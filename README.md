@@ -16,3 +16,22 @@
 ## Source Code Pending
 
 The source code will be published here.
+
+## Bevy Compatibility
+
+`pybevy` versions target specific Bevy versions:
+
+| pybevy  | Bevy |
+|---------|------|
+| 0.1.x   | 0.18 |
+
+
+## Documentation
+
+- **[pybevy.com](https://pybevy.com)** — Project website
+- **[Examples](examples/)** — Runnable examples covering 2D, 3D, ECS, animation, physics, and more
+## License
+
+All code in this repository is dual-licensed under either the MIT or Apache 2.0 license, at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE) for details.
+
+By contributing, you agree your work will be released under both licenses.
