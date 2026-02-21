@@ -1,5 +1,6 @@
 # pybevy: Python 2D/3D Powered by the Bevy Engine
 
+[![Discord](https://img.shields.io/discord/1282043096002986034.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/hA4zUneA8f)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](https://github.com/pybevy/pybevy#license)
 [![pypi](https://img.shields.io/pypi/v/pybevy)](https://pypi.org/project/pybevy/)
 [![pypi downloads](https://img.shields.io/pypi/dm/pybevy)](https://pypi.org/project/pybevy/)
@@ -30,6 +31,10 @@ The source code will be published here.
 
 - **[pybevy.com](https://pybevy.com)** — Project website
 - **[Examples](examples/)** — Runnable examples covering 2D, 3D, ECS, animation, physics, and more
+
+## Community & Contributing
+
+- **Join the Conversation:** The best place to ask questions and chat is the official [Pybevy Discord](https://discord.gg/hA4zUneA8f).
 
 ## License
 
