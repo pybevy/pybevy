@@ -13,7 +13,6 @@
 
 **Pybevy** is a Python extension that bridges the productivity of Python with the performance of the [Bevy Engine](https://bevyengine.org/), a refreshingly simple data-driven game engine built in Rust.
 
-
 ## Source Code Pending
 
 The source code will be published here.
@@ -25,7 +24,6 @@ The source code will be published here.
 | pybevy  | Bevy |
 |---------|------|
 | 0.1.x   | 0.18 |
-
 
 ## Documentation
 
