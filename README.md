@@ -13,7 +13,7 @@
 
 ## What is pybevy?
 
-**Pybevy** is a Python extension that bridges the productivity of Python with the performance of the [Bevy Engine](https://bevy.org/), a refreshingly simple data-driven game engine built in Rust.
+**Pybevy** is a community-maintained Python extension that bridges the productivity of Python with the performance of the [Bevy Engine](https://bevy.org/), a refreshingly simple data-driven game engine built in Rust.
 
 **Hot-reload is the star feature** - modify your Python code and see changes instantly in your running application, making development incredibly fast and iterative. **Combine the vast Python ecosystem** with Bevy's cutting-edge 3D engine: leverage NumPy, SciPy, Matplotlib, PyTorch, and thousands of other packages while enjoying high-performance 3D rendering and physics. Write clean, Pythonic code to build games, simulations, and interactive applications without sacrificing speed. pybevy empowers you to leverage Bevy's massively parallel, cache-friendly ECS (Entity Component System) architecture directly from Python.
 
