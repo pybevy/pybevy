@@ -16,4 +16,4 @@ pybevy_math = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = []
+features = ["mouse", "keyboard", "gamepad", "touch", "gestures"]
