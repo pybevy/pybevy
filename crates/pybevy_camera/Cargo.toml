@@ -25,4 +25,5 @@ features = [
     "bevy_core_pipeline",
     "bevy_post_process",
     "bevy_image",
+    "bevy_camera",
 ]

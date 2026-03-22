@@ -18,4 +18,4 @@ numpy = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = []
+features = ["bevy_window", "bevy_winit"]

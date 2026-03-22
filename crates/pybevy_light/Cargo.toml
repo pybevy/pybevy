@@ -20,4 +20,5 @@ numpy = { workspace = true }
 workspace = true
 features = [
     "bevy_pbr",
+    "bevy_light",
 ]
