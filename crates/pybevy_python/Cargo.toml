@@ -1,0 +1,19 @@
+[package]
+name = "pybevy-python"
+version = "0.2.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "_pybevy"
+crate-type = ["cdylib"]
+
+[dependencies]
+pybevy = { path = "../.." }
+pyo3 = { workspace = true, features = ["extension-module"] }
+
+[features]
+default = ["pybevy/mcp", "linux-display"]
+linux-display = ["pybevy/linux-display"]
+debug = ["pybevy/debug"]
+mcp = ["pybevy/mcp"]

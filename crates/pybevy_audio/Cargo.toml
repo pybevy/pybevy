@@ -1,0 +1,24 @@
+[package]
+name = "pybevy_audio"
+version = "0.2.0"
+edition = "2024"
+description = "Audio components and assets for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_math = { workspace = true }
+pybevy_transform = { workspace = true }
+pybevy_macros = { workspace = true }
+numpy = { workspace = true }
+uuid = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = [
+    "bevy_audio",
+    "bevy_asset",
+    "vorbis",
+    "wav"
+]

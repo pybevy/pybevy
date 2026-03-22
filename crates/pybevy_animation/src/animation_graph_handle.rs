@@ -1,0 +1,41 @@
+use bevy::animation::graph::AnimationGraphHandle;
+use pybevy_core::{PyComponent, PyHandle};
+use pyo3::prelude::*;
+
+#[pyclass(name = "AnimationGraphHandle", extends = PyComponent, eq, frozen)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PyAnimationGraphHandle(pub(crate) PyHandle);
+
+impl TryFrom<PyAnimationGraphHandle> for AnimationGraphHandle {
+    type Error = PyErr;
+
+    fn try_from(value: PyAnimationGraphHandle) -> Result<Self, Self::Error> {
+        Ok(AnimationGraphHandle(value.0.try_into()?))
+    }
+}
+
+impl TryFrom<&PyAnimationGraphHandle> for AnimationGraphHandle {
+    type Error = PyErr;
+
+    fn try_from(value: &PyAnimationGraphHandle) -> Result<Self, Self::Error> {
+        Ok(AnimationGraphHandle((&value.0).try_into()?))
+    }
+}
+
+impl From<&AnimationGraphHandle> for PyAnimationGraphHandle {
+    fn from(value: &AnimationGraphHandle) -> Self {
+        PyAnimationGraphHandle((&value.0).into())
+    }
+}
+
+#[pymethods]
+impl PyAnimationGraphHandle {
+    #[new]
+    pub fn new(handle: PyHandle) -> PyResult<(Self, PyComponent)> {
+        Ok((Self(handle), PyComponent))
+    }
+
+    pub fn handle(&self) -> PyResult<PyHandle> {
+        Ok(self.0.clone())
+    }
+}

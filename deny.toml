@@ -1,0 +1,64 @@
+[advisories]
+version = 2
+ignore = [
+    "RUSTSEC-2024-0436",
+]
+
+[licenses]
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unlicense",
+    "Zlib",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+deny = [
+    { name = "ahash", deny-multiple-versions = true },
+    { name = "glam", deny-multiple-versions = true },
+]
+
+[[bans.features]]
+crate = "bevy"
+deny = ["default"]
+
+[[bans.features]]
+crate = "bevy"
+deny = [
+    "meshlet",
+    "meshlet_processor",
+    "bevy_solari",
+    "solari",
+    "dlss",
+    "force_disable_dlss",
+    "basis-universal",
+    "compressed_image_saver",
+    "experimental_pbr_pcss",
+    "mp3",
+    "symphonia-aac",
+    "symphonia-isomp4",
+    "symphonia-all",
+    "bevy_anti_alias",
+]
+
+[[bans.features]]
+crate = "derive_more"
+deny = ["error"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

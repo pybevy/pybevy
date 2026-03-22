@@ -1,0 +1,16 @@
+[package]
+name = "pybevy_time"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_macros = { workspace = true }
+pybevy_core = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = []

@@ -1,0 +1,13 @@
+[package]
+name = "pybevy_shader"
+version = "0.2.0"
+edition = "2024"
+description = "Shader type wrappers for PyBevy (Shader, ShaderRef, ShaderImport, etc.)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+bevy = { workspace = true, features = ["bevy_render"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+naga = "27"

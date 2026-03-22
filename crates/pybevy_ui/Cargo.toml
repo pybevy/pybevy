@@ -1,0 +1,19 @@
+[package]
+name = "pybevy_ui"
+version = "0.2.0"
+edition = "2024"
+description = "UI components for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+numpy = { workspace = true }
+pybevy_color = { workspace = true }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+pybevy_math = { workspace = true }
+pybevy_sprite = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = ["bevy_ui", "bevy_image"]

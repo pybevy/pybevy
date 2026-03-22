@@ -1,0 +1,12 @@
+[package]
+name = "pybevy_storage"
+version = "0.2.0"
+edition = "2024"
+description = "PyO3-free storage primitives for PyBevy - validity tracking, borrowed references"
+
+[dependencies]
+bevy = { workspace = true, features = ["bevy_asset"] }
+
+[dependencies.pyo3]
+workspace = true
+optional = true

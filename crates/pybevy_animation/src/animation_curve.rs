@@ -1,0 +1,25 @@
+use pyo3::prelude::*;
+
+#[pyclass(name = "AnimationCurve", subclass)]
+#[derive(Debug, Clone, Default)]
+pub struct PyAnimationCurve;
+
+#[pymethods]
+impl PyAnimationCurve {
+    #[new]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[pyclass(name = "AnimatableCurve")]
+pub struct PyAnimatableCurve {}
+
+#[pyclass(name = "AnimatableKeyframeCurve")]
+pub struct PyAnimatableKeyframeCurve {}
+
+#[pyclass(name = "WeightsCurve")]
+pub struct PyWeightsCurve {}
+
+#[pyclass(name = "AnimatedField")]
+pub struct PyAnimatedField {}

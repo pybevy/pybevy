@@ -1,0 +1,19 @@
+[package]
+name = "pybevy_mesh"
+version = "0.2.0"
+edition = "2024"
+description = "Mesh components for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+pybevy_math = { workspace = true }
+pybevy_image = { workspace = true }
+pybevy_render = { workspace = true }
+numpy = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = ["bevy_mesh", "bevy_asset", "bevy_pbr", "bevy_sprite", "bevy_sprite_render"]

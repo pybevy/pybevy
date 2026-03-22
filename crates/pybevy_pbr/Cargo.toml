@@ -1,0 +1,23 @@
+[package]
+name = "pybevy_pbr"
+version = "0.2.0"
+edition = "2024"
+description = "PBR components for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_color = { workspace = true }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+pybevy_math = { workspace = true }
+pybevy_render = { workspace = true }
+numpy = { workspace = true }
+pybevy_shader_types = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = [
+    "bevy_pbr",
+    "bevy_render",
+]

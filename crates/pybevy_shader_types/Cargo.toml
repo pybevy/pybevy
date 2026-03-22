@@ -1,0 +1,15 @@
+[package]
+name = "pybevy_shader_types"
+version = "0.2.0"
+edition = "2024"
+description = "Shared ShaderMaterial types for PyBevy — no Python dependencies"
+license = "MIT OR Apache-2.0"
+
+[dependencies.bevy]
+workspace = true
+default-features = false
+features = [
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_asset",
+]

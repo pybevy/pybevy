@@ -1,21 +1,116 @@
 # Contributing to pybevy
 
-Thank you for your interest in contributing to pybevy!
+Thank you for your interest in contributing to `pybevy`! Let's make high-performance 3D development in Python more accessible.
 
-## Current Status
+## Getting Started
 
-The source code is not yet publicly available, but **we welcome issues and feedback right now**. You can help by:
+### Prerequisites
 
-- **Reporting bugs** — Open an [issue](https://github.com/pybevy/pybevy/issues) with steps to reproduce
-- **Requesting features** — Describe what you'd like to see and your use case
-- **Asking questions** — Join the [Pybevy Discord](https://discord.gg/hA4zUneA8f) to chat with the community
+- Python 3.12+
+- Rust toolchain (stable)
+- Poetry for Python dependency management
 
-Code contributions will be accepted once the source code is published. Stay tuned!
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install libasound-dev libudev-dev mesa-vulkan-drivers vulkan-tools
+```
 
-## Safety
+### Development Setup
 
-PyBevy bridges Python's dynamic nature with Rust's strict safety guarantees. All raw pointer access is guarded by validity checks, and the borrowed/owned component pattern ensures memory safety across the Python-Rust boundary. More details will be published alongside the source code.
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/pybevy/pybevy.git
+   cd pybevy
+   ```
+
+2. **Install dependencies**
+
+   ```bash
+   poetry install
+   ```
+
+3. **Build the project**
+
+   ```bash
+   poetry run maturin develop
+   ```
+
+   For optimized builds (slower to compile, faster to run):
+
+   ```bash
+   poetry run maturin develop --release
+   ```
+
+4. **Build and run tests**
+
+   ```bash
+   make test
+   ```
+
+### Running Checks Manually
+
+**Linting:**
+```bash
+poetry run ruff check tests/
+```
+
+**Type checking:**
+```bash
+poetry run mypy tests/
+```
+
+**Rust formatting:**
+```bash
+cargo fmt --check
+```
+
+**Tests (single-threaded):**
+```bash
+poetry run pytest
+```
+
+**Tests (parallel):**
+```bash
+poetry run pytest -n auto
+```
+
+**All checks (build + test + lint):**
+```bash
+make test
+```
+
+## How to Contribute
+
+### Code Standards
+
+- **Python**: Follow PEP 8, use type hints everywhere, no `Any` types
+- **Rust**: Follow standard Rust conventions, all imports at top of file
+- Ensure `ruff check` and `mypy` pass with zero errors
+- Ensure all tests pass with `poetry run pytest`
+
+### Typings
+
+When introducing new Python-exposed types or functions in Rust, update the relevant `.pyi` stub files to ensure type hints are available for users.
+
+## Areas for Contribution
+
+- **API Development**: Expanding Python bindings for Bevy features
+- **Documentation**: Examples, tutorials, API documentation
+- **Testing**: Unit tests, integration tests, benchmarks
+- **Examples**: Showcase projects demonstrating pybevy capabilities
+
+## Development Notes
+
+- This is a hybrid Rust/Python project using PyO3 and Maturin
+- Hot-reload functionality is a core feature - preserve it in changes
+- Performance is critical - profile changes that affect the Python-Rust boundary
+
+## Getting Help
+
+- Join the [Pybevy Discord](https://discord.gg/hA4zUneA8f) to ask questions and chat
+- Check existing issues and documentation
 
 ## License
 
-By contributing, you agree that your work will be dual-licensed under [MIT](LICENSE-MIT) and [Apache 2.0](LICENSE-APACHE).
+By contributing, you agree that your contributions will be licensed under the same MIT/Apache-2.0 dual license as the project.

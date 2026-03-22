@@ -1,0 +1,32 @@
+use bevy::{color::Color, pbr::wireframe::WireframeColor};
+use pybevy_color::PyColor;
+use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::component_storage;
+use pyo3::prelude::*;
+
+#[component_storage(WireframeColor)]
+#[pyclass(name = "WireframeColor", extends = PyComponent)]
+#[derive(Debug, Clone)]
+pub struct PyWireframeColor {
+    pub(crate) storage: ComponentStorage<WireframeColor>,
+}
+
+#[pymethods]
+impl PyWireframeColor {
+    #[new]
+    #[pyo3(signature = (color = PyColor(Color::WHITE)))]
+    pub fn new(color: PyColor) -> (Self, PyComponent) {
+        Self::from_owned(WireframeColor { color: color.0 })
+    }
+
+    #[getter]
+    pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
+        PyColor::from_color(self.as_ref()?.color, py)
+    }
+
+    #[setter]
+    pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
+        self.as_mut()?.color = color.0;
+        Ok(())
+    }
+}

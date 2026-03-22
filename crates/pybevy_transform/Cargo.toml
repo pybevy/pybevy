@@ -1,0 +1,16 @@
+[package]
+name = "pybevy_transform"
+version = "0.2.0"
+edition = "2024"
+description = "Transform component for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+numpy = { workspace = true }
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+pybevy_math = { workspace = true }
+
+[dependencies.bevy]
+workspace = true

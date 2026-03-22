@@ -1,0 +1,14 @@
+[package]
+name = "pybevy_wgpu"
+version = "0.2.0"
+edition = "2024"
+description = "wgpu type wrappers for PyBevy (matching bevy_image's wgpu-types dependency)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_macros = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = ["bevy_image", "bevy_render"]

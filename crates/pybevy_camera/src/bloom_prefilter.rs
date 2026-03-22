@@ -1,0 +1,45 @@
+use bevy::post_process::bloom::BloomPrefilter;
+use pybevy_core::{FromBorrowedStorage, field_storage::FieldStorage};
+use pybevy_macros::native_field;
+use pyo3::prelude::*;
+
+#[native_field]
+#[pyclass(name = "BloomPrefilter")]
+pub struct PyBloomPrefilter {
+    storage: FieldStorage<BloomPrefilter>,
+}
+
+#[pymethods]
+impl PyBloomPrefilter {
+    #[new]
+    #[pyo3(signature = (threshold = 0.0, threshold_softness = 0.0))]
+    pub fn new(threshold: f32, threshold_softness: f32) -> Self {
+        let prefilter = BloomPrefilter {
+            threshold,
+            threshold_softness,
+        };
+        Self::from_owned(prefilter)
+    }
+
+    #[getter]
+    pub fn threshold(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.threshold)
+    }
+
+    #[setter]
+    pub fn set_threshold(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.threshold = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn threshold_softness(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.threshold_softness)
+    }
+
+    #[setter]
+    pub fn set_threshold_softness(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.threshold_softness = value;
+        Ok(())
+    }
+}

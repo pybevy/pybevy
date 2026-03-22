@@ -1,0 +1,39 @@
+[package]
+name = "pybevy_control"
+version = "0.2.0"
+edition = "2024"
+description = "HTTP control API for PyBevy - enables remote interaction with running scenes"
+license = "MIT OR Apache-2.0"
+
+[features]
+bevy_winit = ["bevy/bevy_winit"]
+x11 = ["bevy/x11"]
+wayland = ["bevy/wayland"]
+
+[dependencies]
+pyo3 = { workspace = true }
+bevy = { workspace = true, default-features = false, features = [
+    "bevy_render",
+    "bevy_pbr",
+    "bevy_core_pipeline",
+    "bevy_camera",
+    "bevy_gizmos",
+    "bevy_window",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "bevy_ui",
+    "png",
+] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+
+pybevy_transform = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+axum = { version = "0.8", features = ["json"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+image = { version = "0.25", default-features = false, features = ["png"] }

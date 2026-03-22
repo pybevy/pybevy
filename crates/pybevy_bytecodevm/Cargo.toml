@@ -1,0 +1,16 @@
+[package]
+name = "pybevy_bytecodevm"
+version = "0.0.3"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3.workspace = true
+bevy_ecs = "0.18"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "vm_pool"
+harness = false

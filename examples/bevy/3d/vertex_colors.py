@@ -1,0 +1,85 @@
+"""Illustrates the use of vertex colors.
+
+Demonstrates how to assign custom colors to individual vertices of a mesh.
+The cube's vertices are colored based on their positions, creating a
+multi-colored gradient effect.
+"""
+
+import numpy as np
+
+from pybevy.app import App, DefaultPlugins
+from pybevy.assets import Assets
+from pybevy.camera import Camera3d
+from pybevy.color import Color
+from pybevy.decorators import entrypoint
+from pybevy.ecs import Commands, ResMut
+from pybevy.light import PointLight
+from pybevy.math import Cuboid, Plane3d, Vec3
+from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
+from pybevy.prelude import Startup
+from pybevy.render import StandardMaterial
+from pybevy.transform import Transform
+
+
+def setup(
+    commands: Commands,
+    meshes: ResMut[Assets[Mesh]],
+    materials: ResMut[Assets[StandardMaterial]],
+) -> None:
+    """Set up a simple 3D scene with vertex-colored cube."""
+    # Ground plane
+    commands.spawn(
+        Mesh3d(meshes.add(Plane3d().mesh().size(5.0, 5.0).build())),
+        MeshMaterial3d(materials.add(
+            StandardMaterial(base_color=Color.srgb(0.3, 0.5, 0.3))
+        )),
+    )
+
+    # Create cube with vertex colors
+    # Assign vertex colors based on vertex positions
+    colorful_cube = Cuboid().mesh().build()
+
+    # Get vertex positions
+    with colorful_cube.attribute(Mesh.ATTRIBUTE_POSITION) as positions:
+        # positions is a numpy array of shape (n_vertices, 3)
+        # Convert positions to colors: map [-0.5, 0.5] to [0, 1]
+        colors = np.zeros((len(positions), 4), dtype=np.float32)
+        colors[:, 0] = (1.0 - positions[:, 0]) / 2.0  # R from x
+        colors[:, 1] = (1.0 - positions[:, 1]) / 2.0  # G from y
+        colors[:, 2] = (1.0 - positions[:, 2]) / 2.0  # B from z
+        colors[:, 3] = 1.0  # Alpha
+
+    # Insert vertex colors
+    colorful_cube.insert_attribute(Mesh.ATTRIBUTE_COLOR, colors)
+
+    commands.spawn(
+        Mesh3d(meshes.add(colorful_cube)),
+        # White base color so vertex colors show through
+        # (vertex colors are multiplied by base_color)
+        MeshMaterial3d(materials.add(
+            StandardMaterial(base_color=Color.WHITE)
+        )),
+        Transform.from_xyz(0.0, 0.5, 0.0),
+    )
+
+    # Light with shadows
+    commands.spawn(
+        PointLight(shadows_enabled=True),
+        Transform.from_xyz(4.0, 5.0, 4.0).looking_at(Vec3.ZERO, Vec3.Y),
+    )
+
+    # Camera
+    commands.spawn(
+        Camera3d(),
+        Transform.from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3.ZERO, Vec3.Y),
+    )
+
+
+@entrypoint
+def main(app: App) -> App:
+    """Configure and return the app."""
+    return app.add_plugins(DefaultPlugins).add_systems(Startup, setup)
+
+
+if __name__ == "__main__":
+    main().run()

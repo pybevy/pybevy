@@ -1,0 +1,675 @@
+//! Global bridge registries for type lookup without World access
+//!
+//! This module provides global registries that allow `try_from_py_type` to check
+//! if a Python type has a registered bridge, without requiring World access.
+//!
+//! # Design
+//!
+//! The global registries complement the Bevy resource-based registries:
+//! - **Global registry**: Used for type identification (is this type dynamically registered?)
+//! - **Bevy resource**: Used for actual dispatch (extract, insert, etc.)
+//!
+//! Feature crates register their bridges in BOTH:
+//! 1. Global registry (at module init or plugin build)
+//! 2. Bevy resource (at plugin build)
+//!
+//! # Thread Safety
+//!
+//! Uses `OnceLock<RwLock<...>>` for thread-safe lazy initialization and access.
+//! The RwLock allows concurrent reads (common case) with exclusive writes (registration).
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock, RwLock},
+};
+
+use pyo3::{ffi::PyTypeObject, types::PyTypeMethods};
+
+use super::{
+    AssetBridge, BatchComponent, ComponentBridge, MessageBridge, ResourceBridge,
+    batchable_field::BatchFieldMeta, rust_batch::PyRustComponentBatch,
+};
+
+/// Global registry for component bridge type pointers
+///
+/// This allows `try_from_py_type` to identify dynamically registered types
+/// without requiring World access.
+static GLOBAL_COMPONENT_BRIDGES: OnceLock<RwLock<GlobalBridgeRegistry>> = OnceLock::new();
+
+/// Internal storage for the global registry
+#[derive(Default)]
+struct GlobalBridgeRegistry {
+    /// PyTypeObject* → Bridge
+    by_py_type: HashMap<*const PyTypeObject, Arc<dyn ComponentBridge>>,
+}
+
+// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+unsafe impl Send for GlobalBridgeRegistry {}
+unsafe impl Sync for GlobalBridgeRegistry {}
+
+/// Get or initialize the global registry
+fn get_global_registry() -> &'static RwLock<GlobalBridgeRegistry> {
+    GLOBAL_COMPONENT_BRIDGES.get_or_init(|| RwLock::new(GlobalBridgeRegistry::default()))
+}
+
+/// Register a component bridge in the global registry
+///
+/// This should be called by feature crates during initialization.
+/// The bridge must have a valid py_type_ptr() - null pointers are ignored.
+///
+/// # Example
+///
+/// ```ignore
+/// use pybevy_core::registry::global_registry;
+///
+/// // In feature crate's module init or plugin build
+/// global_registry::register_component_bridge(AudioPlayerBridge);
+/// ```
+pub fn register_component_bridge<B: ComponentBridge>(bridge: B) {
+    register_component_bridge_arc(Arc::new(bridge));
+}
+
+/// Register a pre-wrapped Arc bridge (used by PyBevyPlugin for shared ownership)
+pub fn register_component_bridge_arc(bridge: Arc<dyn ComponentBridge>) {
+    let ptr = bridge.py_type_ptr();
+    if ptr.is_null() {
+        // Skip registration for bridges without valid Python types
+        // (e.g., proof-of-concept bridges)
+        return;
+    }
+
+    let registry = get_global_registry();
+    let mut guard = registry.write().expect("Global registry lock poisoned");
+    guard.by_py_type.insert(ptr, bridge);
+}
+
+/// Check if a Python type pointer is registered in the global registry
+///
+/// Returns the bridge if found, None otherwise.
+///
+/// # Example
+///
+/// ```ignore
+/// let ptr = py_type.as_type_ptr();
+/// if let Some(bridge) = global_registry::get_bridge_by_py_type(ptr) {
+///     // Type is dynamically registered
+///     return Ok(PyComponentType::Dynamic(ptr));
+/// }
+/// ```
+pub fn get_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn ComponentBridge>> {
+    let registry = get_global_registry();
+    let guard = registry.read().expect("Global registry lock poisoned");
+    guard.by_py_type.get(&ptr).cloned()
+}
+
+/// Check if a Python type pointer is registered (without returning the bridge)
+pub fn contains_py_type(ptr: *const PyTypeObject) -> bool {
+    let registry = get_global_registry();
+    let guard = registry.read().expect("Global registry lock poisoned");
+    guard.by_py_type.contains_key(&ptr)
+}
+
+/// Get the number of registered component bridges (for debugging/testing)
+pub fn bridge_count() -> usize {
+    let registry = get_global_registry();
+    let guard = registry.read().expect("Global registry lock poisoned");
+    guard.by_py_type.len()
+}
+
+/// Get all registered component bridges
+pub fn all_component_bridges() -> Vec<Arc<dyn ComponentBridge>> {
+    let registry = get_global_registry();
+    let guard = registry.read().expect("Global registry lock poisoned");
+    guard.by_py_type.values().cloned().collect()
+}
+
+// ============================================================================
+// Resource Bridge Registry
+// ============================================================================
+
+/// Global registry for resource bridge type pointers
+static GLOBAL_RESOURCE_BRIDGES: OnceLock<RwLock<GlobalResourceBridgeRegistry>> = OnceLock::new();
+
+/// Internal storage for the global resource registry
+#[derive(Default)]
+struct GlobalResourceBridgeRegistry {
+    /// PyTypeObject* → Bridge
+    by_py_type: HashMap<*const PyTypeObject, Arc<dyn ResourceBridge>>,
+}
+
+// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+unsafe impl Send for GlobalResourceBridgeRegistry {}
+unsafe impl Sync for GlobalResourceBridgeRegistry {}
+
+/// Get or initialize the global resource registry
+fn get_global_resource_registry() -> &'static RwLock<GlobalResourceBridgeRegistry> {
+    GLOBAL_RESOURCE_BRIDGES.get_or_init(|| RwLock::new(GlobalResourceBridgeRegistry::default()))
+}
+
+/// Register a resource bridge in the global registry
+///
+/// This should be called by feature crates during initialization.
+/// The bridge must have a valid py_type_ptr() - null pointers are ignored.
+///
+/// # Example
+///
+/// ```ignore
+/// use pybevy_core::registry::global_registry;
+///
+/// // In feature crate's module init or plugin build
+/// global_registry::register_resource_bridge(GlobalVolumeBridge);
+/// ```
+pub fn register_resource_bridge<B: ResourceBridge>(bridge: B) {
+    let ptr = bridge.py_type_ptr();
+    if ptr.is_null() {
+        return;
+    }
+
+    let bridge = Arc::new(bridge);
+    let registry = get_global_resource_registry();
+    let mut guard = registry
+        .write()
+        .expect("Global resource registry lock poisoned");
+    guard.by_py_type.insert(ptr, bridge);
+}
+
+/// Check if a Python type pointer is registered as a resource in the global registry
+///
+/// Returns the bridge if found, None otherwise.
+pub fn get_resource_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn ResourceBridge>> {
+    let registry = get_global_resource_registry();
+    let guard = registry
+        .read()
+        .expect("Global resource registry lock poisoned");
+    guard.by_py_type.get(&ptr).cloned()
+}
+
+/// Check if a Python type pointer is registered as a resource (without returning the bridge)
+pub fn contains_resource_py_type(ptr: *const PyTypeObject) -> bool {
+    let registry = get_global_resource_registry();
+    let guard = registry
+        .read()
+        .expect("Global resource registry lock poisoned");
+    guard.by_py_type.contains_key(&ptr)
+}
+
+/// Get the number of registered resource bridges (for debugging/testing)
+pub fn resource_bridge_count() -> usize {
+    let registry = get_global_resource_registry();
+    let guard = registry
+        .read()
+        .expect("Global resource registry lock poisoned");
+    guard.by_py_type.len()
+}
+
+/// Get all registered resource bridges
+pub fn all_resource_bridges() -> Vec<Arc<dyn ResourceBridge>> {
+    let registry = get_global_resource_registry();
+    let guard = registry
+        .read()
+        .expect("Global resource registry lock poisoned");
+    guard.by_py_type.values().cloned().collect()
+}
+
+// ============================================================================
+// Asset Bridge Registry
+// ============================================================================
+
+/// Global registry for asset bridge type pointers
+static GLOBAL_ASSET_BRIDGES: OnceLock<RwLock<GlobalAssetBridgeRegistry>> = OnceLock::new();
+
+/// Internal storage for the global asset registry
+#[derive(Default)]
+struct GlobalAssetBridgeRegistry {
+    /// PyTypeObject* → Bridge
+    by_py_type: HashMap<*const PyTypeObject, Arc<dyn AssetBridge>>,
+    /// TypeId → Bridge (for lookups from Bevy types)
+    by_type_id: HashMap<std::any::TypeId, Arc<dyn AssetBridge>>,
+}
+
+// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+unsafe impl Send for GlobalAssetBridgeRegistry {}
+unsafe impl Sync for GlobalAssetBridgeRegistry {}
+
+/// Get or initialize the global asset registry
+fn get_global_asset_registry() -> &'static RwLock<GlobalAssetBridgeRegistry> {
+    GLOBAL_ASSET_BRIDGES.get_or_init(|| RwLock::new(GlobalAssetBridgeRegistry::default()))
+}
+
+/// Register an asset bridge in the global registry
+///
+/// This should be called by feature crates during initialization.
+/// The bridge must have a valid py_type_ptr() - null pointers are ignored.
+///
+/// # Example
+///
+/// ```ignore
+/// use pybevy_core::registry::global_registry;
+///
+/// // In feature crate's module init or plugin build
+/// global_registry::register_asset_bridge(AudioSourceBridge);
+/// ```
+pub fn register_asset_bridge<B: AssetBridge>(bridge: B) {
+    let ptr = bridge.py_type_ptr();
+    if ptr.is_null() {
+        return;
+    }
+
+    let type_id = bridge.bevy_type_id();
+    let bridge = Arc::new(bridge);
+    let registry = get_global_asset_registry();
+    let mut guard = registry
+        .write()
+        .expect("Global asset registry lock poisoned");
+    guard.by_py_type.insert(ptr, bridge.clone());
+    guard.by_type_id.insert(type_id, bridge);
+}
+
+/// Check if a Python type pointer is registered as an asset in the global registry
+///
+/// Returns the bridge if found, None otherwise.
+pub fn get_asset_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn AssetBridge>> {
+    let registry = get_global_asset_registry();
+    let guard = registry
+        .read()
+        .expect("Global asset registry lock poisoned");
+    guard.by_py_type.get(&ptr).cloned()
+}
+
+/// Check if a Python type pointer is registered as an asset (without returning the bridge)
+pub fn contains_asset_py_type(ptr: *const PyTypeObject) -> bool {
+    let registry = get_global_asset_registry();
+    let guard = registry
+        .read()
+        .expect("Global asset registry lock poisoned");
+    guard.by_py_type.contains_key(&ptr)
+}
+
+/// Get the number of registered asset bridges (for debugging/testing)
+pub fn asset_bridge_count() -> usize {
+    let registry = get_global_asset_registry();
+    let guard = registry
+        .read()
+        .expect("Global asset registry lock poisoned");
+    guard.by_py_type.len()
+}
+
+/// Get an asset bridge by Bevy TypeId
+///
+/// Returns the bridge if found, None otherwise.
+/// Used by From<Handle<A>> for PyHandle to get the Python type info.
+pub fn get_asset_bridge_by_type_id(type_id: std::any::TypeId) -> Option<Arc<dyn AssetBridge>> {
+    let registry = get_global_asset_registry();
+    let guard = registry
+        .read()
+        .expect("Global asset registry lock poisoned");
+    guard.by_type_id.get(&type_id).cloned()
+}
+
+/// Get an asset bridge by its name
+///
+/// Returns the bridge if found, None otherwise.
+/// Used by convenience methods like `load_scene()`, `load_image()`, etc.
+pub fn get_asset_bridge_by_name(name: &str) -> Option<Arc<dyn AssetBridge>> {
+    let registry = get_global_asset_registry();
+    let guard = registry
+        .read()
+        .expect("Global asset registry lock poisoned");
+    guard
+        .by_py_type
+        .values()
+        .find(|b| b.name() == name)
+        .cloned()
+}
+
+// ============================================================================
+// TypeId Registry (for VisibilityClass.contains and similar APIs)
+// ============================================================================
+
+/// Global registry for component TypeId lookups
+/// This allows methods like VisibilityClass.contains() to work with
+/// any component type (both feature crate and main crate components)
+static GLOBAL_TYPE_ID_REGISTRY: OnceLock<RwLock<TypeIdRegistry>> = OnceLock::new();
+
+/// Internal storage for the TypeId registry
+#[derive(Default)]
+struct TypeIdRegistry {
+    /// PyTypeObject* → TypeId
+    by_py_type: HashMap<*const PyTypeObject, std::any::TypeId>,
+}
+
+// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+unsafe impl Send for TypeIdRegistry {}
+unsafe impl Sync for TypeIdRegistry {}
+
+/// Get or initialize the TypeId registry
+fn get_type_id_registry() -> &'static RwLock<TypeIdRegistry> {
+    GLOBAL_TYPE_ID_REGISTRY.get_or_init(|| RwLock::new(TypeIdRegistry::default()))
+}
+
+/// Register a component's TypeId in the global registry
+///
+/// This should be called by both:
+/// - Feature crate component_bridge! macros
+/// - Main crate native_component! macros
+///
+/// # Example
+///
+/// ```ignore
+/// use pybevy_core::registry::global_registry;
+///
+/// global_registry::register_type_id::<MyPyComponent, MyBevyComponent>();
+/// ```
+pub fn register_type_id<P: pyo3::PyTypeInfo, B: 'static>() {
+    pyo3::Python::attach(|py| {
+        let ptr = P::type_object(py).as_type_ptr();
+        let type_id = std::any::TypeId::of::<B>();
+        let registry = get_type_id_registry();
+        let mut guard = registry.write().expect("TypeId registry lock poisoned");
+        guard.by_py_type.insert(ptr, type_id);
+    });
+}
+
+/// Get the TypeId for a Python type pointer
+///
+/// First checks the component bridge registry, then falls back to the TypeId registry.
+/// Returns None if the type is not registered.
+pub fn get_type_id_by_py_type(ptr: *const PyTypeObject) -> Option<std::any::TypeId> {
+    // First check bridge registry (feature crate components)
+    if let Some(bridge) = get_bridge_by_py_type(ptr) {
+        return Some(bridge.bevy_type_id());
+    }
+
+    // Fall back to TypeId registry (main crate components)
+    let registry = get_type_id_registry();
+    let guard = registry.read().expect("TypeId registry lock poisoned");
+
+    guard.by_py_type.get(&ptr).copied()
+}
+
+// ============================================================================
+// Message Bridge Registry
+// ============================================================================
+
+/// Global registry for message bridge type pointers
+static GLOBAL_MESSAGE_BRIDGES: OnceLock<RwLock<GlobalMessageBridgeRegistry>> = OnceLock::new();
+
+/// Internal storage for the global message registry
+#[derive(Default)]
+struct GlobalMessageBridgeRegistry {
+    /// PyTypeObject* → Bridge
+    by_py_type: HashMap<*const PyTypeObject, Arc<dyn MessageBridge>>,
+    /// TypeId → Bridge (for lookups from Bevy types)
+    by_type_id: HashMap<std::any::TypeId, Arc<dyn MessageBridge>>,
+}
+
+// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+unsafe impl Send for GlobalMessageBridgeRegistry {}
+unsafe impl Sync for GlobalMessageBridgeRegistry {}
+
+/// Get or initialize the global message registry
+fn get_global_message_registry() -> &'static RwLock<GlobalMessageBridgeRegistry> {
+    GLOBAL_MESSAGE_BRIDGES.get_or_init(|| RwLock::new(GlobalMessageBridgeRegistry::default()))
+}
+
+/// Register a message bridge in the global registry
+///
+/// This should be called by feature crates during initialization.
+/// The bridge must have a valid py_type_ptr() - null pointers are ignored.
+///
+/// # Example
+///
+/// ```ignore
+/// use pybevy_core::registry::global_registry;
+///
+/// // In feature crate's module init or plugin build
+/// global_registry::register_message_bridge(KeyboardInputBridge);
+/// ```
+pub fn register_message_bridge<B: MessageBridge>(bridge: B) {
+    let ptr = bridge.py_type_ptr();
+    if ptr.is_null() {
+        return;
+    }
+
+    let type_id = bridge.bevy_type_id();
+    let bridge = Arc::new(bridge);
+    let registry = get_global_message_registry();
+    let mut guard = registry
+        .write()
+        .expect("Global message registry lock poisoned");
+    guard.by_py_type.insert(ptr, bridge.clone());
+    guard.by_type_id.insert(type_id, bridge);
+}
+
+/// Check if a Python type pointer is registered as a message in the global registry
+///
+/// Returns the bridge if found, None otherwise.
+pub fn get_message_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn MessageBridge>> {
+    let registry = get_global_message_registry();
+    let guard = registry
+        .read()
+        .expect("Global message registry lock poisoned");
+    guard.by_py_type.get(&ptr).cloned()
+}
+
+/// Check if a Python type pointer is registered as a message (without returning the bridge)
+pub fn contains_message_py_type(ptr: *const PyTypeObject) -> bool {
+    let registry = get_global_message_registry();
+    let guard = registry
+        .read()
+        .expect("Global message registry lock poisoned");
+    guard.by_py_type.contains_key(&ptr)
+}
+
+/// Get the number of registered message bridges (for debugging/testing)
+pub fn message_bridge_count() -> usize {
+    let registry = get_global_message_registry();
+    let guard = registry
+        .read()
+        .expect("Global message registry lock poisoned");
+    guard.by_py_type.len()
+}
+
+/// Get a message bridge by Bevy TypeId
+///
+/// Returns the bridge if found, None otherwise.
+/// Used for iterating messages by type.
+pub fn get_message_bridge_by_type_id(type_id: std::any::TypeId) -> Option<Arc<dyn MessageBridge>> {
+    let registry = get_global_message_registry();
+    let guard = registry
+        .read()
+        .expect("Global message registry lock poisoned");
+    guard.by_type_id.get(&type_id).cloned()
+}
+
+/// Get all registered message bridges
+///
+/// Returns an iterator over all registered bridges.
+/// Used by PyMessages to iterate all message types.
+pub fn all_message_bridges() -> Vec<Arc<dyn MessageBridge>> {
+    let registry = get_global_message_registry();
+    let guard = registry
+        .read()
+        .expect("Global message registry lock poisoned");
+    guard.by_type_id.values().cloned().collect()
+}
+
+// ============================================================================
+// Batch Component Registry
+// ============================================================================
+
+/// Global registry for batch component type pointers
+static GLOBAL_BATCH_BRIDGES: OnceLock<RwLock<GlobalBatchBridgeRegistry>> = OnceLock::new();
+
+/// Internal storage for the global batch registry
+#[derive(Default)]
+struct GlobalBatchBridgeRegistry {
+    /// PyTypeObject* → Bridge
+    by_py_type: HashMap<*const PyTypeObject, Arc<dyn BatchComponent>>,
+}
+
+// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+unsafe impl Send for GlobalBatchBridgeRegistry {}
+unsafe impl Sync for GlobalBatchBridgeRegistry {}
+
+/// Get or initialize the global batch registry
+fn get_global_batch_registry() -> &'static RwLock<GlobalBatchBridgeRegistry> {
+    GLOBAL_BATCH_BRIDGES.get_or_init(|| RwLock::new(GlobalBatchBridgeRegistry::default()))
+}
+
+/// Register a batch component bridge in the global registry
+pub fn register_batch_bridge(py_type_ptr: *const PyTypeObject, bridge: Arc<dyn BatchComponent>) {
+    if py_type_ptr.is_null() {
+        return;
+    }
+
+    let registry = get_global_batch_registry();
+    let mut guard = registry
+        .write()
+        .expect("Global batch registry lock poisoned");
+    guard.by_py_type.insert(py_type_ptr, bridge);
+}
+
+/// Check if a Python type pointer is registered as a batch component
+///
+/// Returns the bridge if found, None otherwise.
+pub fn get_batch_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn BatchComponent>> {
+    let registry = get_global_batch_registry();
+    let guard = registry
+        .read()
+        .expect("Global batch registry lock poisoned");
+    guard.by_py_type.get(&ptr).cloned()
+}
+
+// ============================================================================
+// Component Batch Meta Registry (for Rust component batch spawning)
+// ============================================================================
+
+/// Function pointer type for macro-generated batch insert functions.
+pub type ComponentBatchInsertFn = for<'py> fn(
+    pyo3::Python<'py>,
+    &PyRustComponentBatch,
+    &[bevy::ecs::entity::Entity],
+    &mut bevy::ecs::world::World,
+) -> pyo3::PyResult<()>;
+
+/// Metadata for a Rust component's batch spawning capability.
+///
+/// Registered by macro-generated code; looked up by RustComponentBatchBridge
+/// during insert_bulk.
+pub struct ComponentBatchMeta {
+    pub component_name: &'static str,
+    pub fields: &'static [BatchFieldMeta],
+    pub insert_fn: ComponentBatchInsertFn,
+}
+
+// SAFETY: ComponentBatchMeta contains only static references and function pointers
+unsafe impl Send for ComponentBatchMeta {}
+unsafe impl Sync for ComponentBatchMeta {}
+
+/// Global registry for component batch metadata, keyed by Python type pointer (as usize).
+static GLOBAL_COMPONENT_BATCH_META: OnceLock<RwLock<HashMap<usize, &'static ComponentBatchMeta>>> =
+    OnceLock::new();
+
+fn get_component_batch_meta_registry()
+-> &'static RwLock<HashMap<usize, &'static ComponentBatchMeta>> {
+    GLOBAL_COMPONENT_BATCH_META.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Register batch metadata for a Rust component.
+///
+/// Called by macro-generated registration functions in feature crates.
+/// `py_type_ptr` is the Python type pointer as usize for the component's pyclass.
+pub fn register_component_batch_meta(py_type_ptr: usize, meta: &'static ComponentBatchMeta) {
+    let registry = get_component_batch_meta_registry();
+    let mut guard = registry
+        .write()
+        .expect("Component batch meta registry lock poisoned");
+    guard.insert(py_type_ptr, meta);
+}
+
+/// Look up batch metadata for a Rust component by its Python type pointer.
+pub fn get_component_batch_meta(py_type_ptr: usize) -> Option<&'static ComponentBatchMeta> {
+    let registry = get_component_batch_meta_registry();
+    let guard = registry
+        .read()
+        .expect("Component batch meta registry lock poisoned");
+    guard.get(&py_type_ptr).copied()
+}
+
+// ============================================================================
+// Global Function Registry (for cross-crate function dispatch)
+// ============================================================================
+
+/// Function type for writing a Python message to the ECS custom message system.
+/// Registered by the main pybevy crate, called from pybevy_agent.
+type MessageWriteFn = dyn Fn(&mut bevy::ecs::world::World, pyo3::Python, &pyo3::Bound<pyo3::PyAny>) -> Result<(), String>
+    + Send
+    + Sync;
+
+static MESSAGE_WRITE_FN: OnceLock<Box<MessageWriteFn>> = OnceLock::new();
+
+/// Register the function that writes Python messages to ECS CustomMessage slots.
+/// Called once at startup by the main pybevy crate.
+pub fn register_message_write_fn(
+    f: impl Fn(
+        &mut bevy::ecs::world::World,
+        pyo3::Python,
+        &pyo3::Bound<pyo3::PyAny>,
+    ) -> Result<(), String>
+    + Send
+    + Sync
+    + 'static,
+) {
+    let _ = MESSAGE_WRITE_FN.set(Box::new(f));
+}
+
+/// Write a Python message instance to the appropriate ECS CustomMessage slot.
+/// Returns an error if the message write function hasn't been registered or if the
+/// message type isn't registered in the MessageRegistry.
+pub fn write_python_message(
+    world: &mut bevy::ecs::world::World,
+    py: pyo3::Python,
+    msg: &pyo3::Bound<pyo3::PyAny>,
+) -> Result<(), String> {
+    let f = MESSAGE_WRITE_FN
+        .get()
+        .ok_or("Message write function not registered")?;
+    f(world, py, msg)
+}
+
+/// Function type for running a Python function as a one-shot ECS system.
+/// Registered by the main pybevy crate, called from pybevy_agent.
+type RunSystemOnceFn = dyn Fn(&mut bevy::ecs::world::World, pyo3::Python, &pyo3::Bound<pyo3::PyAny>) -> Result<(), String>
+    + Send
+    + Sync;
+
+static RUN_SYSTEM_ONCE_FN: OnceLock<Box<RunSystemOnceFn>> = OnceLock::new();
+
+/// Register the function that runs a Python function as a one-shot ECS system.
+/// Called once at startup by the main pybevy crate.
+pub fn register_run_system_once_fn(
+    f: impl Fn(
+        &mut bevy::ecs::world::World,
+        pyo3::Python,
+        &pyo3::Bound<pyo3::PyAny>,
+    ) -> Result<(), String>
+    + Send
+    + Sync
+    + 'static,
+) {
+    let _ = RUN_SYSTEM_ONCE_FN.set(Box::new(f));
+}
+
+/// Run a Python function as a one-shot ECS system with full param injection.
+/// The function's type annotations are used to determine which system params to inject.
+pub fn run_system_once(
+    world: &mut bevy::ecs::world::World,
+    py: pyo3::Python,
+    func: &pyo3::Bound<pyo3::PyAny>,
+) -> Result<(), String> {
+    let f = RUN_SYSTEM_ONCE_FN
+        .get()
+        .ok_or("run_system_once function not registered")?;
+    f(world, py, func)
+}

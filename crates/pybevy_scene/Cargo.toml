@@ -1,0 +1,15 @@
+[package]
+name = "pybevy_scene"
+version = "0.2.0"
+edition = "2024"
+description = "Scene components and assets for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = ["bevy_scene", "bevy_asset"]

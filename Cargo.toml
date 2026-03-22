@@ -1,0 +1,238 @@
+[package]
+name = "pybevy"
+version = "0.2.0"
+edition = "2024"
+description = "PyBevy: A Python Real-Time Engine Built on Bevy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
+documentation = "https://docs.rs/pybevy"
+readme = "README.md"
+keywords = ["gamedev", "bevy", "python", "ecs", "game-engine"]
+categories = ["game-engines", "graphics", "rendering", "game-development"]
+include = [
+    "src/**/*",
+    "pybevy/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "docs/**/*.md",
+    "examples/**/*.rs",
+    "examples/**/*.py",
+]
+
+[lib]
+name = "pybevy"
+crate-type = ["rlib"]
+
+[features]
+default = ["mcp"]
+linux-display = ["bevy/x11", "bevy/wayland"]
+debug = ["bevy/debug"]
+mcp = ["dep:pybevy_control", "pybevy_control?/bevy_winit"]
+native-plugin = []
+native-hot-reload = ["native-plugin", "dep:notify"]
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["examples/rust/*", "crates/pybevy_browser", "crates/pybevy_replicon"]
+
+[workspace.dependencies]
+pyo3 = { version = "0.27", default-features = false, features = ["multiple-pymethods"] }
+bevy = { version = "0.18.1", default-features = false }
+numpy = "0.27"
+uuid = { version = "1.17.0", features = ["v4"] }
+pybevy_core = { path = "./crates/pybevy_core" }
+pybevy_math = { path = "./crates/pybevy_math" }
+pybevy_color = { path = "./crates/pybevy_color" }
+pybevy_audio = { path = "./crates/pybevy_audio" }
+pybevy_transform = { path = "./crates/pybevy_transform" }
+pybevy_a11y = { path = "./crates/pybevy_a11y" }
+pybevy_input = { path = "./crates/pybevy_input" }
+pybevy_time = { path = "./crates/pybevy_time" }
+pybevy_window = { path = "./crates/pybevy_window" }
+pybevy_light = { path = "./crates/pybevy_light" }
+pybevy_camera = { path = "./crates/pybevy_camera" }
+pybevy_gltf = { path = "./crates/pybevy_gltf" }
+pybevy_macros = { path = "./crates/pybevy_macros" }
+pybevy_mesh = { path = "./crates/pybevy_mesh" }
+pybevy_render = { path = "./crates/pybevy_render" }
+pybevy_sprite = { path = "./crates/pybevy_sprite" }
+pybevy_ecs = { path = "./crates/pybevy_ecs" }
+pybevy_ui = { path = "./crates/pybevy_ui" }
+pybevy_text = { path = "./crates/pybevy_text" }
+pybevy_animation = { path = "./crates/pybevy_animation" }
+pybevy_image = { path = "./crates/pybevy_image" }
+pybevy_pbr = { path = "./crates/pybevy_pbr" }
+pybevy_shader = { path = "./crates/pybevy_shader" }
+pybevy_shader_types = { path = "./crates/pybevy_shader_types" }
+pybevy_wgpu = { path = "./crates/pybevy_wgpu" }
+pybevy_scene = { path = "./crates/pybevy_scene" }
+pybevy_control = { path = "./crates/pybevy_control" }
+
+[dependencies]
+pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm" }
+pybevy_core = { path = "./crates/pybevy_core" }
+pybevy_math = { workspace = true }
+pybevy_color = { workspace = true }
+pybevy_audio = { workspace = true }
+pybevy_transform = { workspace = true }
+pybevy_a11y = { workspace = true }
+pybevy_input = { workspace = true }
+pybevy_time = { workspace = true }
+pybevy_window = { workspace = true }
+pybevy_light = { workspace = true }
+pybevy_camera = { workspace = true }
+pybevy_gltf = { workspace = true }
+pybevy_mesh = { workspace = true }
+pybevy_render = { workspace = true }
+pybevy_shader = { workspace = true }
+pybevy_sprite = { workspace = true }
+pybevy_ecs = { workspace = true }
+pybevy_ui = { workspace = true }
+pybevy_text = { workspace = true }
+pybevy_animation = { workspace = true }
+pybevy_image = { workspace = true }
+pybevy_pbr = { workspace = true }
+pybevy_scene = { workspace = true }
+pybevy_control = { workspace = true, optional = true }
+rayon = "1.10"
+numpy = { workspace = true }
+
+pyo3 = { workspace = true, features = [
+    "smallvec",
+    "uuid",
+    "generate-import-lib",
+] }
+
+bevy = { workspace = true, features = [
+    "multi_threaded",
+    "gltf_animation",
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_core_pipeline",
+    "bevy_gizmos",
+    "bevy_gltf",
+    "bevy_log",
+    "bevy_pbr",
+    "bevy_picking",
+    "mesh_picking",
+    "bevy_post_process",
+    "bevy_render",
+    "bevy_scene",
+    "bevy_sprite",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_window",
+    "bevy_winit",
+    "default_font",
+    "tonemapping_luts",
+    "jpeg",
+    "png",
+    "zstd_rust",
+    "pbr_clustered_decals",
+    "reflect_auto_register",
+] }
+
+accesskit = { version = "0.21", default-features = false }
+
+pybevy_macros = { path = "./crates/pybevy_macros" }
+
+smallvec = "1.0"
+uuid = { workspace = true }
+sysinfo = "0.37"
+paste = "1.0"
+
+wgpu-types = "27"
+naga = { version = "27", default-features = false }
+
+thiserror = "2.0"
+
+strum = "0.27.2"
+strum_macros = "0.27.2"
+
+crossbeam-channel = "0.5"
+notify = { version = "7", optional = true }
+
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "bmp",
+    "tiff",
+    "tga",
+    "webp",
+    "gif",
+    "ico",
+    "pnm",
+    "qoi",
+    "hdr",
+] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+pyo3 = { version = "0.27", features = ["auto-initialize"] }
+criterion = "0.5"
+libc = "0.2"
+
+# PBR texture features disabled on macOS/iOS — Metal's 16-sampler-per-stage
+# limit is exceeded when these are enabled (wgpu doesn't use argument buffers).
+# Scalar material values (specular_transmission, clearcoat, anisotropy, etc.)
+# still work; only per-pixel texture modulation is unavailable.
+# See: https://github.com/bevyengine/bevy/issues/17553
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+bevy = { workspace = true, features = [
+    "pbr_transmission_textures",
+    "pbr_specular_textures",
+    "pbr_anisotropy_texture",
+    "pbr_multi_layer_material_textures",
+] }
+
+[profile.package-release]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+strip = true
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[[bench]]
+name = "query_dispatch"
+path = "benches/paper/query_dispatch.rs"
+harness = false
+
+[[bench]]
+name = "vm_overhead"
+path = "benches/paper/vm_overhead.rs"
+harness = false
+
+[[bench]]
+name = "native_physics"
+path = "benches/paper/native_physics.rs"
+harness = false
+
+[[bench]]
+name = "validity_overhead"
+path = "benches/paper/validity_overhead.rs"
+harness = false
+
+[[example]]
+name = "memory_baseline"
+path = "benches/ecs/memory_baseline.rs"
+
+[[example]]
+name = "rendering_fps_native"
+path = "benches/paper/rendering_fps_native.rs"
+
+[[example]]
+name = "native_plugin_example"
+path = "examples/native/native_plugin_example.rs"
+required-features = []

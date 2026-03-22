@@ -1,0 +1,19 @@
+[package]
+name = "pybevy_math"
+version = "0.2.0"
+edition = "2024"
+description = "Math types (Vec2, Vec3, Vec4, Quat, Mat3, Mat4) for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+
+[dependencies.bevy_math]
+version = "0.18"
+features = ["curve"]
+default-features = false

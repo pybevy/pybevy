@@ -1,0 +1,26 @@
+[package]
+name = "pybevy_camera"
+version = "0.2.0"
+edition = "2024"
+description = "Camera components for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+numpy = { workspace = true }
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_color = { workspace = true }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+pybevy_math = { workspace = true }
+pybevy_render = { workspace = true }
+pybevy_sprite = { workspace = true }
+pybevy_transform = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = [
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_post_process",
+    "bevy_image",
+]

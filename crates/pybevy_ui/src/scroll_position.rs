@@ -1,0 +1,59 @@
+use bevy::ui::ScrollPosition;
+use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::component_storage;
+use pybevy_math::vec2::PyVec2;
+use pyo3::prelude::*;
+
+#[component_storage(ScrollPosition)]
+#[pyclass(name = "ScrollPosition", extends = PyComponent)]
+#[derive(Clone, Debug)]
+pub struct PyScrollPosition {
+    pub(crate) storage: ComponentStorage<ScrollPosition>,
+}
+
+#[pymethods]
+impl PyScrollPosition {
+    #[new]
+    #[pyo3(signature = (x = 0.0, y = 0.0))]
+    pub fn new(x: f32, y: f32) -> (Self, PyComponent) {
+        Self::from_owned(ScrollPosition(bevy::math::Vec2::new(x, y)))
+    }
+
+    #[getter]
+    pub fn x(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.0.x)
+    }
+
+    #[setter]
+    pub fn set_x(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.0.x = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn y(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.0.y)
+    }
+
+    #[setter]
+    pub fn set_y(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.0.y = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn offset(&self) -> PyResult<PyVec2> {
+        Ok(self.storage.borrow_field_as(|s| &s.0)?)
+    }
+
+    #[setter]
+    pub fn set_offset(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.0 = value.into();
+        Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let pos = self.as_ref()?;
+        Ok(format!("ScrollPosition({}, {})", pos.0.x, pos.0.y))
+    }
+}

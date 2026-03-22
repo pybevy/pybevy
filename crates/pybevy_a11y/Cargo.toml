@@ -1,0 +1,17 @@
+[package]
+name = "pybevy_a11y"
+version = "0.2.0"
+edition = "2024"
+description = "Accessibility components for PyBevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+accesskit = { version = "0.21", default-features = false }
+
+[dependencies.bevy]
+workspace = true
+default-features = false
+features = []
