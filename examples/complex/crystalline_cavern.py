@@ -1,6 +1,6 @@
 """Crystalline Cavern - Advanced Volumetric Lighting Showcase
 
-A mystical underground crystal cave demonstrating PyBevy's most advanced rendering features:
+A mystical underground crystal cave demonstrating Bevy's most advanced rendering features:
 
 Features:
 - Volumetric fog and god rays (VolumetricLight + VolumetricFog)
@@ -32,8 +32,7 @@ try:
     import numba  # type: ignore[import-untyped]
 except ImportError:
     print("ERROR: Numba is required for this example.")
-    print("Install with: poetry install --extras numba")
-    print("Or: pip install numba")
+    print("Install with: pip install numba")
     exit(1)
 
 from pybevy.camera import (
