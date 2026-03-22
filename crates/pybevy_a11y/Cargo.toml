@@ -16,4 +16,4 @@ accesskit = { version = "0.21", default-features = false }
 [dependencies.bevy]
 workspace = true
 default-features = false
-features = []
+features = ["bevy_window"]
