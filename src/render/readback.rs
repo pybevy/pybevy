@@ -102,9 +102,6 @@ impl FrameReceiver {
         }
         latest
     }
-
-    /// Get the resolution of this camera's render target
-
 }
 
 /// Component that marks an image as a readback target

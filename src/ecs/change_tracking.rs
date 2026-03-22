@@ -75,7 +75,3 @@ pub fn clear_entity_context() {
     CURRENT_ENTITY.with(|e| e.set(None));
     WORLD_PTR.with(|w| w.set(None));
 }
-
-/// Check if we're currently in a query iteration context.
-///
-/// Used for debugging and safety checks.

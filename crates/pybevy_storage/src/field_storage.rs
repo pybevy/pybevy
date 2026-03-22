@@ -307,9 +307,4 @@ impl<T: Clone> FieldStorage<T> {
     {
         Ok(W::from_borrowed(self.borrow_field(field_accessor)?))
     }
-
-    /// Check if this storage contains an owned value (including read-only snapshots)
-
-    /// Check if this storage is a read-only snapshot
-
 }
