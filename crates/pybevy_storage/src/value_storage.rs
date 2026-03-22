@@ -201,12 +201,6 @@ impl<T: Copy> ValueStorage<T> {
         }
     }
 
-    /// Check if this storage contains an owned value (including read-only snapshots)
-
-    /// Check if this storage contains a borrowed value
-
-    /// Check if this storage is a read-only snapshot
-
     /// Get the current value (returns a copy)
     ///
     /// For owned values, returns a copy.

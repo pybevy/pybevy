@@ -1,8 +1,11 @@
 [package]
 name = "pybevy_bytecodevm"
-version = "0.0.3"
+version = "0.2.0"
 edition = "2024"
+description = "Bytecode VM for PyBevy expressions"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
 
 [dependencies]
 pyo3.workspace = true

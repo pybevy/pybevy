@@ -2,14 +2,18 @@
 name = "pybevy-python"
 version = "0.2.0"
 edition = "2024"
+description = "Python extension module (cdylib) for PyBevy"
+publish = false
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
 
 [lib]
 name = "_pybevy"
 crate-type = ["cdylib"]
 
 [dependencies]
-pybevy = { path = "../.." }
+pybevy = { path = "../..", version = "=0.2.0" }
 pyo3 = { workspace = true, features = ["extension-module"] }
 
 [features]

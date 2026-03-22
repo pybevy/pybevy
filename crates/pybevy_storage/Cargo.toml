@@ -3,6 +3,9 @@ name = "pybevy_storage"
 version = "0.2.0"
 edition = "2024"
 description = "PyO3-free storage primitives for PyBevy - validity tracking, borrowed references"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
 
 [dependencies]
 bevy = { workspace = true, features = ["bevy_asset"] }

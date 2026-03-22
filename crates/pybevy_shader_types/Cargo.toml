@@ -4,6 +4,8 @@ version = "0.2.0"
 edition = "2024"
 description = "Shared ShaderMaterial types for PyBevy — no Python dependencies"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
 
 [dependencies.bevy]
 workspace = true

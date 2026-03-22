@@ -4,12 +4,14 @@ version = "0.2.0"
 edition = "2024"
 description = "Animation types for PyBevy"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
 
 [dependencies]
 pyo3 = { workspace = true, features = ["macros"] }
 uuid = { workspace = true }
-pybevy_core = { path = "../pybevy_core" }
-pybevy_macros = { path = "../pybevy_macros" }
+pybevy_core = { path = "../pybevy_core", version = "=0.2.0" }
+pybevy_macros = { path = "../pybevy_macros", version = "=0.2.0" }
 pybevy_mesh = { workspace = true }
 
 [dependencies.bevy]

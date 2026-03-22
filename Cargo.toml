@@ -44,37 +44,37 @@ pyo3 = { version = "0.27", default-features = false, features = ["multiple-pymet
 bevy = { version = "0.18.1", default-features = false }
 numpy = "0.27"
 uuid = { version = "1.17.0", features = ["v4"] }
-pybevy_core = { path = "./crates/pybevy_core" }
-pybevy_math = { path = "./crates/pybevy_math" }
-pybevy_color = { path = "./crates/pybevy_color" }
-pybevy_audio = { path = "./crates/pybevy_audio" }
-pybevy_transform = { path = "./crates/pybevy_transform" }
-pybevy_a11y = { path = "./crates/pybevy_a11y" }
-pybevy_input = { path = "./crates/pybevy_input" }
-pybevy_time = { path = "./crates/pybevy_time" }
-pybevy_window = { path = "./crates/pybevy_window" }
-pybevy_light = { path = "./crates/pybevy_light" }
-pybevy_camera = { path = "./crates/pybevy_camera" }
-pybevy_gltf = { path = "./crates/pybevy_gltf" }
-pybevy_macros = { path = "./crates/pybevy_macros" }
-pybevy_mesh = { path = "./crates/pybevy_mesh" }
-pybevy_render = { path = "./crates/pybevy_render" }
-pybevy_sprite = { path = "./crates/pybevy_sprite" }
-pybevy_ecs = { path = "./crates/pybevy_ecs" }
-pybevy_ui = { path = "./crates/pybevy_ui" }
-pybevy_text = { path = "./crates/pybevy_text" }
-pybevy_animation = { path = "./crates/pybevy_animation" }
-pybevy_image = { path = "./crates/pybevy_image" }
-pybevy_pbr = { path = "./crates/pybevy_pbr" }
-pybevy_shader = { path = "./crates/pybevy_shader" }
-pybevy_shader_types = { path = "./crates/pybevy_shader_types" }
-pybevy_wgpu = { path = "./crates/pybevy_wgpu" }
-pybevy_scene = { path = "./crates/pybevy_scene" }
-pybevy_control = { path = "./crates/pybevy_control" }
+pybevy_core = { path = "./crates/pybevy_core", version = "=0.2.0" }
+pybevy_math = { path = "./crates/pybevy_math", version = "=0.2.0" }
+pybevy_color = { path = "./crates/pybevy_color", version = "=0.2.0" }
+pybevy_audio = { path = "./crates/pybevy_audio", version = "=0.2.0" }
+pybevy_transform = { path = "./crates/pybevy_transform", version = "=0.2.0" }
+pybevy_a11y = { path = "./crates/pybevy_a11y", version = "=0.2.0" }
+pybevy_input = { path = "./crates/pybevy_input", version = "=0.2.0" }
+pybevy_time = { path = "./crates/pybevy_time", version = "=0.2.0" }
+pybevy_window = { path = "./crates/pybevy_window", version = "=0.2.0" }
+pybevy_light = { path = "./crates/pybevy_light", version = "=0.2.0" }
+pybevy_camera = { path = "./crates/pybevy_camera", version = "=0.2.0" }
+pybevy_gltf = { path = "./crates/pybevy_gltf", version = "=0.2.0" }
+pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.2.0" }
+pybevy_mesh = { path = "./crates/pybevy_mesh", version = "=0.2.0" }
+pybevy_render = { path = "./crates/pybevy_render", version = "=0.2.0" }
+pybevy_sprite = { path = "./crates/pybevy_sprite", version = "=0.2.0" }
+pybevy_ecs = { path = "./crates/pybevy_ecs", version = "=0.2.0" }
+pybevy_ui = { path = "./crates/pybevy_ui", version = "=0.2.0" }
+pybevy_text = { path = "./crates/pybevy_text", version = "=0.2.0" }
+pybevy_animation = { path = "./crates/pybevy_animation", version = "=0.2.0" }
+pybevy_image = { path = "./crates/pybevy_image", version = "=0.2.0" }
+pybevy_pbr = { path = "./crates/pybevy_pbr", version = "=0.2.0" }
+pybevy_shader = { path = "./crates/pybevy_shader", version = "=0.2.0" }
+pybevy_shader_types = { path = "./crates/pybevy_shader_types", version = "=0.2.0" }
+pybevy_wgpu = { path = "./crates/pybevy_wgpu", version = "=0.2.0" }
+pybevy_scene = { path = "./crates/pybevy_scene", version = "=0.2.0" }
+pybevy_control = { path = "./crates/pybevy_control", version = "=0.2.0" }
 
 [dependencies]
-pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm" }
-pybevy_core = { path = "./crates/pybevy_core" }
+pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.2.0" }
+pybevy_core = { path = "./crates/pybevy_core", version = "=0.2.0" }
 pybevy_math = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_audio = { workspace = true }
@@ -140,7 +140,7 @@ bevy = { workspace = true, features = [
 
 accesskit = { version = "0.21", default-features = false }
 
-pybevy_macros = { path = "./crates/pybevy_macros" }
+pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.2.0" }
 
 smallvec = "1.0"
 uuid = { workspace = true }

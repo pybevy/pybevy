@@ -2,7 +2,10 @@
 name = "pybevy_macros"
 version = "0.2.0"
 edition = "2024"
+description = "Procedural macros for PyBevy"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
 
 [lib]
 proc-macro = true
