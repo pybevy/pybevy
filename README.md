@@ -42,6 +42,29 @@ Pre-compiled wheels are available for the following platforms:
 pip install pybevy --upgrade
 ```
 
+#### Linux System Dependencies
+
+PyBevy's pre-built wheels link against system display and audio libraries.
+On most desktop distributions these are already present.
+
+If you see an `ImportError` mentioning `libwayland-client.so` or `libasound.so`:
+
+```bash
+# Debian/Ubuntu
+sudo apt install libwayland-client0 libasound2t64
+
+# Fedora/RHEL
+sudo dnf install alsa-lib wayland
+```
+
+**Docker / headless environments** also need a software GPU driver:
+
+```bash
+apt install -y libwayland-client0 libasound2t64 mesa-vulkan-drivers
+```
+
+ALSA warnings about missing audio devices are harmless and can be ignored.
+
 ### Free-Threaded Python (3.13t+)
 
 PyBevy supports Python's free-threaded mode (PEP 703). Non-conflicting Python systems run truly in parallel on separate cores via Bevy's multi-threaded scheduler — no GIL serialization. Validated on CPython 3.14t. Performance depends on workload and scene complexity; see [Benchmarks](docs/benchmarks.md) for methodology and numbers.
