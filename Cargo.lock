@@ -4302,7 +4302,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_bytecodevm"
-version = "0.0.3"
+version = "0.2.0"
 dependencies = [
  "bevy_ecs",
  "criterion",
@@ -4480,7 +4480,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_render"
-version = "0.0.3"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "pybevy_color",
@@ -4546,7 +4546,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_text"
-version = "0.0.3"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "numpy",
