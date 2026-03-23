@@ -216,6 +216,24 @@ PyBevy versions target specific Bevy versions:
 
 PyBevy follows Bevy's API conventions as closely as possible and targets full coverage of Bevy's public API. Core modules like transforms, lighting, cameras, and input are fully covered; others are in progress. See [API Coverage](docs/coverage.md) for current per-module stats and [Limitations](docs/limitations.md) for known constraints.
 
+## Development Process
+
+PyBevy started in May 2025 as a pure-Python ECS prototype, then moved through a
+ctypes FFI layer before pivoting to PyO3, which became the real foundation.
+Hand-written `.pyi` type stubs drove the API design before the Rust integration was
+fully in place. The project also builds on Bevy experience going back to 2021.
+
+The ECS query model, safety/validity system, and core Bevy component bindings were
+developed manually across multiple iterations.
+
+From November 2025 onward, AI tools were used more heavily for API coverage expansion
+across Bevy's large surface area, crate splitting into ~30 feature crates, and parts
+of the test/stub/documentation workflow.
+
+To keep that process grounded, PyBevy is backed by a custom Rust API compliance tool
+that validates bindings against Bevy's source and the Python stubs, and a test suite
+spanning 100K+ lines. Both publishing soon.
+
 ## Limitations
 
 - **No built-in physics** — use NumPy or JAX for physics computation, PyBevy for visualization.
