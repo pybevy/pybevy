@@ -1,6 +1,7 @@
 name: Dependencies
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "**/Cargo.toml"
