@@ -1,0 +1,40 @@
+name: Dependencies
+
+on:
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "deny.toml"
+  push:
+    paths:
+      - "**/Cargo.toml"
+      - "deny.toml"
+    branches:
+      - main
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: ${{github.event_name == 'pull_request'}}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+      - name: Check for security advisories and unmaintained crates
+        run: cargo deny check advisories
+      - name: Check for banned and duplicated dependencies
+        run: cargo deny check bans
+      - name: Check for unauthorized licenses
+        run: cargo deny check licenses
+      - name: Check for unauthorized crate sources
+        run: cargo deny check sources
