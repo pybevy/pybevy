@@ -9,7 +9,7 @@ use crate::{
     PyWindowMode, PyWindowPosition, PyWindowResizeConstraints, PyWindowResolution, PyWindowTheme,
 };
 
-const DEFAULT_APP_TITLE: &str = "PyBevy Application";
+pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
 #[component_storage(Window)]
 #[pyclass(name = "Window", extends = PyComponent)]

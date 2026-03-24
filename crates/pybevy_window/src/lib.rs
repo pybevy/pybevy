@@ -64,7 +64,7 @@ pub use screen_edge::PyScreenEdge;
 pub use update_mode::PyUpdateMode;
 pub use video_mode::PyVideoMode;
 pub use video_mode_selection::PyVideoModeSelection;
-pub use window::PyWindow;
+pub use window::{DEFAULT_APP_TITLE, PyWindow};
 pub use window_close_requested::PyWindowCloseRequested;
 pub use window_event::PyWindowEvent;
 pub use window_focused::PyWindowFocused;

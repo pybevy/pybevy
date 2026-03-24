@@ -13,6 +13,17 @@ use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
 use super::{app::PyApp, plugin::PyPluginGroup, plugin_config::PluginConfigType};
 use crate::assets::configured_asset_plugin;
 
+fn default_window_plugin() -> bevy::window::WindowPlugin {
+    bevy::window::WindowPlugin {
+        primary_window: Some(bevy::window::Window {
+            title: pybevy_window::DEFAULT_APP_TITLE.into(),
+            name: Some("pybevy".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 #[pyclass(name = "DefaultPlugins", extends = PyPluginGroup)]
 pub struct PyDefaultPlugins;
 
@@ -62,6 +73,7 @@ impl PyDefaultPlugins {
             bevy_app.add_plugins(
                 DefaultPlugins
                     .set(configured_asset_plugin())
+                    .set(default_window_plugin())
                     .disable::<bevy::log::LogPlugin>(),
             );
             // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
@@ -297,6 +309,7 @@ impl PyPluginGroupBuilder {
     fn apply_to_bevy(&self, py: Python) -> PyResult<PluginGroupBuilder> {
         let mut builder = DefaultPlugins
             .set(configured_asset_plugin())
+            .set(default_window_plugin())
             .disable::<bevy::log::LogPlugin>();
 
         // Apply configured plugins
