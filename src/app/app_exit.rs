@@ -6,10 +6,8 @@ use pyo3::prelude::*;
 
 use crate::ecs::message::PyMessage;
 
-// Generate AppExit message bridge with write capability
 message_bridge!(AppExit, PyAppExit, writable);
 
-/// Register AppExit message bridge with global registry.
 pub fn register_app_exit_bridge() {
     pybevy_core::registry::global_registry::register_message_bridge(AppExitBridge);
 }
