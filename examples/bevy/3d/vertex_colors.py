@@ -17,7 +17,7 @@ from pybevy.light import PointLight
 from pybevy.math import Cuboid, Plane3d, Vec3
 from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
 from pybevy.prelude import Startup
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 from pybevy.transform import Transform
 
 
