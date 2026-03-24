@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 pub mod readback;
 pub mod readback_py;
+pub mod wgpu_error_handler;
 
 pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     readback_py::register_readback_bridges();

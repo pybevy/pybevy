@@ -147,6 +147,7 @@ uuid = { workspace = true }
 sysinfo = "0.37"
 paste = "1.0"
 
+wgpu = { version = "27", default-features = false }
 wgpu-types = "27"
 naga = { version = "27", default-features = false }
 
