@@ -16,7 +16,7 @@ import math
 from pybevy.camera import Bloom, Tonemapping
 from pybevy.color import LinearRgba
 from pybevy.prelude import *
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 
 
 @component

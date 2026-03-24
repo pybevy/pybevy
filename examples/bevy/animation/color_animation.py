@@ -15,7 +15,7 @@ import math
 
 from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 
 
 @component

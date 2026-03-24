@@ -16,7 +16,8 @@ from pybevy.ecs import Commands, Res, ResMut
 from pybevy.math import Quat, Rectangle, Vec3
 from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.render import AlphaMode, StandardMaterial
+from pybevy.pbr import StandardMaterial
+from pybevy.render import AlphaMode
 
 
 def setup(

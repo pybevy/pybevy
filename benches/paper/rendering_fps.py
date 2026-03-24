@@ -35,7 +35,7 @@ from pybevy.camera import Camera3d
 from pybevy.ecs import Commands, MessageWriter, Mut, Res, ResMut, View, With
 from pybevy.math import Cuboid, Vec3
 from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 from pybevy.time import Time
 from pybevy.transform import Transform
 from pybevy.window import PresentMode, Window, WindowPlugin

@@ -14,7 +14,7 @@ from pybevy.ecs import Commands, ResMut
 from pybevy.math import Circle, Cuboid, Quat, Vec3
 from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 
 
 def setup(

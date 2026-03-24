@@ -24,7 +24,7 @@ from pybevy.light import DirectionalLight
 from pybevy.math import Cuboid, Quat, Sphere, Vec3
 from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
 from pybevy.prelude import Startup, Update
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 from pybevy.time import Time
 from pybevy.transform import Transform
 

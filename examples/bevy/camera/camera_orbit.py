@@ -22,7 +22,7 @@ from pybevy.input import AccumulatedMouseMotion, MouseButton, MouseInput
 from pybevy.math import Cuboid, EulerRot, Plane3d, Quat, Vec3
 from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.render import StandardMaterial
+from pybevy.pbr import StandardMaterial
 
 
 @resource
