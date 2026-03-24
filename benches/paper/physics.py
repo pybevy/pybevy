@@ -45,14 +45,14 @@ def _get_numba_physics():  # type: ignore[no-untyped-def]
     import numba  # type: ignore[import-untyped]
 
     @numba.jit(nopython=True, parallel=True)
-    def numba_physics(pos_x, pos_y, pos_z, dt):  # type: ignore[no-untyped-def]
-        for i in numba.prange(len(pos_x)):
-            x = pos_x[i]
-            y = pos_y[i]
-            z = pos_z[i]
-            pos_x[i] = x + y * dt + 0.5 * y * y * dt
-            pos_y[i] = y + math.sin(x * 0.1) * dt
-            pos_z[i] = z + math.cos(x * 0.1) * dt
+    def numba_physics(translation, dt):  # type: ignore[no-untyped-def]
+        for i in numba.prange(len(translation.x)):
+            x = translation.x[i]
+            y = translation.y[i]
+            z = translation.z[i]
+            translation.x[i] = x + y * dt + 0.5 * y * y * dt
+            translation.y[i] = y + math.sin(x * 0.1) * dt
+            translation.z[i] = z + math.cos(x * 0.1) * dt
 
     return numba_physics
 
@@ -123,9 +123,7 @@ def _make_numba_app(entity_count: int) -> App:
     def physics(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
             col = batch.column_mut(Transform)
-            jit_physics(
-                col.translation.x, col.translation.y, col.translation.z, 0.016
-            )
+            jit_physics(col.translation, 0.016)
 
     app = App()
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))

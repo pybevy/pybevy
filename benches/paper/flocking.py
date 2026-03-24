@@ -28,7 +28,7 @@ import argparse
 import math
 import statistics
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from benches.paper.bench_utils import (
     BenchConfig,
@@ -41,6 +41,7 @@ from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Mut, Query, View
 from pybevy.prelude import Component
+from pybevy.math import Vec3
 from pybevy.transform import Transform
 
 DEFAULT_COUNTS = [500, 1_000, 2_000, 5_000]
@@ -59,9 +60,7 @@ BOUND = 50.0
 @component
 @dataclass
 class Velocity(Component):
-    vx: float = 0.0
-    vy: float = 0.0
-    vz: float = 0.0
+    vel: Vec3 = field(default_factory=lambda: Vec3.ZERO)
 
 
 # =============================================================================
@@ -84,7 +83,7 @@ def _make_query_app(entity_count: int) -> App:
             vy = random.uniform(-1.0, 1.0)
             commands.spawn(
                 Transform.from_xyz(x, y, z),
-                Velocity(vx=vx, vy=vy, vz=0.0),
+                Velocity(vel=Vec3(vx, vy, 0.0)),
             )
 
     def flocking(
@@ -102,7 +101,7 @@ def _make_query_app(entity_count: int) -> App:
             transforms.append(t)
             vels.append(v)
             positions.append((t.translation.x, t.translation.y))
-            velocities.append((v.vx, v.vy))
+            velocities.append((v.vel.x, v.vel.y))
 
         n = len(positions)
         r2 = PERCEPTION_RADIUS * PERCEPTION_RADIUS
@@ -159,18 +158,18 @@ def _make_query_app(entity_count: int) -> App:
                     fx = fx / f_mag * MAX_FORCE
                     fy = fy / f_mag * MAX_FORCE
 
-                v.vx += fx * DT  # type: ignore[union-attr]
-                v.vy += fy * DT  # type: ignore[union-attr]
+                v.vel.x += fx * DT  # type: ignore[union-attr]
+                v.vel.y += fy * DT  # type: ignore[union-attr]
 
             # Clamp speed
-            vx = v.vx  # type: ignore[union-attr]
-            vy = v.vy  # type: ignore[union-attr]
+            vx = v.vel.x  # type: ignore[union-attr]
+            vy = v.vel.y  # type: ignore[union-attr]
             speed = math.sqrt(vx * vx + vy * vy)
             if speed > MAX_SPEED:
-                v.vx = vx / speed * MAX_SPEED  # type: ignore[union-attr]
-                v.vy = vy / speed * MAX_SPEED  # type: ignore[union-attr]
-                vx = v.vx  # type: ignore[union-attr]
-                vy = v.vy  # type: ignore[union-attr]
+                v.vel.x = vx / speed * MAX_SPEED  # type: ignore[union-attr]
+                v.vel.y = vy / speed * MAX_SPEED  # type: ignore[union-attr]
+                vx = v.vel.x  # type: ignore[union-attr]
+                vy = v.vel.y  # type: ignore[union-attr]
 
             # Update position
             t.translation.x += vx * DT  # type: ignore[union-attr]
@@ -205,7 +204,7 @@ def _get_numba_flocking(parallel: bool = True):  # type: ignore[no-untyped-def]
 
     @numba.jit(nopython=True, parallel=parallel)
     def numba_flocking(  # type: ignore[no-untyped-def]
-        pos_x, pos_y, vel_x, vel_y, n,
+        translation, vel, n,
         perception_r2, sep_w, ali_w, coh_w, max_speed, max_force, dt, bound
     ):
         # Pre-read positions and velocities into contiguous arrays
@@ -215,10 +214,10 @@ def _get_numba_flocking(parallel: bool = True):  # type: ignore[no-untyped-def]
         vvx = np.empty(n, dtype=np.float64)
         vvy = np.empty(n, dtype=np.float64)
         for i in range(n):
-            px[i] = pos_x[i]
-            py[i] = pos_y[i]
-            vvx[i] = vel_x[i]
-            vvy[i] = vel_y[i]
+            px[i] = translation.x[i]
+            py[i] = translation.y[i]
+            vvx[i] = vel.x[i]
+            vvy[i] = vel.y[i]
 
         for i in numba.prange(n):
             pxi = px[i]
@@ -277,8 +276,8 @@ def _get_numba_flocking(parallel: bool = True):  # type: ignore[no-untyped-def]
                 new_vx = new_vx / speed * max_speed
                 new_vy = new_vy / speed * max_speed
 
-            vel_x[i] = new_vx
-            vel_y[i] = new_vy
+            vel.x[i] = new_vx
+            vel.y[i] = new_vy
 
             new_px = pxi + new_vx * dt
             new_py = pyi + new_vy * dt
@@ -292,8 +291,8 @@ def _get_numba_flocking(parallel: bool = True):  # type: ignore[no-untyped-def]
             elif new_py < -bound:
                 new_py += 2.0 * bound
 
-            pos_x[i] = new_px
-            pos_y[i] = new_py
+            translation.x[i] = new_px
+            translation.y[i] = new_py
 
     return numba_flocking
 
@@ -314,7 +313,7 @@ def _make_numba_app(entity_count: int, parallel: bool = True) -> App:
             vy = random.uniform(-1.0, 1.0)
             commands.spawn(
                 Transform.from_xyz(x, y, 0.0),
-                Velocity(vx=vx, vy=vy, vz=0.0),
+                Velocity(vel=Vec3(vx, vy, 0.0)),
             )
 
     def flocking(view: View[tuple[Mut[Transform], Mut[Velocity]]]) -> None:
@@ -323,8 +322,7 @@ def _make_numba_app(entity_count: int, parallel: bool = True) -> App:
             vel = batch.column_mut(Velocity)
             n = len(pos.translation.x)
             jit_flocking(
-                pos.translation.x, pos.translation.y,
-                vel.vx, vel.vy, n,
+                pos.translation, vel.vel, n,
                 r2, SEPARATION_WEIGHT, ALIGNMENT_WEIGHT, COHESION_WEIGHT,
                 MAX_SPEED, MAX_FORCE, DT, BOUND,
             )

@@ -62,8 +62,7 @@ class Firefly(Component):
     coupling_strength: float = COUPLING_STRENGTH
     # Movement parameters
     vel: Vec3 = field(default_factory=lambda: Vec3.ZERO)
-    region_center_x: float = 0.0
-    region_center_z: float = 0.0
+    region_center: Vec3 = field(default_factory=lambda: Vec3.ZERO)
     region_radius: float = 5.0
 
 
@@ -189,8 +188,7 @@ def setup_swarm(
                     region_idx=region_idx,
                     coupling_strength=ALPHA_COUPLING_STRENGTH if is_alpha else COUPLING_STRENGTH,
                     vel=Vec3(vel_x, vel_y, vel_z),
-                    region_center_x=region_offset_x,
-                    region_center_z=region_offset_z,
+                    region_center=Vec3(region_offset_x, 0.0, region_offset_z),
                     region_radius=region_radius,
                 ),
             ]
@@ -332,8 +330,7 @@ def firefly_sync_system(
 def movement_kernel(
     pos,    # Vec3ViewColumn (Transform.translation)
     vel,    # Vec3ViewColumn (Firefly.vel)
-    center_x: np.ndarray,  # Firefly.region_center_x
-    center_z: np.ndarray,  # Firefly.region_center_z
+    region_center,  # Vec3ViewColumn (Firefly.region_center)
     radius: np.ndarray,    # Firefly.region_radius
     delta_time: float,
 ) -> None:
@@ -349,8 +346,8 @@ def movement_kernel(
         pos.z[i] += vel.z[i] * delta_time
 
         # Region boundary steering
-        dx = pos.x[i] - center_x[i]
-        dz = pos.z[i] - center_z[i]
+        dx = pos.x[i] - region_center.x[i]
+        dz = pos.z[i] - region_center.z[i]
         dist = math.sqrt(dx * dx + dz * dz)
 
         if dist > radius[i]:
@@ -396,8 +393,7 @@ def firefly_movement_system(
         movement_kernel(
             pos.translation,
             firefly_col.vel,  # type: ignore[attr-defined]
-            firefly_col.region_center_x,  # type: ignore[attr-defined]
-            firefly_col.region_center_z,  # type: ignore[attr-defined]
+            firefly_col.region_center,  # type: ignore[attr-defined]
             firefly_col.region_radius,  # type: ignore[attr-defined]
             dt,
         )
