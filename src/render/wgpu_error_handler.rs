@@ -29,8 +29,9 @@ impl Plugin for WgpuErrorHandlerPlugin {
 
         let seen: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-        device.wgpu_device().on_uncaptured_error(Arc::new(move |error| {
-            match &error {
+        device
+            .wgpu_device()
+            .on_uncaptured_error(Arc::new(move |error| match &error {
                 wgpu::Error::Validation { description, .. } => {
                     let is_new = seen
                         .lock()
@@ -41,7 +42,6 @@ impl Plugin for WgpuErrorHandlerPlugin {
                     }
                 }
                 _ => panic!("wgpu error: {error}"),
-            }
-        }));
+            }));
     }
 }

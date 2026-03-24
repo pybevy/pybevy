@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_COVERAGE_THRESHOLD: 0
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: ${{github.event_name == 'pull_request'}}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        os: ["ubuntu-latest"]
+        rust: ["stable"] # nightly
+        python-version: ["3.13"] # 3.12
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Install dependencies
+        run: sudo apt-get -y update && sudo apt-get install -y libasound-dev libudev-dev libwayland-dev mesa-vulkan-drivers vulkan-tools
+
+      - uses: actions/checkout@v4
+
+      - name: Install poetry
+        run: pipx install poetry==2.1.4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "poetry"
+
+      - uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0
+        with:
+          toolchain: ${{matrix.rust}}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
+        with:
+          prefix-key: pybevy
+          cache-on-failure: true
+          cache-targets: false
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad
+
+      - name: Cargo fmt
+        run: cargo fmt --check
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Lint with Ruff
+        run: poetry run ruff check tests examples benches pybevy
+
+      - name: Lint with Mypy
+        run: poetry run mypy tests examples benches pybevy
+
+      # - name: Cargo clippy
+      #   run: cargo clippy --locked
+
+      - name: Cargo tests
+        run: cargo test --locked --all-features
+        env:
+          RUSTC_WRAPPER: sccache
+
+      - name: Poetry env
+        run: poetry env use ${{ matrix.python-version }}
+
+      - name: Build and install Rust extension with Maturin
+        run: poetry run maturin develop --locked
+        env:
+          RUSTC_WRAPPER: sccache
+
+      - name: Run tests with Pytest
+        run: poetry run pytest --cov=pybevy --cov-report=xml
+
+  rust-coverage:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get -y update && sudo apt-get install -y libasound-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
+        with:
+          prefix-key: pybevy-coverage
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov@0.8.4 --locked || true
+
+      - name: Run Rust coverage
+        run: |
+          cargo llvm-cov --locked \
+            -p pybevy_control --features pybevy_control/bevy_winit,pybevy_control/wayland \
+            -p pybevy_storage \
+            -p pybevy_bytecodevm \
+            -p pybevy_core \
+            --summary-only 2>&1 | tee coverage-summary.txt
+
+      - name: Check coverage threshold
+        run: |
+          # Extract total line coverage percentage
+          COVERAGE=$(grep '^TOTAL' coverage-summary.txt | awk '{print $10}' | tr -d '%')
+          echo "Total line coverage: ${COVERAGE}%"
+          # Fail if coverage drops below 60%
+          if [ "$(echo "$COVERAGE < $RUST_COVERAGE_THRESHOLD" | bc)" -eq 1 ]; then
+            echo "::error::Rust coverage ${COVERAGE}% is below ${RUST_COVERAGE_THRESHOLD}% threshold"
+            exit 1
+          fi

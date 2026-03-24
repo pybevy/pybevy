@@ -34,10 +34,6 @@ impl PyDefaultPlugins {
         (PyDefaultPlugins, PyPluginGroup)
     }
 
-    /// Convenience method: equivalent to .build().set(plugin)
-    ///
-    /// Usage:
-    ///   DefaultPlugins.set(WindowPlugin(primary_window=Window(title="Game")))
     pub fn set(&self, py: Python, plugin: Bound<'_, PyAny>) -> PyResult<Py<PyPluginGroupBuilder>> {
         // Create builder and call .set() on it
         // Track that this builder came from DefaultPlugins for duplicate detection
@@ -49,13 +45,6 @@ impl PyDefaultPlugins {
         builder.borrow(py).set(py, plugin)
     }
 
-    /// Build the plugin group, returning a builder for configuration.
-    ///
-    /// This matches Bevy's `PluginGroup::build()` - returns a `PluginGroupBuilder`
-    /// that can be used to enable/disable specific plugins.
-    ///
-    /// Usage:
-    ///   DefaultPlugins.build().disable(AudioPlugin)
     pub fn build(&self, py: Python) -> PyResult<Py<PyPluginGroupBuilder>> {
         // Track that this builder came from DefaultPlugins for duplicate detection
         let source_type =
@@ -77,6 +66,7 @@ impl PyDefaultPlugins {
                     .disable::<bevy::log::LogPlugin>(),
             );
             bevy_app.add_plugins(crate::render::wgpu_error_handler::WgpuErrorHandlerPlugin);
+
             // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
             // works without requiring an explicit ScenePlugin() addition.
             bevy_app.add_observer(pybevy_scene::scene_instance_ready_bridge);
@@ -85,7 +75,6 @@ impl PyDefaultPlugins {
     }
 }
 
-/// Position for plugin insertion
 #[derive(Clone)]
 enum PluginPosition {
     End,
@@ -101,7 +90,6 @@ enum PluginPosition {
 pub(crate) struct PluginTypeId(*const pyo3::ffi::PyTypeObject);
 
 impl PluginTypeId {
-    /// Get the raw type pointer (for insertion into registry)
     pub(crate) fn as_ptr(self) -> *const pyo3::ffi::PyTypeObject {
         self.0
     }
@@ -110,10 +98,6 @@ impl PluginTypeId {
 unsafe impl Send for PluginTypeId {}
 unsafe impl Sync for PluginTypeId {}
 
-/// Builder for configuring plugin groups.
-///
-/// This is returned by `PluginGroup.build()` and allows configuring which
-/// plugins to include/exclude before adding to the app.
 #[pyclass(name = "PluginGroupBuilder", extends = PyPluginGroup)]
 pub struct PyPluginGroupBuilder {
     configured_plugins: HashMap<PluginConfigType, Py<PyAny>>,
@@ -165,7 +149,6 @@ impl PyPluginGroupBuilder {
 
 #[pymethods]
 impl PyPluginGroupBuilder {
-    /// Replace a plugin in the group
     pub fn set(&self, py: Python, plugin: Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         if !plugin.is_instance_of::<PyPlugin>() {
             return Err(PyTypeError::new_err(
@@ -185,10 +168,6 @@ impl PyPluginGroupBuilder {
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
-    /// Disable a specific plugin
-    ///
-    /// Usage:
-    ///   builder.disable(AudioPlugin)
     pub fn disable(&self, py: Python, plugin_type: Bound<'_, PyType>) -> PyResult<Py<Self>> {
         let config_type = PluginConfigType::from_py_type(py, &plugin_type)?;
 
@@ -198,7 +177,6 @@ impl PyPluginGroupBuilder {
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
-    /// Add a plugin to the end
     pub fn add(&self, py: Python, plugin: Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         if !plugin.is_instance_of::<PyPlugin>() {
             return Err(PyTypeError::new_err(
@@ -214,7 +192,6 @@ impl PyPluginGroupBuilder {
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
-    /// Add plugin before target
     pub fn add_before(
         &self,
         py: Python,
@@ -238,7 +215,6 @@ impl PyPluginGroupBuilder {
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
-    /// Add plugin after target
     pub fn add_after(
         &self,
         py: Python,
@@ -262,7 +238,6 @@ impl PyPluginGroupBuilder {
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
-    /// Re-enable a previously disabled plugin
     pub fn enable(&self, py: Python, plugin_type: Bound<'_, PyType>) -> PyResult<Py<Self>> {
         let config_type = PluginConfigType::from_py_type(py, &plugin_type)?;
 
@@ -272,7 +247,6 @@ impl PyPluginGroupBuilder {
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
-    /// Plugin trait implementation - called by PyApp.add_plugins()
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
         app.borrow().with_bevy_app(|bevy_app| {
             // Insert pre-plugin resources (e.g., WinitSettings must exist before WinitPlugin runs)
@@ -307,7 +281,6 @@ impl PyPluginGroupBuilder {
         Ok(())
     }
 
-    /// Internal: Apply configuration to 's PluginGroupBuilder
     fn apply_to_bevy(&self, py: Python) -> PyResult<PluginGroupBuilder> {
         let mut builder = DefaultPlugins
             .set(configured_asset_plugin())
@@ -327,6 +300,7 @@ impl PyPluginGroupBuilder {
         }
 
         // Apply added plugins (future enhancement)
+        // TODO review if needed anymore
         // for (position, plugin) in &self.added_plugins {
         //     builder = add_plugin(builder, position, plugin, py)?;
         // }
@@ -335,7 +309,6 @@ impl PyPluginGroupBuilder {
     }
 }
 
-/// Apply a plugin configuration to the builder
 fn apply_plugin_configuration(
     builder: PluginGroupBuilder,
     config_type: &PluginConfigType,
@@ -348,11 +321,13 @@ fn apply_plugin_configuration(
             let bevy_plugin = bevy::window::WindowPlugin::try_from(&*window_plugin)?;
             Ok(builder.set(bevy_plugin))
         }
+
         PluginConfigType::Winit => {
             // WinitPlugin itself has no config fields - WinitSettings is a resource
             // handled by insert_pre_plugin_resources() in build()
             Ok(builder.set(bevy::winit::WinitPlugin::default()))
         }
+
         PluginConfigType::Render => {
             let render_plugin: PyRef<pybevy_render::PyRenderPlugin> = plugin_obj.extract(py)?;
             let mut wgpu_settings = bevy::render::settings::WgpuSettings::default();
@@ -368,6 +343,7 @@ fn apply_plugin_configuration(
             }
             Ok(builder.set(bevy_plugin))
         }
+
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
             "Plugin configuration not yet implemented: {:?}",
             config_type
@@ -375,7 +351,6 @@ fn apply_plugin_configuration(
     }
 }
 
-/// Disable a plugin from the builder
 fn disable_plugin(
     builder: PluginGroupBuilder,
     config_type: &PluginConfigType,
