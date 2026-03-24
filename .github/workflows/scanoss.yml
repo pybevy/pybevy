@@ -1,0 +1,17 @@
+name: SCANOSS Scan
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: scanoss/code-scan-action@v0
+        with:
+          policies: copyleft
