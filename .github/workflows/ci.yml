@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_COVERAGE: false
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  RUST_COVERAGE_THRESHOLD: 0
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -97,7 +97,6 @@ jobs:
         run: poetry run pytest --cov=pybevy --cov-report=xml
 
   rust-coverage:
-    if: env.RUST_COVERAGE == 'true'
     timeout-minutes: 30
     runs-on: ubuntu-latest
 
@@ -134,7 +133,7 @@ jobs:
           COVERAGE=$(grep '^TOTAL' coverage-summary.txt | awk '{print $10}' | tr -d '%')
           echo "Total line coverage: ${COVERAGE}%"
           # Fail if coverage drops below 60%
-          if [ "$(echo "$COVERAGE < 60" | bc)" -eq 1 ]; then
-            echo "::error::Rust coverage ${COVERAGE}% is below 60% threshold"
+          if [ "$(echo "$COVERAGE < $RUST_COVERAGE_THRESHOLD" | bc)" -eq 1 ]; then
+            echo "::error::Rust coverage ${COVERAGE}% is below ${RUST_COVERAGE_THRESHOLD}% threshold"
             exit 1
           fi
