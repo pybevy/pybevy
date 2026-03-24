@@ -824,9 +824,7 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
 
     // Check if Space was pressed while in paused mode
     if space_pressed {
-        let is_paused = world
-            .get_resource::<StartPaused>()
-            .is_some_and(|p| p.0);
+        let is_paused = world.get_resource::<StartPaused>().is_some_and(|p| p.0);
         if is_paused {
             eprintln!("▶ Space pressed — loading scene...");
             if let Some(mut paused) = world.get_resource_mut::<StartPaused>() {
@@ -2641,7 +2639,10 @@ fn render_hot_reload_overlay(
 
         // Combine lines (line3/line4 may be empty)
         let mut output = if is_paused {
-            format!("PAUSED — press Space to load | F5=Full reload\n{}\n{}", line1, line2)
+            format!(
+                "PAUSED — press Space to load | F5=Full reload\n{}\n{}",
+                line1, line2
+            )
         } else {
             format!("{}\n{}", line1, line2)
         };
@@ -2880,11 +2881,17 @@ pub fn add_hot_reload_system(
         if let Some((width, height)) = parse_resolution(&res_str) {
             // Window entity doesn't exist yet (plugins build during app.run()),
             // so register a PreStartup system to set resolution once it's available.
-            app.add_systems(PreStartup, move |mut query: bevy::ecs::system::Query<&mut bevy::window::Window, bevy::ecs::query::With<bevy::window::PrimaryWindow>>| {
-                if let Ok(mut window) = query.single_mut() {
-                    window.resolution.set(width, height);
-                }
-            });
+            app.add_systems(
+                PreStartup,
+                move |mut query: bevy::ecs::system::Query<
+                    &mut bevy::window::Window,
+                    bevy::ecs::query::With<bevy::window::PrimaryWindow>,
+                >| {
+                    if let Ok(mut window) = query.single_mut() {
+                        window.resolution.set(width, height);
+                    }
+                },
+            );
             if verbose {
                 eprintln!("   → Window resolution will be set to {}x{}", width, height);
             }
