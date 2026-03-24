@@ -6,7 +6,6 @@ use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 
 use crate::app::task_pool::PyTaskPoolPlugin;
 
-/// Plugin configuration type discriminator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PluginConfigType {
     Window,
