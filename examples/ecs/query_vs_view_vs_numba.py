@@ -10,8 +10,6 @@ Shows different ways to update components:
 
 import math
 
-import numpy as np
-
 try:
     import numba  # type: ignore[import-untyped]
 except ImportError:
@@ -116,9 +114,9 @@ def update_view_cube(time: Res[Time], view: View[Mut[Transform], With[ViewCube]]
 
 # Syntax 3 helper: Numba JIT kernel for fast Transform updates
 @numba.jit(nopython=True)
-def fast_transform(pos_x: np.ndarray, pos_y: np.ndarray, time: float) -> None:
-    for i in range(len(pos_x)):
-        pos_y[i] = math.sin(time + pos_x[i]) * 1.5
+def fast_transform(translation, time: float) -> None:
+    for i in range(len(translation.x)):
+        translation.y[i] = math.sin(time + translation.x[i]) * 1.5
 
 
 # Syntax 3: View + Numba JIT - compiled zero-copy access for maximum performance, complex logic, large numbers of entities
@@ -127,7 +125,7 @@ def update_jit_cube(time: Res[Time], view: View[Mut[Transform], With[JitCube]]) 
 
     for batch in view.iter_batches():
         transform = batch.column_mut(Transform)
-        fast_transform(transform.translation.x, transform.translation.y, t)
+        fast_transform(transform.translation, t)
 
 
 def update_cross_cube(

@@ -77,27 +77,12 @@ class Crystal(Component):
 
 
 @component
+@dataclass
 class SweepingLight(Component):
     """Spotlight that sweeps in a pattern."""
-    sweep_angle: float
-    sweep_speed: float
-    center_x: float
-    center_y: float
-    center_z: float
-
-    def __init__(
-        self,
-        sweep_angle: float = 0.0,
-        sweep_speed: float = 0.5,
-        center_x: float = 0.0,
-        center_y: float = 0.0,
-        center_z: float = 0.0,
-    ):
-        self.sweep_angle = sweep_angle
-        self.sweep_speed = sweep_speed
-        self.center_x = center_x
-        self.center_y = center_y
-        self.center_z = center_z
+    sweep_angle: float = 0.0
+    sweep_speed: float = 0.5
+    center: Vec3 = field(default_factory=lambda: Vec3.ZERO)
 
 
 @component
@@ -258,9 +243,7 @@ def setup_volumetric_lights(commands: Commands) -> None:
             VolumetricLight(),  # Enable volumetric god rays!
             SweepingLight(
                 sweep_speed=speed,
-                center_x=x,
-                center_y=y,
-                center_z=z,
+                center=Vec3(x, y, z),
             ),
         )
 
@@ -476,12 +459,12 @@ def spotlight_sweep_system(
 
         # Update target position (circular sweep)
         radius = 8.0
-        target_x = light.center_x + math.cos(angle) * radius
-        target_z = light.center_z + math.sin(angle) * radius
+        target_x = light.center.x + math.cos(angle) * radius
+        target_z = light.center.z + math.sin(angle) * radius
         target_y = 0.0
 
         # Update transform to look at target
-        transform.translation = Vec3(light.center_x, light.center_y, light.center_z)
+        transform.translation = light.center
 
         # Look at the sweeping target
         target = Vec3(target_x, target_y, target_z)

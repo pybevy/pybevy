@@ -481,18 +481,18 @@ def setup(
 # Numba scatter kernel
 # ---------------------------------------------------------------------------
 
-@numba.njit(parallel=True, fastmath=True, cache=True)
-def _scatter_poses(tx, ty, tz, rx, ry, rz, rw, body_ids, poses):
+@numba.njit(parallel=True, fastmath=True)
+def _scatter_poses(translation, rotation, body_ids, poses):
     """Write Newton body poses into ECS Transform arrays."""
-    for i in numba.prange(len(tx)):
+    for i in numba.prange(len(translation.x)):
         idx = int(body_ids[i])
-        tx[i] = poses[idx, 0]
-        ty[i] = poses[idx, 1]
-        tz[i] = poses[idx, 2]
-        rx[i] = poses[idx, 3]
-        ry[i] = poses[idx, 4]
-        rz[i] = poses[idx, 5]
-        rw[i] = poses[idx, 6]
+        translation.x[i] = poses[idx, 0]
+        translation.y[i] = poses[idx, 1]
+        translation.z[i] = poses[idx, 2]
+        rotation.x[i] = poses[idx, 3]
+        rotation.y[i] = poses[idx, 4]
+        rotation.z[i] = poses[idx, 5]
+        rotation.w[i] = poses[idx, 6]
 
 
 # ---------------------------------------------------------------------------
@@ -561,8 +561,7 @@ def sync_transforms(
         tf = batch.column_mut(Transform)
         ids = batch.column(PhysicsId)
         _scatter_poses(
-            tf.translation.x, tf.translation.y, tf.translation.z,
-            tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w,
+            tf.translation, tf.rotation,
             ids.body_idx, poses,
         )
 

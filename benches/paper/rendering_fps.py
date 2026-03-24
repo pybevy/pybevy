@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import math
 import statistics
-from typing import TYPE_CHECKING
 
 import numba  # type: ignore[import-untyped]
 
@@ -41,8 +40,6 @@ from pybevy.time import Time
 from pybevy.transform import Transform
 from pybevy.window import PresentMode, Window, WindowPlugin
 
-if TYPE_CHECKING:
-    from pybevy.ecs import FieldExpr
 
 DEFAULT_COUNTS = [
     1_000, 5_000, 10_000, 50_000,
@@ -55,18 +52,16 @@ DEFAULT_MEASURE_FRAMES = 120
 
 @numba.jit(nopython=True, parallel=True)
 def _wave_kernel(
-    pos_x: FieldExpr,
-    pos_y: FieldExpr,
-    pos_z: FieldExpr,
+    translation,
     time: float,
 ) -> None:
     """Sine wave on Y based on XZ distance from origin."""
-    n = len(pos_x)
+    n = len(translation.x)
     for i in numba.prange(n):
-        x = pos_x[i]
-        z = pos_z[i]
+        x = translation.x[i]
+        z = translation.z[i]
         dist = math.sqrt(x * x + z * z)
-        pos_y[i] = math.sin(dist * 0.5 - time * 2.0) * 3.0
+        translation.y[i] = math.sin(dist * 0.5 - time * 2.0) * 3.0
 
 
 def main() -> None:
@@ -167,12 +162,7 @@ def main() -> None:
         t = time_res.elapsed_secs()
         for batch in view.iter_batches():
             col = batch.column_mut(Transform)
-            _wave_kernel(
-                col.translation.x,
-                col.translation.y,
-                col.translation.z,
-                t,
-            )
+            _wave_kernel(col.translation, t)
 
     def tick(
         commands: Commands,

@@ -10,7 +10,6 @@ Performance:
 
 import math
 import random
-from typing import TYPE_CHECKING
 
 try:
     import numba  # type: ignore[import-untyped]
@@ -27,9 +26,6 @@ import numpy as np
 from pybevy.ecs import With
 from pybevy.math import Sphere
 from pybevy.prelude import *
-
-if TYPE_CHECKING:
-    from pybevy.ecs import FieldExpr  # type: ignore[assignment]
 
 
 # Constants
@@ -523,13 +519,8 @@ def setup_scene(
 
 @numba.jit(nopython=True)  # type: ignore[misc]
 def walking_kernel(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    rot_x: "FieldExpr",
-    rot_y: "FieldExpr",
-    rot_z: "FieldExpr",
-    rot_w: "FieldExpr",
+    translation,
+    rotation,
     delta_time: float,
     city_size: float,
     speed: float,
@@ -539,22 +530,22 @@ def walking_kernel(
     """Update walker positions with random movement (PARALLEL).
 
     Args:
-        pos_x, pos_y, pos_z: ViewColumn handles for translation
-        rot_x, rot_y, rot_z, rot_w: ViewColumn handles for rotation
+        translation: Vec3ViewColumn for Transform.translation
+        rotation: QuatViewColumn for Transform.rotation
         delta_time: Frame delta time in seconds
         city_size: Total city size for boundary checks
         speed: Movement speed in units/second
         turn_chance: Probability per frame to turn randomly
         margin: Distance from edge to trigger bounce
     """
-    n = len(pos_x)
+    n = len(translation.x)
 
     for i in numba.prange(n):  # Parallel loop across CPU cores
         # Read current rotation quaternion
-        qx = rot_x[i]
-        qy = rot_y[i]
-        qz = rot_z[i]
-        qw = rot_w[i]
+        qx = rotation.x[i]
+        qy = rotation.y[i]
+        qz = rotation.z[i]
+        qw = rotation.w[i]
 
         # Calculate forward direction from quaternion
         # Forward in Bevy is -Z axis rotated by quaternion
@@ -564,8 +555,8 @@ def walking_kernel(
 
         # Move forward (only X-Z plane)
         delta = speed * delta_time
-        new_x = pos_x[i] + forward_x * delta
-        new_z = pos_z[i] + forward_z * delta
+        new_x = translation.x[i] + forward_x * delta
+        new_z = translation.z[i] + forward_z * delta
 
         # Random turn
         if random.random() < turn_chance:
@@ -582,10 +573,10 @@ def walking_kernel(
             new_qz = qw * 0.0 + qx * sin_half - qy * 0.0 + qz * cos_half
             new_qw = qw * cos_half - qx * 0.0 - qy * sin_half - qz * 0.0
 
-            rot_x[i] = new_qx
-            rot_y[i] = new_qy
-            rot_z[i] = new_qz
-            rot_w[i] = new_qw
+            rotation.x[i] = new_qx
+            rotation.y[i] = new_qy
+            rotation.z[i] = new_qz
+            rotation.w[i] = new_qw
 
         # Boundary checking and bounce
         bounce = False
@@ -597,23 +588,23 @@ def walking_kernel(
         if bounce:
             # 180-degree rotation around Y: q * (0, 1, 0, 0)
             # Hamilton product: w=-y1, x=-z1, y=w1, z=x1
-            cur_x = rot_x[i]
-            cur_y = rot_y[i]
-            cur_z = rot_z[i]
-            cur_w = rot_w[i]
+            cur_x = rotation.x[i]
+            cur_y = rotation.y[i]
+            cur_z = rotation.z[i]
+            cur_w = rotation.w[i]
 
-            rot_x[i] = -cur_z
-            rot_y[i] = cur_w
-            rot_z[i] = cur_x
-            rot_w[i] = -cur_y
+            rotation.x[i] = -cur_z
+            rotation.y[i] = cur_w
+            rotation.z[i] = cur_x
+            rotation.w[i] = -cur_y
 
             # Clamp position
             new_x = max(margin, min(city_size - margin, new_x))
             new_z = max(margin, min(city_size - margin, new_z))
 
         # Write position
-        pos_x[i] = new_x
-        pos_z[i] = new_z
+        translation.x[i] = new_x
+        translation.z[i] = new_z
 
 
 def walking_system(
@@ -634,13 +625,8 @@ def walking_system(
         transform = batch.column_mut(Transform)
 
         walking_kernel(
-            transform.translation.x,
-            transform.translation.y,
-            transform.translation.z,
-            transform.rotation.x,
-            transform.rotation.y,
-            transform.rotation.z,
-            transform.rotation.w,
+            transform.translation,
+            transform.rotation,
             time.delta_secs(),
             city_size,
             speed,
@@ -667,13 +653,8 @@ def warning_light_pulsate_system(
 
 @numba.jit(nopython=True)  # type: ignore[misc]
 def camera_look_at_kernel(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    rot_x: "FieldExpr",
-    rot_y: "FieldExpr",
-    rot_z: "FieldExpr",
-    rot_w: "FieldExpr",
+    translation,
+    rotation,
     camera_x: float,
     camera_y: float,
     camera_z: float,
@@ -683,9 +664,9 @@ def camera_look_at_kernel(
 ) -> None:
     """Update camera transform to look at target (non-parallel for single camera)."""
     # Set camera position
-    pos_x[0] = camera_x
-    pos_y[0] = camera_y
-    pos_z[0] = camera_z
+    translation.x[0] = camera_x
+    translation.y[0] = camera_y
+    translation.z[0] = camera_z
 
     # Calculate look_at direction
     forward_x = target_x - camera_x
@@ -763,10 +744,10 @@ def camera_look_at_kernel(
                 qy = (m12 + m21) / s
                 qz = 0.25 * s
 
-            rot_x[0] = qx
-            rot_y[0] = qy
-            rot_z[0] = qz
-            rot_w[0] = qw
+            rotation.x[0] = qx
+            rotation.y[0] = qy
+            rotation.z[0] = qz
+            rotation.w[0] = qw
 
 
 def camera_flight_system(
@@ -792,13 +773,8 @@ def camera_flight_system(
             for batch in view.iter_batches():
                 transform = batch.column_mut(Transform)
                 camera_look_at_kernel(
-                    transform.translation.x,
-                    transform.translation.y,
-                    transform.translation.z,
-                    transform.rotation.x,
-                    transform.rotation.y,
-                    transform.rotation.z,
-                    transform.rotation.w,
+                    transform.translation,
+                    transform.rotation,
                     start_pos[0],
                     start_pos[1],
                     start_pos[2],

@@ -21,7 +21,7 @@ Physical Setup:
 
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 try:
     import numba  # type: ignore[import-untyped]
@@ -71,25 +71,10 @@ TREE_ROOT_SIZE = 200.0  # Size of root octree node
 class Particle(Component):
     """N-body particle with position, velocity, and mass."""
 
-    # Position
-    x: float
-    y: float
-    z: float
-
-    # Velocity
-    vx: float
-    vy: float
-    vz: float
-
-    # Acceleration (computed by Barnes-Hut)
-    ax: float = 0.0
-    ay: float = 0.0
-    az: float = 0.0
-
-    # Mass
+    pos: Vec3
+    vel: Vec3
+    accel: Vec3 = field(default_factory=lambda: Vec3.ZERO)
     mass: float = PARTICLE_MASS
-
-    # Galaxy ID (for coloring)
     galaxy_id: int = 0
 
 
@@ -213,12 +198,8 @@ def setup_simulation(
     for x, y, z, vx, vy, vz, gid in galaxy1:
         commands.spawn(
             Particle(
-                x=x - GALAXY_SEPARATION / 2,
-                y=y,
-                z=z,
-                vx=vx + COLLISION_VELOCITY,
-                vy=vy,
-                vz=vz,
+                pos=Vec3(x - GALAXY_SEPARATION / 2, y, z),
+                vel=Vec3(vx + COLLISION_VELOCITY, vy, vz),
                 galaxy_id=gid,
             ),
             SimMarker(),
@@ -232,12 +213,8 @@ def setup_simulation(
     for x, y, z, vx, vy, vz, gid in galaxy2:
         commands.spawn(
             Particle(
-                x=x + GALAXY_SEPARATION / 2,
-                y=y,
-                z=z,
-                vx=vx - COLLISION_VELOCITY,
-                vy=vy,
-                vz=vz,
+                pos=Vec3(x + GALAXY_SEPARATION / 2, y, z),
+                vel=Vec3(vx - COLLISION_VELOCITY, vy, vz),
                 galaxy_id=gid,
             ),
             SimMarker(),
@@ -637,12 +614,12 @@ def physics_system(
 
     items = list(query)
     for particle, _transform in items:
-        pos_x_list.append(particle.x)
-        pos_y_list.append(particle.y)
-        pos_z_list.append(particle.z)
-        vel_x_list.append(particle.vx)
-        vel_y_list.append(particle.vy)
-        vel_z_list.append(particle.vz)
+        pos_x_list.append(particle.pos.x)
+        pos_y_list.append(particle.pos.y)
+        pos_z_list.append(particle.pos.z)
+        vel_x_list.append(particle.vel.x)
+        vel_y_list.append(particle.vel.y)
+        vel_z_list.append(particle.vel.z)
         mass_list.append(particle.mass)
 
     if not pos_x_list:
@@ -715,16 +692,10 @@ def physics_system(
 
     # Write back to ECS (use stored list - query iterator is exhausted)
     for i, (particle, transform) in enumerate(items):
-        particle.x = float(pos_x[i])
-        particle.y = float(pos_y[i])
-        particle.z = float(pos_z[i])
-        particle.vx = float(vel_x[i])
-        particle.vy = float(vel_y[i])
-        particle.vz = float(vel_z[i])
-        particle.ax = float(accel_x[i])
-        particle.ay = float(accel_y[i])
-        particle.az = float(accel_z[i])
-        transform.translation = Vec3(float(pos_x[i]), float(pos_y[i]), float(pos_z[i]))
+        particle.pos = Vec3(float(pos_x[i]), float(pos_y[i]), float(pos_z[i]))
+        particle.vel = Vec3(float(vel_x[i]), float(vel_y[i]), float(vel_z[i]))
+        particle.accel = Vec3(float(accel_x[i]), float(accel_y[i]), float(accel_z[i]))
+        transform.translation = particle.pos
 
     # Update statistics
     sim_state.frame_count += 1
