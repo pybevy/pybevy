@@ -76,6 +76,7 @@ impl PyDefaultPlugins {
                     .set(default_window_plugin())
                     .disable::<bevy::log::LogPlugin>(),
             );
+            bevy_app.add_plugins(crate::render::wgpu_error_handler::WgpuErrorHandlerPlugin);
             // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
             // works without requiring an explicit ScenePlugin() addition.
             bevy_app.add_observer(pybevy_scene::scene_instance_ready_bridge);
@@ -278,6 +279,7 @@ impl PyPluginGroupBuilder {
             self.insert_pre_plugin_resources(app.py(), bevy_app)?;
             let builder = self.apply_to_bevy(app.py())?;
             bevy_app.add_plugins(builder);
+            bevy_app.add_plugins(crate::render::wgpu_error_handler::WgpuErrorHandlerPlugin);
             // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
             // works without requiring an explicit ScenePlugin() addition.
             bevy_app.add_observer(pybevy_scene::scene_instance_ready_bridge);
