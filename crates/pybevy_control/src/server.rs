@@ -61,9 +61,6 @@ pub struct ServerConfig {
     pub execute_python_enabled: bool,
     pub api_discovery_enabled: bool,
 }
-
-// ── Helper: send operation to Bevy world and await response ──────────────
-
 async fn send_operation(
     sender: &ControlSender,
     operation: ControlOperation,
@@ -105,9 +102,6 @@ fn parse_entity_ref(entity: &str) -> EntityRef {
         Err(_) => EntityRef::Name(entity.to_string()),
     }
 }
-
-// ── Router ───────────────────────────────────────────────────────────────
-
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Health
@@ -211,9 +205,6 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
-
-// ── Health & SSE ─────────────────────────────────────────────────────────
-
 async fn health() -> &'static str {
     "ok"
 }
@@ -228,9 +219,6 @@ async fn handle_sse(
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-
-// ── Entity routes ────────────────────────────────────────────────────────
-
 async fn list_entities(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::ListEntities).await {
         Ok(v) => (StatusCode::OK, Json(v)),
@@ -383,9 +371,6 @@ async fn get_bounding_box(
         Err(e) => e,
     }
 }
-
-// ── Query ────────────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct QueryEntitiesBody {
     #[serde(default)]
@@ -418,9 +403,6 @@ async fn scene_summary(State(state): State<AppState>) -> impl IntoResponse {
         Err(e) => e,
     }
 }
-
-// ── Resources ────────────────────────────────────────────────────────────
-
 async fn list_resources(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::ListResources).await {
         Ok(v) => (StatusCode::OK, Json(v)),
@@ -472,9 +454,6 @@ async fn remove_resource(
         Err(e) => e,
     }
 }
-
-// ── Systems & Component schema ───────────────────────────────────────────
-
 async fn list_systems(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::ListSystems).await {
         Ok(v) => (StatusCode::OK, Json(v)),
@@ -491,9 +470,6 @@ async fn get_component_schema(
         Err(e) => e,
     }
 }
-
-// ── Screenshot routes ────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct ScreenshotBody {
     #[serde(default = "default_delay_frames")]
@@ -682,9 +658,6 @@ async fn capture_depth(
         Err(e) => e,
     }
 }
-
-// ── Reload routes ────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct ReloadBody {
     #[serde(default = "default_reload_mode")]
@@ -761,9 +734,6 @@ async fn reload_and_capture(
         Err(e) => e,
     }
 }
-
-// ── Execute Python ───────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct ExecuteBody {
     code: String,
@@ -786,9 +756,6 @@ async fn execute_python(
         Err(e) => e,
     }
 }
-
-// ── Time control routes ──────────────────────────────────────────────────
-
 async fn get_time_status(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::GetTimeStatus).await {
         Ok(v) => (StatusCode::OK, Json(v)),
@@ -854,9 +821,6 @@ async fn seek_time(
         Err(e) => e,
     }
 }
-
-// ── Asset mutation ───────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct MutateAssetBody {
     entity: serde_json::Value,
@@ -891,9 +855,6 @@ async fn mutate_asset(
         Err(e) => e,
     }
 }
-
-// ── Spatial queries ──────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct SpatialQueryBody {
     entity_a: serde_json::Value,
@@ -1018,9 +979,6 @@ async fn check_all_overlaps(
         Err(e) => e,
     }
 }
-
-// ── Performance, error, debug ────────────────────────────────────────────
-
 async fn get_performance(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::GetPerformance).await {
         Ok(v) => (StatusCode::OK, Json(v)),
@@ -1041,9 +999,6 @@ async fn debug_registry(State(state): State<AppState>) -> impl IntoResponse {
         Err(e) => e,
     }
 }
-
-// ── Batch ────────────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct BatchBody {
     operations: Vec<serde_json::Value>,
@@ -1068,10 +1023,6 @@ async fn batch_mutate(
         Err(e) => e,
     }
 }
-
-// ── Custom tools ─────────────────────────────────────────────────────────
-
-// ── Schedule ─────────────────────────────────────────────────────────────
 
 async fn submit_schedule(
     State(state): State<AppState>,
@@ -1134,9 +1085,6 @@ async fn cancel_schedule(
         )
     }
 }
-
-// ── Custom tools ────────────────────────────────────────────────────────
-
 async fn call_custom_tool(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -1152,9 +1100,6 @@ async fn call_custom_tool(
         Err(e) => e,
     }
 }
-
-// ── Plugin configs ───────────────────────────────────────────────────────
-
 async fn list_configs(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::ListConfigs).await {
         Ok(v) => (StatusCode::OK, Json(v)),
@@ -1168,9 +1113,6 @@ async fn get_config(State(state): State<AppState>, Path(key): Path<String>) -> i
         Err(e) => e,
     }
 }
-
-// ── API discovery (served directly, no World access) ─────────────────────
-
 #[derive(Deserialize)]
 struct SearchQuery {
     q: String,
@@ -1301,8 +1243,6 @@ async fn get_instructions(State(state): State<AppState>) -> impl IntoResponse {
         ),
     }
 }
-
-// ── Server startup ───────────────────────────────────────────────────────
 
 pub fn start_server(host: String, port: u16, state: AppState) {
     std::thread::spawn(move || {

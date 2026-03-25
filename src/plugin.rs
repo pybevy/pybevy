@@ -28,7 +28,11 @@
 //!         transform.rotation *= Quat.from_rotation_y(time.delta_secs())
 //! ```
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 use bevy::{
     app::{
@@ -37,6 +41,8 @@ use bevy::{
     },
     ecs::schedule::{IntoScheduleConfigs, Schedules},
 };
+#[cfg(feature = "native-hot-reload")]
+use notify::{EventKind, RecursiveMode, Watcher};
 use pybevy_core::{ComponentBridge, DynamicComponentRegistry, registry::global_registry};
 use pyo3::{
     exceptions::{PyAttributeError, PyImportError},
@@ -244,13 +250,6 @@ def _make_native_loader(module_name, systems):
 /// Start a background file watcher that triggers hot reload on `.py` file changes.
 #[cfg(feature = "native-hot-reload")]
 fn start_file_watcher(paths: &[String], reload_state: HotReloadState) {
-    use std::{
-        path::Path,
-        time::{Duration, Instant},
-    };
-
-    use notify::{EventKind, RecursiveMode, Watcher};
-
     let paths: Vec<String> = paths.to_vec();
 
     std::thread::spawn(move || {

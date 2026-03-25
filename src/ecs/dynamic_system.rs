@@ -104,7 +104,6 @@ impl DynamicSystemInner {
 /// Clear the system parameter cache.
 /// Called when apps are dropped to prevent stale cache entries.
 pub fn clear_system_param_cache() {
-    use crate::ecs::system::SystemFunction;
     SystemFunction::clear_cache();
 }
 

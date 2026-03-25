@@ -37,7 +37,7 @@ pub fn spawn_entity(
         .as_object()
         .ok_or_else(|| ControlError::invalid_params("'components' must be a JSON object"))?;
 
-    // Phase 1: Validate all components exist in registry (fail fast)
+    // Validate all components exist in registry (fail fast)
     let mut validation_errors = Vec::new();
     for (comp_name, _) in obj {
         if find_bridge(comp_name).is_none() {
@@ -51,7 +51,7 @@ pub fn spawn_entity(
         )));
     }
 
-    // Phase 2: Spawn and add components
+    // Spawn and add components
     let entity = world.spawn_empty().id();
     let entity_id = entity.to_bits();
 
@@ -118,7 +118,7 @@ pub fn spawn_entity(
         );
     }
 
-    // Phase 3: If errors occurred, despawn the partial entity
+    // If errors occurred, despawn the partial entity
     if !errors.is_empty() {
         world.despawn(entity);
         return Ok(serde_json::json!({

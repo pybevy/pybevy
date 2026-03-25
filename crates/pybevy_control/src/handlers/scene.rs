@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::{
     ecs::{entity::Entity, hierarchy::ChildOf, name::Name, reflect::AppTypeRegistry, world::World},
     reflect::TypeInfo,
@@ -1133,8 +1135,6 @@ pub fn get_bounding_box(
 /// 3. Characteristic built-in component (Camera3d > PointLight > Mesh3d etc.)
 /// 4. Fallback: "other"
 pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlError> {
-    use std::collections::HashMap;
-
     /// Characteristic built-in components in priority order.
     const CHARACTERISTIC_COMPONENTS: &[&str] = &[
         "Camera3d",

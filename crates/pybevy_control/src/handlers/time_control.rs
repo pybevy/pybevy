@@ -13,7 +13,7 @@ use crate::bridge::ControlError;
 fn propagate_transforms(world: &mut World) {
     use bevy::prelude::Children;
 
-    // Phase 1: Update root entities (no ChildOf)
+    // Update root entities (no ChildOf)
     let mut root_query = world.query_filtered::<(Entity, &Transform), Without<ChildOf>>();
     let roots: Vec<(Entity, GlobalTransform)> = root_query
         .iter(world)
@@ -25,7 +25,7 @@ fn propagate_transforms(world: &mut World) {
         }
     }
 
-    // Phase 2: Propagate to children (breadth-first)
+    // Propagate to children (breadth-first)
     let mut queue: Vec<(Entity, GlobalTransform)> = roots;
     while !queue.is_empty() {
         let mut next_queue = Vec::new();

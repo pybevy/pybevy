@@ -20,8 +20,12 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
     ptr::NonNull,
-    sync::Arc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use smallvec::SmallVec;
@@ -49,10 +53,10 @@ use bevy::{
     prelude::*,
 };
 use pybevy_bytecodevm::{
-    bytecode::{CompiledBytecode, Compiler, FieldId, VM},
+    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType as VmFieldType, VM},
     expr::RustExpr,
 };
-use pybevy_core::PyEntity;
+use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError},
     prelude::*,
@@ -60,8 +64,9 @@ use pyo3::{
 };
 
 use crate::ecs::{
-    component_layout::ComponentStorageType,
+    component_layout::{ComponentLayout, ComponentStorageType, PrimitiveType},
     component_type::{PyComponentType, register_component_id_simple},
+    component_wrapper::*,
     helpers::validity_guard::ValidityFlag,
     view::{construct_view_class_item, view_column::PyViewColumn},
 };
@@ -447,10 +452,6 @@ impl PyView {
         // Use generic helper that constrains T::Mutability = Mutable
         let (result, count) = match component_type {
             PyComponentType::Custom(type_ptr) => {
-                use std::sync::Mutex;
-
-                use crate::ecs::{component_layout::ComponentStorageType, component_wrapper::*};
-
                 let accumulator = Mutex::new((initial, 0usize));
 
                 // Get Python type and determine storage type
@@ -533,10 +534,6 @@ impl PyView {
                 accumulator.into_inner().unwrap()
             }
             PyComponentType::Dynamic(type_ptr) => {
-                use std::sync::Mutex;
-
-                use pybevy_core::registry::global_registry;
-
                 let bridge = global_registry::get_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
 
@@ -920,7 +917,6 @@ impl PyView {
             let mut query_state = query_builder.build();
 
             // Just count - no expression evaluation needed
-            use std::sync::atomic::{AtomicUsize, Ordering};
             let counter = AtomicUsize::new(0);
 
             let tick_filters = self.resolve_tick_filters();
@@ -945,14 +941,8 @@ pub(crate) fn get_component_field_info(
     component_type: &PyComponentType,
     field_name: &str,
 ) -> PyResult<(usize, pybevy_bytecodevm::bytecode::FieldType)> {
-    use pybevy_bytecodevm::bytecode::FieldType as VmFieldType;
-
     match component_type {
         PyComponentType::Custom(type_ptr) => {
-            use crate::ecs::component_layout::{
-                ComponentLayout, ComponentStorageType, PrimitiveType,
-            };
-
             // Get Python type and ComponentLayout
             Python::attach(|py| {
                 let py_type = unsafe {
@@ -1059,8 +1049,6 @@ pub(crate) fn get_component_field_info(
             })
         }
         PyComponentType::Dynamic(type_ptr) => {
-            use pybevy_core::registry::global_registry;
-
             // Get bridge from global registry
             let bridge = global_registry::get_bridge_by_py_type(*type_ptr).ok_or_else(|| {
                 PyRuntimeError::new_err("Dynamic component bridge not found in registry")
@@ -1167,12 +1155,9 @@ fn create_field_proxy<'py>(
     // Check if this is a Transform-like component (Dynamic Transform bridge)
     // Transform fields return F32 from bridge, but we need composite proxies
     let is_transform = match component_type {
-        PyComponentType::Dynamic(type_ptr) => {
-            use pybevy_core::registry::global_registry;
-            global_registry::get_bridge_by_py_type(*type_ptr)
-                .map(|b| b.name() == "Transform")
-                .unwrap_or(false)
-        }
+        PyComponentType::Dynamic(type_ptr) => global_registry::get_bridge_by_py_type(*type_ptr)
+            .map(|b| b.name() == "Transform")
+            .unwrap_or(false),
         _ => false,
     };
 
@@ -1336,7 +1321,6 @@ impl PyViewColMut {
 
         // Compute hash for secondary cache
         let expr_hash = {
-            use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             format!("{:?}", expr).hash(&mut hasher);
             hasher.finish()
@@ -1427,8 +1411,6 @@ impl PyViewColMut {
         match &self.component_type {
             PyComponentType::Dynamic(type_ptr) => {
                 // Dynamic component - use ViewBridge from ComponentBridge
-                use pybevy_core::registry::global_registry;
-
                 let bridge = global_registry::get_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
 
@@ -1467,8 +1449,6 @@ impl PyViewColMut {
                 Ok(())
             }
             PyComponentType::Custom(type_ptr) => {
-                use crate::ecs::{component_layout::ComponentStorageType, component_wrapper::*};
-
                 // Get Python type and determine storage type
                 let storage_type = Python::attach(|py| {
                     let py_type = unsafe {
@@ -2032,8 +2012,6 @@ impl PyBatch {
                 }
             })?,
             PyComponentType::Dynamic(type_ptr) => {
-                use pybevy_core::registry::global_registry;
-
                 let bridge = global_registry::get_bridge_by_py_type(type_ptr)
                     .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
 
@@ -2176,8 +2154,6 @@ impl PyBatch {
                 }
             })?,
             PyComponentType::Dynamic(type_ptr) => {
-                use pybevy_core::registry::global_registry;
-
                 let bridge = global_registry::get_bridge_by_py_type(type_ptr)
                     .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
 

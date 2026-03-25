@@ -13,7 +13,7 @@ use bevy::{
         App, First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate, Last,
         Main, MainScheduleOrder, PostStartup, PostUpdate, PreStartup, PreUpdate, Startup, Update,
     },
-    ecs::schedule::{Chain, IntoScheduleConfigs, ScheduleConfigs},
+    ecs::schedule::{Chain, ExecutorKind, IntoScheduleConfigs, ScheduleConfigs, Schedules},
     log::LogPlugin,
 };
 use pybevy_a11y::PyBevyA11yPlugin;
@@ -33,9 +33,13 @@ use pyo3::{
 use crate::{
     app::{
         PyStage, SimTick,
+        app_exit::PyAppExit,
         chained_systems::PyChainedSystems,
         error_messages,
-        hot_reload::{HotReloadState, PyAppReloadState, add_hot_reload_system},
+        hot_reload::{
+            HotReloadState, PyAppReloadState, SystemStage, add_hot_reload_system,
+            clear_entities_and_resources, generation_matches, startup_or_reload,
+        },
         plugin::{PyPlugin, PyPluginGroup},
         plugins::{PyDefaultPlugins, PyPluginGroupBuilder},
     },
@@ -44,9 +48,10 @@ use crate::{
         dynamic_condition::DynamicCondition,
         dynamic_system::DynamicSystem,
         messages::MessageRegistry,
+        observer_registry::ObserverRegistry,
         state::{
-            PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, StateScheduleLabel,
-            TransitionScheduleLabel, apply_state_transitions,
+            PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
+            StateScheduleLabel, TransitionScheduleLabel, apply_state_transitions,
         },
         world::PyWorld,
     },
@@ -256,7 +261,6 @@ impl PyApp {
 
     /// Helper to get SystemStage for profiling based on PyStage
     fn get_system_stage(stage: PyStage) -> crate::app::hot_reload::SystemStage {
-        use crate::app::hot_reload::SystemStage;
         match stage {
             PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup => SystemStage::Startup,
             _ => SystemStage::UpdateOrLast,
@@ -678,7 +682,6 @@ impl PyApp {
                     // Initialize the schedule with single-threaded executor.
                     // State schedules are run via world.run_schedule() from within
                     // a Python-attached context; multi-threaded would deadlock on GIL.
-                    use bevy::ecs::schedule::{ExecutorKind, Schedules};
 
                     macro_rules! init_state_schedule {
                         ($app:expr, $lbl:expr) => {
@@ -740,7 +743,6 @@ impl PyApp {
                 // Macro to add systems to the correct schedule with automatic schedule initialization
                 macro_rules! add_to_schedule {
                     ($app:expr, $stage:expr, $system:expr) => {{
-                        use bevy::ecs::schedule::Schedules;
                         // Init schedule if needed
                         match $stage {
                             PyStage::Main => {
@@ -887,7 +889,6 @@ impl PyApp {
                     }
 
                     // Add run conditions and chain the systems
-                    use crate::app::hot_reload::{generation_matches, startup_or_reload};
 
                     if dynamic_systems.is_empty() {
                         return Err(PyRuntimeError::new_err("Empty chained systems"));
@@ -946,7 +947,6 @@ impl PyApp {
                         )?;
 
                         // Always add generation-based run conditions for hot reload support
-                        use crate::app::hot_reload::{generation_matches, startup_or_reload};
 
                         // Add user condition if present
                         if let Some(cond) = condition_func {
@@ -1335,8 +1335,6 @@ impl PyApp {
         py: Python,
         observer: Bound<'_, PyAny>,
     ) -> PyResult<Py<PyApp>> {
-        use crate::ecs::observer_registry::ObserverRegistry;
-
         pyself.ensure_active()?;
 
         // Collect observers for re-registration after reload
@@ -1364,8 +1362,6 @@ impl PyApp {
         py: Python,
         state_type: Bound<'_, PyType>,
     ) -> PyResult<Py<PyApp>> {
-        use crate::ecs::state::{PyNextState, PyState};
-
         pyself.ensure_active()?;
 
         // States are already registered from initial load; skip during hot reload
@@ -1424,8 +1420,6 @@ impl PyApp {
         py: Python,
         initial_state: Py<PyAny>,
     ) -> PyResult<Py<PyApp>> {
-        use crate::ecs::state::{PyNextState, PyState};
-
         pyself.ensure_active()?;
 
         // States are already registered from initial load; skip during hot reload
@@ -1700,8 +1694,6 @@ impl PyApp {
     /// - All entities
     /// - Custom Python resources
     pub fn clear_scene(&self, py: Python) -> PyResult<()> {
-        use crate::app::hot_reload::clear_entities_and_resources;
-
         self.ensure_active()?;
 
         let app_id = self.app_id;
@@ -1868,8 +1860,6 @@ impl PyApp {
     /// This allows checking exit status programmatically for conditional logic or tests.
     /// Can be called before or after run() to check the exit status.
     pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<crate::app::app_exit::PyAppExit>>> {
-        use crate::app::app_exit::PyAppExit;
-
         BEVY_APPS.with(|apps_cell| {
             let apps = apps_cell.borrow();
             let app = apps.get(&self.app_id).ok_or_else(|| {

@@ -1,6 +1,9 @@
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 
-use super::{PyEntity, component_type::PyComponentType};
+use super::{
+    PyEntity,
+    component_type::{ComponentRegistry, PyComponentType},
+};
 
 /// Base class for all events in PyBevy.
 ///
@@ -420,8 +423,6 @@ fn entity_has_component(
     match comp_type {
         PyComponentType::Custom(type_ptr) => {
             // For custom components, look up the ComponentId from the registry
-            use crate::ecs::component_type::ComponentRegistry;
-
             if let Some(registry) = world.get_resource::<ComponentRegistry>() {
                 if let Some(component_id) = registry.get(*type_ptr) {
                     // Check if entity has this component using the ComponentId

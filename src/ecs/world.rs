@@ -42,6 +42,7 @@ use bevy::{
     ecs::{system::System, world::World},
     prelude::*,
 };
+use pybevy_core::registry::global_registry;
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
@@ -50,21 +51,28 @@ use pyo3::{
 };
 
 use crate::{
-    app::hot_reload::{HotReloadable, SystemStage},
+    app::{
+        PyStage,
+        hot_reload::{HotReloadable, SystemStage},
+    },
     assets::{asset_type::PyAssetTypeParam, assets::PyAssets},
     ecs::{
         PyEntity,
         commands::PyCommands,
         component::PyComponentId,
+        component_layout::ComponentStorageType,
         component_type::{ComponentRegistry, PyComponentType, register_custom_component},
+        custom_component::PyCustomComponent,
         dynamic_system::{DynamicSystem, execute_system_func},
         entity_commands::PyEntityCommands,
         helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard},
-        observer::{BundleFilter, EventType, PyOn},
+        lazy_wrapper_proxy::PyLazyWrapperProxy,
+        observer::{BundleFilter, EventType, PyEvent, PyOn},
         observer_registry::ObserverRegistry,
         resource_type::{
             PyResourceStorage, PyResourceType, ResourceRegistry, register_custom_resource,
         },
+        state::{PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule},
     },
 };
 
@@ -218,11 +226,6 @@ impl PyWorld {
         type_ptr: *const pyo3::ffi::PyTypeObject,
         validity: ValidityFlagWithMode,
     ) -> PyResult<Option<Py<PyAny>>> {
-        use crate::ecs::{
-            component_layout::ComponentStorageType, custom_component::PyCustomComponent,
-            lazy_wrapper_proxy::PyLazyWrapperProxy,
-        };
-
         let world = self.world_mut()?;
 
         let component_id = {
@@ -378,8 +381,6 @@ impl PyWorld {
 
     /// Despawn an entity
     pub fn despawn(&self, entity: &PyEntity) -> PyResult<()> {
-        use super::observer_registry::ObserverRegistry;
-
         self.check_valid()?;
         let world_ptr = self.world_ptr();
         let world = self.world_mut()?;
@@ -714,11 +715,6 @@ impl PyWorld {
     }
 
     pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<()> {
-        use super::{
-            observer::{PyEvent, PyOn},
-            observer_registry::ObserverRegistry,
-        };
-
         self.check_valid()?;
 
         // Verify the event is a subclass of Event
@@ -771,7 +767,6 @@ impl PyWorld {
                         // Bundle filter requires an entity-targeted event
                         if let Some(entity) = target_entity {
                             // Create bundle filter and check if entity matches
-                            use super::observer::BundleFilter;
                             let filter = BundleFilter {
                                 components: bundle_filter.clone(),
                             };
@@ -811,8 +806,6 @@ impl PyWorld {
     }
 
     pub fn add_observer(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<Py<PyEntity>> {
-        use super::observer_registry::ObserverRegistry;
-
         self.check_valid()?;
         let world = self.world_mut()?;
 
@@ -822,8 +815,6 @@ impl PyWorld {
     }
 
     pub fn despawn_observer(&self, observer_entity: &PyEntity) -> PyResult<()> {
-        use super::observer_registry::ObserverRegistry;
-
         self.check_valid()?;
         let world = self.world_mut()?;
 
@@ -838,8 +829,6 @@ impl PyWorld {
         entity: &PyEntity,
         component_type: Bound<'_, PyAny>,
     ) -> PyResult<Option<Py<PyAny>>> {
-        use crate::ecs::helpers::validity_guard::AccessMode;
-
         self.check_valid()?;
         let world = self.world_mut()?;
 
@@ -864,8 +853,6 @@ impl PyWorld {
 
         match comp_type {
             PyComponentType::Dynamic(type_ptr) => {
-                use pybevy_core::registry::global_registry;
-
                 let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
                     PyRuntimeError::new_err(format!(
                         "Dynamic component type {:?} not registered",
@@ -909,8 +896,6 @@ impl PyWorld {
 
         match comp_type {
             PyComponentType::Dynamic(type_ptr) => {
-                use pybevy_core::registry::global_registry;
-
                 let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
                     PyRuntimeError::new_err(format!(
                         "Dynamic component type {:?} not registered",
@@ -928,11 +913,6 @@ impl PyWorld {
     }
 
     pub fn run_schedule(&self, py: Python, label: Bound<'_, PyAny>) -> PyResult<()> {
-        use crate::{
-            app::PyStage,
-            ecs::state::{PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule},
-        };
-
         self.check_valid()?;
 
         // Try PyStage first (SimTick, Update, etc.)

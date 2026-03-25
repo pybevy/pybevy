@@ -161,7 +161,6 @@ impl PyMessages {
     }
 
     pub(crate) fn iter_to_python(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        use bevy::input::keyboard::KeyboardInput;
         use pybevy_input::{PyKeyboardInput, PyKeyboardInputExt};
 
         let world = self.world.world_mut()?;
@@ -204,7 +203,6 @@ impl PyMessages {
                 Ok(Vec::new())
             }
             MessageType::WindowEvent => {
-                use bevy::window::WindowEvent;
                 use pybevy_window::PyWindowEvent;
                 self.iter_messages::<WindowEvent, _>(py, world, cursor_state, |msg, py| {
                     Ok(Py::new(py, PyWindowEvent::from_bevy(py, msg)?)?.into_any())
@@ -220,16 +218,12 @@ impl PyMessages {
                 )
             }
             MessageType::AssetEventImage => {
-                use bevy::{asset::AssetEvent, image::Image};
-
                 use crate::assets::asset_event::PyAssetEvent;
                 self.iter_messages::<AssetEvent<Image>, _>(py, world, cursor_state, |event, py| {
                     Ok(Py::new(py, (PyAssetEvent::from_bevy(event), PyMessage))?.into_any())
                 })
             }
             MessageType::AssetEventMesh => {
-                use bevy::{asset::AssetEvent, mesh::Mesh};
-
                 use crate::assets::asset_event::PyAssetEvent;
                 self.iter_messages::<AssetEvent<Mesh>, _>(py, world, cursor_state, |event, py| {
                     Ok(Py::new(py, (PyAssetEvent::from_bevy(event), PyMessage))?.into_any())
@@ -273,8 +267,6 @@ impl PyMessages {
     where
         F: FnOnce(&mut dyn ErasedMessages) -> R,
     {
-        use bevy::input::keyboard::KeyboardInput;
-
         let world = self.world.world_mut()?;
 
         match &self.message_type {
@@ -290,7 +282,6 @@ impl PyMessages {
                 ))
             }
             MessageType::WindowEvent => {
-                use bevy::window::WindowEvent;
                 let mut messages =
                     world.get_resource_or_insert_with(|| Messages::<WindowEvent>::default());
                 Ok(f(&mut Wrap(&mut *messages)))

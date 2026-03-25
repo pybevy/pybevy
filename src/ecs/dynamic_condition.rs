@@ -16,7 +16,7 @@ use bevy::{
 };
 use pyo3::prelude::*;
 
-use crate::ecs::dynamic_system::DynamicSystem;
+use crate::{app::hot_reload::HotReloadGeneration, ecs::dynamic_system::DynamicSystem};
 
 /// A condition system that wraps a Python function returning bool
 /// Unlike DynamicSystem which returns (), this extracts and returns the bool result
@@ -117,8 +117,6 @@ impl System for DynamicCondition {
         _input: SystemIn<'_, Self>,
         world: UnsafeWorldCell,
     ) -> Result<Self::Out, RunSystemError> {
-        use crate::app::hot_reload::HotReloadGeneration;
-
         // First check generation (hot reload logic)
         let world_ref = unsafe { world.world() };
         let gen_check = match world_ref.get_resource::<HotReloadGeneration>() {

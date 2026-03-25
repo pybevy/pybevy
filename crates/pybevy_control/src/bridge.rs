@@ -5,7 +5,15 @@ use pyo3::Python;
 use serde::Deserialize;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::handlers;
+use crate::handlers::{
+    self,
+    reload::{PendingReloadAndCapture, PendingReloadAndCaptures, ReloadAndCaptureState},
+    schedule::{
+        ActiveSchedule, ActiveSchedules, SharedScheduleRegistryResource, SharedScheduleState,
+    },
+    screenshot::{ActiveTimeline, PendingTimelines, setup_debug_camera},
+    turnaround::{ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints},
+};
 
 /// Maximum requests processed per frame to prevent frame spikes
 const MAX_REQUESTS_PER_FRAME: usize = 32;
@@ -399,11 +407,6 @@ pub fn control_poll_system(world: &mut World) {
 
                 // Handle SubmitSchedule (no GIL needed — just stores in World resource)
                 if matches!(&request.operation, ControlOperation::SubmitSchedule { .. }) {
-                    use crate::handlers::schedule::{
-                        ActiveSchedule, ActiveSchedules, SharedScheduleRegistryResource,
-                        SharedScheduleState,
-                    };
-
                     let sched_req = match request.operation {
                         ControlOperation::SubmitSchedule { request: r } => r,
                         _ => unreachable!(),
@@ -506,10 +509,6 @@ pub fn control_poll_system(world: &mut World) {
                         position,
                         look_at,
                     } => {
-                        use crate::handlers::screenshot::{
-                            ActiveTimeline, PendingTimelines, setup_debug_camera,
-                        };
-
                         let mut schedule = crate::handlers::screenshot::compute_schedule(
                             *total_frames,
                             *capture_count,
@@ -584,11 +583,6 @@ pub fn control_poll_system(world: &mut World) {
                         look_at,
                         hide_ui,
                     } => {
-                        use crate::handlers::reload::{
-                            PendingReloadAndCapture, PendingReloadAndCaptures,
-                            ReloadAndCaptureState,
-                        };
-
                         // Trigger the reload
                         let mode_str = mode.clone();
                         let _ = handlers::reload::trigger_reload(
@@ -629,11 +623,6 @@ pub fn control_poll_system(world: &mut World) {
                         max_width,
                         hide_ui,
                     } => {
-                        use crate::handlers::turnaround::{
-                            ActiveTurnaround, PendingTurnarounds, compute_scene_bounds,
-                            compute_viewpoints,
-                        };
-
                         let vc = view_count.unwrap_or(6);
                         let elev = elevation.unwrap_or(25.0);
                         let top = include_top.unwrap_or(true);

@@ -25,29 +25,40 @@ use bevy::{
         Main, PostStartup, PostUpdate, PreStartup, PreUpdate, Startup, Update,
     },
     asset::{Asset, AssetServer, Assets},
+    color::Color,
     ecs::{
-        component::Component,
-        schedule::{Chain, IntoScheduleConfigs, ScheduleConfigs, Schedules},
+        component::{Component, ComponentId},
+        entity::Entity,
+        query::With,
+        schedule::{
+            Chain, IntoScheduleConfigs, Schedule, ScheduleConfigs, ScheduleLabel, Schedules,
+        },
         world::World,
     },
-    image::Image,
+    image::{Image, TextureAtlasLayout},
+    input::{ButtonInput, keyboard::KeyCode},
     mesh::Mesh,
-    pbr::StandardMaterial,
-    prelude::{Resource, default},
+    pbr::{StandardMaterial, wireframe::WireframeMaterial},
+    prelude::{ImageNode, Resource, TextColor, TextFont, default},
     scene::Scene,
-    ui::widget::Text,
+    ui::{Node, PositionType, Val, widget::Text},
 };
 use pybevy_core::PyPlugin;
 use pyo3::{
+    exceptions::PyRuntimeError,
     prelude::*,
     types::{PyAnyMethods, PyType},
 };
+use sysinfo::ProcessRefreshKind;
 
 use crate::{
     app::{PyStage, SimTick, app::PyApp, chained_systems::PyChainedSystems},
     ecs::{
         dynamic_system::{DynamicSystem, DynamicSystemHandle},
         messages::MessageRegistry,
+        observer_registry::ObserverRegistry,
+        resource_type::{PyResourceStorage, PyResourceType, ResourceRegistry},
+        world::PyWorld,
     },
 };
 
@@ -97,7 +108,6 @@ fn get_python_gc_objects() -> usize {
 
 /// Count total systems across all schedules in the world.
 fn count_schedule_systems(world: &World) -> usize {
-    use bevy::ecs::schedule::Schedules;
     let Some(schedules) = world.get_resource::<Schedules>() else {
         return 0;
     };
@@ -807,8 +817,6 @@ impl PyHotReloadControl {
 /// Built-in system that checks for F5/F6 keypress and triggers reload or mode toggle
 /// This runs automatically when hot reload is enabled - no user code needed
 pub(crate) fn handle_f5_reload_system(world: &mut World) {
-    use bevy::input::{ButtonInput, keyboard::KeyCode};
-
     // Read all key states upfront, then drop the immutable borrow
     let (f5_pressed, f6_pressed, f7_pressed, space_pressed) = {
         let Some(input) = world.get_resource::<ButtonInput<KeyCode>>() else {
@@ -1037,8 +1045,6 @@ fn clear_programmatic_assets<T: Asset>(world: &mut World, verbose: bool, name: &
 /// Clear all custom Python resources from PyResourceStorage
 /// Preserves built-in resources (Time, AssetServer, etc.) and HotReloadControl
 fn clear_custom_resources(world: &mut World, verbose: bool) {
-    use crate::ecs::resource_type::{PyResourceStorage, PyResourceType};
-
     // Save HotReloadControl before clearing (it needs to persist across reloads)
     // We iterate through all resources and save the one that is HotReloadControl
     let hot_reload_control = Python::attach(|py| {
@@ -1108,8 +1114,6 @@ fn clear_custom_resources(world: &mut World, verbose: bool) {
 /// - RenderDevice and render infrastructure
 /// - Plugin state
 pub fn clear_entities_and_resources(world: &mut World) {
-    use bevy::ecs::entity::Entity;
-
     // Despawn ALL entities
     // For JupyBevy, we want a complete clean slate
     let all_entities: Vec<Entity> = world
@@ -1150,8 +1154,6 @@ fn perform_reload(
     mode: ReloadMode,
     error_state: Arc<Mutex<Vec<PyErr>>>,
 ) -> PyResult<()> {
-    use pyo3::exceptions::PyRuntimeError;
-
     if is_verbose() {
         eprintln!("🔄 [Hot Reload] Starting {:?} reload", mode);
     }
@@ -1179,8 +1181,6 @@ fn perform_reload(
             Vec<Py<PyAny>>,
             Vec<String>,
         )> {
-            use crate::app::app::PyApp;
-
             // Create a temporary app with what WILL be the new generation
             let temp_app = PyApp::create_reload_temp(next_generation);
             let temp_app_py = Py::new(py, temp_app)?;
@@ -1286,7 +1286,6 @@ fn perform_reload(
     if mode == ReloadMode::Full {
         // Clear only user-spawned entities (marked with HotReloadable)
         // Preserve Bevy's internal entities (window, renderer, etc. from plugins)
-        use bevy::ecs::{entity::Entity, query::With};
 
         // Collect ALL entities with HotReloadable marker
         // We need to collect all at once before despawning to avoid iterator invalidation
@@ -1342,8 +1341,6 @@ fn perform_reload(
                 Vec<Py<PyAny>>,
                 Vec<String>,
             )> {
-                use crate::app::app::PyApp;
-
                 // Create a temporary app in reload mode (skips plugins, stores systems/resources)
                 let temp_app = PyApp::create_reload_temp(new_generation);
                 let temp_app_py = Py::new(py, temp_app)?;
@@ -1419,7 +1416,6 @@ fn perform_reload(
 
             // Perform full cleanup that was skipped earlier
             {
-                use bevy::ecs::{entity::Entity, query::With};
                 let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
                 let all_hotreloadable: Vec<Entity> = query.iter(world).collect();
 
@@ -1518,8 +1514,6 @@ fn perform_reload(
     // For Partial reload: skip resource insertion (keep existing resources)
     if mode == ReloadMode::Full {
         Python::attach(|py| -> PyResult<()> {
-            use crate::ecs::world::PyWorld;
-
             PyWorld::with_temporary(world, py, |py_world| {
                 for resource in pending_resources {
                     let resource_bound = resource.into_bound(py);
@@ -1537,8 +1531,6 @@ fn perform_reload(
     // (used by reloaded systems' MessageReader[T]) resolve to the same slot.
     if !pending_messages.is_empty() {
         Python::attach(|py| -> PyResult<()> {
-            use crate::ecs::messages::MessageRegistry;
-
             for msg_type in &pending_messages {
                 let bound = msg_type.bind(py);
                 let type_ptr = bound.as_type_ptr();
@@ -1581,8 +1573,6 @@ fn perform_reload(
     // that observers should catch.
     if mode == ReloadMode::Full && !pending_observers.is_empty() {
         Python::attach(|py| -> PyResult<()> {
-            use crate::ecs::observer_registry::ObserverRegistry;
-
             // Clear old observers and collect their entity IDs for despawning
             if let Some(mut registry) = world.get_resource_mut::<ObserverRegistry>() {
                 let old_entities = registry.clear_all();
@@ -1675,7 +1665,6 @@ fn perform_reload(
         // Ensure Last schedule exists before trying to add systems to it
         // This is needed because ScheduleRunnerPlugin doesn't create the Last schedule
         if stage == PyStage::Last {
-            use bevy::ecs::schedule::{Schedule, ScheduleLabel, Schedules};
             let label = Last.intern();
             let mut schedules = world.resource_mut::<Schedules>();
             if !schedules.contains(label) {
@@ -1869,8 +1858,7 @@ fn perform_reload(
             }
 
             // Snapshot entities before Startup so we can clean up on failure
-            let pre_startup_entities: std::collections::HashSet<bevy::ecs::entity::Entity> = {
-                use bevy::ecs::{entity::Entity, query::With};
+            let pre_startup_entities: std::collections::HashSet<Entity> = {
                 let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
                 query.iter(world).collect()
             };
@@ -1900,7 +1888,6 @@ fn perform_reload(
 
                 // Clean up entities created during partial Startup execution
                 {
-                    use bevy::ecs::{entity::Entity, query::With};
                     let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
                     let post_entities: Vec<Entity> = query.iter(world).collect();
                     let mut cleaned = 0;
@@ -2106,12 +2093,6 @@ struct HotReloadErrorText;
 /// System that spawns the hot reload overlay UI entity
 /// Called immediately when hot reload is enabled
 fn spawn_hot_reload_overlay_system(world: &mut World) {
-    use bevy::{
-        color::Color,
-        prelude::{ImageNode, TextColor, TextFont},
-        ui::{Node, PositionType, Val},
-    };
-
     let verbose = is_verbose();
     if verbose {
         eprintln!("🎨 [Hot Reload Overlay] Spawning overlay...");
@@ -2263,7 +2244,6 @@ fn update_system_stats(world: &mut bevy::ecs::world::World) {
             monitor.system.refresh_cpu_all();
 
             // Refresh process info with explicit CPU tracking enabled
-            use sysinfo::ProcessRefreshKind;
             monitor.system.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::Some(&[pid]),
                 false,
@@ -2291,15 +2271,6 @@ fn update_system_stats(world: &mut bevy::ecs::world::World) {
         stats.entity_count = world.entities().len() as usize;
 
         // Update asset counts by type (O(1) per type)
-        use bevy::{
-            animation::{AnimationClip, graph::AnimationGraph},
-            asset::Assets,
-            image::{Image, TextureAtlasLayout},
-            mesh::Mesh,
-            pbr::{StandardMaterial, wireframe::WireframeMaterial},
-            scene::Scene,
-        };
-
         stats.asset_counts.clear();
 
         if let Some(assets) = world.get_resource::<Assets<Mesh>>() {
@@ -2770,7 +2741,6 @@ pub fn add_hot_reload_system(
     // Initial process stats - only if we have a valid PID
     let (initial_memory_mb, initial_cpu) = if let Some(pid) = process_pid {
         // Initial process refresh with explicit CPU tracking (establishes baseline for CPU calculation)
-        use sysinfo::ProcessRefreshKind;
         system.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::Some(&[pid]),
             false,
@@ -2901,11 +2871,6 @@ pub fn add_hot_reload_system(
     // Insert the Python-accessible hot reload control resource
     // This allows Python systems to request reloads (e.g., on F5 press)
     Python::attach(|py| {
-        use bevy::ecs::component::ComponentId;
-        use pyo3::types::PyType;
-
-        use crate::ecs::resource_type::{PyResourceStorage, ResourceRegistry};
-
         let control = PyHotReloadControl::new(state.clone());
         let py_control = match Py::new(py, control) {
             Ok(c) => c,

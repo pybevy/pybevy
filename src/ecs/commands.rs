@@ -1,6 +1,7 @@
 use bevy::ecs::{
     entity::Entity, hierarchy::ChildOf, ptr::OwningPtr, system::Commands, world::World,
 };
+use pybevy_core::registry::global_registry;
 use pyo3::{
     exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
@@ -20,7 +21,9 @@ use crate::{
     app::hot_reload::HotReloadable,
     ecs::{
         batch_spawn::SpawnBatchCommand,
+        component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
         component_type::ComponentRegistry,
+        component_wrapper::*,
         dynamic_system::execute_system_func,
         observer::{BundleFilter, PyEvent, PyOn},
         observer_registry::ObserverRegistry,
@@ -279,8 +282,6 @@ fn insert_components_to_entity(
             // Gamepad, AudioSink, SpatialAudioSink now handled via bridge (no_insert returns error)
             PyComponentType::Dynamic(type_ptr) => {
                 // Dynamic component - use bridge for insertion
-                use pybevy_core::registry::global_registry;
-
                 // Get the bridge for this type
                 let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
                     PyRuntimeError::new_err("Dynamic component type not registered")
@@ -317,13 +318,6 @@ fn insert_components_to_entity(
                 }
             }
             PyComponentType::Custom(raw_type_ptr) => {
-                use crate::ecs::{
-                    component_layout::{
-                        ComponentLayout, ComponentStorageType, serialize_to_wrapper,
-                    },
-                    component_wrapper::*,
-                };
-
                 // Custom component insertion - needs different handling for Commands vs World
                 let py_obj = component.clone().unbind();
 
@@ -584,8 +578,6 @@ pub(crate) fn set_parent_helper(
     child_id: Entity,
     parent_id: Entity,
 ) -> PyResult<()> {
-    use bevy::ecs::hierarchy::ChildOf;
-
     if commands.is_world {
         commands
             .world_mut()?
@@ -680,8 +672,6 @@ fn remove_components_from_entity(
             // Children uses dynamic dispatch from pybevy_core
             PyComponentType::Dynamic(type_ptr) => {
                 // Dynamic component removal - use bridge registry to get ComponentId
-                use pybevy_core::registry::global_registry;
-
                 // Check if this is an auto-managed component that can't be removed
                 if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) {
                     if bridge.name() == "Children" {

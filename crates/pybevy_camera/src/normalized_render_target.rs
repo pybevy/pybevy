@@ -1,4 +1,10 @@
-use bevy::camera::NormalizedRenderTarget;
+use std::hash::{Hash, Hasher};
+
+use bevy::{
+    camera::{ImageRenderTarget, ManualTextureViewHandle, NormalizedRenderTarget},
+    ecs::entity::ContainsEntity,
+    image::Image,
+};
 use pybevy_core::{PyEntity, PyHandle};
 use pyo3::prelude::*;
 
@@ -11,8 +17,6 @@ impl PyNormalizedRenderTarget {
     #[staticmethod]
     #[pyo3(signature = (handle, scale_factor = 1.0))]
     pub fn image(handle: &PyHandle, scale_factor: f32) -> PyResult<Self> {
-        use bevy::{camera::ImageRenderTarget, image::Image};
-
         let image_handle = bevy::asset::Handle::<Image>::try_from(handle)?;
         Ok(PyNormalizedRenderTarget(NormalizedRenderTarget::Image(
             ImageRenderTarget {
@@ -24,7 +28,6 @@ impl PyNormalizedRenderTarget {
 
     #[staticmethod]
     pub fn texture_view(id: u32) -> Self {
-        use bevy::camera::ManualTextureViewHandle;
         PyNormalizedRenderTarget(NormalizedRenderTarget::TextureView(
             ManualTextureViewHandle(id),
         ))
@@ -53,10 +56,7 @@ impl PyNormalizedRenderTarget {
 
     pub fn window_entity(&self) -> Option<PyEntity> {
         match &self.0 {
-            NormalizedRenderTarget::Window(window_ref) => {
-                use bevy::ecs::entity::ContainsEntity;
-                Some(window_ref.entity().into())
-            }
+            NormalizedRenderTarget::Window(window_ref) => Some(window_ref.entity().into()),
             _ => None,
         }
     }
@@ -92,7 +92,6 @@ impl PyNormalizedRenderTarget {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.0.hash(&mut hasher);
         hasher.finish()

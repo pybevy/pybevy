@@ -6,6 +6,7 @@ use pyo3::{
 };
 
 use super::{PyChildOf, PyEntity, commands::PyCommands, helpers::validity_guard::ValidityFlag};
+use crate::ecs::observer_registry::ObserverRegistry;
 
 /// Represents a handle to perform deferred operations on an entity.
 /// Operations are queued and applied later when the Commands are flushed.
@@ -36,6 +37,7 @@ unsafe impl Send for PyEntityCommands {}
 unsafe impl Sync for PyEntityCommands {}
 
 impl PyEntityCommands {
+
     pub(crate) fn with_commands(entity: Entity, commands: &PyCommands) -> Self {
         Self {
             id: entity,
@@ -292,8 +294,6 @@ impl PyEntityCommands {
     /// commands.spawn(Player()).observe(on_damage)
     /// ```
     pub fn observe(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
-        use crate::ecs::observer_registry::ObserverRegistry;
-
         // Try to get world access from either Commands or World
         let world_mut = if let Some(commands) = self.get_commands()? {
             // Via Commands (immediate mode only)

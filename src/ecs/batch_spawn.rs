@@ -5,7 +5,7 @@ use pybevy_core::{BatchComponent, registry::global_registry};
 use pyo3::{exceptions::PyValueError, ffi::PyTypeObject, prelude::*, types::PyTuple};
 
 use super::{
-    component_layout::{ComponentStorageType, serialize_to_wrapper},
+    component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
     component_type::{PyComponentType, register_custom_component},
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,
@@ -177,7 +177,6 @@ fn insert_uniform_bulk(
 
                 match storage_type {
                     ComponentStorageType::Wrapper(_) => {
-                        use super::component_layout::ComponentLayout;
                         if let Ok(layout) = ComponentLayout::from_annotations(cls) {
                             serialize_to_wrapper(component, &layout).ok()
                         } else {

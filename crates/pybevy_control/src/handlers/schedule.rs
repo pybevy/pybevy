@@ -4,8 +4,12 @@ use std::{
 };
 
 use bevy::{
-    ecs::world::World,
-    prelude::Resource,
+    ecs::{
+        entity::Entity,
+        hierarchy::{ChildOf, Children},
+        world::World,
+    },
+    prelude::{GlobalTransform, Resource, Transform, Without},
     time::{Time, Virtual},
 };
 use serde::{Deserialize, Serialize};
@@ -13,13 +17,18 @@ use tokio::sync::oneshot;
 
 use crate::{
     bridge::{
-        ControlError, ControlOperation, DebugCameraRequest, EntityRef, PendingScreenshot,
-        PendingScreenshots,
+        ControlError, ControlOperation, DebugCameraRequest, EntityRef, PendingReloadResponses,
+        PendingScreenshot, PendingScreenshots,
     },
-    handlers,
+    handlers::{
+        self,
+        reload::{PendingReloadAndCapture, PendingReloadAndCaptures, ReloadAndCaptureState},
+        screenshot::{ActiveTimeline, PendingTimelines, setup_debug_camera},
+        turnaround::{
+            ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints,
+        },
+    },
 };
-
-// ── Request types ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct ScheduleRequest {
@@ -45,8 +54,6 @@ pub struct ScheduleAction {
     pub skip_if_error: Option<String>,
 }
 
-// ── Result types ─────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionResult {
     pub index: usize,
@@ -61,8 +68,6 @@ pub struct ActionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
-
-// ── State machine ────────────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq)]
 enum ScheduleState {
@@ -91,8 +96,6 @@ pub struct ActiveSchedules {
     pub schedules: Vec<ActiveSchedule>,
     pub next_id: u64,
 }
-
-// ── Async shared state ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SharedScheduleState {
@@ -150,9 +153,6 @@ impl SharedScheduleRegistry {
 
 #[derive(Resource, Clone)]
 pub struct SharedScheduleRegistryResource(pub SharedScheduleRegistry);
-
-// ── Non-schedulable tools ───────────────────────────────────────────────
-
 const NON_SCHEDULABLE_TOOLS: &[&str] = &[
     "schedule_actions",
     "get_schedule_result",
@@ -196,9 +196,7 @@ fn is_transform_mutation_tool(name: &str) -> bool {
 /// Updates GlobalTransform for root entities first, then recursively for children.
 /// This ensures spatial queries see up-to-date world positions within the same frame.
 fn propagate_transforms(world: &mut World) {
-    use bevy::prelude::*;
-
-    // Phase 1: Update root entities (no ChildOf)
+    // Update root entities (no ChildOf)
     let mut root_query = world.query_filtered::<(Entity, &Transform), Without<ChildOf>>();
     let roots: Vec<(Entity, GlobalTransform)> = root_query
         .iter(world)
@@ -210,7 +208,7 @@ fn propagate_transforms(world: &mut World) {
         }
     }
 
-    // Phase 2: Propagate to children (breadth-first)
+    // Propagate to children (breadth-first)
     let mut queue: Vec<(Entity, GlobalTransform)> = roots;
     while !queue.is_empty() {
         let mut next_queue = Vec::new();
@@ -218,7 +216,7 @@ fn propagate_transforms(world: &mut World) {
             // Get children of this entity
             let child_entities: Vec<Entity> =
                 if let Some(children) = world.get::<Children>(*parent_entity) {
-                    children.iter().collect()
+                    children.iter().copied().collect()
                 } else {
                     continue;
                 };
@@ -235,9 +233,6 @@ fn propagate_transforms(world: &mut World) {
         queue = next_queue;
     }
 }
-
-// ── Validation ──────────────────────────────────────────────────────────
-
 pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
     if request.actions.is_empty() {
         return Err("actions must not be empty".to_string());
@@ -317,9 +312,6 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
 
     Ok(())
 }
-
-// ── tool_to_operation ───────────────────────────────────────────────────
-
 pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<ControlOperation, String> {
     let obj = args.as_object();
     let get_str = |key: &str| -> String {
@@ -665,9 +657,6 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
         _ => Err(format!("unknown tool: '{}'", tool)),
     }
 }
-
-// ── resolve_at ──────────────────────────────────────────────────────────
-
 fn resolve_at(action: &ScheduleAction) -> f64 {
     action.at.unwrap_or(0.0)
 }
@@ -675,9 +664,6 @@ fn resolve_at(action: &ScheduleAction) -> f64 {
 fn resolve_at_frame(action: &ScheduleAction) -> Option<u64> {
     action.at_frame
 }
-
-// ── Schedule creation ───────────────────────────────────────────────────
-
 impl ActiveSchedule {
     pub fn new_sync(
         schedule_id: String,
@@ -723,9 +709,6 @@ impl ActiveSchedule {
         }
     }
 }
-
-// ── Process system ──────────────────────────────────────────────────────
-
 pub fn process_active_schedules(world: &mut World) {
     let mut schedules = world
         .remove_resource::<ActiveSchedules>()
@@ -1142,9 +1125,6 @@ fn process_single_schedule(world: &mut World, schedule: &mut ActiveSchedule) {
         }
     }
 }
-
-// ── Deferred action setup ───────────────────────────────────────────────
-
 fn setup_deferred_action(
     world: &mut World,
     tool: &str,
@@ -1222,7 +1202,6 @@ fn setup_deferred_action(
                 .map(|e| e.timestamp_secs)
                 .unwrap_or(0.0);
 
-            use crate::bridge::PendingReloadResponses;
             let mut pending = world.get_resource_or_insert_with(PendingReloadResponses::default);
             pending.pending.push(crate::bridge::PendingReloadResponse {
                 response_tx: forward_tx,
@@ -1266,9 +1245,6 @@ fn setup_deferred_action(
                 .map(|e| e.timestamp_secs)
                 .unwrap_or(0.0);
 
-            use crate::handlers::reload::{
-                PendingReloadAndCapture, PendingReloadAndCaptures, ReloadAndCaptureState,
-            };
             let mut pending = world.get_resource_or_insert_with(PendingReloadAndCaptures::default);
             pending.pending.push(PendingReloadAndCapture {
                 response_tx: forward_tx,
@@ -1305,10 +1281,6 @@ fn setup_deferred_action(
                     *look_at,
                 ),
                 _ => unreachable!(),
-            };
-
-            use crate::handlers::screenshot::{
-                ActiveTimeline, PendingTimelines, setup_debug_camera,
             };
 
             let mut schedule_frames =
@@ -1376,10 +1348,6 @@ fn setup_deferred_action(
                     *hide_ui,
                 ),
                 _ => unreachable!(),
-            };
-
-            use crate::handlers::turnaround::{
-                ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints,
             };
 
             let vc = view_count.unwrap_or(6);
@@ -1522,9 +1490,6 @@ fn setup_deferred_action(
         _ => Err(format!("Cannot defer tool '{}'", tool)),
     }
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
 fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
     for idx in from_index..schedule.actions.len() {
         let action = &schedule.actions[idx];
@@ -1580,5 +1545,3 @@ fn finalize_schedule(schedule: ActiveSchedule) {
         }
     }
 }
-
-// ── Tests ───────────────────────────────────────────────────────────────
