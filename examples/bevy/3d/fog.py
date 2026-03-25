@@ -7,10 +7,7 @@ Demonstrates:
 - Fog color and density settings
 """
 
-from pybevy.input import ButtonInput, KeyCode
-from pybevy.pbr import DistanceFog, FogFalloff
 from pybevy.prelude import *
-from pybevy.text import Text2d, TextColor, TextFont
 
 
 @resource

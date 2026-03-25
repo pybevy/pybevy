@@ -27,10 +27,6 @@ RUST_BINARY = "memory_baseline"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-# ---------------------------------------------------------------------------
-# Rust baseline measurement (subprocess)
-# ---------------------------------------------------------------------------
-
 def _measure_rust(scenario: str, entity_count: int) -> dict[str, float]:
     """Run the Rust memory_baseline example and parse JSON output."""
     binary = PROJECT_ROOT / "target" / "release" / "examples" / RUST_BINARY
@@ -49,10 +45,6 @@ def _measure_rust(scenario: str, entity_count: int) -> dict[str, float]:
         raise RuntimeError(f"Rust binary failed:\n{result.stderr[-500:]}")
     return json.loads(result.stdout.strip())  # type: ignore[no-any-return]
 
-
-# ---------------------------------------------------------------------------
-# PyBevy measurement (subprocess with inline script)
-# ---------------------------------------------------------------------------
 
 _PYBEVY_SCRIPT = textwrap.dedent("""\
 import gc, json, os, sys
@@ -164,10 +156,6 @@ def _measure_pybevy(scenario: str, entity_count: int) -> dict[str, float]:
     raise RuntimeError(f"No JSON output for {scenario}:\n{result.stdout[-500:]}")
 
 
-# ---------------------------------------------------------------------------
-# Scenario definitions
-# ---------------------------------------------------------------------------
-
 # (rust_scenario, pybevy_scenario, label, description)
 COMPARISONS: list[tuple[str, str, str, str]] = [
     ("transform", "transform",
@@ -189,11 +177,6 @@ COMPARISONS: list[tuple[str, str, str, str]] = [
      "Transform + Marker",
      "Transform + zero-size marker"),
 ]
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 class TestMemoryComparison:

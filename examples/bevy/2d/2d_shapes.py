@@ -10,16 +10,7 @@ Controls:
 - Close window to exit
 """
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.assets import Assets
-from pybevy.camera import Camera2d
-from pybevy.color import Color
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands
-from pybevy.math import Circle, Rectangle, Vec3
-from pybevy.mesh import Mesh, Mesh2d, MeshMaterial2d
-from pybevy.prelude import ResMut, Startup, Transform
-from pybevy.sprite import ColorMaterial
+from pybevy.prelude import *
 
 
 def setup(

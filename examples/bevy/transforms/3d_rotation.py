@@ -11,12 +11,7 @@ The Rotatable component stores rotation speed in rotations per second.
 import math
 from dataclasses import dataclass
 
-from pybevy.assets import Assets
-from pybevy.ecs import Commands, Query, Res, ResMut
-from pybevy.math import Cuboid, Vec3
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
 
 
 @component

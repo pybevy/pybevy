@@ -11,7 +11,6 @@ Note: Gesture events (pinch, rotation, double-tap) are not yet implemented in Py
 
 from pybevy.input import MouseButtonInput, MouseMotion, MouseWheel
 from pybevy.prelude import *
-from pybevy.window import CursorMoved
 
 
 def print_mouse_events_system(

@@ -6,8 +6,6 @@ A minimal 2D sprite example showing:
 - Rendering with Camera2d
 """
 
-from pybevy.assets import AssetServer
-from pybevy.ecs import Commands, Res
 from pybevy.prelude import *
 
 

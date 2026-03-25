@@ -12,9 +12,7 @@ Demonstrates:
 - Using Timer for recurring actions
 """
 
-from pybevy.decorators import plugin
 from pybevy.prelude import *
-from pybevy.time import Time
 
 
 @plugin

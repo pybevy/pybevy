@@ -8,7 +8,6 @@ Demonstrates:
 - Transform propagation in hierarchies
 """
 
-from pybevy.ecs import ChildOf, Children
 from pybevy.prelude import *
 
 

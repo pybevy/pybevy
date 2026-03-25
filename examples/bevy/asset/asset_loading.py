@@ -8,7 +8,6 @@ Demonstrates:
 - Asset handles and dependencies
 """
 
-from pybevy.ecs import Res, ResMut
 from pybevy.prelude import *
 
 

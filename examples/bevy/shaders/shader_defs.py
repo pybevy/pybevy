@@ -27,7 +27,6 @@ PyBevy:
         is_red: bool = False  # automatically becomes #ifdef IS_RED
 """
 
-from pybevy.color import LinearRgba
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 

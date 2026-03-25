@@ -11,13 +11,7 @@ Demonstrates:
 
 import math
 
-from pybevy.assets import Assets, AssetServer
-from pybevy.ecs import Commands, Res, ResMut
-from pybevy.math import Quat, Rectangle, Vec3
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
-from pybevy.render import AlphaMode
 
 
 def setup(

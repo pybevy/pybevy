@@ -17,11 +17,6 @@ class Marker(Component):
     pass
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _run_batch(setup_fn: Callable[..., None]) -> None:
     app = App()
     app.add_systems(Startup, setup_fn)
@@ -91,11 +86,6 @@ def _spawn_batch_with_uniforms(entity_count: int) -> None:
     _run_batch(setup)
 
 
-# ---------------------------------------------------------------------------
-# Batch vs normal spawn comparison
-# ---------------------------------------------------------------------------
-
-
 def test_batch_vs_normal_100_batch(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_batch_positions, 100)
 
@@ -120,11 +110,6 @@ def test_batch_vs_normal_10000_normal(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_normal, 10000)
 
 
-# ---------------------------------------------------------------------------
-# Positions-only vs full transform (measures per-array overhead)
-# ---------------------------------------------------------------------------
-
-
 def test_positions_only_10000(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_batch_positions, 10000)
 
@@ -139,11 +124,6 @@ def test_positions_only_100000(benchmark: BenchmarkFixture) -> None:
 
 def test_full_transform_100000(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_batch_full, 100000)
-
-
-# ---------------------------------------------------------------------------
-# Visibility batch benchmarks
-# ---------------------------------------------------------------------------
 
 
 def test_with_visibility_10000(benchmark: BenchmarkFixture) -> None:
@@ -162,22 +142,12 @@ def test_transform_only_100000(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_batch_positions, 100000)
 
 
-# ---------------------------------------------------------------------------
-# Uniform component overhead
-# ---------------------------------------------------------------------------
-
-
 def test_with_uniforms_10000(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_batch_with_uniforms, 10000)
 
 
 def test_with_uniforms_100000(benchmark: BenchmarkFixture) -> None:
     benchmark(_spawn_batch_with_uniforms, 100000)
-
-
-# ---------------------------------------------------------------------------
-# World vs deferred Commands batch spawn
-# ---------------------------------------------------------------------------
 
 
 def _spawn_batch_commands(entity_count: int) -> None:

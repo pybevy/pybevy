@@ -7,7 +7,6 @@ Simple demonstration of using View API to animate a PointLight's intensity.
 import math
 
 from pybevy.prelude import *
-from pybevy.time import Time
 
 
 @component

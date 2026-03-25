@@ -20,7 +20,6 @@ PyBevy:
         texture: Image  # automatically gets bindings 101 (texture) / 102 (sampler)
 """
 
-from pybevy.image import Image
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 

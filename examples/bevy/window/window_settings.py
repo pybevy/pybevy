@@ -9,12 +9,8 @@ Demonstrates:
 - WindowPlugin.set() pattern for configuration
 """
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.camera import Camera2d
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands
-from pybevy.prelude import Startup
-from pybevy.window import Window, WindowPlugin, WindowResolution
+from pybevy.prelude import *
+from pybevy.window import WindowResolution
 
 
 def setup(commands: Commands) -> None:

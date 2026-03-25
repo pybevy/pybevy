@@ -9,16 +9,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.assets import Assets, Handle
-from pybevy.camera import Camera2d
-from pybevy.color import Color
-from pybevy.decorators import entrypoint, resource
-from pybevy.ecs import Commands, Local, Res, ResMut, Resource
-from pybevy.image import Image
-from pybevy.math import UVec3, Vec2
-from pybevy.prelude import FixedUpdate, Startup
-from pybevy.sprite import Sprite
+from pybevy.prelude import *
 from pybevy.wgpu import Extent3d, TextureFormat
 
 IMAGE_WIDTH = 256

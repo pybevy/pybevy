@@ -13,9 +13,7 @@ modifying material properties in Update systems using Assets.get_mut().
 
 import math
 
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
 
 
 @component

@@ -14,7 +14,6 @@ For UI text rendering (screen space), see the UI examples.
 import math
 
 from pybevy.prelude import *
-from pybevy.text import Justify, Text2d, TextColor, TextFont, TextLayout
 
 
 @component

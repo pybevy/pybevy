@@ -23,12 +23,8 @@ from pybevy.animation import (
     AnimationNodeIndex,
     AnimationPlayer,
 )
-from pybevy.ecs import Children
-from pybevy.gltf import GltfAssetLabel
-from pybevy.light import DirectionalLight
-from pybevy.math import EulerRot
 from pybevy.prelude import *
-from pybevy.scene import Scene, SceneInstanceReady
+from pybevy.scene import SceneInstanceReady
 
 
 @component

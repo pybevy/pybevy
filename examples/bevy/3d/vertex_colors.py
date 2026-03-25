@@ -7,18 +7,7 @@ multi-colored gradient effect.
 
 import numpy as np
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.assets import Assets
-from pybevy.camera import Camera3d
-from pybevy.color import Color
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands, ResMut
-from pybevy.light import PointLight
-from pybevy.math import Cuboid, Plane3d, Vec3
-from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
-from pybevy.prelude import Startup
-from pybevy.pbr import StandardMaterial
-from pybevy.transform import Transform
+from pybevy.prelude import *
 
 
 def setup(

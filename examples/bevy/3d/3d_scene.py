@@ -9,12 +9,7 @@ A minimal 3D example demonstrating:
 
 import math
 
-from pybevy.assets import Assets
-from pybevy.ecs import Commands, ResMut
-from pybevy.math import Circle, Cuboid, Quat, Vec3
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
 
 
 def setup(

@@ -2,7 +2,6 @@
 
 import math
 
-from pybevy.decorators import component, entrypoint
 from pybevy.prelude import *
 
 

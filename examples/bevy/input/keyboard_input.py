@@ -6,7 +6,6 @@ Demonstrates:
 - KeyCode for key location-based input
 """
 
-from pybevy.input import ButtonInput, KeyCode
 from pybevy.prelude import *
 
 

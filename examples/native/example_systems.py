@@ -10,16 +10,9 @@ import math
 
 # Import the Rust-defined Health component (injected by register_component)
 from pybevy._pybevy import Health  # type: ignore[import-not-found]
-from pybevy.assets import Assets
-from pybevy.decorators import component
-from pybevy.ecs import Commands, ResMut, With
-from pybevy.math import Circle, Cuboid, Quat, Vec3
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
-from pybevy.time import Time
 
-# --- Tweak this while the app is running, then press F5! ---
+# Tweak this while the app is running, then press F5!
 ROTATION_SPEED = 1.0
 
 

@@ -8,12 +8,7 @@ Demonstrates:
 - Bright colors in dark environment for bloom visibility
 """
 
-from pybevy.camera import Bloom, BloomCompositeMode, Tonemapping
-from pybevy.input import ButtonInput, KeyCode
-from pybevy.math import Circle
-from pybevy.mesh import Mesh2d, MeshMaterial2d
 from pybevy.prelude import *
-from pybevy.sprite import ColorMaterial
 
 
 @component

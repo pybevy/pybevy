@@ -38,7 +38,7 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 
-from pybevy.app import AppExit, ScheduleRunnerPlugin, chain
+from pybevy.app import ScheduleRunnerPlugin
 from pybevy.prelude import *
 
 

@@ -32,8 +32,6 @@ use bevy::{
     shader::{Shader, ShaderRef},
 };
 
-// ── Global shader handle registry ────────────────────────────────────
-
 static SHADER_REGISTRY: OnceLock<RwLock<HashMap<u64, Handle<Shader>>>> = OnceLock::new();
 static SHADER_DEF_REGISTRY: OnceLock<RwLock<HashMap<u64, Vec<String>>>> = OnceLock::new();
 /// Tracks which bindings WGSL sources have been injected (by hash of content).
@@ -97,7 +95,7 @@ pub fn clear_shader_registries() {
     }
 }
 
-// ── Shader params uniform buffer ─────────────────────────────────────
+// Shader params uniform buffer
 //
 // 64 × vec4 = 256 floats = 1024 bytes.
 // Python's @material decorator packs typed fields into this buffer and
@@ -117,8 +115,6 @@ impl Default for ShaderParams {
         }
     }
 }
-
-// ── Pipeline specialization key ──────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ShaderMaterialKey {
@@ -144,8 +140,6 @@ impl From<&ShaderMaterialExtension> for ShaderMaterialKey {
         }
     }
 }
-
-// ── Material extension ───────────────────────────────────────────────
 
 /// Maximum number of texture slots available to @material classes.
 pub const MAX_TEXTURE_SLOTS: usize = 4;
@@ -249,7 +243,7 @@ impl MaterialExtension for ShaderMaterialExtension {
 /// The complete material type: StandardMaterial + ShaderMaterialExtension.
 pub type ShaderMaterial = ExtendedMaterial<StandardMaterial, ShaderMaterialExtension>;
 
-// ── Shader sync system ───────────────────────────────────────────────
+// Shader sync system
 //
 // Runs in `Last` schedule — after all user Update systems, before Render
 // extraction. Scans all ShaderMaterial assets for shader paths and loads

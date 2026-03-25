@@ -9,21 +9,10 @@ Demonstrates:
 Usage with MCP: run_scene(path=..., headless=True) then capture_screenshot().
 """
 
-from pybevy.app import App, DefaultPlugins, ScheduleRunnerPlugin
-from pybevy.assets import Assets
-from pybevy.camera import Camera, Camera3d, RenderTarget
-from pybevy.color import Color
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands, Mut, Query, Res, ResMut, With
-from pybevy.image import Image
-from pybevy.light import PointLight
-from pybevy.math import Cuboid, Quat, Vec3
-from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
-from pybevy.pbr import StandardMaterial
-from pybevy.prelude import Startup, Update
-from pybevy.time import Time
-from pybevy.transform import Transform
-from pybevy.window import ExitCondition, WindowPlugin
+from pybevy.app import ScheduleRunnerPlugin
+from pybevy.camera import RenderTarget
+from pybevy.prelude import *
+from pybevy.window import ExitCondition
 from pybevy.winit import WinitPlugin
 
 

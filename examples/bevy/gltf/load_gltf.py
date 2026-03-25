@@ -6,15 +6,8 @@ This example demonstrates:
 - Setting up lighting and camera for 3D rendering
 """
 
-from pybevy.app import App, DefaultPlugins, Startup
-from pybevy.assets import AssetServer
-from pybevy.camera import Camera3d
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands, Res
-from pybevy.light import DirectionalLight, DirectionalLightShadowMap
-from pybevy.math import Vec3
-from pybevy.scene import Scene, SceneRoot
-from pybevy.transform import Transform
+from pybevy.light import DirectionalLightShadowMap
+from pybevy.prelude import *
 
 
 @entrypoint

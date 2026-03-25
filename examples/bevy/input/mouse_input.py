@@ -10,7 +10,7 @@ Note: PyBevy uses MessageReader[MouseWheel] for scroll events instead of
 AccumulatedMouseScroll resource (which doesn't exist yet).
 """
 
-from pybevy.input import AccumulatedMouseMotion, MouseButton, MouseInput, MouseWheel
+from pybevy.input import AccumulatedMouseMotion, MouseInput, MouseWheel
 from pybevy.prelude import *
 
 

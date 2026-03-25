@@ -7,11 +7,8 @@ per second regardless of the actual frame rate.
 
 from dataclasses import dataclass
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Local, Res
-from pybevy.prelude import FixedUpdate, Update
-from pybevy.time import Time, TimeFixed
+from pybevy.prelude import *
+from pybevy.time import TimeFixed
 
 
 @dataclass

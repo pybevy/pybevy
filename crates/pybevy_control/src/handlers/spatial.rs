@@ -253,8 +253,6 @@ pub fn entity_label(world: &World, entity: Entity) -> String {
     base
 }
 
-// ── Tool handlers ──
-
 /// Pairwise spatial query: distance, direction, AABB overlap between two entities.
 pub fn query_spatial(
     world: &mut World,

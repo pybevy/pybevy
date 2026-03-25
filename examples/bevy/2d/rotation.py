@@ -16,23 +16,7 @@ in Rust Bevy but not in PyBevy yet.
 import math
 from dataclasses import dataclass
 
-from pybevy import component
-from pybevy.app import App
-from pybevy.assets import AssetServer
-from pybevy.ecs import Commands, Component, Mut, Query, Single, With, Without
-from pybevy.input import ButtonInput, KeyCode
-from pybevy.math import Quat, Vec2, Vec3
-from pybevy.prelude import (
-    Camera2d,
-    DefaultPlugins,
-    FixedUpdate,
-    Res,
-    Sprite,
-    Startup,
-    Time,
-    Transform,
-    entrypoint,
-)
+from pybevy.prelude import *
 
 BOUNDS = Vec2(1200.0, 640.0)
 

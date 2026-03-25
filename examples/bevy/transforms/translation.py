@@ -9,12 +9,7 @@ Demonstrates:
 The cube moves back and forth along its local X axis.
 """
 
-from pybevy.assets import Assets
-from pybevy.ecs import Commands, Query, Res, ResMut
-from pybevy.math import Cuboid, Vec3
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
 
 
 @component

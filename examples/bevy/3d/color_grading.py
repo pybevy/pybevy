@@ -6,8 +6,6 @@ and demonstrates system chaining with .chain().
 
 import math
 
-from pybevy.app import chain
-from pybevy.decorators import entrypoint
 from pybevy.prelude import *
 
 

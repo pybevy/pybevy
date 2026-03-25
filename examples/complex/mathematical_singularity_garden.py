@@ -23,7 +23,6 @@ except ImportError:
     exit(1)
 
 from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
-from pybevy.ecs import With
 from pybevy.prelude import *
 
 if TYPE_CHECKING:
@@ -36,10 +35,6 @@ PARTICLE_SPACING = 2.0
 MORPH_SPEED = 0.5
 COLOR_CYCLE_SPEED = 1.0
 
-
-# ============================================================================
-# ADVANCED MATHEMATICAL KERNELS - Numba JIT Compiled
-# ============================================================================
 
 
 @numba.jit(nopython=True, parallel=True)
@@ -434,10 +429,6 @@ def compute_color_field(
             b_out[i] = x_hsv + m
 
 
-# ============================================================================
-# COMPONENTS
-# ============================================================================
-
 
 @component
 class MathParticle(Component):
@@ -455,18 +446,12 @@ class ParticleColor(Component):
     b: float = 0.5
 
 
-# ============================================================================
-# SETUP
-# ============================================================================
-
 
 def setup_scene(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Set up the mathematical singularity garden."""
-
     # Create materials with different base colors
     material_handles = []
     for _ in range(10):
@@ -558,22 +543,20 @@ def setup_scene(
     )
 
 
-# ============================================================================
-# ANIMATION SYSTEM
-# ============================================================================
 
-
-_frame_count = [0]
-_current_mode = [0]
+class AnimationState:
+    def __init__(self) -> None:
+        self.frame_count: int = 0
+        self.current_mode: int = 0
 
 
 def mathematical_animation_system(
     view: View[Mut[Transform], With[MathParticle]],
     time: Res[Time],
+    state: Local[AnimationState],
 ) -> None:
-    """Animate particles through mathematical transformations."""
     t = time.elapsed_secs()
-    _frame_count[0] += 1
+    state.frame_count += 1
 
     # Cycle through different mathematical visualizations
     mode_duration = 12.0  # Seconds per mode
@@ -585,8 +568,8 @@ def mathematical_animation_system(
     morph_factor = mode_time / transition_time if mode_time < transition_time else 1.0
 
     # Announce mode changes
-    if mode != _current_mode[0]:
-        _current_mode[0] = mode
+    if mode != state.current_mode:
+        state.current_mode = mode
         modes = [
             "Klein Bottle Manifold",
             "Quantum Interference Patterns",
@@ -691,24 +674,23 @@ def mathematical_animation_system(
             )
 
 
-def performance_monitor_system(time: Res[Time]) -> None:
-    """Monitor and report performance metrics."""
-    if _frame_count[0] % 300 == 0 and _frame_count[0] > 0:
+class FPSCounter:
+    def __init__(self) -> None:
+        self.frame_count: int = 0
+
+
+def performance_monitor_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
+    counter.frame_count += 1
+    if counter.frame_count % 300 == 0 and counter.frame_count > 0:
         elapsed = time.elapsed_secs()
-        fps = _frame_count[0] / elapsed
+        fps = counter.frame_count / elapsed
         particles = GRID_SIZE * GRID_SIZE
 
         print(f"FPS: {fps:.1f} | Particles: {particles:,}")
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
-
-
 @entrypoint
 def main(app: App) -> App:
-    """Create the mathematical singularity garden."""
     return (
         app.add_plugins(DefaultPlugins)
         .add_plugins(OrbitCameraPlugin)

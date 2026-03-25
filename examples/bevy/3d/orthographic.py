@@ -8,7 +8,6 @@ This example demonstrates:
 
 from __future__ import annotations
 
-from pybevy.decorators import entrypoint
 from pybevy.prelude import *
 
 

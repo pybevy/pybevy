@@ -7,13 +7,11 @@ Demonstrates:
 - Comparison with/without SSAO
 """
 
-from pybevy.input import ButtonInput, KeyCode
 from pybevy.pbr import (
     ScreenSpaceAmbientOcclusion,
     ScreenSpaceAmbientOcclusionQualityLevel,
 )
 from pybevy.prelude import *
-from pybevy.text import Text2d, TextColor, TextFont
 
 
 @component

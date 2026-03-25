@@ -42,24 +42,8 @@ import newton  # type: ignore[import-not-found]
 import numba
 import numpy as np
 
-from pybevy.camera import Bloom
-from pybevy.color import LinearRgba
-from pybevy.light import (
-    FogVolume,
-    GlobalAmbientLight,
-    NotShadowCaster,
-    VolumetricFog,
-    VolumetricLight,
-)
-from pybevy.pbr import DistanceFog, FogFalloff
+from pybevy.light import FogVolume, NotShadowCaster, VolumetricFog, VolumetricLight
 from pybevy.prelude import *
-from pybevy.render import AlphaMode
-from pybevy.text import Justify, TextColor, TextFont, TextLayout
-from pybevy.ui import JustifyContent, Node, Text, Val
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 CUBE_SIZE = 0.25
 WALL_COLS = 40   # width (Z)
@@ -89,10 +73,6 @@ SLOWMO_RAMPUP_DURATION = 3.0  # seconds (real time) to ramp back to full speed a
 STATE_BUILDING = "building"
 STATE_READY = "ready"
 STATE_RUNNING = "running"
-
-# ---------------------------------------------------------------------------
-# Components & Resources
-# ---------------------------------------------------------------------------
 
 
 @component
@@ -201,10 +181,6 @@ class NewtonSim(Resource):
         return (p[0], p[1], p[2])
 
 
-# ---------------------------------------------------------------------------
-# Background model build (avoids blocking the render loop)
-# ---------------------------------------------------------------------------
-
 def _build_newton_model(body_data):
     """Build Newton model on background thread. Returns dict with results."""
     t0 = time.perf_counter()
@@ -248,10 +224,6 @@ def _build_newton_model(body_data):
     print(f"[Newton] build={1e3*(t1-t0):.0f}ms  finalize={1e3*(t2-t1):.0f}ms  solver={1e3*(t3-t2):.0f}ms  warmup={1e3*(t4-t3):.0f}ms  bodies={model.body_count}")
     return {"model": model, "state_0": state_0, "state_1": state_1, "control": control, "solver": solver}
 
-
-# ---------------------------------------------------------------------------
-# Setup system — spawn ECS entities + kick off background Newton build
-# ---------------------------------------------------------------------------
 
 def setup(
     commands: Commands,
@@ -477,10 +449,6 @@ def setup(
     sim.start_rebuild()
 
 
-# ---------------------------------------------------------------------------
-# Numba scatter kernel
-# ---------------------------------------------------------------------------
-
 @numba.njit(parallel=True, fastmath=True)
 def _scatter_poses(translation, rotation, body_ids, poses):
     """Write Newton body poses into ECS Transform arrays."""
@@ -494,10 +462,6 @@ def _scatter_poses(translation, rotation, body_ids, poses):
         rotation.z[i] = poses[idx, 5]
         rotation.w[i] = poses[idx, 6]
 
-
-# ---------------------------------------------------------------------------
-# Update systems
-# ---------------------------------------------------------------------------
 
 def poll_build(
     sim: ResMut[NewtonSim],
@@ -630,10 +594,6 @@ def slowmo_controller(sim: ResMut[NewtonSim]):
             sim.slowmo_phase = "done"
             print("[SlowMo] Full speed.")
 
-
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
 
 @entrypoint
 def main(app: App) -> App:

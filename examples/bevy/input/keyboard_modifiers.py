@@ -9,7 +9,6 @@ Demonstrates:
 This system prints when Ctrl + Shift + A is pressed.
 """
 
-from pybevy.input import ButtonInput, KeyCode
 from pybevy.prelude import *
 
 

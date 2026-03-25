@@ -9,8 +9,6 @@ Demonstrates:
 - Asset handle cloning
 """
 
-from pybevy.assets import AssetServer
-from pybevy.ecs import Commands, Res
 from pybevy.prelude import *
 
 

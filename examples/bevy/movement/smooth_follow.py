@@ -16,7 +16,6 @@ PyBevy Adaptations:
 import math
 import random
 
-from pybevy.ecs import Res, ResMut
 from pybevy.prelude import *
 
 

@@ -1,20 +1,7 @@
-//! Name component for entity identification.
-
 use bevy::ecs::name::Name;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pyo3::prelude::*;
 
-/// Component used to identify an entity with a human-readable name.
-///
-/// Names are not unique - multiple entities can have the same name.
-/// Use Entity for unique identification.
-///
-/// Example:
-///     commands.spawn((Name("Player"), Transform()))
-///
-///     # Query by name
-///     for name in query:
-///         print(f"Entity name: {name}")
 #[pyclass(name = "Name", extends = PyComponent, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyName {
@@ -54,20 +41,17 @@ impl PyName {
         Self::from_owned(Name::new(name))
     }
 
-    /// Get the name as a string.
     #[getter]
     pub fn name(&self) -> PyResult<String> {
         Ok(self.as_ref()?.as_str().to_string())
     }
 
-    /// Set the name.
     #[setter]
     pub fn set_name(&mut self, name: String) -> PyResult<()> {
         self.as_mut()?.set(name);
         Ok(())
     }
 
-    /// Get the name as a string (alias for name property).
     pub fn as_str(&self) -> PyResult<String> {
         self.name()
     }
@@ -82,7 +66,6 @@ impl PyName {
     }
 }
 
-// TryFrom for spawn conversion (Python -> Bevy)
 impl TryFrom<&PyName> for Name {
     type Error = PyErr;
 
@@ -91,7 +74,6 @@ impl TryFrom<&PyName> for Name {
     }
 }
 
-// TryFrom for query extraction (Bevy -> Python)
 impl TryFrom<&Name> for PyName {
     type Error = PyErr;
 

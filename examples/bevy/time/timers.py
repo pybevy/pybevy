@@ -8,7 +8,6 @@ Demonstrates:
 - Timer modes (Once vs Repeating)
 """
 
-from pybevy.ecs import Res, ResMut
 from pybevy.prelude import *
 
 

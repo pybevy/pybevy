@@ -6,11 +6,7 @@ Demonstrates:
 - Running a headless application
 """
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.camera import Camera3d
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands
-from pybevy.prelude import Update
+from pybevy.prelude import *
 from pybevy.winit import WinitPlugin
 
 

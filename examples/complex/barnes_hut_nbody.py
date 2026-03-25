@@ -33,13 +33,7 @@ except ImportError:
 import numpy as np
 
 from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
-from pybevy.light import GlobalAmbientLight
-from pybevy.math import Sphere
 from pybevy.prelude import *
-
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
 
 N_PARTICLES = 8 * 1024  # 96k particles
 N_PER_GALAXY = N_PARTICLES // 2
@@ -61,11 +55,6 @@ MAX_TREE_DEPTH = 20
 TREE_ROOT_SIZE = 200.0  # Size of root octree node
 
 
-# ============================================================================
-# COMPONENTS
-# ============================================================================
-
-
 @component
 @dataclass
 class Particle(Component):
@@ -82,11 +71,6 @@ class Particle(Component):
 class SimMarker(Component):
     """Marker component for all simulation particles."""
 
-
-
-# ============================================================================
-# RESOURCES
-# ============================================================================
 
 
 @resource
@@ -121,11 +105,6 @@ class SimulationState(Resource):
         self.kinetic_energy = 0.0
         self.potential_energy = 0.0
         self.frame_count = 0
-
-
-# ============================================================================
-# INITIAL CONDITIONS - PLUMMER SPHERE
-# ============================================================================
 
 
 def sample_plummer_sphere(
@@ -250,11 +229,6 @@ def setup_simulation(
     # Add ambient light for better visibility
     commands.insert_resource(GlobalAmbientLight(brightness=300.0, color=Color.srgb(0.15, 0.15, 0.2)))
 
-
-
-# ============================================================================
-# BARNES-HUT OCTREE CONSTRUCTION
-# ============================================================================
 
 
 @numba.jit(nopython=True)
@@ -418,11 +392,6 @@ def build_octree(
     return node_count
 
 
-# ============================================================================
-# BARNES-HUT FORCE CALCULATION
-# ============================================================================
-
-
 @numba.jit(nopython=True)
 def compute_force_tree_walk(
     px: float,
@@ -537,11 +506,6 @@ def compute_forces(
             accel_z[i] = 0.0
 
 
-# ============================================================================
-# LEAPFROG INTEGRATOR
-# ============================================================================
-
-
 @numba.jit(nopython=True)
 def leapfrog_integrate(
     pos_x: np.ndarray,
@@ -591,11 +555,6 @@ def velocity_kick(
         vel_x[i] += accel_x[i] * dt * 0.5
         vel_y[i] += accel_y[i] * dt * 0.5
         vel_z[i] += accel_z[i] * dt * 0.5
-
-
-# ============================================================================
-# ECS SYSTEMS
-# ============================================================================
 
 
 def physics_system(
@@ -704,11 +663,6 @@ def physics_system(
         kinetic = 0.5 * np.sum(masses * (vel_x**2 + vel_y**2 + vel_z**2))
         sim_state.kinetic_energy = float(kinetic)
         print(f"Frame {sim_state.frame_count}: KE={kinetic:.1f}, Nodes={node_count}")
-
-
-# ============================================================================
-# APP SETUP
-# ============================================================================
 
 
 @entrypoint

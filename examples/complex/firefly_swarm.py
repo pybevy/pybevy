@@ -32,7 +32,6 @@ except ImportError:
 import numpy as np
 
 from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
-from pybevy.light import GlobalAmbientLight
 from pybevy.prelude import *
 
 # Constants
@@ -87,8 +86,6 @@ def setup_swarm(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Set up firefly swarm."""
-
     # Materials
     ground_material = materials.add(Color.srgb(0.05, 0.1, 0.05))
     firefly_material = materials.add(Color.srgb(0.2, 0.15, 0.1))
@@ -439,7 +436,6 @@ def stats_system(
 
 @entrypoint
 def main(app: App) -> App:
-    """Create firefly swarm simulation."""
     return (
         app.add_plugins(DefaultPlugins)
         .add_plugins(OrbitCameraPlugin())

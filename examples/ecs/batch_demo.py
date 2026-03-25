@@ -5,8 +5,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pybevy.camera import Bloom, Tonemapping
-from pybevy.color import LinearRgba
 from pybevy.prelude import *
 
 N = 64000

@@ -17,17 +17,7 @@ UI elements (Text/Node) are omitted as PyBevy doesn't have UI support yet.
 
 from dataclasses import dataclass
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.assets import Assets, AssetServer, Handle
-from pybevy.camera import Camera2d
-from pybevy.decorators import component, entrypoint
-from pybevy.ecs import Commands, Component, Mut, Query, Res, ResMut, Single, With
-from pybevy.image import Image, TextureAtlas, TextureAtlasLayout
-from pybevy.input import ButtonInput, KeyCode
-from pybevy.math import UVec2, Vec3
-from pybevy.prelude import Startup, Transform, Update, run_if
-from pybevy.sprite import Sprite
-from pybevy.time import Time, Timer, TimerMode
+from pybevy.prelude import *
 
 
 @component(storage="python")

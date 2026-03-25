@@ -34,7 +34,6 @@ except ImportError:
     exit(1)
 
 from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
-from pybevy.ecs import With
 from pybevy.prelude import *
 
 if TYPE_CHECKING:
@@ -47,10 +46,6 @@ CUBE_SPACING = 2.0
 WAVE_SPEED = 2.0
 WAVE_AMPLITUDE = 3.0
 
-
-# ============================================================================
-# NUMBA JIT KERNELS - Direct ViewColumn access for Transform fields
-# ============================================================================
 
 
 @numba.jit(nopython=True, parallel=True)
@@ -160,20 +155,11 @@ def animate_ripple_kernel(
         pos_y[i] = height
 
 
-# ============================================================================
-# MARKER COMPONENTS
-# ============================================================================
-
 
 @component
 class Cube(Component):
     """Marker component for animated cubes."""
 
-
-
-# ============================================================================
-# SETUP
-# ============================================================================
 
 
 def setup_scene(
@@ -232,14 +218,6 @@ def setup_scene(
     )
 
 
-# ============================================================================
-# ANIMATION SYSTEM - ViewColumn + Numba JIT
-# ============================================================================
-
-
-# Debug tracking
-_frame_count = [0]
-
 
 def cube_animation_system(
     view: View[Mut[Transform], With[Cube]],
@@ -251,7 +229,6 @@ def cube_animation_system(
     compared to ~10ms with traditional Query iteration (100x speedup).
     """
     t = time.elapsed_secs()
-    _frame_count[0] += 1
 
     # Choose animation pattern based on time
     pattern = int(t / 10.0) % 3
@@ -286,21 +263,20 @@ def cube_animation_system(
             )
 
 
-def fps_system(time: Res[Time]) -> None:
-    """Print FPS once per second."""
+class FPSCounter:
+    def __init__(self) -> None:
+        self.frame_count: int = 0
+
+
+def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
+    counter.frame_count += 1
     t = time.elapsed_secs()
-    if t > 0 and _frame_count[0] % 60 == 0:
-        print(f"FPS: ~{_frame_count[0] / max(t, 0.001):.1f}")
-
-
-# ============================================================================
-# MAIN
-# ============================================================================
+    if t > 0 and counter.frame_count % 60 == 0:
+        print(f"FPS: ~{counter.frame_count / max(t, 0.001):.1f}")
 
 
 @entrypoint
 def main(app: App) -> App:
-    """Create and configure the cube wave animation."""
     return (
         app.add_plugins(DefaultPlugins)
         .add_plugins(OrbitCameraPlugin())  # type: ignore[arg-type]

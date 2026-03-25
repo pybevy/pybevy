@@ -10,7 +10,6 @@ Note: This example requires a touchscreen or touch input device.
 On desktop systems without touch input, the example will run but won't receive any events.
 """
 
-from pybevy.input import TouchInput
 from pybevy.prelude import *
 
 

@@ -17,7 +17,6 @@ except ImportError:
     print("Install with: pip install torch torchvision")
     exit(1)
 
-# --- Network Size Constants ---
 MNIST_IMG_SIZE = 28
 NUM_OUTPUTS = 10
 CONV1_OUT_CH = 8
@@ -28,7 +27,6 @@ CONV2_KERNEL_SIZE = 3
 FC1_OUT_FEATURES = 128
 
 
-# --- PyTorch Model: MNIST CNN ---
 class MnistCNN(nn.Module):
     def __init__(self):
         super().__init__()
@@ -67,7 +65,6 @@ class MnistCNN(nn.Module):
         return self.fc2(x)  # Raw scores (logits)
 
 
-# --- Components ---
 @component
 @dataclass
 class InputCube(Component):
@@ -95,9 +92,6 @@ class Conv2WeightCube(Component):
     in_channel_idx: int
     ky: int
     kx: int
-
-
-# --- Resources ---
 
 
 @resource
@@ -157,7 +151,6 @@ class ModelBundleCNN(Resource):
     data_loader_iter: Iterator
 
 
-# --- Helper Functions ---
 def create_mnist_loader() -> Iterator:
     print("Downloading MNIST...")
     transform = transforms.Compose(
@@ -183,23 +176,18 @@ def normalize_to_rgb(img_data: np.ndarray) -> np.ndarray:
     return (norm_map * 255).astype(np.uint8)
 
 
-# --- Setup System ---
-
-
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
     images: ResMut[Assets[Image]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    # --- 1. Initialize CNN and its Resources ---
     cnn_model = MnistCNN()
     cnn_criterion = nn.CrossEntropyLoss()
     cnn_optimizer = optim.Adam(cnn_model.parameters(), lr=0.001)
     data_loader_iter = create_mnist_loader()
     viz_state = CnnVizState()  # Create instance for hooks
 
-    # --- PyTorch Hooks for Activations ---
     def hook_relu1(module: nn.Module, input: tuple[torch.Tensor, ...], output: torch.Tensor) -> None:
         viz_state.conv1_activations = output.data[0].cpu().numpy()
 
@@ -208,14 +196,12 @@ def setup(
 
     cnn_model.relu1.register_forward_hook(hook_relu1)
     cnn_model.pool.register_forward_hook(hook_pool)
-    # --- End Hooks ---
 
     commands.insert_resource(viz_state)
     commands.insert_resource(
         ModelBundleCNN(cnn_model, cnn_criterion, cnn_optimizer, data_loader_iter)
     )
 
-    # --- 2. Spawn Neuron-Cubes ---
     cube_mesh_handle = meshes.add(Cuboid(1.0))
     input_mat = materials.add(
         StandardMaterial(base_color=Color.srgb(1.0, 1.0, 1.0), unlit=True)
@@ -336,7 +322,6 @@ def setup(
                             ),
                         )
 
-    # --- 4. Spawn Detailed Connection Lines (MODIFIED) ---
     detailed_conn_positions = []
     detailed_conn_colors = []
     vertex_count = 0
@@ -416,13 +401,9 @@ def setup(
         ),
     )
 
-    # --- 5. Spawn Camera ---
     commands.spawn(
         Camera3d(), Transform.from_xyz(0.0, 0.0, 15.0).looking_at(Vec3.ZERO, Vec3.Y)
     )
-
-
-# --- Update Systems ---
 
 
 def train_cnn_system(
@@ -505,7 +486,6 @@ def update_detailed_connections_system(
     conn_mesh = meshes.get_mut(conn_res.mesh_handle)
     assert conn_mesh is not None, "Detailed connection mesh not found"
 
-    # --- (Get Activations & Weights - Same as before) ---
     input_acts = viz_state.input_image.flatten()
     conv1_acts = viz_state.conv1_activations
     conv2_acts = viz_state.conv2_pooled_activations
@@ -513,20 +493,17 @@ def update_detailed_connections_system(
     weights2 = viz_state.conv2_weights
     fc1_weights = viz_state.fc1_weights
 
-    # --- (Calculate Average Activations & Weights - Same as before) ---
     avg_act1_per_filter = np.mean(conv1_acts, axis=(1, 2))
     avg_act2_per_filter = np.mean(conv2_acts, axis=(1, 2))
     avg_fc1_weight_per_conv2_filter = np.mean(
         fc1_weights.reshape(FC1_OUT_FEATURES, CONV2_OUT_CH, 14 * 14), axis=(0, 2)
     )
 
-    # --- Map averages to alpha values ---
     max_avg_act1 = np.max(avg_act1_per_filter) if avg_act1_per_filter.size > 0 else 1e-6
     max_avg_act2 = np.max(avg_act2_per_filter) if avg_act2_per_filter.size > 0 else 1e-6
     max_output_act = np.max(output_acts) if output_acts.size > 0 else 1e-6
     max_abs_w2 = np.max(np.abs(weights2)) if weights2.size > 0 else 1e-6
 
-    # --- ADJUST POWER AND MAX_ALPHA HERE ---
     # Increase power further for steeper falloff
     HIGHER_POWER = 6.0  # Was 4.0
     # Reduce the maximum possible alpha values significantly
@@ -546,7 +523,6 @@ def update_detailed_connections_system(
         alpha = min_alpha + scaled_act * (max_alpha - min_alpha)
         return np.clip(alpha, min_alpha, max_alpha)
 
-    # --- END ADJUSTMENT ---
 
     # Adjust source scaling max alpha too
     def scale_source_alpha(
@@ -654,7 +630,6 @@ def rotate_camera_system(time: Res[Time], query: Query[Mut[Transform], With[Came
         transform.rotate_around(Vec3.ZERO, rotation)
 
 
-# --- App Runner ---
 @entrypoint
 def main(app: App) -> App:
     return (

@@ -6,19 +6,7 @@ colors that continuously shift through the color spectrum.
 """
 
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.assets import Assets, AssetServer
-from pybevy.camera import Camera3d
-from pybevy.color import Color
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands, Query, Res, ResMut
-from pybevy.light import EnvironmentMapLight
-from pybevy.math import Cuboid, Vec3
-from pybevy.mesh import Mesh, Mesh3d, MeshMaterial3d
-from pybevy.prelude import Startup, Update
-from pybevy.pbr import StandardMaterial
-from pybevy.time import Time
-from pybevy.transform import Transform
+from pybevy.prelude import *
 
 
 def setup(

@@ -675,8 +675,6 @@ impl PyViewColumn {
         Ok(())
     }
 
-    // ──── Arithmetic operators ────
-
     fn __mul__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
             let result = self.binary_op_col(&col.borrow(), |a, b| a * b)?;
@@ -788,8 +786,6 @@ impl PyViewColumn {
         let result = self.unary_op(|a| a.abs())?;
         Ok(Py::new(py, result)?.into())
     }
-
-    // ──── Math methods ────
 
     fn sin(&self, py: Python) -> PyResult<Py<PyAny>> {
         let result = self.unary_op(f64::sin)?;
@@ -911,8 +907,6 @@ impl PyViewColumn {
         let result = self.binary_op_scalar(scalar, |a, b| a + (b - a) * t)?;
         Ok(Py::new(py, result)?.into())
     }
-
-    // ──── Assignment from ViewColumn or scalar ────
 
     /// Assign values from another ViewColumn or a scalar into this column.
     ///

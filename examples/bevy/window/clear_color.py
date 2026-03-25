@@ -7,9 +7,6 @@ Controls:
 - Space: Change clear color to purple
 """
 
-from pybevy.camera import ClearColor
-from pybevy.ecs import Commands, Res, ResMut
-from pybevy.input import ButtonInput, KeyCode
 from pybevy.prelude import *
 
 

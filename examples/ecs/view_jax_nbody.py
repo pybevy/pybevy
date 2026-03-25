@@ -35,7 +35,6 @@ import numpy as np
 
 import pybevy.ecs.jax_ext  # noqa: F401  # activate JAX support
 from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
-from pybevy.ecs import View, With
 from pybevy.prelude import *
 
 # Configuration
@@ -44,10 +43,6 @@ GRAVITY_STRENGTH = 50.0
 SOFTENING = 0.5
 SPAWN_RADIUS = 30.0
 
-
-# ============================================================================
-# Components
-# ============================================================================
 
 
 @component
@@ -66,10 +61,6 @@ class Mass(Component):
 class Body(Component):
     pass
 
-
-# ============================================================================
-# JAX Kernel — O(n²) all-pairs gravity
-# ============================================================================
 
 
 @jax.jit
@@ -113,10 +104,6 @@ def nbody_step(
 
     return new_pos, new_vel
 
-
-# ============================================================================
-# Setup
-# ============================================================================
 
 
 def setup(
@@ -170,10 +157,6 @@ def setup(
     )
 
 
-# ============================================================================
-# Gravity System — JAX JIT
-# ============================================================================
-
 
 def gravity_system(
     view: View[tuple[Mut[Transform], Mut[Velocity], Mass], With[Body]],
@@ -198,19 +181,17 @@ def gravity_system(
         vel.vel.from_jax(new_vel)  # type: ignore[attr-defined]
 
 
-# ============================================================================
-# Main
-# ============================================================================
+
+class FPSCounter:
+    def __init__(self) -> None:
+        self.frame_count: int = 0
 
 
-_frame_count = [0]
-
-
-def fps_system(time: Res[Time]) -> None:
-    _frame_count[0] += 1
+def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
+    counter.frame_count += 1
     t = time.elapsed_secs()
-    if t > 0 and _frame_count[0] % 120 == 0:
-        print(f"FPS: ~{_frame_count[0] / max(t, 0.001):.1f}  ({N_BODIES} bodies, {N_BODIES * N_BODIES:,} interactions)")
+    if t > 0 and counter.frame_count % 120 == 0:
+        print(f"FPS: ~{counter.frame_count / max(t, 0.001):.1f}  ({N_BODIES} bodies, {N_BODIES * N_BODIES:,} interactions)")
 
 
 @entrypoint

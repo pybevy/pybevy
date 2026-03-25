@@ -2,9 +2,6 @@
 
 import math
 
-from pybevy.color import LinearRgba
-from pybevy.decorators import component, entrypoint
-from pybevy.light import GlobalAmbientLight
 from pybevy.prelude import *
 
 

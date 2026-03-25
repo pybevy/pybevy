@@ -66,8 +66,6 @@ struct StagedDebugScreenshot {
     ui_restore: Option<Vec<(Entity, Visibility)>>,
 }
 
-// ── Timeline types ──
-
 /// Resource tracking active timelines (multi-frame capture sequences).
 #[derive(Resource, Default)]
 pub struct PendingTimelines {

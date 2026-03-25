@@ -11,12 +11,7 @@ The cube scales up and down, cycling through X, Y, and Z axes.
 
 import math
 
-from pybevy.assets import Assets
-from pybevy.ecs import Commands, Query, Res, ResMut
-from pybevy.math import Cuboid, Quat, Vec3
-from pybevy.mesh import Mesh3d, MeshMaterial3d
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
 
 
 @component

@@ -23,10 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pybevy.ecs import With
-from pybevy.math import Sphere
 from pybevy.prelude import *
-
 
 # Constants
 NUM_PEOPLE = 25000
@@ -86,8 +83,6 @@ def setup_city(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Set up the city with ground plane, streets, and buildings using physics."""
-
     layout = CityLayout()
 
     # Materials
@@ -326,8 +321,6 @@ def spawn_people(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Spawn people as small cuboids on the streets."""
-
     layout = CityLayout()
     city_size = (
         layout.num_blocks_x * (layout.block_size + layout.street_width)
@@ -385,8 +378,6 @@ def spawn_people(
 def setup_scene(
     commands: Commands,
 ) -> None:
-    """Set up lighting, camera, and cinematic camera path."""
-
     layout = CityLayout()
     city_size = (
         layout.num_blocks_x * (layout.block_size + layout.street_width)
@@ -510,11 +501,6 @@ def setup_scene(
         ),
         FlyingCamera(),
     )
-
-
-# ============================================================================
-# NUMBA JIT KERNELS - ViewColumn zero-copy access for Transform fields
-# ============================================================================
 
 
 @numba.jit(nopython=True)  # type: ignore[misc]
@@ -839,7 +825,6 @@ def camera_flight_system(
 
 @entrypoint
 def main(app: App) -> App:
-    """Create and configure the city simulation."""
     return (
         app.add_plugins(DefaultPlugins)
         .insert_resource(CityLayout())

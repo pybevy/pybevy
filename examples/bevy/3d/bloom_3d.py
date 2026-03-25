@@ -13,10 +13,7 @@ creating a dramatic lighting effect in a dark scene.
 
 import math
 
-from pybevy.camera import Bloom, Tonemapping
-from pybevy.color import LinearRgba
 from pybevy.prelude import *
-from pybevy.pbr import StandardMaterial
 
 
 @component

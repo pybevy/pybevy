@@ -10,7 +10,6 @@ Bevy's built-in components and modify their fields in batch.
 
 import numpy as np
 
-from pybevy.ecs import World
 from pybevy.prelude import *
 
 

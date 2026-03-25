@@ -18,7 +18,6 @@ PyBevy:
         intensity: float = 1.0
 """
 
-from pybevy.color import LinearRgba
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 

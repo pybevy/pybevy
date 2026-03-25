@@ -35,19 +35,8 @@ except ImportError:
     print("Install with: pip install numba")
     exit(1)
 
-from pybevy.camera import (
-    Bloom,
-    BloomCompositeMode,
-    ColorGrading,
-    ColorGradingGlobal,
-    ColorGradingSection,
-    Exposure,
-    Hdr,
-    Tonemapping,
-)
-from pybevy.color import LinearRgba
-from pybevy.ecs import With
-from pybevy.light import GlobalAmbientLight, VolumetricFog, VolumetricLight
+from pybevy.camera import Exposure
+from pybevy.light import VolumetricFog, VolumetricLight
 from pybevy.prelude import *
 
 # Constants
@@ -95,8 +84,6 @@ def setup_cave(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Create cave walls and floor."""
-
     # Dark cave wall material
     cave_material = materials.add(
         StandardMaterial(
@@ -158,8 +145,6 @@ def setup_crystals(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Create glowing emissive crystals."""
-
     # Crystal mesh - elongated hexagonal prism
     crystal_mesh = meshes.add(Cylinder(0.6, 3.0))
 
@@ -218,8 +203,6 @@ def setup_crystals(
 
 
 def setup_volumetric_lights(commands: Commands) -> None:
-    """Create spotlights with volumetric god rays."""
-
     # Spotlight positions and colors
     spotlight_configs = [
         # (x, y, z, target_x, target_y, target_z, r, g, b, sweep_speed)
@@ -266,8 +249,6 @@ def spawn_particles(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    """Spawn dust particles that will float in volumetric light."""
-
     # Tiny sphere for particles
     particle_mesh = meshes.add(Sphere(0.02))
 
@@ -303,8 +284,6 @@ def spawn_particles(
 
 
 def setup_post_processing(commands: Commands) -> None:
-    """Setup camera with volumetric fog and post-processing."""
-
     # Camera with HDR, bloom, color grading, and tonemapping
     commands.spawn(
         Camera3d(),
@@ -350,10 +329,6 @@ def setup_post_processing(commands: Commands) -> None:
         CinematicCamera(),
     )
 
-
-# ============================================================================
-# ANIMATION SYSTEMS - View API + Numba
-# ============================================================================
 
 
 @numba.jit(nopython=True)  # type: ignore[misc]
@@ -491,7 +466,6 @@ def camera_cinematic_system(
 
 @entrypoint
 def main(app: App) -> App:
-    """Create and configure the crystalline cavern demo."""
     return (
         app.add_plugins(DefaultPlugins)
         .add_systems(

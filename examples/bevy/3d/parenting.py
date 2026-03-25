@@ -9,7 +9,6 @@ This example demonstrates:
 
 from __future__ import annotations
 
-from pybevy.decorators import component, entrypoint
 from pybevy.prelude import *
 
 

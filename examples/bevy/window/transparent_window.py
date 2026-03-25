@@ -7,15 +7,7 @@ Note: PyBevy currently doesn't expose CompositeAlphaMode, so platform-specific
 alpha compositing settings from the Rust version are not included.
 """
 
-from pybevy.app import App, DefaultPlugins
-from pybevy.assets import AssetServer
-from pybevy.camera import Camera2d, ClearColor
-from pybevy.color import Color
-from pybevy.decorators import entrypoint
-from pybevy.ecs import Commands, Res
-from pybevy.prelude import Startup
-from pybevy.sprite import Sprite
-from pybevy.window import Window, WindowPlugin
+from pybevy.prelude import *
 
 
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:

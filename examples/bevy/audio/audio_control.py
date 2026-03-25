@@ -10,13 +10,7 @@ Demonstrates how to control audio playback including:
 
 import math
 
-from pybevy.assets import AssetServer
-from pybevy.audio import AudioPlayer, AudioSink
-from pybevy.color import Color
-from pybevy.ecs import Single
-from pybevy.input import ButtonInput, KeyCode
 from pybevy.prelude import *
-from pybevy.text import Text2d, TextColor, TextFont
 
 
 @component

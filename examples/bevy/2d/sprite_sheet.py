@@ -16,8 +16,6 @@ appear slightly blurred at certain scales.
 
 from dataclasses import dataclass
 
-from pybevy.image import TextureAtlas, TextureAtlasLayout
-from pybevy.math import UVec2
 from pybevy.prelude import *
 
 

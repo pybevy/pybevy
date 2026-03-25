@@ -16,8 +16,6 @@ use crate::{
     shader_material::{MAX_TEXTURE_SLOTS, ShaderMaterial, ShaderMaterialExtension, ShaderParams},
 };
 
-// ── ShaderMaterial asset wrapper ──────────────────────────────────────
-
 #[asset_storage(ShaderMaterial)]
 #[pyclass(name = "ShaderMaterial", extends = PyAsset)]
 #[derive(Debug)]
@@ -98,18 +96,15 @@ impl PyShaderMaterial {
         Ok(Self::from_owned(material))
     }
 
-    /// Get the shader defs bitmask.
     fn get_shader_defs(&self) -> PyResult<u32> {
         Ok(self.as_ref()?.extension.shader_defs)
     }
 
-    /// Set the shader defs bitmask.
     fn set_shader_defs(&mut self, defs: u32) -> PyResult<()> {
         self.as_mut()?.extension.shader_defs = defs;
         Ok(())
     }
 
-    /// Set a texture handle for a given slot (0-3).
     fn set_texture(&mut self, slot: usize, handle: &Bound<'_, PyAny>) -> PyResult<()> {
         let py_handle = extract_handle_from_any(handle)?;
         let typed: bevy::asset::Handle<Image> = (&py_handle).try_into()?;
@@ -130,7 +125,6 @@ impl PyShaderMaterial {
         Ok(())
     }
 
-    /// Clear a texture slot (set to None).
     fn clear_texture(&mut self, slot: usize) -> PyResult<()> {
         let mat = self.as_mut()?;
         match slot {
@@ -149,8 +143,6 @@ impl PyShaderMaterial {
         Ok(())
     }
 
-    /// Set a single float in the uniform data buffer.
-    /// Index is the float index (0-255), not byte offset.
     fn set_data_float(&mut self, index: usize, value: f32) -> PyResult<()> {
         if index >= 256 {
             return Err(PyIndexError::new_err(format!(
@@ -163,7 +155,6 @@ impl PyShaderMaterial {
         Ok(())
     }
 
-    /// Get a single float from the uniform data buffer.
     fn get_data_float(&self, index: usize) -> PyResult<f32> {
         if index >= 256 {
             return Err(PyIndexError::new_err(format!(
@@ -175,7 +166,6 @@ impl PyShaderMaterial {
         Ok(mat.extension.params.data[index / 4][index % 4])
     }
 
-    /// Set multiple floats starting at the given index.
     fn set_data_floats(&mut self, start: usize, values: Vec<f32>) -> PyResult<()> {
         let end = start + values.len();
         if end > 256 {
@@ -192,7 +182,6 @@ impl PyShaderMaterial {
         Ok(())
     }
 
-    /// Get multiple floats starting at the given index.
     fn get_data_floats(&self, start: usize, count: usize) -> PyResult<Vec<f32>> {
         let end = start + count;
         if end > 256 {
@@ -211,8 +200,6 @@ impl PyShaderMaterial {
     }
 }
 
-// ── ShaderMaterialPlugin ──────────────────────────────────────────────
-
 #[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
@@ -225,8 +212,6 @@ impl PyShaderMaterialPlugin {
         (PyShaderMaterialPlugin, PyPlugin)
     }
 }
-
-// ── MeshMaterial3dShader component ────────────────────────────────────
 
 #[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]

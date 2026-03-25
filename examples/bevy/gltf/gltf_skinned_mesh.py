@@ -22,10 +22,7 @@ Scene hierarchy:
 import math
 
 from pybevy.animation import SkinnedMesh
-from pybevy.ecs import ChildOf, Children
-from pybevy.gltf import GltfAssetLabel
 from pybevy.prelude import *
-from pybevy.scene import Scene
 
 
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:

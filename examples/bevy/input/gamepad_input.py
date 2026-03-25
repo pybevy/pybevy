@@ -12,10 +12,7 @@ Connect a gamepad to test this example.
 """
 
 from pybevy.input import (
-    Gamepad,
-    GamepadAxis,
     GamepadAxisChanged,
-    GamepadButton,
     GamepadButtonChanged,
     GamepadConnection,
 )

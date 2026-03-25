@@ -16,14 +16,7 @@ Controls:
 
 import math
 
-from pybevy import component
-from pybevy.assets import Assets
-from pybevy.ecs import Commands, Component, Mut, Res, ResMut, With
-from pybevy.input import ButtonInput, KeyCode
-from pybevy.math import Circle, Rectangle, Vec2, Vec3
-from pybevy.mesh import Mesh2d, MeshMaterial2d
 from pybevy.prelude import *
-from pybevy.sprite import ColorMaterial
 
 # Player movement speed factor
 PLAYER_SPEED = 100.0

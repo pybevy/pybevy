@@ -7,10 +7,8 @@ Demonstrates:
 - Excluding objects from wireframe
 """
 
-from pybevy.input import ButtonInput, KeyCode
 from pybevy.pbr import NoWireframe, Wireframe, WireframeColor, WireframeConfig
 from pybevy.prelude import *
-from pybevy.text import Text2d, TextColor, TextFont
 
 
 def setup(

@@ -11,9 +11,8 @@ from pybevy.animation import (
     AnimationNodeIndex,
     AnimationPlayer,
 )
-from pybevy.gltf import GltfAssetLabel
 from pybevy.prelude import *
-from pybevy.scene import Scene, SceneInstanceReady, SceneRoot
+from pybevy.scene import SceneInstanceReady
 
 FOX_PATH = "bevy/models/animated/Fox.glb"
 

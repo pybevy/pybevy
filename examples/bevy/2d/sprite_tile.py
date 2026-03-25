@@ -7,10 +7,7 @@ Demonstrates:
 - Time-based oscillating animation
 """
 
-from pybevy.assets import AssetServer
-from pybevy.ecs import Commands, Query, Res, ResMut
 from pybevy.prelude import *
-from pybevy.sprite import SpriteImageMode
 
 
 @resource
