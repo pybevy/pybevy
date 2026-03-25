@@ -225,10 +225,12 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
                     #pyo3_path::exceptions::PyRuntimeError::new_err(concat!(#bevy_type_str, " not found"))
                 })?;
 
+                // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                 let ptr = unsafe {
                     untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type
                 };
 
+                // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
                     #core_path::ComponentStorage::borrowed(ptr, validity)
                 };
@@ -276,10 +278,12 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
                         #pyo3_path::exceptions::PyRuntimeError::new_err("Component not found")
                     })?;
 
+                    // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                     let ptr = unsafe {
                         untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type
                     };
 
+                    // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {
                         #core_path::ComponentStorage::borrowed(ptr, validity)
                     };
@@ -302,6 +306,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             ) -> #pyo3_path::PyResult<Option<#pyo3_path::Py<#pyo3_path::PyAny>>> {
                 if let Some(component) = entity.get::<#bevy_type>() {
                     let ptr = component as *const #bevy_type as *mut #bevy_type;
+                    // SAFETY: ptr is from a valid entity.get() borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {
                         #core_path::ComponentStorage::borrowed(ptr, validity)
                     };
@@ -320,6 +325,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             ) -> #pyo3_path::PyResult<Option<#pyo3_path::Py<#pyo3_path::PyAny>>> {
                 if let Some(mut component) = entity.get_mut::<#bevy_type>() {
                     let ptr = component.as_mut() as *mut #bevy_type;
+                    // SAFETY: ptr is from a valid entity.get_mut() borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {
                         #core_path::ComponentStorage::borrowed(ptr, validity)
                     };

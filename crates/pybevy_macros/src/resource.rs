@@ -338,6 +338,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
                 let ptr = resource as *const #bevy_type as *mut #bevy_type;
                 // Override to read mode even though caller requested write
                 let read_validity = validity.flag.with_access_mode(pybevy_core::AccessMode::Read);
+                // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
                     pybevy_core::ResourceStorage::borrowed(ptr, read_validity)
                 };
@@ -359,6 +360,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
                 })?;
 
                 let ptr = resource.into_inner() as *mut #bevy_type;
+                // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
                     pybevy_core::ResourceStorage::borrowed(ptr, validity)
                 };
@@ -418,6 +420,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
                 })?;
 
                 let ptr = resource as *const #bevy_type as *mut #bevy_type;
+                // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
                     pybevy_core::ResourceStorage::borrowed(ptr, validity)
                 };

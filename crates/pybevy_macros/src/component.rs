@@ -541,11 +541,12 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
                     world.register_component::<#bevy_type>()
                 }
 
-                fn column_data_ptr_fn(
+                unsafe fn column_data_ptr_fn(
                     column: &bevy::ecs::storage::Column,
                     entity_count: usize,
                 ) -> *const u8 {
-                    let data_slice = unsafe { column.get_data_slice::<#bevy_type>(entity_count) };
+                    // SAFETY: caller guarantees entity_count == column.len(); #bevy_type matches the column's component type.
+                    let data_slice = column.get_data_slice::<#bevy_type>(entity_count);
                     data_slice.as_ptr() as *const u8
                 }
 
@@ -667,10 +668,12 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                 })?;
 
+                // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                 let ptr = unsafe {
                     untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type
                 };
 
+                // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
                     pybevy_core::ComponentStorage::borrowed(ptr, validity)
                 };
@@ -693,10 +696,12 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
                         pyo3::exceptions::PyRuntimeError::new_err("Component not found")
                     })?;
 
+                    // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                     let ptr = unsafe {
                         untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type
                     };
 
+                    // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {
                         pybevy_core::ComponentStorage::borrowed(ptr, validity)
                     };
@@ -719,6 +724,7 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
                 if let Some(component) = entity.get::<#bevy_type>() {
                     let ptr = component as *const #bevy_type as *mut #bevy_type;
+                    // SAFETY: ptr is from a valid entity.get() borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {
                         pybevy_core::ComponentStorage::borrowed(ptr, validity)
                     };
@@ -737,6 +743,7 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
                 if let Some(mut component) = entity.get_mut::<#bevy_type>() {
                     let ptr = component.as_mut() as *mut #bevy_type;
+                    // SAFETY: ptr is from a valid entity.get_mut() borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {
                         pybevy_core::ComponentStorage::borrowed(ptr, validity)
                     };

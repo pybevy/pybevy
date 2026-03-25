@@ -2044,7 +2044,7 @@ impl PyBatch {
                     ))
                 })?;
 
-                (view_bridge.column_data_ptr)(column, entity_count)
+                unsafe { (view_bridge.column_data_ptr)(column, entity_count) }
             }
         };
 
@@ -2188,7 +2188,7 @@ impl PyBatch {
                     ))
                 })?;
 
-                (view_bridge.column_data_ptr)(column, entity_count)
+                unsafe { (view_bridge.column_data_ptr)(column, entity_count) }
             }
         };
 
