@@ -1,0 +1,11 @@
+{
+  "settings": {
+    "skip": {
+      "patterns": {
+        "scanning": [
+          "assets/**"
+        ]
+      }
+    }
+  }
+}
