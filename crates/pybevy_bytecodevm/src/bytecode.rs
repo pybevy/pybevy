@@ -495,7 +495,6 @@ impl PooledVM {
     pub fn get_mut(&mut self) -> &mut VM {
         self.vm.as_mut().expect("VM already released")
     }
-
 }
 
 impl Drop for PooledVM {

@@ -102,7 +102,6 @@ impl FrameReceiver {
         }
         latest
     }
-
 }
 
 /// Component that marks an image as a readback target

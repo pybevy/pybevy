@@ -307,5 +307,4 @@ impl<T: Clone> FieldStorage<T> {
     {
         Ok(W::from_borrowed(self.borrow_field(field_accessor)?))
     }
-
 }
