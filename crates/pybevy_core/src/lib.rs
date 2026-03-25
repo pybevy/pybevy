@@ -39,7 +39,7 @@ pub mod resource;
 
 // Storage layer — re-exported from pybevy_storage
 pub use pybevy_storage::{
-    component_storage, field_storage, list_storage, resource_storage, storage, storage_error,
+    asset_storage, component_storage, field_storage, list_storage, resource_storage, storage_error,
     storage_traits, validity_guard, value_storage, view_bridge,
 };
 

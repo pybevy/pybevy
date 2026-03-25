@@ -1,6 +1,6 @@
 use bevy::shader::{Shader, ShaderDefVal};
 use naga::ShaderStage;
-use pybevy_core::{NativeAsset, PyAsset, storage::AssetStorage};
+use pybevy_core::{NativeAsset, PyAsset, asset_storage::AssetStorage};
 use pybevy_macros::native_asset;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
