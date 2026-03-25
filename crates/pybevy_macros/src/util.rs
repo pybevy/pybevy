@@ -98,10 +98,6 @@ pub(crate) fn find_storage_field_type<'a>(
     }
 }
 
-// ============================================================================
-// Field accessor generation (used by #[derive(PyComponent)])
-// ============================================================================
-
 /// Field annotation parsed from `#[color]`, `#[borrowed]`, `#[read_only]` attributes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldAnnotation {

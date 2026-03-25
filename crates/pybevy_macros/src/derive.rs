@@ -8,10 +8,6 @@ use crate::util::{
     parse_field_annotation, pybevy_crate_paths, to_snake_case,
 };
 
-// ============================================================================
-// #[derive(PyComponent)] macro
-// ============================================================================
-
 /// Derives a complete PyO3 component wrapper for a Bevy component.
 ///
 /// Generates:
@@ -127,14 +123,12 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
         .collect();
 
     let expanded = quote! {
-        // 1. Wrapper struct
         #[#pyo3_path::pyclass(name = #py_name_str, extends = #core_path::PyComponent)]
         #[derive(Debug, Clone)]
         pub struct #py_type {
             storage: #core_path::ComponentStorage<#bevy_type>,
         }
 
-        // 2. From/TryFrom impls and helper methods
         impl From<#bevy_type> for #py_type {
             fn from(component: #bevy_type) -> Self {
                 Self {
@@ -181,7 +175,6 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             }
         }
 
-        // 3. #[pymethods] with constructor and field accessors
         #[#pyo3_path::pymethods]
         impl #py_type {
             #[new]
@@ -195,7 +188,6 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             #accessors
         }
 
-        // 4. Bridge struct implementing ComponentBridge
         pub struct #bridge_type;
 
         impl #core_path::ComponentBridge for #bridge_type {
@@ -339,7 +331,6 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             }
         }
 
-        // 5. Registration function
         pub fn #register_fn() {
             #core_path::registry::global_registry::register_component_bridge(#bridge_type);
         }
