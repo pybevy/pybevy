@@ -187,6 +187,7 @@ pub fn newtype_bridge(input: TokenStream) -> TokenStream {
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                 })?;
 
+                // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                 let component = unsafe {
                     untyped.deref::<#bevy_type>()
                 };
@@ -233,6 +234,7 @@ pub fn newtype_bridge(input: TokenStream) -> TokenStream {
                         pyo3::exceptions::PyRuntimeError::new_err("Component not found")
                     })?;
 
+                    // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                     let component = unsafe {
                         untyped.deref::<#bevy_type>()
                     };

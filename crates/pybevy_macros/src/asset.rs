@@ -359,6 +359,7 @@ pub fn asset_bridge(input: TokenStream) -> TokenStream {
                 match assets.get(&typed_handle) {
                     Some(asset) => {
                         let ptr = asset as *const #bevy_type;
+                        // SAFETY: `ptr` is derived from a valid Bevy `Assets` borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                         let storage = unsafe {
                             pybevy_core::AssetStorage::borrowed_readonly(
                                 ptr,
@@ -392,6 +393,7 @@ pub fn asset_bridge(input: TokenStream) -> TokenStream {
                 match assets.get_mut(&typed_handle) {
                     Some(asset) => {
                         let ptr = asset as *mut #bevy_type;
+                        // SAFETY: `ptr` is derived from a valid Bevy `Assets` mutable borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                         let storage = unsafe {
                             pybevy_core::AssetStorage::borrowed_mut(
                                 ptr,
@@ -505,6 +507,7 @@ pub fn asset_bridge(input: TokenStream) -> TokenStream {
                         }
                     };
                     let ptr = asset as *const #bevy_type;
+                    // SAFETY: `ptr` is derived from a valid Bevy `Assets` borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                     let storage = unsafe {
                         pybevy_core::AssetStorage::borrowed_readonly(
                             ptr,
@@ -665,6 +668,7 @@ pub fn handle_bridge(input: TokenStream) -> TokenStream {
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                 })?;
 
+                // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                 let component = unsafe { untyped.deref::<#bevy_type>() };
                 let py_component = #py_type::from(component);
                 let obj = pyo3::Py::new(py, (py_component, pybevy_core::PyComponent))?;
@@ -683,6 +687,7 @@ pub fn handle_bridge(input: TokenStream) -> TokenStream {
                         pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                     })?;
 
+                    // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
                     let component = unsafe { untyped.deref::<#bevy_type>() };
                     let py_component = #py_type::from(component);
                     let obj = pyo3::Py::new(py, (py_component, pybevy_core::PyComponent))?;
