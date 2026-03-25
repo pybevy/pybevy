@@ -10,7 +10,7 @@
 //! ## 1. Owned Assets (Python-created)
 //!
 //! Created via Python constructors like `StandardMaterial()`, these assets are:
-//! - **Stored in**: `Pin<Box<T>>` on the heap (stable memory address, pinned for safety)
+//! - **Stored in**: `Box<T>` on the heap (stable memory address)
 //! - **Consumed by**: `Assets[T].add()` which takes ownership via `take()`
 //! - **Valid when**: Before being added to `Assets<T>` storage
 //!
@@ -28,8 +28,6 @@
 //!
 //! - **`BorrowedReadOnly`**: Created from `Res[Assets[T]].get()`, stores `*const T`
 //! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, stores `*mut T`
-
-use std::pin::Pin;
 
 use bevy::asset::{Asset, UntypedHandle};
 
@@ -57,7 +55,7 @@ pub struct AssetStorage<T: Asset> {
 pub(crate) enum AssetStorageInner<T: Asset> {
     /// Python-created instance, fully owned
     /// Option allows consuming the asset via take() when adding to Assets<T>
-    Owned(Option<Pin<Box<T>>>),
+    Owned(Option<Box<T>>),
 
     /// Read-only borrowed reference to asset in Assets<T> storage
     /// Created from `&T` - mutation through this pointer is UB
@@ -89,7 +87,7 @@ pub(crate) enum AssetStorageInner<T: Asset> {
 }
 
 // SAFETY: AssetStorage is Send because:
-// - Pin<Box<T>> is Send when T is Send
+// - Box<T> is Send when T is Send
 // - Raw pointer is just an address
 // - ValidityFlag (Arc<AtomicBool>) is Send + Sync
 // - UntypedHandle is Send
@@ -106,7 +104,7 @@ impl<T: Asset + Clone> Clone for AssetStorage<T> {
     fn clone(&self) -> Self {
         match &self.inner {
             AssetStorageInner::Owned(Some(asset)) => Self {
-                inner: AssetStorageInner::Owned(Some(Box::pin((**asset).clone()))),
+                inner: AssetStorageInner::Owned(Some(Box::new((**asset).clone()))),
             },
             AssetStorageInner::Owned(None) => Self {
                 inner: AssetStorageInner::Owned(None),
@@ -159,7 +157,7 @@ impl<T: Asset> AssetStorage<T> {
     /// Create owned asset storage
     pub fn owned(asset: T) -> Self {
         Self {
-            inner: AssetStorageInner::Owned(Some(Box::pin(asset))),
+            inner: AssetStorageInner::Owned(Some(Box::new(asset))),
         }
     }
 
@@ -170,21 +168,12 @@ impl<T: Asset> AssetStorage<T> {
     /// - Asset is borrowed (not owned)
     ///
     /// # Errors
-    /// Returns `PyRuntimeError` if asset is not available for consumption
+    /// Returns `StorageError::AssetConsumed` if asset was already taken
+    /// Returns `StorageError::AssetBorrowed` if asset is a borrowed reference
     pub fn take(&mut self) -> Result<T, StorageError> {
         match &mut self.inner {
             AssetStorageInner::Owned(opt) => {
-                opt.take()
-                    .map(|pinned| {
-                        // SAFETY: We're consuming the Pin<Box<T>>, so it's safe to get the inner value.
-                        // We use into_inner_unchecked to extract the Box, then into_inner to get T.
-                        // This prevents the Box's Drop from running on moved-out memory.
-                        unsafe {
-                            let boxed = std::pin::Pin::into_inner_unchecked(pinned);
-                            *boxed
-                        }
-                    })
-                    .ok_or(StorageError::AssetConsumed)
+                opt.take().map(|boxed| *boxed).ok_or(StorageError::AssetConsumed)
             }
             AssetStorageInner::BorrowedReadOnly { .. } | AssetStorageInner::BorrowedMut { .. } => {
                 Err(StorageError::AssetBorrowed)
@@ -276,11 +265,7 @@ impl<T: Asset> AssetStorage<T> {
     #[inline(always)]
     fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
-            AssetStorageInner::Owned(Some(asset)) => {
-                // SAFETY: We need mutable access to the pinned asset.
-                // This is safe because T implements Unpin (assets don't have self-references)
-                unsafe { asset.as_mut().get_unchecked_mut() as *mut T }
-            }
+            AssetStorageInner::Owned(Some(asset)) => &mut **asset as *mut T,
             AssetStorageInner::Owned(None) => std::ptr::null_mut(),
             // Read-only borrowed cannot be mutated - return null
             // check_write() will catch this before we get here

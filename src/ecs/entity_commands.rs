@@ -37,7 +37,6 @@ unsafe impl Send for PyEntityCommands {}
 unsafe impl Sync for PyEntityCommands {}
 
 impl PyEntityCommands {
-
     pub(crate) fn with_commands(entity: Entity, commands: &PyCommands) -> Self {
         Self {
             id: entity,
