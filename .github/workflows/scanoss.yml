@@ -7,12 +7,14 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  checks: write
+  actions: read
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: scanoss/code-scan-action@v0
+      - uses: scanoss/code-scan-action@0b39db4d8f5f560f0108f16a4fb53ed28efa5add # v1
         with:
           policies: copyleft
