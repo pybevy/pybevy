@@ -40,8 +40,8 @@ from benches.paper.bench_utils import (
 from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Mut, Query, View
-from pybevy.prelude import Component
 from pybevy.math import Vec3
+from pybevy.prelude import Component
 from pybevy.transform import Transform
 
 DEFAULT_COUNTS = [500, 1_000, 2_000, 5_000]

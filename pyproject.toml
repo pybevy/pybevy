@@ -97,7 +97,7 @@ exclude = [
 
 [tool.ruff.lint.per-file-ignores]
 "docs/learn/*" = ["ANN201", "ANN204"]
-"examples/*" = ["ANN201", "ANN204", "F403", "F405", "T201"]
+"examples/*" = ["ANN001", "ANN201", "ANN204", "F403", "F405", "T201"]
 "examples/complex/*" = ["ANN001", "ANN202", "F403", "F405", "T201", "SIM102"]  # Numba/Newton: can't annotate, nested ifs intentional
 "benches/*" = ["ANN001", "ANN201", "ANN202", "ANN204", "F403", "F405", "PLC0415", "T20"]  # Relaxed in benchmarks
 "pybevy/*.pyi" = [
