@@ -40,7 +40,6 @@ from pybevy.time import Time
 from pybevy.transform import Transform
 from pybevy.window import PresentMode, Window, WindowPlugin
 
-
 DEFAULT_COUNTS = [
     1_000, 5_000, 10_000, 50_000,
     80_000, 90_000, 100_000, 110_000, 120_000, 130_000, 140_000, 150_000,

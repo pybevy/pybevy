@@ -324,8 +324,8 @@ def _run_script(
         try:
             int(parts[0])
             int(parts[1])
-        except ValueError:
-            raise click.BadParameter(f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080).")
+        except ValueError as err:
+            raise click.BadParameter(f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080).") from err
         os.environ["PYBEVY_WINDOW_RESOLUTION"] = resolution
     else:
         os.environ.pop("PYBEVY_WINDOW_RESOLUTION", None)

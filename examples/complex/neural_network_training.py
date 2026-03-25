@@ -10,8 +10,8 @@ try:
     import torch  # type: ignore[import-not-found]
     import torch.nn as nn  # type: ignore[import-not-found]
     import torch.optim as optim  # type: ignore[import-not-found]
-    import torchvision  # type: ignore[import-not-found]
-    import torchvision.transforms as transforms  # type: ignore[import-not-found]
+    import torchvision  # type: ignore[import-not-found,import-untyped]
+    import torchvision.transforms as transforms  # type: ignore[import-not-found,import-untyped]
 except ImportError:
     print("ERROR: PyTorch is required for this example.")
     print("Install with: pip install torch torchvision")
