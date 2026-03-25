@@ -9,8 +9,6 @@ use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::{ComponentStorage, PyComponent, PyEntity};
 
-// Manual implementation because component_storage macro uses pybevy_core:: paths
-// which don't work inside pybevy_core itself.
 #[pyclass(name = "ChildOf", extends = PyComponent, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyChildOf {
@@ -44,7 +42,6 @@ impl TryFrom<&ChildOf> for PyChildOf {
 }
 
 impl PyChildOf {
-    /// Create from an owned component value. Returns tuple for PyO3 class inheritance.
     pub fn from_owned(component: ChildOf) -> (Self, PyComponent) {
         (
             Self {
@@ -54,7 +51,6 @@ impl PyChildOf {
         )
     }
 
-    /// Create from a borrowed component storage (for query iteration).
     pub fn from_borrowed(storage: ComponentStorage<ChildOf>) -> (Self, PyComponent) {
         (Self { storage }, PyComponent)
     }
@@ -86,14 +82,10 @@ impl PyChildOf {
     }
 }
 
-// ============================================================================
-// PyChildren - Auto-managed list of child entities (read-only)
-// ============================================================================
-
 /// Auto-managed list of child entities.
 ///
-/// This component is automatically maintained by Bevy when ChildOf relationships change.
-/// It should NOT be modified directly - instead, add/remove ChildOf components on children.
+/// Maintained by Bevy when ChildOf relationships change.
+/// Not modifiable directly — add/remove ChildOf on children instead.
 #[pyclass(name = "Children", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyChildren {
@@ -122,22 +114,18 @@ impl TryFrom<PyChildren> for Children {
 
 #[pymethods]
 impl PyChildren {
-    /// Get list of child entities.
     pub fn entities(&self) -> Vec<PyEntity> {
         self.entities.clone()
     }
 
-    /// Get number of children.
     pub fn len(&self) -> usize {
         self.entities.len()
     }
 
-    /// Check if has any children.
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
     }
 
-    /// Iterate over children.
     fn __iter__(slf: PyRef<'_, Self>) -> PyChildrenIterator {
         PyChildrenIterator {
             children: slf.entities.clone(),
@@ -145,7 +133,6 @@ impl PyChildren {
         }
     }
 
-    /// Get child by index.
     fn __getitem__(&self, idx: isize) -> PyResult<PyEntity> {
         let len = self.entities.len() as isize;
         let actual_idx = if idx < 0 {
@@ -160,7 +147,6 @@ impl PyChildren {
             .ok_or_else(|| PyIndexError::new_err(format!("Index {} out of bounds", idx)))
     }
 
-    /// Support len() in Python.
     fn __len__(&self) -> usize {
         self.entities.len()
     }

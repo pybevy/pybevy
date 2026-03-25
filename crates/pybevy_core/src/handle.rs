@@ -105,10 +105,6 @@ fn extract_index_from_synthetic_uuid(uuid: &Uuid) -> u64 {
     (uuid.as_u128() & 0xFFFF_FFFF_FFFF_FFFF) as u64
 }
 
-// ============================================================================
-// Conversion traits for typed Handle<A>
-// ============================================================================
-
 impl<A: Asset> TryFrom<PyHandle> for Handle<A> {
     type Error = PyErr;
 
@@ -274,10 +270,6 @@ impl From<PyHandle> for UntypedAssetId {
         UntypedAssetId::from(&handle)
     }
 }
-
-// ============================================================================
-// Python methods
-// ============================================================================
 
 #[pymethods]
 impl PyHandle {
@@ -453,10 +445,6 @@ fn normalize_handle_id(id: u128) -> u128 {
     }
 }
 
-// ============================================================================
-// Internal methods
-// ============================================================================
-
 impl PyHandle {
     /// Get the Rust TypeId for this handle's asset type.
     pub fn asset_type_id(&self) -> Option<TypeId> {
@@ -539,10 +527,6 @@ impl PyHandle {
         }
     }
 }
-
-// ============================================================================
-// Helper function to convert any Handle-like Python object to PyHandle
-// ============================================================================
 
 /// Extract a PyHandle from a Python object.
 ///

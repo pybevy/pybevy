@@ -43,7 +43,6 @@ pub use pybevy_storage::{
     storage_traits, validity_guard, value_storage, view_bridge,
 };
 
-// PyF32List (was in list_storage.rs, needs pyo3)
 pybevy_storage::impl_py_list!(PyF32List, "F32List", f32);
 
 use bevy::ecs::{
@@ -186,10 +185,6 @@ impl ComponentBridge for ChildOfBridge {
     }
 }
 
-// ============================================================================
-// ChildrenBridge - Read-only component, auto-managed by Bevy
-// ============================================================================
-
 pub struct ChildrenBridge;
 
 impl ComponentBridge for ChildrenBridge {
@@ -311,7 +306,6 @@ impl ComponentBridge for ChildrenBridge {
     }
 }
 
-// Re-export commonly used types at crate root
 pub use asset::{NativeAsset, PyAsset};
 pub use asset_path::PyAssetPath;
 pub use component::PyComponent;
@@ -322,7 +316,6 @@ pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};
 pub use plugin::{PluginBridge, PyPlugin};
-// Storage types re-exported from pybevy_storage
 pub use pybevy_storage::{
     AccessMode, AssetStorage, BorrowableStorage, ComponentStorage, ComponentStorageInner,
     FieldOffset, FieldStorage, FieldStorageInner, FromBorrowedStorage, ListStorage,
@@ -341,11 +334,8 @@ pub use reload_request::{
     LastSystemError, PendingReloadRequest, PyResourceStorage, ReloadRequestMode, ReloadResult,
 };
 pub use resource::PyResource;
-// Re-export uuid for use in macros (asset_bridge! needs it for synthetic UUID construction)
 pub use uuid;
 
-/// Register core component bridges with global registry.
-/// Call this from main crate during initialization.
 pub fn register_core_bridges() {
     registry::global_registry::register_component_bridge(ChildOfBridge);
     registry::global_registry::register_component_bridge(ChildrenBridge);
