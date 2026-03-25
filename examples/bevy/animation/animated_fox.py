@@ -95,10 +95,11 @@ def iter_descendants(entity: Entity, children_query: Query[Children]):
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_systems(Startup, setup)
-    app.add_systems(Update, play_animation_when_ready)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup)
+        .add_systems(Update, play_animation_when_ready)
+    )
 
 
 if __name__ == "__main__":

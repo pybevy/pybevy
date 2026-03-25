@@ -33,10 +33,11 @@ def setup(
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_plugins(ShaderMaterialPlugin())  # required
-    app.add_systems(Startup, setup)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_plugins(ShaderMaterialPlugin())  # required
+        .add_systems(Startup, setup)
+    )
 
 if __name__ == "__main__":
     main().run()

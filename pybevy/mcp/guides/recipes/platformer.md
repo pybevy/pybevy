@@ -251,16 +251,17 @@ def setup(
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_systems(Startup, (setup, setup_hud))
-    app.add_systems(Update, (
-        move_player,
-        follow_camera,
-        spin_collectibles,
-        collect_gems,
-        update_hud,
-    ))
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_systems(Startup, (setup, setup_hud))
+        .add_systems(Update, (
+            move_player,
+            follow_camera,
+            spin_collectibles,
+            collect_gems,
+            update_hud,
+        ))
+    )
 
 if __name__ == "__main__":
     main().run()

@@ -89,11 +89,12 @@ def rotate_camera(
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_plugins(ShaderMaterialPlugin())
-    app.add_systems(Startup, setup)
-    app.add_systems(Update, rotate_camera)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_plugins(ShaderMaterialPlugin())
+        .add_systems(Startup, setup)
+        .add_systems(Update, rotate_camera)
+    )
 
 
 if __name__ == "__main__":

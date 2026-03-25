@@ -592,9 +592,9 @@ class App:
     # Hot reload support (for CLI dev/watch mode)
     @property
     def _state(self) -> AppReloadState: ...
-    def set_hot_reload_loader(
+    def _set_hot_reload_loader(
         self, loader: Callable[[], Callable[[], App]]
-    ) -> None: ...
+    ) -> App: ...
 
     # Internal method for hot reload - creates temporary app that skips plugins
     @staticmethod

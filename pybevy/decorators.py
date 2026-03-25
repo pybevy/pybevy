@@ -352,7 +352,10 @@ def entrypoint(func: Callable) -> Callable:
     Example:
         @entrypoint
         def main(app: App) -> App:
-            return app.add_plugins(DefaultPlugins).add_systems(Startup, setup)
+            return (
+                app.add_plugins(DefaultPlugins)
+                .add_systems(Startup, setup)
+            )
 
         if __name__ == "__main__":
             main().run()  # App() is automatically created and injected

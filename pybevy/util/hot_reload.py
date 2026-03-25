@@ -351,7 +351,7 @@ def create_hot_reload_loader(
     entrypoint_wrapper: Callable[[Callable], Callable] | None = None,
 ) -> Callable[[], Callable[[], "App"]]:
     """
-    Create a hot reload loader function for use with app.set_hot_reload_loader().
+    Create a hot reload loader function for use with app._set_hot_reload_loader().
 
     The returned loader function will be called by PyBevy's hot reload system
     when a reload is triggered. It loads the fresh entrypoint function and
@@ -380,7 +380,7 @@ def create_hot_reload_loader(
             verbose=True
         )
 
-        app.set_hot_reload_loader(loader)
+        app._set_hot_reload_loader(loader)
 
     Example (with wrapper to re-add plugin):
         def wrap_with_plugin(entrypoint_func):
