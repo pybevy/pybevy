@@ -120,10 +120,11 @@ def bounce_physics(
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_systems(Startup, setup)
-    app.add_systems(Update, bounce_physics)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup)
+        .add_systems(Update, bounce_physics)
+    )
 
 
 if __name__ == "__main__":

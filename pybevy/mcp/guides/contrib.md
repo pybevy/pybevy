@@ -12,10 +12,11 @@ from pybevy.contrib import OrbitCameraPlugin, OrbitCamera
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_plugins(OrbitCameraPlugin())
-    app.add_systems(Startup, setup)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_plugins(OrbitCameraPlugin())
+        .add_systems(Startup, setup)
+    )
 
 def setup(commands: Commands) -> None:
     commands.spawn(
@@ -81,10 +82,11 @@ from pybevy.contrib import FlyCameraPlugin, FlyCamera
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_plugins(FlyCameraPlugin())
-    app.add_systems(Startup, setup)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_plugins(FlyCameraPlugin())
+        .add_systems(Startup, setup)
+    )
 
 def setup(commands: Commands) -> None:
     commands.spawn(
@@ -131,10 +133,11 @@ from pybevy.contrib.orbit_camera import OrbitCamera, orbit_camera_control_system
 
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.init_resource(OrbitCameraState)
-    app.add_systems(Update, orbit_camera_control_system)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .init_resource(OrbitCameraState)
+        .add_systems(Update, orbit_camera_control_system)
+    )
 ```
 
 This gives you finer control over which systems are registered and allows mixing contrib systems with your own camera logic.

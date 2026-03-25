@@ -529,8 +529,8 @@ def _run_script(
             # Set up hot reload loader if hot reload is enabled
             # Note: We don't use HotReloadPlugin here because it would try to add
             # systems to the Last schedule after DefaultPlugins has already set it up.
-            # Instead, set_hot_reload_loader() initializes hot reload internally.
-            if hasattr(app, "set_hot_reload_loader") and hot_reload:
+            # Instead, _set_hot_reload_loader() initializes hot reload internally.
+            if hasattr(app, "_set_hot_reload_loader") and hot_reload:
                 # Create a loader that checks the reload mode from the state
                 def loader() -> Callable[[], App]:
                     files = changed_files_cache.get("files")
@@ -553,7 +553,7 @@ def _run_script(
                     changed_files_cache["files"] = set()
                     return result
 
-                app.set_hot_reload_loader(loader)  # type: ignore
+                app._set_hot_reload_loader(loader)  # type: ignore
 
             app.run()
         except KeyboardInterrupt:

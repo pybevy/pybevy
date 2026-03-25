@@ -72,14 +72,18 @@ See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, m
 
   @entrypoint
   def main(app: App) -> App:
-      app.add_plugins(DefaultPlugins)
-      # ... add systems, resources, etc.
-      return app
+      return (
+          app.add_plugins(DefaultPlugins)
+          # ... add systems, resources, etc.
+          .add_systems(Startup, setup)
+          .add_systems(Update, animate)
+      )
 
   if __name__ == "__main__":
       main().run()
   ```
   Common mistakes: missing `@entrypoint` decorator, wrong signature (must be `def main(app: App) -> App`), missing `return app`, missing `if __name__` guard.
+- **Always use chained return style** — use `return (app.add_plugins(...).add_systems(...))`. Do NOT use separate `app.method(...)` calls followed by `return app`.
 - Always use `from pybevy.prelude import *` (NOT `from pybevy import *`)
 - Pass shapes directly to meshes.add(): `meshes.add(Cuboid(1,1,1))`
 - Use `GlobalAmbientLight` (Resource) not `AmbientLight` (Component) for global light

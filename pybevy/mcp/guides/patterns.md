@@ -55,10 +55,11 @@ def animate(
 # -- Entrypoint (MUST accept App and return App) --
 @entrypoint
 def main(app: App) -> App:
-    app.add_plugins(DefaultPlugins)
-    app.add_systems(Startup, setup)
-    app.add_systems(Update, animate)
-    return app
+    return (
+        app.add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup)
+        .add_systems(Update, animate)
+    )
 
 if __name__ == "__main__":
     main().run()

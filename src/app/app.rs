@@ -1833,25 +1833,26 @@ impl PyApp {
 
     /// Set the hot reload loader function (called by CLI)
     /// The loader should return a function that when called returns create_app function
-    pub fn set_hot_reload_loader(&self, loader: Bound<'_, PyAny>) -> PyResult<()> {
-        self.ensure_active()?;
-        self.hot_reload_state.set_loader(loader.unbind());
+    #[pyo3(name = "_set_hot_reload_loader")]
+    pub fn set_hot_reload_loader(pyself: PyRef<'_, Self>, loader: Bound<'_, PyAny>) -> PyResult<Py<PyApp>> {
+        pyself.ensure_active()?;
+        pyself.hot_reload_state.set_loader(loader.unbind());
 
         // Add the hot reload system to the app if not already added
         BEVY_APPS.with(|apps_cell| {
             let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
+            let app = pyself.get_app_mut(&mut apps)?;
 
             // Add hot reload checking system
             add_hot_reload_system(
                 app,
-                self.hot_reload_state.clone(),
-                self.system_error.clone(),
+                pyself.hot_reload_state.clone(),
+                pyself.system_error.clone(),
             );
             Ok::<(), PyErr>(())
         })?;
 
-        Ok(())
+        Ok(pyself.into())
     }
 
     /// Check if the app should exit
