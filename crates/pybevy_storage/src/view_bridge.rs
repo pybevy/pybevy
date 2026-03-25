@@ -102,9 +102,11 @@ pub struct ViewBridge {
     ///
     /// # Safety
     ///
+    /// `entity_count` must equal the column's actual length.
     /// The returned pointer is valid only for the lifetime of the column.
     /// Caller must ensure proper synchronization for mutable access.
-    pub column_data_ptr: fn(column: &bevy::ecs::storage::Column, entity_count: usize) -> *const u8,
+    pub column_data_ptr:
+        unsafe fn(column: &bevy::ecs::storage::Column, entity_count: usize) -> *const u8,
 }
 
 impl std::fmt::Debug for ViewBridge {

@@ -611,6 +611,10 @@ def system(state: ResMut[GameState]) -> None:
 # then it's not protected by Bevy's scheduler
 ```
 
+**CAUTION: Spawning threads inside systems**:
+
+Passing component references to threads spawned within a system bypasses PyBevy's safety guarantees. Without the GIL, two threads calling `as_mut()` on the same component simultaneously would create a data race on the underlying Rust memory. In practice the effect is limited to corrupted field values (torn writes on non-atomic types). A thread-id check in the validity flag could detect this, but would add a branch to every component access on the hot path.
+
 ### Safe Patterns
 
 **Standard component mutations**:

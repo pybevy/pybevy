@@ -3,11 +3,6 @@
 //! This crate contains the Bevy-side `ShaderMaterial` type definition
 //! (`ExtendedMaterial<StandardMaterial, ShaderMaterialExtension>`) and
 //! supporting types. No Python dependencies.
-//!
-//! Used by:
-//! - `pybevy_pbr` — Python wrappers + plugin registration
-//! - `pybevy_replicon` — server-side extraction for browser sync
-//! - `pybevy_browser` — client-side material reconstruction
 
 use std::{
     collections::HashMap,
