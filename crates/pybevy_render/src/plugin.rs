@@ -4,8 +4,7 @@ use pyo3::prelude::*;
 use crate::power_preference::PyPowerPreference;
 
 #[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen)]
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PyRenderPlugin {
     pub power_preference: Option<PyPowerPreference>,
     pub synchronous_pipeline_compilation: Option<bool>,
@@ -43,4 +42,3 @@ impl PyRenderPlugin {
         }
     }
 }
-

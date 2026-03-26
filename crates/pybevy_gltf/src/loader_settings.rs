@@ -11,7 +11,6 @@ pub struct PyGltfLoaderSettings {
     pub(crate) inner: GltfLoaderSettings,
 }
 
-
 #[pymethods]
 impl PyGltfLoaderSettings {
     #[new]
@@ -38,12 +37,8 @@ impl PyGltfLoaderSettings {
     ) -> Self {
         Self {
             inner: GltfLoaderSettings {
-                load_meshes: load_meshes
-                    .map(Into::into)
-                    .unwrap_or_default(),
-                load_materials: load_materials
-                    .map(Into::into)
-                    .unwrap_or_default(),
+                load_meshes: load_meshes.map(Into::into).unwrap_or_default(),
+                load_materials: load_materials.map(Into::into).unwrap_or_default(),
                 load_cameras,
                 load_lights,
                 load_animations,

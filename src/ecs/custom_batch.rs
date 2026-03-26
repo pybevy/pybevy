@@ -117,20 +117,14 @@ impl PyCustomComponentBatch {
                 if ndim != 2 {
                     return Err(PyValueError::new_err(format!(
                         "Field '{}' ({:?}): expected 2D array with shape (N, {}), got {}D array",
-                        field_name,
-                        field_info.field_type,
-                        expected_cols,
-                        ndim
+                        field_name, field_info.field_type, expected_cols, ndim
                     )));
                 }
                 let shape: Vec<usize> = value.getattr("shape")?.extract()?;
                 if shape[1] != expected_cols {
                     return Err(PyValueError::new_err(format!(
                         "Field '{}' ({:?}): expected shape (N, {}), got (N, {})",
-                        field_name,
-                        field_info.field_type,
-                        expected_cols,
-                        shape[1]
+                        field_name, field_info.field_type, expected_cols, shape[1]
                     )));
                 }
                 shape[0]

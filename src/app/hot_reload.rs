@@ -97,9 +97,10 @@ fn get_python_gc_objects() -> usize {
     Python::attach(|py| {
         if let Ok(gc) = py.import("gc")
             && let Ok(counts) = gc.call_method0("get_count")
-                && let Ok(tuple) = counts.extract::<(usize, usize, usize)>() {
-                    return tuple.0 + tuple.1 + tuple.2;
-                }
+            && let Ok(tuple) = counts.extract::<(usize, usize, usize)>()
+        {
+            return tuple.0 + tuple.1 + tuple.2;
+        }
         0
     })
 }
@@ -118,9 +119,10 @@ fn detect_gil_status() -> bool {
         // Try Python 3.13+ free-threading detection
         if let Ok(sys) = py.import("sys")
             && let Ok(enabled_attr) = sys.getattr("_is_gil_enabled")
-                && let Ok(result) = enabled_attr.call0() {
-                    return result.extract().unwrap_or(true);
-                }
+            && let Ok(result) = enabled_attr.call0()
+        {
+            return result.extract().unwrap_or(true);
+        }
         // GIL is enabled by default (standard CPython)
         true
     })
@@ -865,9 +867,10 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
             }
             // Clear paused state if active
             if let Some(mut paused) = world.get_resource_mut::<StartPaused>()
-                && paused.0 {
-                    paused.0 = false;
-                }
+                && paused.0
+            {
+                paused.0 = false;
+            }
             if let Some(reload_res) = world.get_resource::<HotReloadResource>() {
                 reload_res.state.request_reload(ReloadMode::Full);
             }
@@ -900,16 +903,15 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
     }
 
     // Check if F7 was just pressed (toggle memory overlay)
-    if f7_pressed
-        && let Some(mut visible) = world.get_resource_mut::<MemoryOverlayVisible>() {
-            visible.0 = !visible.0;
-            if is_verbose() {
-                eprintln!(
-                    "📊 F7 pressed! Memory overlay: {}",
-                    if visible.0 { "ON" } else { "OFF" }
-                );
-            }
+    if f7_pressed && let Some(mut visible) = world.get_resource_mut::<MemoryOverlayVisible>() {
+        visible.0 = !visible.0;
+        if is_verbose() {
+            eprintln!(
+                "📊 F7 pressed! Memory overlay: {}",
+                if visible.0 { "ON" } else { "OFF" }
+            );
         }
+    }
 }
 
 /// System that runs each frame to check for hot reload requests
@@ -917,13 +919,14 @@ pub fn check_hot_reload_system(world: &mut World) {
     // Check for MCP reload requests (cross-crate mailbox from pybevy_core)
     if let Some(mut mcp_request) = world.get_resource_mut::<pybevy_core::PendingReloadRequest>()
         && let Some(mcp_mode) = mcp_request.mode.take()
-            && let Some(reload_res) = world.get_resource::<HotReloadResource>() {
-                let mode = match mcp_mode {
-                    pybevy_core::ReloadRequestMode::Full => ReloadMode::Full,
-                    pybevy_core::ReloadRequestMode::Partial => ReloadMode::Partial,
-                };
-                reload_res.state.request_reload(mode);
-            }
+        && let Some(reload_res) = world.get_resource::<HotReloadResource>()
+    {
+        let mode = match mcp_mode {
+            pybevy_core::ReloadRequestMode::Full => ReloadMode::Full,
+            pybevy_core::ReloadRequestMode::Partial => ReloadMode::Partial,
+        };
+        reload_res.state.request_reload(mode);
+    }
 
     // First check if reload is pending WITHOUT acquiring GIL (fast path)
     let is_reload_pending = {
@@ -961,20 +964,21 @@ pub fn check_hot_reload_system(world: &mut World) {
 
     // If we got the loader func, perform reload WITHOUT holding GIL
     if let Some((loader_func, mode, error_state)) = reload_data
-        && let Err(e) = perform_reload(world, loader_func, mode, error_state) {
-            let error_msg = e.to_string();
-            Python::attach(|py| e.print(py));
+        && let Err(e) = perform_reload(world, loader_func, mode, error_state)
+    {
+        let error_msg = e.to_string();
+        Python::attach(|py| e.print(py));
 
-            // Write reload errors to LastSystemError so MCP can see them
-            let timestamp = world
-                .get_resource::<bevy::time::Time>()
-                .map(|t| t.elapsed_secs_f64())
-                .unwrap_or(0.0);
-            let mut last_error =
-                world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
-            last_error.error = Some(error_msg);
-            last_error.timestamp_secs = timestamp;
-        }
+        // Write reload errors to LastSystemError so MCP can see them
+        let timestamp = world
+            .get_resource::<bevy::time::Time>()
+            .map(|t| t.elapsed_secs_f64())
+            .unwrap_or(0.0);
+        let mut last_error =
+            world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
+        last_error.error = Some(error_msg);
+        last_error.timestamp_secs = timestamp;
+    }
 }
 
 /// Clear only programmatically-created assets (those added via `assets.add()`).
@@ -1544,13 +1548,14 @@ fn perform_reload(
                             &class_name,
                             msg_type.clone_ref(py),
                             new_generation,
-                        ) && is_verbose()
-                        {
-                            eprintln!(
-                                "   → Aliased message '{}' with new type pointer",
-                                class_name
-                            );
-                        }
+                        )
+                        && is_verbose()
+                    {
+                        eprintln!(
+                            "   → Aliased message '{}' with new type pointer",
+                            class_name
+                        );
+                    }
                 }
             }
             Ok(())
@@ -1602,14 +1607,16 @@ fn perform_reload(
                     if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
                         for inner in chained.systems.bind(py).iter() {
                             if let Ok(name) = inner.getattr("__name__")
-                                && let Ok(s) = name.extract::<String>() {
-                                    names.insert(s);
-                                }
+                                && let Ok(s) = name.extract::<String>()
+                            {
+                                names.insert(s);
+                            }
                         }
                     } else if let Ok(name) = sys_bound.getattr("__name__")
-                        && let Ok(s) = name.extract::<String>() {
-                            names.insert(s);
-                        }
+                        && let Ok(s) = name.extract::<String>()
+                    {
+                        names.insert(s);
+                    }
                 }
             }
             names
@@ -1881,10 +1888,11 @@ fn perform_reload(
                     let mut cleaned = 0;
                     for entity in post_entities {
                         if !pre_startup_entities.contains(&entity)
-                            && world.get_entity(entity).is_ok() {
-                                world.despawn(entity);
-                                cleaned += 1;
-                            }
+                            && world.get_entity(entity).is_ok()
+                        {
+                            world.despawn(entity);
+                            cleaned += 1;
+                        }
                     }
                     if is_verbose() && cleaned > 0 {
                         eprintln!(
@@ -1944,10 +1952,11 @@ fn perform_reload(
         .is_some_and(|e| e.error.is_some() && e.timestamp_secs > pre_startup_error_ts);
 
     if !startup_had_error
-        && let Some(mut last_error) = world.get_resource_mut::<pybevy_core::LastSystemError>() {
-            last_error.error = None;
-            last_error.traceback = None;
-        }
+        && let Some(mut last_error) = world.get_resource_mut::<pybevy_core::LastSystemError>()
+    {
+        last_error.error = None;
+        last_error.traceback = None;
+    }
 
     // Clear failure state on success
     if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
@@ -1965,23 +1974,24 @@ fn perform_reload(
 
     // Register system handles for this generation and gut old-generation systems
     if !system_handles.is_empty()
-        && let Some(mut registry) = world.get_resource_mut::<DynamicSystemRegistry>() {
-            for handle in system_handles {
-                registry.register(new_generation, handle);
-            }
-
-            // Gut systems from old generations to release their Python references.
-            // Keep KEEP_ALIVE_GENERATIONS worth of systems for potential rollback.
-            let keep_after = new_generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
-            registry.cleanup_old_generations(keep_after);
-
-            if is_verbose() {
-                eprintln!(
-                    "   → Registered system handles for gen {} and gutted systems older than gen {}",
-                    new_generation, keep_after
-                );
-            }
+        && let Some(mut registry) = world.get_resource_mut::<DynamicSystemRegistry>()
+    {
+        for handle in system_handles {
+            registry.register(new_generation, handle);
         }
+
+        // Gut systems from old generations to release their Python references.
+        // Keep KEEP_ALIVE_GENERATIONS worth of systems for potential rollback.
+        let keep_after = new_generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
+        registry.cleanup_old_generations(keep_after);
+
+        if is_verbose() {
+            eprintln!(
+                "   → Registered system handles for gen {} and gutted systems older than gen {}",
+                new_generation, keep_after
+            );
+        }
+    }
 
     // Prune old MessageRegistry entries to release stale Python type pointers
     if let Some(mut msg_registry) = world.get_resource_mut::<MessageRegistry>() {
@@ -2311,9 +2321,10 @@ fn update_system_stats(world: &mut bevy::ecs::world::World) {
 
         // Capture memory baseline on first stats update (after Startup has run)
         if stats.memory_mb > 0.0
-            && let Some(mut profile) = world.get_resource_mut::<MemoryProfile>() {
-                profile.capture_baseline(stats.memory_mb);
-            }
+            && let Some(mut profile) = world.get_resource_mut::<MemoryProfile>()
+        {
+            profile.capture_baseline(stats.memory_mb);
+        }
     }
 
     // Write cross-crate DebugSnapshot for MCP
@@ -2618,27 +2629,29 @@ fn render_hot_reload_overlay(
         let has_error = last_error.as_ref().and_then(|e| e.error.as_ref()).is_some();
 
         if let Some(last_err) = last_error.as_ref()
-            && last_err.error.is_some() && last_err.timestamp_secs > stats.last_error_timestamp {
-                // Extract the meaningful error line from traceback or error message
-                let error_msg = last_err
-                    .traceback
-                    .as_deref()
-                    .and_then(|tb| {
-                        // Get the last non-empty line (the actual error)
-                        tb.lines().rev().find(|l| !l.trim().is_empty())
-                    })
-                    .or(last_err.error.as_deref())
-                    .unwrap_or("Unknown error");
+            && last_err.error.is_some()
+            && last_err.timestamp_secs > stats.last_error_timestamp
+        {
+            // Extract the meaningful error line from traceback or error message
+            let error_msg = last_err
+                .traceback
+                .as_deref()
+                .and_then(|tb| {
+                    // Get the last non-empty line (the actual error)
+                    tb.lines().rev().find(|l| !l.trim().is_empty())
+                })
+                .or(last_err.error.as_deref())
+                .unwrap_or("Unknown error");
 
-                let display_msg = if error_msg.len() > 120 {
-                    format!("Error: {}...", &error_msg[..117])
-                } else {
-                    format!("Error: {}", error_msg)
-                };
+            let display_msg = if error_msg.len() > 120 {
+                format!("Error: {}...", &error_msg[..117])
+            } else {
+                format!("Error: {}", error_msg)
+            };
 
-                error_text.0 = display_msg;
-                stats.last_error_timestamp = last_err.timestamp_secs;
-            }
+            error_text.0 = display_msg;
+            stats.last_error_timestamp = last_err.timestamp_secs;
+        }
 
         *visibility = if has_error {
             bevy::prelude::Visibility::Inherited
@@ -2832,24 +2845,25 @@ pub fn add_hot_reload_system(
 
     // Check for --resolution flag (communicated via env var, e.g. "1920x1080")
     if let Ok(res_str) = env::var("PYBEVY_WINDOW_RESOLUTION")
-        && let Some((width, height)) = parse_resolution(&res_str) {
-            // Window entity doesn't exist yet (plugins build during app.run()),
-            // so register a PreStartup system to set resolution once it's available.
-            app.add_systems(
-                PreStartup,
-                move |mut query: bevy::ecs::system::Query<
-                    &mut bevy::window::Window,
-                    bevy::ecs::query::With<bevy::window::PrimaryWindow>,
-                >| {
-                    if let Ok(mut window) = query.single_mut() {
-                        window.resolution.set(width, height);
-                    }
-                },
-            );
-            if verbose {
-                eprintln!("   → Window resolution will be set to {}x{}", width, height);
-            }
+        && let Some((width, height)) = parse_resolution(&res_str)
+    {
+        // Window entity doesn't exist yet (plugins build during app.run()),
+        // so register a PreStartup system to set resolution once it's available.
+        app.add_systems(
+            PreStartup,
+            move |mut query: bevy::ecs::system::Query<
+                &mut bevy::window::Window,
+                bevy::ecs::query::With<bevy::window::PrimaryWindow>,
+            >| {
+                if let Ok(mut window) = query.single_mut() {
+                    window.resolution.set(width, height);
+                }
+            },
+        );
+        if verbose {
+            eprintln!("   → Window resolution will be set to {}x{}", width, height);
         }
+    }
 
     // Insert the Python-accessible hot reload control resource
     // This allows Python systems to request reloads (e.g., on F5 press)

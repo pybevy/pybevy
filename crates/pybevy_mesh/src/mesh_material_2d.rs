@@ -27,12 +27,13 @@ impl PyMeshMaterial2d {
 
         // Validate asset type
         if let Some(name) = handle.asset_type_name()
-            && name != "ColorMaterial" {
-                return Err(PyTypeError::new_err(format!(
-                    "AssetType `{}` does not match expected type `ColorMaterial`",
-                    name
-                )));
-            }
+            && name != "ColorMaterial"
+        {
+            return Err(PyTypeError::new_err(format!(
+                "AssetType `{}` does not match expected type `ColorMaterial`",
+                name
+            )));
+        }
 
         Ok((Self(handle), PyComponent))
     }

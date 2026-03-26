@@ -236,10 +236,12 @@ fn parse_stub_definitions(content: &str) -> (Vec<String>, Vec<String>) {
             }
         } else if let Some(rest) = trimmed.strip_prefix("def ") {
             // Only top-level functions (no indentation)
-            if !line.starts_with(' ') && !line.starts_with('\t')
-                && let Some(name) = rest.split('(').next() {
-                    functions.push(name.trim().to_string());
-                }
+            if !line.starts_with(' ')
+                && !line.starts_with('\t')
+                && let Some(name) = rest.split('(').next()
+            {
+                functions.push(name.trim().to_string());
+            }
         }
     }
 
@@ -282,11 +284,13 @@ fn load_guides(guides_dir: &Path) -> (Vec<GuideEntry>, HashMap<String, String>) 
                 sub_entries.sort_by_key(|e| e.file_name());
                 for sub_entry in sub_entries {
                     let sub_path = sub_entry.path();
-                    if sub_path.is_file() && sub_path.extension().is_some_and(|ext| ext == "md")
-                        && let Some(stem) = sub_path.file_stem().and_then(|s| s.to_str()) {
-                            let name = format!("{subdir_str}/{stem}");
-                            md_files.push((name, sub_path));
-                        }
+                    if sub_path.is_file()
+                        && sub_path.extension().is_some_and(|ext| ext == "md")
+                        && let Some(stem) = sub_path.file_stem().and_then(|s| s.to_str())
+                    {
+                        let name = format!("{subdir_str}/{stem}");
+                        md_files.push((name, sub_path));
+                    }
                 }
             }
         }
@@ -342,8 +346,7 @@ fn extract_class_definition(content: &str, class_name: &str) -> Option<String> {
 
     let start = lines.iter().position(|line| {
         let trimmed = line.trim();
-        trimmed.starts_with(&class_prefix)
-            && trimmed[class_prefix.len()..].starts_with(['(', ':'])
+        trimmed.starts_with(&class_prefix) && trimmed[class_prefix.len()..].starts_with(['(', ':'])
     })?;
 
     let mut end = lines.len();
@@ -472,9 +475,10 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
                 // Property setter — mark existing property as read-write
                 let prop_name = rest.split('(').next().unwrap_or("").to_string();
                 if let Some(&idx) = property_names.get(&prop_name)
-                    && let Some(obj) = properties[idx].as_object_mut() {
-                        obj.insert("readonly".into(), serde_json::Value::Bool(false));
-                    }
+                    && let Some(obj) = properties[idx].as_object_mut()
+                {
+                    obj.insert("readonly".into(), serde_json::Value::Bool(false));
+                }
             } else {
                 // Regular method
                 methods.push(format!("def {sig}"));
@@ -527,18 +531,19 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
 fn extract_constructor_display(sig: &str) -> String {
     // sig looks like: __init__(self, radius: float = 1.0, height: float = 1.0) -> None
     if let Some(paren_start) = sig.find('(')
-        && let Some(paren_end) = sig.rfind(')') {
-            let params_str = &sig[paren_start + 1..paren_end];
-            let params: Vec<&str> = params_str
-                .split(',')
-                .map(|p| p.trim())
-                .filter(|p| *p != "self" && !p.is_empty())
-                .collect();
-            if params.is_empty() {
-                return "()".to_string();
-            }
-            return format!("({})", params.join(", "));
+        && let Some(paren_end) = sig.rfind(')')
+    {
+        let params_str = &sig[paren_start + 1..paren_end];
+        let params: Vec<&str> = params_str
+            .split(',')
+            .map(|p| p.trim())
+            .filter(|p| *p != "self" && !p.is_empty())
+            .collect();
+        if params.is_empty() {
+            return "()".to_string();
         }
+        return format!("({})", params.join(", "));
+    }
     sig.to_string()
 }
 

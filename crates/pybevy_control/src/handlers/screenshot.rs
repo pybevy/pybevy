@@ -123,7 +123,8 @@ pub fn process_pending_screenshots(world: &mut World) {
 
     if pending.pending.is_empty()
         && world
-            .get_resource::<StagedDebugScreenshots>().is_none_or(|s| s.pending.is_empty())
+            .get_resource::<StagedDebugScreenshots>()
+            .is_none_or(|s| s.pending.is_empty())
     {
         world.insert_resource(pending);
         return;
@@ -624,10 +625,11 @@ pub fn screenshot_captured_observer(
 
     // Restore gizmo visibility
     if let Some(was_enabled) = responder.gizmo_restore
-        && let Some(mut store) = gizmo_store {
-            let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-            config.enabled = was_enabled;
-        }
+        && let Some(mut store) = gizmo_store
+    {
+        let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+        config.enabled = was_enabled;
+    }
 
     // Clean up debug camera if present
     if let Some(cleanup) = responder.debug_cleanup {
@@ -704,16 +706,17 @@ fn composite_contact_sheet(
 
     // Resize if max_width set
     if let Some(max_w) = timeline.max_width
-        && canvas.width() > max_w {
-            let scale = max_w as f64 / canvas.width() as f64;
-            let new_height = (canvas.height() as f64 * scale).round() as u32;
-            canvas = image::imageops::resize(
-                &canvas,
-                max_w,
-                new_height,
-                image::imageops::FilterType::Triangle,
-            );
-        }
+        && canvas.width() > max_w
+    {
+        let scale = max_w as f64 / canvas.width() as f64;
+        let new_height = (canvas.height() as f64 * scale).round() as u32;
+        canvas = image::imageops::resize(
+            &canvas,
+            max_w,
+            new_height,
+            image::imageops::FilterType::Triangle,
+        );
+    }
 
     let width = canvas.width();
     let height = canvas.height();
@@ -780,16 +783,17 @@ fn encode_rgb_screenshot(
 ) -> Result<serde_json::Value, ControlError> {
     // Resize if max_width is set and image is wider
     if let Some(max_w) = max_width
-        && rgb.width() > max_w {
-            let scale = max_w as f64 / rgb.width() as f64;
-            let new_height = (rgb.height() as f64 * scale).round() as u32;
-            rgb = image::imageops::resize(
-                &rgb,
-                max_w,
-                new_height,
-                image::imageops::FilterType::Triangle,
-            );
-        }
+        && rgb.width() > max_w
+    {
+        let scale = max_w as f64 / rgb.width() as f64;
+        let new_height = (rgb.height() as f64 * scale).round() as u32;
+        rgb = image::imageops::resize(
+            &rgb,
+            max_w,
+            new_height,
+            image::imageops::FilterType::Triangle,
+        );
+    }
 
     let width = rgb.width();
     let height = rgb.height();

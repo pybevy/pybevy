@@ -538,12 +538,13 @@ impl PyWorld {
             PyResourceType::Custom(type_ptr) => {
                 // Check if the registry exists and contains this type
                 if let Some(registry) = world.get_resource::<ResourceRegistry>()
-                    && let Some(&component_id) = registry.registry.get(&type_ptr) {
-                        // Check if the storage exists and contains this resource
-                        if let Some(storage) = world.get_resource::<PyResourceStorage>() {
-                            return Ok(storage.resources.contains_key(&component_id));
-                        }
+                    && let Some(&component_id) = registry.registry.get(&type_ptr)
+                {
+                    // Check if the storage exists and contains this resource
+                    if let Some(storage) = world.get_resource::<PyResourceStorage>() {
+                        return Ok(storage.resources.contains_key(&component_id));
                     }
+                }
                 Ok(false)
             }
             PyResourceType::Dynamic(type_ptr) => {
@@ -592,11 +593,7 @@ impl PyWorld {
         }
 
         let world_ptr = pyself.borrow(py).world_ptr();
-        let validity = pyself
-            .borrow(py)
-            .validity
-            .clone()
-            .unwrap_or_default();
+        let validity = pyself.borrow(py).validity.clone().unwrap_or_default();
 
         let py_commands = unsafe { PyCommands::from_world(world_ptr, pyself, validity) };
         Ok(py_commands)
@@ -791,11 +788,10 @@ impl PyWorld {
 
                     // Execute the observer with full parameter injection
                     let world = self.world_mut()?;
-                    execute_system_func(py, &observer_entry.system_func, world, on_param).inspect_err(
-                        |e| {
+                    execute_system_func(py, &observer_entry.system_func, world, on_param)
+                        .inspect_err(|e| {
                             e.print(py);
-                        },
-                    )?;
+                        })?;
                 }
             }
         }
@@ -1099,9 +1095,10 @@ impl PyWorld {
                     for observer_entry in observers {
                         // Check entity filter if present (per-entity observers)
                         if let Some(filter_entity) = observer_entry.entity_filter
-                            && entity != filter_entity {
-                                continue; // Event targets different entity
-                            }
+                            && entity != filter_entity
+                        {
+                            continue; // Event targets different entity
+                        }
 
                         // Check bundle filter if present
                         if let Some(ref bundle_filter) = observer_entry.bundle_filter {

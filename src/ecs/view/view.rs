@@ -173,16 +173,18 @@ impl ResolvedTickFilters {
 
         for &id in &self.changed_ids {
             if let Some(ticks) = entity_mut.get_change_ticks_by_id(id)
-                && !ticks.is_changed(self.last_run, self.this_run) {
-                    return false;
-                }
+                && !ticks.is_changed(self.last_run, self.this_run)
+            {
+                return false;
+            }
         }
 
         for &id in &self.added_ids {
             if let Some(ticks) = entity_mut.get_change_ticks_by_id(id)
-                && !ticks.is_added(self.last_run, self.this_run) {
-                    return false;
-                }
+                && !ticks.is_added(self.last_run, self.this_run)
+            {
+                return false;
+            }
         }
 
         true
@@ -260,33 +262,35 @@ impl PyView {
         // Check Changed filters
         for ct in &self.changed_filter_types {
             if let Ok(id) = self.get_component_id(ct)
-                && let Some(column) = table.get_column(id) {
-                    let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
-                    for i in 0..entity_count {
-                        if mask[i] {
-                            let tick = unsafe { *changed_ticks[i].get() };
-                            if !tick.is_newer_than(last_run, this_run) {
-                                mask[i] = false;
-                            }
+                && let Some(column) = table.get_column(id)
+            {
+                let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
+                for i in 0..entity_count {
+                    if mask[i] {
+                        let tick = unsafe { *changed_ticks[i].get() };
+                        if !tick.is_newer_than(last_run, this_run) {
+                            mask[i] = false;
                         }
                     }
                 }
+            }
         }
 
         // Check Added filters
         for ct in &self.added_filter_types {
             if let Ok(id) = self.get_component_id(ct)
-                && let Some(column) = table.get_column(id) {
-                    let added_ticks = unsafe { column.get_added_ticks_slice(entity_count) };
-                    for i in 0..entity_count {
-                        if mask[i] {
-                            let tick = unsafe { *added_ticks[i].get() };
-                            if !tick.is_newer_than(last_run, this_run) {
-                                mask[i] = false;
-                            }
+                && let Some(column) = table.get_column(id)
+            {
+                let added_ticks = unsafe { column.get_added_ticks_slice(entity_count) };
+                for i in 0..entity_count {
+                    if mask[i] {
+                        let tick = unsafe { *added_ticks[i].get() };
+                        if !tick.is_newer_than(last_run, this_run) {
+                            mask[i] = false;
                         }
                     }
                 }
+            }
         }
 
         Some(mask)
@@ -1622,9 +1626,10 @@ impl PyViewColMut {
 
                         // Skip entire table if tick mask filters out all entities
                         if let Some(ref mask) = tick_mask
-                            && !mask.iter().any(|&v| v) {
-                                continue;
-                            }
+                            && !mask.iter().any(|&v| v)
+                        {
+                            continue;
+                        }
 
                         // Get base pointer for each component
                         let mut component_bases: HashMap<ComponentId, *mut u8> = HashMap::new();
@@ -1684,9 +1689,10 @@ impl PyViewColMut {
                     let strides = &field_strides;
                     (0..batch.entity_count).filter_map(move |entity_idx| {
                         if let Some(mask) = mask
-                            && !mask[entity_idx] {
-                                return None;
-                            }
+                            && !mask[entity_idx]
+                        {
+                            return None;
+                        }
 
                         let field_ptrs: Vec<SendPtr> = bytecode
                             .field_map
@@ -1810,32 +1816,32 @@ impl PyViewColMut {
                 if let Some(table) = tables.get(table_id) {
                     let entity_count = table.entity_count() as usize;
                     if entity_count > 0
-                        && let Some(column) = table.get_column(dest_component_id) {
-                            if has_tick_filters {
-                                // Only mark entities that passed tick filters as changed
-                                if let Some(mask) =
-                                    view.build_tick_mask_for_table(table, entity_count)
-                                {
-                                    let changed_ticks =
-                                        unsafe { column.get_changed_ticks_slice(entity_count) };
-                                    for i in 0..entity_count {
-                                        if mask[i] {
-                                            unsafe {
-                                                *changed_ticks[i].get() = change_tick;
-                                            }
+                        && let Some(column) = table.get_column(dest_component_id)
+                    {
+                        if has_tick_filters {
+                            // Only mark entities that passed tick filters as changed
+                            if let Some(mask) = view.build_tick_mask_for_table(table, entity_count)
+                            {
+                                let changed_ticks =
+                                    unsafe { column.get_changed_ticks_slice(entity_count) };
+                                for i in 0..entity_count {
+                                    if mask[i] {
+                                        unsafe {
+                                            *changed_ticks[i].get() = change_tick;
                                         }
                                     }
                                 }
-                            } else {
-                                let changed_ticks =
-                                    unsafe { column.get_changed_ticks_slice(entity_count) };
-                                for tick in changed_ticks {
-                                    unsafe {
-                                        *tick.get() = change_tick;
-                                    }
+                            }
+                        } else {
+                            let changed_ticks =
+                                unsafe { column.get_changed_ticks_slice(entity_count) };
+                            for tick in changed_ticks {
+                                unsafe {
+                                    *tick.get() = change_tick;
                                 }
                             }
                         }
+                    }
                 }
             }
         }

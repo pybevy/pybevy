@@ -419,16 +419,17 @@ impl DynamicSystem {
                                     existing_accesses
                                 {
                                     if (*mutable || *existing_mut)
-                                        && !current_filters.is_disjoint_from(existing_filters) {
-                                            return Err(ComponentAccessConflict {
-                                                param_idx,
-                                                mutable: *mutable,
-                                                comp_name,
-                                                existing_idx: *existing_idx,
-                                                existing_mut: *existing_mut,
-                                                existing_name: existing_name.clone(),
-                                            });
-                                        }
+                                        && !current_filters.is_disjoint_from(existing_filters)
+                                    {
+                                        return Err(ComponentAccessConflict {
+                                            param_idx,
+                                            mutable: *mutable,
+                                            comp_name,
+                                            existing_idx: *existing_idx,
+                                            existing_mut: *existing_mut,
+                                            existing_name: existing_name.clone(),
+                                        });
+                                    }
                                 }
                             }
 
@@ -474,16 +475,17 @@ impl DynamicSystem {
                                 existing_accesses
                             {
                                 if (*mutable || *existing_mut)
-                                    && !current_filters.is_disjoint_from(existing_filters) {
-                                        return Err(ComponentAccessConflict {
-                                            param_idx,
-                                            mutable: *mutable,
-                                            comp_name,
-                                            existing_idx: *existing_idx,
-                                            existing_mut: *existing_mut,
-                                            existing_name: existing_name.clone(),
-                                        });
-                                    }
+                                    && !current_filters.is_disjoint_from(existing_filters)
+                                {
+                                    return Err(ComponentAccessConflict {
+                                        param_idx,
+                                        mutable: *mutable,
+                                        comp_name,
+                                        existing_idx: *existing_idx,
+                                        existing_mut: *existing_mut,
+                                        existing_name: existing_name.clone(),
+                                    });
+                                }
                             }
                         }
 
@@ -1264,10 +1266,11 @@ impl System for DynamicSystem {
                     // For queries, we need to register component accesses
                     for param_type in &query_param.data {
                         if let QueryData::Component {
-                                ty: comp_type,
-                                mutable,
-                                ..
-                            } = param_type {
+                            ty: comp_type,
+                            mutable,
+                            ..
+                        } = param_type
+                        {
                             let id = match comp_type {
                                 PyComponentType::Custom(type_ptr) => {
                                     // Check if we've already registered this custom component
@@ -1280,8 +1283,7 @@ impl System for DynamicSystem {
                                         });
 
                                         // Register the custom component and store its ID
-                                        let id =
-                                            register_custom_component(world, *type_ptr, name);
+                                        let id = register_custom_component(world, *type_ptr, name);
                                         self.custom_component_ids.insert(*type_ptr, id);
                                         id
                                     }

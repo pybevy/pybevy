@@ -306,12 +306,13 @@ fn insert_components_to_entity(
 
                             // Get the bridge again (it's registered globally)
                             if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr)
-                                && let Err(e) = bridge.insert(world, entity_id, component_bound) {
-                                    eprintln!(
-                                        "Failed to insert dynamic component '{}': {}",
-                                        bridge_name, e
-                                    );
-                                }
+                                && let Err(e) = bridge.insert(world, entity_id, component_bound)
+                            {
+                                eprintln!(
+                                    "Failed to insert dynamic component '{}': {}",
+                                    bridge_name, e
+                                );
+                            }
                         });
                     })?;
                 }
@@ -606,9 +607,10 @@ pub(crate) fn remove_components_from_entity_helper(
     let mut component_types = Vec::new();
     for component in components.iter() {
         if let Ok(component_type_obj) = component.cast::<PyType>()
-            && let Ok(comp_type) = PyComponentType::try_from((component_type_obj, py)) {
-                component_types.push(comp_type);
-            }
+            && let Ok(comp_type) = PyComponentType::try_from((component_type_obj, py))
+        {
+            component_types.push(comp_type);
+        }
     }
 
     // Remove the components
@@ -660,11 +662,12 @@ fn remove_components_from_entity(
                 // Dynamic component removal - use bridge registry to get ComponentId
                 // Check if this is an auto-managed component that can't be removed
                 if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr)
-                    && bridge.name() == "Children" {
-                        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                            "Cannot remove Children component - it is auto-managed by Bevy. Remove ChildOf components instead.",
-                        ));
-                    }
+                    && bridge.name() == "Children"
+                {
+                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                        "Cannot remove Children component - it is auto-managed by Bevy. Remove ChildOf components instead.",
+                    ));
+                }
 
                 let type_ptr_copy = SendTypePtr::new(type_ptr);
 
@@ -695,17 +698,19 @@ fn remove_components_from_entity(
                     // Direct world access - look up ComponentId and remove
                     let world = commands.world_mut()?;
                     if let Some(registry) = world.get_resource::<ComponentRegistry>()
-                        && let Some(component_id) = registry.get(type_ptr.as_ptr()) {
-                            world.entity_mut(entity_id).remove_by_id(component_id);
-                        }
-                        // Silently ignore if component not registered or not present
+                        && let Some(component_id) = registry.get(type_ptr.as_ptr())
+                    {
+                        world.entity_mut(entity_id).remove_by_id(component_id);
+                    }
+                    // Silently ignore if component not registered or not present
                 } else {
                     // Commands - queue the operation for later
                     commands.execute_or_queue(move |world: &mut World| {
                         if let Some(registry) = world.get_resource::<ComponentRegistry>()
-                            && let Some(component_id) = registry.get(type_ptr.as_ptr()) {
-                                world.entity_mut(entity_id).remove_by_id(component_id);
-                            }
+                            && let Some(component_id) = registry.get(type_ptr.as_ptr())
+                        {
+                            world.entity_mut(entity_id).remove_by_id(component_id);
+                        }
                     })?;
                 }
             }
@@ -1049,50 +1054,51 @@ impl PyCommands {
 
             let registry = world.get_resource::<ObserverRegistry>();
             if let Some(registry) = registry
-                && let Some(observers) = registry.get_observers_for_event(py, &event)? {
-                    let observers = observers.clone();
-                    for observer_entry in observers {
-                        // Check entity filter if present (per-entity observers)
-                        if let Some(filter_entity) = observer_entry.entity_filter {
-                            // This observer only triggers for a specific entity
-                            if let Some(entity) = target_entity {
-                                if entity != filter_entity {
-                                    // Event targets different entity, skip this observer
-                                    continue;
-                                }
-                            } else {
-                                // Entity-specific observer on global event - skip
+                && let Some(observers) = registry.get_observers_for_event(py, &event)?
+            {
+                let observers = observers.clone();
+                for observer_entry in observers {
+                    // Check entity filter if present (per-entity observers)
+                    if let Some(filter_entity) = observer_entry.entity_filter {
+                        // This observer only triggers for a specific entity
+                        if let Some(entity) = target_entity {
+                            if entity != filter_entity {
+                                // Event targets different entity, skip this observer
                                 continue;
                             }
+                        } else {
+                            // Entity-specific observer on global event - skip
+                            continue;
                         }
-
-                        // Check bundle filter if present
-                        if let Some(ref bundle_filter) = observer_entry.bundle_filter {
-                            if let Some(entity) = target_entity {
-                                let filter = BundleFilter {
-                                    components: bundle_filter.clone(),
-                                };
-                                if !filter.matches(world, entity) {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-
-                        let on_param = Py::new(
-                            py,
-                            PyOn {
-                                event_data: event_clone.clone_ref(py),
-                                entity: target_entity,
-                            },
-                        )?;
-                        execute_system_func(py, &observer_entry.system_func, world, on_param)
-                            .inspect_err(|e| {
-                                e.print(py);
-                            })?;
                     }
+
+                    // Check bundle filter if present
+                    if let Some(ref bundle_filter) = observer_entry.bundle_filter {
+                        if let Some(entity) = target_entity {
+                            let filter = BundleFilter {
+                                components: bundle_filter.clone(),
+                            };
+                            if !filter.matches(world, entity) {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    let on_param = Py::new(
+                        py,
+                        PyOn {
+                            event_data: event_clone.clone_ref(py),
+                            entity: target_entity,
+                        },
+                    )?;
+                    execute_system_func(py, &observer_entry.system_func, world, on_param)
+                        .inspect_err(|e| {
+                            e.print(py);
+                        })?;
                 }
+            }
         } else {
             // Commands - queue the trigger for later
             self.execute_or_queue(move |world: &mut World| {
@@ -1114,54 +1120,53 @@ impl PyCommands {
                     if let Some(registry) = registry
                         && let Ok(Some(observers)) =
                             registry.get_observers_for_event(py, event_bound)
-                        {
-                            let observers = observers.clone();
-                            for observer_entry in observers {
-                                // Check entity filter if present (per-entity observers)
-                                if let Some(filter_entity) = observer_entry.entity_filter {
-                                    // This observer only triggers for a specific entity
-                                    if let Some(entity) = target_entity {
-                                        if entity != filter_entity {
-                                            // Event targets different entity, skip this observer
-                                            continue;
-                                        }
-                                    } else {
-                                        // Entity-specific observer on global event - skip
+                    {
+                        let observers = observers.clone();
+                        for observer_entry in observers {
+                            // Check entity filter if present (per-entity observers)
+                            if let Some(filter_entity) = observer_entry.entity_filter {
+                                // This observer only triggers for a specific entity
+                                if let Some(entity) = target_entity {
+                                    if entity != filter_entity {
+                                        // Event targets different entity, skip this observer
                                         continue;
                                     }
+                                } else {
+                                    // Entity-specific observer on global event - skip
+                                    continue;
                                 }
+                            }
 
-                                // Check bundle filter if present
-                                if let Some(ref bundle_filter) = observer_entry.bundle_filter {
-                                    if let Some(entity) = target_entity {
-                                        let filter = BundleFilter {
-                                            components: bundle_filter.clone(),
-                                        };
-                                        if !filter.matches(world, entity) {
-                                            continue;
-                                        }
-                                    } else {
+                            // Check bundle filter if present
+                            if let Some(ref bundle_filter) = observer_entry.bundle_filter {
+                                if let Some(entity) = target_entity {
+                                    let filter = BundleFilter {
+                                        components: bundle_filter.clone(),
+                                    };
+                                    if !filter.matches(world, entity) {
                                         continue;
                                     }
+                                } else {
+                                    continue;
                                 }
+                            }
 
-                                if let Ok(on_param) = Py::new(
-                                    py,
-                                    PyOn {
-                                        event_data: event_clone.clone_ref(py),
-                                        entity: target_entity,
-                                    },
-                                )
-                                    && let Err(e) = execute_system_func(
-                                        py,
-                                        &observer_entry.system_func,
-                                        world,
-                                        on_param,
-                                    ) {
-                                        e.print(py);
-                                    }
+                            if let Ok(on_param) = Py::new(
+                                py,
+                                PyOn {
+                                    event_data: event_clone.clone_ref(py),
+                                    entity: target_entity,
+                                },
+                            ) && let Err(e) = execute_system_func(
+                                py,
+                                &observer_entry.system_func,
+                                world,
+                                on_param,
+                            ) {
+                                e.print(py);
                             }
                         }
+                    }
                 });
             })?;
         }

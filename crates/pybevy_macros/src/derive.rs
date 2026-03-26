@@ -4,8 +4,8 @@ use quote::quote;
 use syn::{Fields, Ident, ItemStruct, parse_macro_input};
 
 use crate::util::{
-    FieldDef, generate_field_accessors, is_primitive_type,
-    parse_field_annotation, pybevy_crate_paths, to_snake_case,
+    FieldDef, generate_field_accessors, is_primitive_type, parse_field_annotation,
+    pybevy_crate_paths, to_snake_case,
 };
 
 /// Derives a complete PyO3 component wrapper for a Bevy component.

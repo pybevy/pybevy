@@ -240,12 +240,13 @@ impl PyMeshMaterial3dShader {
 
         // Validate asset type
         if let Some(name) = handle.asset_type_name()
-            && name != "ShaderMaterial" {
-                return Err(PyTypeError::new_err(format!(
-                    "AssetType `{}` does not match expected type `ShaderMaterial`",
-                    name
-                )));
-            }
+            && name != "ShaderMaterial"
+        {
+            return Err(PyTypeError::new_err(format!(
+                "AssetType `{}` does not match expected type `ShaderMaterial`",
+                name
+            )));
+        }
 
         Ok((Self(handle), PyComponent))
     }

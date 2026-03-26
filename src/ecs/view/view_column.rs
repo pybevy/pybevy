@@ -417,29 +417,30 @@ impl PyViewColumn {
                 _ => false,
             };
             if !is_composite
-                && let Ok((offset, field_type)) = get_component_field_info(comp_type, name) {
-                    let dtype = match field_type {
-                        FieldType::F32 => "f4",
-                        FieldType::F64 => "f8",
-                        FieldType::I32 => "i4",
-                        FieldType::I64 => "i8",
-                        FieldType::U32 => "u4",
-                        FieldType::U64 => "u8",
-                        FieldType::Bool => "u1",
-                        FieldType::Vec3 | FieldType::Vec2 => {
-                            // Composite fields for built-in components shouldn't reach here
-                            // (they use bridge which returns individual scalar sub-fields)
-                            return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
-                                "Cannot access composite field '{}' as a raw column. \
+                && let Ok((offset, field_type)) = get_component_field_info(comp_type, name)
+            {
+                let dtype = match field_type {
+                    FieldType::F32 => "f4",
+                    FieldType::F64 => "f8",
+                    FieldType::I32 => "i4",
+                    FieldType::I64 => "i8",
+                    FieldType::U32 => "u4",
+                    FieldType::U64 => "u8",
+                    FieldType::Bool => "u1",
+                    FieldType::Vec3 | FieldType::Vec2 => {
+                        // Composite fields for built-in components shouldn't reach here
+                        // (they use bridge which returns individual scalar sub-fields)
+                        return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
+                            "Cannot access composite field '{}' as a raw column. \
                                  Use .{}.x, .{}.y, .{}.z for individual component access.",
-                                name, name, name, name,
-                            )));
-                        }
-                    };
+                            name, name, name, name,
+                        )));
+                    }
+                };
 
-                    let field_col = self.at_offset(offset, dtype)?;
-                    return Ok(Py::new(py, field_col)?.into());
-                }
+                let field_col = self.at_offset(offset, dtype)?;
+                return Ok(Py::new(py, field_col)?.into());
+            }
         }
 
         // Priority 2: Custom component with dynamic field access
@@ -450,51 +451,51 @@ impl PyViewColumn {
                 unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
 
             if let Ok(cls) = py_type.cast::<pyo3::types::PyType>()
-                && let Ok(layout) = ComponentLayout::from_annotations(cls) {
-                    // Find field in layout
-                    for field in &layout.fields {
-                        if field.name == name {
-                            // Determine dtype from field type
-                            let dtype = match field.field_type {
-                                PrimitiveType::F32 => "f4",
-                                PrimitiveType::F64 => "f8",
-                                PrimitiveType::I32 => "i4",
-                                PrimitiveType::I64 => "i8",
-                                PrimitiveType::U32 => "u4",
-                                PrimitiveType::U64 => "u8",
-                                PrimitiveType::Bool => "u1",
-                                PrimitiveType::Vec3 => {
-                                    let vec3_col = self.at_offset(field.offset, "struct")?;
-                                    let viewcolumn_accessors =
-                                        py.import("pybevy.ecs.view_accessors")?;
-                                    let vec3_wrapper =
-                                        viewcolumn_accessors.getattr("Vec3ViewColumn")?;
-                                    return Ok(vec3_wrapper.call1((vec3_col,))?.into());
-                                }
-                                PrimitiveType::Vec2 => {
-                                    let vec2_col = self.at_offset(field.offset, "struct")?;
-                                    let viewcolumn_accessors =
-                                        py.import("pybevy.ecs.view_accessors")?;
-                                    let vec2_wrapper =
-                                        viewcolumn_accessors.getattr("Vec2ViewColumn")?;
-                                    return Ok(vec2_wrapper.call1((vec2_col,))?.into());
-                                }
-                            };
+                && let Ok(layout) = ComponentLayout::from_annotations(cls)
+            {
+                // Find field in layout
+                for field in &layout.fields {
+                    if field.name == name {
+                        // Determine dtype from field type
+                        let dtype = match field.field_type {
+                            PrimitiveType::F32 => "f4",
+                            PrimitiveType::F64 => "f8",
+                            PrimitiveType::I32 => "i4",
+                            PrimitiveType::I64 => "i8",
+                            PrimitiveType::U32 => "u4",
+                            PrimitiveType::U64 => "u8",
+                            PrimitiveType::Bool => "u1",
+                            PrimitiveType::Vec3 => {
+                                let vec3_col = self.at_offset(field.offset, "struct")?;
+                                let viewcolumn_accessors =
+                                    py.import("pybevy.ecs.view_accessors")?;
+                                let vec3_wrapper =
+                                    viewcolumn_accessors.getattr("Vec3ViewColumn")?;
+                                return Ok(vec3_wrapper.call1((vec3_col,))?.into());
+                            }
+                            PrimitiveType::Vec2 => {
+                                let vec2_col = self.at_offset(field.offset, "struct")?;
+                                let viewcolumn_accessors =
+                                    py.import("pybevy.ecs.view_accessors")?;
+                                let vec2_wrapper =
+                                    viewcolumn_accessors.getattr("Vec2ViewColumn")?;
+                                return Ok(vec2_wrapper.call1((vec2_col,))?.into());
+                            }
+                        };
 
-                            let field_col = self.at_offset(field.offset, dtype)?;
-                            return Ok(Py::new(py, field_col)?.into());
-                        }
+                        let field_col = self.at_offset(field.offset, dtype)?;
+                        return Ok(Py::new(py, field_col)?.into());
                     }
-
-                    // Field not found in layout
-                    let available: Vec<&str> =
-                        layout.fields.iter().map(|f| f.name.as_str()).collect();
-                    return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
-                        "Component has no field '{}' (available: {})",
-                        name,
-                        available.join(", ")
-                    )));
                 }
+
+                // Field not found in layout
+                let available: Vec<&str> = layout.fields.iter().map(|f| f.name.as_str()).collect();
+                return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
+                    "Component has no field '{}' (available: {})",
+                    name,
+                    available.join(", ")
+                )));
+            }
         }
 
         // Priority 3: Fallback to hardcoded fields (for backwards compatibility and special cases)

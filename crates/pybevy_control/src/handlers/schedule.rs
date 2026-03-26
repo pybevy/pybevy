@@ -141,10 +141,11 @@ impl SharedScheduleRegistry {
     pub fn cancel(&self, id: &str) -> bool {
         if let Ok(guard) = self.inner.lock()
             && let Some(arc) = guard.get(id)
-                && let Ok(mut state) = arc.lock() {
-                    state.cancelled = true;
-                    return true;
-                }
+            && let Ok(mut state) = arc.lock()
+        {
+            state.cancelled = true;
+            return true;
+        }
         false
     }
 }
@@ -274,23 +275,25 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
                     ));
                 }
                 if let Some(prev) = last_at
-                    && at < prev {
-                        return Err(format!(
-                            "action[{}]: 'at' values must be monotonically non-decreasing (got {} after {})",
-                            i, at, prev
-                        ));
-                    }
+                    && at < prev
+                {
+                    return Err(format!(
+                        "action[{}]: 'at' values must be monotonically non-decreasing (got {} after {})",
+                        i, at, prev
+                    ));
+                }
                 last_at = Some(at);
             }
             (None, Some(frame)) => {
                 uses_at_frame = true;
                 if let Some(prev) = last_frame
-                    && frame < prev {
-                        return Err(format!(
-                            "action[{}]: 'at_frame' values must be monotonically non-decreasing (got {} after {})",
-                            i, frame, prev
-                        ));
-                    }
+                    && frame < prev
+                {
+                    return Err(format!(
+                        "action[{}]: 'at_frame' values must be monotonically non-decreasing (got {} after {})",
+                        i, frame, prev
+                    ));
+                }
                 last_frame = Some(frame);
             }
             (None, None) => {
@@ -525,9 +528,8 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             }
         }
         "check_overlaps" => {
-            let has_entity = obj.is_some_and(|o| {
-                o.contains_key("entity_id") || o.contains_key("name")
-            });
+            let has_entity =
+                obj.is_some_and(|o| o.contains_key("entity_id") || o.contains_key("name"));
             let max_float_gap = get_f32("max_float_gap").unwrap_or(0.1);
             let ground_y = get_f32("ground_y");
             if has_entity {
@@ -924,21 +926,22 @@ fn process_single_schedule(world: &mut World, schedule: &mut ActiveSchedule) {
 
                 // Check skip_if_error
                 if let Some(ref skip_label) = action.skip_if_error
-                    && schedule.errored_labels.contains(skip_label) {
-                        schedule.results.push(ActionResult {
-                            index: schedule.current_index,
-                            label: action.label.clone(),
-                            tool: action.tool.clone(),
-                            at: resolve_at(action),
-                            fired_at_game_time: game_time,
-                            status: "skipped".to_string(),
-                            result: None,
-                            error: Some(format!("Skipped due to error in '{}'", skip_label)),
-                        });
-                        schedule.current_index += 1;
-                        update_async_progress(schedule);
-                        continue;
-                    }
+                    && schedule.errored_labels.contains(skip_label)
+                {
+                    schedule.results.push(ActionResult {
+                        index: schedule.current_index,
+                        label: action.label.clone(),
+                        tool: action.tool.clone(),
+                        at: resolve_at(action),
+                        fired_at_game_time: game_time,
+                        status: "skipped".to_string(),
+                        result: None,
+                        error: Some(format!("Skipped due to error in '{}'", skip_label)),
+                    });
+                    schedule.current_index += 1;
+                    update_async_progress(schedule);
+                    continue;
+                }
 
                 // Execute the action
                 let tool_name = action.tool.clone();
@@ -1503,10 +1506,11 @@ fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
 
 fn update_async_progress(schedule: &ActiveSchedule) {
     if let Some(ref shared) = schedule.async_shared
-        && let Ok(mut guard) = shared.lock() {
-            guard.completed_actions = schedule.results.len();
-            guard.results = schedule.results.clone();
-        }
+        && let Ok(mut guard) = shared.lock()
+    {
+        guard.completed_actions = schedule.results.len();
+        guard.results = schedule.results.clone();
+    }
 }
 
 fn finalize_schedule(schedule: ActiveSchedule) {
@@ -1532,9 +1536,10 @@ fn finalize_schedule(schedule: ActiveSchedule) {
     }
 
     if let Some(ref shared) = schedule.async_shared
-        && let Ok(mut guard) = shared.lock() {
-            guard.status = "completed".to_string();
-            guard.completed_actions = schedule.results.len();
-            guard.results = schedule.results;
-        }
+        && let Ok(mut guard) = shared.lock()
+    {
+        guard.status = "completed".to_string();
+        guard.completed_actions = schedule.results.len();
+        guard.results = schedule.results;
+    }
 }

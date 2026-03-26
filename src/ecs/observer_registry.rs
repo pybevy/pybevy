@@ -220,12 +220,13 @@ impl ObserverRegistry {
             let mut i = 0;
             while i < observers.len() {
                 if let Some(filter_entity) = observers[i].entity_filter
-                    && filter_entity == watched_entity {
-                        // This observer was watching the despawned entity
-                        let removed = observers.remove(i);
-                        removed_observers.push(removed.observer_entity);
-                        continue; // Don't increment i, check same index again
-                    }
+                    && filter_entity == watched_entity
+                {
+                    // This observer was watching the despawned entity
+                    let removed = observers.remove(i);
+                    removed_observers.push(removed.observer_entity);
+                    continue; // Don't increment i, check same index again
+                }
                 i += 1;
             }
         }

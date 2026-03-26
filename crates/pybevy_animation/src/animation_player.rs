@@ -21,13 +21,7 @@ pub struct PyAnimationTarget {
 impl PyAnimationTarget {
     #[new]
     pub fn new(id: &PyAnimationTargetId, player: PyEntity) -> (Self, PyComponent) {
-        (
-            Self {
-                id: *id,
-                player,
-            },
-            PyComponent,
-        )
+        (Self { id: *id, player }, PyComponent)
     }
 
     #[getter]

@@ -44,16 +44,17 @@ pub(crate) fn extract_param_type_from_query_param(
     // Check for Mut[Component] FIRST before generic tuple check
     // because Mut[T] is also a GenericAlias but should be handled differently
     if let Ok(origin) = key.getattr("__origin__")
-        && origin.is(PyMut::type_object(py)) {
-            // This is Mut[Component] - extract with mutability
-            let (mutable, component_type) = extract_component_with_mutability(py, key)?;
+        && origin.is(PyMut::type_object(py))
+    {
+        // This is Mut[Component] - extract with mutability
+        let (mutable, component_type) = extract_component_with_mutability(py, key)?;
 
-            return ok_single(ParamType::Component {
-                ty: component_type,
-                mutable,
-                optional: false,
-            });
-        }
+        return ok_single(ParamType::Component {
+            ty: component_type,
+            mutable,
+            optional: false,
+        });
+    }
 
     #[inline(always)]
     fn ok_single(param: ParamType) -> Result<(bool, SmallVec<[ParamType; 2]>), PyErr> {
@@ -148,9 +149,10 @@ fn extract_optional_inner<'py>(
     let types_mod = py.import("types")?;
     if let Ok(union_type_any) = types_mod.getattr("UnionType")
         && let Ok(union_type) = union_type_any.cast::<PyType>()
-            && key.is_instance(union_type)? {
-                return extract_non_none_from_union_args(py, key);
-            }
+        && key.is_instance(union_type)?
+    {
+        return extract_non_none_from_union_args(py, key);
+    }
 
     Ok(None)
 }

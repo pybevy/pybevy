@@ -115,12 +115,13 @@ impl Drop for PyQueryIter {
         }
         // Clean up the iterator if it exists
         if let Some(iter_ptr) = self.iterator_ptr
-            && !iter_ptr.is_null() {
-                unsafe {
-                    // SAFETY: We created this from a valid QueryIter
-                    let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
-                }
+            && !iter_ptr.is_null()
+        {
+            unsafe {
+                // SAFETY: We created this from a valid QueryIter
+                let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
             }
+        }
     }
 }
 
@@ -144,10 +145,11 @@ impl PyQueryIter {
         let mut component_ids = Vec::new();
         for param_type in &param.data {
             if let QueryData::Component {
-                    ty: comp_type,
-                    optional,
-                    ..
-                } = param_type {
+                ty: comp_type,
+                optional,
+                ..
+            } = param_type
+            {
                 let id = register_component_id(world, comp_type, &custom_component_ids);
                 component_ids.push((id, *optional));
             }
@@ -286,7 +288,11 @@ impl PyQueryIter {
             .data
             .iter()
             .map(|param_type| {
-                if let QueryData::Component { ty: PyComponentType::Dynamic(type_ptr), .. } = param_type {
+                if let QueryData::Component {
+                    ty: PyComponentType::Dynamic(type_ptr),
+                    ..
+                } = param_type
+                {
                     global_registry::get_bridge_by_py_type(*type_ptr)
                         .map(|bridge| bridge.extract_fn())
                 } else {
@@ -549,11 +555,12 @@ impl PyQueryIter {
 
             // Reset iterator for sequential re-iteration
             if let Some(iter_ptr) = borrowed.iterator_ptr.take()
-                && !iter_ptr.is_null() {
-                    unsafe {
-                        let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
-                    }
+                && !iter_ptr.is_null()
+            {
+                unsafe {
+                    let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
                 }
+            }
         }
         Ok(slf)
     }

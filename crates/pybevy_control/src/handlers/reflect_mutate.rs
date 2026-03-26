@@ -203,9 +203,10 @@ fn resolve_field_name(field_name: &str, parent_info: &StructInfo) -> Option<Stri
         return Some(field_name.to_string());
     }
     if let Some(stripped) = field_name.strip_suffix('_')
-        && parent_info.field(stripped).is_some() {
-            return Some(stripped.to_string());
-        }
+        && parent_info.field(stripped).is_some()
+    {
+        return Some(stripped.to_string());
+    }
     None
 }
 
@@ -238,9 +239,10 @@ fn json_to_reflect(
     // Handle Option<T>: if target is an Enum with "None" and "Some" variants,
     // unwrap JSON null → None, anything else → Some(inner)
     if let Some(TypeInfo::Enum(enum_info)) = target_type_info
-        && is_option_enum(enum_info) {
-            return convert_option(value, enum_info, target_type_info, registry);
-        }
+        && is_option_enum(enum_info)
+    {
+        return convert_option(value, enum_info, target_type_info, registry);
+    }
 
     match value {
         Value::Number(n) => convert_number(n, target_type_id),
@@ -248,12 +250,13 @@ fn json_to_reflect(
         Value::String(s) => {
             // If targeting an enum, treat string as a unit variant name
             if let Some(TypeInfo::Enum(enum_info)) = target_type_info
-                && enum_info.variant(s).is_some() {
-                    let mut dynamic = DynamicEnum::default();
-                    dynamic.set_represented_type(target_type_info);
-                    dynamic.set_variant(s, DynamicVariant::Unit);
-                    return Ok(Box::new(dynamic));
-                }
+                && enum_info.variant(s).is_some()
+            {
+                let mut dynamic = DynamicEnum::default();
+                dynamic.set_represented_type(target_type_info);
+                dynamic.set_variant(s, DynamicVariant::Unit);
+                return Ok(Box::new(dynamic));
+            }
             Ok(Box::new(s.clone()))
         }
         Value::Array(arr) => convert_array(arr, target_type_id, target_type_info, registry),

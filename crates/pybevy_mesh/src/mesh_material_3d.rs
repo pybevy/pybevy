@@ -27,12 +27,13 @@ impl PyMeshMaterial3d {
 
         // Validate asset type
         if let Some(name) = handle.asset_type_name()
-            && name != "StandardMaterial" {
-                return Err(PyTypeError::new_err(format!(
-                    "AssetType `{}` does not match expected type `StandardMaterial`",
-                    name
-                )));
-            }
+            && name != "StandardMaterial"
+        {
+            return Err(PyTypeError::new_err(format!(
+                "AssetType `{}` does not match expected type `StandardMaterial`",
+                name
+            )));
+        }
 
         Ok((Self(handle), PyComponent))
     }

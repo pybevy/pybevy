@@ -126,7 +126,8 @@ pub(crate) fn is_primitive_type(ty: &Type) -> bool {
         let name = segment.ident.to_string();
         return matches!(
             name.as_str(),
-            "f32" | "f64"
+            "f32"
+                | "f64"
                 | "i8"
                 | "i16"
                 | "i32"

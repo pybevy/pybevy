@@ -88,10 +88,11 @@ def create_wrapper(original_func, result_container, functools):
         // Try to get the result from the wrapper's _result_dict
         if let Ok(inner_func) = self.inner.get_cached_function()
             && let Ok(result_dict) = inner_func.bind(py).getattr("_result_dict")
-                && let Ok(value) = result_dict.get_item("value")
-                    && let Ok(b) = value.extract::<bool>() {
-                        return b;
-                    }
+            && let Ok(value) = result_dict.get_item("value")
+            && let Ok(b) = value.extract::<bool>()
+        {
+            return b;
+        }
         false
     }
 }

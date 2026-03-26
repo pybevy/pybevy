@@ -62,9 +62,10 @@ impl SystemFunction {
     /// This should be called when tearing down an app to prevent stale cache entries.
     pub fn clear_cache() {
         if let Ok(mut cache_guard) = SYSTEM_PARAM_CACHE.lock()
-            && let Some(cache) = cache_guard.as_mut() {
-                cache.clear();
-            }
+            && let Some(cache) = cache_guard.as_mut()
+        {
+            cache.clear();
+        }
     }
 
     pub fn new(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
@@ -285,7 +286,9 @@ impl SystemFunction {
                     bundle_filter: on_param.bundle_filter,
                 }
             } else if annotation.is(PyResource::type_object(py)) {
-                return Err(PyTypeError::new_err("Resource must be subclass of `Resource`".to_string()));
+                return Err(PyTypeError::new_err(
+                    "Resource must be subclass of `Resource`".to_string(),
+                ));
             } else if annotation.is_instance_of::<PyType>()
                 && annotation
                     .cast::<PyType>()?

@@ -79,9 +79,7 @@ impl PyResourceType {
         validity: ValidityFlag,
     ) -> PyResult<Py<PyAny>> {
         match self {
-            PyResourceType::AssetServer => {
-                Self::get_asset_server(world, py, validity)
-            }
+            PyResourceType::AssetServer => Self::get_asset_server(world, py, validity),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| {
@@ -173,11 +171,9 @@ impl PyResourceType {
         resource_instance: Py<PyAny>,
     ) -> PyResult<()> {
         match self {
-            PyResourceType::AssetServer => {
-                Err(PyTypeError::new_err(
-                    "AssetServer cannot be manually inserted. It is provided by AssetPlugin.",
-                ))
-            }
+            PyResourceType::AssetServer => Err(PyTypeError::new_err(
+                "AssetServer cannot be manually inserted. It is provided by AssetPlugin.",
+            )),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| {
@@ -234,11 +230,9 @@ impl PyResourceType {
     /// Remove a Python resource from the world
     pub fn remove_from_world(&self, world: &mut World, py: Python) -> PyResult<()> {
         match self {
-            PyResourceType::AssetServer => {
-                Err(PyTypeError::new_err(
-                    "AssetServer cannot be manually removed. It is managed by AssetPlugin.",
-                ))
-            }
+            PyResourceType::AssetServer => Err(PyTypeError::new_err(
+                "AssetServer cannot be manually removed. It is managed by AssetPlugin.",
+            )),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| {
@@ -464,10 +458,11 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
             // MRO elements are PyType objects - use cast instead of deprecated downcast
             if let Ok(base_type) = base.cast::<PyType>()
                 && let Ok(name) = base_type.name()
-                    && name == "Resource" {
-                        is_resource = true;
-                        break;
-                    }
+                && name == "Resource"
+            {
+                is_resource = true;
+                break;
+            }
         }
 
         if !is_resource {
