@@ -218,7 +218,16 @@ Both Rust and Python systems can read and write the same built-in components (Tr
 
 You can define components in Rust and make them queryable/mutable from Python:
 
-### 1. Define the component
+### 1. Add `pyo3` to your dependencies
+
+The `PyComponent` derive macro generates code that references `pyo3` directly, so you need it as an explicit dependency:
+
+```toml
+[dependencies]
+pyo3 = "0.27"
+```
+
+### 2. Define the component
 
 ```rust
 use pybevy::PyComponent;
@@ -236,7 +245,7 @@ The derive macro generates:
 - `HealthBridge` — Bridge struct for registering with PyBevy
 - `register_health()` — Registration function
 
-### 2. Register with PyBevyPlugin
+### 3. Register with PyBevyPlugin
 
 ```rust
 App::new()
@@ -253,7 +262,7 @@ App::new()
     .run();
 ```
 
-### 3. Use from Python
+### 4. Use from Python
 
 Registered components are injected into `pybevy._pybevy`, so Python can import and use them like any built-in component:
 
@@ -268,7 +277,7 @@ def apply_damage(query: Query[Mut[Health]], time: Res[Time]) -> None:
             health.value = health.max  # Reset
 ```
 
-### 4. Rust reads the updated values
+### 5. Rust reads the updated values
 
 ```rust
 fn print_health(query: Query<&Health>, mut frame_count: Local<u32>) {
