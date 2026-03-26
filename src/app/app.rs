@@ -1834,7 +1834,10 @@ impl PyApp {
     /// Set the hot reload loader function (called by CLI)
     /// The loader should return a function that when called returns create_app function
     #[pyo3(name = "_set_hot_reload_loader")]
-    pub fn set_hot_reload_loader(pyself: PyRef<'_, Self>, loader: Bound<'_, PyAny>) -> PyResult<Py<PyApp>> {
+    pub fn set_hot_reload_loader(
+        pyself: PyRef<'_, Self>,
+        loader: Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
         pyself.hot_reload_state.set_loader(loader.unbind());
 
