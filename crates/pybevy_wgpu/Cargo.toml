@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_wgpu"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "wgpu type wrappers for PyBevy (matching bevy_image's wgpu-types dependency)"
 license = "MIT OR Apache-2.0"

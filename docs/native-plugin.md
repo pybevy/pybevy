@@ -12,7 +12,7 @@
 # Cargo.toml
 [dependencies]
 bevy = "0.18"
-pybevy = "0.18"
+pybevy = { version = "0.2", features = ["native-plugin"] }
 ```
 
 ### 2. Create your Python systems module
@@ -333,7 +333,7 @@ To enable automatic reload on file save, add the `native-hot-reload` feature to 
 
 ```toml
 [dependencies]
-pybevy = { version = "0.18", features = ["native-hot-reload"] }
+pybevy = { version = "0.2", features = ["native-hot-reload"] }
 ```
 
 This uses the `notify` crate to watch directories specified via `with_python_path()`. When a `.py` file changes, a reload is triggered using the current default mode (toggled with F6).

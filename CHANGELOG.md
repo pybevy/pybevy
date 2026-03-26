@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1
+
+### Bug fixes
+
+- Fix wgpu shader errors crashing the process — errors are now handled gracefully (#27, #9)
+- Fix `StandardMaterial` import path (#26)
+- Fix `DefaultPlugins` window title defaulting to "PyBevy App" (#25)
+- Fix native-plugin feature and crate metadata for publishing
+
+### Improvements
+
+- Chained app style matching Bevy's `App::new().add_plugins(...)` pattern (#32)
+- Macros split from monolithic file into type-specific modules (#28)
+- Asset storage module restructured (#31)
+- Vec3 format refactored (#24, #23)
+- Code cleanups: unsafe documentation, top-level imports, comments (#29)
+- Examples updated to use new chained app style
+
 ## 0.2.0
 
 ### Highlights

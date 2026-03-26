@@ -1,6 +1,6 @@
 [package]
 name = "pybevy-python"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Python extension module (cdylib) for PyBevy"
 publish = false
@@ -13,7 +13,7 @@ name = "_pybevy"
 crate-type = ["cdylib"]
 
 [dependencies]
-pybevy = { path = "../..", version = "=0.2.0" }
+pybevy = { path = "../..", version = "=0.2.1" }
 pyo3 = { workspace = true, features = ["extension-module"] }
 
 [features]

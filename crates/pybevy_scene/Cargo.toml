@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_scene"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Scene components and assets for PyBevy"
 license = "MIT OR Apache-2.0"

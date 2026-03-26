@@ -4204,7 +4204,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accesskit",
  "bevy",
@@ -4258,7 +4258,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy-python"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pybevy",
  "pyo3",
@@ -4266,7 +4266,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_a11y"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accesskit",
  "bevy",
@@ -4277,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_animation"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_audio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4303,7 +4303,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_bytecodevm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy_ecs",
  "criterion",
@@ -4312,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_camera"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_color"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4338,7 +4338,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_control"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "base64",
@@ -4357,7 +4357,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_macros",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_ecs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_gltf"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4391,7 +4391,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_image"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "image",
@@ -4406,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_input"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4417,7 +4417,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_light"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4431,7 +4431,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4441,7 +4441,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_math"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "bevy_math",
@@ -4452,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_mesh"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4466,7 +4466,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_pbr"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4481,7 +4481,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_render"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_color",
@@ -4497,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_scene"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4507,7 +4507,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_shader"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "naga",
@@ -4518,14 +4518,14 @@ dependencies = [
 
 [[package]]
 name = "pybevy_shader_types"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
 ]
 
 [[package]]
 name = "pybevy_sprite"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4539,7 +4539,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_storage"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pyo3",
@@ -4547,7 +4547,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_text"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4560,7 +4560,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_time"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4570,7 +4570,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_transform"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4582,7 +4582,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_ui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
@@ -4596,7 +4596,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_wgpu"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "pybevy_macros",
@@ -4605,7 +4605,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_window"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
