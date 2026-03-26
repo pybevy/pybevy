@@ -398,14 +398,14 @@ impl PyHandle {
         let other_id = match other.call_method0("id") {
             Ok(val) => match val.extract::<u128>() {
                 Ok(id) => id,
-                Err(_) => return Ok(py.NotImplemented().into_py_any(py)?),
+                Err(_) => return py.NotImplemented().into_py_any(py),
             },
-            Err(_) => return Ok(py.NotImplemented().into_py_any(py)?),
+            Err(_) => return py.NotImplemented().into_py_any(py),
         };
 
         let other_type_class = match other.call_method0("asset_type_class") {
             Ok(val) => val,
-            Err(_) => return Ok(py.NotImplemented().into_py_any(py)?),
+            Err(_) => return py.NotImplemented().into_py_any(py),
         };
 
         // Get self's comparison values
@@ -424,10 +424,10 @@ impl PyHandle {
         let result = match op {
             CompareOp::Eq => types_equal && ids_equal,
             CompareOp::Ne => !types_equal || !ids_equal,
-            _ => return Ok(py.NotImplemented().into_py_any(py)?),
+            _ => return py.NotImplemented().into_py_any(py),
         };
 
-        Ok(result.into_py_any(py)?)
+        result.into_py_any(py)
     }
 }
 

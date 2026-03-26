@@ -19,6 +19,7 @@ pub struct PyBloom {
 #[pymethods]
 impl PyBloom {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         intensity = 0.15,
         low_frequency_boost = 0.7,

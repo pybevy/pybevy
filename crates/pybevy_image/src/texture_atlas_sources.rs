@@ -65,6 +65,12 @@ impl From<TextureAtlasSources> for PyTextureAtlasSources {
     }
 }
 
+impl Default for PyTextureAtlasSources {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl From<PyTextureAtlasSources> for TextureAtlasSources {
     fn from(py: PyTextureAtlasSources) -> Self {
         py.inner

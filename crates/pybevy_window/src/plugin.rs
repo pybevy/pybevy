@@ -5,6 +5,7 @@ use crate::winit_settings::PyWinitSettings;
 
 #[pyclass(name = "WinitPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct PyWinitPlugin {
     pub settings: Option<PyWinitSettings>,
 }
@@ -25,8 +26,3 @@ impl PyWinitPlugin {
     }
 }
 
-impl Default for PyWinitPlugin {
-    fn default() -> Self {
-        PyWinitPlugin { settings: None }
-    }
-}

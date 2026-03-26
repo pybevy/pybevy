@@ -114,14 +114,13 @@ impl Drop for PyQueryIter {
             }
         }
         // Clean up the iterator if it exists
-        if let Some(iter_ptr) = self.iterator_ptr {
-            if !iter_ptr.is_null() {
+        if let Some(iter_ptr) = self.iterator_ptr
+            && !iter_ptr.is_null() {
                 unsafe {
                     // SAFETY: We created this from a valid QueryIter
                     let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
                 }
             }
-        }
     }
 }
 
@@ -144,16 +143,13 @@ impl PyQueryIter {
         // First, collect and register all component IDs (tracking optional status)
         let mut component_ids = Vec::new();
         for param_type in &param.data {
-            match param_type {
-                QueryData::Component {
+            if let QueryData::Component {
                     ty: comp_type,
                     optional,
                     ..
-                } => {
-                    let id = register_component_id(world, &comp_type, &custom_component_ids);
-                    component_ids.push((id, *optional));
-                }
-                _ => {}
+                } = param_type {
+                let id = register_component_id(world, comp_type, &custom_component_ids);
+                component_ids.push((id, *optional));
             }
         }
 
@@ -290,13 +286,9 @@ impl PyQueryIter {
             .data
             .iter()
             .map(|param_type| {
-                if let QueryData::Component { ty, .. } = param_type {
-                    if let PyComponentType::Dynamic(type_ptr) = ty {
-                        global_registry::get_bridge_by_py_type(*type_ptr)
-                            .map(|bridge| bridge.extract_fn())
-                    } else {
-                        None
-                    }
+                if let QueryData::Component { ty: PyComponentType::Dynamic(type_ptr), .. } = param_type {
+                    global_registry::get_bridge_by_py_type(*type_ptr)
+                        .map(|bridge| bridge.extract_fn())
                 } else {
                     None
                 }
@@ -365,7 +357,7 @@ impl PyQueryIter {
         let (storage_type, cached_layout) = {
             let cache = self.layout_cache.borrow();
             if let Some(cached) = cache.get(&type_ptr) {
-                (cached.0.clone(), cached.1.clone())
+                (cached.0, cached.1.clone())
             } else {
                 drop(cache);
                 // SAFETY: type_ptr is valid for the lifetime of the Python interpreter
@@ -391,7 +383,7 @@ impl PyQueryIter {
                 };
                 self.layout_cache
                     .borrow_mut()
-                    .insert(type_ptr, (st.clone(), layout.clone()));
+                    .insert(type_ptr, (st, layout.clone()));
                 (st, layout)
             }
         };
@@ -506,7 +498,7 @@ impl PyQueryIter {
                             .expect("Custom component ID should be registered"),
                         _ => *self
                             .component_id_cache
-                            .get(&ty)
+                            .get(ty)
                             .expect("Component ID should be cached"),
                     };
 
@@ -556,13 +548,12 @@ impl PyQueryIter {
             }
 
             // Reset iterator for sequential re-iteration
-            if let Some(iter_ptr) = borrowed.iterator_ptr.take() {
-                if !iter_ptr.is_null() {
+            if let Some(iter_ptr) = borrowed.iterator_ptr.take()
+                && !iter_ptr.is_null() {
                     unsafe {
                         let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
                     }
                 }
-            }
         }
         Ok(slf)
     }

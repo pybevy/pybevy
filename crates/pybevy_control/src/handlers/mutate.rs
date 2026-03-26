@@ -431,11 +431,10 @@ fn set_custom_component(
                 continue;
             }
             // Skip components with a Rust TypeId (Bevy built-ins, bridge components)
-            if let Some(comp_info) = components.get_info(*comp_id) {
-                if comp_info.type_id().is_some() {
+            if let Some(comp_info) = components.get_info(*comp_id)
+                && comp_info.type_id().is_some() {
                     continue;
                 }
-            }
             // Try interpreting as PyObject-stored component and check Python type name
             if let Ok(ptr) = entity_ref.get_by_id(*comp_id) {
                 let matched = Python::attach(|py| {
@@ -723,8 +722,8 @@ pub fn insert_resource(
                 // Patch semantics: if resource already exists, mutate in-place
                 // to preserve fields not included in the update
                 if bridge.contains_in_world(world) {
-                    if let Some(obj) = value.as_object() {
-                        if !obj.is_empty() {
+                    if let Some(obj) = value.as_object()
+                        && !obj.is_empty() {
                             let write_flag = pybevy_core::ValidityFlag::new_write();
                             let write_validity =
                                 write_flag.with_access_mode(pybevy_core::AccessMode::Write);
@@ -760,7 +759,6 @@ pub fn insert_resource(
 
                             write_flag.set_invalid();
                         }
-                    }
                     return Ok(Some(serde_json::json!({
                         "inserted": resource_type,
                     })));
@@ -827,8 +825,8 @@ pub fn insert_resource(
     if let Some((comp_id, type_ptr)) = custom_entry {
         Python::attach(|py| {
             // Patch semantics: if custom resource already exists, mutate in-place
-            if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>() {
-                if let Some(existing) = storage.resources.get(&comp_id) {
+            if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>()
+                && let Some(existing) = storage.resources.get(&comp_id) {
                     let bound = existing.bind(py);
                     if let Some(obj) = value.as_object() {
                         for (field_name, field_value) in obj {
@@ -853,7 +851,6 @@ pub fn insert_resource(
                         "custom": true,
                     }));
                 }
-            }
 
             // Resource doesn't exist yet: create default and apply fields
             let py_type =
@@ -896,10 +893,10 @@ pub fn insert_resource(
                 .resources
                 .insert(comp_id, instance.unbind());
 
-            return Ok(serde_json::json!({
+            Ok(serde_json::json!({
                 "inserted": resource_type,
                 "custom": true,
-            }));
+            }))
         })
     } else {
         Err(ControlError::not_found(format!(
@@ -1103,8 +1100,8 @@ pub(crate) fn convert_field_value(
         }
 
         // Convert Color from JSON array [r, g, b, a]
-        if type_name == "Color" {
-            if let serde_json::Value::Array(arr) = field_value
+        if type_name == "Color"
+            && let serde_json::Value::Array(arr) = field_value
                 && arr.len() == 4
             {
                 let r = json_number_to_f64(&arr[0])?;
@@ -1118,7 +1115,6 @@ pub(crate) fn convert_field_value(
                     .map(|v| v.unbind())
                     .map_err(|e| e.to_string());
             }
-        }
 
         // Convert JSON arrays to math types based on current field type
         if let serde_json::Value::Array(arr) = field_value {

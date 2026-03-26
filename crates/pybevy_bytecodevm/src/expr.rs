@@ -148,6 +148,7 @@ impl RustExpr {
     /// The Python object should have:
     /// - `op`: string describing the operation ("add", "mul", "field", "const", etc.)
     /// - `args`: list of arguments (child expressions or values)
+    #[allow(clippy::only_used_in_recursion)]
     pub fn from_py_object(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Self> {
         // Check if it's a simple numeric type (int or float)
         if let Ok(val) = obj.extract::<f64>() {

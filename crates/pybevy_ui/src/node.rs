@@ -501,7 +501,7 @@ impl PyNode {
 
     #[getter]
     pub fn border_radius(&self) -> PyResult<crate::border_radius::PyBorderRadius> {
-        Ok(self.as_ref()?.border_radius.clone().into())
+        Ok(self.as_ref()?.border_radius.into())
     }
 
     #[setter]

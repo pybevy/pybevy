@@ -75,6 +75,7 @@ impl PyMat3A {
     pub const NAN: PyMat3A = PyMat3A::mat3a(Mat3A::NAN);
 
     #[new]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         m00: f32,
         m01: f32,

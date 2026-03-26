@@ -78,7 +78,7 @@ impl PyMessageWriter {
 
         // Extract message type from key (e.g., AppExit from MessageWriter[AppExit])
         let type_obj = key.cast::<PyType>()?;
-        let py_message_type = PyMessageType::from_message_type(&type_obj)?;
+        let py_message_type = PyMessageType::from_message_type(type_obj)?;
 
         // Create MessageTypeParam with Writer class
         let param = MessageTypeParam {
@@ -115,7 +115,7 @@ impl PyMessageWriter {
                 // Verify the message is an instance of the registered type
                 let msg_type = bound_message.get_type();
                 let expected_type = py_type.bind(py);
-                if !msg_type.is(&expected_type) {
+                if !msg_type.is(expected_type) {
                     return Err(PyTypeError::new_err(format!(
                         "Expected message of type {}, got {}",
                         expected_type.name()?,
@@ -157,7 +157,7 @@ impl PyMessageWriter {
                 }
 
                 let world = self.world.world_mut()?;
-                let event_id = bridge.write_message(py, world, &bound_message)?;
+                let event_id = bridge.write_message(py, world, bound_message)?;
                 Ok(PyMessageId::from_boxed(event_id))
             }
         }
@@ -247,7 +247,7 @@ impl PyMessageReader {
 
         // Extract message type from key (e.g., AppExit from MessageReader[AppExit])
         let type_obj = key.cast::<PyType>()?;
-        let py_message_type = PyMessageType::from_message_type(&type_obj)?;
+        let py_message_type = PyMessageType::from_message_type(type_obj)?;
 
         // Create MessageTypeParam with Reader class
         let param = MessageTypeParam {

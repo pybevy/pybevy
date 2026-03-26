@@ -79,6 +79,7 @@ impl PyMat4 {
     pub const NAN: PyMat4 = PyMat4::mat4(Mat4::NAN);
 
     #[new]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         m00: f32,
         m01: f32,

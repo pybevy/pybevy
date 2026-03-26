@@ -73,20 +73,20 @@ fn bindings_set() -> &'static RwLock<std::collections::HashSet<u64>> {
 /// Clear all cached shader handles and def names.
 /// Called on plugin build to avoid stale handles from previous app runs.
 pub fn clear_shader_registries() {
-    if let Some(reg) = SHADER_REGISTRY.get() {
-        if let Ok(mut map) = reg.write() {
-            map.clear();
-        }
+    if let Some(reg) = SHADER_REGISTRY.get()
+        && let Ok(mut map) = reg.write()
+    {
+        map.clear();
     }
-    if let Some(reg) = SHADER_DEF_REGISTRY.get() {
-        if let Ok(mut map) = reg.write() {
-            map.clear();
-        }
+    if let Some(reg) = SHADER_DEF_REGISTRY.get()
+        && let Ok(mut map) = reg.write()
+    {
+        map.clear();
     }
-    if let Some(reg) = BINDINGS_INJECTED.get() {
-        if let Ok(mut set) = reg.write() {
-            set.clear();
-        }
+    if let Some(reg) = BINDINGS_INJECTED.get()
+        && let Ok(mut set) = reg.write()
+    {
+        set.clear();
     }
 }
 
@@ -199,34 +199,33 @@ impl MaterialExtension for ShaderMaterialExtension {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if key.bind_group_data.frag_shader_id != 0 {
-            if let Some(handle) = get_shader_handle(key.bind_group_data.frag_shader_id) {
-                if let Some(fragment) = &mut descriptor.fragment {
-                    fragment.shader = handle;
-                }
-            }
+        if key.bind_group_data.frag_shader_id != 0
+            && let Some(handle) = get_shader_handle(key.bind_group_data.frag_shader_id)
+            && let Some(fragment) = &mut descriptor.fragment
+        {
+            fragment.shader = handle;
         }
-        if key.bind_group_data.vert_shader_id != 0 {
-            if let Some(handle) = get_shader_handle(key.bind_group_data.vert_shader_id) {
-                descriptor.vertex.shader = handle;
-            }
+        if key.bind_group_data.vert_shader_id != 0
+            && let Some(handle) = get_shader_handle(key.bind_group_data.vert_shader_id)
+        {
+            descriptor.vertex.shader = handle;
         }
 
         // Push shader defs from bool fields
-        if key.bind_group_data.shader_defs != 0 {
-            if let Some(names) = get_shader_def_names(key.bind_group_data.frag_shader_id) {
-                for (i, name) in names.iter().enumerate() {
-                    if key.bind_group_data.shader_defs & (1 << i) != 0 {
-                        if let Some(fragment) = &mut descriptor.fragment {
-                            fragment
-                                .shader_defs
-                                .push(bevy::shader::ShaderDefVal::Bool(name.clone(), true));
-                        }
-                        descriptor
-                            .vertex
+        if key.bind_group_data.shader_defs != 0
+            && let Some(names) = get_shader_def_names(key.bind_group_data.frag_shader_id)
+        {
+            for (i, name) in names.iter().enumerate() {
+                if key.bind_group_data.shader_defs & (1 << i) != 0 {
+                    if let Some(fragment) = &mut descriptor.fragment {
+                        fragment
                             .shader_defs
                             .push(bevy::shader::ShaderDefVal::Bool(name.clone(), true));
                     }
+                    descriptor
+                        .vertex
+                        .shader_defs
+                        .push(bevy::shader::ShaderDefVal::Bool(name.clone(), true));
                 }
             }
         }

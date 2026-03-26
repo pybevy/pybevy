@@ -26,6 +26,7 @@ pub struct PyShaderMaterial {
 #[pymethods]
 impl PyShaderMaterial {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None))]
     pub fn new(
         py: Python<'_>,
@@ -238,14 +239,13 @@ impl PyMeshMaterial3dShader {
         let handle = extract_handle_from_any(handle)?;
 
         // Validate asset type
-        if let Some(name) = handle.asset_type_name() {
-            if name != "ShaderMaterial" {
+        if let Some(name) = handle.asset_type_name()
+            && name != "ShaderMaterial" {
                 return Err(PyTypeError::new_err(format!(
                     "AssetType `{}` does not match expected type `ShaderMaterial`",
                     name
                 )));
             }
-        }
 
         Ok((Self(handle), PyComponent))
     }

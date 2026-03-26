@@ -20,14 +20,13 @@ impl PyImageNode {
     pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
         let py_handle = extract_handle_from_any(handle)?;
 
-        if let Some(name) = py_handle.asset_type_name() {
-            if name != "Image" {
+        if let Some(name) = py_handle.asset_type_name()
+            && name != "Image" {
                 return Err(PyTypeError::new_err(format!(
                     "AssetType `{}` does not match expected type `Image`",
                     name
                 )));
             }
-        }
 
         let bevy_handle: Handle<Image> = py_handle.try_into()?;
         Ok(Self::from_owned(ImageNode::new(bevy_handle)))
@@ -49,14 +48,13 @@ impl PyImageNode {
     pub fn set_texture(&mut self, handle: &Bound<'_, PyAny>) -> PyResult<()> {
         let py_handle = extract_handle_from_any(handle)?;
 
-        if let Some(name) = py_handle.asset_type_name() {
-            if name != "Image" {
+        if let Some(name) = py_handle.asset_type_name()
+            && name != "Image" {
                 return Err(PyTypeError::new_err(format!(
                     "AssetType `{}` does not match expected type `Image`",
                     name
                 )));
             }
-        }
 
         let bevy_handle: Handle<Image> = py_handle.try_into()?;
         self.as_mut()?.image = bevy_handle;

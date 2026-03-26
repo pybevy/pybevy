@@ -125,7 +125,7 @@ impl PyOn {
             let first_type_obj = first_key.cast_exact::<PyType>()?;
 
             // Check for lifecycle event markers
-            if first_type_obj.is(&PyOnAdd::type_object(py)) {
+            if first_type_obj.is(PyOnAdd::type_object(py)) {
                 // On[OnAdd, Component] - component addition lifecycle event
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
@@ -142,7 +142,7 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(&PyOnInsert::type_object(py)) {
+            } else if first_type_obj.is(PyOnInsert::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
@@ -158,7 +158,7 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(&PyOnRemove::type_object(py)) {
+            } else if first_type_obj.is(PyOnRemove::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
@@ -174,7 +174,7 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(&PyOnReplace::type_object(py)) {
+            } else if first_type_obj.is(PyOnReplace::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
@@ -190,7 +190,7 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(&PyOnDespawn::type_object(py)) {
+            } else if first_type_obj.is(PyOnDespawn::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
@@ -376,7 +376,7 @@ impl EventType {
         match self {
             EventType::Custom(expected_type) => {
                 let event_type = event.get_type();
-                event_type.is(&expected_type.bind(py))
+                event_type.is(expected_type.bind(py))
             }
             // TODO: Implement lifecycle event matching
             _ => false,
@@ -423,12 +423,11 @@ fn entity_has_component(
     match comp_type {
         PyComponentType::Custom(type_ptr) => {
             // For custom components, look up the ComponentId from the registry
-            if let Some(registry) = world.get_resource::<ComponentRegistry>() {
-                if let Some(component_id) = registry.get(*type_ptr) {
+            if let Some(registry) = world.get_resource::<ComponentRegistry>()
+                && let Some(component_id) = registry.get(*type_ptr) {
                     // Check if entity has this component using the ComponentId
                     return entity.contains_id(component_id);
                 }
-            }
             // Component not registered or registry doesn't exist
             false
         }

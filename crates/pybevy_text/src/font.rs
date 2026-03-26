@@ -23,6 +23,6 @@ impl PyFont {
 
     pub fn data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let font = self.as_ref()?;
-        Ok(PyBytes::new(py, &font.data).into())
+        Ok(PyBytes::new(py, &font.data))
     }
 }

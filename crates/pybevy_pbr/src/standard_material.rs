@@ -165,7 +165,7 @@ impl PyStandardMaterial {
             anisotropy_strength,
             anisotropy_rotation,
             double_sided,
-            cull_mode: cull_mode.map(|v| v.try_into()).transpose()?,
+            cull_mode: cull_mode.map(Into::into),
             unlit,
             fog_enabled,
             alpha_mode: alpha_mode.into(),

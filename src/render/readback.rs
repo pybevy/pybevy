@@ -41,15 +41,15 @@ pub(crate) fn list_entities() -> Vec<u64> {
     map.keys().copied().collect()
 }
 
-///! GPU Readback System for JupyBevy
-///!
-///! Adapted from Bevy's headless_renderer example.
-///! Architecture:
-///! 1. Render to texture (Camera → GPU Image)
-///! 2. Copy texture to buffer (ImageCopyDriver node)
-///! 3. Map buffer and read pixels (RenderWorld)
-///! 4. Send via channel to MainWorld
-///! 5. Python extracts pixels via HeadlessRenderer.extract_frame()
+// GPU Readback System for JupyBevy
+//
+// Adapted from Bevy's headless_renderer example.
+// Architecture:
+// 1. Render to texture (Camera → GPU Image)
+// 2. Copy texture to buffer (ImageCopyDriver node)
+// 3. Map buffer and read pixels (RenderWorld)
+// 4. Send via channel to MainWorld
+// 5. Python extracts pixels via HeadlessRenderer.extract_frame()
 use bevy::{
     camera::RenderTarget,
     prelude::*,

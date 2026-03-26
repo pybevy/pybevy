@@ -272,7 +272,7 @@ impl PyMessages {
         match &self.message_type {
             MessageType::KeyboardInput => {
                 let mut messages =
-                    world.get_resource_or_insert_with(|| Messages::<KeyboardInput>::default());
+                    world.get_resource_or_insert_with(Messages::<KeyboardInput>::default);
                 Ok(f(&mut Wrap(&mut *messages)))
             }
             MessageType::GamepadRumbleRequest => {
@@ -283,7 +283,7 @@ impl PyMessages {
             }
             MessageType::WindowEvent => {
                 let mut messages =
-                    world.get_resource_or_insert_with(|| Messages::<WindowEvent>::default());
+                    world.get_resource_or_insert_with(Messages::<WindowEvent>::default);
                 Ok(f(&mut Wrap(&mut *messages)))
             }
             MessageType::SceneInstanceReady => {
@@ -295,12 +295,12 @@ impl PyMessages {
             }
             MessageType::AssetEventImage => {
                 let mut messages =
-                    world.get_resource_or_insert_with(|| Messages::<AssetEvent<Image>>::default());
+                    world.get_resource_or_insert_with(Messages::<AssetEvent<Image>>::default);
                 Ok(f(&mut Wrap(&mut *messages)))
             }
             MessageType::AssetEventMesh => {
                 let mut messages =
-                    world.get_resource_or_insert_with(|| Messages::<AssetEvent<Mesh>>::default());
+                    world.get_resource_or_insert_with(Messages::<AssetEvent<Mesh>>::default);
                 Ok(f(&mut Wrap(&mut *messages)))
             }
             MessageType::Custom(py_type) => {
@@ -535,19 +535,19 @@ impl PyMessageType {
         }
 
         // Special handling types that don't use message_bridge! (need extra resources/special logic)
-        if message.is(&<PyKeyboardInput as PyTypeInfo>::type_object(py)) {
+        if message.is(<PyKeyboardInput as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::KeyboardInput));
         }
 
-        if message.is(&<PyGamepadRumbleRequest as PyTypeInfo>::type_object(py)) {
+        if message.is(<PyGamepadRumbleRequest as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::GamepadRumbleRequest));
         }
 
-        if message.is(&<PyWindowEvent as PyTypeInfo>::type_object(py)) {
+        if message.is(<PyWindowEvent as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::WindowEvent));
         }
 
-        if message.is(&<PySceneInstanceReady as PyTypeInfo>::type_object(py)) {
+        if message.is(<PySceneInstanceReady as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::SceneInstanceReady));
         }
 
@@ -556,7 +556,7 @@ impl PyMessageType {
 
         // For now, we identify AssetEvent by checking if it's the AssetEvent class
         // In the future, we might need to distinguish Image vs Mesh events differently
-        if message.is(&<PyAssetEvent as PyTypeInfo>::type_object(py)) {
+        if message.is(<PyAssetEvent as PyTypeInfo>::type_object(py)) {
             // Default to Image events for now - this will need refinement
             // when we expose separate AssetEvent[Image] and AssetEvent[Mesh] types
             return Ok(PyMessageType(MessageType::AssetEventImage));
@@ -680,7 +680,7 @@ impl MessageRegistry {
             // Old entry: keep only if it's the newest for its slot
             newest_per_slot
                 .get(&reg.message_num)
-                .map_or(true, |&newest| reg.generation >= newest)
+                .is_none_or(|&newest| reg.generation >= newest)
         });
     }
 

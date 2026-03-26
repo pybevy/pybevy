@@ -42,7 +42,7 @@ pub(crate) fn construct_view_class_item(
 
         Err(_) => {
             // Single parameter
-            let (_single, params) = extract_param_type_from_query_param(py, &key)?;
+            let (_single, params) = extract_param_type_from_query_param(py, key)?;
             params.into_vec()
         }
     };

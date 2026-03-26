@@ -16,13 +16,13 @@ pub struct PyWith {
 impl PyWith {
     #[classmethod]
     #[pyo3(signature = (key, /))]
-    pub fn __class_getitem__<'a>(
-        cls: &'a Bound<'_, PyType>,
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
         let values = parse_multi_component_filter(py, key, "With")?;
-        Ok(PyWith { values }.into_py_any(py)?)
+        PyWith { values }.into_py_any(py)
     }
 }
 
@@ -36,13 +36,13 @@ pub struct PyWithout {
 impl PyWithout {
     #[classmethod]
     #[pyo3(signature = (key, /))]
-    pub fn __class_getitem__<'a>(
-        cls: &'a Bound<'_, PyType>,
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
         let values = parse_multi_component_filter(py, key, "Without")?;
-        Ok(PyWithout { values }.into_py_any(py)?)
+        PyWithout { values }.into_py_any(py)
     }
 }
 
@@ -56,13 +56,13 @@ pub struct PyChanged {
 impl PyChanged {
     #[classmethod]
     #[pyo3(signature = (key, /))]
-    pub fn __class_getitem__<'a>(
-        cls: &'a Bound<'_, PyType>,
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
         let component_type = parse_single_component_filter(py, key)?;
-        Ok(PyChanged { component_type }.into_py_any(py)?)
+        PyChanged { component_type }.into_py_any(py)
     }
 }
 
@@ -76,13 +76,13 @@ pub struct PyAdded {
 impl PyAdded {
     #[classmethod]
     #[pyo3(signature = (key, /))]
-    pub fn __class_getitem__<'a>(
-        cls: &'a Bound<'_, PyType>,
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
         let component_type = parse_single_component_filter(py, key)?;
-        Ok(PyAdded { component_type }.into_py_any(py)?)
+        PyAdded { component_type }.into_py_any(py)
     }
 }
 
@@ -96,13 +96,13 @@ pub struct PyHas {
 impl PyHas {
     #[classmethod]
     #[pyo3(signature = (key, /))]
-    pub fn __class_getitem__<'a>(
-        cls: &'a Bound<'_, PyType>,
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
         let component_type = parse_single_component_filter(py, key)?;
-        Ok(PyHas { component_type }.into_py_any(py)?)
+        PyHas { component_type }.into_py_any(py)
     }
 }
 
@@ -116,12 +116,12 @@ pub struct PyAnyOf {
 impl PyAnyOf {
     #[classmethod]
     #[pyo3(signature = (key, /))]
-    pub fn __class_getitem__<'a>(
-        cls: &'a Bound<'_, PyType>,
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
         let values = parse_multi_component_filter(py, key, "AnyOf")?;
-        Ok(PyAnyOf { values }.into_py_any(py)?)
+        PyAnyOf { values }.into_py_any(py)
     }
 }

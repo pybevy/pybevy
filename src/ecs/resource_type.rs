@@ -80,14 +80,14 @@ impl PyResourceType {
     ) -> PyResult<Py<PyAny>> {
         match self {
             PyResourceType::AssetServer => {
-                return Self::get_asset_server(world, py, validity);
+                Self::get_asset_server(world, py, validity)
             }
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| {
                         PyTypeError::new_err("Resource bridge not found for dynamic type")
                     })?;
-                return bridge.get(world, validity.with_access_mode(AccessMode::Read), py);
+                bridge.get(world, validity.with_access_mode(AccessMode::Read), py)
             }
             PyResourceType::Custom(type_ptr) => {
                 // For custom resources, we need to look up the ComponentId from the registry
@@ -174,16 +174,16 @@ impl PyResourceType {
     ) -> PyResult<()> {
         match self {
             PyResourceType::AssetServer => {
-                return Err(PyTypeError::new_err(
+                Err(PyTypeError::new_err(
                     "AssetServer cannot be manually inserted. It is provided by AssetPlugin.",
-                ));
+                ))
             }
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| {
                         PyTypeError::new_err("Resource bridge not found for dynamic type")
                     })?;
-                return bridge.insert(world, resource_instance.bind(py));
+                bridge.insert(world, resource_instance.bind(py))
             }
             PyResourceType::Custom(type_ptr) => {
                 // Register the custom resource if not already registered
@@ -235,9 +235,9 @@ impl PyResourceType {
     pub fn remove_from_world(&self, world: &mut World, py: Python) -> PyResult<()> {
         match self {
             PyResourceType::AssetServer => {
-                return Err(PyTypeError::new_err(
+                Err(PyTypeError::new_err(
                     "AssetServer cannot be manually removed. It is managed by AssetPlugin.",
-                ));
+                ))
             }
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
@@ -245,7 +245,7 @@ impl PyResourceType {
                         PyTypeError::new_err("Resource bridge not found for dynamic type")
                     })?;
                 bridge.remove(world);
-                return Ok(());
+                Ok(())
             }
             PyResourceType::Custom(type_ptr) => {
                 // Look up the ComponentId from the registry
@@ -462,14 +462,12 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
 
         for base in mro.iter() {
             // MRO elements are PyType objects - use cast instead of deprecated downcast
-            if let Ok(base_type) = base.cast::<PyType>() {
-                if let Ok(name) = base_type.name() {
-                    if name.to_string() == "Resource" {
+            if let Ok(base_type) = base.cast::<PyType>()
+                && let Ok(name) = base_type.name()
+                    && name == "Resource" {
                         is_resource = true;
                         break;
                     }
-                }
-            }
         }
 
         if !is_resource {
@@ -484,7 +482,7 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
         }
 
         // Check for known resource types
-        if ty.is(&PyAssetServer::type_object(py)) {
+        if ty.is(PyAssetServer::type_object(py)) {
             Ok(PyResourceType::AssetServer)
         } else {
             // Check for dynamically registered resource bridges (from feature crates)
@@ -494,11 +492,11 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
             }
 
             // Check if this is a built-in resource that doesn't need decorator validation
-            let is_builtin = ty.is(&PyState::type_object(py))
-                || ty.is(&PyNextState::type_object(py))
-                || ty.is(&PyHotReloadControl::type_object(py))
-                || ty.is(&PyMessages::type_object(py))
-                || ty.is(&PyAssets::type_object(py));
+            let is_builtin = ty.is(PyState::type_object(py))
+                || ty.is(PyNextState::type_object(py))
+                || ty.is(PyHotReloadControl::type_object(py))
+                || ty.is(PyMessages::type_object(py))
+                || ty.is(PyAssets::type_object(py));
 
             if !is_builtin {
                 // Not a built-in resource - check for custom resource decorator

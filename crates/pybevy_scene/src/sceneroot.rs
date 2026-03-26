@@ -26,14 +26,13 @@ impl PySceneRoot {
     pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
         let handle = extract_handle_from_any(handle)?;
 
-        if let Some(name) = handle.asset_type_name() {
-            if name != "Scene" {
+        if let Some(name) = handle.asset_type_name()
+            && name != "Scene" {
                 return Err(PyTypeError::new_err(format!(
                     "AssetType `{}` does not match expected type `Scene`",
                     name
                 )));
             }
-        }
 
         Ok((Self(handle), PyComponent))
     }

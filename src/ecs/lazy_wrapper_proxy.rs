@@ -97,6 +97,7 @@ impl PyLazyWrapperProxy {
     /// # Safety
     /// - data_ptr must point to valid wrapper bytes for the component's lifetime
     /// - validity must be properly invalidated when the data becomes invalid
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn new(
         data_ptr: *mut u8,
         layout: Arc<ComponentLayout>,

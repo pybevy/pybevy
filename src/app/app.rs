@@ -163,11 +163,10 @@ impl PluginRegistry {
         }
         // Hot-reload path: pointer changed but name matches
         let name = Self::get_qualified_name(type_ptr, py);
-        if let Some(ref name) = name {
-            if self.by_name.contains(name) {
+        if let Some(ref name) = name
+            && self.by_name.contains(name) {
                 return true;
             }
-        }
         false
     }
 
@@ -535,29 +534,25 @@ fn despawn_on_state_change_impl(
 
             for (old_state, new_state) in &changes {
                 // DespawnOnExit: despawn when exiting old_state
-                if let Some(exit_id) = despawn_exit_id {
-                    if let Ok(ptr) = entity_ref.get_by_id(exit_id) {
+                if let Some(exit_id) = despawn_exit_id
+                    && let Ok(ptr) = entity_ref.get_by_id(exit_id) {
                         // SAFETY: PyObject storage — raw data is Py<PyAny>
                         let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
-                        if let Ok(sv) = py_obj.bind(py).call_method0("state_value") {
-                            if sv.eq(old_state.bind(py)).unwrap_or(false) {
+                        if let Ok(sv) = py_obj.bind(py).call_method0("state_value")
+                            && sv.eq(old_state.bind(py)).unwrap_or(false) {
                                 entities_to_despawn.push(*entity);
                             }
-                        }
                     }
-                }
 
                 // DespawnOnEnter: despawn when entering new_state
-                if let Some(enter_id) = despawn_enter_id {
-                    if let Ok(ptr) = entity_ref.get_by_id(enter_id) {
+                if let Some(enter_id) = despawn_enter_id
+                    && let Ok(ptr) = entity_ref.get_by_id(enter_id) {
                         let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
-                        if let Ok(sv) = py_obj.bind(py).call_method0("state_value") {
-                            if sv.eq(new_state.bind(py)).unwrap_or(false) {
+                        if let Ok(sv) = py_obj.bind(py).call_method0("state_value")
+                            && sv.eq(new_state.bind(py)).unwrap_or(false) {
                                 entities_to_despawn.push(*entity);
                             }
-                        }
                     }
-                }
             }
         }
     }
@@ -734,12 +729,9 @@ impl PyApp {
                     Ok::<(), PyErr>(())
                 })?;
 
-                return Ok(pyself.into());
+                Ok(pyself.into())
             }
             ScheduleType::Stage(stage) => {
-                // Continue with existing Stage logic below
-                let stage = stage; // Extract the stage for use below
-
                 // Macro to add systems to the correct schedule with automatic schedule initialization
                 macro_rules! add_to_schedule {
                     ($app:expr, $stage:expr, $system:expr) => {{
@@ -953,17 +945,13 @@ impl PyApp {
                             // Check if the condition has parameters by inspecting it
                             let has_params = Python::attach(|py| -> bool {
                                 let inspect = py.import("inspect").ok();
-                                if let Some(inspect_mod) = inspect {
-                                    if let Ok(sig) = inspect_mod.call_method1("signature", (cond.bind(py),)) {
-                                        if let Ok(params) = sig.getattr("parameters") {
-                                            if let Ok(values) = params.getattr("values") {
-                                                if let Ok(params_list) = values.call0() {
+                                if let Some(inspect_mod) = inspect
+                                    && let Ok(sig) = inspect_mod.call_method1("signature", (cond.bind(py),))
+                                        && let Ok(params) = sig.getattr("parameters")
+                                            && let Ok(values) = params.getattr("values")
+                                                && let Ok(params_list) = values.call0() {
                                                     return params_list.len().unwrap_or(0) > 0;
                                                 }
-                                            }
-                                        }
-                                    }
-                                }
                                 false
                             });
 
@@ -1834,10 +1822,7 @@ impl PyApp {
     /// Set the hot reload loader function (called by CLI)
     /// The loader should return a function that when called returns create_app function
     #[pyo3(name = "_set_hot_reload_loader")]
-    pub fn set_hot_reload_loader(
-        pyself: PyRef<'_, Self>,
-        loader: Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyApp>> {
+    pub fn set_hot_reload_loader(pyself: PyRef<'_, Self>, loader: Bound<'_, PyAny>) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
         pyself.hot_reload_state.set_loader(loader.unbind());
 

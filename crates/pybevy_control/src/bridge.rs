@@ -314,6 +314,12 @@ pub struct SseEventBroadcaster {
     pub tx: Arc<tokio::sync::broadcast::Sender<String>>,
 }
 
+impl Default for SseEventBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SseEventBroadcaster {
     pub fn new() -> Self {
         let (tx, _) = tokio::sync::broadcast::channel(256);
@@ -763,13 +769,10 @@ pub fn control_poll_system(world: &mut World) {
                 let result = result.map(|mut val| {
                     if let Some(time) =
                         world.get_resource::<bevy::time::Time<bevy::time::Virtual>>()
-                    {
-                        if time.is_paused() {
-                            if let Some(obj) = val.as_object_mut() {
+                        && time.is_paused()
+                            && let Some(obj) = val.as_object_mut() {
                                 obj.insert("_time_paused".to_string(), serde_json::json!(true));
                             }
-                        }
-                    }
                     val
                 });
 
@@ -788,8 +791,8 @@ pub fn control_poll_system(world: &mut World) {
     world.insert_resource(receiver);
 
     // Broadcast new system errors via SSE + update shared state for HTTP piggyback
-    if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>() {
-        if let Some(ref msg) = last_error.error {
+    if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>()
+        && let Some(ref msg) = last_error.error {
             let error_ts = last_error.timestamp_secs;
             let msg = msg.clone();
             let traceback = last_error.traceback.clone();
@@ -814,5 +817,4 @@ pub fn control_poll_system(world: &mut World) {
                 }
             }
         }
-    }
 }

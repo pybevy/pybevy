@@ -4,7 +4,7 @@ use quote::quote;
 use syn::{Fields, Ident, ItemStruct, parse_macro_input};
 
 use crate::util::{
-    FieldDef, extract_option_inner, generate_field_accessors, is_primitive_type,
+    FieldDef, generate_field_accessors, is_primitive_type,
     parse_field_annotation, pybevy_crate_paths, to_snake_case,
 };
 
@@ -102,11 +102,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
         .iter()
         .zip(field_types.iter())
         .map(|(name, ty)| {
-            if is_primitive_type(ty) || extract_option_inner(ty).is_some() {
-                quote! { #name: #ty }
-            } else {
-                quote! { #name: #ty }
-            }
+            quote! { #name: #ty }
         })
         .collect();
 

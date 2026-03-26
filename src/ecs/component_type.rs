@@ -136,7 +136,7 @@ impl PyComponentType {
             )));
         }
 
-        if ty.is(&PyComponent::type_object(py)) {
+        if ty.is(PyComponent::type_object(py)) {
             return Err(PyErr::new::<PyTypeError, _>(
                 "Cannot use Component base class directly. Use a concrete component type.",
             ));
@@ -149,10 +149,10 @@ impl PyComponentType {
         }
 
         // Check for special Python-only built-in components (DespawnOnExit, DespawnOnEnter)
-        if ty.is(&crate::ecs::state::PyDespawnOnExit::type_object(py)) {
+        if ty.is(crate::ecs::state::PyDespawnOnExit::type_object(py)) {
             return Ok(PyComponentType::Custom(type_ptr));
         }
-        if ty.is(&crate::ecs::state::PyDespawnOnEnter::type_object(py)) {
+        if ty.is(crate::ecs::state::PyDespawnOnEnter::type_object(py)) {
             return Ok(PyComponentType::Custom(type_ptr));
         }
 

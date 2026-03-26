@@ -21,7 +21,7 @@ impl PyGltf {
         Ok(gltf
             .scenes
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 
@@ -41,7 +41,7 @@ impl PyGltf {
         Ok(gltf
             .meshes
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 
@@ -61,7 +61,7 @@ impl PyGltf {
         Ok(gltf
             .materials
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 
@@ -81,7 +81,7 @@ impl PyGltf {
         Ok(gltf
             .nodes
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 
@@ -101,7 +101,7 @@ impl PyGltf {
         Ok(gltf
             .default_scene
             .as_ref()
-            .map(|handle| PyHandle::from(handle)))
+            .map(PyHandle::from))
     }
 
     #[getter]
@@ -110,7 +110,7 @@ impl PyGltf {
         Ok(gltf
             .skins
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 
@@ -189,29 +189,29 @@ impl PyGltfNode {
         Ok(node
             .children
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 
     #[getter]
     pub fn mesh(&self) -> PyResult<Option<PyHandle>> {
         let node = self.storage.as_ref()?;
-        Ok(node.mesh.as_ref().map(|handle| PyHandle::from(handle)))
+        Ok(node.mesh.as_ref().map(PyHandle::from))
     }
 
     #[getter]
     pub fn skin(&self) -> PyResult<Option<PyHandle>> {
         let node = self.storage.as_ref()?;
-        Ok(node.skin.as_ref().map(|handle| PyHandle::from(handle)))
+        Ok(node.skin.as_ref().map(PyHandle::from))
     }
 
     #[getter]
     pub fn transform(&self, py: Python<'_>) -> PyResult<Py<PyTransform>> {
         let node = self.storage.as_ref()?;
-        Ok(Py::new(
+        Py::new(
             py,
             (PyTransform::from(node.transform), PyComponent),
-        )?)
+        )
     }
 
     #[getter]
@@ -261,7 +261,7 @@ impl PyGltfPrimitive {
         Ok(primitive
             .material
             .as_ref()
-            .map(|handle| PyHandle::from(handle)))
+            .map(PyHandle::from))
     }
 
     #[getter]
@@ -310,7 +310,7 @@ impl PyGltfSkin {
         Ok(skin
             .joints
             .iter()
-            .map(|handle| PyHandle::from(handle))
+            .map(PyHandle::from)
             .collect())
     }
 

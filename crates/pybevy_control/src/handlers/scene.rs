@@ -356,11 +356,10 @@ pub fn get_entity(
     let mut components = serde_json::Map::new();
     let mut entity_name: Option<String> = None;
 
-    if let Ok(eref) = world.get_entity(entity) {
-        if let Some(name) = eref.get::<Name>() {
+    if let Ok(eref) = world.get_entity(entity)
+        && let Some(name) = eref.get::<Name>() {
             entity_name = Some(name.as_str().to_string());
         }
-    }
 
     // Extract component values via Python
     Python::attach(|py| {
@@ -368,8 +367,8 @@ pub fn get_entity(
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
         for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
-            if let Ok(entity_ref) = world.get_entity(entity) {
-                if bridge.entity_contains(&entity_ref) {
+            if let Ok(entity_ref) = world.get_entity(entity)
+                && bridge.entity_contains(&entity_ref) {
                     let name = bridge.name().to_string();
                     let value = bridge
                         .extract_from_entity_ref(&entity_ref, validity.clone(), py)
@@ -383,7 +382,6 @@ pub fn get_entity(
 
                     components.insert(name, serde_json::Value::String(value));
                 }
-            }
         }
 
         validity_flag.set_invalid();
@@ -391,8 +389,8 @@ pub fn get_entity(
 
     // Extract custom Python component data
     let mut custom_components = serde_json::Map::new();
-    if let Some(info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
-        if let Ok(eref) = world.get_entity(entity) {
+    if let Some(info) = world.get_resource::<pybevy_core::CustomComponentInfo>()
+        && let Ok(eref) = world.get_entity(entity) {
             for component_id in eref.archetype().components() {
                 if let Some(entry) = info.get(*component_id) {
                     if entry.is_pyobject_storage {
@@ -424,7 +422,6 @@ pub fn get_entity(
                 }
             }
         }
-    }
 
     // Count remaining unknown components
     let mut unknown_count = 0;
@@ -510,8 +507,8 @@ pub fn get_component(
     }
 
     // Try custom Python components
-    if let Some(info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
-        if let Ok(eref) = world.get_entity(entity) {
+    if let Some(info) = world.get_resource::<pybevy_core::CustomComponentInfo>()
+        && let Ok(eref) = world.get_entity(entity) {
             for component_id in eref.archetype().components() {
                 if let Some(entry) = info.get(*component_id) {
                     if entry.name != component {
@@ -534,7 +531,6 @@ pub fn get_component(
                 }
             }
         }
-    }
 
     Err(ControlError::not_found(format!(
         "Component '{component}' not found on entity {entity_id}"
@@ -618,8 +614,8 @@ pub fn query_entities(
     // Debug: log when entities exist but nothing matched the filters
     if matching.is_empty() && entity_count > 0 && !with_filters.is_empty() {
         // Sample first entity to debug
-        if let Some(first_entity) = all_entities.first() {
-            if let Ok(entity_ref) = world.get_entity(*first_entity) {
+        if let Some(first_entity) = all_entities.first()
+            && let Ok(entity_ref) = world.get_entity(*first_entity) {
                 let sample_components: Vec<String> = bridges
                     .iter()
                     .filter(|b| b.entity_contains(&entity_ref))
@@ -636,7 +632,6 @@ pub fn query_entities(
                     sample_components.len(),
                 );
             }
-        }
     }
 
     Ok(serde_json::json!({
@@ -764,8 +759,8 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
         });
 
         // Extract values from PyResourceStorage
-        if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>() {
-            if let Some(py_obj) = storage.resources.get(&comp_id) {
+        if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>()
+            && let Some(py_obj) = storage.resources.get(&comp_id) {
                 let fields = Python::attach(|py| {
                     let bound = py_obj.bind(py);
                     extract_custom_resource_fields(py, bound)
@@ -777,7 +772,6 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
                         .insert("fields".into(), serde_json::json!(fields));
                 }
             }
-        }
 
         resources.push(res_entry);
     }
@@ -830,7 +824,7 @@ pub fn get_component_schema(
             // Try to get Bevy reflection type info for richer schema
             let reflection_info = world
                 .get_resource::<AppTypeRegistry>()
-                .map(|reg| {
+                .and_then(|reg| {
                     let type_registry = reg.read();
                     let type_id = bridge.bevy_type_id();
                     type_registry.get(type_id).map(|registration| {
@@ -858,8 +852,7 @@ pub fn get_component_schema(
 
                         (editable, field_types, type_info_kind_name(type_info))
                     })
-                })
-                .flatten();
+                });
 
             let schema = Python::attach(|py| {
                 let py_type = bridge.py_type(py);
@@ -973,8 +966,8 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, pyo3::types::PyType>) ->
     let mut fields = serde_json::Map::new();
 
     // Try __annotations__
-    if let Ok(annotations) = py_type.getattr("__annotations__") {
-        if let Ok(dict) = annotations.cast::<pyo3::types::PyDict>() {
+    if let Ok(annotations) = py_type.getattr("__annotations__")
+        && let Ok(dict) = annotations.cast::<pyo3::types::PyDict>() {
             for (key, value) in dict.iter() {
                 if let Ok(k) = key.extract::<String>() {
                     let v = value
@@ -985,11 +978,10 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, pyo3::types::PyType>) ->
                 }
             }
         }
-    }
 
     // Try PyO3 getset_descriptor detection via dir()
-    if fields.is_empty() {
-        if let Ok(dir_list) = py_type.dir() {
+    if fields.is_empty()
+        && let Ok(dir_list) = py_type.dir() {
             for attr_obj in dir_list.iter() {
                 let Ok(name) = attr_obj.extract::<String>() else {
                     continue;
@@ -1009,35 +1001,26 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, pyo3::types::PyType>) ->
                 }
             }
         }
-    }
 
     // Fallback: try __init__ signature via inspect module
-    if fields.is_empty() {
-        if let Ok(inspect) = py.import("inspect") {
-            if let Ok(sig) = inspect.call_method1("signature", (py_type,)) {
-                if let Ok(params) = sig.getattr("parameters") {
-                    if let Ok(items) = params.call_method0("items") {
-                        if let Ok(iter) = items.try_iter() {
+    if fields.is_empty()
+        && let Ok(inspect) = py.import("inspect")
+            && let Ok(sig) = inspect.call_method1("signature", (py_type,))
+                && let Ok(params) = sig.getattr("parameters")
+                    && let Ok(items) = params.call_method0("items")
+                        && let Ok(iter) = items.try_iter() {
                             for item in iter {
-                                if let Ok(tuple) = item {
-                                    if let Ok(k) =
+                                if let Ok(tuple) = item
+                                    && let Ok(k) =
                                         tuple.get_item(0).and_then(|v| v.extract::<String>())
-                                    {
-                                        if k != "self" && !k.starts_with('_') {
+                                        && k != "self" && !k.starts_with('_') {
                                             fields.insert(
                                                 k,
                                                 serde_json::Value::String("unknown".into()),
                                             );
                                         }
-                                    }
-                                }
                             }
                         }
-                    }
-                }
-            }
-        }
-    }
 
     serde_json::Value::Object(fields)
 }
@@ -1251,7 +1234,7 @@ fn strip_numeric_suffix(name: &str) -> String {
     if before_digits.ends_with('.') {
         return name.to_string(); // Part of a decimal number, don't strip
     }
-    let trimmed = before_digits.trim_end_matches(|c: char| c == '_' || c == '-' || c == ' ');
+    let trimmed = before_digits.trim_end_matches(['_', '-', ' ']);
     if trimmed.is_empty() {
         name.to_string()
     } else {

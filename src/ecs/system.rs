@@ -58,16 +58,13 @@ impl Clone for SystemFunction {
 }
 
 impl SystemFunction {
-    /// Create a minimal stub for testing (no real Python function).
-
     /// Clear the global system parameter cache.
     /// This should be called when tearing down an app to prevent stale cache entries.
     pub fn clear_cache() {
-        if let Ok(mut cache_guard) = SYSTEM_PARAM_CACHE.lock() {
-            if let Some(cache) = cache_guard.as_mut() {
+        if let Ok(mut cache_guard) = SYSTEM_PARAM_CACHE.lock()
+            && let Some(cache) = cache_guard.as_mut() {
                 cache.clear();
             }
-        }
     }
 
     pub fn new(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
@@ -154,12 +151,12 @@ impl SystemFunction {
             let (is_mutable, annotation, is_wrapped_resource) =
                 if let Ok(origin) = raw_annotation.getattr("__origin__") {
                     // This is a generic type like Mut[Time], Res[Time], ResMut[Time], Assets[Mesh], etc.
-                    if origin.is(&PyMut::type_object(py)) {
+                    if origin.is(PyMut::type_object(py)) {
                         // Mut[T] - extract the inner type from __args__
                         let args = raw_annotation.getattr("__args__")?;
                         let inner = args.get_item(0)?;
                         (true, inner, false)
-                    } else if origin.is(&PyRes::type_object(py)) {
+                    } else if origin.is(PyRes::type_object(py)) {
                         // Res[T] - extract the inner type, mark as read-only
                         // Note: typing.get_type_hints() creates nested tuples: ((<class T>,),)
                         // So we need to extract twice: first gets (<class T>,), second gets <class T>
@@ -173,7 +170,7 @@ impl SystemFunction {
                             first_elem
                         };
                         (false, inner.clone(), true)
-                    } else if origin.is(&PyResMut::type_object(py)) {
+                    } else if origin.is(PyResMut::type_object(py)) {
                         // ResMut[T] - extract the inner type, mark as mutable
                         // Note: typing.get_type_hints() creates nested tuples: ((<class T>,),)
                         let args = raw_annotation.getattr("__args__")?;
@@ -215,20 +212,20 @@ impl SystemFunction {
                     .extract::<String>()?
             };
 
-            let ty = if annotation.get_type().is(&PyQueryParam::type_object(py)) {
+            let ty = if annotation.get_type().is(PyQueryParam::type_object(py)) {
                 let obj = annotation.extract::<PyQueryParam>()?;
                 // For Query, mutability is determined by the component parameters (Mut[Component]),
                 // not by wrapping the entire Query parameter
                 SystemParamType::Query {
                     param: Arc::new(obj),
                 }
-            } else if annotation.get_type().is(&PyViewParam::type_object(py)) {
+            } else if annotation.get_type().is(PyViewParam::type_object(py)) {
                 let obj = annotation.extract::<PyViewParam>()?;
                 // For View, mutability is determined by the component parameters (Mut[Component])
                 SystemParamType::View {
                     param: Arc::new(obj),
                 }
-            } else if param_name == "View" || annotation.get_type().is(&PyView::type_object(py)) {
+            } else if param_name == "View" || annotation.get_type().is(PyView::type_object(py)) {
                 // Plain View without type parameters - not currently supported
                 return Err(PyTypeError::new_err(format!(
                     "System function `{}` uses View without type parameters. Use View[Mut[Component]] or View[Component]",
@@ -252,7 +249,7 @@ impl SystemFunction {
                 }
             } else if annotation.is_instance_of::<PyLocal>() {
                 SystemParamType::Local(annotation.unbind().clone_ref(py))
-            } else if annotation.get_type().is(&PyAssetTypeParam::type_object(py)) {
+            } else if annotation.get_type().is(PyAssetTypeParam::type_object(py)) {
                 // Assets[T] - extract the asset type
                 let asset_param = annotation.extract::<PyAssetTypeParam>()?;
                 SystemParamType::Assets {
@@ -260,13 +257,13 @@ impl SystemFunction {
                     wrapper_class: asset_param.wrapper_class().map(AssetTypePtr),
                     mutable: is_mutable,
                 }
-            } else if annotation.is(&PyAssetServer::type_object(py)) {
+            } else if annotation.is(PyAssetServer::type_object(py)) {
                 SystemParamType::AssetServer
-            } else if annotation.is(&PyWorld::type_object(py)) {
+            } else if annotation.is(PyWorld::type_object(py)) {
                 SystemParamType::World
-            } else if annotation.is(&PyCommands::type_object(py)) {
+            } else if annotation.is(PyCommands::type_object(py)) {
                 SystemParamType::Commands
-            } else if annotation.get_type().is(&MessageTypeParam::type_object(py)) {
+            } else if annotation.get_type().is(MessageTypeParam::type_object(py)) {
                 // MessageWriter[T] or MessageReader[T] - extract the message type
                 let message_param = annotation.extract::<MessageTypeParam>()?;
                 match message_param.ty {
@@ -279,7 +276,7 @@ impl SystemFunction {
                 }
             } else if annotation
                 .get_type()
-                .is(&super::observer::PyOnTypeParam::type_object(py))
+                .is(super::observer::PyOnTypeParam::type_object(py))
             {
                 // On[E] or On[E, B] - extract event type and optional bundle filter
                 let on_param = annotation.extract::<super::observer::PyOnTypeParam>()?;
@@ -287,10 +284,8 @@ impl SystemFunction {
                     event_type: on_param.event_type,
                     bundle_filter: on_param.bundle_filter,
                 }
-            } else if annotation.is(&PyResource::type_object(py)) {
-                return Err(PyTypeError::new_err(format!(
-                    "Resource must be subclass of `Resource`"
-                )));
+            } else if annotation.is(PyResource::type_object(py)) {
+                return Err(PyTypeError::new_err("Resource must be subclass of `Resource`".to_string()));
             } else if annotation.is_instance_of::<PyType>()
                 && annotation
                     .cast::<PyType>()?

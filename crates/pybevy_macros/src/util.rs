@@ -120,42 +120,38 @@ pub(crate) struct FieldDef {
 
 /// Check if a type is a primitive (i.e., getter returns `Ok(self.as_ref()?.field)` directly)
 pub(crate) fn is_primitive_type(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            let name = segment.ident.to_string();
-            return matches!(
-                name.as_str(),
-                "f32"
-                    | "f64"
-                    | "i8"
-                    | "i16"
-                    | "i32"
-                    | "i64"
-                    | "u8"
-                    | "u16"
-                    | "u32"
-                    | "u64"
-                    | "bool"
-                    | "usize"
-                    | "isize"
-            );
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        let name = segment.ident.to_string();
+        return matches!(
+            name.as_str(),
+            "f32" | "f64"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "bool"
+                | "usize"
+                | "isize"
+        );
     }
     false
 }
 
 /// Check if a type is `Option<T>` and return the inner type if so
 pub(crate) fn extract_option_inner(ty: &Type) -> Option<&Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Option" {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                        return Some(inner);
-                    }
-                }
-            }
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+        && segment.ident == "Option"
+        && let PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(GenericArgument::Type(inner)) = args.args.first()
+    {
+        return Some(inner);
     }
     None
 }

@@ -380,8 +380,8 @@ impl PyMinimalPlugins {
         app.borrow().with_bevy_app(|bevy_app| {
             bevy_app.add_plugins((
                 TaskPoolPlugin::default(),
-                FrameCountPlugin::default(),
-                TimePlugin::default(),
+                FrameCountPlugin,
+                TimePlugin,
                 ScheduleRunnerPlugin::default(),
             ));
             Ok(())

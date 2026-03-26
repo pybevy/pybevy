@@ -1,4 +1,4 @@
-use bevy::{asset::RenderAssetUsages, gltf::GltfLoaderSettings};
+use bevy::gltf::GltfLoaderSettings;
 use pybevy_image::{PyImageSamplerDescriptor, PyRenderAssetUsages};
 use pyo3::prelude::*;
 
@@ -6,21 +6,16 @@ use pyo3::prelude::*;
 // field, but GltfConvertCoordinates is private in the published bevy_gltf 0.18.0 crate.
 // This field will be exposed once Bevy makes the type public.
 #[pyclass(name = "GltfLoaderSettings")]
+#[derive(Default)]
 pub struct PyGltfLoaderSettings {
     pub(crate) inner: GltfLoaderSettings,
 }
 
-impl Default for PyGltfLoaderSettings {
-    fn default() -> Self {
-        Self {
-            inner: GltfLoaderSettings::default(),
-        }
-    }
-}
 
 #[pymethods]
 impl PyGltfLoaderSettings {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         load_meshes = None,
         load_materials = None,
@@ -45,10 +40,10 @@ impl PyGltfLoaderSettings {
             inner: GltfLoaderSettings {
                 load_meshes: load_meshes
                     .map(Into::into)
-                    .unwrap_or(RenderAssetUsages::default()),
+                    .unwrap_or_default(),
                 load_materials: load_materials
                     .map(Into::into)
-                    .unwrap_or(RenderAssetUsages::default()),
+                    .unwrap_or_default(),
                 load_cameras,
                 load_lights,
                 load_animations,

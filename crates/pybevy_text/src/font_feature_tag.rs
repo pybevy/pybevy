@@ -51,6 +51,6 @@ impl PyFontFeatureTag {
     pub const SLASHED_ZERO: PyFontFeatureTag = PyFontFeatureTag(FontFeatureTag::SLASHED_ZERO);
 
     pub fn __repr__(&self) -> String {
-        format!("FontFeatureTag(...)")
+        "FontFeatureTag(...)".to_string()
     }
 }

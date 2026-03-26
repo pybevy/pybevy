@@ -416,8 +416,8 @@ impl PyViewColumn {
                 }
                 _ => false,
             };
-            if !is_composite {
-                if let Ok((offset, field_type)) = get_component_field_info(comp_type, name) {
+            if !is_composite
+                && let Ok((offset, field_type)) = get_component_field_info(comp_type, name) {
                     let dtype = match field_type {
                         FieldType::F32 => "f4",
                         FieldType::F64 => "f8",
@@ -440,7 +440,6 @@ impl PyViewColumn {
                     let field_col = self.at_offset(offset, dtype)?;
                     return Ok(Py::new(py, field_col)?.into());
                 }
-            }
         }
 
         // Priority 2: Custom component with dynamic field access
@@ -450,8 +449,8 @@ impl PyViewColumn {
             let py_type =
                 unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
 
-            if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                if let Ok(layout) = ComponentLayout::from_annotations(&cls) {
+            if let Ok(cls) = py_type.cast::<pyo3::types::PyType>()
+                && let Ok(layout) = ComponentLayout::from_annotations(cls) {
                     // Find field in layout
                     for field in &layout.fields {
                         if field.name == name {
@@ -496,7 +495,6 @@ impl PyViewColumn {
                         available.join(", ")
                     )));
                 }
-            }
         }
 
         // Priority 3: Fallback to hardcoded fields (for backwards compatibility and special cases)

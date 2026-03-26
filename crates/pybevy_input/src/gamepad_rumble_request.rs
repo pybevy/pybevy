@@ -48,7 +48,7 @@ impl PyGamepadRumbleRequest {
     }
 
     fn gamepad(&self) -> PyEntity {
-        self.gamepad_entity.clone()
+        self.gamepad_entity
     }
 
     fn __repr__(&self) -> String {

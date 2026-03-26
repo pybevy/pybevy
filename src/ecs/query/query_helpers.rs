@@ -27,7 +27,7 @@ pub(crate) fn extract_param_type_from_query_param(
     // Check for Optional[T] / T | None FIRST
     if let Some(inner) = extract_optional_inner(py, key)? {
         // Reject Optional[Entity]
-        if inner.is(&PyEntity::type_object(py)) {
+        if inner.is(PyEntity::type_object(py)) {
             return Err(PyTypeError::new_err(
                 "Optional[Entity] is not supported. Entity is always present on every entity.",
             ));
@@ -43,8 +43,8 @@ pub(crate) fn extract_param_type_from_query_param(
 
     // Check for Mut[Component] FIRST before generic tuple check
     // because Mut[T] is also a GenericAlias but should be handled differently
-    if let Ok(origin) = key.getattr("__origin__") {
-        if origin.is(&PyMut::type_object(py)) {
+    if let Ok(origin) = key.getattr("__origin__")
+        && origin.is(PyMut::type_object(py)) {
             // This is Mut[Component] - extract with mutability
             let (mutable, component_type) = extract_component_with_mutability(py, key)?;
 
@@ -54,7 +54,6 @@ pub(crate) fn extract_param_type_from_query_param(
                 optional: false,
             });
         }
-    }
 
     #[inline(always)]
     fn ok_single(param: ParamType) -> Result<(bool, SmallVec<[ParamType; 2]>), PyErr> {
@@ -85,7 +84,7 @@ pub(crate) fn extract_param_type_from_query_param(
         ok_single(QueryFilter::Has(key.extract::<PyHas>()?).into())
     } else if key.is_instance_of::<PyAnyOf>() {
         ok_single(QueryFilter::AnyOf(key.extract::<PyAnyOf>()?).into())
-    } else if key.is(&PyEntity::type_object(py)) {
+    } else if key.is(PyEntity::type_object(py)) {
         ok_single(ParamType::Entity)
     } else {
         // Plain component type (not wrapped in Mut[])
@@ -105,7 +104,7 @@ fn extract_component_with_mutability(
 ) -> Result<(bool, PyComponentType), PyErr> {
     // Check if this is a generic alias (Mut[Component]) by checking for __origin__ attribute
     let (mutable, type_key) = if let Ok(origin) = key.getattr("__origin__") {
-        if origin.is(&PyMut::type_object(py)) {
+        if origin.is(PyMut::type_object(py)) {
             // This is Mut[Component] - extract the inner component type
             let args = key.getattr("__args__")?;
             let inner = args.get_item(0)?;
@@ -147,13 +146,11 @@ fn extract_optional_inner<'py>(
 
     // Check PEP 604: T | None (types.UnionType)
     let types_mod = py.import("types")?;
-    if let Ok(union_type_any) = types_mod.getattr("UnionType") {
-        if let Ok(union_type) = union_type_any.cast::<PyType>() {
-            if key.is_instance(union_type)? {
+    if let Ok(union_type_any) = types_mod.getattr("UnionType")
+        && let Ok(union_type) = union_type_any.cast::<PyType>()
+            && key.is_instance(union_type)? {
                 return extract_non_none_from_union_args(py, key);
             }
-        }
-    }
 
     Ok(None)
 }
@@ -221,7 +218,7 @@ pub(crate) fn construct_query_class_item_with_options(
                 let is_filter_tuple = if item.is_instance_of::<PyGenericAlias>() {
                     // Check if it's tuple[...] by looking at __origin__
                     if let Ok(origin) = item.getattr("__origin__") {
-                        if origin.is(&py.get_type::<pyo3::types::PyTuple>()) {
+                        if origin.is(py.get_type::<pyo3::types::PyTuple>()) {
                             // It's a tuple - check if all elements are filters
                             if let Ok(args) = item.getattr("__args__") {
                                 if let Ok(tuple_args) = args.cast::<PyTuple>() {
@@ -267,7 +264,7 @@ pub(crate) fn construct_query_class_item_with_options(
 
         Err(_) => {
             // single parameter
-            let (single, params) = extract_param_type_from_query_param(py, &key)?;
+            let (single, params) = extract_param_type_from_query_param(py, key)?;
             (single, params.into_vec())
         }
     };

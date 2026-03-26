@@ -172,10 +172,9 @@ impl<T: Asset> AssetStorage<T> {
     /// Returns `StorageError::AssetBorrowed` if asset is a borrowed reference
     pub fn take(&mut self) -> Result<T, StorageError> {
         match &mut self.inner {
-            AssetStorageInner::Owned(opt) => opt
-                .take()
-                .map(|boxed| *boxed)
-                .ok_or(StorageError::AssetConsumed),
+            AssetStorageInner::Owned(opt) => {
+                opt.take().map(|boxed| *boxed).ok_or(StorageError::AssetConsumed)
+            }
             AssetStorageInner::BorrowedReadOnly { .. } | AssetStorageInner::BorrowedMut { .. } => {
                 Err(StorageError::AssetBorrowed)
             }

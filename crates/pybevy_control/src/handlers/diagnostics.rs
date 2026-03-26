@@ -6,8 +6,8 @@ use crate::bridge::ControlError;
 /// Falls back to basic Time-based metrics if DebugSnapshot is not populated.
 pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlError> {
     // Try rich snapshot first (populated by hot reload overlay system)
-    if let Some(snap) = world.get_resource::<pybevy_core::DebugSnapshot>() {
-        if snap.populated {
+    if let Some(snap) = world.get_resource::<pybevy_core::DebugSnapshot>()
+        && snap.populated {
             let mut result = serde_json::Map::new();
 
             // Performance
@@ -115,7 +115,6 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
 
             return Ok(serde_json::Value::Object(result));
         }
-    }
 
     // Fallback: basic metrics from Time resource
     let mut result = serde_json::Map::new();

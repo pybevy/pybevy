@@ -5,6 +5,7 @@ use crate::power_preference::PyPowerPreference;
 
 #[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct PyRenderPlugin {
     pub power_preference: Option<PyPowerPreference>,
     pub synchronous_pipeline_compilation: Option<bool>,
@@ -43,11 +44,3 @@ impl PyRenderPlugin {
     }
 }
 
-impl Default for PyRenderPlugin {
-    fn default() -> Self {
-        PyRenderPlugin {
-            power_preference: None,
-            synchronous_pipeline_compilation: None,
-        }
-    }
-}

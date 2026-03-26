@@ -42,10 +42,10 @@ impl Message for SceneInstanceReadyMessage {}
 
 pub fn scene_instance_ready_bridge(trigger: On<SceneInstanceReady>, mut commands: Commands) {
     let event = trigger.event();
-    let event_clone = event.clone();
+    let event_clone = *event;
     commands.queue(move |world: &mut World| {
         let mut messages =
-            world.get_resource_or_insert_with(|| Messages::<SceneInstanceReadyMessage>::default());
+            world.get_resource_or_insert_with(Messages::<SceneInstanceReadyMessage>::default);
         messages.write(SceneInstanceReadyMessage(event_clone));
     });
 }
