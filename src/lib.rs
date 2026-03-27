@@ -11,24 +11,20 @@ pub mod prelude {
     pub use crate::app::app::PyApp;
 }
 
-// Re-export PyStage for native plugin users
 pub use app::PyStage;
 pub use pybevy_core;
 pub use pyo3;
 
-// Native Bevy plugin for integrating Python systems into Rust Bevy apps
 #[cfg(feature = "native-plugin")]
 pub mod plugin;
 #[cfg(feature = "native-plugin")]
 pub use plugin::PyBevyPlugin;
 
-// Modules with local code that can't move to feature crates
 pub(crate) mod app;
 pub(crate) mod assets;
 pub(crate) mod ecs;
 pub(crate) mod render;
 
-/// Internal function to materialize a color into a StandardMaterial
 #[pyfunction]
 fn _color_materialize(color: &pybevy_color::PyColor, py: Python<'_>) -> PyResult<Py<PyAny>> {
     let material = bevy::pbr::StandardMaterial {
@@ -74,11 +70,13 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_transform::add_module(m)?;
     pybevy_window::add_module(m)?;
     pybevy_window::add_winit_module(m)?;
+
     #[cfg(feature = "mcp")]
     {
         pybevy_control::add_module(m)?;
         pybevy_control::register_world_wrapper_hook(ecs::world::create_world_wrapper);
     }
+
     // Main crate modules (local code)
     app::add_module(m)?;
     assets::add_module(m)?;

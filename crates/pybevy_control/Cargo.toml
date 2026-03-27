@@ -39,3 +39,6 @@ base64 = "0.22"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

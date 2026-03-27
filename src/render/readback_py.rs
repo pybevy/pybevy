@@ -3,11 +3,9 @@ use pybevy_core::{PyHandle, plugin::plugin_registry};
 use pybevy_macros::plugin_bridge;
 use pyo3::prelude::*;
 
-// PyO3 bindings for GPU readback system
 use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
 use crate::app::{app::PyApp, plugin::PyPlugin};
 
-/// Python wrapper for ImageCopyPlugin
 #[pyclass(name = "ImageCopyPlugin", extends = PyPlugin)]
 pub struct PyImageCopyPlugin;
 
@@ -115,7 +113,6 @@ pub fn list_readback_entities() -> Vec<u64> {
     super::readback::list_entities()
 }
 
-/// Add readback functions to Python module
 pub(crate) fn add_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyImageCopyPlugin>()?;
     module.add_function(wrap_pyfunction!(spawn_image_copier, module)?)?;
