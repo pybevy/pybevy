@@ -21,13 +21,7 @@ pub struct PyAnimationTarget {
 impl PyAnimationTarget {
     #[new]
     pub fn new(id: &PyAnimationTargetId, player: PyEntity) -> (Self, PyComponent) {
-        (
-            Self {
-                id: id.clone(),
-                player,
-            },
-            PyComponent,
-        )
+        (Self { id: *id, player }, PyComponent)
     }
 
     #[getter]
@@ -37,7 +31,7 @@ impl PyAnimationTarget {
 
     #[setter]
     pub fn set_id(&mut self, id: &PyAnimationTargetId) {
-        self.id = id.clone();
+        self.id = *id;
     }
 
     pub fn __repr__(&self) -> String {

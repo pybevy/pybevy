@@ -18,6 +18,7 @@ impl From<PlaneMeshBuilder> for PyPlaneMeshBuilder {
 #[pymethods]
 impl PyPlaneMeshBuilder {
     #[staticmethod]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(py: Python, normal: PyDir3, size: PyVec2) -> PyResult<Py<PyAny>> {
         let builder = PlaneMeshBuilder::new(normal.into(), size.into());
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())

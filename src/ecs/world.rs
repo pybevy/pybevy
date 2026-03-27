@@ -202,7 +202,7 @@ impl PyWorld {
         type_ptr: *const pyo3::ffi::PyTypeObject,
     ) -> PyResult<Py<PyAny>> {
         let world_ptr = self.world_ptr();
-        let validity = self.validity.clone().unwrap_or_else(ValidityFlag::new);
+        let validity = self.validity.clone().unwrap_or_default();
 
         // Create PyAssets wrapper for the specified asset type
         // When called from World.resource(), assume mutable access (for backwards compatibility)
@@ -348,7 +348,7 @@ impl PyWorld {
 
         // Create a temporary PyCommands wrapper around this world to reuse component insertion logic
         let world_ptr = self.world_ptr();
-        let validity = self.validity.clone().unwrap_or_else(ValidityFlag::new);
+        let validity = self.validity.clone().unwrap_or_default();
 
         // SAFETY: We're creating a temporary PyCommands that will be used immediately
         // and dropped before returning, so the world pointer remains valid
@@ -407,7 +407,7 @@ impl PyWorld {
         self.check_valid()?;
 
         // Check if this is an Assets[T] parameter
-        if resource.get_type().is(&PyAssetTypeParam::type_object(py)) {
+        if resource.get_type().is(PyAssetTypeParam::type_object(py)) {
             let asset_param = resource.extract::<PyAssetTypeParam>()?;
             // Return the Assets resource for this asset type
             return self.get_assets_resource(py, asset_param.type_ptr());
@@ -421,7 +421,7 @@ impl PyWorld {
         let world = unsafe { &*self.world_ptr() };
 
         // Get validity flag (use a new one if this is an owned world)
-        let validity = self.validity.clone().unwrap_or_else(ValidityFlag::new);
+        let validity = self.validity.clone().unwrap_or_default();
 
         // Retrieve the resource from the world
         py_resource_type.get_from_world(world, py, validity)
@@ -537,12 +537,12 @@ impl PyWorld {
             }
             PyResourceType::Custom(type_ptr) => {
                 // Check if the registry exists and contains this type
-                if let Some(registry) = world.get_resource::<ResourceRegistry>() {
-                    if let Some(&component_id) = registry.registry.get(&type_ptr) {
-                        // Check if the storage exists and contains this resource
-                        if let Some(storage) = world.get_resource::<PyResourceStorage>() {
-                            return Ok(storage.resources.contains_key(&component_id));
-                        }
+                if let Some(registry) = world.get_resource::<ResourceRegistry>()
+                    && let Some(&component_id) = registry.registry.get(&type_ptr)
+                {
+                    // Check if the storage exists and contains this resource
+                    if let Some(storage) = world.get_resource::<PyResourceStorage>() {
+                        return Ok(storage.resources.contains_key(&component_id));
                     }
                 }
                 Ok(false)
@@ -593,11 +593,7 @@ impl PyWorld {
         }
 
         let world_ptr = pyself.borrow(py).world_ptr();
-        let validity = pyself
-            .borrow(py)
-            .validity
-            .clone()
-            .unwrap_or_else(ValidityFlag::new);
+        let validity = pyself.borrow(py).validity.clone().unwrap_or_default();
 
         let py_commands = unsafe { PyCommands::from_world(world_ptr, pyself, validity) };
         Ok(py_commands)
@@ -607,7 +603,7 @@ impl PyWorld {
         self.check_valid()?;
 
         let world_ptr = self.world_ptr();
-        let validity = self.validity.clone().unwrap_or_else(ValidityFlag::new);
+        let validity = self.validity.clone().unwrap_or_default();
         let temp_commands = unsafe { PyCommands::from_world_temporary(world_ptr, validity) };
 
         let iter = batch.call_method0("__iter__")?;
@@ -792,12 +788,10 @@ impl PyWorld {
 
                     // Execute the observer with full parameter injection
                     let world = self.world_mut()?;
-                    execute_system_func(py, &observer_entry.system_func, world, on_param).map_err(
-                        |e| {
+                    execute_system_func(py, &observer_entry.system_func, world, on_param)
+                        .inspect_err(|e| {
                             e.print(py);
-                            e
-                        },
-                    )?;
+                        })?;
                 }
             }
         }
@@ -811,7 +805,7 @@ impl PyWorld {
 
         let observer_entity = ObserverRegistry::register_observer(py, &observer, world)?;
 
-        Ok(Py::new(py, PyEntity(observer_entity))?)
+        Py::new(py, PyEntity(observer_entity))
     }
 
     pub fn despawn_observer(&self, observer_entity: &PyEntity) -> PyResult<()> {
@@ -1100,10 +1094,10 @@ impl PyWorld {
 
                     for observer_entry in observers {
                         // Check entity filter if present (per-entity observers)
-                        if let Some(filter_entity) = observer_entry.entity_filter {
-                            if entity != filter_entity {
-                                continue; // Event targets different entity
-                            }
+                        if let Some(filter_entity) = observer_entry.entity_filter
+                            && entity != filter_entity
+                        {
+                            continue; // Event targets different entity
                         }
 
                         // Check bundle filter if present

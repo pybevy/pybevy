@@ -56,7 +56,7 @@ pub(crate) fn parse_multi_component_filter(
         )))
     } else {
         // Single component type
-        let component = extract_component_type_from_query_param(py, &key)?;
+        let component = extract_component_type_from_query_param(py, key)?;
         Ok(smallvec![component])
     }
 }

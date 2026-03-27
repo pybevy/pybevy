@@ -14,6 +14,7 @@ pub struct PyImageSamplerDescriptor {
 #[pymethods]
 impl PyImageSamplerDescriptor {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         address_mode_u = PyImageAddressMode::ClampToEdge,
         address_mode_v = PyImageAddressMode::ClampToEdge,

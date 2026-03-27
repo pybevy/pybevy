@@ -22,6 +22,7 @@ pub struct PyKeyboardInput {
 #[pymethods]
 impl PyKeyboardInput {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (key_code, state, *, shift=false, ctrl=false, alt=false, super_key=false, repeat=false, logical_key=None, text=None, window=None))]
     fn new(
         key_code: PyKeyCode,

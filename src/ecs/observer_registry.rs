@@ -64,7 +64,7 @@ impl ObserverRegistry {
         registry
             .observers
             .entry(event_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(observer_entry);
 
         Ok(observer_entity)
@@ -108,7 +108,7 @@ impl ObserverRegistry {
         registry
             .observers
             .entry(event_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(observer_entry);
 
         Ok(observer_entity)
@@ -200,7 +200,7 @@ impl ObserverRegistry {
         }
 
         // Despawn the entity
-        if let Some(entity_mut) = world.get_entity_mut(observer_entity).ok() {
+        if let Ok(entity_mut) = world.get_entity_mut(observer_entity) {
             entity_mut.despawn();
         }
 
@@ -219,13 +219,13 @@ impl ObserverRegistry {
         for observers in self.observers.values_mut() {
             let mut i = 0;
             while i < observers.len() {
-                if let Some(filter_entity) = observers[i].entity_filter {
-                    if filter_entity == watched_entity {
-                        // This observer was watching the despawned entity
-                        let removed = observers.remove(i);
-                        removed_observers.push(removed.observer_entity);
-                        continue; // Don't increment i, check same index again
-                    }
+                if let Some(filter_entity) = observers[i].entity_filter
+                    && filter_entity == watched_entity
+                {
+                    // This observer was watching the despawned entity
+                    let removed = observers.remove(i);
+                    removed_observers.push(removed.observer_entity);
+                    continue; // Don't increment i, check same index again
                 }
                 i += 1;
             }
@@ -247,7 +247,7 @@ impl ObserverRegistry {
 
         // Despawn the observer entities
         for observer_entity in observer_entities {
-            if let Some(entity_mut) = world.get_entity_mut(observer_entity).ok() {
+            if let Ok(entity_mut) = world.get_entity_mut(observer_entity) {
                 entity_mut.despawn();
             }
         }

@@ -18,11 +18,7 @@ impl PyGltf {
     #[getter]
     pub fn scenes(&self) -> PyResult<Vec<PyHandle>> {
         let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .scenes
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(gltf.scenes.iter().map(PyHandle::from).collect())
     }
 
     #[getter]
@@ -38,11 +34,7 @@ impl PyGltf {
     #[getter]
     pub fn meshes(&self) -> PyResult<Vec<PyHandle>> {
         let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .meshes
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(gltf.meshes.iter().map(PyHandle::from).collect())
     }
 
     #[getter]
@@ -58,11 +50,7 @@ impl PyGltf {
     #[getter]
     pub fn materials(&self) -> PyResult<Vec<PyHandle>> {
         let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .materials
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(gltf.materials.iter().map(PyHandle::from).collect())
     }
 
     #[getter]
@@ -78,11 +66,7 @@ impl PyGltf {
     #[getter]
     pub fn nodes(&self) -> PyResult<Vec<PyHandle>> {
         let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .nodes
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(gltf.nodes.iter().map(PyHandle::from).collect())
     }
 
     #[getter]
@@ -98,20 +82,13 @@ impl PyGltf {
     #[getter]
     pub fn default_scene(&self) -> PyResult<Option<PyHandle>> {
         let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .default_scene
-            .as_ref()
-            .map(|handle| PyHandle::from(handle)))
+        Ok(gltf.default_scene.as_ref().map(PyHandle::from))
     }
 
     #[getter]
     pub fn skins(&self) -> PyResult<Vec<PyHandle>> {
         let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .skins
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(gltf.skins.iter().map(PyHandle::from).collect())
     }
 
     #[getter]
@@ -186,32 +163,25 @@ impl PyGltfNode {
     #[getter]
     pub fn children(&self) -> PyResult<Vec<PyHandle>> {
         let node = self.storage.as_ref()?;
-        Ok(node
-            .children
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(node.children.iter().map(PyHandle::from).collect())
     }
 
     #[getter]
     pub fn mesh(&self) -> PyResult<Option<PyHandle>> {
         let node = self.storage.as_ref()?;
-        Ok(node.mesh.as_ref().map(|handle| PyHandle::from(handle)))
+        Ok(node.mesh.as_ref().map(PyHandle::from))
     }
 
     #[getter]
     pub fn skin(&self) -> PyResult<Option<PyHandle>> {
         let node = self.storage.as_ref()?;
-        Ok(node.skin.as_ref().map(|handle| PyHandle::from(handle)))
+        Ok(node.skin.as_ref().map(PyHandle::from))
     }
 
     #[getter]
     pub fn transform(&self, py: Python<'_>) -> PyResult<Py<PyTransform>> {
         let node = self.storage.as_ref()?;
-        Ok(Py::new(
-            py,
-            (PyTransform::from(node.transform), PyComponent),
-        )?)
+        Py::new(py, (PyTransform::from(node.transform), PyComponent))
     }
 
     #[getter]
@@ -258,10 +228,7 @@ impl PyGltfPrimitive {
     #[getter]
     pub fn material(&self) -> PyResult<Option<PyHandle>> {
         let primitive = self.storage.as_ref()?;
-        Ok(primitive
-            .material
-            .as_ref()
-            .map(|handle| PyHandle::from(handle)))
+        Ok(primitive.material.as_ref().map(PyHandle::from))
     }
 
     #[getter]
@@ -307,11 +274,7 @@ impl PyGltfSkin {
     #[getter]
     pub fn joints(&self) -> PyResult<Vec<PyHandle>> {
         let skin = self.storage.as_ref()?;
-        Ok(skin
-            .joints
-            .iter()
-            .map(|handle| PyHandle::from(handle))
-            .collect())
+        Ok(skin.joints.iter().map(PyHandle::from).collect())
     }
 
     #[getter]

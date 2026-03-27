@@ -111,31 +111,23 @@ impl PyCustomComponentBatch {
 
             // Validate array shape based on field type
             let ndim: usize = value.getattr("ndim")?.extract()?;
-            let length: usize;
-
-            if field_info.field_type.is_composite() {
+            let length: usize = if field_info.field_type.is_composite() {
                 // Vec3/Vec2: require 2D array with shape (N, 3) or (N, 2)
                 let expected_cols = field_info.field_type.element_count();
                 if ndim != 2 {
                     return Err(PyValueError::new_err(format!(
-                        "Field '{}' ({}): expected 2D array with shape (N, {}), got {}D array",
-                        field_name,
-                        format!("{:?}", field_info.field_type),
-                        expected_cols,
-                        ndim
+                        "Field '{}' ({:?}): expected 2D array with shape (N, {}), got {}D array",
+                        field_name, field_info.field_type, expected_cols, ndim
                     )));
                 }
                 let shape: Vec<usize> = value.getattr("shape")?.extract()?;
                 if shape[1] != expected_cols {
                     return Err(PyValueError::new_err(format!(
-                        "Field '{}' ({}): expected shape (N, {}), got (N, {})",
-                        field_name,
-                        format!("{:?}", field_info.field_type),
-                        expected_cols,
-                        shape[1]
+                        "Field '{}' ({:?}): expected shape (N, {}), got (N, {})",
+                        field_name, field_info.field_type, expected_cols, shape[1]
                     )));
                 }
-                length = shape[0];
+                shape[0]
             } else {
                 // Scalar: require 1D array
                 if ndim != 1 {
@@ -144,8 +136,8 @@ impl PyCustomComponentBatch {
                         field_name, ndim
                     )));
                 }
-                length = value.len()?;
-            }
+                value.len()?
+            };
             if let Some((prev_count, ref prev_name)) = expected_count {
                 if length != prev_count {
                     return Err(PyValueError::new_err(format!(

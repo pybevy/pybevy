@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use crate::winit_settings::PyWinitSettings;
 
 #[pyclass(name = "WinitPlugin", extends = PyPlugin, frozen)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyWinitPlugin {
     pub settings: Option<PyWinitSettings>,
 }
@@ -22,11 +22,5 @@ impl PyWinitPlugin {
             Some(s) => Ok(format!("WinitPlugin(settings={})", s.__repr__())),
             None => Ok("WinitPlugin()".to_string()),
         }
-    }
-}
-
-impl Default for PyWinitPlugin {
-    fn default() -> Self {
-        PyWinitPlugin { settings: None }
     }
 }

@@ -202,11 +202,10 @@ fn resolve_field_name(field_name: &str, parent_info: &StructInfo) -> Option<Stri
     if parent_info.field(field_name).is_some() {
         return Some(field_name.to_string());
     }
-    if field_name.ends_with('_') {
-        let stripped = &field_name[..field_name.len() - 1];
-        if parent_info.field(stripped).is_some() {
-            return Some(stripped.to_string());
-        }
+    if let Some(stripped) = field_name.strip_suffix('_')
+        && parent_info.field(stripped).is_some()
+    {
+        return Some(stripped.to_string());
     }
     None
 }
@@ -239,10 +238,10 @@ fn json_to_reflect(
 ) -> Result<Box<dyn PartialReflect>, String> {
     // Handle Option<T>: if target is an Enum with "None" and "Some" variants,
     // unwrap JSON null → None, anything else → Some(inner)
-    if let Some(TypeInfo::Enum(enum_info)) = target_type_info {
-        if is_option_enum(enum_info) {
-            return convert_option(value, enum_info, target_type_info, registry);
-        }
+    if let Some(TypeInfo::Enum(enum_info)) = target_type_info
+        && is_option_enum(enum_info)
+    {
+        return convert_option(value, enum_info, target_type_info, registry);
     }
 
     match value {
@@ -250,13 +249,13 @@ fn json_to_reflect(
         Value::Bool(b) => Ok(Box::new(*b)),
         Value::String(s) => {
             // If targeting an enum, treat string as a unit variant name
-            if let Some(TypeInfo::Enum(enum_info)) = target_type_info {
-                if enum_info.variant(s).is_some() {
-                    let mut dynamic = DynamicEnum::default();
-                    dynamic.set_represented_type(target_type_info);
-                    dynamic.set_variant(s, DynamicVariant::Unit);
-                    return Ok(Box::new(dynamic));
-                }
+            if let Some(TypeInfo::Enum(enum_info)) = target_type_info
+                && enum_info.variant(s).is_some()
+            {
+                let mut dynamic = DynamicEnum::default();
+                dynamic.set_represented_type(target_type_info);
+                dynamic.set_variant(s, DynamicVariant::Unit);
+                return Ok(Box::new(dynamic));
             }
             Ok(Box::new(s.clone()))
         }
@@ -342,11 +341,11 @@ fn convert_array(
         if info.field_len() == arr.len() {
             let mut dynamic = bevy::reflect::DynamicTupleStruct::default();
             dynamic.set_represented_type(target_type_info);
-            for i in 0..info.field_len() {
+            for (i, arr_item) in arr.iter().enumerate().take(info.field_len()) {
                 let field_info = info.field_at(i).unwrap();
                 let field_type_id = field_info.type_id();
                 let field_type_info = registry.get(field_type_id).map(|r| r.type_info());
-                let value = json_to_reflect(&arr[i], field_type_id, field_type_info, registry)?;
+                let value = json_to_reflect(arr_item, field_type_id, field_type_info, registry)?;
                 dynamic.insert_boxed(value);
             }
             return Ok(Box::new(dynamic));

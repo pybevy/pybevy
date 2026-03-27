@@ -21,6 +21,7 @@ pub struct PySprite {
 #[pymethods]
 impl PySprite {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         image,
         color = PyColor::default(),

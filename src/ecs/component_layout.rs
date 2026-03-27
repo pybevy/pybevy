@@ -89,7 +89,7 @@ impl PrimitiveType {
     }
 
     /// Convert to numpy dtype string
-    pub fn to_numpy_dtype(&self) -> &'static str {
+    pub fn to_numpy_dtype(self) -> &'static str {
         match self {
             PrimitiveType::F32 => "f4",
             PrimitiveType::F64 => "f8",
@@ -118,7 +118,7 @@ impl PrimitiveType {
     }
 
     /// Convert to FieldType for bytecode VM
-    pub fn to_field_type(&self) -> FieldType {
+    pub fn to_field_type(self) -> FieldType {
         match self {
             PrimitiveType::F32 => FieldType::F32,
             PrimitiveType::F64 => FieldType::F64,
@@ -192,7 +192,7 @@ impl ComponentLayout {
                 Some(prim_type) => {
                     // Align current offset to field's alignment requirement
                     let alignment = prim_type.alignment();
-                    current_offset = (current_offset + alignment - 1) / alignment * alignment;
+                    current_offset = current_offset.div_ceil(alignment) * alignment;
 
                     fields.push(FieldInfo {
                         name: field_name_str.clone(),

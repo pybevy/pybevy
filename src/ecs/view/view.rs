@@ -172,18 +172,18 @@ impl ResolvedTickFilters {
         }
 
         for &id in &self.changed_ids {
-            if let Some(ticks) = entity_mut.get_change_ticks_by_id(id) {
-                if !ticks.is_changed(self.last_run, self.this_run) {
-                    return false;
-                }
+            if let Some(ticks) = entity_mut.get_change_ticks_by_id(id)
+                && !ticks.is_changed(self.last_run, self.this_run)
+            {
+                return false;
             }
         }
 
         for &id in &self.added_ids {
-            if let Some(ticks) = entity_mut.get_change_ticks_by_id(id) {
-                if !ticks.is_added(self.last_run, self.this_run) {
-                    return false;
-                }
+            if let Some(ticks) = entity_mut.get_change_ticks_by_id(id)
+                && !ticks.is_added(self.last_run, self.this_run)
+            {
+                return false;
             }
         }
 
@@ -205,6 +205,7 @@ impl PyView {
     /// Create a new View with filter components
     ///
     /// SAFETY: The world pointer must remain valid for the lifetime of this object
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn new_with_filters(
         component_types: Vec<PyComponentType>,
         mutable_components: HashSet<PyComponentType>,
@@ -260,15 +261,15 @@ impl PyView {
 
         // Check Changed filters
         for ct in &self.changed_filter_types {
-            if let Ok(id) = self.get_component_id(ct) {
-                if let Some(column) = table.get_column(id) {
-                    let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
-                    for i in 0..entity_count {
-                        if mask[i] {
-                            let tick = unsafe { *changed_ticks[i].get() };
-                            if !tick.is_newer_than(last_run, this_run) {
-                                mask[i] = false;
-                            }
+            if let Ok(id) = self.get_component_id(ct)
+                && let Some(column) = table.get_column(id)
+            {
+                let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
+                for i in 0..entity_count {
+                    if mask[i] {
+                        let tick = unsafe { *changed_ticks[i].get() };
+                        if !tick.is_newer_than(last_run, this_run) {
+                            mask[i] = false;
                         }
                     }
                 }
@@ -277,15 +278,15 @@ impl PyView {
 
         // Check Added filters
         for ct in &self.added_filter_types {
-            if let Ok(id) = self.get_component_id(ct) {
-                if let Some(column) = table.get_column(id) {
-                    let added_ticks = unsafe { column.get_added_ticks_slice(entity_count) };
-                    for i in 0..entity_count {
-                        if mask[i] {
-                            let tick = unsafe { *added_ticks[i].get() };
-                            if !tick.is_newer_than(last_run, this_run) {
-                                mask[i] = false;
-                            }
+            if let Ok(id) = self.get_component_id(ct)
+                && let Some(column) = table.get_column(id)
+            {
+                let added_ticks = unsafe { column.get_added_ticks_slice(entity_count) };
+                for i in 0..entity_count {
+                    if mask[i] {
+                        let tick = unsafe { *added_ticks[i].get() };
+                        if !tick.is_newer_than(last_run, this_run) {
+                            mask[i] = false;
                         }
                     }
                 }
@@ -460,7 +461,7 @@ impl PyView {
                         pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
                     };
                     if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                        ComponentStorageType::from_python_class(&cls)
+                        ComponentStorageType::from_python_class(cls)
                             .unwrap_or(ComponentStorageType::PyObject)
                     } else {
                         ComponentStorageType::PyObject
@@ -849,7 +850,7 @@ impl PyView {
                         return None;
                     }
                     let table_id = archetype.table_id();
-                    if tables.get(table_id).map_or(false, |t| t.entity_count() > 0) {
+                    if tables.get(table_id).is_some_and(|t| t.entity_count() > 0) {
                         Some(table_id)
                     } else {
                         None
@@ -951,12 +952,12 @@ pub(crate) fn get_component_field_info(
 
                 if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
                     // Check storage type
-                    let storage_type = ComponentStorageType::from_python_class(&cls)
+                    let storage_type = ComponentStorageType::from_python_class(cls)
                         .unwrap_or(ComponentStorageType::PyObject);
 
                     if let ComponentStorageType::Wrapper(_) = storage_type {
                         // Get ComponentLayout for field offsets
-                        if let Ok(layout) = ComponentLayout::from_annotations(&cls) {
+                        if let Ok(layout) = ComponentLayout::from_annotations(cls) {
                             // Handle nested fields (e.g., "position.x" for Vec3 fields)
                             if let Some((base, sub)) = field_name.split_once('.') {
                                 for field in &layout.fields {
@@ -1441,7 +1442,7 @@ impl PyViewColMut {
                     }
                     if let Some(mut untyped) = entity_mut.get_mut_by_id(component_id) {
                         // Get raw pointer to component data
-                        let ptr = untyped.as_mut().as_ptr() as *mut u8;
+                        let ptr = untyped.as_mut().as_ptr();
                         self.execute_on_wrapper_data(ptr, bytecode);
                     }
                 });
@@ -1455,7 +1456,7 @@ impl PyViewColMut {
                         pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
                     };
                     if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                        ComponentStorageType::from_python_class(&cls)
+                        ComponentStorageType::from_python_class(cls)
                             .unwrap_or(ComponentStorageType::PyObject)
                     } else {
                         ComponentStorageType::PyObject
@@ -1624,10 +1625,10 @@ impl PyViewColMut {
                         };
 
                         // Skip entire table if tick mask filters out all entities
-                        if let Some(ref mask) = tick_mask {
-                            if !mask.iter().any(|&v| v) {
-                                continue;
-                            }
+                        if let Some(ref mask) = tick_mask
+                            && !mask.iter().any(|&v| v)
+                        {
+                            continue;
                         }
 
                         // Get base pointer for each component
@@ -1687,10 +1688,10 @@ impl PyViewColMut {
                     let mask = batch.tick_mask.as_ref();
                     let strides = &field_strides;
                     (0..batch.entity_count).filter_map(move |entity_idx| {
-                        if let Some(mask) = mask {
-                            if !mask[entity_idx] {
-                                return None;
-                            }
+                        if let Some(mask) = mask
+                            && !mask[entity_idx]
+                        {
+                            return None;
                         }
 
                         let field_ptrs: Vec<SendPtr> = bytecode
@@ -1814,30 +1815,29 @@ impl PyViewColMut {
                 let table_id = archetype.table_id();
                 if let Some(table) = tables.get(table_id) {
                     let entity_count = table.entity_count() as usize;
-                    if entity_count > 0 {
-                        if let Some(column) = table.get_column(dest_component_id) {
-                            if has_tick_filters {
-                                // Only mark entities that passed tick filters as changed
-                                if let Some(mask) =
-                                    view.build_tick_mask_for_table(table, entity_count)
-                                {
-                                    let changed_ticks =
-                                        unsafe { column.get_changed_ticks_slice(entity_count) };
-                                    for i in 0..entity_count {
-                                        if mask[i] {
-                                            unsafe {
-                                                *changed_ticks[i].get() = change_tick;
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
+                    if entity_count > 0
+                        && let Some(column) = table.get_column(dest_component_id)
+                    {
+                        if has_tick_filters {
+                            // Only mark entities that passed tick filters as changed
+                            if let Some(mask) = view.build_tick_mask_for_table(table, entity_count)
+                            {
                                 let changed_ticks =
                                     unsafe { column.get_changed_ticks_slice(entity_count) };
                                 for i in 0..entity_count {
-                                    unsafe {
-                                        *changed_ticks[i].get() = change_tick;
+                                    if mask[i] {
+                                        unsafe {
+                                            *changed_ticks[i].get() = change_tick;
+                                        }
                                     }
+                                }
+                            }
+                        } else {
+                            let changed_ticks =
+                                unsafe { column.get_changed_ticks_slice(entity_count) };
+                            for tick in changed_ticks {
+                                unsafe {
+                                    *tick.get() = change_tick;
                                 }
                             }
                         }
@@ -1994,7 +1994,7 @@ impl PyBatch {
                 };
 
                 if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                    let storage_type = ComponentStorageType::from_python_class(&cls)
+                    let storage_type = ComponentStorageType::from_python_class(cls)
                         .unwrap_or(ComponentStorageType::PyObject);
 
                     match storage_type {
@@ -2122,9 +2122,9 @@ impl PyBatch {
 
         // Mark all entities as changed for Bevy's change detection
         let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
-        for i in 0..entity_count {
+        for tick in changed_ticks {
             unsafe {
-                *changed_ticks[i].get() = change_tick;
+                *tick.get() = change_tick;
             }
         }
 
@@ -2136,7 +2136,7 @@ impl PyBatch {
                 };
 
                 if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                    let storage_type = ComponentStorageType::from_python_class(&cls)
+                    let storage_type = ComponentStorageType::from_python_class(cls)
                         .unwrap_or(ComponentStorageType::PyObject);
 
                     match storage_type {

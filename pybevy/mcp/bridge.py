@@ -268,13 +268,6 @@ class McpBridge:
         if self._recorder:
             self._recorder.record(request, response, duration_ms)
 
-        method = str(request.get("method", ""))
-        if method == "tools/call":
-            params: JsonDict = request.get("params") or {}  # type: ignore[assignment]
-            tool_name = str(params.get("name", ""))
-            args: JsonDict = params.get("arguments") or {}  # type: ignore[assignment]
-            has_error = response is not None and "error" in response
-
         return response
 
     def _dispatch_inner(self, request: JsonDict) -> JsonDict | None:

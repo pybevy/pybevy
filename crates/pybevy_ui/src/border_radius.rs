@@ -23,7 +23,7 @@ impl From<PyBorderRadius> for BorderRadius {
 
 impl From<&PyBorderRadius> for BorderRadius {
     fn from(py_br: &PyBorderRadius) -> Self {
-        py_br.inner.clone()
+        py_br.inner
     }
 }
 

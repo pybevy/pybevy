@@ -122,9 +122,9 @@ pub fn process_pending_screenshots(world: &mut World) {
     };
 
     if pending.pending.is_empty()
-        && !world
+        && world
             .get_resource::<StagedDebugScreenshots>()
-            .is_some_and(|s| !s.pending.is_empty())
+            .is_none_or(|s| s.pending.is_empty())
     {
         world.insert_resource(pending);
         return;
@@ -153,7 +153,7 @@ pub fn process_pending_screenshots(world: &mut World) {
         let ui_restore = if screenshot.hide_ui {
             let mut all = hide_ui_nodes(world);
             // Merge overlay restores (avoid duplicates)
-            all.extend(overlay_restore.drain(..));
+            all.append(&mut overlay_restore);
             Some(all)
         } else if !overlay_restore.is_empty() {
             Some(overlay_restore)
@@ -344,9 +344,7 @@ pub fn process_pending_timelines(world: &mut World) {
 
 /// Set gizmo visibility for the default gizmo group, returning the original enabled state.
 fn set_gizmos_enabled(world: &mut World, enabled: bool) -> Option<bool> {
-    let Some(mut store) = world.get_resource_mut::<GizmoConfigStore>() else {
-        return None;
-    };
+    let mut store = world.get_resource_mut::<GizmoConfigStore>()?;
     let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
     let was_enabled = config.enabled;
     if was_enabled != enabled {
@@ -542,6 +540,7 @@ fn cleanup_debug_camera(
 
 /// Global observer triggered by Bevy when a screenshot is captured.
 /// Handles normal screenshots, timeline captures, and turnaround captures.
+#[allow(clippy::too_many_arguments)]
 pub fn screenshot_captured_observer(
     trigger: On<ScreenshotCaptured>,
     mut responders: ResMut<PendingScreenshotResponders>,
@@ -625,11 +624,11 @@ pub fn screenshot_captured_observer(
     }
 
     // Restore gizmo visibility
-    if let Some(was_enabled) = responder.gizmo_restore {
-        if let Some(mut store) = gizmo_store {
-            let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-            config.enabled = was_enabled;
-        }
+    if let Some(was_enabled) = responder.gizmo_restore
+        && let Some(mut store) = gizmo_store
+    {
+        let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+        config.enabled = was_enabled;
     }
 
     // Clean up debug camera if present
@@ -653,7 +652,7 @@ fn composite_contact_sheet(
 
     let cols = timeline.columns.max(1) as usize;
     let count = timeline.collected.len();
-    let rows = (count + cols - 1) / cols;
+    let rows = count.div_ceil(cols);
 
     if count == 0 {
         return Err(ControlError::internal("No captures collected"));
@@ -706,17 +705,17 @@ fn composite_contact_sheet(
     }
 
     // Resize if max_width set
-    if let Some(max_w) = timeline.max_width {
-        if canvas.width() > max_w {
-            let scale = max_w as f64 / canvas.width() as f64;
-            let new_height = (canvas.height() as f64 * scale).round() as u32;
-            canvas = image::imageops::resize(
-                &canvas,
-                max_w,
-                new_height,
-                image::imageops::FilterType::Triangle,
-            );
-        }
+    if let Some(max_w) = timeline.max_width
+        && canvas.width() > max_w
+    {
+        let scale = max_w as f64 / canvas.width() as f64;
+        let new_height = (canvas.height() as f64 * scale).round() as u32;
+        canvas = image::imageops::resize(
+            &canvas,
+            max_w,
+            new_height,
+            image::imageops::FilterType::Triangle,
+        );
     }
 
     let width = canvas.width();
@@ -783,17 +782,17 @@ fn encode_rgb_screenshot(
     max_width: Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
     // Resize if max_width is set and image is wider
-    if let Some(max_w) = max_width {
-        if rgb.width() > max_w {
-            let scale = max_w as f64 / rgb.width() as f64;
-            let new_height = (rgb.height() as f64 * scale).round() as u32;
-            rgb = image::imageops::resize(
-                &rgb,
-                max_w,
-                new_height,
-                image::imageops::FilterType::Triangle,
-            );
-        }
+    if let Some(max_w) = max_width
+        && rgb.width() > max_w
+    {
+        let scale = max_w as f64 / rgb.width() as f64;
+        let new_height = (rgb.height() as f64 * scale).round() as u32;
+        rgb = image::imageops::resize(
+            &rgb,
+            max_w,
+            new_height,
+            image::imageops::FilterType::Triangle,
+        );
     }
 
     let width = rgb.width();

@@ -418,17 +418,17 @@ impl DynamicSystem {
                                 for (existing_idx, existing_mut, existing_name, existing_filters) in
                                     existing_accesses
                                 {
-                                    if *mutable || *existing_mut {
-                                        if !current_filters.is_disjoint_from(existing_filters) {
-                                            return Err(ComponentAccessConflict {
-                                                param_idx,
-                                                mutable: *mutable,
-                                                comp_name,
-                                                existing_idx: *existing_idx,
-                                                existing_mut: *existing_mut,
-                                                existing_name: existing_name.clone(),
-                                            });
-                                        }
+                                    if (*mutable || *existing_mut)
+                                        && !current_filters.is_disjoint_from(existing_filters)
+                                    {
+                                        return Err(ComponentAccessConflict {
+                                            param_idx,
+                                            mutable: *mutable,
+                                            comp_name,
+                                            existing_idx: *existing_idx,
+                                            existing_mut: *existing_mut,
+                                            existing_name: existing_name.clone(),
+                                        });
                                     }
                                 }
                             }
@@ -474,17 +474,17 @@ impl DynamicSystem {
                             for (existing_idx, existing_mut, existing_name, existing_filters) in
                                 existing_accesses
                             {
-                                if *mutable || *existing_mut {
-                                    if !current_filters.is_disjoint_from(existing_filters) {
-                                        return Err(ComponentAccessConflict {
-                                            param_idx,
-                                            mutable: *mutable,
-                                            comp_name,
-                                            existing_idx: *existing_idx,
-                                            existing_mut: *existing_mut,
-                                            existing_name: existing_name.clone(),
-                                        });
-                                    }
+                                if (*mutable || *existing_mut)
+                                    && !current_filters.is_disjoint_from(existing_filters)
+                                {
+                                    return Err(ComponentAccessConflict {
+                                        param_idx,
+                                        mutable: *mutable,
+                                        comp_name,
+                                        existing_idx: *existing_idx,
+                                        existing_mut: *existing_mut,
+                                        existing_name: existing_name.clone(),
+                                    });
                                 }
                             }
                         }
@@ -1159,9 +1159,9 @@ impl System for DynamicSystem {
                 }
             }
 
-            // Drop the Commands wrapper before appending the queue
+            // Consume the Commands wrapper before appending the queue
             // (Commands borrows local_command_queue, must release that borrow first)
-            drop(commands_storage);
+            let _commands_storage = commands_storage;
 
             // Append queued commands to the per-system queue for deferred application
             if let Some(mut queue) = local_command_queue {
@@ -1265,47 +1265,44 @@ impl System for DynamicSystem {
                 SystemParamType::Query { param: query_param } => {
                     // For queries, we need to register component accesses
                     for param_type in &query_param.data {
-                        match param_type {
-                            QueryData::Component {
-                                ty: comp_type,
-                                mutable,
-                                ..
-                            } => {
-                                let id = match comp_type {
-                                    PyComponentType::Custom(type_ptr) => {
-                                        // Check if we've already registered this custom component
-                                        if let Some(&id) = self.custom_component_ids.get(type_ptr) {
-                                            id
-                                        } else {
-                                            // Get the component name from the Python type
-                                            let name = Python::attach(|py| {
-                                                get_python_type_name(py, *type_ptr)
-                                            });
+                        if let QueryData::Component {
+                            ty: comp_type,
+                            mutable,
+                            ..
+                        } = param_type
+                        {
+                            let id = match comp_type {
+                                PyComponentType::Custom(type_ptr) => {
+                                    // Check if we've already registered this custom component
+                                    if let Some(&id) = self.custom_component_ids.get(type_ptr) {
+                                        id
+                                    } else {
+                                        // Get the component name from the Python type
+                                        let name = Python::attach(|py| {
+                                            get_python_type_name(py, *type_ptr)
+                                        });
 
-                                            // Register the custom component and store its ID
-                                            let id =
-                                                register_custom_component(world, *type_ptr, name);
-                                            self.custom_component_ids.insert(*type_ptr, id);
-                                            id
-                                        }
+                                        // Register the custom component and store its ID
+                                        let id = register_custom_component(world, *type_ptr, name);
+                                        self.custom_component_ids.insert(*type_ptr, id);
+                                        id
                                     }
-                                    // All built-in component types
-                                    _ => register_component_id(
-                                        world,
-                                        comp_type,
-                                        &self.custom_component_ids,
-                                    ),
-                                };
-
-                                // Register read or write access based on mutability
-                                if *mutable {
-                                    write_ids.push(id);
-                                } else {
-                                    // Read-only access - enables parallel execution of multiple read-only queries
-                                    read_ids.push(id);
                                 }
+                                // All built-in component types
+                                _ => register_component_id(
+                                    world,
+                                    comp_type,
+                                    &self.custom_component_ids,
+                                ),
+                            };
+
+                            // Register read or write access based on mutability
+                            if *mutable {
+                                write_ids.push(id);
+                            } else {
+                                // Read-only access - enables parallel execution of multiple read-only queries
+                                read_ids.push(id);
                             }
-                            _ => {}
                         }
                     }
 

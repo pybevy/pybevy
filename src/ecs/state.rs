@@ -47,11 +47,7 @@ pub fn state(py: Python, cls: Bound<PyType>) -> PyResult<Py<PyType>> {
     // Validate that enum has at least one variant
     let members_dict = cls.getattr("__members__")?;
     let values = members_dict.call_method0("values")?;
-    let mut has_members = false;
-    for _ in values.try_iter()? {
-        has_members = true;
-        break;
-    }
+    let has_members = values.try_iter()?.next().is_some();
 
     if !has_members {
         return Err(PyValueError::new_err(
@@ -199,7 +195,7 @@ impl PyNextState {
         let state_bound = state.bind(py);
         let provided_type = state_bound.get_type();
 
-        if !provided_type.is(&self.state_type.bind(py)) {
+        if !provided_type.is(self.state_type.bind(py)) {
             return Err(PyTypeError::new_err(format!(
                 "State type mismatch: expected {}, got {}",
                 self.state_type.bind(py).name()?,
@@ -306,7 +302,7 @@ impl PyOnEnterSchedule {
             Ok(self
                 .state_value
                 .bind(py)
-                .is(&other_schedule.state_value.bind(py)))
+                .is(other_schedule.state_value.bind(py)))
         } else {
             Ok(false)
         }
@@ -337,7 +333,7 @@ impl PyOnExitSchedule {
             Ok(self
                 .state_value
                 .bind(py)
-                .is(&other_schedule.state_value.bind(py)))
+                .is(other_schedule.state_value.bind(py)))
         } else {
             Ok(false)
         }
@@ -370,8 +366,8 @@ impl PyOnTransitionSchedule {
         // CRITICAL: Use 'is' semantics (pointer equality) instead of Python's __eq__
         // to avoid deadlock when called from systems in py.detach() context (app.rs:1192)
         if let Ok(other_schedule) = other.extract::<PyRef<Self>>() {
-            let exited_eq = self.exited.bind(py).is(&other_schedule.exited.bind(py));
-            let entered_eq = self.entered.bind(py).is(&other_schedule.entered.bind(py));
+            let exited_eq = self.exited.bind(py).is(other_schedule.exited.bind(py));
+            let entered_eq = self.entered.bind(py).is(other_schedule.entered.bind(py));
             Ok(exited_eq && entered_eq)
         } else {
             Ok(false)

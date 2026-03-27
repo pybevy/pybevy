@@ -431,10 +431,10 @@ fn set_custom_component(
                 continue;
             }
             // Skip components with a Rust TypeId (Bevy built-ins, bridge components)
-            if let Some(comp_info) = components.get_info(*comp_id) {
-                if comp_info.type_id().is_some() {
-                    continue;
-                }
+            if let Some(comp_info) = components.get_info(*comp_id)
+                && comp_info.type_id().is_some()
+            {
+                continue;
             }
             // Try interpreting as PyObject-stored component and check Python type name
             if let Ok(ptr) = entity_ref.get_by_id(*comp_id) {
@@ -723,43 +723,42 @@ pub fn insert_resource(
                 // Patch semantics: if resource already exists, mutate in-place
                 // to preserve fields not included in the update
                 if bridge.contains_in_world(world) {
-                    if let Some(obj) = value.as_object() {
-                        if !obj.is_empty() {
-                            let write_flag = pybevy_core::ValidityFlag::new_write();
-                            let write_validity =
-                                write_flag.with_access_mode(pybevy_core::AccessMode::Write);
+                    if let Some(obj) = value.as_object()
+                        && !obj.is_empty()
+                    {
+                        let write_flag = pybevy_core::ValidityFlag::new_write();
+                        let write_validity =
+                            write_flag.with_access_mode(pybevy_core::AccessMode::Write);
 
-                            let py_resource =
-                                bridge.get_mut(world, write_validity, py).map_err(|e| {
-                                    ControlError::internal(format!(
-                                        "Failed to get existing resource for patch: {e}"
-                                    ))
-                                })?;
-                            let instance = py_resource.bind(py);
+                        let py_resource =
+                            bridge.get_mut(world, write_validity, py).map_err(|e| {
+                                ControlError::internal(format!(
+                                    "Failed to get existing resource for patch: {e}"
+                                ))
+                            })?;
+                        let instance = py_resource.bind(py);
 
-                            for (field_name, field_value) in obj {
-                                match convert_field_value(py, instance, field_name, field_value) {
-                                    Ok(py_value) => {
-                                        if let Err(e) =
-                                            instance.setattr(field_name.as_str(), py_value)
-                                        {
-                                            write_flag.set_invalid();
-                                            return Err(ControlError::internal(format!(
-                                                "Failed to set {field_name}: {e}"
-                                            )));
-                                        }
-                                    }
-                                    Err(e) => {
+                        for (field_name, field_value) in obj {
+                            match convert_field_value(py, instance, field_name, field_value) {
+                                Ok(py_value) => {
+                                    if let Err(e) = instance.setattr(field_name.as_str(), py_value)
+                                    {
                                         write_flag.set_invalid();
                                         return Err(ControlError::internal(format!(
-                                            "Failed to convert {field_name}: {e}"
+                                            "Failed to set {field_name}: {e}"
                                         )));
                                     }
                                 }
+                                Err(e) => {
+                                    write_flag.set_invalid();
+                                    return Err(ControlError::internal(format!(
+                                        "Failed to convert {field_name}: {e}"
+                                    )));
+                                }
                             }
-
-                            write_flag.set_invalid();
                         }
+
+                        write_flag.set_invalid();
                     }
                     return Ok(Some(serde_json::json!({
                         "inserted": resource_type,
@@ -827,32 +826,32 @@ pub fn insert_resource(
     if let Some((comp_id, type_ptr)) = custom_entry {
         Python::attach(|py| {
             // Patch semantics: if custom resource already exists, mutate in-place
-            if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>() {
-                if let Some(existing) = storage.resources.get(&comp_id) {
-                    let bound = existing.bind(py);
-                    if let Some(obj) = value.as_object() {
-                        for (field_name, field_value) in obj {
-                            match convert_field_value(py, bound, field_name, field_value) {
-                                Ok(py_value) => {
-                                    if let Err(e) = bound.setattr(field_name.as_str(), py_value) {
-                                        return Err(ControlError::internal(format!(
-                                            "Failed to set {field_name}: {e}"
-                                        )));
-                                    }
-                                }
-                                Err(e) => {
+            if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>()
+                && let Some(existing) = storage.resources.get(&comp_id)
+            {
+                let bound = existing.bind(py);
+                if let Some(obj) = value.as_object() {
+                    for (field_name, field_value) in obj {
+                        match convert_field_value(py, bound, field_name, field_value) {
+                            Ok(py_value) => {
+                                if let Err(e) = bound.setattr(field_name.as_str(), py_value) {
                                     return Err(ControlError::internal(format!(
-                                        "Failed to convert {field_name}: {e}"
+                                        "Failed to set {field_name}: {e}"
                                     )));
                                 }
                             }
+                            Err(e) => {
+                                return Err(ControlError::internal(format!(
+                                    "Failed to convert {field_name}: {e}"
+                                )));
+                            }
                         }
                     }
-                    return Ok(serde_json::json!({
-                        "inserted": resource_type,
-                        "custom": true,
-                    }));
                 }
+                return Ok(serde_json::json!({
+                    "inserted": resource_type,
+                    "custom": true,
+                }));
             }
 
             // Resource doesn't exist yet: create default and apply fields
@@ -896,10 +895,10 @@ pub fn insert_resource(
                 .resources
                 .insert(comp_id, instance.unbind());
 
-            return Ok(serde_json::json!({
+            Ok(serde_json::json!({
                 "inserted": resource_type,
                 "custom": true,
-            }));
+            }))
         })
     } else {
         Err(ControlError::not_found(format!(
@@ -1103,21 +1102,20 @@ pub(crate) fn convert_field_value(
         }
 
         // Convert Color from JSON array [r, g, b, a]
-        if type_name == "Color" {
-            if let serde_json::Value::Array(arr) = field_value
-                && arr.len() == 4
-            {
-                let r = json_number_to_f64(&arr[0])?;
-                let g = json_number_to_f64(&arr[1])?;
-                let b = json_number_to_f64(&arr[2])?;
-                let a = json_number_to_f64(&arr[3])?;
-                let color_mod = PyModule::import(py, "pybevy.color").map_err(|e| e.to_string())?;
-                let color_cls = color_mod.getattr("Color").map_err(|e| e.to_string())?;
-                return color_cls
-                    .call_method1("srgba", (r, g, b, a))
-                    .map(|v| v.unbind())
-                    .map_err(|e| e.to_string());
-            }
+        if type_name == "Color"
+            && let serde_json::Value::Array(arr) = field_value
+            && arr.len() == 4
+        {
+            let r = json_number_to_f64(&arr[0])?;
+            let g = json_number_to_f64(&arr[1])?;
+            let b = json_number_to_f64(&arr[2])?;
+            let a = json_number_to_f64(&arr[3])?;
+            let color_mod = PyModule::import(py, "pybevy.color").map_err(|e| e.to_string())?;
+            let color_cls = color_mod.getattr("Color").map_err(|e| e.to_string())?;
+            return color_cls
+                .call_method1("srgba", (r, g, b, a))
+                .map(|v| v.unbind())
+                .map_err(|e| e.to_string());
         }
 
         // Convert JSON arrays to math types based on current field type

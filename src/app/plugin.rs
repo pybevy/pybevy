@@ -20,7 +20,7 @@ impl PyPluginGroup {
     pub fn build(pyself: Bound<'_, Self>, _py: Python) -> PyResult<Py<PyAny>> {
         Err(PyNotImplementedError::new_err(format!(
             "PluginGroup.build() not implemented for {}",
-            pyself.get_type().name()?.to_string()
+            pyself.get_type().name()?
         )))
     }
 }

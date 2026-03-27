@@ -218,14 +218,12 @@ pub fn find_root_ancestor(world: &World, entity: Entity) -> Entity {
 pub fn find_ancestor_name(world: &World, entity: Entity) -> Option<String> {
     let mut current = entity;
     for _ in 0..10 {
-        let Some(child_of) = world.get::<ChildOf>(current) else {
-            return None;
-        };
+        let child_of = world.get::<ChildOf>(current)?;
         let parent = child_of.parent();
-        if let Some(name) = world.get::<Name>(parent) {
-            if !is_generic_name(Some(name.as_str())) {
-                return Some(name.as_str().to_string());
-            }
+        if let Some(name) = world.get::<Name>(parent)
+            && !is_generic_name(Some(name.as_str()))
+        {
+            return Some(name.as_str().to_string());
         }
         current = parent;
     }
@@ -244,10 +242,10 @@ pub fn entity_label(world: &World, entity: Entity) -> String {
     };
 
     // Append parent context for generic or unnamed entities that have a parent
-    if is_generic_name(name_str) {
-        if let Some(ancestor) = find_ancestor_name(world, entity) {
-            return format!("{} [parent: {}]", base, ancestor);
-        }
+    if is_generic_name(name_str)
+        && let Some(ancestor) = find_ancestor_name(world, entity)
+    {
+        return format!("{} [parent: {}]", base, ancestor);
     }
 
     base
@@ -412,11 +410,11 @@ pub fn check_overlaps(
         }
 
         // Skip entities sharing the same root ancestor (parented parts overlap by design)
-        if let Some(root) = target_root {
-            if world.get::<ChildOf>(*entity).is_some() && find_root_ancestor(world, *entity) == root
-            {
-                continue;
-            }
+        if let Some(root) = target_root
+            && world.get::<ChildOf>(*entity).is_some()
+            && find_root_ancestor(world, *entity) == root
+        {
+            continue;
         }
 
         let Ok(other_aabb) = compute_world_aabb(world, *entity) else {

@@ -49,6 +49,7 @@ impl PyFogVolume {
 #[pymethods]
 impl PyFogVolume {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         fog_color = Self::default_fog_color(),
         density_factor = Self::default_density_factor(),

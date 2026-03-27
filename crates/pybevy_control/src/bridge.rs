@@ -314,6 +314,12 @@ pub struct SseEventBroadcaster {
     pub tx: Arc<tokio::sync::broadcast::Sender<String>>,
 }
 
+impl Default for SseEventBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SseEventBroadcaster {
     pub fn new() -> Self {
         let (tx, _) = tokio::sync::broadcast::channel(256);
@@ -763,12 +769,10 @@ pub fn control_poll_system(world: &mut World) {
                 let result = result.map(|mut val| {
                     if let Some(time) =
                         world.get_resource::<bevy::time::Time<bevy::time::Virtual>>()
+                        && time.is_paused()
+                        && let Some(obj) = val.as_object_mut()
                     {
-                        if time.is_paused() {
-                            if let Some(obj) = val.as_object_mut() {
-                                obj.insert("_time_paused".to_string(), serde_json::json!(true));
-                            }
-                        }
+                        obj.insert("_time_paused".to_string(), serde_json::json!(true));
                     }
                     val
                 });
@@ -788,30 +792,29 @@ pub fn control_poll_system(world: &mut World) {
     world.insert_resource(receiver);
 
     // Broadcast new system errors via SSE + update shared state for HTTP piggyback
-    if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>() {
-        if let Some(ref msg) = last_error.error {
-            let error_ts = last_error.timestamp_secs;
-            let msg = msg.clone();
-            let traceback = last_error.traceback.clone();
+    if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>()
+        && let Some(ref msg) = last_error.error
+    {
+        let error_ts = last_error.timestamp_secs;
+        let msg = msg.clone();
+        let traceback = last_error.traceback.clone();
 
-            let mut tracker =
-                world.get_resource_or_insert_with(LastBroadcastedErrorTimestamp::default);
+        let mut tracker = world.get_resource_or_insert_with(LastBroadcastedErrorTimestamp::default);
 
-            if error_ts > tracker.timestamp_secs {
-                tracker.timestamp_secs = error_ts;
+        if error_ts > tracker.timestamp_secs {
+            tracker.timestamp_secs = error_ts;
 
-                // SSE broadcast (for clients that subscribe to /api/v1/sse)
-                if let Some(broadcaster) = world.get_resource::<SseEventBroadcaster>() {
-                    broadcaster.send(&crate::protocol::SseEvent::Error {
-                        message: msg.clone(),
-                        traceback,
-                    });
-                }
+            // SSE broadcast (for clients that subscribe to /api/v1/sse)
+            if let Some(broadcaster) = world.get_resource::<SseEventBroadcaster>() {
+                broadcaster.send(&crate::protocol::SseEvent::Error {
+                    message: msg.clone(),
+                    traceback,
+                });
+            }
 
-                // Shared state update (for HTTP piggyback on next tool response)
-                if let Some(shared) = world.get_resource::<SharedLatestErrorResource>() {
-                    shared.0.update(msg, error_ts);
-                }
+            // Shared state update (for HTTP piggyback on next tool response)
+            if let Some(shared) = world.get_resource::<SharedLatestErrorResource>() {
+                shared.0.update(msg, error_ts);
             }
         }
     }

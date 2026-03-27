@@ -43,9 +43,11 @@ impl PyCamera {
         viewport: Option<&PyViewport>,
         sub_camera_view: Option<PySubCameraView>,
     ) -> PyResult<(Self, PyComponent)> {
-        let mut camera = Camera::default();
-        camera.is_active = is_active;
-        camera.order = order;
+        let mut camera = Camera {
+            is_active,
+            order,
+            ..Default::default()
+        };
         if let Some(cc) = clear_color {
             camera.clear_color = cc.into();
         }
@@ -135,7 +137,7 @@ impl PyCamera {
 
     #[getter]
     pub fn clear_color(&self) -> PyResult<PyClearColorConfig> {
-        Ok(self.as_ref()?.clear_color.clone().into())
+        Ok(self.as_ref()?.clear_color.into())
     }
 
     #[setter]

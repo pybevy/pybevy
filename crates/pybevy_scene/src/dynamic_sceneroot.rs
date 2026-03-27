@@ -26,13 +26,13 @@ impl PyDynamicSceneRoot {
     pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
         let handle = extract_handle_from_any(handle)?;
 
-        if let Some(name) = handle.asset_type_name() {
-            if name != "DynamicScene" {
-                return Err(PyTypeError::new_err(format!(
-                    "AssetType `{}` does not match expected type `DynamicScene`",
-                    name
-                )));
-            }
+        if let Some(name) = handle.asset_type_name()
+            && name != "DynamicScene"
+        {
+            return Err(PyTypeError::new_err(format!(
+                "AssetType `{}` does not match expected type `DynamicScene`",
+                name
+            )));
         }
 
         Ok((Self(handle), PyComponent))

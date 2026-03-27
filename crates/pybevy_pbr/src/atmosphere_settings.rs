@@ -15,6 +15,7 @@ pub struct PyAtmosphereSettings {
 #[pymethods]
 impl PyAtmosphereSettings {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         transmittance_lut_size = PyUVec2::new(256, 128),
         multiscattering_lut_size = PyUVec2::new(32, 32),

@@ -3,7 +3,7 @@ use pybevy_core::{PyHandle, plugin::plugin_registry};
 use pybevy_macros::plugin_bridge;
 use pyo3::prelude::*;
 
-///! PyO3 bindings for GPU readback system
+// PyO3 bindings for GPU readback system
 use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
 use crate::app::{app::PyApp, plugin::PyPlugin};
 

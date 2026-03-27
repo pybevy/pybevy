@@ -20,22 +20,22 @@ impl PluginConfigType {
     /// Extract plugin type from Python type object using type equality comparison
     pub fn from_py_type(py: Python<'_>, py_type: &Bound<'_, PyType>) -> PyResult<Self> {
         // Compare by type equality using PyTypeInfo trait
-        if py_type.is(&<PyWindowPlugin as PyTypeInfo>::type_object(py)) {
+        if py_type.is(<PyWindowPlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::Window);
         }
-        if py_type.is(&<PyAudioPlugin as PyTypeInfo>::type_object(py)) {
+        if py_type.is(<PyAudioPlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::Audio);
         }
-        if py_type.is(&<PyTaskPoolPlugin as PyTypeInfo>::type_object(py)) {
+        if py_type.is(<PyTaskPoolPlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::TaskPool);
         }
-        if py_type.is(&<PyRenderPlugin as PyTypeInfo>::type_object(py)) {
+        if py_type.is(<PyRenderPlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::Render);
         }
-        if py_type.is(&<PyImagePlugin as PyTypeInfo>::type_object(py)) {
+        if py_type.is(<PyImagePlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::Image);
         }
-        if py_type.is(&<PyWinitPlugin as PyTypeInfo>::type_object(py)) {
+        if py_type.is(<PyWinitPlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::Winit);
         }
 

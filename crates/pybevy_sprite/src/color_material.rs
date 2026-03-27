@@ -72,7 +72,7 @@ impl PyColorMaterial {
 
     #[getter]
     pub fn alpha_mode(&self, py: Python) -> PyResult<Py<PyAlphaMode2d>> {
-        Ok(Py::new(py, PyAlphaMode2d::from(self.as_ref()?.alpha_mode))?)
+        Py::new(py, PyAlphaMode2d::from(self.as_ref()?.alpha_mode))
     }
 
     #[setter]

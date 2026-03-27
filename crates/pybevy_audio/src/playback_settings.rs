@@ -17,6 +17,7 @@ pub struct PyPlaybackSettings {
 #[pymethods]
 impl PyPlaybackSettings {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
         mode = None,
