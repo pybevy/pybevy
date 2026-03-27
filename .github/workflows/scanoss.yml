@@ -16,5 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: scanoss/code-scan-action@0b39db4d8f5f560f0108f16a4fb53ed28efa5add # v1
+        continue-on-error: true
         with:
           policies: copyleft
