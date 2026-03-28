@@ -4308,6 +4308,8 @@ dependencies = [
  "bevy_ecs",
  "criterion",
  "pyo3",
+ "rayon",
+ "smallvec",
 ]
 
 [[package]]
@@ -4352,6 +4354,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tower",
  "tower-http",
 ]
 

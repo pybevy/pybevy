@@ -74,7 +74,7 @@ pybevy_scene = { path = "./crates/pybevy_scene", version = "=0.2.1" }
 pybevy_control = { path = "./crates/pybevy_control", version = "=0.2.1" }
 
 [dependencies]
-pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.2.1" }
+pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.2.1", features = ["parallel"] }
 pybevy_core = { path = "./crates/pybevy_core", version = "=0.2.1" }
 pybevy_math = { workspace = true }
 pybevy_color = { workspace = true }
