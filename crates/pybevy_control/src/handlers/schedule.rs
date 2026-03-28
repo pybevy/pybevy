@@ -717,8 +717,12 @@ pub fn process_active_schedules(world: &mut World) {
         return;
     }
 
-    // Hold GIL for Python-touching tools (same pattern as control_poll_system)
-    pyo3::Python::attach(|_py| {
+    // Remove runtime from World to use for dispatch (same scope as old Python::attach)
+    let mut runtime = world
+        .remove_non_send_resource::<Box<dyn crate::runtime::ControlRuntime>>()
+        .expect("ControlRuntime resource missing");
+
+    {
         let mut i = 0;
         while i < schedules.schedules.len() {
             // Check for async cancellation
@@ -747,7 +751,7 @@ pub fn process_active_schedules(world: &mut World) {
                 schedule.state = ScheduleState::Done;
             }
 
-            process_single_schedule(world, &mut schedules.schedules[i]);
+            process_single_schedule(world, &mut schedules.schedules[i], &mut *runtime);
             schedules.schedules[i].frame_counter += 1;
 
             if schedules.schedules[i].state == ScheduleState::Done {
@@ -757,12 +761,18 @@ pub fn process_active_schedules(world: &mut World) {
                 i += 1;
             }
         }
-    });
+    }
+
+    world.insert_non_send_resource(runtime);
 
     world.insert_resource(schedules);
 }
 
-fn process_single_schedule(world: &mut World, schedule: &mut ActiveSchedule) {
+fn process_single_schedule(
+    world: &mut World,
+    schedule: &mut ActiveSchedule,
+    runtime: &mut dyn crate::runtime::ControlRuntime,
+) {
     loop {
         match schedule.state {
             ScheduleState::Done => return,
@@ -780,7 +790,7 @@ fn process_single_schedule(world: &mut World, schedule: &mut ActiveSchedule) {
                         match result {
                             Ok(value) => {
                                 let has_errors =
-                                    crate::handlers::mutate::has_embedded_errors(&value);
+                                    crate::handlers::pyo3::mutate::has_embedded_errors(&value);
                                 let has_run_code_failure = value
                                     .get("success")
                                     .and_then(|v| v.as_bool())
@@ -987,11 +997,11 @@ fn process_single_schedule(world: &mut World, schedule: &mut ActiveSchedule) {
                     // Sync tool — execute immediately via dispatch
                     match tool_to_operation(&tool_name, &tool_args) {
                         Ok(op) => {
-                            let result = handlers::dispatch(world, op);
+                            let result = handlers::dispatch(world, op, runtime);
                             match result {
                                 Ok(value) => {
                                     let has_errors =
-                                        crate::handlers::mutate::has_embedded_errors(&value);
+                                        crate::handlers::pyo3::mutate::has_embedded_errors(&value);
                                     let has_run_code_failure = value
                                         .get("success")
                                         .and_then(|v| v.as_bool())

@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use bevy::{ecs::world::World, prelude::Resource};
-use pyo3::Python;
 use serde::Deserialize;
 use tokio::sync::{mpsc, oneshot};
 
@@ -252,6 +251,16 @@ impl ControlError {
         Self {
             code: -32603,
             message: msg.into(),
+        }
+    }
+
+    pub fn not_supported(operation: &str) -> Self {
+        Self {
+            code: -32601,
+            message: format!(
+                "Operation '{}' is not supported by the current Python runtime backend",
+                operation
+            ),
         }
     }
 }
@@ -757,29 +766,17 @@ pub fn control_poll_system(world: &mut World) {
         }
     }
 
-    // Phase 2: Execute sync handlers with one batched GIL acquire.
-    // This prevents rapid Python::attach()/release cycling (which corrupts
-    // GIL state after py.detach()) while keeping GIL hold time minimal.
+    // Phase 2: Dispatch sync requests through the runtime.
+    // The runtime impl batches GIL acquisition (PyO3) or enters interpreter
+    // scope as appropriate for the backend.
     if !sync_requests.is_empty() {
-        Python::attach(|_py| {
-            for request in sync_requests {
-                let result = handlers::dispatch(world, request.operation);
+        let mut runtime = world
+            .remove_non_send_resource::<Box<dyn crate::runtime::ControlRuntime>>()
+            .expect("ControlRuntime resource missing");
 
-                // Inject pause warning into successful responses
-                let result = result.map(|mut val| {
-                    if let Some(time) =
-                        world.get_resource::<bevy::time::Time<bevy::time::Virtual>>()
-                        && time.is_paused()
-                        && let Some(obj) = val.as_object_mut()
-                    {
-                        obj.insert("_time_paused".to_string(), serde_json::json!(true));
-                    }
-                    val
-                });
+        runtime.dispatch_batch(world, sync_requests);
 
-                let _ = request.response_tx.send(result);
-            }
-        });
+        world.insert_non_send_resource(runtime);
     }
 
     // Store deferred screenshots

@@ -3,10 +3,12 @@ pub mod bridge;
 pub mod handlers;
 pub mod plugin;
 pub mod protocol;
+pub mod runtime;
+pub mod runtime_pyo3;
 pub mod server;
 pub mod sse;
 
-pub use handlers::execute::register_world_wrapper_hook;
+pub use handlers::pyo3::execute::register_world_wrapper_hook;
 pub use plugin::PyControlPlugin;
 use pybevy_core::plugin::plugin_registry;
 use pybevy_macros::plugin_bridge;
