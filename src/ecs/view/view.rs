@@ -28,20 +28,6 @@ use std::{
     },
 };
 
-use smallvec::SmallVec;
-
-/// Maximum number of field pointers to stack-allocate before falling back to heap.
-/// Most expressions use 1-4 fields, so 8 provides headroom without heap allocation.
-type FieldPtrVec = SmallVec<[*mut u8; 8]>;
-
-/// Send+Sync wrapper for raw pointer batch execution.
-/// SAFETY: The pointers are valid for the duration of batch execution
-/// and the data they point to is accessed in parallel using proper rayon semantics.
-#[derive(Clone, Copy)]
-struct SendPtr(*mut u8);
-unsafe impl Send for SendPtr {}
-unsafe impl Sync for SendPtr {}
-
 use bevy::{
     ecs::{
         change_detection::Tick,
@@ -53,8 +39,9 @@ use bevy::{
     prelude::*,
 };
 use pybevy_bytecodevm::{
-    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType as VmFieldType, VM},
+    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType as VmFieldType},
     expr::RustExpr,
+    view_engine::{self, ViewFilter},
 };
 use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
@@ -240,60 +227,6 @@ impl PyView {
     /// Returns true if this view has any per-entity tick filters (Changed or Added)
     fn has_tick_filters(&self) -> bool {
         !self.changed_filter_types.is_empty() || !self.added_filter_types.is_empty()
-    }
-
-    /// Build a per-entity tick filter mask for a table.
-    ///
-    /// Returns a Vec<bool> where `true` means the entity passes all Changed/Added filters.
-    /// Returns None if there are no tick filters (all entities pass).
-    fn build_tick_mask_for_table(
-        &self,
-        table: &bevy::ecs::storage::Table,
-        entity_count: usize,
-    ) -> Option<Vec<bool>> {
-        if !self.has_tick_filters() {
-            return None;
-        }
-
-        let last_run = self.last_run;
-        let this_run = self.this_run;
-        let mut mask = vec![true; entity_count];
-
-        // Check Changed filters
-        for ct in &self.changed_filter_types {
-            if let Ok(id) = self.get_component_id(ct)
-                && let Some(column) = table.get_column(id)
-            {
-                let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
-                for i in 0..entity_count {
-                    if mask[i] {
-                        let tick = unsafe { *changed_ticks[i].get() };
-                        if !tick.is_newer_than(last_run, this_run) {
-                            mask[i] = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check Added filters
-        for ct in &self.added_filter_types {
-            if let Ok(id) = self.get_component_id(ct)
-                && let Some(column) = table.get_column(id)
-            {
-                let added_ticks = unsafe { column.get_added_ticks_slice(entity_count) };
-                for i in 0..entity_count {
-                    if mask[i] {
-                        let tick = unsafe { *added_ticks[i].get() };
-                        if !tick.is_newer_than(last_run, this_run) {
-                            mask[i] = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        Some(mask)
     }
 
     /// Get or register a component ID
@@ -497,13 +430,14 @@ impl PyView {
                                     if let Some(mut untyped) =
                                         entity_mut.get_mut_by_id(component_id)
                                     {
-                                        let data_ptr = unsafe {
+                                        // SAFETY: deref_mut + evaluate_on_ptr: pointer from
+                                        // get_mut_by_id() with matching wrapper layout.
+                                        let value = unsafe {
                                             let wrapper =
                                                 untyped.as_mut().deref_mut::<$wrapper_type>();
-                                            wrapper.data.as_ptr() as *const u8
+                                            let data_ptr = wrapper.data.as_ptr() as *const u8;
+                                            self.evaluate_expr_on_wrapper_data(data_ptr, &bytecode)
                                         };
-                                        let value =
-                                            self.evaluate_expr_on_wrapper_data(data_ptr, &bytecode);
                                         let mut acc = accumulator.lock().unwrap();
                                         acc.0 = op(acc.0, value);
                                         acc.1 += 1;
@@ -566,9 +500,9 @@ impl PyView {
                         return;
                     }
                     if let Some(mut untyped) = entity_mut.get_mut_by_id(component_id) {
-                        // Get raw pointer to component data
                         let ptr = untyped.as_mut().as_ptr() as *const u8;
-                        let value = self.evaluate_expr_on_wrapper_data(ptr, &bytecode);
+                        // SAFETY: ptr from get_mut_by_id() points to valid component data
+                        let value = unsafe { self.evaluate_expr_on_wrapper_data(ptr, &bytecode) };
                         let mut acc = accumulator.lock().unwrap();
                         acc.0 = op(acc.0, value);
                         acc.1 += 1;
@@ -584,28 +518,19 @@ impl PyView {
         Ok((result, count))
     }
 
-    /// Evaluate expression on wrapper storage data (read-only)
+    /// Evaluate expression on wrapper storage data (read-only).
+    ///
+    /// # Safety
+    ///
+    /// `data_ptr` must point to valid component data whose layout matches
+    /// the field offsets in `bytecode`.
     #[inline]
-    fn evaluate_expr_on_wrapper_data(
+    unsafe fn evaluate_expr_on_wrapper_data(
         &self,
         data_ptr: *const u8,
         bytecode: &CompiledBytecode,
     ) -> f64 {
-        // Create VM for this execution
-        let mut vm = VM::new();
-
-        // Build field pointers for this wrapper (stack-allocated for ≤8 fields)
-        let mut field_ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
-        for field_id in &bytecode.field_map {
-            let field_ptr = unsafe { data_ptr.add(field_id.offset) as *mut u8 };
-            field_ptrs.push(field_ptr);
-        }
-
-        // Use data pointer as entity seed
-        let entity_seed = data_ptr as usize;
-
-        // Execute bytecode and get result
-        unsafe { vm.execute_and_reduce(bytecode, field_ptrs.as_slice(), entity_seed) }
+        unsafe { view_engine::evaluate_on_ptr(data_ptr, bytecode) }
     }
 }
 
@@ -1441,9 +1366,9 @@ impl PyViewColMut {
                         return;
                     }
                     if let Some(mut untyped) = entity_mut.get_mut_by_id(component_id) {
-                        // Get raw pointer to component data
                         let ptr = untyped.as_mut().as_ptr();
-                        self.execute_on_wrapper_data(ptr, bytecode);
+                        // SAFETY: ptr from get_mut_by_id() points to valid component data
+                        unsafe { self.execute_on_wrapper_data(ptr, bytecode) };
                     }
                 });
 
@@ -1526,6 +1451,8 @@ impl PyViewColMut {
     /// Execute bytecode on multiple components (cross-component expressions)
     ///
     /// Uses batch execution with table iteration for performance.
+    /// Delegates to `view_engine` for archetype gathering, batch execution,
+    /// and change tick marking.
     fn execute_batch_multi_component(
         &self,
         world: &mut World,
@@ -1533,342 +1460,59 @@ impl PyViewColMut {
         bytecode: &CompiledBytecode,
         component_ids: HashSet<ComponentId>,
     ) -> PyResult<()> {
-        // Get stride for each component
-        let components = world.components();
-        let mut component_strides: HashMap<ComponentId, usize> = HashMap::new();
-        for &component_id in &component_ids {
-            let component_info = components.get_info(component_id).ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Component {:?} not found",
-                    component_id
-                ))
-            })?;
-            component_strides.insert(component_id, component_info.layout().size());
-        }
-
-        // Get filter component IDs
-        let with_filter_ids: Vec<ComponentId> = view
-            .filter_types
-            .iter()
-            .filter_map(|ft| view.get_component_id(ft).ok())
-            .collect();
-
-        let without_filter_ids: Vec<ComponentId> = view
-            .without_filter_types
-            .iter()
-            .filter_map(|ft| view.get_component_id(ft).ok())
-            .collect();
-
-        // Also collect Changed/Added filter IDs for archetype-level presence checks
-        let changed_filter_ids: Vec<ComponentId> = view
-            .changed_filter_types
-            .iter()
-            .filter_map(|ft| view.get_component_id(ft).ok())
-            .collect();
-
-        let added_filter_ids: Vec<ComponentId> = view
-            .added_filter_types
-            .iter()
-            .filter_map(|ft| view.get_component_id(ft).ok())
-            .collect();
-
-        let has_tick_filters = view.has_tick_filters();
-
-        // Collect table info for all archetypes containing ALL required components AND With filters,
-        // and NONE of the Without filter components
-        struct TableBatch {
-            component_bases: HashMap<ComponentId, *mut u8>,
-            entity_count: usize,
-            /// Per-entity tick mask (None = all pass, Some = per-entity filter)
-            tick_mask: Option<Vec<bool>>,
-        }
-
-        let table_batches: Vec<TableBatch> = {
-            let archetypes = world.archetypes();
-            let storages = world.storages();
-            let tables = &storages.tables;
-
-            let mut batches = Vec::new();
-            for archetype in archetypes.iter() {
-                // Skip if archetype doesn't have ALL required components
-                if !component_ids.iter().all(|id| archetype.contains(*id)) {
-                    continue;
-                }
-
-                // Skip if archetype doesn't have ALL With filter components
-                if !with_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                    continue;
-                }
-
-                // Skip if archetype has ANY Without filter components
-                if without_filter_ids.iter().any(|id| archetype.contains(*id)) {
-                    continue;
-                }
-
-                // Changed/Added filter components must be present on archetype
-                if !changed_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                    continue;
-                }
-                if !added_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                    continue;
-                }
-
-                let table_id = archetype.table_id();
-                if let Some(table) = tables.get(table_id) {
-                    let entity_count = table.entity_count() as usize;
-                    if entity_count > 0 {
-                        // Build tick mask if needed
-                        let tick_mask = if has_tick_filters {
-                            view.build_tick_mask_for_table(table, entity_count)
-                        } else {
-                            None
-                        };
-
-                        // Skip entire table if tick mask filters out all entities
-                        if let Some(ref mask) = tick_mask
-                            && !mask.iter().any(|&v| v)
-                        {
-                            continue;
-                        }
-
-                        // Get base pointer for each component
-                        let mut component_bases: HashMap<ComponentId, *mut u8> = HashMap::new();
-                        let mut all_found = true;
-
-                        for &component_id in &component_ids {
-                            if let Some(column) = table.get_column(component_id) {
-                                // Get raw pointer to column data
-                                // SAFETY: We're inside a mutable world access
-                                // Note: get_data_slice expects element count, not byte count
-                                // We just need the pointer, stride-based access is handled separately
-                                let ptr = unsafe {
-                                    let data_slice = column.get_data_slice::<u8>(entity_count);
-                                    data_slice.as_ptr() as *mut u8
-                                };
-                                component_bases.insert(component_id, ptr);
-                            } else {
-                                all_found = false;
-                                break;
-                            }
-                        }
-
-                        if all_found {
-                            batches.push(TableBatch {
-                                component_bases,
-                                entity_count,
-                                tick_mask,
-                            });
-                        }
-                    }
-                }
-            }
-            batches
+        let filter = ViewFilter {
+            component_ids,
+            with_ids: view
+                .filter_types
+                .iter()
+                .filter_map(|ft| view.get_component_id(ft).ok())
+                .collect(),
+            without_ids: view
+                .without_filter_types
+                .iter()
+                .filter_map(|ft| view.get_component_id(ft).ok())
+                .collect(),
+            changed_ids: view
+                .changed_filter_types
+                .iter()
+                .filter_map(|ft| view.get_component_id(ft).ok())
+                .collect(),
+            added_ids: view
+                .added_filter_types
+                .iter()
+                .filter_map(|ft| view.get_component_id(ft).ok())
+                .collect(),
         };
 
-        if has_tick_filters {
-            // Tick-filtered path: process entities individually (cannot use batch VM)
-            use rayon::prelude::*;
+        let strides = view_engine::resolve_component_strides(world, &filter.component_ids)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
 
-            // Pre-compute field strides
-            let field_strides: Vec<usize> = bytecode
-                .field_map
-                .iter()
-                .map(|field_id| component_strides[&field_id.component_id])
-                .collect();
+        let last_run = view.last_run;
+        let this_run = view.this_run;
+        let batches = view_engine::gather_table_batches(world, &filter, last_run, this_run);
 
-            // Build work items: (table_batch_idx, entity_idx) for all passing entities
-            struct EntityWork {
-                field_ptrs: Vec<SendPtr>,
-                entity_seed: usize,
-            }
-
-            let work_items: Vec<EntityWork> = table_batches
-                .iter()
-                .flat_map(|batch| {
-                    let mask = batch.tick_mask.as_ref();
-                    let strides = &field_strides;
-                    (0..batch.entity_count).filter_map(move |entity_idx| {
-                        if let Some(mask) = mask
-                            && !mask[entity_idx]
-                        {
-                            return None;
-                        }
-
-                        let field_ptrs: Vec<SendPtr> = bytecode
-                            .field_map
-                            .iter()
-                            .enumerate()
-                            .map(|(i, field_id)| {
-                                let base = batch.component_bases[&field_id.component_id];
-                                let stride = strides[i];
-                                SendPtr(unsafe {
-                                    base.add(field_id.offset).add(entity_idx * stride)
-                                })
-                            })
-                            .collect();
-
-                        Some(EntityWork {
-                            field_ptrs,
-                            entity_seed: entity_idx,
-                        })
-                    })
-                })
-                .collect();
-
-            // Process in parallel
-            work_items.par_iter().for_each(|work| {
-                let mut vm = VM::new();
-                let ptrs: Vec<*mut u8> = work.field_ptrs.iter().map(|p| p.0).collect();
-                unsafe {
-                    vm.execute(bytecode, &ptrs, work.entity_seed);
-                }
-            });
-        } else {
-            // Fast path: no tick filters, batch execution
-            use rayon::prelude::*;
-
-            // Build per-field bases and strides based on bytecode field_map
-            // For each table, we need to compute:
-            // - field_bases[i] = component_base + field_offset
-            // - field_strides[i] = component_stride
-            struct ChunkInfo {
-                field_bases: Vec<SendPtr>,
-                field_strides: Vec<usize>,
-                count: usize,
-            }
-
-            const CHUNK_SIZE: usize = 32768;
-
-            let chunks: Vec<ChunkInfo> = table_batches
-                .iter()
-                .flat_map(|batch| {
-                    // Pre-compute field info for this table
-                    let field_strides: Vec<usize> = bytecode
-                        .field_map
-                        .iter()
-                        .map(|field_id| component_strides[&field_id.component_id])
-                        .collect();
-
-                    // Split into chunks
-                    (0..batch.entity_count)
-                        .step_by(CHUNK_SIZE)
-                        .map(move |start| {
-                            let chunk_count = (batch.entity_count - start).min(CHUNK_SIZE);
-
-                            // Calculate field bases for this chunk
-                            let field_bases: Vec<SendPtr> = bytecode
-                                .field_map
-                                .iter()
-                                .enumerate()
-                                .map(|(i, field_id)| {
-                                    let component_base =
-                                        batch.component_bases[&field_id.component_id];
-                                    let stride = field_strides[i];
-                                    // Base for this chunk = component_base + field_offset + start * stride
-                                    let ptr = unsafe {
-                                        component_base.add(field_id.offset).add(start * stride)
-                                    };
-                                    SendPtr(ptr)
-                                })
-                                .collect();
-
-                            ChunkInfo {
-                                field_bases,
-                                field_strides: field_strides.clone(),
-                                count: chunk_count,
-                            }
-                        })
-                })
-                .collect();
-
-            // Process chunks in parallel
-            chunks.par_iter().for_each(|chunk| {
-                let mut vm = VM::new();
-                let bases: Vec<*mut u8> = chunk.field_bases.iter().map(|p| p.0).collect();
-                unsafe {
-                    vm.execute_batch_multi(bytecode, &bases, &chunk.field_strides, chunk.count);
-                }
-            });
-        }
-
-        // Mark destination component as changed for Bevy's change detection.
-        // Raw pointer writes above bypass DerefMut, so systems using Changed<T>
-        // (like transform propagation) won't see updates without this.
-        let change_tick = world.change_tick();
-        let dest_component_id = self.component_id;
-        {
-            let archetypes = world.archetypes();
-            let storages = world.storages();
-            let tables = &storages.tables;
-
-            for archetype in archetypes.iter() {
-                if !component_ids.iter().all(|id| archetype.contains(*id)) {
-                    continue;
-                }
-                if !with_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                    continue;
-                }
-                if without_filter_ids.iter().any(|id| archetype.contains(*id)) {
-                    continue;
-                }
-
-                let table_id = archetype.table_id();
-                if let Some(table) = tables.get(table_id) {
-                    let entity_count = table.entity_count() as usize;
-                    if entity_count > 0
-                        && let Some(column) = table.get_column(dest_component_id)
-                    {
-                        if has_tick_filters {
-                            // Only mark entities that passed tick filters as changed
-                            if let Some(mask) = view.build_tick_mask_for_table(table, entity_count)
-                            {
-                                let changed_ticks =
-                                    unsafe { column.get_changed_ticks_slice(entity_count) };
-                                for i in 0..entity_count {
-                                    if mask[i] {
-                                        unsafe {
-                                            *changed_ticks[i].get() = change_tick;
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            let changed_ticks =
-                                unsafe { column.get_changed_ticks_slice(entity_count) };
-                            for tick in changed_ticks {
-                                unsafe {
-                                    *tick.get() = change_tick;
-                                }
-                            }
-                        }
-                    }
-                }
+        unsafe {
+            if view.has_tick_filters() {
+                view_engine::execute_filtered_assignment(&batches, bytecode, &strides, true);
+            } else {
+                view_engine::execute_batch_assignment(&batches, bytecode, &strides, true);
             }
         }
+
+        view_engine::mark_component_changed(world, &batches, self.component_id);
 
         Ok(())
     }
 
-    /// Execute bytecode on wrapper storage data
+    /// Execute bytecode on wrapper storage data.
+    ///
+    /// # Safety
+    ///
+    /// `data_ptr` must point to valid component data whose layout matches
+    /// the field offsets in `bytecode`.
     #[inline]
-    fn execute_on_wrapper_data(&self, data_ptr: *mut u8, bytecode: &CompiledBytecode) {
-        // Create VM for this execution
-        let mut vm = VM::new();
-
-        // Build field pointers for this wrapper (stack-allocated for ≤8 fields)
-        let mut field_ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
-        for field_id in &bytecode.field_map {
-            let field_ptr = unsafe { data_ptr.add(field_id.offset) };
-            field_ptrs.push(field_ptr);
-        }
-
-        // Use data pointer as entity seed for deterministic randomness
-        let entity_seed = data_ptr as usize;
-
-        // Execute bytecode
-        unsafe {
-            vm.execute(bytecode, field_ptrs.as_slice(), entity_seed);
-        }
+    unsafe fn execute_on_wrapper_data(&self, data_ptr: *mut u8, bytecode: &CompiledBytecode) {
+        unsafe { view_engine::execute_on_ptr(data_ptr, bytecode) };
     }
 }
 
