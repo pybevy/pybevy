@@ -267,7 +267,7 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
         let custom_names = get_custom_component_names(world, *entity);
         component_names.extend(custom_names.iter().cloned());
 
-        let label = super::spatial::entity_label(world, *entity);
+        let label = crate::handlers::spatial::entity_label(world, *entity);
 
         let mut entry = serde_json::json!({
             "id": entity_id,
@@ -325,7 +325,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
                 .collect();
             let archetype_components = entity_ref.archetype().components().len();
 
-            let label = super::spatial::entity_label(world, *entity);
+            let label = crate::handlers::spatial::entity_label(world, *entity);
             samples.push(serde_json::json!({
                 "id": entity.to_bits(),
                 "name": name,
@@ -437,7 +437,7 @@ pub fn get_entity(
         components.insert(k.clone(), v.clone());
     }
 
-    let label = super::spatial::entity_label(world, entity);
+    let label = crate::handlers::spatial::entity_label(world, entity);
 
     let mut result = serde_json::json!({
         "id": entity_id,
@@ -463,7 +463,7 @@ pub fn get_component(
 ) -> Result<serde_json::Value, ControlError> {
     let entity = resolve_entity(world, &entity_ref)?;
     let entity_id = entity.to_bits();
-    let label = super::spatial::entity_label(world, entity);
+    let label = crate::handlers::spatial::entity_label(world, entity);
 
     // Try bridge components first
     let bridge_result = Python::attach(|py| -> Option<serde_json::Value> {
@@ -591,7 +591,7 @@ pub fn query_entities(
 
         if has_all_with && has_none_without {
             let entity_name = entity_ref.get::<Name>().map(|n| n.as_str().to_string());
-            let label = super::spatial::entity_label(world, *entity);
+            let label = crate::handlers::spatial::entity_label(world, *entity);
 
             // Detect remaining unknown components
             let archetype_count = entity_ref.archetype().components().len();
@@ -1044,7 +1044,7 @@ pub fn get_bounding_box(
         let local_min = center - half;
         let local_max = center + half;
 
-        let r = super::spatial::round6;
+        let r = crate::handlers::spatial::round6;
         let local = serde_json::json!({
             "center": [r(center.x), r(center.y), r(center.z)],
             "half_extents": [r(half.x), r(half.y), r(half.z)],
@@ -1094,12 +1094,12 @@ pub fn get_bounding_box(
     }
 
     // Fallback: merge descendant AABBs (SceneRoot/GLB entities)
-    let merged = super::spatial::compute_world_aabb(world, entity)
+    let merged = crate::handlers::spatial::compute_world_aabb(world, entity)
         .map_err(|_| ControlError::not_found("Entity has no Aabb (no mesh?)"))?;
 
     let world_center = (merged.min + merged.max) * 0.5;
     let world_size = merged.max - merged.min;
-    let r = super::spatial::round6;
+    let r = crate::handlers::spatial::round6;
 
     Ok(serde_json::json!({
         "local": null,

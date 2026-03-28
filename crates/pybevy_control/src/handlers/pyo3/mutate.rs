@@ -4,11 +4,11 @@ use bevy::ecs::world::World;
 use pybevy_core::ComponentBridge;
 use pyo3::{prelude::*, types::PyModule};
 
-use super::{
-    reflect_mutate::{self, ReflectError},
-    scene::resolve_entity,
+use super::scene::resolve_entity;
+use crate::{
+    bridge::{ControlError, EntityRef},
+    handlers::reflect_mutate::{self, ReflectError},
 };
-use crate::bridge::{ControlError, EntityRef};
 
 /// Find a component bridge by name.
 fn find_bridge(name: &str) -> Option<Arc<dyn ComponentBridge>> {

@@ -175,6 +175,9 @@ impl Plugin for ControlBevyPlugin {
             api_discovery: config.api_discovery,
         });
 
+        app.insert_non_send_resource(Box::new(crate::runtime_pyo3::Pyo3ControlRuntime)
+            as Box<dyn crate::runtime::ControlRuntime>);
+
         // Ensure the app keeps ticking when unfocused so MCP requests are processed
         #[cfg(feature = "bevy_winit")]
         app.add_systems(bevy::app::Startup, configure_mcp_update_mode);
