@@ -175,7 +175,7 @@ impl PyDir3 {
                 "Dir3 * Quat is not supported. Use Quat * Dir3 to rotate a direction.",
             ))
         } else {
-            Err(PyTypeError::new_err("Dir3 can only be multiplied by float"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
@@ -186,9 +186,7 @@ impl PyDir3 {
             // Quat * Dir3 -> Dir3 (rotation)
             Ok(Py::new(py, PyDir3::dir3(quat.get() * self.0))?.into_any())
         } else {
-            Err(PyTypeError::new_err(
-                "Dir3 can only be multiplied by float or Quat",
-            ))
+            Ok(py.NotImplemented().into_any())
         }
     }
 }

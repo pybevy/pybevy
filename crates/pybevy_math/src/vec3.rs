@@ -423,66 +423,66 @@ impl PyVec3 {
         Ok(self.as_ref()?.element_product())
     }
 
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec3::from_vec3(self_vec + scalar))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec + scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec3>() {
-            Ok(PyVec3::from_vec3(self_vec + *other_vec.as_ref()?))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec + *other_vec.as_ref()?))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec3::from_vec3(self_vec - scalar))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec - scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec3>() {
-            Ok(PyVec3::from_vec3(self_vec - *other_vec.as_ref()?))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec - *other_vec.as_ref()?))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec3::from_vec3(self_vec * scalar))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec * scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec3>() {
-            Ok(PyVec3::from_vec3(self_vec * *other_vec.as_ref()?))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec * *other_vec.as_ref()?))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __div__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    fn __div__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec3::from_vec3(self_vec / scalar))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec / scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec3>() {
-            Ok(PyVec3::from_vec3(self_vec / *other_vec.as_ref()?))
+            Ok(Py::new(py, PyVec3::from_vec3(self_vec / *other_vec.as_ref()?))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for /"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
-        self.__div__(other)
+    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.__div__(other, py)
     }
 
     fn __neg__(&self) -> PyResult<PyVec3> {
         Ok(PyVec3::from_vec3(-*self.as_ref()?))
     }
 
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec3::from_vec3(scalar * self_vec))
+            Ok(Py::new(py, PyVec3::from_vec3(scalar * self_vec))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec3>() {
-            Ok(PyVec3::from_vec3(*other_vec.as_ref()? * self_vec))
+            Ok(Py::new(py, PyVec3::from_vec3(*other_vec.as_ref()? * self_vec))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 

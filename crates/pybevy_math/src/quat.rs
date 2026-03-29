@@ -267,9 +267,7 @@ impl PyQuat {
             let v = *self_quat * other_vec3.get();
             Ok(Py::new(py, PyVec3::from_vec3(v))?.into_any())
         } else {
-            Err(PyTypeError::new_err(
-                "Quat can only be multiplied by Quat or Vec3",
-            ))
+            Ok(py.NotImplemented().into_any())
         }
     }
 

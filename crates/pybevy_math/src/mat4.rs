@@ -372,18 +372,16 @@ impl PyMat4 {
         } else if let Ok(vec) = other.extract::<PyVec4>() {
             Ok(Py::new(py, PyVec4::from_vec4(self_mat * Vec4::from(&vec)))?.into_any())
         } else {
-            Err(PyTypeError::new_err(
-                "Unsupported operand type for * (expected Mat4, Vec4, or scalar)",
-            ))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyMat4> {
+    fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_mat = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyMat4::mat4(scalar * self_mat))
+            Ok(Py::new(py, PyMat4::mat4(scalar * self_mat))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 

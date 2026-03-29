@@ -358,13 +358,13 @@ impl PyMat2 {
         Ok(self.as_ref()?.is_nan())
     }
 
-    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyMat2> {
+    fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyMat2::from_mat2(self.get() * scalar))
+            Ok(Py::new(py, PyMat2::from_mat2(self.get() * scalar))?.into_any())
         } else if let Ok(other_mat) = other.extract::<PyMat2>() {
-            Ok(PyMat2::from_mat2(self.get() * other_mat.get()))
+            Ok(Py::new(py, PyMat2::from_mat2(self.get() * other_mat.get()))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
