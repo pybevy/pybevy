@@ -1,6 +1,5 @@
 pub mod color_impl;
 
-// Re-export main types
 pub use color_impl::{
     PyColor, PyHsla, PyHsva, PyLaba, PyLcha, PyLinearRgba, PyOklaba, PyOklcha, PySrgba, PyXyza,
 };

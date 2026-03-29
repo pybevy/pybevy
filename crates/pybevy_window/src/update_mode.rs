@@ -8,28 +8,17 @@ pub struct PyUpdateMode(pub(crate) UpdateMode);
 
 #[pymethods]
 impl PyUpdateMode {
-    /// Update as fast as possible until an AppExit event occurs.
     #[staticmethod]
     pub fn continuous() -> Self {
         PyUpdateMode(UpdateMode::Continuous)
     }
 
-    /// Reactive mode - updates in response to events or after `wait` seconds.
-    ///
-    /// Reacts to all event types (window, device, and user events).
-    ///
     #[staticmethod]
     #[pyo3(signature = (wait = 1.0))]
     pub fn reactive(wait: f64) -> Self {
         PyUpdateMode(UpdateMode::reactive(Duration::from_secs_f64(wait)))
     }
 
-    /// Low power reactive mode - only reacts to window and user events.
-    ///
-    /// Unlike `reactive()`, this ignores device events like general mouse movement
-    /// (only reacts when the cursor is over a window). This can greatly reduce
-    /// power consumption.
-    ///
     #[staticmethod]
     #[pyo3(signature = (wait = 1.0))]
     pub fn reactive_low_power(wait: f64) -> Self {

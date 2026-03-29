@@ -43,10 +43,6 @@ impl PyAnimationTarget {
     }
 }
 
-/// Python wrapper for Bevy's ActiveAnimation.
-///
-/// This is a lightweight handle that borrows back into the AnimationPlayer's
-/// ComponentStorage. Methods on this type mutate the ECS component directly.
 #[pyclass(name = "ActiveAnimation")]
 pub struct PyActiveAnimation {
     pub(crate) storage: ComponentStorage<AnimationPlayer>,
@@ -209,9 +205,6 @@ impl PyActiveAnimation {
     }
 }
 
-/// Python wrapper for Bevy's AnimationPlayer component.
-///
-/// Uses ComponentStorage for proper ECS mutation persistence.
 #[component_storage(AnimationPlayer)]
 #[pyclass(name = "AnimationPlayer", extends = PyComponent)]
 #[derive(Clone)]

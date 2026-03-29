@@ -69,14 +69,11 @@ pub use touch_input::PyTouchInput;
 pub use touch_phase::PyTouchPhase;
 pub use touches::{PyTouch, PyTouches};
 
-// Generate component bridges
 component_bridge!(Gamepad, PyGamepad, no_insert);
 component_bridge!(GamepadSettings, PyGamepadSettings, no_insert);
 
-// Generate plugin bridges via macro
 plugin_bridge!(PyInputPlugin, bevy::input::InputPlugin);
 
-// Generate resource bridges
 resource_bridge!(
     bevy::input::touch::Touches,
     PyTouches,
@@ -105,7 +102,6 @@ resource_bridge!(
     no_insert
 );
 
-// Manual bridge for AccumulatedMouseMotion (value-based, no ResourceStorage)
 pub struct AccumulatedMouseMotionBridge;
 
 impl ResourceBridge for AccumulatedMouseMotionBridge {
@@ -188,45 +184,32 @@ pub fn register_input_bridges() {
     global_registry::register_component_bridge(GamepadBridge);
     global_registry::register_component_bridge(GamepadSettingsBridge);
 
-    // Message bridges - touch
     global_registry::register_message_bridge(touch_input::TouchInputBridge);
-
-    // Message bridges - mouse
     global_registry::register_message_bridge(mouse_events::MouseButtonInputBridge);
     global_registry::register_message_bridge(mouse_events::MouseMotionBridge);
     global_registry::register_message_bridge(mouse_events::MouseWheelBridge);
-
-    // Message bridges - gamepad
     global_registry::register_message_bridge(gamepad_events::GamepadButtonChangedBridge);
     global_registry::register_message_bridge(gamepad_events::GamepadAxisChangedBridge);
     global_registry::register_message_bridge(gamepad_events::GamepadConnectionBridge);
     global_registry::register_message_bridge(gamepad_events::GamepadButtonStateChangedBridge);
-
-    // Message bridges - gesture
     global_registry::register_message_bridge(gesture_events::PinchGestureBridge);
     global_registry::register_message_bridge(gesture_events::RotationGestureBridge);
     global_registry::register_message_bridge(gesture_events::DoubleTapGestureBridge);
     global_registry::register_message_bridge(gesture_events::PanGestureBridge);
-
-    // Message bridges - keyboard
     global_registry::register_message_bridge(keyboard_events::KeyboardFocusLostBridge);
 
-    // Resource bridges
     global_registry::register_resource_bridge(AccumulatedMouseMotionBridge);
     global_registry::register_resource_bridge(TouchesBridge);
     global_registry::register_resource_bridge(ButtonInputBridge);
     global_registry::register_resource_bridge(MouseInputBridge);
     global_registry::register_resource_bridge(AxisBridge);
 
-    // Plugins
     plugin_registry::register_plugin_bridge(InputPluginBridge);
 }
 pub fn add_input_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_input_bridges();
 
-    // Plugins
     m.add_class::<PyInputPlugin>()?;
-
     m.add_class::<PyAxis>()?;
     m.add_class::<PyButtonInput>()?;
     m.add_class::<PyButtonState>()?;
@@ -250,32 +233,19 @@ pub fn add_input_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTouchInput>()?;
     m.add_class::<PyTouchPhase>()?;
 
-    // Gamepad events
     m.add_class::<PyGamepadButtonChanged>()?;
     m.add_class::<PyGamepadAxisChanged>()?;
     m.add_class::<PyGamepadConnection>()?;
     m.add_class::<PyGamepadButtonStateChanged>()?;
-
-    // Gesture events
     m.add_class::<PyPinchGesture>()?;
     m.add_class::<PyRotationGesture>()?;
     m.add_class::<PyDoubleTapGesture>()?;
     m.add_class::<PyPanGesture>()?;
-
-    // Keyboard events
     m.add_class::<PyKeyboardFocusLost>()?;
-
-    // Accumulated mouse resources
     m.add_class::<PyAccumulatedMouseMotion>()?;
     m.add_class::<PyAccumulatedMouseScroll>()?;
-
-    // GamepadEvent
     m.add_class::<PyGamepadEvent>()?;
-
-    // KeyboardInput
     m.add_class::<PyKeyboardInput>()?;
-
-    // Touches
     m.add_class::<PyTouch>()?;
     m.add_class::<PyTouches>()?;
 

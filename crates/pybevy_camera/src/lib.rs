@@ -85,12 +85,10 @@ use pybevy_core::{plugin::plugin_registry, registry::global_registry};
 use pybevy_macros::{
     component_bridge, newtype_bridge, plugin_bridge, resource_bridge, unit_bridge,
 };
-// Re-export moved types from pybevy_render for backward compatibility
 pub use pybevy_render::{
     PyColorGrading, PyColorGradingGlobal, PyColorGradingSection, PyHdr, PyMipBias, PyMsaa,
     PyNoAutomaticBatching, PyNoIndirectDrawing, PyOcclusionCulling, PyTemporalJitter,
 };
-// Re-export moved type from pybevy_sprite for backward compatibility
 pub mod scaling_mode;
 use pyo3::prelude::*;
 pub use render_layers::PyRenderLayers;
@@ -111,7 +109,6 @@ pub use visibility_class::PyVisibilityClass;
 pub use visibility_range::PyVisibilityRange;
 pub use visible_mesh_entities::PyVisibleMeshEntities;
 
-// Generate bridges for unit/marker components
 unit_bridge!(NoCpuCulling, PyNoCpuCulling);
 unit_bridge!(NoFrustumCulling, PyNoFrustumCulling);
 unit_bridge!(Camera2d, PyCamera2d);
@@ -120,7 +117,6 @@ unit_bridge!(NormalPrepass, PyNormalPrepass);
 unit_bridge!(MotionVectorPrepass, PyMotionVectorPrepass);
 unit_bridge!(DeferredPrepass, PyDeferredPrepass);
 
-// Generate bridges for ComponentStorage-based components
 component_bridge!(Camera, PyCamera, view_fields = [is_active]);
 component_bridge!(Camera3d, PyCamera3d);
 component_bridge!(InheritedVisibility, PyInheritedVisibility);
@@ -150,22 +146,17 @@ component_bridge!(VisibleMeshEntities, PyVisibleMeshEntities);
 component_bridge!(Skybox, PySkybox, view_fields = [brightness]);
 component_bridge!(RenderTarget, PyRenderTarget);
 
-// Generate bridges for newtype/enum components
 newtype_bridge!(Tonemapping, PyTonemapping);
 newtype_bridge!(CameraMainTextureUsages, PyCameraMainTextureUsages);
-// Note: MainPassResolutionOverride doesn't impl Clone, so we can't use newtype_bridge
 
-// Generate bridges for resources
 resource_bridge!(ClearColor, PyClearColor);
 
-// Generate plugin bridges via macro
 plugin_bridge!(PyCameraPlugin, bevy::camera::CameraPlugin);
 plugin_bridge!(
     PyCorePipelinePlugin,
     bevy::core_pipeline::CorePipelinePlugin
 );
 pub fn register_camera_bridges() {
-    // Unit markers use dynamic dispatch
     global_registry::register_component_bridge(NoCpuCullingBridge);
     global_registry::register_component_bridge(NoFrustumCullingBridge);
     global_registry::register_component_bridge(Camera2dBridge);
@@ -174,7 +165,6 @@ pub fn register_camera_bridges() {
     global_registry::register_component_bridge(MotionVectorPrepassBridge);
     global_registry::register_component_bridge(DeferredPrepassBridge);
 
-    // ComponentStorage-based components
     global_registry::register_component_bridge(CameraBridge);
     global_registry::register_component_bridge(Camera3dBridge);
     global_registry::register_component_bridge(InheritedVisibilityBridge);
@@ -194,19 +184,14 @@ pub fn register_camera_bridges() {
     global_registry::register_component_bridge(SkyboxBridge);
     global_registry::register_component_bridge(RenderTargetBridge);
 
-    // Newtype/enum components
     global_registry::register_component_bridge(TonemappingBridge);
     global_registry::register_component_bridge(CameraMainTextureUsagesBridge);
-    // Note: MainPassResolutionOverride doesn't impl Clone, so no bridge registration
 
-    // Resources
     global_registry::register_resource_bridge(ClearColorBridge);
 
-    // Plugins
     plugin_registry::register_plugin_bridge(CameraPluginBridge);
     plugin_registry::register_plugin_bridge(CorePipelinePluginBridge);
 
-    // Batch components
     visibility_batch::register_visibility_batch_bridge();
     register_exposure_batch();
     register_camera_batch();
@@ -217,11 +202,8 @@ pub fn register_camera_bridges() {
 pub fn add_camera_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_camera_bridges();
 
-    // Plugins
     m.add_class::<PyCameraPlugin>()?;
     m.add_class::<PyCorePipelinePlugin>()?;
-
-    // Unit markers (camera-specific, defined here)
     m.add_class::<PyNoCpuCulling>()?;
     m.add_class::<PyNoFrustumCulling>()?;
     m.add_class::<PyCamera2d>()?;
@@ -229,14 +211,10 @@ pub fn add_camera_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNormalPrepass>()?;
     m.add_class::<PyMotionVectorPrepass>()?;
     m.add_class::<PyDeferredPrepass>()?;
-
-    // Unit markers (re-exported from pybevy_render for backward compatibility)
     m.add_class::<PyHdr>()?;
     m.add_class::<PyNoAutomaticBatching>()?;
     m.add_class::<PyNoIndirectDrawing>()?;
     m.add_class::<PyOcclusionCulling>()?;
-
-    // ComponentStorage-based components
     m.add_class::<PyCamera>()?;
     m.add_class::<PyCamera3d>()?;
     m.add_class::<PyInheritedVisibility>()?;
@@ -256,15 +234,9 @@ pub fn add_camera_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVisibilityClass>()?;
     m.add_class::<PyVisibleMeshEntities>()?;
     m.add_class::<PySkybox>()?;
-
-    // ComponentStorage-based (re-exported from pybevy_render for backward compatibility)
     m.add_class::<PyTemporalJitter>()?;
-
-    // RenderTarget types
     m.add_class::<PyRenderTarget>()?;
     m.add_class::<PyNormalizedRenderTarget>()?;
-
-    // Supporting types
     m.add_class::<PyPhysicalCameraParameters>()?;
     m.add_class::<PyHalfSpace>()?;
     m.add_class::<PyCullingSphere>()?;
@@ -279,22 +251,14 @@ pub fn add_camera_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySubCameraView>()?;
     m.add_class::<PyPerspectiveProjection>()?;
     m.add_class::<PyOrthographicProjection>()?;
-
-    // Supporting types (re-exported from pybevy_render for backward compatibility)
     m.add_class::<PyColorGradingSection>()?;
     m.add_class::<PyColorGradingGlobal>()?;
-
-    // Newtype/enum components
     m.add_class::<PyTonemapping>()?;
     m.add_class::<PyCameraMainTextureUsages>()?;
     m.add_class::<PyMainPassResolutionOverride>()?;
     m.add_class::<PyViewport>()?;
-
-    // Newtype/enum (re-exported from pybevy_render for backward compatibility)
     m.add_class::<PyMsaa>()?;
     m.add_class::<PyMipBias>()?;
-
-    // Resources
     m.add_class::<PyClearColor>()?;
 
     Ok(())

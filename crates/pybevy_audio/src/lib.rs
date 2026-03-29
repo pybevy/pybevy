@@ -114,7 +114,6 @@ impl Plugin for PyBevyAudioPlugin {
 }
 
 pub fn register_audio_bridges() {
-    // Component bridges
     global_registry::register_component_bridge(AudioPlayerBridge);
     global_registry::register_component_bridge(AudioSinkBridge);
     global_registry::register_component_bridge(PlaybackSettingsBridge);
@@ -122,15 +121,12 @@ pub fn register_audio_bridges() {
     global_registry::register_component_bridge(SpatialAudioSinkBridge);
     register_playback_settings_batch();
 
-    // Resource bridges
     global_registry::register_resource_bridge(GlobalVolumeBridge);
     global_registry::register_resource_bridge(DefaultSpatialScaleBridge);
 
-    // Asset bridges
     global_registry::register_asset_bridge(AudioSourceBridge);
     global_registry::register_asset_bridge(PitchBridge);
 
-    // Plugin bridges
     plugin_registry::register_plugin_bridge(AudioPluginBridge);
 }
 

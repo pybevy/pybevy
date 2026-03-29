@@ -9,9 +9,6 @@ use pybevy_core::{
 use pybevy_macros::{component_storage, resource_storage};
 use pyo3::prelude::*;
 
-// ==================== PyGlobalAmbientLight Resource ====================
-// In Bevy 0.18, the global ambient light resource was renamed from AmbientLight to GlobalAmbientLight.
-
 #[resource_storage(GlobalAmbientLight)]
 #[pyclass(name = "GlobalAmbientLight", extends = PyResource, eq)]
 #[derive(Debug, Resource)]

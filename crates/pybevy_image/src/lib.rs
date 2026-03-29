@@ -34,10 +34,8 @@ pub use texture_atlas::PyTextureAtlas;
 pub use texture_atlas_layout::PyTextureAtlasLayout;
 pub use texture_atlas_sources::PyTextureAtlasSources;
 
-// Generate ImagePluginBridge via macro
 plugin_bridge!(PyImagePlugin, bevy::image::ImagePlugin);
 
-// Generate asset bridges
 asset_bridge!(TextureAtlasLayout, PyTextureAtlasLayout, not_loadable);
 pub fn register_image_bridges() {
     plugin_registry::register_plugin_bridge(ImagePluginBridge);
@@ -46,36 +44,23 @@ pub fn register_image_bridges() {
 pub fn add_image_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_image_bridges();
 
-    // Plugin
     m.add_class::<PyImagePlugin>()?;
-
-    // Image types
     m.add_class::<PyImage>()?;
     m.add_class::<PyRenderAssetUsages>()?;
     m.add_class::<ImageDataContext>()?;
     m.add_class::<ImageDataContextMut>()?;
     m.add_class::<ImagePixelContextMut>()?;
-
-    // Image format and settings
     m.add_class::<PyImageCompareFunction>()?;
     m.add_class::<PyImageFormat>()?;
     m.add_class::<PyImageFormatSetting>()?;
     m.add_class::<PyImageFormatSettingWithFormat>()?;
     m.add_class::<PyImageSamplerBorderColor>()?;
-
-    // Sampler and loader settings
     m.add_class::<PyImageSamplerDescriptor>()?;
     m.add_class::<PyImageSampler>()?;
     m.add_class::<PyImageLoaderSettings>()?;
-
-    // These live in bevy::image in Rust
     m.add_class::<PyImageAddressMode>()?;
     m.add_class::<PyImageFilterMode>()?;
-
-    // Image array layout
     m.add_class::<PyImageArrayLayout>()?;
-
-    // Texture atlas
     m.add_class::<PyTextureAtlas>()?;
     m.add_class::<PyTextureAtlasLayout>()?;
     m.add_class::<PyTextureAtlasSources>()?;

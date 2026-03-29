@@ -22,24 +22,16 @@ impl PyWinitSettings {
         })
     }
 
-    /// Default settings for games.
-    ///
-    /// Continuous rendering when focused, reactive low-power at 60Hz when unfocused.
     #[staticmethod]
     pub fn game() -> Self {
         PyWinitSettings(WinitSettings::game())
     }
 
-    /// Default settings for desktop applications.
-    ///
-    /// Reactive rendering (5s wait) when focused, reactive low-power (60s wait) when unfocused.
-    /// Use this for tools, editors, and other apps that don't need continuous rendering.
     #[staticmethod]
     pub fn desktop_app() -> Self {
         PyWinitSettings(WinitSettings::desktop_app())
     }
 
-    /// Maximum speed rendering - continuous in both focused and unfocused states.
     #[staticmethod]
     pub fn continuous() -> Self {
         PyWinitSettings(WinitSettings::continuous())

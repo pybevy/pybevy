@@ -30,7 +30,6 @@ use bevy::animation::{
 pub use plugin::PyAnimationPlugin;
 use pybevy_core::{plugin::plugin_registry, registry::global_registry};
 use pybevy_macros::{asset_bridge, component_bridge, newtype_bridge, plugin_bridge};
-// Re-export moved type from pybevy_mesh for backward compatibility
 pub use pybevy_mesh::PySkinnedMesh;
 use pyo3::prelude::*;
 pub use repeat_animation::PyRepeatAnimation;
@@ -168,28 +167,22 @@ impl pybevy_core::ComponentBridge for AnimationGraphHandleBridge {
 }
 
 pub fn register_animation_bridges() {
-    // Component bridges
     global_registry::register_component_bridge(AnimatedByBridge);
     global_registry::register_component_bridge(AnimationPlayerBridge);
     global_registry::register_component_bridge(AnimationTransitionsBridge);
     global_registry::register_component_bridge(AnimationGraphHandleBridge);
     global_registry::register_component_bridge(AnimationTargetIdBridge);
 
-    // Asset bridges
     global_registry::register_asset_bridge(AnimationClipBridge);
     global_registry::register_asset_bridge(AnimationGraphBridge);
 
-    // Plugin bridges
     plugin_registry::register_plugin_bridge(AnimationPluginBridge);
 }
 
 pub fn add_animation_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_animation_bridges();
 
-    // Plugin
     m.add_class::<PyAnimationPlugin>()?;
-
-    // Components
     m.add_class::<PyAnimatedBy>()?;
     m.add_class::<PyAnimationPlayer>()?;
     m.add_class::<PyAnimationTransitions>()?;
@@ -197,14 +190,10 @@ pub fn add_animation_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySkinnedMesh>()?;
     m.add_class::<PyAnimationTarget>()?;
     m.add_class::<PyActiveAnimation>()?;
-
-    // Assets
     m.add_class::<PyAnimationClip>()?;
     m.add_class::<PyAnimationGraph>()?;
     m.add_class::<PyAnimationGraphNode>()?;
     m.add_class::<PyAnimationNodeType>()?;
-
-    // Non-component types
     m.add_class::<PyAnimationEvent>()?;
     m.add_class::<PyAnimationEventData>()?;
     m.add_class::<PyAnimationCurve>()?;

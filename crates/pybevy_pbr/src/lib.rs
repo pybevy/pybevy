@@ -60,7 +60,6 @@ pub use wireframe_color::PyWireframeColor;
 pub use wireframe_config::PyWireframeConfig;
 pub use wireframe_material::PyWireframeMaterial;
 
-// Generate bridges for ComponentStorage-based components
 component_bridge!(
     DistanceFog,
     PyDistanceFog,
@@ -109,27 +108,22 @@ component_bridge!(NoWireframe, PyNoWireframe);
 component_bridge!(Lightmap, PyLightmap);
 unit_bridge!(ForwardDecal, PyForwardDecal);
 
-// Generate plugin bridges via macro
 plugin_bridge!(PyPbrPlugin, bevy::pbr::PbrPlugin);
 
-// Generate resource bridges
 resource_bridge!(WireframeConfig, PyWireframeConfig);
 resource_bridge!(DefaultOpaqueRendererMethod, PyDefaultOpaqueRendererMethod);
 
-// Generate asset bridges
 asset_bridge!(StandardMaterial, PyStandardMaterial);
 asset_bridge!(WireframeMaterial, PyWireframeMaterial, not_loadable);
 asset_bridge!(ScatteringMedium, PyScatteringMedium, not_loadable);
 asset_bridge!(ShaderMaterial, PyShaderMaterial, not_loadable);
 
-// Generate handle bridge for ShaderMaterial's MeshMaterial3d
 handle_bridge!(
     MeshMaterial3d::<ShaderMaterial>,
     PyMeshMaterial3dShader,
     "MeshMaterial3dShader"
 );
 
-// Generate plugin bridge with custom build logic
 plugin_bridge!(
     PyShaderMaterialPlugin,
     bevy::pbr::MaterialPlugin::<ShaderMaterial>,
@@ -158,29 +152,23 @@ pub fn register_pbr_bridges() {
     register_atmosphere_settings_batch();
     register_wireframe_color_batch();
 
-    // Plugins
     plugin_registry::register_plugin_bridge(PbrPluginBridge);
 
-    // Resources
     global_registry::register_resource_bridge(WireframeConfigBridge);
     global_registry::register_resource_bridge(DefaultOpaqueRendererMethodBridge);
 
-    // Assets
     global_registry::register_asset_bridge(StandardMaterialBridge);
     global_registry::register_asset_bridge(WireframeMaterialBridge);
     global_registry::register_asset_bridge(ScatteringMediumBridge);
     global_registry::register_asset_bridge(ShaderMaterialBridge);
 
-    // ShaderMaterial component + plugin
     global_registry::register_component_bridge(MeshMaterial3dShaderBridge);
     plugin_registry::register_plugin_bridge(MaterialPluginBridge);
 }
 pub fn add_pbr_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_pbr_bridges();
 
-    // Plugins
     m.add_class::<PyPbrPlugin>()?;
-
     m.add_class::<PyDistanceFog>()?;
     m.add_class::<PyFogFalloff>()?;
     m.add_class::<PyScreenSpaceAmbientOcclusion>()?;
@@ -203,7 +191,6 @@ pub fn add_pbr_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFalloff>()?;
     m.add_class::<PyOpaqueRendererMethod>()?;
 
-    // ShaderMaterial
     m.add_class::<PyShaderMaterial>()?;
     m.add_class::<PyShaderMaterialPlugin>()?;
     m.add_class::<PyMeshMaterial3dShader>()?;

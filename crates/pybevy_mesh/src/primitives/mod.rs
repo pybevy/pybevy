@@ -1,4 +1,3 @@
-// Mesh builders
 pub mod annulus;
 pub mod capsule2d;
 pub mod capsule3d;
@@ -20,10 +19,8 @@ pub mod torus;
 pub mod triangle2d;
 pub mod triangle3d;
 
-// Meshable shapes
 pub mod shapes;
 
-// Re-export mesh builders
 pub use annulus::PyAnnulusMeshBuilder;
 pub use capsule2d::PyCapsule2dMeshBuilder;
 pub use capsule3d::PyCapsule3dMeshBuilder;
@@ -39,7 +36,6 @@ pub use rectangle::PyRectangleMeshBuilder;
 pub use regular_polygon::PyRegularPolygonMeshBuilder;
 pub use rhombus::PyRhombusMeshBuilder;
 pub use segment2d::PySegment2dMeshBuilder;
-// Re-export shapes
 pub use shapes::{
     PyAnnulus, PyCapsule2d, PyCapsule3d, PyCircle, PyCircularSector, PyCircularSegment, PyCone,
     PyCuboid, PyCylinder, PyEllipse, PyPlane3d, PyRectangle, PyRegularPolygon, PyRhombus,

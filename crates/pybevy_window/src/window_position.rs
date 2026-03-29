@@ -24,10 +24,6 @@ impl From<PyWindowPosition> for WindowPosition {
 
 #[pymethods]
 impl PyWindowPosition {
-    /// Create a WindowPosition.
-    ///
-    /// - `WindowPosition()` — automatic (default)
-    /// - `WindowPosition(x, y)` — at specific coordinates
     #[new]
     #[pyo3(signature = (x=None, y=None))]
     pub fn new(x: Option<i32>, y: Option<i32>) -> Self {

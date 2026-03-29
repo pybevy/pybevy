@@ -56,7 +56,6 @@ pub use spot_light::PySpotLight;
 pub use sun_disk::PySunDisk;
 pub use volumetric_fog::PyVolumetricFog;
 
-// Generate component bridges for borrowed pattern components with View API support
 component_bridge!(
     PointLight,
     PyPointLight,
@@ -102,17 +101,14 @@ component_bridge!(
     batch_only_fields = [color]
 );
 
-// Generate bridges for unit/marker components
 unit_bridge!(NotShadowCaster, PyNotShadowCaster);
 unit_bridge!(NotShadowReceiver, PyNotShadowReceiver);
 unit_bridge!(TransmittedShadowReceiver, PyTransmittedShadowReceiver);
 unit_bridge!(VolumetricLight, PyVolumetricLight);
 unit_bridge!(LightProbe, PyLightProbe);
 
-// Generate bridges for newtype components
 newtype_bridge!(ShadowFilteringMethod, PyShadowFilteringMethod);
 
-// Generate bridges for borrowed pattern components
 component_bridge!(SunDisk, PySunDisk, view_fields = [angular_size, intensity]);
 component_bridge!(
     AtmosphereEnvironmentMapLight,
@@ -126,7 +122,6 @@ component_bridge!(
     batch_only_fields = [ambient_color]
 );
 
-// Generate bridges for newly migrated components
 component_bridge!(
     EnvironmentMapLight,
     PyEnvironmentMapLight,
@@ -141,7 +136,6 @@ component_bridge!(DirectionalLightTexture, PyDirectionalLightTexture, view_only_
 component_bridge!(SpotLightTexture, PySpotLightTexture);
 component_bridge!(PointLightTexture, PyPointLightTexture);
 component_bridge!(ClusteredDecal, PyClusteredDecal, view_fields = [tag]);
-// Use explicit bridge name to match expected "FogVolumeBridge"
 component_bridge!(
     FogVolume,
     PyFogVolumeNew,
@@ -160,7 +154,6 @@ component_bridge!(
     PyIrradianceVolume,
     view_fields = [intensity, affects_lightmapped_meshes]
 );
-// no_insert for read-only component, explicit bridge name for "Cascades"
 component_bridge!(Cascades, PyCascades, no_insert);
 component_bridge!(
     AmbientLight,
@@ -174,20 +167,16 @@ component_bridge!(
     view_fields = [overlap_proportion, minimum_distance]
 );
 
-// Generate LightPluginBridge via macro
 plugin_bridge!(PyLightPlugin, bevy::light::LightPlugin);
 
-// Generate resource bridge for GlobalAmbientLight resource (renamed from AmbientLight in Bevy 0.18)
 resource_bridge!(GlobalAmbientLight, PyGlobalAmbientLight);
 resource_bridge!(DirectionalLightShadowMap, PyDirectionalLightShadowMap);
 resource_bridge!(PointLightShadowMap, PyPointLightShadowMap);
 pub fn register_light_bridges() {
-    // Core light components with View API support
     global_registry::register_component_bridge(PointLightBridge);
     global_registry::register_component_bridge(DirectionalLightBridge);
     global_registry::register_component_bridge(SpotLightBridge);
 
-    // Batch spawning support for light components
     register_point_light_batch();
     register_directional_light_batch();
     register_spot_light_batch();
@@ -202,22 +191,15 @@ pub fn register_light_bridges() {
     register_cascade_shadow_config_batch();
     register_fog_volume_batch();
 
-    // Unit markers
     global_registry::register_component_bridge(NotShadowCasterBridge);
     global_registry::register_component_bridge(NotShadowReceiverBridge);
     global_registry::register_component_bridge(TransmittedShadowReceiverBridge);
     global_registry::register_component_bridge(VolumetricLightBridge);
     global_registry::register_component_bridge(LightProbeBridge);
-
-    // Newtype components
     global_registry::register_component_bridge(ShadowFilteringMethodBridge);
-
-    // Borrowed pattern components
     global_registry::register_component_bridge(SunDiskBridge);
     global_registry::register_component_bridge(AtmosphereEnvironmentMapLightBridge);
     global_registry::register_component_bridge(VolumetricFogBridge);
-
-    // Newly migrated components
     global_registry::register_component_bridge(EnvironmentMapLightBridge);
     global_registry::register_component_bridge(GeneratedEnvironmentMapLightBridge);
     global_registry::register_component_bridge(DirectionalLightTextureBridge);
@@ -230,21 +212,16 @@ pub fn register_light_bridges() {
     global_registry::register_component_bridge(AmbientLightBridge);
     global_registry::register_component_bridge(CascadeShadowConfigBridge);
 
-    // Resource bridges
     global_registry::register_resource_bridge(GlobalAmbientLightBridge);
     global_registry::register_resource_bridge(DirectionalLightShadowMapBridge);
     global_registry::register_resource_bridge(PointLightShadowMapBridge);
 
-    // Plugin bridges
     plugin_registry::register_plugin_bridge(LightPluginBridge);
 }
 pub fn add_light_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_light_bridges();
 
-    // Plugin
     m.add_class::<PyLightPlugin>()?;
-
-    // Add all light classes
     m.add_class::<PyPointLight>()?;
     m.add_class::<PyDirectionalLight>()?;
     m.add_class::<PySpotLight>()?;
@@ -259,7 +236,6 @@ pub fn add_light_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVolumetricFog>()?;
     m.add_class::<PyCascade>()?;
 
-    // Newly migrated classes
     m.add_class::<PyEnvironmentMapLight>()?;
     m.add_class::<PyGeneratedEnvironmentMapLight>()?;
     m.add_class::<PyDirectionalLightTexture>()?;

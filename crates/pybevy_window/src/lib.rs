@@ -77,7 +77,6 @@ pub use window_resolution::PyWindowResolution;
 pub use window_theme::PyWindowTheme;
 pub use winit_settings::PyWinitSettings;
 
-// Generate component bridges via macro
 component_bridge!(CursorIcon, PyCursorIcon);
 component_bridge!(CursorOptions, PyCursorOptions);
 component_bridge!(Monitor, PyMonitor, no_insert);
@@ -89,7 +88,6 @@ component_bridge!(
     view_fields = [decorations, resizable, transparent]
 );
 
-// Generate plugin bridges via macro
 plugin_bridge!(PyWinitPlugin, bevy::winit::WinitPlugin, |py_plugin, app| {
     let config: pyo3::PyRef<'_, PyWinitPlugin> = py_plugin.extract()?;
     if let Some(ref settings) = config.settings {
@@ -112,7 +110,6 @@ pub struct PyBevyWindowPlugin;
 
 impl Plugin for PyBevyWindowPlugin {
     fn build(&self, app: &mut App) {
-        // Register with global registry for type lookup without World access
         global_registry::register_component_bridge(CursorIconBridge);
         global_registry::register_component_bridge(CursorOptionsBridge);
         global_registry::register_component_bridge(MonitorBridge);
@@ -120,7 +117,6 @@ impl Plugin for PyBevyWindowPlugin {
         global_registry::register_component_bridge(PrimaryWindowBridge);
         global_registry::register_component_bridge(WindowBridge);
 
-        // Register component bridges with the Bevy resource
         if let Some(mut registry) = app
             .world_mut()
             .get_resource_mut::<DynamicComponentRegistry>()
@@ -144,7 +140,6 @@ pub fn register_window_bridges() {
     global_registry::register_component_bridge(WindowBridge);
     register_window_batch();
 
-    // Message bridges
     global_registry::register_message_bridge(cursor_events::CursorEnteredBridge);
     global_registry::register_message_bridge(cursor_events::CursorLeftBridge);
     global_registry::register_message_bridge(cursor_moved::CursorMovedBridge);
@@ -155,7 +150,6 @@ pub fn register_window_bridges() {
     global_registry::register_message_bridge(window_focused::WindowFocusedBridge);
     global_registry::register_message_bridge(window_resized::WindowResizedBridge);
 
-    // Plugins
     plugin_registry::register_plugin_bridge(WinitPluginBridge);
     plugin_registry::register_plugin_bridge(WindowPluginBridge);
 }
@@ -163,11 +157,8 @@ pub fn register_window_bridges() {
 pub fn add_window_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_window_bridges();
 
-    // Plugins
     m.add_class::<PyWinitPlugin>()?;
     m.add_class::<PyWindowPlugin>()?;
-
-    // Enums and simple types
     m.add_class::<PyAppLifecycle>()?;
     m.add_class::<PyCompositeAlphaMode>()?;
     m.add_class::<PyCursorGrabMode>()?;
@@ -186,7 +177,6 @@ pub fn add_window_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWindowResolution>()?;
     m.add_class::<PyWindowTheme>()?;
 
-    // Components
     m.add_class::<PyCursorIcon>()?;
     m.add_class::<PyCursorOptions>()?;
     m.add_class::<PyMonitor>()?;
@@ -194,7 +184,6 @@ pub fn add_window_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPrimaryWindow>()?;
     m.add_class::<PyWindow>()?;
 
-    // Message types
     m.add_class::<PyCursorEntered>()?;
     m.add_class::<PyCursorLeft>()?;
     m.add_class::<PyCursorMoved>()?;

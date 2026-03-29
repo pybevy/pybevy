@@ -40,15 +40,6 @@ enum HandleKind {
     WeakUuid(Uuid),
 }
 
-/// Python wrapper for Bevy's Handle<T>.
-///
-/// Handles are references to assets stored in `Assets<T>` resources.
-/// Strong handles keep the asset alive, weak handles are just references.
-///
-/// # Type Safety
-///
-/// The asset type is tracked via `type_ptr` which points to the Python type object.
-/// Type verification happens when converting to typed `Handle<A>`.
 #[pyclass(name = "Handle", subclass, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyHandle {

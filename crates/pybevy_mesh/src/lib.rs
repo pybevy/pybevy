@@ -37,13 +37,11 @@ pub use meshable::{PyMeshable, meshable_to_mesh};
 pub use morph_weights::PyMorphWeights;
 pub use plugin::PyMeshPlugin;
 pub use primitive_topology::PyPrimitiveTopology;
-// Re-export shapes
 pub use primitives::{
     PyAnnulus, PyCapsule2d, PyCapsule3d, PyCircle, PyCircularSector, PyCircularSegment, PyCone,
     PyCuboid, PyCylinder, PyEllipse, PyPlane3d, PyRectangle, PyRegularPolygon, PyRhombus,
     PySegment2d, PySphere, PyTetrahedron, PyTorus, PyTriangle2d, PyTriangle3d,
 };
-// Re-export mesh builders
 pub use primitives::{
     PyAnnulusMeshBuilder, PyCapsule2dMeshBuilder, PyCapsule3dMeshBuilder, PyCircleMeshBuilder,
     PyCircularSectorMeshBuilder, PyCircularSegmentMeshBuilder, PyConeMeshBuilder,
@@ -60,12 +58,10 @@ pub use skinned_mesh_inverse_bindposes::PySkinnedMeshInverseBindposes;
 pub use sphere_kind::PySphereKind;
 pub use vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues};
 
-// Generate component bridges for borrowed pattern components
 component_bridge!(MeshTag, PyMeshTag, view_fields = [0 as value]);
 component_bridge!(MorphWeights, PyMorphWeights);
 component_bridge!(SkinnedMesh, PySkinnedMesh);
 
-// Generate handle bridges for handle wrapper components
 handle_bridge!(Mesh3d, PyMesh3d);
 handle_bridge!(Mesh2d, PyMesh2d);
 handle_bridge!(
@@ -79,10 +75,8 @@ handle_bridge!(
     "MeshMaterial2d"
 );
 
-// Generate MeshPluginBridge via macro
 plugin_bridge!(PyMeshPlugin, bevy::mesh::MeshPlugin);
 
-// Generate asset bridges
 asset_bridge!(
     SkinnedMeshInverseBindposes,
     PySkinnedMeshInverseBindposes,
@@ -98,18 +92,13 @@ pub fn register_mesh_bridges() {
     global_registry::register_component_bridge(MeshMaterial3dBridge);
     global_registry::register_component_bridge(MeshMaterial2dBridge);
 
-    // Plugin bridges
     plugin_registry::register_plugin_bridge(MeshPluginBridge);
-
-    // Asset bridges
     global_registry::register_asset_bridge(SkinnedMeshInverseBindposesBridge);
 }
 pub fn add_mesh_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_mesh_bridges();
 
-    // Plugin
     m.add_class::<PyMeshPlugin>()?;
-
     m.add_class::<PyIndices>()?;
     m.add_class::<PyIndicesIterator>()?;
     m.add_class::<PyMesh>()?;
@@ -129,7 +118,6 @@ pub fn add_mesh_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MeshAttributeContextMut>()?;
     m.add_class::<PyMeshable>()?;
 
-    // Mesh builders
     m.add_class::<PyMeshBuilder>()?;
     m.add_class::<PyAnnulusMeshBuilder>()?;
     m.add_class::<PyCapsule2dMeshBuilder>()?;
@@ -152,7 +140,6 @@ pub fn add_mesh_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCircularSegmentMeshBuilder>()?;
     m.add_class::<PySegment2dMeshBuilder>()?;
 
-    // Meshable shapes (2D)
     m.add_class::<PyAnnulus>()?;
     m.add_class::<PyCapsule2d>()?;
     m.add_class::<PyCircle>()?;
@@ -165,7 +152,6 @@ pub fn add_mesh_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCircularSegment>()?;
     m.add_class::<PySegment2d>()?;
 
-    // Meshable shapes (3D)
     m.add_class::<PyCapsule3d>()?;
     m.add_class::<PyCone>()?;
     m.add_class::<PyCuboid>()?;

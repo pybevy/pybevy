@@ -1,11 +1,6 @@
 use bevy::text::{FontFeatureTag, FontFeatures};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-/// Python wrapper for Bevy's FontFeatures.
-///
-/// Provides a builder-style API for specifying OpenType font features.
-/// Features are accumulated internally and converted to Bevy's FontFeatures
-/// via the builder pattern.
 #[pyclass(name = "FontFeatures")]
 #[derive(Debug, Clone, Default)]
 pub struct PyFontFeatures {
@@ -60,30 +55,18 @@ impl PyFontFeatures {
         Self::default()
     }
 
-    /// Enable an OpenType feature (sets its value to 1).
-    ///
-    /// Returns self for method chaining.
     pub fn enable(slf: Py<Self>, py: Python<'_>, tag: &str) -> PyResult<Py<Self>> {
         let tag_bytes = parse_tag(tag)?;
         slf.borrow_mut(py).features.push((tag_bytes, 1));
         Ok(slf)
     }
 
-    /// Disable an OpenType feature (sets its value to 0).
-    ///
-    /// Returns self for method chaining.
     pub fn disable(slf: Py<Self>, py: Python<'_>, tag: &str) -> PyResult<Py<Self>> {
         let tag_bytes = parse_tag(tag)?;
         slf.borrow_mut(py).features.push((tag_bytes, 0));
         Ok(slf)
     }
 
-    /// Set an OpenType feature to a specific value.
-    ///
-    /// For most features, `enable()` or `disable()` should be used instead.
-    /// Some features like "wght" take numeric values.
-    ///
-    /// Returns self for method chaining.
     #[pyo3(signature = (tag, value))]
     pub fn set(slf: Py<Self>, py: Python<'_>, tag: &str, value: u32) -> PyResult<Py<Self>> {
         let tag_bytes = parse_tag(tag)?;
@@ -91,7 +74,6 @@ impl PyFontFeatures {
         Ok(slf)
     }
 
-    /// Standard ligatures ("liga").
     #[staticmethod]
     pub fn standard_ligatures() -> Self {
         Self {
@@ -99,7 +81,6 @@ impl PyFontFeatures {
         }
     }
 
-    /// Small caps ("smcp").
     #[staticmethod]
     pub fn small_caps() -> Self {
         Self {
@@ -107,7 +88,6 @@ impl PyFontFeatures {
         }
     }
 
-    /// Oldstyle figures ("onum").
     #[staticmethod]
     pub fn oldstyle_figures() -> Self {
         Self {
@@ -115,7 +95,6 @@ impl PyFontFeatures {
         }
     }
 
-    /// Tabular figures ("tnum").
     #[staticmethod]
     pub fn tabular_figures() -> Self {
         Self {
@@ -123,7 +102,6 @@ impl PyFontFeatures {
         }
     }
 
-    /// Slashed zero ("zero").
     #[staticmethod]
     pub fn slashed_zero() -> Self {
         Self {
@@ -131,7 +109,6 @@ impl PyFontFeatures {
         }
     }
 
-    /// Fractions ("frac").
     #[staticmethod]
     pub fn fractions() -> Self {
         Self {
