@@ -279,18 +279,16 @@ impl PyMat3 {
         } else if let Ok(vec) = other.extract::<PyVec3>() {
             Ok(Py::new(py, PyVec3::from_vec3(self_mat * Vec3::from(&vec)))?.into_any())
         } else {
-            Err(PyTypeError::new_err(
-                "Unsupported operand type for * (expected Mat3, Vec3, or scalar)",
-            ))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyMat3> {
+    fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_mat = *self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyMat3::mat3(scalar * self_mat))
+            Ok(Py::new(py, PyMat3::mat3(scalar * self_mat))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 

@@ -196,9 +196,7 @@ impl PyMat3A {
         } else if let Ok(vec) = other.extract::<PyVec3A>() {
             Ok(Py::new(py, PyVec3A::from_vec3a(self_mat * Vec3A::from(&vec)))?.into_any())
         } else {
-            Err(PyTypeError::new_err(
-                "Unsupported operand type for * (expected Mat3A, Vec3A, or scalar)",
-            ))
+            Ok(py.NotImplemented().into_any())
         }
     }
 

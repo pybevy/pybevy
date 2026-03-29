@@ -196,66 +196,66 @@ impl PyVec2 {
         Ok(PyVec2::from_vec2(self.as_ref()?.normalize()))
     }
 
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec2> {
+    fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_v = self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec2::from_vec2(*self_v + Vec2::splat(scalar)))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v + Vec2::splat(scalar)))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(PyVec2::from_vec2(*self_v + other_vec.get()))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v + other_vec.get()))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec2> {
+    fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_v = self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec2::from_vec2(*self_v - Vec2::splat(scalar)))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v - Vec2::splat(scalar)))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(PyVec2::from_vec2(*self_v - other_vec.get()))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v - other_vec.get()))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec2> {
+    fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_v = self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec2::from_vec2(*self_v * scalar))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v * scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(PyVec2::from_vec2(*self_v * other_vec.get()))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v * other_vec.get()))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __div__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec2> {
+    fn __div__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_v = self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec2::from_vec2(*self_v / scalar))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v / scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(PyVec2::from_vec2(*self_v / other_vec.get()))
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v / other_vec.get()))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for /"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
-    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec2> {
-        self.__div__(other)
+    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.__div__(other, py)
     }
 
     fn __neg__(&self) -> PyResult<PyVec2> {
         Ok(PyVec2::from_vec2(-*self.as_ref()?))
     }
 
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyVec2> {
+    fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_v = self.as_ref()?;
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(PyVec2::from_vec2(scalar * *self_v))
+            Ok(Py::new(py, PyVec2::from_vec2(scalar * *self_v))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(PyVec2::from_vec2(other_vec.get() * *self_v))
+            Ok(Py::new(py, PyVec2::from_vec2(other_vec.get() * *self_v))?.into_any())
         } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
+            Ok(py.NotImplemented().into_any())
         }
     }
 
