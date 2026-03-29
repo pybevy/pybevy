@@ -26,8 +26,7 @@ try:
 except ImportError:
     raise ImportError(
         "Numba is required for ViewColumn zero-copy access.\n"
-        "Install with: pip install numba\n"
-        "Or: poetry install --extras numba"
+        "Install with: pip install numba"
     )
 
 # Import the Rust type and Python wrappers

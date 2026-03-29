@@ -18,8 +18,7 @@ try:
 except ImportError as err:
     raise ImportError(
         "JAX is required for ViewColumn JAX interop.\n"
-        "Install with: pip install jax jaxlib\n"
-        "Or: poetry install --extras jax"
+        "Install with: pip install jax jaxlib"
     ) from err
 
 import numpy as np

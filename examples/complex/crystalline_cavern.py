@@ -31,8 +31,7 @@ import numpy as np
 try:
     import numba  # type: ignore[import-untyped]
 except ImportError:
-    print("ERROR: Numba is required for this example.")
-    print("Install with: pip install numba")
+    print("ERROR: Numba is required for this example. Install with: pip install numba")
     exit(1)
 
 from pybevy.camera import Exposure

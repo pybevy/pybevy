@@ -28,9 +28,7 @@ from typing import TYPE_CHECKING
 try:
     import numba  # type: ignore[import-untyped]
 except ImportError:
-    print("ERROR: Numba is required for this example.")
-    print("Install with: poetry install --extras numba")
-    print("Or: pip install numba")
+    print("ERROR: Numba is required for this example. Install with: pip install numba")
     exit(1)
 
 from pybevy.contrib import OrbitCamera, OrbitCameraPlugin

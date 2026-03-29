@@ -26,9 +26,8 @@ try:
     import jax  # type: ignore[import-untyped]
     import jax.numpy as jnp  # type: ignore[import-untyped]
 except ImportError:
-    print("ERROR: JAX is required for this example.")
-    print("Install with: pip install jax jaxlib")
-    print("Or for GPU: pip install jax[cuda12]")
+    print("ERROR: JAX is required for this example. Install with: pip install jax jaxlib")
+    print("For GPU support: pip install jax[cuda12]")
     exit(1)
 
 import numpy as np

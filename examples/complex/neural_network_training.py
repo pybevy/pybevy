@@ -13,8 +13,7 @@ try:
     import torchvision  # type: ignore[import-not-found,import-untyped]
     import torchvision.transforms as transforms  # type: ignore[import-not-found,import-untyped]
 except ImportError:
-    print("ERROR: PyTorch is required for this example.")
-    print("Install with: pip install torch torchvision")
+    print("ERROR: PyTorch is required for this example. Install with: pip install torch torchvision")
     exit(1)
 
 MNIST_IMG_SIZE = 28
