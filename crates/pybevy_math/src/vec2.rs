@@ -1,4 +1,4 @@
-use bevy::math::{BVec2, Vec2};
+use bevy::math::{BVec2, Vec2, Vec2Swizzles};
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{
     basic::CompareOp,
@@ -538,5 +538,25 @@ impl PyVec2 {
     #[staticmethod]
     pub fn from_angle(angle: f32) -> PyVec2 {
         PyVec2::from_vec2(Vec2::from_angle(angle))
+    }
+
+    pub fn to_angle(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.to_angle())
+    }
+
+    pub fn xx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xx().into())
+    }
+
+    pub fn xy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xy().into())
+    }
+
+    pub fn yx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yx().into())
+    }
+
+    pub fn yy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yy().into())
     }
 }
