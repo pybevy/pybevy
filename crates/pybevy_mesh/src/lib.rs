@@ -38,17 +38,15 @@ pub use morph_weights::PyMorphWeights;
 pub use plugin::PyMeshPlugin;
 pub use primitive_topology::PyPrimitiveTopology;
 pub use primitives::{
-    PyAnnulus, PyCapsule2d, PyCapsule3d, PyCircle, PyCircularSector, PyCircularSegment, PyCone,
-    PyCuboid, PyCylinder, PyEllipse, PyPlane3d, PyRectangle, PyRegularPolygon, PyRhombus,
-    PySegment2d, PySphere, PyTetrahedron, PyTorus, PyTriangle2d, PyTriangle3d,
-};
-pub use primitives::{
-    PyAnnulusMeshBuilder, PyCapsule2dMeshBuilder, PyCapsule3dMeshBuilder, PyCircleMeshBuilder,
-    PyCircularSectorMeshBuilder, PyCircularSegmentMeshBuilder, PyConeMeshBuilder,
-    PyCuboidMeshBuilder, PyCylinderMeshBuilder, PyEllipseMeshBuilder, PyPlaneMeshBuilder,
-    PyRectangleMeshBuilder, PyRegularPolygonMeshBuilder, PyRhombusMeshBuilder,
-    PySegment2dMeshBuilder, PySphereMeshBuilder, PyTetrahedronMeshBuilder, PyTorusMeshBuilder,
-    PyTriangle2dMeshBuilder, PyTriangle3dMeshBuilder,
+    PyAnnulus, PyAnnulusMeshBuilder, PyCapsule2d, PyCapsule2dMeshBuilder, PyCapsule3d,
+    PyCapsule3dMeshBuilder, PyCircle, PyCircleMeshBuilder, PyCircularSector,
+    PyCircularSectorMeshBuilder, PyCircularSegment, PyCircularSegmentMeshBuilder, PyCone,
+    PyConeMeshBuilder, PyCuboid, PyCuboidMeshBuilder, PyCylinder, PyCylinderMeshBuilder, PyEllipse,
+    PyEllipseMeshBuilder, PyPlane3d, PyPlaneMeshBuilder, PyRectangle, PyRectangleMeshBuilder,
+    PyRegularPolygon, PyRegularPolygonMeshBuilder, PyRhombus, PyRhombusMeshBuilder, PySegment2d,
+    PySegment2dMeshBuilder, PySphere, PySphereMeshBuilder, PyTetrahedron, PyTetrahedronMeshBuilder,
+    PyTorus, PyTorusMeshBuilder, PyTriangle2d, PyTriangle2dMeshBuilder, PyTriangle3d,
+    PyTriangle3dMeshBuilder,
 };
 use pybevy_core::{plugin::plugin_registry, registry::global_registry};
 use pybevy_macros::{asset_bridge, component_bridge, handle_bridge, plugin_bridge};

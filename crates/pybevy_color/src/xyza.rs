@@ -1,10 +1,11 @@
-use bevy::color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, Xyza};
-use bevy::math::StableInterpolate;
+use bevy::{
+    color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, Xyza},
+    math::StableInterpolate,
+};
 use pybevy_core::ValueStorage;
 use pyo3::prelude::*;
 
-use super::linear_rgba::PyLinearRgba;
-use super::srgba::PySrgba;
+use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 // === Xyza ===
 
@@ -228,4 +229,3 @@ impl PyXyza {
         ))
     }
 }
-

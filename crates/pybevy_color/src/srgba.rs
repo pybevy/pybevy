@@ -1,5 +1,7 @@
-use bevy::color::{Alpha, Gray, Luminance, Mix, Srgba, color_difference::EuclideanDistance};
-use bevy::math::StableInterpolate;
+use bevy::{
+    color::{Alpha, Gray, Luminance, Mix, Srgba, color_difference::EuclideanDistance},
+    math::StableInterpolate,
+};
 use pybevy_core::ValueStorage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 

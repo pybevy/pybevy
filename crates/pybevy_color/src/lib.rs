@@ -1,5 +1,5 @@
-mod common;
 pub mod color;
+mod common;
 pub mod hsla;
 pub mod hsva;
 pub mod laba;
@@ -18,10 +18,9 @@ pub use lcha::PyLcha;
 pub use linear_rgba::PyLinearRgba;
 pub use oklaba::PyOklaba;
 pub use oklcha::PyOklcha;
+use pyo3::prelude::*;
 pub use srgba::PySrgba;
 pub use xyza::PyXyza;
-
-use pyo3::prelude::*;
 
 pub fn add_color_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyColor>()?;

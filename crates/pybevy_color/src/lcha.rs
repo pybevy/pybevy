@@ -2,8 +2,7 @@ use bevy::color::{Alpha, Gray, Hue, Lcha, LinearRgba, Luminance, Mix, Srgba};
 use pybevy_core::ValueStorage;
 use pyo3::prelude::*;
 
-use super::linear_rgba::PyLinearRgba;
-use super::srgba::PySrgba;
+use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Lcha", eq)]
 #[derive(Debug, Clone, PartialEq)]

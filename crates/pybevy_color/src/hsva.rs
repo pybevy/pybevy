@@ -2,8 +2,7 @@ use bevy::color::{Alpha, Gray, Hsva, Hue, LinearRgba, Mix, Saturation, Srgba};
 use pybevy_core::ValueStorage;
 use pyo3::prelude::*;
 
-use super::linear_rgba::PyLinearRgba;
-use super::srgba::PySrgba;
+use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Hsva", eq)]
 #[derive(Debug, Clone, PartialEq)]

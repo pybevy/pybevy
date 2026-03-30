@@ -1,10 +1,13 @@
-use bevy::color::{Alpha, Gray, LinearRgba, Luminance, Mix, Oklaba, Srgba, color_difference::EuclideanDistance};
-use bevy::math::StableInterpolate;
+use bevy::{
+    color::{
+        Alpha, Gray, LinearRgba, Luminance, Mix, Oklaba, Srgba, color_difference::EuclideanDistance,
+    },
+    math::StableInterpolate,
+};
 use pybevy_core::ValueStorage;
 use pyo3::prelude::*;
 
-use super::linear_rgba::PyLinearRgba;
-use super::srgba::PySrgba;
+use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 // === Oklaba ===
 
@@ -236,4 +239,3 @@ impl PyOklaba {
         ))
     }
 }
-

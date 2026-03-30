@@ -1,11 +1,11 @@
-use bevy::color::{Alpha, Color, Hsla, Hue, LinearRgba, Luminance, Mix, Saturation, Srgba, color_difference::EuclideanDistance};
+use bevy::color::{
+    Alpha, Color, Hsla, Hue, LinearRgba, Luminance, Mix, Saturation, Srgba,
+    color_difference::EuclideanDistance,
+};
 use pybevy_core::PyMaterializable;
 use pyo3::prelude::*;
 
-use super::common::fmt_f32;
-use super::hsla::PyHsla;
-use super::linear_rgba::PyLinearRgba;
-use super::srgba::PySrgba;
+use super::{common::fmt_f32, hsla::PyHsla, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Color", extends = PyMaterializable, eq)]
 #[derive(Debug, Clone, PartialEq)]
