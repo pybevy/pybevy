@@ -28,7 +28,7 @@ name = "pybevy"
 crate-type = ["rlib"]
 
 [features]
-default = ["mcp"]
+default = ["mcp", "linux-display"]
 linux-display = ["bevy/x11", "bevy/wayland"]
 debug = ["bevy/debug"]
 mcp = ["dep:pybevy_control", "pybevy_control?/bevy_winit", "pybevy_reload/mcp"]
