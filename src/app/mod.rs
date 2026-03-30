@@ -3,7 +3,10 @@ use bevy::{
         First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate, Last, Main,
         PostStartup, PostUpdate, PreStartup, PreUpdate, Startup, Update,
     },
-    ecs::{schedule::ScheduleLabel, world::World},
+    ecs::{
+        schedule::{InternedScheduleLabel, ScheduleLabel},
+        world::World,
+    },
 };
 use pyo3::prelude::*;
 
@@ -64,6 +67,35 @@ impl PyStage {
             PyStage::FixedLast => world.run_schedule(FixedLast),
             PyStage::SimTick => world.run_schedule(SimTick),
         }
+    }
+
+    /// Return the interned Bevy schedule label for this stage.
+    pub fn intern_label(self) -> InternedScheduleLabel {
+        match self {
+            PyStage::Startup => Startup.intern(),
+            PyStage::PreStartup => PreStartup.intern(),
+            PyStage::PostStartup => PostStartup.intern(),
+            PyStage::Main => Main.intern(),
+            PyStage::First => First.intern(),
+            PyStage::PreUpdate => PreUpdate.intern(),
+            PyStage::Update => Update.intern(),
+            PyStage::PostUpdate => PostUpdate.intern(),
+            PyStage::Last => Last.intern(),
+            PyStage::FixedFirst => FixedFirst.intern(),
+            PyStage::FixedPreUpdate => FixedPreUpdate.intern(),
+            PyStage::FixedUpdate => FixedUpdate.intern(),
+            PyStage::FixedPostUpdate => FixedPostUpdate.intern(),
+            PyStage::FixedLast => FixedLast.intern(),
+            PyStage::SimTick => SimTick.intern(),
+        }
+    }
+
+    /// Whether this stage is a Startup variant (Startup, PreStartup, PostStartup).
+    pub fn is_startup(self) -> bool {
+        matches!(
+            self,
+            PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup
+        )
     }
 }
 

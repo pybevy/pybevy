@@ -18,8 +18,8 @@ use tower_http::cors::CorsLayer;
 use crate::{
     api_index::ApiIndex,
     bridge::{
-        ControlOperation, ControlRequest, ControlSender, EntityRef, SharedLatestError,
-        SseEventBroadcaster,
+        ControlOperation, ControlRequest, ControlSender, EntityRef, MutateOp, OtherOp, ReloadOp,
+        SceneOp, SharedLatestError, SpatialOp, SseEventBroadcaster, TimeOp, VisualOp,
     },
 };
 
@@ -220,7 +220,12 @@ async fn handle_sse(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 async fn list_entities(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListEntities).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Scene(SceneOp::ListEntities),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -232,9 +237,9 @@ async fn get_entity(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::GetEntity {
+        ControlOperation::Scene(SceneOp::GetEntity {
             entity: parse_entity_ref(&entity),
-        },
+        }),
     )
     .await
     {
@@ -257,9 +262,9 @@ async fn spawn_entity(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::SpawnEntity {
+        ControlOperation::Mutate(MutateOp::SpawnEntity {
             components: body.components,
-        },
+        }),
     )
     .await
     {
@@ -277,9 +282,9 @@ async fn despawn_entity(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::DespawnEntity {
+        ControlOperation::Mutate(MutateOp::DespawnEntity {
             entity: parse_entity_ref(&entity),
-        },
+        }),
     )
     .await
     {
@@ -294,10 +299,10 @@ async fn get_component(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::GetComponent {
+        ControlOperation::Scene(SceneOp::GetComponent {
             entity: parse_entity_ref(&entity),
             component,
-        },
+        }),
     )
     .await
     {
@@ -321,11 +326,11 @@ async fn set_component(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::SetComponent {
+        ControlOperation::Mutate(MutateOp::SetComponent {
             entity: parse_entity_ref(&entity),
             component,
             fields: body.fields,
-        },
+        }),
     )
     .await
     {
@@ -343,10 +348,10 @@ async fn remove_component(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::RemoveComponent {
+        ControlOperation::Mutate(MutateOp::RemoveComponent {
             entity: parse_entity_ref(&entity),
             component,
-        },
+        }),
     )
     .await
     {
@@ -361,9 +366,9 @@ async fn get_bounding_box(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::GetBoundingBox {
+        ControlOperation::Scene(SceneOp::GetBoundingBox {
             entity: parse_entity_ref(&entity),
-        },
+        }),
     )
     .await
     {
@@ -385,10 +390,10 @@ async fn query_entities(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::QueryEntities {
+        ControlOperation::Scene(SceneOp::QueryEntities {
             with: body.with,
             without: body.without,
-        },
+        }),
     )
     .await
     {
@@ -398,13 +403,23 @@ async fn query_entities(
 }
 
 async fn scene_summary(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::SceneSummary).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Scene(SceneOp::SceneSummary),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
 }
 async fn list_resources(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListResources).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Scene(SceneOp::ListResources),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -425,10 +440,10 @@ async fn insert_resource(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::InsertResource {
+        ControlOperation::Mutate(MutateOp::InsertResource {
             resource_type,
             value: body.value,
-        },
+        }),
     )
     .await
     {
@@ -446,7 +461,7 @@ async fn remove_resource(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::RemoveResource { resource_type },
+        ControlOperation::Mutate(MutateOp::RemoveResource { resource_type }),
     )
     .await
     {
@@ -455,7 +470,7 @@ async fn remove_resource(
     }
 }
 async fn list_systems(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListSystems).await {
+    match send_operation(&state.sender, ControlOperation::Scene(SceneOp::ListSystems)).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -465,7 +480,12 @@ async fn get_component_schema(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetComponentSchema { name }).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Scene(SceneOp::GetComponentSchema { name }),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -494,13 +514,13 @@ async fn capture_screenshot(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::CaptureScreenshot {
+        ControlOperation::Visual(VisualOp::CaptureScreenshot {
             delay_frames: body.delay_frames,
             max_width: body.max_width,
             position: body.position,
             look_at: body.look_at,
             hide_ui: body.hide_ui,
-        },
+        }),
     )
     .await
     {
@@ -518,13 +538,13 @@ async fn capture_with_gizmos(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::CaptureWithGizmos {
+        ControlOperation::Visual(VisualOp::CaptureWithGizmos {
             delay_frames: body.delay_frames,
             max_width: body.max_width,
             position: body.position,
             look_at: body.look_at,
             hide_ui: body.hide_ui,
-        },
+        }),
     )
     .await
     {
@@ -565,14 +585,14 @@ async fn capture_timeline(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::CaptureTimeline {
+        ControlOperation::Visual(VisualOp::CaptureTimeline {
             total_frames: body.total_frames,
             capture_count: body.capture_count,
             max_width: body.max_width,
             columns: body.columns,
             position: body.position,
             look_at: body.look_at,
-        },
+        }),
     )
     .await
     {
@@ -602,7 +622,7 @@ async fn capture_turnaround(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::CaptureTurnaround {
+        ControlOperation::Visual(VisualOp::CaptureTurnaround {
             look_at: body.look_at,
             distance: body.distance,
             elevation: body.elevation,
@@ -611,7 +631,7 @@ async fn capture_turnaround(
             columns: body.columns,
             max_width: body.max_width,
             hide_ui: body.hide_ui,
-        },
+        }),
     )
     .await
     {
@@ -641,7 +661,7 @@ async fn capture_depth(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::CaptureDepth {
+        ControlOperation::Visual(VisualOp::CaptureDepth {
             position: body.position,
             look_at: body.look_at,
             sample_points: body.sample_points,
@@ -650,7 +670,7 @@ async fn capture_depth(
             delay_frames: body.delay_frames,
             hide_ui: body.hide_ui,
             max_width: body.max_width,
-        },
+        }),
     )
     .await
     {
@@ -677,11 +697,11 @@ async fn trigger_reload(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::TriggerReload {
+        ControlOperation::Reload(ReloadOp::TriggerReload {
             mode: body.mode,
             pause: body.pause,
             time_scale: body.time_scale,
-        },
+        }),
     )
     .await
     {
@@ -691,7 +711,12 @@ async fn trigger_reload(
 }
 
 async fn get_reload_status(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetReloadStatus).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Reload(ReloadOp::GetReloadStatus),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -717,7 +742,7 @@ async fn reload_and_capture(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::ReloadAndCapture {
+        ControlOperation::Reload(ReloadOp::ReloadAndCapture {
             mode: body.mode,
             pause: body.pause,
             time_scale: body.time_scale,
@@ -726,7 +751,7 @@ async fn reload_and_capture(
             position: body.position,
             look_at: body.look_at,
             hide_ui: body.hide_ui,
-        },
+        }),
     )
     .await
     {
@@ -748,7 +773,7 @@ async fn execute_python(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::ExecutePython { code: body.code },
+        ControlOperation::Other(OtherOp::ExecutePython { code: body.code }),
     )
     .await
     {
@@ -757,21 +782,21 @@ async fn execute_python(
     }
 }
 async fn get_time_status(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetTimeStatus).await {
+    match send_operation(&state.sender, ControlOperation::Time(TimeOp::GetTimeStatus)).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
 }
 
 async fn pause_time(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::PauseTime).await {
+    match send_operation(&state.sender, ControlOperation::Time(TimeOp::PauseTime)).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
 }
 
 async fn resume_time(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ResumeTime).await {
+    match send_operation(&state.sender, ControlOperation::Time(TimeOp::ResumeTime)).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -788,7 +813,7 @@ async fn set_time_scale(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::SetTimeScale { scale: body.scale },
+        ControlOperation::Time(TimeOp::SetTimeScale { scale: body.scale }),
     )
     .await
     {
@@ -810,10 +835,10 @@ async fn seek_time(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::SeekTime {
+        ControlOperation::Time(TimeOp::SeekTime {
             seconds: body.seconds,
             pause: body.pause,
-        },
+        }),
     )
     .await
     {
@@ -842,12 +867,12 @@ async fn mutate_asset(
     };
     match send_operation(
         &state.sender,
-        ControlOperation::MutateAsset {
+        ControlOperation::Other(OtherOp::MutateAsset {
             entity,
             component: body.component,
             asset_type: body.asset_type,
             fields: body.fields,
-        },
+        }),
     )
     .await
     {
@@ -875,7 +900,7 @@ async fn query_spatial(
     };
     match send_operation(
         &state.sender,
-        ControlOperation::QuerySpatial { entity_a, entity_b },
+        ControlOperation::Spatial(SpatialOp::QuerySpatial { entity_a, entity_b }),
     )
     .await
     {
@@ -901,11 +926,11 @@ async fn query_spatial_neighborhood(
     };
     match send_operation(
         &state.sender,
-        ControlOperation::QuerySpatialNeighborhood {
+        ControlOperation::Spatial(SpatialOp::QuerySpatialNeighborhood {
             entity,
             radius: body.radius,
             max_results: body.max_results,
-        },
+        }),
     )
     .await
     {
@@ -934,12 +959,12 @@ async fn check_overlaps(
     };
     match send_operation(
         &state.sender,
-        ControlOperation::CheckOverlaps {
+        ControlOperation::Spatial(SpatialOp::CheckOverlaps {
             entity,
             include_siblings: body.include_siblings,
             max_float_gap: body.max_float_gap,
             ground_y: body.ground_y,
-        },
+        }),
     )
     .await
     {
@@ -965,13 +990,13 @@ async fn check_all_overlaps(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::CheckAllOverlaps {
+        ControlOperation::Spatial(SpatialOp::CheckAllOverlaps {
             min_penetration: body.min_penetration,
             max_results: body.max_results,
             max_float_gap: body.max_float_gap,
             ground_y: body.ground_y,
             include_siblings: body.include_siblings,
-        },
+        }),
     )
     .await
     {
@@ -980,21 +1005,36 @@ async fn check_all_overlaps(
     }
 }
 async fn get_performance(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetPerformance).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Other(OtherOp::GetPerformance),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
 }
 
 async fn get_last_error(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetLastError).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Reload(ReloadOp::GetLastError),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
 }
 
 async fn debug_registry(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::DebugRegistry).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Scene(SceneOp::DebugRegistry),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -1013,9 +1053,9 @@ async fn batch_mutate(
     }
     match send_operation(
         &state.sender,
-        ControlOperation::BatchMutate {
+        ControlOperation::Mutate(MutateOp::BatchMutate {
             operations: body.operations,
-        },
+        }),
     )
     .await
     {
@@ -1038,7 +1078,7 @@ async fn submit_schedule(
 
     match send_operation(
         &state.sender,
-        ControlOperation::SubmitSchedule { request: body },
+        ControlOperation::Other(OtherOp::SubmitSchedule { request: body }),
     )
     .await
     {
@@ -1092,7 +1132,7 @@ async fn call_custom_tool(
 ) -> impl IntoResponse {
     match send_operation(
         &state.sender,
-        ControlOperation::CallCustomTool { name, arguments },
+        ControlOperation::Other(OtherOp::CallCustomTool { name, arguments }),
     )
     .await
     {
@@ -1101,14 +1141,19 @@ async fn call_custom_tool(
     }
 }
 async fn list_configs(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListConfigs).await {
+    match send_operation(&state.sender, ControlOperation::Other(OtherOp::ListConfigs)).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
 }
 
 async fn get_config(State(state): State<AppState>, Path(key): Path<String>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetConfig { key }).await {
+    match send_operation(
+        &state.sender,
+        ControlOperation::Other(OtherOp::GetConfig { key }),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }

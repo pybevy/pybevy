@@ -17,8 +17,9 @@ use tokio::sync::oneshot;
 
 use crate::{
     bridge::{
-        ControlError, ControlOperation, DebugCameraRequest, EntityRef, PendingReloadResponses,
-        PendingScreenshot, PendingScreenshots,
+        ControlError, ControlOperation, DebugCameraRequest, EntityRef, MutateOp, OtherOp,
+        PendingReloadResponses, PendingScreenshot, PendingScreenshots, ReloadOp, SceneOp,
+        SpatialOp, TimeOp, VisualOp,
     },
     handlers::{
         self,
@@ -358,18 +359,18 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
 
     match tool {
         // Time control
-        "pause_time" => Ok(ControlOperation::PauseTime),
-        "resume_time" => Ok(ControlOperation::ResumeTime),
+        "pause_time" => Ok(ControlOperation::Time(TimeOp::PauseTime)),
+        "resume_time" => Ok(ControlOperation::Time(TimeOp::ResumeTime)),
         "set_time_scale" => {
             let scale = get_f32("scale").unwrap_or(1.0);
-            Ok(ControlOperation::SetTimeScale { scale })
+            Ok(ControlOperation::Time(TimeOp::SetTimeScale { scale }))
         }
-        "get_time_status" => Ok(ControlOperation::GetTimeStatus),
+        "get_time_status" => Ok(ControlOperation::Time(TimeOp::GetTimeStatus)),
         "seek_time" => {
             let seconds =
                 get_f64("seconds").ok_or_else(|| "seek_time requires 'seconds'".to_string())?;
             let pause = get_bool("pause", true);
-            Ok(ControlOperation::SeekTime { seconds, pause })
+            Ok(ControlOperation::Time(TimeOp::SeekTime { seconds, pause }))
         }
 
         // Scene queries
@@ -392,33 +393,38 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                         .collect()
                 })
                 .unwrap_or_default();
-            Ok(ControlOperation::QueryEntities { with, without })
+            Ok(ControlOperation::Scene(SceneOp::QueryEntities {
+                with,
+                without,
+            }))
         }
         "get_component" => {
             let component = get_str("component");
             if component.is_empty() {
                 return Err("get_component requires 'component'".to_string());
             }
-            Ok(ControlOperation::GetComponent {
+            Ok(ControlOperation::Scene(SceneOp::GetComponent {
                 entity: get_entity_ref(),
                 component,
-            })
+            }))
         }
         "get_component_schema" => {
             let name = get_str("name");
             if name.is_empty() {
                 return Err("get_component_schema requires 'name'".to_string());
             }
-            Ok(ControlOperation::GetComponentSchema { name })
+            Ok(ControlOperation::Scene(SceneOp::GetComponentSchema {
+                name,
+            }))
         }
-        "get_scene_summary" => Ok(ControlOperation::SceneSummary),
-        "get_performance" => Ok(ControlOperation::GetPerformance),
-        "get_registry" => Ok(ControlOperation::DebugRegistry),
-        "get_reload_status" => Ok(ControlOperation::GetReloadStatus),
-        "get_last_error" => Ok(ControlOperation::GetLastError),
-        "get_bounding_box" => Ok(ControlOperation::GetBoundingBox {
+        "get_scene_summary" => Ok(ControlOperation::Scene(SceneOp::SceneSummary)),
+        "get_performance" => Ok(ControlOperation::Other(OtherOp::GetPerformance)),
+        "get_registry" => Ok(ControlOperation::Scene(SceneOp::DebugRegistry)),
+        "get_reload_status" => Ok(ControlOperation::Reload(ReloadOp::GetReloadStatus)),
+        "get_last_error" => Ok(ControlOperation::Reload(ReloadOp::GetLastError)),
+        "get_bounding_box" => Ok(ControlOperation::Scene(SceneOp::GetBoundingBox {
             entity: get_entity_ref(),
-        }),
+        })),
 
         // Mutations
         "spawn_entity" => {
@@ -426,29 +432,31 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                 .and_then(|o| o.get("components"))
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::SpawnEntity { components })
+            Ok(ControlOperation::Mutate(MutateOp::SpawnEntity {
+                components,
+            }))
         }
-        "despawn_entity" => Ok(ControlOperation::DespawnEntity {
+        "despawn_entity" => Ok(ControlOperation::Mutate(MutateOp::DespawnEntity {
             entity: get_entity_ref(),
-        }),
+        })),
         "set_component" => {
             let component = get_str("component");
             let fields = obj
                 .and_then(|o| o.get("fields"))
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::SetComponent {
+            Ok(ControlOperation::Mutate(MutateOp::SetComponent {
                 entity: get_entity_ref(),
                 component,
                 fields,
-            })
+            }))
         }
         "remove_component" => {
             let component = get_str("component");
-            Ok(ControlOperation::RemoveComponent {
+            Ok(ControlOperation::Mutate(MutateOp::RemoveComponent {
                 entity: get_entity_ref(),
                 component,
-            })
+            }))
         }
         "set_resource" => {
             let resource_type = get_str("resource_type");
@@ -456,18 +464,20 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                 .and_then(|o| o.get("value"))
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::InsertResource {
+            Ok(ControlOperation::Mutate(MutateOp::InsertResource {
                 resource_type,
                 value,
-            })
+            }))
         }
         "remove_resource" => {
             let resource_type = get_str("resource_type");
-            Ok(ControlOperation::RemoveResource { resource_type })
+            Ok(ControlOperation::Mutate(MutateOp::RemoveResource {
+                resource_type,
+            }))
         }
         "run_code" => {
             let code = get_str("code");
-            Ok(ControlOperation::ExecutePython { code })
+            Ok(ControlOperation::Other(OtherOp::ExecutePython { code }))
         }
         "batch" => {
             let operations = obj
@@ -475,7 +485,9 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            Ok(ControlOperation::BatchMutate { operations })
+            Ok(ControlOperation::Mutate(MutateOp::BatchMutate {
+                operations,
+            }))
         }
 
         // Asset mutation
@@ -486,12 +498,12 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                 .and_then(|o| o.get("fields"))
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::MutateAsset {
+            Ok(ControlOperation::Other(OtherOp::MutateAsset {
                 entity: get_entity_ref(),
                 component,
                 asset_type,
                 fields,
-            })
+            }))
         }
 
         // Spatial queries
@@ -502,11 +514,13 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                     .and_then(|o| o.get("max_results"))
                     .and_then(|v| v.as_u64())
                     .map(|v| v as usize);
-                Ok(ControlOperation::QuerySpatialNeighborhood {
-                    entity: get_entity_ref(),
-                    radius,
-                    max_results,
-                })
+                Ok(ControlOperation::Spatial(
+                    SpatialOp::QuerySpatialNeighborhood {
+                        entity: get_entity_ref(),
+                        radius,
+                        max_results,
+                    },
+                ))
             } else {
                 let entity_a = if let Some(id) = obj
                     .and_then(|o| o.get("entity_id_a"))
@@ -524,7 +538,10 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                 } else {
                     EntityRef::Name(get_str("name_b"))
                 };
-                Ok(ControlOperation::QuerySpatial { entity_a, entity_b })
+                Ok(ControlOperation::Spatial(SpatialOp::QuerySpatial {
+                    entity_a,
+                    entity_b,
+                }))
             }
         }
         "check_overlaps" => {
@@ -534,12 +551,12 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             let ground_y = get_f32("ground_y");
             if has_entity {
                 let include_siblings = get_bool("include_siblings", false);
-                Ok(ControlOperation::CheckOverlaps {
+                Ok(ControlOperation::Spatial(SpatialOp::CheckOverlaps {
                     entity: get_entity_ref(),
                     include_siblings,
                     max_float_gap,
                     ground_y,
-                })
+                }))
             } else {
                 let min_penetration = get_f32("min_penetration");
                 let max_results = obj
@@ -547,13 +564,13 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
                     .and_then(|v| v.as_u64())
                     .map(|v| v as usize);
                 let include_siblings = get_bool("include_siblings", false);
-                Ok(ControlOperation::CheckAllOverlaps {
+                Ok(ControlOperation::Spatial(SpatialOp::CheckAllOverlaps {
                     min_penetration,
                     max_results,
                     max_float_gap,
                     ground_y,
                     include_siblings,
-                })
+                }))
             }
         }
 
@@ -565,37 +582,37 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             let look_at = get_vec3("look_at");
             let hide_ui = get_bool("hide_ui", true);
             if get_bool("gizmos", false) {
-                Ok(ControlOperation::CaptureWithGizmos {
+                Ok(ControlOperation::Visual(VisualOp::CaptureWithGizmos {
                     delay_frames,
                     max_width,
                     position,
                     look_at,
                     hide_ui,
-                })
+                }))
             } else {
-                Ok(ControlOperation::CaptureScreenshot {
+                Ok(ControlOperation::Visual(VisualOp::CaptureScreenshot {
                     delay_frames,
                     max_width,
                     position,
                     look_at,
                     hide_ui,
-                })
+                }))
             }
         }
-        "capture_timeline" => Ok(ControlOperation::CaptureTimeline {
+        "capture_timeline" => Ok(ControlOperation::Visual(VisualOp::CaptureTimeline {
             total_frames: get_u32("total_frames").unwrap_or(60),
             capture_count: get_u32("capture_count").unwrap_or(6),
             max_width: get_u32("max_width"),
             columns: get_u32("columns").unwrap_or(3),
             position: get_vec3("position"),
             look_at: get_vec3("look_at"),
-        }),
-        "reload" => Ok(ControlOperation::TriggerReload {
+        })),
+        "reload" => Ok(ControlOperation::Reload(ReloadOp::TriggerReload {
             mode: get_str("mode"),
             pause: get_bool("pause", false),
             time_scale: get_f32("time_scale"),
-        }),
-        "reload_and_capture" => Ok(ControlOperation::ReloadAndCapture {
+        })),
+        "reload_and_capture" => Ok(ControlOperation::Reload(ReloadOp::ReloadAndCapture {
             mode: {
                 let m = get_str("mode");
                 if m.is_empty() { "full".to_string() } else { m }
@@ -607,8 +624,8 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             position: get_vec3("position"),
             look_at: get_vec3("look_at"),
             hide_ui: Some(get_bool("hide_ui", true)),
-        }),
-        "capture_turnaround" => Ok(ControlOperation::CaptureTurnaround {
+        })),
+        "capture_turnaround" => Ok(ControlOperation::Visual(VisualOp::CaptureTurnaround {
             look_at: get_vec3("look_at"),
             distance: get_f32("distance"),
             elevation: get_f32("elevation"),
@@ -619,8 +636,8 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             columns: get_u32("columns"),
             max_width: get_u32("max_width"),
             hide_ui: obj.and_then(|o| o.get("hide_ui")).and_then(|v| v.as_bool()),
-        }),
-        "capture_depth" => Ok(ControlOperation::CaptureDepth {
+        })),
+        "capture_depth" => Ok(ControlOperation::Visual(VisualOp::CaptureDepth {
             position: get_vec3("position"),
             look_at: get_vec3("look_at"),
             sample_points: obj.and_then(|o| o.get("sample_points")).and_then(|v| {
@@ -643,13 +660,16 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             delay_frames: get_u32("delay_frames"),
             hide_ui: obj.and_then(|o| o.get("hide_ui")).and_then(|v| v.as_bool()),
             max_width: get_u32("max_width"),
-        }),
+        })),
 
         // Custom tools
         _ if tool.starts_with("custom.") => {
             let name = tool.to_string();
             let arguments = args.clone();
-            Ok(ControlOperation::CallCustomTool { name, arguments })
+            Ok(ControlOperation::Other(OtherOp::CallCustomTool {
+                name,
+                arguments,
+            }))
         }
 
         _ => Err(format!("unknown tool: '{}'", tool)),
@@ -1144,13 +1164,13 @@ fn setup_deferred_action(
         "capture_screenshot" => {
             let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
             let (delay_frames, max_width, position, look_at, hide_ui, with_gizmos) = match &op {
-                ControlOperation::CaptureScreenshot {
+                ControlOperation::Visual(VisualOp::CaptureScreenshot {
                     delay_frames,
                     max_width,
                     position,
                     look_at,
                     hide_ui,
-                } => (
+                }) => (
                     *delay_frames,
                     *max_width,
                     *position,
@@ -1158,13 +1178,13 @@ fn setup_deferred_action(
                     *hide_ui,
                     false,
                 ),
-                ControlOperation::CaptureWithGizmos {
+                ControlOperation::Visual(VisualOp::CaptureWithGizmos {
                     delay_frames,
                     max_width,
                     position,
                     look_at,
                     hide_ui,
-                } => (
+                }) => (
                     *delay_frames,
                     *max_width,
                     *position,
@@ -1195,11 +1215,11 @@ fn setup_deferred_action(
         "reload" => {
             let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
             let (mode, pause, time_scale) = match &op {
-                ControlOperation::TriggerReload {
+                ControlOperation::Reload(ReloadOp::TriggerReload {
                     mode,
                     pause,
                     time_scale,
-                } => (mode.clone(), *pause, *time_scale),
+                }) => (mode.clone(), *pause, *time_scale),
                 _ => unreachable!(),
             };
 
@@ -1224,7 +1244,7 @@ fn setup_deferred_action(
             let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
             let (mode, pause, time_scale, delay_frames, max_width, position, look_at, hide_ui) =
                 match &op {
-                    ControlOperation::ReloadAndCapture {
+                    ControlOperation::Reload(ReloadOp::ReloadAndCapture {
                         mode,
                         pause,
                         time_scale,
@@ -1233,7 +1253,7 @@ fn setup_deferred_action(
                         position,
                         look_at,
                         hide_ui,
-                    } => (
+                    }) => (
                         mode.clone(),
                         *pause,
                         *time_scale,
@@ -1273,14 +1293,14 @@ fn setup_deferred_action(
         "capture_timeline" => {
             let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
             let (total_frames, capture_count, max_width, columns, position, look_at) = match &op {
-                ControlOperation::CaptureTimeline {
+                ControlOperation::Visual(VisualOp::CaptureTimeline {
                     total_frames,
                     capture_count,
                     max_width,
                     columns,
                     position,
                     look_at,
-                } => (
+                }) => (
                     *total_frames,
                     *capture_count,
                     *max_width,
@@ -1336,7 +1356,7 @@ fn setup_deferred_action(
                 max_width,
                 hide_ui,
             ) = match &op {
-                ControlOperation::CaptureTurnaround {
+                ControlOperation::Visual(VisualOp::CaptureTurnaround {
                     look_at,
                     distance,
                     elevation,
@@ -1345,7 +1365,7 @@ fn setup_deferred_action(
                     columns,
                     max_width,
                     hide_ui,
-                } => (
+                }) => (
                     *look_at,
                     *distance,
                     *elevation,
@@ -1412,7 +1432,7 @@ fn setup_deferred_action(
                 hide_ui,
                 max_width,
             ) = match &op {
-                ControlOperation::CaptureDepth {
+                ControlOperation::Visual(VisualOp::CaptureDepth {
                     position,
                     look_at,
                     sample_points,
@@ -1421,7 +1441,7 @@ fn setup_deferred_action(
                     delay_frames,
                     hide_ui,
                     max_width,
-                } => (
+                }) => (
                     *position,
                     *look_at,
                     sample_points.clone(),
