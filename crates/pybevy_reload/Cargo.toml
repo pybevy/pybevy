@@ -1,0 +1,32 @@
+[package]
+name = "pybevy_reload"
+version = "0.2.1"
+edition = "2024"
+description = "Hot reload infrastructure for PyBevy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
+
+[features]
+default = []
+mcp = ["dep:pybevy_control"]
+
+[dependencies]
+pybevy_core = { path = "../pybevy_core", version = "=0.2.1" }
+pybevy_control = { path = "../pybevy_control", version = "=0.2.1", optional = true }
+sysinfo = "0.37"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dependencies.bevy]
+workspace = true
+features = [
+    "bevy_asset",
+    "bevy_color",
+    "bevy_ui",
+    "bevy_text",
+    "bevy_render",
+    "bevy_pbr",
+    "bevy_animation",
+    "bevy_scene",
+    "bevy_log",
+]

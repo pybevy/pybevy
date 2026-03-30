@@ -1,0 +1,296 @@
+use std::sync::{Arc, Mutex};
+
+use bevy::prelude::Resource;
+
+use crate::{state::ReloadMode, util::lock_or_recover};
+
+/// Stage where a system runs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemStage {
+    Startup,
+    UpdateOrLast,
+}
+
+/// Statistics about hot reload events for the overlay
+#[derive(Resource, Clone)]
+pub struct HotReloadStats {
+    /// Last reload mode used
+    pub last_mode: Option<ReloadMode>,
+    /// Timestamp of last reload (in seconds since app start)
+    pub last_reload_time: f64,
+    /// Total number of reloads
+    pub reload_count: u32,
+    /// Default reload mode for file changes (toggled with F6)
+    pub default_mode: ReloadMode,
+    /// Current memory usage in MB
+    pub memory_mb: f64,
+    /// Current CPU usage percentage
+    pub cpu_percent: f32,
+    /// FPS rolling average (60 frames)
+    pub fps_average: f32,
+    /// Current frame FPS
+    pub fps_current: f32,
+    /// Total system RAM in MB
+    pub total_memory_mb: f64,
+    /// Number of CPU cores
+    pub cpu_core_count: usize,
+    /// Python GIL enabled status
+    pub gil_enabled: bool,
+    /// Total app uptime in seconds
+    pub uptime_secs: f64,
+    /// Total number of entities
+    pub entity_count: usize,
+    /// Asset counts by type
+    pub asset_counts: std::collections::HashMap<String, usize>,
+    /// Timestamp of last error displayed in overlay (to detect new errors)
+    pub last_error_timestamp: f64,
+    /// Frame number of last reload (for frame-based cooldown)
+    pub last_reload_frame: u32,
+}
+
+/// Resource for tracking system information
+#[derive(Resource)]
+pub struct SystemMonitor {
+    pub system: sysinfo::System,
+    /// Process ID for monitoring, None if PID could not be determined
+    pub process_pid: Option<sysinfo::Pid>,
+    pub last_update: f64,
+    /// Last 60 FPS values for rolling average
+    pub fps_history: std::collections::VecDeque<f32>,
+    /// Last time the overlay text was updated (for throttling)
+    pub last_render_update: f64,
+}
+
+/// Performance profiling statistics for dynamic systems
+/// Only active when hot reload is enabled
+/// Uses interior mutability for concurrent access from multiple systems
+#[derive(Resource, Clone)]
+pub struct SystemProfiler {
+    /// Per-system timing statistics (wrapped in Arc<Mutex> for concurrent access)
+    stats: Arc<Mutex<ProfilerData>>,
+    /// Rolling window size (frames to average)
+    window_size: usize,
+}
+
+struct ProfilerData {
+    /// Update/Last stage systems
+    update_systems: std::collections::HashMap<String, SystemTimingStats>,
+    /// Startup stage systems
+    startup_systems: std::collections::HashMap<String, SystemTimingStats>,
+    /// Time when startup systems should stop being displayed (5 seconds after first startup)
+    startup_visible_until: Option<f64>,
+}
+
+struct SystemTimingStats {
+    /// Circular buffer of recent execution times
+    recent_times: std::collections::VecDeque<std::time::Duration>,
+    /// Cached rolling average (updated each frame)
+    average_time: std::time::Duration,
+}
+
+impl SystemProfiler {
+    /// Create a new profiler with specified window size
+    pub fn new(window_size: usize) -> Self {
+        Self {
+            stats: Arc::new(Mutex::new(ProfilerData {
+                update_systems: std::collections::HashMap::new(),
+                startup_systems: std::collections::HashMap::new(),
+                startup_visible_until: None,
+            })),
+            window_size,
+        }
+    }
+
+    /// Record a timing measurement for a system (concurrent-safe)
+    pub fn record_timing(
+        &self,
+        system_name: &str,
+        duration: std::time::Duration,
+        stage: SystemStage,
+        current_time: f64,
+    ) {
+        let mut data = lock_or_recover(&self.stats);
+
+        // Set startup visibility timer on first startup system
+        if stage == SystemStage::Startup && data.startup_visible_until.is_none() {
+            data.startup_visible_until = Some(current_time + 5.0);
+        }
+
+        let systems = match stage {
+            SystemStage::Startup => &mut data.startup_systems,
+            SystemStage::UpdateOrLast => &mut data.update_systems,
+        };
+
+        let entry = systems
+            .entry(system_name.to_string())
+            .or_insert_with(|| SystemTimingStats {
+                recent_times: std::collections::VecDeque::with_capacity(self.window_size),
+                average_time: std::time::Duration::ZERO,
+            });
+
+        // Add new timing to circular buffer
+        entry.recent_times.push_back(duration);
+
+        // Remove oldest if we exceed window size
+        if entry.recent_times.len() > self.window_size {
+            entry.recent_times.pop_front();
+        }
+
+        // Recalculate rolling average
+        if !entry.recent_times.is_empty() {
+            let sum: std::time::Duration = entry.recent_times.iter().sum();
+            entry.average_time = sum / entry.recent_times.len() as u32;
+        }
+    }
+
+    /// Get the top N Update/Last systems by average execution time (concurrent-safe)
+    pub fn get_top_n_update(&self, n: usize) -> Vec<(String, std::time::Duration)> {
+        let data = lock_or_recover(&self.stats);
+        let mut systems: Vec<(String, std::time::Duration)> = data
+            .update_systems
+            .iter()
+            .map(|(name, stats)| (name.clone(), stats.average_time))
+            .collect();
+
+        // Sort by average time (descending)
+        systems.sort_by_key(|x| std::cmp::Reverse(x.1));
+
+        // Take top N
+        systems.into_iter().take(n).collect()
+    }
+
+    /// Get the top N Startup systems by average execution time (concurrent-safe)
+    pub fn get_top_n_startup(&self, n: usize) -> Vec<(String, std::time::Duration)> {
+        let data = lock_or_recover(&self.stats);
+        let mut systems: Vec<(String, std::time::Duration)> = data
+            .startup_systems
+            .iter()
+            .map(|(name, stats)| (name.clone(), stats.average_time))
+            .collect();
+
+        // Sort by average time (descending)
+        systems.sort_by_key(|x| std::cmp::Reverse(x.1));
+
+        // Take top N
+        systems.into_iter().take(n).collect()
+    }
+
+    /// Check if startup systems should still be displayed
+    pub fn should_show_startup(&self, current_time: f64) -> bool {
+        let data = lock_or_recover(&self.stats);
+        data.startup_visible_until
+            .map(|until| current_time < until)
+            .unwrap_or(false)
+    }
+
+    /// Clear all profiling statistics (concurrent-safe)
+    pub fn clear(&self) {
+        let mut data = lock_or_recover(&self.stats);
+        data.update_systems.clear();
+        data.startup_systems.clear();
+        data.startup_visible_until = None;
+    }
+}
+
+/// Memory snapshot captured at each reload event
+#[derive(Clone)]
+pub struct ReloadMemorySnapshot {
+    /// Generation number at time of snapshot
+    pub generation: u32,
+    /// Process RSS in MB
+    pub rss_mb: f64,
+    /// Delta from previous snapshot (MB)
+    pub delta_mb: f64,
+    /// Python GC tracked objects (sum of gc.get_count())
+    pub gc_objects: usize,
+    /// Total systems across all schedules
+    pub schedule_systems: usize,
+}
+
+/// Resource tracking memory across reloads (rolling window of snapshots).
+/// Captures a snapshot at each reload for trend analysis.
+#[derive(Resource)]
+pub struct MemoryProfile {
+    /// Rolling window of reload snapshots (capped at MAX_SNAPSHOTS)
+    pub snapshots: Vec<ReloadMemorySnapshot>,
+    /// Baseline RSS captured after first Startup (MB)
+    pub baseline_rss_mb: f64,
+    /// Peak RSS observed (MB)
+    pub peak_rss_mb: f64,
+    /// Whether baseline has been captured
+    pub baseline_captured: bool,
+    /// Warning threshold: growth above baseline that triggers warning (MB)
+    pub warning_threshold_mb: f64,
+}
+
+impl Default for MemoryProfile {
+    fn default() -> Self {
+        Self {
+            snapshots: Vec::with_capacity(Self::MAX_SNAPSHOTS),
+            baseline_rss_mb: 0.0,
+            peak_rss_mb: 0.0,
+            baseline_captured: false,
+            warning_threshold_mb: 200.0, // Warn after 200MB growth above baseline
+        }
+    }
+}
+
+impl MemoryProfile {
+    pub const MAX_SNAPSHOTS: usize = 20;
+
+    /// Capture a snapshot at reload time
+    pub fn capture_snapshot(
+        &mut self,
+        generation: u32,
+        rss_mb: f64,
+        gc_objects: usize,
+        schedule_systems: usize,
+    ) {
+        let delta_mb = self
+            .snapshots
+            .last()
+            .map(|prev| rss_mb - prev.rss_mb)
+            .unwrap_or(0.0);
+
+        if rss_mb > self.peak_rss_mb {
+            self.peak_rss_mb = rss_mb;
+        }
+
+        let snapshot = ReloadMemorySnapshot {
+            generation,
+            rss_mb,
+            delta_mb,
+            gc_objects,
+            schedule_systems,
+        };
+
+        if self.snapshots.len() >= Self::MAX_SNAPSHOTS {
+            self.snapshots.remove(0);
+        }
+        self.snapshots.push(snapshot);
+    }
+
+    /// Capture baseline RSS after first Startup
+    pub fn capture_baseline(&mut self, rss_mb: f64) {
+        if !self.baseline_captured {
+            self.baseline_rss_mb = rss_mb;
+            self.peak_rss_mb = rss_mb;
+            self.baseline_captured = true;
+        }
+    }
+
+    /// Check if memory growth exceeds warning threshold
+    pub fn is_warning(&self, current_rss_mb: f64) -> bool {
+        self.baseline_captured
+            && (current_rss_mb - self.baseline_rss_mb) > self.warning_threshold_mb
+    }
+
+    /// Get memory growth since baseline
+    pub fn growth_mb(&self, current_rss_mb: f64) -> f64 {
+        if self.baseline_captured {
+            current_rss_mb - self.baseline_rss_mb
+        } else {
+            0.0
+        }
+    }
+}

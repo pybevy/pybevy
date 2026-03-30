@@ -1,0 +1,54 @@
+use std::{
+    env,
+    sync::{Mutex, MutexGuard},
+};
+
+use bevy::ecs::{schedule::Schedules, world::World};
+
+use crate::profiling::SystemMonitor;
+
+/// Helper to lock a mutex, recovering from poison if a thread panicked while holding it.
+pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        bevy::log::warn!(
+            "Recovered from poisoned mutex - a thread may have panicked while holding the lock"
+        );
+        poisoned.into_inner()
+    })
+}
+
+/// Check if verbose debug output is enabled via environment variable
+pub fn is_verbose() -> bool {
+    env::var("PYBEVY_VERBOSE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// Parse a "WIDTHxHEIGHT" resolution string into (width, height) as f32.
+pub fn parse_resolution(s: &str) -> Option<(f32, f32)> {
+    let (w, h) = s.split_once('x').or_else(|| s.split_once('X'))?;
+    Some((w.parse().ok()?, h.parse().ok()?))
+}
+
+/// Get current RSS of this process in MB using the SystemMonitor resource.
+pub fn get_current_rss_mb(world: &World) -> f64 {
+    let Some(monitor) = world.get_resource::<SystemMonitor>() else {
+        return 0.0;
+    };
+    let Some(pid) = monitor.process_pid else {
+        return 0.0;
+    };
+    monitor
+        .system
+        .process(pid)
+        .map(|p| p.memory() as f64 / 1_048_576.0)
+        .unwrap_or(0.0)
+}
+
+/// Count total systems across all schedules in the world.
+pub fn count_schedule_systems(world: &World) -> usize {
+    let Some(schedules) = world.get_resource::<Schedules>() else {
+        return 0;
+    };
+    schedules.iter().map(|(_, s)| s.systems_len()).sum()
+}

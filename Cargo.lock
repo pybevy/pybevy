@@ -4233,6 +4233,7 @@ dependencies = [
  "pybevy_math",
  "pybevy_mesh",
  "pybevy_pbr",
+ "pybevy_reload",
  "pybevy_render",
  "pybevy_scene",
  "pybevy_shader",
@@ -4480,6 +4481,17 @@ dependencies = [
  "pybevy_render",
  "pybevy_shader_types",
  "pyo3",
+]
+
+[[package]]
+name = "pybevy_reload"
+version = "0.2.1"
+dependencies = [
+ "bevy",
+ "image",
+ "pybevy_control",
+ "pybevy_core",
+ "sysinfo",
 ]
 
 [[package]]

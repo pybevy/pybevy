@@ -31,7 +31,7 @@ crate-type = ["rlib"]
 default = ["mcp"]
 linux-display = ["bevy/x11", "bevy/wayland"]
 debug = ["bevy/debug"]
-mcp = ["dep:pybevy_control", "pybevy_control?/bevy_winit"]
+mcp = ["dep:pybevy_control", "pybevy_control?/bevy_winit", "pybevy_reload/mcp"]
 native-plugin = []
 native-hot-reload = ["native-plugin", "dep:notify"]
 
@@ -72,6 +72,7 @@ pybevy_shader_types = { path = "./crates/pybevy_shader_types", version = "=0.2.1
 pybevy_wgpu = { path = "./crates/pybevy_wgpu", version = "=0.2.1" }
 pybevy_scene = { path = "./crates/pybevy_scene", version = "=0.2.1" }
 pybevy_control = { path = "./crates/pybevy_control", version = "=0.2.1" }
+pybevy_reload = { path = "./crates/pybevy_reload", version = "=0.2.1" }
 
 [dependencies]
 pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.2.1", features = ["parallel"] }
@@ -98,6 +99,7 @@ pybevy_animation = { workspace = true }
 pybevy_image = { workspace = true }
 pybevy_pbr = { workspace = true }
 pybevy_scene = { workspace = true }
+pybevy_reload = { workspace = true }
 pybevy_control = { workspace = true, optional = true }
 rayon = "1.10"
 numpy = { workspace = true }
