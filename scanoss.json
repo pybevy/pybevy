@@ -1,4 +1,11 @@
 {
+  "bom": {
+    "include": [
+      {
+        "purl": "pkg:pypi/pybevy"
+      }
+    ]
+  },
   "settings": {
     "skip": {
       "patterns": {
