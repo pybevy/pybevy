@@ -1,9 +1,23 @@
 {
+  "bom": {
+    "include": [
+      {
+        "purl": "pkg:pypi/pybevy"
+      },
+      {
+        "purl": "pkg:github/bevyengine/bevy"
+      }
+    ]
+  },
   "settings": {
     "skip": {
       "patterns": {
         "scanning": [
-          "assets/**"
+          "assets/**",
+          "**/LICENSE-*",
+          "LICENSE-*",
+          "crates/pybevy_wgpu/src/extent3d.rs",
+          "src/assets/recursive_dependency_load_state.rs"
         ]
       }
     }

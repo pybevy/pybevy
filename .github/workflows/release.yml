@@ -9,8 +9,21 @@ permissions:
   contents: read
 
 jobs:
+  scanoss:
+    name: SCANOSS License Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: scanoss/code-scan-action@0b39db4d8f5f560f0108f16a4fb53ed28efa5add # v1
+        with:
+          policies: copyleft
+          api.key: ${{ secrets.SCANOSS_API_KEY }}
+          api.url: https://api.osskb.org
+          matchAnnotations: 'false'
+
   build-sdist:
     name: Build sdist
+    needs: [scanoss]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +38,7 @@ jobs:
           path: dist
 
   build-wheels:
+    needs: [scanoss]
     name: Build ${{ matrix.target }} (${{ matrix.os }}, py${{ matrix.python-version }})
     strategy:
       fail-fast: false

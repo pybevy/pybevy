@@ -21,4 +21,5 @@ jobs:
         with:
           policies: copyleft
           api.key: ${{ secrets.SCANOSS_API_KEY }}
-          api.url: https://api.osskb.org/scan/direct
+          api.url: https://api.osskb.org
+          matchAnnotations: 'false'
