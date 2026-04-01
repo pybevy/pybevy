@@ -12,7 +12,8 @@
         "scanning": [
           "assets/**",
           "**/LICENSE-*",
-          "LICENSE-*"
+          "LICENSE-*",
+          "crates/pybevy_wgpu/src/extent3d.rs"
         ]
       }
     }
