@@ -97,9 +97,6 @@ impl PyGlobalAmbientLight {
     }
 }
 
-// ==================== PyAmbientLight Component ====================
-// In Bevy 0.18, AmbientLight is a Component (per-camera override for GlobalAmbientLight).
-
 #[component_storage(AmbientLight)]
 #[pyclass(name = "AmbientLight", extends = PyComponent, eq)]
 #[derive(Debug, Clone)]

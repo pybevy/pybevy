@@ -12,10 +12,6 @@ use crate::{
     button_state::PyButtonState, mouse_button::PyMouseButton, mouse_scroll_unit::PyMouseScrollUnit,
 };
 
-// ============================================================================
-// MouseButtonInput
-// ============================================================================
-
 #[pyclass(name = "MouseButtonInput", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseButtonInput {
@@ -89,10 +85,6 @@ impl PyMouseButtonInput {
     }
 }
 
-// ============================================================================
-// MouseMotion
-// ============================================================================
-
 #[pyclass(name = "MouseMotion", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseMotion {
@@ -135,10 +127,6 @@ impl PyMouseMotion {
         format!("MouseMotion(delta=Vec2({}, {}))", d.x, d.y)
     }
 }
-
-// ============================================================================
-// MouseWheel
-// ============================================================================
 
 #[pyclass(name = "MouseWheel", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]

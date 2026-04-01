@@ -3,10 +3,6 @@ pub use pybevy_core::PyMessage;
 use pybevy_macros::message_bridge;
 use pyo3::prelude::*;
 
-// ============================================================================
-// KeyboardFocusLost
-// ============================================================================
-
 #[pyclass(name = "KeyboardFocusLost", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyKeyboardFocusLost;

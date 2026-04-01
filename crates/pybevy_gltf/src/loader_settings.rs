@@ -3,8 +3,8 @@ use pybevy_image::{PyImageSamplerDescriptor, PyRenderAssetUsages};
 use pyo3::prelude::*;
 
 // NOTE: Bevy's GltfLoaderSettings also has a `convert_coordinates: Option<GltfConvertCoordinates>`
-// field, but GltfConvertCoordinates is private in the published bevy_gltf 0.18.0 crate.
-// This field will be exposed once Bevy makes the type public.
+// field, but GltfConvertCoordinates is private in bevy_gltf. Will be exposed once Bevy makes
+// the type public.
 #[pyclass(name = "GltfLoaderSettings")]
 #[derive(Default)]
 pub struct PyGltfLoaderSettings {

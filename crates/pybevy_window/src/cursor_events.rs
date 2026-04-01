@@ -4,10 +4,6 @@ pub use pybevy_core::PyMessage;
 use pybevy_macros::message_bridge;
 use pyo3::prelude::*;
 
-// ============================================================================
-// CursorEntered
-// ============================================================================
-
 #[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorEntered {
@@ -40,10 +36,6 @@ impl PyCursorEntered {
         format!("CursorEntered(window={:?})", self.window)
     }
 }
-
-// ============================================================================
-// CursorLeft
-// ============================================================================
 
 #[pyclass(name = "CursorLeft", extends = PyMessage, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]

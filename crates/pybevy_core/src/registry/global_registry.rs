@@ -123,10 +123,6 @@ pub fn all_component_bridges() -> Vec<Arc<dyn ComponentBridge>> {
     guard.by_py_type.values().cloned().collect()
 }
 
-// ============================================================================
-// Resource Bridge Registry
-// ============================================================================
-
 /// Global registry for resource bridge type pointers
 static GLOBAL_RESOURCE_BRIDGES: OnceLock<RwLock<GlobalResourceBridgeRegistry>> = OnceLock::new();
 
@@ -210,10 +206,6 @@ pub fn all_resource_bridges() -> Vec<Arc<dyn ResourceBridge>> {
         .expect("Global resource registry lock poisoned");
     guard.by_py_type.values().cloned().collect()
 }
-
-// ============================================================================
-// Asset Bridge Registry
-// ============================================================================
 
 /// Global registry for asset bridge type pointers
 static GLOBAL_ASSET_BRIDGES: OnceLock<RwLock<GlobalAssetBridgeRegistry>> = OnceLock::new();
@@ -322,10 +314,6 @@ pub fn get_asset_bridge_by_name(name: &str) -> Option<Arc<dyn AssetBridge>> {
         .cloned()
 }
 
-// ============================================================================
-// TypeId Registry (for VisibilityClass.contains and similar APIs)
-// ============================================================================
-
 /// Global registry for component TypeId lookups
 /// This allows methods like VisibilityClass.contains() to work with
 /// any component type (both feature crate and main crate components)
@@ -386,10 +374,6 @@ pub fn get_type_id_by_py_type(ptr: *const PyTypeObject) -> Option<std::any::Type
 
     guard.by_py_type.get(&ptr).copied()
 }
-
-// ============================================================================
-// Message Bridge Registry
-// ============================================================================
 
 /// Global registry for message bridge type pointers
 static GLOBAL_MESSAGE_BRIDGES: OnceLock<RwLock<GlobalMessageBridgeRegistry>> = OnceLock::new();
@@ -494,10 +478,6 @@ pub fn all_message_bridges() -> Vec<Arc<dyn MessageBridge>> {
     guard.by_type_id.values().cloned().collect()
 }
 
-// ============================================================================
-// Batch Component Registry
-// ============================================================================
-
 /// Global registry for batch component type pointers
 static GLOBAL_BATCH_BRIDGES: OnceLock<RwLock<GlobalBatchBridgeRegistry>> = OnceLock::new();
 
@@ -540,10 +520,6 @@ pub fn get_batch_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn B
         .expect("Global batch registry lock poisoned");
     guard.by_py_type.get(&ptr).cloned()
 }
-
-// ============================================================================
-// Component Batch Meta Registry (for Rust component batch spawning)
-// ============================================================================
 
 /// Function pointer type for macro-generated batch insert functions.
 pub type ComponentBatchInsertFn = for<'py> fn(
@@ -596,10 +572,6 @@ pub fn get_component_batch_meta(py_type_ptr: usize) -> Option<&'static Component
         .expect("Component batch meta registry lock poisoned");
     guard.get(&py_type_ptr).copied()
 }
-
-// ============================================================================
-// Global Function Registry (for cross-crate function dispatch)
-// ============================================================================
 
 /// Function type for writing a Python message to the ECS custom message system.
 /// Registered by the main pybevy crate, called from pybevy_agent.

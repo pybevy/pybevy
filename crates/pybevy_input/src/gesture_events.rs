@@ -7,10 +7,6 @@ use pybevy_macros::message_bridge;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
-// ============================================================================
-// PinchGesture
-// ============================================================================
-
 #[pyclass(name = "PinchGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPinchGesture(pub f32);
@@ -43,10 +39,6 @@ impl PyPinchGesture {
         format!("PinchGesture({})", self.0)
     }
 }
-
-// ============================================================================
-// RotationGesture
-// ============================================================================
 
 #[pyclass(name = "RotationGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,10 +73,6 @@ impl PyRotationGesture {
     }
 }
 
-// ============================================================================
-// DoubleTapGesture
-// ============================================================================
-
 #[pyclass(name = "DoubleTapGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDoubleTapGesture;
@@ -112,10 +100,6 @@ impl PyDoubleTapGesture {
         "DoubleTapGesture()".to_string()
     }
 }
-
-// ============================================================================
-// PanGesture
-// ============================================================================
 
 #[pyclass(name = "PanGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]

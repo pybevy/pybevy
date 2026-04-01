@@ -11,10 +11,6 @@ use crate::{
     button_state::PyButtonState, gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton,
 };
 
-// ============================================================================
-// GamepadButtonChanged
-// ============================================================================
-
 #[pyclass(name = "GamepadButtonChanged", extends = PyMessage)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadButtonChanged {
@@ -68,10 +64,6 @@ impl PyGamepadButtonChanged {
     }
 }
 
-// ============================================================================
-// GamepadAxisChanged
-// ============================================================================
-
 #[pyclass(name = "GamepadAxisChanged", extends = PyMessage)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadAxisChanged {
@@ -124,10 +116,6 @@ impl PyGamepadAxisChanged {
         )
     }
 }
-
-// ============================================================================
-// GamepadConnection
-// ============================================================================
 
 #[pyclass(name = "GamepadConnection", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
@@ -245,10 +233,6 @@ impl PyGamepadConnection {
         }
     }
 }
-
-// ============================================================================
-// GamepadButtonStateChanged
-// ============================================================================
 
 #[pyclass(name = "GamepadButtonStateChanged", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
