@@ -13,7 +13,7 @@ import signal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from pybevy.mcp.hub.session import SessionManager
+from .session import SessionManager
 
 logger = logging.getLogger("pybevy.hub")
 

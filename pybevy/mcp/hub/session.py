@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from pybevy.mcp.engine import build_engine_env
+from ..engine import build_engine_env
 
 logger = logging.getLogger("pybevy.hub")
 

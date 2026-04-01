@@ -8,10 +8,10 @@ Usage:
 
 from dataclasses import dataclass
 
-from pybevy.app import App, Plugin, Update
-from pybevy.decorators import component, plugin, resource
-from pybevy.ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
-from pybevy.input import (
+from ..app import App, Plugin, Update
+from ..decorators import component, plugin, resource
+from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
+from ..input import (
     ButtonInput,
     ButtonState,
     KeyboardInput,
@@ -20,9 +20,9 @@ from pybevy.input import (
     MouseInput,
     MouseMotion,
 )
-from pybevy.math import Quat, Vec3
-from pybevy.time import Time
-from pybevy.transform import Transform
+from ..math import Quat, Vec3
+from ..time import Time
+from ..transform import Transform
 
 
 @component

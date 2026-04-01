@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from pybevy.mcp.bridge import McpBridge
+from .bridge import McpBridge
 
 type JsonDict = dict[str, Any]
 

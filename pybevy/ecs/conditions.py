@@ -181,7 +181,7 @@ def input_just_pressed(key_code):
         ```
     """
     # Import at runtime to avoid circular dependencies
-    from pybevy.input import ButtonInput
+    from ..input import ButtonInput
 
     def condition(input_state: ButtonInput) -> bool:
         return input_state.just_pressed(key_code)
@@ -204,7 +204,7 @@ def state_is_active(state_type: type, target_value: int):
 
     Example:
         ```python
-        from pybevy.ecs import Resource, Res
+        from . import Resource, Res
         from pybevy.ecs.conditions import state_is_active
 
         class GamePhase(Resource):
@@ -218,7 +218,7 @@ def state_is_active(state_type: type, target_value: int):
         ```
     """
     # Import at runtime to avoid circular dependencies
-    from pybevy.ecs import Res
+    from . import Res
 
     def condition(res: Res) -> bool:  # type: ignore
         return hasattr(res, 'value') and res.value == target_value
