@@ -3,6 +3,9 @@
     "include": [
       {
         "purl": "pkg:pypi/pybevy"
+      },
+      {
+        "purl": "pkg:github/bevyengine/bevy"
       }
     ]
   },
