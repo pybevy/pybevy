@@ -3,7 +3,9 @@
     "skip": {
       "patterns": {
         "scanning": [
-          "assets/**"
+          "assets/**",
+          "**/LICENSE-*",
+          "LICENSE-*"
         ]
       }
     }
