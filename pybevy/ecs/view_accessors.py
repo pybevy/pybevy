@@ -14,7 +14,7 @@ These wrappers enable natural syntax like:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pybevy.ecs import ViewColumn
+    from . import ViewColumn
 
 
 class Vec3ViewColumn:

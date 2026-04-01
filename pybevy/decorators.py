@@ -106,7 +106,7 @@ def component(
     return _apply
 
 
-from pybevy.math import Vec2, Vec3
+from .math import Vec2, Vec3
 
 _PRIMITIVE_TYPES = (int, float, bool)
 _WRAPPER_TYPES = (int, float, bool, Vec3, Vec2)
@@ -189,7 +189,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
 
         @classmethod  # type: ignore[misc]  # dynamic classmethod on decorated class
         def from_numpy(klass: type, **kwargs: object) -> object:
-            from pybevy.ecs import CustomComponentBatch
+            from .ecs import CustomComponentBatch
 
             return CustomComponentBatch(klass, **kwargs)
 

@@ -6,7 +6,7 @@ This module provides systems that handle DespawnOnExit and DespawnOnEnter compon
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pybevy.ecs import (
+    from . import (
         Commands,
         DespawnOnEnter,
         DespawnOnExit,
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         State,
     )
 else:
-    from pybevy.ecs import (
+    from . import (
         Commands,
         DespawnOnEnter,
         DespawnOnExit,

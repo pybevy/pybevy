@@ -30,8 +30,8 @@ except ImportError:
     )
 
 # Import the Rust type and Python wrappers
-from pybevy.ecs import ViewColumn
-from pybevy.ecs.view_accessors import QuatViewColumn, Vec3ViewColumn
+from . import ViewColumn
+from .view_accessors import QuatViewColumn, Vec3ViewColumn
 
 # ============================================================================
 # Step 1: Define the Numba type

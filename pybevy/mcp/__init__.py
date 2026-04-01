@@ -2,7 +2,7 @@ import importlib.util
 import os
 import sys
 
-import pybevy._pybevy as _pybevy  # type: ignore
+from .. import _pybevy  # type: ignore
 
 _native = _pybevy.mcp
 _mcp_dir = os.path.dirname(__file__)

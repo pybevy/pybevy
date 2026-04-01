@@ -1,0 +1,12 @@
+[package]
+name = "pybevy-build"
+version = "0.2.1"
+edition = "2024"
+description = "Build helper for downstream pybevy wheels — locates and copies Python sources"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+keywords = ["gamedev", "bevy", "python", "build"]
+categories = ["development-tools::build-utils"]
+
+[dependencies]
+cargo_metadata = "0.19"

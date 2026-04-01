@@ -9,10 +9,10 @@ Usage:
 import math
 from dataclasses import dataclass
 
-from pybevy.app import App, Plugin, Update
-from pybevy.decorators import component, plugin, resource
-from pybevy.ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
-from pybevy.input import (
+from ..app import App, Plugin, Update
+from ..decorators import component, plugin, resource
+from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
+from ..input import (
     ButtonState,
     KeyboardInput,
     KeyCode,
@@ -21,8 +21,8 @@ from pybevy.input import (
     MouseMotion,
     MouseWheel,
 )
-from pybevy.math import Vec3
-from pybevy.transform import Transform
+from ..math import Vec3
+from ..transform import Transform
 
 
 @component(storage="python")

@@ -15,14 +15,14 @@ import threading
 import time
 from typing import Any
 
-from pybevy.mcp import ApiIndex
-from pybevy.mcp.definitions import (
+from . import ApiIndex
+from .definitions import (
     builtin_prompts,
     builtin_tools,
     filtered_resources,
 )
-from pybevy.mcp.engine import build_engine_env, find_free_port, has_display
-from pybevy.mcp.recorder import SessionRecorder
+from .engine import build_engine_env, find_free_port, has_display
+from .recorder import SessionRecorder
 
 type JsonId = int | str | None
 type JsonDict = dict[str, Any]

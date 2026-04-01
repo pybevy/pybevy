@@ -394,7 +394,7 @@ def _run_script(
             else:
                 # Standalone script without package - use run_path
                 # Handle caching BEFORE reloading module
-                from pybevy.decorators import (  # type: ignore[attr-defined]
+                from .decorators import (  # type: ignore[attr-defined]
                     _component_cache_enabled,
                 )
 

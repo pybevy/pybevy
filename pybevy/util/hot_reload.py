@@ -312,7 +312,8 @@ def load_entrypoint_function(
 
     # Handle component caching
     import pybevy
-    from pybevy.decorators import _component_cache_enabled  # type: ignore[attr-defined]
+
+    from ..decorators import _component_cache_enabled  # type: ignore[attr-defined]
 
     if changed_files is not None:
         # Partial reload: enable component caching if not already enabled
