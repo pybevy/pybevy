@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::half_space::PyHalfSpace;
 
-#[component_storage(Aabb)]
+#[component_storage(Aabb, bridge)]
 #[pyclass(name = "Aabb", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAabb {

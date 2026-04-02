@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::PyScreenSpaceAmbientOcclusionQualityLevel;
 
-#[component_storage(ScreenSpaceAmbientOcclusion)]
+#[component_storage(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness])]
 #[pyclass(name = "ScreenSpaceAmbientOcclusion", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyScreenSpaceAmbientOcclusion {

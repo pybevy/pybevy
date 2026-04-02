@@ -4,7 +4,7 @@ use pybevy_input::{PyButtonState, PyMouseButton, PyMouseScrollUnit, PyTouchPhase
 use pybevy_math::{ivec2::PyIVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 
-use crate::{PyAppLifecycle, PyWindowTheme};
+use crate::{app_lifecycle::PyAppLifecycle, window_theme::PyWindowTheme};
 
 #[pyclass(name = "WindowEvent", eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
@@ -125,7 +125,7 @@ pub enum PyWindowEvent {
         theme: PyWindowTheme,
         window: PyEntity,
     },
-    /// REVIEW: KeyboardInput not supported - use MessageReader[KeyboardInput] directly
+    /// TODO REVIEW: KeyboardInput not supported - use MessageReader[KeyboardInput] directly
     KeyboardInput {},
 }
 

@@ -1,9 +1,10 @@
 use bevy::window::CursorMoved;
 use pybevy_core::{PyEntity, PyMessage};
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
+#[message_storage(CursorMoved)]
 #[pyclass(name = "CursorMoved", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorMoved {
@@ -65,5 +66,3 @@ impl PyCursorMoved {
         )
     }
 }
-
-message_bridge!(CursorMoved, PyCursorMoved);

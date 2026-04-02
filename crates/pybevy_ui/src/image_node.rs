@@ -7,7 +7,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::PyNodeImageMode;
 
-#[component_storage(ImageNode)]
+#[component_storage(ImageNode, bridge)]
 #[pyclass(name = "ImageNode", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyImageNode {

@@ -1,36 +1,13 @@
 use bevy::ecs::name::Name;
 use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
+#[component_storage(Name, bridge)]
 #[pyclass(name = "Name", extends = PyComponent, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyName {
     pub(crate) storage: ComponentStorage<Name>,
-}
-
-impl PyName {
-    pub fn from_owned(value: Name) -> (Self, PyComponent) {
-        (
-            PyName {
-                storage: ComponentStorage::owned(value),
-            },
-            PyComponent,
-        )
-    }
-
-    pub fn from_borrowed(storage: ComponentStorage<Name>) -> (Self, PyComponent) {
-        (PyName { storage }, PyComponent)
-    }
-
-    #[inline(always)]
-    pub fn as_ref(&self) -> PyResult<&Name> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    pub fn as_mut(&mut self) -> PyResult<&mut Name> {
-        Ok(self.storage.as_mut()?)
-    }
 }
 
 #[pymethods]
@@ -71,15 +48,5 @@ impl TryFrom<&PyName> for Name {
 
     fn try_from(py_name: &PyName) -> Result<Self, Self::Error> {
         Ok(py_name.as_ref()?.clone())
-    }
-}
-
-impl TryFrom<&Name> for PyName {
-    type Error = PyErr;
-
-    fn try_from(name: &Name) -> Result<Self, Self::Error> {
-        Ok(PyName {
-            storage: ComponentStorage::owned(name.clone()),
-        })
     }
 }

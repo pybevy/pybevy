@@ -9,7 +9,13 @@ use pyo3::prelude::*;
 
 use crate::{PyBloomCompositeMode, PyBloomPrefilter};
 
-#[component_storage(Bloom)]
+#[component_storage(Bloom, bridge, view_fields = [
+    intensity,
+    low_frequency_boost,
+    low_frequency_boost_curvature,
+    high_pass_frequency,
+    max_mip_dimension
+])]
 #[pyclass(name = "Bloom", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyBloom {

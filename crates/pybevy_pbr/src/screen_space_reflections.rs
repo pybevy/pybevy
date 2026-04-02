@@ -3,7 +3,14 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(ScreenSpaceReflections)]
+#[component_storage(ScreenSpaceReflections, bridge, view_fields = [
+    perceptual_roughness_threshold,
+    thickness,
+    linear_steps,
+    linear_march_exponent,
+    bisection_steps,
+    use_secant
+])]
 #[pyclass(name = "ScreenSpaceReflections", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyScreenSpaceReflections {

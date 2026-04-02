@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::visibility_batch::PyVisibilityBatch;
 
-#[component_storage(Visibility)]
+#[component_storage(Visibility, bridge)]
 #[pyclass(name = "Visibility", extends = PyComponent, eq)]
 #[derive(Debug, Clone)]
 pub struct PyVisibility {

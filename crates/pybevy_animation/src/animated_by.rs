@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(AnimatedBy)]
+#[component_storage(AnimatedBy, bridge)]
 #[pyclass(name = "AnimatedBy", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyAnimatedBy {

@@ -3,7 +3,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-#[newtype_storage(Msaa)]
+#[newtype_storage(Msaa, bridge, copy)]
 #[pyclass(name = "Msaa", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMsaa(pub(crate) Msaa);

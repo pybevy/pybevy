@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::val2::PyVal2;
 
-#[component_storage(UiTransform)]
+#[component_storage(UiTransform, bridge)]
 #[pyclass(name = "UiTransform", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyUiTransform {

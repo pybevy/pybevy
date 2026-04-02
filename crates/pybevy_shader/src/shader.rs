@@ -1,14 +1,14 @@
 use bevy::shader::{Shader, ShaderDefVal};
 use naga::ShaderStage;
-use pybevy_core::{NativeAsset, PyAsset, asset_storage::AssetStorage};
-use pybevy_macros::native_asset;
+use pybevy_core::AssetStorage;
+use pybevy_macros::asset_storage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{PyShaderDefVal, PyShaderImport, PySource, PyValidateShader};
 
-#[native_asset(Shader)]
-#[pyclass(name = "Shader", extends = PyAsset)]
-#[derive(Debug, Clone)]
+#[asset_storage(Shader, bridge)]
+#[pyclass(name = "Shader", extends = pybevy_core::PyAsset)]
+#[derive(Debug)]
 pub struct PyShader {
     storage: AssetStorage<Shader>,
 }

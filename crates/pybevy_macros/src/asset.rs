@@ -125,30 +125,61 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// The main crate then uses `asset_bridge!` to add runtime dispatch.
+/// With bridge generation:
+///
+/// ```rust
+/// #[asset_storage(Mesh, bridge)]
+/// #[asset_storage(TextureAtlasLayout, bridge, not_loadable)]
+/// ```
 pub fn asset_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct AssetStorageArgs {
         bevy_type: Type,
         no_clone: bool,
+        bridge: bool,
+        bridge_name: Option<String>,
+        not_loadable: bool,
     }
 
     impl Parse for AssetStorageArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             let bevy_type: Type = input.parse()?;
-            let no_clone = if input.peek(Token![,]) {
+            let mut no_clone = false;
+            let mut bridge = false;
+            let mut bridge_name = None;
+            let mut not_loadable = false;
+
+            while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
-                let ident: Ident = input.parse()?;
-                if ident == "no_clone" {
-                    true
-                } else {
-                    return Err(syn::Error::new_spanned(ident, "expected 'no_clone'"));
+                if !input.peek(syn::Ident) && !input.peek(syn::LitStr) {
+                    break;
                 }
-            } else {
-                false
-            };
+                if input.peek(syn::LitStr) {
+                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
+                } else {
+                    let ident: Ident = input.parse()?;
+                    match ident.to_string().as_str() {
+                        "no_clone" => no_clone = true,
+                        "bridge" => bridge = true,
+                        "not_loadable" => not_loadable = true,
+                        other => {
+                            return Err(syn::Error::new_spanned(
+                                ident,
+                                format!(
+                                    "unknown option '{}', expected one of: no_clone, bridge, not_loadable",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+
             Ok(AssetStorageArgs {
                 bevy_type,
                 no_clone,
+                bridge,
+                bridge_name,
+                not_loadable,
             })
         }
     }
@@ -170,6 +201,17 @@ pub fn asset_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         }
+    };
+
+    let bridge_tokens = if args.bridge {
+        generate_asset_bridge_tokens(
+            bevy_type,
+            py_type,
+            args.bridge_name.as_deref(),
+            args.not_loadable,
+        )
+    } else {
+        quote! {}
     };
 
     let expanded = quote! {
@@ -222,88 +264,27 @@ pub fn asset_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
                 Ok(self.storage.as_mut()?)
             }
         }
+
+        #bridge_tokens
     };
 
     TokenStream::from(expanded)
 }
 
-/// Generates an AssetBridge struct and implementation for feature crates.
-///
-/// This macro generates:
-/// - A bridge struct (e.g., `AudioSourceBridge`)
-/// - `impl AssetBridge for XBridge` with all required methods
-///
-/// # Usage
-///
-/// ```rust
-/// // In pybevy_audio/src/lib.rs
-/// asset_bridge!(AudioSource, PyAudioSource);
-/// ```
-///
-/// This generates `AudioSourceBridge` struct with full `AssetBridge` impl.
-///
-/// For assets where the Bevy type name differs from the bridge prefix:
-/// ```rust
-/// asset_bridge!(bevy::audio::AudioSource, PyAudioSource, "AudioSource");
-/// ```
-///
-/// For assets that cannot be loaded from files (only created programmatically):
-/// ```rust
-/// asset_bridge!(TextureAtlasLayout, PyTextureAtlasLayout, not_loadable);
-/// ```
-pub fn asset_bridge(input: TokenStream) -> TokenStream {
-    struct BridgeArgs {
-        bevy_type: Type,
-        py_type: Ident,
-        bridge_name: Option<String>,
-        not_loadable: bool,
-    }
-
-    impl Parse for BridgeArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
-            let mut bridge_name = None;
-            let mut not_loadable = false;
-
-            while input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                if input.peek(syn::Ident) {
-                    let ident: syn::Ident = input.parse()?;
-                    if ident == "not_loadable" {
-                        not_loadable = true;
-                    } else {
-                        return Err(syn::Error::new(ident.span(), "expected `not_loadable`"));
-                    }
-                } else if input.peek(syn::LitStr) {
-                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
-                }
-            }
-
-            Ok(BridgeArgs {
-                bevy_type,
-                py_type,
-                bridge_name,
-                not_loadable,
-            })
-        }
-    }
-
-    let args = parse_macro_input!(input as BridgeArgs);
-    let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
-
+/// Shared asset bridge code generation used by `#[asset_storage(..., bridge)]`.
+pub(crate) fn generate_asset_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+    not_loadable: bool,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let asset_name = &bridge_name_str;
-
-    let not_loadable = args.not_loadable;
 
     let is_loadable_impl = if not_loadable {
         quote! {
@@ -564,66 +545,26 @@ pub fn asset_bridge(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    let inventory_submit = quote! {
+        pybevy_core::inventory::submit!(pybevy_core::AssetBridgeRegistration {
+            create: || std::sync::Arc::new(#bridge_name),
+        });
+    };
+
+    quote! {
+        #expanded
+        #inventory_submit
+    }
 }
 
-/// Generates a ComponentBridge for handle wrapper types in feature crates.
-///
-/// This macro generates the full ComponentBridge implementation for components
-/// that wrap a Handle<Asset> (like Mesh3d wrapping Handle<Mesh>).
-///
-/// The Python type must:
-/// - Have a single field `PyHandle` at position 0
-/// - Implement `From<&BevyType> for PyType`
-/// - Have `TryFrom<&PyType> for BevyType` that converts handle
-///
-/// # Usage
-///
-/// ```rust
-/// // In pybevy_mesh/src/lib.rs
-/// handle_bridge!(Mesh3d, PyMesh3d);
-/// ```
-///
-/// This generates `Mesh3dBridge` struct with full `ComponentBridge` impl.
-///
-/// For generic types:
-/// ```rust
-/// handle_bridge!(MeshMaterial3d<StandardMaterial>, PyMeshMaterial3d, "MeshMaterial3d");
-/// ```
-pub fn handle_bridge(input: TokenStream) -> TokenStream {
-    struct BridgeArgs {
-        bevy_type: Type,
-        py_type: Ident,
-        bridge_name: Option<String>,
-    }
-
-    impl Parse for BridgeArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
-            let bridge_name = if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                Some(input.parse::<syn::LitStr>()?.value())
-            } else {
-                None
-            };
-
-            Ok(BridgeArgs {
-                bevy_type,
-                py_type,
-                bridge_name,
-            })
-        }
-    }
-
-    let args = parse_macro_input!(input as BridgeArgs);
-    let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
-
+/// Shared handle bridge code generation used by `#[handle_storage]`.
+pub(crate) fn generate_handle_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
@@ -755,6 +696,76 @@ pub fn handle_bridge(input: TokenStream) -> TokenStream {
                 }
             }
         }
+    };
+
+    let inventory_submit = quote! {
+        pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
+            create: || std::sync::Arc::new(#bridge_name),
+        });
+    };
+
+    quote! {
+        #expanded
+        #inventory_submit
+    }
+}
+
+/// Attribute proc macro for handle wrapper types.
+///
+/// Generates the ComponentBridge impl and inventory registration for structs
+/// that wrap a `PyHandle` (e.g., `Mesh3d` wrapping `Handle<Mesh>`).
+///
+/// # Usage
+///
+/// ```rust
+/// #[handle_storage(Mesh3d)]
+/// #[pyclass(name = "Mesh3d", extends = PyComponent, frozen)]
+/// pub struct PyMesh3d(pub PyHandle);
+/// ```
+///
+/// For generic Bevy types:
+/// ```rust
+/// #[handle_storage(MeshMaterial3d<StandardMaterial>, "MeshMaterial3d")]
+/// #[pyclass(name = "MeshMaterial3d", extends = PyComponent, frozen)]
+/// pub struct PyMeshMaterial3d(pub PyHandle);
+/// ```
+pub fn handle_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+    struct HandleStorageArgs {
+        bevy_type: Type,
+        bridge_name: Option<String>,
+    }
+
+    impl Parse for HandleStorageArgs {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let bevy_type: Type = input.parse()?;
+            let bridge_name = if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+                if input.peek(syn::LitStr) {
+                    Some(input.parse::<syn::LitStr>()?.value())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            Ok(HandleStorageArgs {
+                bevy_type,
+                bridge_name,
+            })
+        }
+    }
+
+    let args = parse_macro_input!(attr as HandleStorageArgs);
+    let input = parse_macro_input!(item as ItemStruct);
+    let py_type = &input.ident;
+
+    let bridge_tokens =
+        generate_handle_bridge_tokens(&args.bevy_type, py_type, args.bridge_name.as_deref());
+
+    let expanded = quote! {
+        #input
+        #bridge_tokens
     };
 
     TokenStream::from(expanded)

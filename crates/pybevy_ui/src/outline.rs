@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[component_storage(Outline)]
+#[component_storage(Outline, bridge)]
 #[pyclass(name = "Outline", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyOutline {

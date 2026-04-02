@@ -16,15 +16,6 @@ pub mod skinned_mesh_inverse_bindposes;
 pub mod sphere_kind;
 pub mod vertex_attribute;
 
-use bevy::{
-    mesh::{
-        Mesh2d, Mesh3d, MeshTag,
-        morph::MorphWeights,
-        skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
-    },
-    pbr::{MeshMaterial3d, StandardMaterial},
-    sprite_render::{ColorMaterial, MeshMaterial2d},
-};
 pub use indices::{PyIndices, PyIndicesIterator};
 pub use mesh::{MeshAttributeContext, MeshAttributeContextMut, PyMesh};
 pub use mesh_builder::PyMeshBuilder;
@@ -48,54 +39,49 @@ pub use primitives::{
     PyTorus, PyTorusMeshBuilder, PyTriangle2d, PyTriangle2dMeshBuilder, PyTriangle3d,
     PyTriangle3dMeshBuilder,
 };
-use pybevy_core::{plugin::plugin_registry, registry::global_registry};
-use pybevy_macros::{asset_bridge, component_bridge, handle_bridge, plugin_bridge};
 use pyo3::prelude::*;
 pub use skinned_mesh::PySkinnedMesh;
 pub use skinned_mesh_inverse_bindposes::PySkinnedMeshInverseBindposes;
 pub use sphere_kind::PySphereKind;
 pub use vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues};
 
-component_bridge!(MeshTag, PyMeshTag, view_fields = [0 as value]);
-component_bridge!(MorphWeights, PyMorphWeights);
-component_bridge!(SkinnedMesh, PySkinnedMesh);
-
-handle_bridge!(Mesh3d, PyMesh3d);
-handle_bridge!(Mesh2d, PyMesh2d);
-handle_bridge!(
-    MeshMaterial3d::<StandardMaterial>,
-    PyMeshMaterial3d,
-    "MeshMaterial3d"
-);
-handle_bridge!(
-    MeshMaterial2d::<ColorMaterial>,
-    PyMeshMaterial2d,
-    "MeshMaterial2d"
-);
-
-plugin_bridge!(PyMeshPlugin, bevy::mesh::MeshPlugin);
-
-asset_bridge!(
-    SkinnedMeshInverseBindposes,
-    PySkinnedMeshInverseBindposes,
-    not_loadable
-);
-pub fn register_mesh_bridges() {
-    global_registry::register_component_bridge(MeshTagBridge);
-    register_mesh_tag_batch();
-    global_registry::register_component_bridge(MorphWeightsBridge);
-    global_registry::register_component_bridge(SkinnedMeshBridge);
-    global_registry::register_component_bridge(Mesh3dBridge);
-    global_registry::register_component_bridge(Mesh2dBridge);
-    global_registry::register_component_bridge(MeshMaterial3dBridge);
-    global_registry::register_component_bridge(MeshMaterial2dBridge);
-
-    plugin_registry::register_plugin_bridge(MeshPluginBridge);
-    global_registry::register_asset_bridge(SkinnedMeshInverseBindposesBridge);
+/// Register meshable primitives into the `math` Python module.
+///
+/// These types (Circle, Sphere, CircularSector, etc.) are Bevy math primitives
+/// that also implement `Meshable`. In Bevy, the type lives in `bevy_math` and
+/// the `impl Meshable` is in `bevy_mesh`. PyO3 can't do this — the base class
+/// (`extends = PyMeshable`) must be on the struct definition, so the wrapper
+/// structs live here in `pybevy_mesh`. This function injects them into the
+/// `math` module so users can `from pybevy.math import Circle`.
+///
+/// Called from `src/lib.rs` after `pybevy_math::add_module()` creates the
+/// `math` submodule.
+pub fn add_math_primitives(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyAnnulus>()?;
+    m.add_class::<PyCapsule2d>()?;
+    m.add_class::<PyCircle>()?;
+    m.add_class::<PyEllipse>()?;
+    m.add_class::<PyRectangle>()?;
+    m.add_class::<PyRegularPolygon>()?;
+    m.add_class::<PyRhombus>()?;
+    m.add_class::<PyTriangle2d>()?;
+    m.add_class::<PyCircularSector>()?;
+    m.add_class::<PyCircularSegment>()?;
+    m.add_class::<PySegment2d>()?;
+    m.add_class::<PyCapsule3d>()?;
+    m.add_class::<PyCone>()?;
+    m.add_class::<PyCuboid>()?;
+    m.add_class::<PyCylinder>()?;
+    m.add_class::<PyPlane3d>()?;
+    m.add_class::<PySphere>()?;
+    m.add_class::<PyTetrahedron>()?;
+    m.add_class::<PyTorus>()?;
+    m.add_class::<PyTriangle3d>()?;
+    Ok(())
 }
-pub fn add_mesh_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_mesh_bridges();
 
+pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "mesh")?;
     m.add_class::<PyMeshPlugin>()?;
     m.add_class::<PyIndices>()?;
     m.add_class::<PyIndicesIterator>()?;
@@ -159,46 +145,5 @@ pub fn add_mesh_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTetrahedron>()?;
     m.add_class::<PyTorus>()?;
     m.add_class::<PyTriangle3d>()?;
-    Ok(())
-}
-/// Register meshable primitives into the `math` Python module.
-///
-/// These types (Circle, Sphere, CircularSector, etc.) are Bevy math primitives
-/// that also implement `Meshable`. In Bevy, the type lives in `bevy_math` and
-/// the `impl Meshable` is in `bevy_mesh`. PyO3 can't do this — the base class
-/// (`extends = PyMeshable`) must be on the struct definition, so the wrapper
-/// structs live here in `pybevy_mesh`. This function injects them into the
-/// `math` module so users can `from pybevy.math import Circle`.
-///
-/// Called from `src/lib.rs` after `pybevy_math::add_module()` creates the
-/// `math` submodule.
-pub fn add_math_primitives(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // 2D
-    m.add_class::<PyAnnulus>()?;
-    m.add_class::<PyCapsule2d>()?;
-    m.add_class::<PyCircle>()?;
-    m.add_class::<PyEllipse>()?;
-    m.add_class::<PyRectangle>()?;
-    m.add_class::<PyRegularPolygon>()?;
-    m.add_class::<PyRhombus>()?;
-    m.add_class::<PyTriangle2d>()?;
-    m.add_class::<PyCircularSector>()?;
-    m.add_class::<PyCircularSegment>()?;
-    m.add_class::<PySegment2d>()?;
-    // 3D
-    m.add_class::<PyCapsule3d>()?;
-    m.add_class::<PyCone>()?;
-    m.add_class::<PyCuboid>()?;
-    m.add_class::<PyCylinder>()?;
-    m.add_class::<PyPlane3d>()?;
-    m.add_class::<PySphere>()?;
-    m.add_class::<PyTetrahedron>()?;
-    m.add_class::<PyTorus>()?;
-    m.add_class::<PyTriangle3d>()?;
-    Ok(())
-}
-pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "mesh")?;
-    add_mesh_classes(&m)?;
     parent.add_submodule(&m)
 }

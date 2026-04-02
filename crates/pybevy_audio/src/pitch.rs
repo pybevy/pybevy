@@ -5,7 +5,7 @@ use pybevy_core::AssetStorage;
 use pybevy_macros::asset_storage;
 use pyo3::prelude::*;
 
-#[asset_storage(Pitch)]
+#[asset_storage(Pitch, bridge)]
 #[pyclass(name = "Pitch", extends = pybevy_core::PyAsset)]
 #[derive(Debug)]
 pub struct PyPitch {

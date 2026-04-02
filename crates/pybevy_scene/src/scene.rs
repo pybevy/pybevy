@@ -3,7 +3,7 @@ use pybevy_core::AssetStorage;
 use pybevy_macros::asset_storage;
 use pyo3::prelude::*;
 
-#[asset_storage(Scene, no_clone)]
+#[asset_storage(Scene, no_clone, bridge)]
 #[pyclass(name = "Scene", extends = pybevy_core::PyAsset)]
 #[derive(Debug)]
 pub struct PyScene {

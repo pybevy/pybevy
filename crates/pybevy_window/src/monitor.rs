@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::video_mode::PyVideoMode;
 
-#[component_storage(Monitor, no_clone)]
+#[component_storage(Monitor, no_clone, bridge)]
 #[pyclass(name = "Monitor", extends = PyComponent)]
 pub struct PyMonitor {
     pub(crate) storage: ComponentStorage<Monitor>,

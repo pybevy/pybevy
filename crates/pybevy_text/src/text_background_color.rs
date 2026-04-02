@@ -4,7 +4,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(TextBackgroundColor)]
+#[component_storage(TextBackgroundColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "TextBackgroundColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextBackgroundColor {

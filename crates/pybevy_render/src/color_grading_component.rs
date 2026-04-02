@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::color_grading::{PyColorGradingGlobal, PyColorGradingSection};
 
-#[component_storage(ColorGrading)]
+#[component_storage(ColorGrading, bridge)]
 #[pyclass(name = "ColorGrading", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyColorGrading {

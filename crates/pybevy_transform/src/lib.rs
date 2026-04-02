@@ -1,20 +1,14 @@
 pub mod global_transform;
 pub mod transform;
 
-use bevy::transform::components::{GlobalTransform, Transform};
+use bevy::{app::App, transform::TransformPlugin};
 pub use global_transform::PyGlobalTransform;
-use pybevy_core::{PyPlugin, plugin::plugin_registry, registry::global_registry};
-use pybevy_macros::{component_bridge, plugin_bridge};
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
 pub use transform::PyTransform;
 
-component_bridge!(
-    Transform,
-    PyTransform,
-    view_fields = [translation, rotation, scale]
-);
-component_bridge!(GlobalTransform, PyGlobalTransform, no_insert);
-
+#[plugin_storage(TransformPlugin)]
 #[pyclass(name = "TransformPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransformPlugin;
@@ -33,25 +27,17 @@ impl Default for PyTransformPlugin {
     }
 }
 
-plugin_bridge!(PyTransformPlugin, bevy::transform::TransformPlugin);
-
-pub fn register_transform_bridges() {
-    global_registry::register_component_bridge(TransformBridge);
-    global_registry::register_component_bridge(GlobalTransformBridge);
-    plugin_registry::register_plugin_bridge(TransformPluginBridge);
-    register_transform_batch();
-}
-
-pub fn add_transform_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_transform_bridges();
-    m.add_class::<PyTransformPlugin>()?;
-    m.add_class::<PyTransform>()?;
-    m.add_class::<PyGlobalTransform>()?;
-    Ok(())
+impl PluginBuild for PyTransformPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(TransformPlugin);
+        Ok(())
+    }
 }
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "transform")?;
-    add_transform_classes(&m)?;
+    m.add_class::<PyTransformPlugin>()?;
+    m.add_class::<PyTransform>()?;
+    m.add_class::<PyGlobalTransform>()?;
     parent.add_submodule(&m)
 }

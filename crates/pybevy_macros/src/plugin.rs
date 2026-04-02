@@ -1,70 +1,34 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{
-    Ident, Token, Type,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-};
+use syn::{ItemStruct, Type, parse_macro_input};
 
-/// Generates a PluginBridge struct and implementation for feature crates.
+/// Attribute proc macro for plugin wrappers.
 ///
-/// This macro generates:
-/// - A bridge struct (e.g., `TransformPluginBridge`)
-/// - `impl PluginBridge for XBridge` with all required methods
+/// Generates the PluginBridge impl and inventory registration for a struct
+/// that implements `PluginBuild`.
 ///
 /// # Usage
 ///
-/// Simple plugin (uses BevyType::default()):
 /// ```rust
-/// // In pybevy_transform/src/lib.rs
-/// plugin_bridge!(PyTransformPlugin, TransformPlugin);
-/// ```
+/// #[plugin_storage(bevy::window::WindowPlugin)]
+/// #[pyclass(name = "WindowPlugin", extends = PyPlugin)]
+/// pub struct PyWindowPlugin { ... }
 ///
-/// Plugin with custom build logic:
-/// ```rust
-/// plugin_bridge!(PyAudioPlugin, AudioPlugin, |py_plugin: &Bound<'_, PyAudioPlugin>, app: &mut App| {
-///     let config = py_plugin.extract::<PyRef<PyAudioPlugin>>()?;
-///     // Use config to customize the Bevy plugin
-///     app.add_plugins(bevy::audio::AudioPlugin::default());
-///     Ok(())
-/// });
+/// impl PluginBuild for PyWindowPlugin {
+///     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+///         let config: PyRef<'_, PyWindowPlugin> = py_plugin.extract()?;
+///         app.add_plugins(bevy::window::WindowPlugin::try_from(&*config)?);
+///         Ok(())
+///     }
+/// }
 /// ```
-///
-/// The bridge name is derived from the Bevy type (e.g., `TransformPluginBridge`).
-pub fn plugin_bridge(input: TokenStream) -> TokenStream {
-    struct PluginBridgeArgs {
-        py_type: Ident,
-        bevy_type: Type,
-        custom_build: Option<syn::ExprClosure>,
-    }
+pub fn plugin_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let bevy_type: Type = parse_macro_input!(attr as Type);
+    let input = parse_macro_input!(item as ItemStruct);
+    let py_type = &input.ident;
 
-    impl Parse for PluginBridgeArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let py_type: Ident = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let bevy_type: Type = input.parse()?;
-
-            let custom_build = if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                Some(input.parse()?)
-            } else {
-                None
-            };
-
-            Ok(PluginBridgeArgs {
-                py_type,
-                bevy_type,
-                custom_build,
-            })
-        }
-    }
-
-    let args = parse_macro_input!(input as PluginBridgeArgs);
-    let py_type = &args.py_type;
-    let bevy_type = &args.bevy_type;
-
-    // Extract simple name for bridge struct (strip generic args if present)
-    let bevy_type_name = match &args.bevy_type {
+    // Extract simple name for bridge struct
+    let bevy_type_name = match &bevy_type {
         Type::Path(type_path) => type_path
             .path
             .segments
@@ -77,28 +41,9 @@ pub fn plugin_bridge(input: TokenStream) -> TokenStream {
     let bridge_name = quote::format_ident!("{}Bridge", bevy_type_name);
     let plugin_name = &bevy_type_name;
 
-    // Generate build method based on whether custom logic is provided
-    let build_impl = match &args.custom_build {
-        Some(closure) => {
-            quote! {
-                fn build(&self, py_plugin: &pyo3::Bound<'_, pyo3::PyAny>, app: &mut bevy::app::App) -> pyo3::PyResult<()> {
-                    let build_fn: fn(&pyo3::Bound<'_, pyo3::PyAny>, &mut bevy::app::App) -> pyo3::PyResult<()> = #closure;
-                    build_fn(py_plugin, app)
-                }
-            }
-        }
-        None => {
-            quote! {
-                fn build(&self, _py_plugin: &pyo3::Bound<'_, pyo3::PyAny>, app: &mut bevy::app::App) -> pyo3::PyResult<()> {
-                    app.add_plugins(#bevy_type::default());
-                    Ok(())
-                }
-            }
-        }
-    };
-
     let expanded = quote! {
-        /// Bridge for #plugin_name plugin
+        #input
+
         pub struct #bridge_name;
 
         impl pybevy_core::PluginBridge for #bridge_name {
@@ -120,8 +65,14 @@ pub fn plugin_bridge(input: TokenStream) -> TokenStream {
                 #plugin_name
             }
 
-            #build_impl
+            fn build(&self, py_plugin: &pyo3::Bound<'_, pyo3::PyAny>, app: &mut bevy::app::App) -> pyo3::PyResult<()> {
+                <#py_type as pybevy_core::PluginBuild>::build(py_plugin, app)
+            }
         }
+
+        pybevy_core::inventory::submit!(pybevy_core::PluginBridgeRegistration {
+            create: || std::sync::Arc::new(#bridge_name),
+        });
     };
 
     TokenStream::from(expanded)

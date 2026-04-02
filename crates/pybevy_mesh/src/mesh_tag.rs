@@ -1,35 +1,13 @@
 use bevy::mesh::MeshTag;
 use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
-/// A simple tag component that can be used to identify mesh entities.
+
+#[component_storage(MeshTag, bridge, view_fields = [0 as value])]
 #[pyclass(name = "MeshTag", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyMeshTag {
     pub(crate) storage: ComponentStorage<MeshTag>,
-}
-
-impl PyMeshTag {
-    pub fn from_owned(value: MeshTag) -> (Self, PyComponent) {
-        (
-            PyMeshTag {
-                storage: ComponentStorage::owned(value),
-            },
-            PyComponent,
-        )
-    }
-    pub fn from_borrowed(storage: ComponentStorage<MeshTag>) -> (Self, PyComponent) {
-        (PyMeshTag { storage }, PyComponent)
-    }
-
-    #[inline(always)]
-    pub fn as_ref(&self) -> PyResult<&MeshTag> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    pub fn as_mut(&mut self) -> PyResult<&mut MeshTag> {
-        Ok(self.storage.as_mut()?)
-    }
 }
 
 #[pymethods]

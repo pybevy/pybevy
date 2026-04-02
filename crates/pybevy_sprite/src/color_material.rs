@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::PyAlphaMode2d;
 
-#[asset_storage(ColorMaterial)]
+#[asset_storage(ColorMaterial, bridge)]
 #[pyclass(name = "ColorMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyColorMaterial {

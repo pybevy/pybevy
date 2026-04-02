@@ -1,8 +1,9 @@
 use bevy::input::keyboard::KeyboardFocusLost;
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pyo3::prelude::*;
 
+#[message_storage(KeyboardFocusLost)]
 #[pyclass(name = "KeyboardFocusLost", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyKeyboardFocusLost;
@@ -30,6 +31,3 @@ impl PyKeyboardFocusLost {
         "KeyboardFocusLost()".to_string()
     }
 }
-
-// Message bridge
-message_bridge!(KeyboardFocusLost, PyKeyboardFocusLost);

@@ -3,13 +3,13 @@ use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
-use crate::{PyAnimationCurve, PyAnimationTargetId};
+use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId};
 
 #[pyclass(name = "VariableCurve", extends = PyAnimationCurve)]
 #[derive(Debug, Clone)]
 pub struct PyVariableCurve(pub(crate) VariableCurve);
 
-#[asset_storage(AnimationClip)]
+#[asset_storage(AnimationClip, bridge)]
 #[pyclass(name = "AnimationClip", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyAnimationClip {

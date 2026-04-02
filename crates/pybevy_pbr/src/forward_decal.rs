@@ -1,7 +1,9 @@
 use bevy::pbr::decal::ForwardDecal;
 use pybevy_core::PyComponent;
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
+#[component_storage(ForwardDecal, unit, bridge)]
 #[pyclass(name = "ForwardDecal", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyForwardDecal;

@@ -6,11 +6,10 @@ use bevy::{
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass},
 };
 use pybevy_core::PyComponent;
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-/// Marker component that disables CPU culling for an entity.
-///
-/// Entities with this component will skip CPU-side visibility culling.
+#[component_storage(NoCpuCulling, unit, bridge)]
 #[pyclass(name = "NoCpuCulling", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoCpuCulling;
@@ -47,10 +46,7 @@ impl PyNoCpuCulling {
     }
 }
 
-/// Marker component that disables frustum culling for an entity.
-///
-/// Entities with this component will always be rendered regardless of
-/// whether they are in the camera's view frustum.
+#[component_storage(NoFrustumCulling, unit, bridge)]
 #[pyclass(name = "NoFrustumCulling", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoFrustumCulling;
@@ -87,9 +83,7 @@ impl PyNoFrustumCulling {
     }
 }
 
-/// Marker component for 2D camera rendering.
-///
-/// Configures a camera entity for 2D rendering.
+#[component_storage(Camera2d, unit, bridge)]
 #[pyclass(name = "Camera2d", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCamera2d;
@@ -130,10 +124,7 @@ impl PyCamera2d {
     }
 }
 
-/// Marker component that enables depth prepass for a camera.
-///
-/// When added to a Camera3d entity, depth values are copied to a separate texture
-/// during the prepass phase. Required for features like occlusion culling.
+#[component_storage(DepthPrepass, unit, bridge)]
 #[pyclass(name = "DepthPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDepthPrepass;
@@ -170,10 +161,7 @@ impl PyDepthPrepass {
     }
 }
 
-/// Marker component that enables normal prepass for a camera.
-///
-/// When added to a Camera3d entity, vertex world normals are copied to a
-/// separate texture during the prepass phase.
+#[component_storage(NormalPrepass, unit, bridge)]
 #[pyclass(name = "NormalPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNormalPrepass;
@@ -210,10 +198,7 @@ impl PyNormalPrepass {
     }
 }
 
-/// Marker component that enables motion vector prepass for a camera.
-///
-/// When added to a Camera3d entity, screen space motion vectors are copied
-/// to a separate texture during the prepass phase.
+#[component_storage(MotionVectorPrepass, unit, bridge)]
 #[pyclass(name = "MotionVectorPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMotionVectorPrepass;
@@ -250,10 +235,7 @@ impl PyMotionVectorPrepass {
     }
 }
 
-/// Marker component that enables deferred prepass for a camera.
-///
-/// When added to a Camera3d entity, deferred materials are rendered to the
-/// deferred gbuffer texture during the prepass phase.
+#[component_storage(DeferredPrepass, unit, bridge)]
 #[pyclass(name = "DeferredPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDeferredPrepass;

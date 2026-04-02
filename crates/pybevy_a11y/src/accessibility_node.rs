@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use super::role::PyRole;
 
-#[component_storage(AccessibilityNode)]
+#[component_storage(AccessibilityNode, bridge)]
 #[pyclass(name = "AccessibilityNode", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAccessibilityNode {

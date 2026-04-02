@@ -156,12 +156,16 @@ fn get_global_resource_registry() -> &'static RwLock<GlobalResourceBridgeRegistr
 /// global_registry::register_resource_bridge(GlobalVolumeBridge);
 /// ```
 pub fn register_resource_bridge<B: ResourceBridge>(bridge: B) {
+    register_resource_bridge_arc(Arc::new(bridge));
+}
+
+/// Register a pre-wrapped Arc resource bridge (used by inventory auto-registration)
+pub fn register_resource_bridge_arc(bridge: Arc<dyn ResourceBridge>) {
     let ptr = bridge.py_type_ptr();
     if ptr.is_null() {
         return;
     }
 
-    let bridge = Arc::new(bridge);
     let registry = get_global_resource_registry();
     let mut guard = registry
         .write()
@@ -242,13 +246,17 @@ fn get_global_asset_registry() -> &'static RwLock<GlobalAssetBridgeRegistry> {
 /// global_registry::register_asset_bridge(AudioSourceBridge);
 /// ```
 pub fn register_asset_bridge<B: AssetBridge>(bridge: B) {
+    register_asset_bridge_arc(Arc::new(bridge));
+}
+
+/// Register a pre-wrapped Arc asset bridge (used by inventory auto-registration)
+pub fn register_asset_bridge_arc(bridge: Arc<dyn AssetBridge>) {
     let ptr = bridge.py_type_ptr();
     if ptr.is_null() {
         return;
     }
 
     let type_id = bridge.bevy_type_id();
-    let bridge = Arc::new(bridge);
     let registry = get_global_asset_registry();
     let mut guard = registry
         .write()
@@ -338,7 +346,7 @@ fn get_type_id_registry() -> &'static RwLock<TypeIdRegistry> {
 /// Register a component's TypeId in the global registry
 ///
 /// This should be called by both:
-/// - Feature crate component_bridge! macros
+/// - Feature crate #[component_storage(..., bridge)] attributes
 /// - Main crate native_component! macros
 ///
 /// # Example
@@ -410,13 +418,17 @@ fn get_global_message_registry() -> &'static RwLock<GlobalMessageBridgeRegistry>
 /// global_registry::register_message_bridge(KeyboardInputBridge);
 /// ```
 pub fn register_message_bridge<B: MessageBridge>(bridge: B) {
+    register_message_bridge_arc(Arc::new(bridge));
+}
+
+/// Register a pre-wrapped Arc message bridge (used by inventory auto-registration)
+pub fn register_message_bridge_arc(bridge: Arc<dyn MessageBridge>) {
     let ptr = bridge.py_type_ptr();
     if ptr.is_null() {
         return;
     }
 
     let type_id = bridge.bevy_type_id();
-    let bridge = Arc::new(bridge);
     let registry = get_global_message_registry();
     let mut guard = registry
         .write()

@@ -151,7 +151,7 @@ impl ImagePixelContextMut {
     }
 }
 
-#[asset_storage(Image)]
+#[asset_storage(Image, bridge)]
 #[pyclass(name = "Image", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyImage {

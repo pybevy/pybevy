@@ -4,7 +4,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(RelativeCursorPosition)]
+#[component_storage(RelativeCursorPosition, bridge)]
 #[pyclass(name = "RelativeCursorPosition", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyRelativeCursorPosition {

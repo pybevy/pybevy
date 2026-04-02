@@ -9,7 +9,7 @@ use crate::{
     PyOverflow, PyOverflowClipMargin, PyPositionType, PyRepeatedGridTrack, PyUiRect, PyVal,
 };
 
-#[component_storage(Node)]
+#[component_storage(Node, bridge)]
 #[pyclass(name = "Node", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyNode {

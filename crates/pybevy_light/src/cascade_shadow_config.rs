@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, PyF32List};
 use pybevy_macros::component_storage;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-#[component_storage(CascadeShadowConfig)]
+#[component_storage(CascadeShadowConfig, bridge, view_fields = [overlap_proportion, minimum_distance])]
 #[pyclass(name = "CascadeShadowConfig", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyCascadeShadowConfig {

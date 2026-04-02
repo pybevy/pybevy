@@ -4,11 +4,13 @@ use bevy::render::{
     view::{Hdr, NoIndirectDrawing},
 };
 use pybevy_core::PyComponent;
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
 /// Marker component that enables HDR rendering for a camera.
 ///
 /// When added to a camera entity, enables high dynamic range rendering.
+#[component_storage(Hdr, unit, bridge)]
 #[pyclass(name = "Hdr", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyHdr;
@@ -49,6 +51,7 @@ impl PyHdr {
 ///
 /// Prevents the entity from being automatically batched with similar
 /// entities during rendering.
+#[component_storage(NoAutomaticBatching, unit, bridge)]
 #[pyclass(name = "NoAutomaticBatching", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoAutomaticBatching;
@@ -88,6 +91,7 @@ impl PyNoAutomaticBatching {
 /// Marker component that disables indirect drawing for an entity.
 ///
 /// Prevents the entity from using indirect draw calls during rendering.
+#[component_storage(NoIndirectDrawing, unit, bridge)]
 #[pyclass(name = "NoIndirectDrawing", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoIndirectDrawing;
@@ -129,6 +133,7 @@ impl PyNoIndirectDrawing {
 /// When added to a camera entity, enables GPU-based occlusion culling
 /// which can improve performance by not rendering objects hidden behind
 /// other objects.
+#[component_storage(OcclusionCulling, unit, bridge)]
 #[pyclass(name = "OcclusionCulling", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyOcclusionCulling;

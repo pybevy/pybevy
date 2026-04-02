@@ -9,7 +9,7 @@ use super::{
     clear_color_config::PyClearColorConfig, sub_camera_view::PySubCameraView, viewport::PyViewport,
 };
 
-#[component_storage(Camera)]
+#[component_storage(Camera, bridge, view_fields = [is_active])]
 #[pyclass(name = "Camera", extends = PyComponent, eq)]
 #[derive(Clone)]
 pub struct PyCamera {

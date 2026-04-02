@@ -4,7 +4,7 @@ use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::resource_storage;
 use pyo3::prelude::*;
 
-#[resource_storage(WireframeConfig)]
+#[resource_storage(WireframeConfig, bridge)]
 #[pyclass(name = "WireframeConfig", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyWireframeConfig {

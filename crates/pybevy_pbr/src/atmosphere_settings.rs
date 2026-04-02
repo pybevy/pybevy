@@ -5,7 +5,16 @@ use pybevy_math::{PyUVec2, PyUVec3};
 use pybevy_render::PyAtmosphereMode;
 use pyo3::prelude::*;
 
-#[component_storage(AtmosphereSettings)]
+#[component_storage(AtmosphereSettings, bridge, view_fields = [
+    transmittance_lut_samples,
+    multiscattering_lut_dirs,
+    multiscattering_lut_samples,
+    sky_view_lut_samples,
+    aerial_view_lut_samples,
+    aerial_view_lut_max_distance,
+    scene_units_to_m,
+    sky_max_samples
+])]
 #[pyclass(name = "AtmosphereSettings", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAtmosphereSettings {

@@ -2,25 +2,16 @@ use bevy::{
     asset::AssetId,
     text::{Font, FontAtlasSet},
 };
-use pybevy_core::{PyResource, ResourceStorage, extract_handle_from_any};
+use pybevy_core::{ResourceStorage, extract_handle_from_any};
+use pybevy_macros::resource_storage;
 use pyo3::prelude::*;
 
 use crate::font_atlas::{PyFontAtlas, PyFontAtlasKey};
 
-#[pyclass(name = "FontAtlasSet", extends = PyResource)]
+#[resource_storage(FontAtlasSet, no_clone, bridge, no_mut, no_insert)]
+#[pyclass(name = "FontAtlasSet", extends = pybevy_core::PyResource)]
 pub struct PyFontAtlasSet {
     pub(crate) storage: ResourceStorage<FontAtlasSet>,
-}
-
-impl PyFontAtlasSet {
-    pub fn from_borrowed(storage: ResourceStorage<FontAtlasSet>) -> (Self, PyResource) {
-        (Self { storage }, PyResource)
-    }
-
-    #[inline(always)]
-    pub(crate) fn as_ref(&self) -> PyResult<&FontAtlasSet> {
-        Ok(self.storage.as_ref()?)
-    }
 }
 
 #[pymethods]

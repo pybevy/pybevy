@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{PyFontSmoothing, font_features::PyFontFeatures, font_weight::PyFontWeight};
 
-#[component_storage(TextFont)]
+#[component_storage(TextFont, bridge, view_fields = [font_size])]
 #[pyclass(name = "TextFont", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextFont {

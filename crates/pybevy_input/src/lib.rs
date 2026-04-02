@@ -25,14 +25,8 @@ pub mod touch_input;
 pub mod touch_phase;
 pub mod touches;
 
-use std::any::TypeId;
-
 pub use accumulated_mouse::{PyAccumulatedMouseMotion, PyAccumulatedMouseScroll};
 pub use axis::PyAxis;
-use bevy::{
-    ecs::{component::ComponentId, world::World},
-    input::gamepad::{Gamepad, GamepadSettings},
-};
 pub use button_input::PyButtonInput;
 pub use button_state::PyButtonState;
 pub use gamepad::PyGamepad;
@@ -58,157 +52,12 @@ pub use mouse_events::{PyMouseButtonInput, PyMouseMotion, PyMouseWheel};
 pub use mouse_input::PyMouseInput;
 pub use mouse_scroll_unit::PyMouseScrollUnit;
 pub use plugin::PyInputPlugin;
-use pybevy_core::{
-    ValidityFlagWithMode,
-    plugin::plugin_registry,
-    registry::{ResourceBridge, global_registry},
-};
-use pybevy_macros::{component_bridge, plugin_bridge, resource_bridge};
-use pyo3::{PyTypeInfo, ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::prelude::*;
 pub use touch_input::PyTouchInput;
 pub use touch_phase::PyTouchPhase;
 pub use touches::{PyTouch, PyTouches};
-
-component_bridge!(Gamepad, PyGamepad, no_insert);
-component_bridge!(GamepadSettings, PyGamepadSettings, no_insert);
-
-plugin_bridge!(PyInputPlugin, bevy::input::InputPlugin);
-
-resource_bridge!(
-    bevy::input::touch::Touches,
-    PyTouches,
-    no_mut,
-    default_insert
-);
-resource_bridge!(
-    bevy::input::ButtonInput<bevy::input::keyboard::KeyCode>,
-    PyButtonInput,
-    "ButtonInput",
-    no_mut,
-    default_insert
-);
-resource_bridge!(
-    bevy::input::ButtonInput<bevy::input::mouse::MouseButton>,
-    PyMouseInput,
-    "MouseInput",
-    no_mut,
-    default_insert
-);
-resource_bridge!(
-    bevy::input::Axis<bevy::input::gamepad::GamepadAxis>,
-    PyAxis,
-    "Axis",
-    no_mut,
-    no_insert
-);
-
-pub struct AccumulatedMouseMotionBridge;
-
-impl ResourceBridge for AccumulatedMouseMotionBridge {
-    fn bevy_type_id(&self) -> TypeId {
-        TypeId::of::<bevy::input::mouse::AccumulatedMouseMotion>()
-    }
-
-    fn py_type_ptr(&self) -> *const PyTypeObject {
-        Python::attach(|py| {
-            PyAccumulatedMouseMotion::type_object(py).as_type_ptr() as *const PyTypeObject
-        })
-    }
-
-    fn py_type<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
-        PyAccumulatedMouseMotion::type_object(py)
-    }
-
-    fn name(&self) -> &'static str {
-        "AccumulatedMouseMotion"
-    }
-
-    fn get(
-        &self,
-        world: &World,
-        _validity: ValidityFlagWithMode,
-        py: Python,
-    ) -> PyResult<Py<PyAny>> {
-        let resource = world
-            .get_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
-            .ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(
-                    "AccumulatedMouseMotion resource not found in world",
-                )
-            })?;
-        let py_resource = Py::new(py, PyAccumulatedMouseMotion::from_bevy(resource))?;
-        Ok(py_resource.into_any())
-    }
-
-    fn get_mut(
-        &self,
-        world: &mut World,
-        _validity: ValidityFlagWithMode,
-        py: Python,
-    ) -> PyResult<Py<PyAny>> {
-        let resource = world
-            .get_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
-            .ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(
-                    "AccumulatedMouseMotion resource not found in world",
-                )
-            })?;
-        let py_resource = Py::new(py, PyAccumulatedMouseMotion::from_bevy(resource))?;
-        Ok(py_resource.into_any())
-    }
-
-    fn insert(&self, world: &mut World, resource: &Bound<PyAny>) -> PyResult<()> {
-        let py_resource = resource.extract::<PyRef<PyAccumulatedMouseMotion>>()?;
-        let motion = bevy::input::mouse::AccumulatedMouseMotion {
-            delta: py_resource.delta.get(),
-        };
-        world.insert_resource(motion);
-        Ok(())
-    }
-
-    fn remove(&self, world: &mut World) {
-        world.remove_resource::<bevy::input::mouse::AccumulatedMouseMotion>();
-    }
-
-    fn contains_in_world(&self, world: &World) -> bool {
-        world.contains_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
-    }
-
-    fn resource_id(&self, world: &World) -> Option<ComponentId> {
-        world
-            .components()
-            .resource_id::<bevy::input::mouse::AccumulatedMouseMotion>()
-    }
-}
-pub fn register_input_bridges() {
-    global_registry::register_component_bridge(GamepadBridge);
-    global_registry::register_component_bridge(GamepadSettingsBridge);
-
-    global_registry::register_message_bridge(touch_input::TouchInputBridge);
-    global_registry::register_message_bridge(mouse_events::MouseButtonInputBridge);
-    global_registry::register_message_bridge(mouse_events::MouseMotionBridge);
-    global_registry::register_message_bridge(mouse_events::MouseWheelBridge);
-    global_registry::register_message_bridge(gamepad_events::GamepadButtonChangedBridge);
-    global_registry::register_message_bridge(gamepad_events::GamepadAxisChangedBridge);
-    global_registry::register_message_bridge(gamepad_events::GamepadConnectionBridge);
-    global_registry::register_message_bridge(gamepad_events::GamepadButtonStateChangedBridge);
-    global_registry::register_message_bridge(gesture_events::PinchGestureBridge);
-    global_registry::register_message_bridge(gesture_events::RotationGestureBridge);
-    global_registry::register_message_bridge(gesture_events::DoubleTapGestureBridge);
-    global_registry::register_message_bridge(gesture_events::PanGestureBridge);
-    global_registry::register_message_bridge(keyboard_events::KeyboardFocusLostBridge);
-
-    global_registry::register_resource_bridge(AccumulatedMouseMotionBridge);
-    global_registry::register_resource_bridge(TouchesBridge);
-    global_registry::register_resource_bridge(ButtonInputBridge);
-    global_registry::register_resource_bridge(MouseInputBridge);
-    global_registry::register_resource_bridge(AxisBridge);
-
-    plugin_registry::register_plugin_bridge(InputPluginBridge);
-}
-pub fn add_input_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_input_bridges();
-
+pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "input")?;
     m.add_class::<PyInputPlugin>()?;
     m.add_class::<PyAxis>()?;
     m.add_class::<PyButtonInput>()?;
@@ -248,12 +97,5 @@ pub fn add_input_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKeyboardInput>()?;
     m.add_class::<PyTouch>()?;
     m.add_class::<PyTouches>()?;
-
-    Ok(())
-}
-
-pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "input")?;
-    add_input_classes(&m)?;
     parent.add_submodule(&m)
 }

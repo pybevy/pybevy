@@ -4,7 +4,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
-#[component_storage(Skybox)]
+#[component_storage(Skybox, bridge, view_fields = [brightness])]
 #[pyclass(name = "Skybox", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PySkybox {

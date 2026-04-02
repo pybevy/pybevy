@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import ClassVar
 
 import numpy as np
 
@@ -6,14 +7,7 @@ from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
-from pybevy.wgpu import (
-    Extent3d,
-    ImageAddressMode,
-    ImageFilterMode,
-    TextureDimension,
-    TextureFormat,
-)
-from pybevy.wgpu import ImageSampler as WgpuImageSampler
+from pybevy.wgpu import Extent3d, TextureDimension, TextureFormat
 
 class ImageFormat(Enum):
     """Image encoding format for saving/exporting images.
@@ -418,14 +412,14 @@ class Image(Asset):
         """Get the number of mip levels in this image."""
 
     @property
-    def sampler(self) -> WgpuImageSampler:
+    def sampler(self) -> ImageSampler:
         """Get the texture sampler configuration.
 
         Returns sampler settings like filter modes and address modes.
         """
 
     @sampler.setter
-    def sampler(self, value: WgpuImageSampler) -> None:
+    def sampler(self, value: ImageSampler) -> None:
         """Set the texture sampler configuration.
 
         Args:
@@ -433,7 +427,8 @@ class Image(Asset):
 
         Example:
             >>> from pybevy.image import Image
-            >>> from pybevy.wgpu import ImageSampler, Extent3d
+            >>> from pybevy.image import ImageSampler
+            >>> from pybevy.wgpu import Extent3d
             >>> img = Image(Extent3d(64, 64, 1))
             >>> img.sampler = ImageSampler.linear()  # Smooth filtering
             >>> img.sampler = ImageSampler.nearest()  # Pixel-perfect filtering
@@ -1249,6 +1244,20 @@ class ImageSamplerDescriptor:
 
 
 
+class ImageFilterMode:
+    """Image filtering mode for texture sampling."""
+
+    Nearest: ClassVar[ImageFilterMode]
+    Linear: ClassVar[ImageFilterMode]
+
+class ImageAddressMode:
+    """Image addressing mode for texture coordinates outside [0, 1] range."""
+
+    ClampToEdge: ClassVar[ImageAddressMode]
+    Repeat: ClassVar[ImageAddressMode]
+    MirrorRepeat: ClassVar[ImageAddressMode]
+    ClampToBorder: ClassVar[ImageAddressMode]
+
 class ImageSampler:
     """Image sampler - either use default or provide a custom descriptor.
 
@@ -1280,6 +1289,21 @@ class ImageSampler:
     @staticmethod
     def descriptor(desc: ImageSamplerDescriptor) -> ImageSampler:
         """Create a sampler with a custom descriptor."""
+
+    @property
+    def is_default(self) -> bool: ...
+    @property
+    def mag_filter(self) -> ImageFilterMode | None: ...
+    @property
+    def min_filter(self) -> ImageFilterMode | None: ...
+    @property
+    def mipmap_filter(self) -> ImageFilterMode | None: ...
+    @property
+    def address_mode_u(self) -> ImageAddressMode | None: ...
+    @property
+    def address_mode_v(self) -> ImageAddressMode | None: ...
+    @property
+    def address_mode_w(self) -> ImageAddressMode | None: ...
 
 
 class ImageArrayLayout:

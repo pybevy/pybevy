@@ -205,7 +205,7 @@ impl PyActiveAnimation {
     }
 }
 
-#[component_storage(AnimationPlayer)]
+#[component_storage(AnimationPlayer, bridge)]
 #[pyclass(name = "AnimationPlayer", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAnimationPlayer {

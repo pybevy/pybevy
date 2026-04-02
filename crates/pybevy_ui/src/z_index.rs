@@ -3,7 +3,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-#[newtype_storage(ZIndex)]
+#[newtype_storage(ZIndex, bridge)]
 #[pyclass(name = "ZIndex", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyZIndex(pub(crate) ZIndex);
@@ -32,7 +32,7 @@ impl PyZIndex {
     }
 }
 
-#[newtype_storage(GlobalZIndex)]
+#[newtype_storage(GlobalZIndex, bridge)]
 #[pyclass(name = "GlobalZIndex", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGlobalZIndex(pub(crate) GlobalZIndex);

@@ -61,7 +61,8 @@ pub use vec3a::PyVec3A;
 pub use vec4::PyVec4;
 pub use winding_order::PyWindingOrder;
 
-pub fn add_math_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "math")?;
     m.add_class::<PyAffine2>()?;
     m.add_class::<PyMat2>()?;
     m.add_class::<PyAffine3A>()?;
@@ -109,11 +110,5 @@ pub fn add_math_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyArc2d>()?;
     m.add_class::<PyInfinitePlane3d>()?;
     m.add_class::<PyPolygon>()?;
-    Ok(())
-}
-
-pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "math")?;
-    add_math_classes(&m)?;
     parent.add_submodule(&m)
 }

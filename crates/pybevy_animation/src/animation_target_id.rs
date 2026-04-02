@@ -4,7 +4,7 @@ use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 use uuid::Uuid;
 
-#[newtype_storage(AnimationTargetId)]
+#[newtype_storage(AnimationTargetId, bridge, copy)]
 #[pyclass(name = "AnimationTargetId", extends = PyComponent, frozen, eq)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PyAnimationTargetId(pub(crate) AnimationTargetId);

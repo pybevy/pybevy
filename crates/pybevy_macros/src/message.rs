@@ -1,87 +1,80 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, Token, Type,
+    Ident, ItemStruct, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
 
-/// Generates a MessageBridge for event/message types in feature crates.
+/// Attribute proc macro for message bridges.
 ///
-/// This macro generates the full MessageBridge implementation for Bevy events
-/// that are exposed as PyBevy messages.
-///
-/// The Python type must:
-/// - Implement `From<&BevyType> for PyType` (for reading events)
-/// - Optionally implement `TryFrom<&PyType> for BevyType` (for writable events)
+/// Goes on the struct definition and generates the MessageBridge impl + inventory registration.
 ///
 /// # Usage
 ///
-/// For read-only events (most input events):
 /// ```rust
-/// // In pybevy_input/src/lib.rs
-/// message_bridge!(KeyboardInput, PyKeyboardInput);
+/// #[message_storage(CursorEntered)]
+/// #[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
+/// pub struct PyCursorEntered { ... }
 /// ```
-///
-/// For writable events (like AppExit):
-/// ```rust
-/// message_bridge!(AppExit, PyAppExit, writable);
-/// ```
-///
-/// For types with different bridge names:
-/// ```rust
-/// message_bridge!(bevy::input::keyboard::KeyboardInput, PyKeyboardInput, "KeyboardInput");
-/// ```
-pub fn message_bridge(input: TokenStream) -> TokenStream {
-    struct BridgeArgs {
+pub fn message_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+    struct MessageStorageArgs {
         bevy_type: Type,
-        py_type: Ident,
-        bridge_name: Option<String>,
         writable: bool,
     }
 
-    impl Parse for BridgeArgs {
+    impl Parse for MessageStorageArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
-            let mut bridge_name = None;
             let mut writable = false;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
-                if input.peek(syn::LitStr) {
-                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
+                let ident: Ident = input.parse()?;
+                if ident == "writable" {
+                    writable = true;
                 } else {
-                    let ident: Ident = input.parse()?;
-                    if ident == "writable" {
-                        writable = true;
-                    } else {
-                        return Err(syn::Error::new_spanned(
-                            ident,
-                            "expected 'writable' or a string literal",
-                        ));
-                    }
+                    return Err(syn::Error::new_spanned(ident, "expected 'writable'"));
                 }
             }
 
-            Ok(BridgeArgs {
+            Ok(MessageStorageArgs {
                 bevy_type,
-                py_type,
-                bridge_name,
                 writable,
             })
         }
     }
 
-    let args = parse_macro_input!(input as BridgeArgs);
-    let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
-    let writable = args.writable;
+    let args = parse_macro_input!(attr as MessageStorageArgs);
+    let input = parse_macro_input!(item as ItemStruct);
+    let py_type = &input.ident;
 
+    let bridge_tokens = generate_message_bridge_tokens(
+        &args.bevy_type,
+        py_type,
+        None,
+        args.writable,
+        true, // emit inventory
+    );
+
+    let expanded = quote! {
+        #input
+        #bridge_tokens
+    };
+
+    TokenStream::from(expanded)
+}
+
+/// Shared message bridge code generation.
+fn generate_message_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+    writable: bool,
+    emit_inventory: bool,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
@@ -212,5 +205,18 @@ pub fn message_bridge(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    let inventory_submit = if emit_inventory {
+        quote! {
+            pybevy_core::inventory::submit!(pybevy_core::MessageBridgeRegistration {
+                create: || std::sync::Arc::new(#bridge_name),
+            });
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #expanded
+        #inventory_submit
+    }
 }

@@ -45,6 +45,7 @@ pyo3 = { version = "0.27", default-features = false, features = ["multiple-pymet
 bevy = { version = "0.18.1", default-features = false }
 numpy = "0.27"
 uuid = { version = "1.17.0", features = ["v4"] }
+inventory = "0.3"
 pybevy_core = { path = "./crates/pybevy_core", version = "=0.2.1" }
 pybevy_math = { path = "./crates/pybevy_math", version = "=0.2.1" }
 pybevy_color = { path = "./crates/pybevy_color", version = "=0.2.1" }

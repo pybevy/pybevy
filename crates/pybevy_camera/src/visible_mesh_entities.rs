@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(VisibleMeshEntities)]
+#[component_storage(VisibleMeshEntities, bridge)]
 #[pyclass(name = "VisibleMeshEntities", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyVisibleMeshEntities {

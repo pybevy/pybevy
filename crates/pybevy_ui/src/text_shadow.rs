@@ -5,7 +5,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(TextShadow)]
+#[component_storage(TextShadow, bridge)]
 #[pyclass(name = "TextShadow", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyTextShadow {

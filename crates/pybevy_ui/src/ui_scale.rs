@@ -1,36 +1,13 @@
 use bevy::ui::UiScale;
-use pybevy_core::PyResource;
+use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_macros::resource_storage;
 use pyo3::prelude::*;
 
-/// Note: This uses a simple value storage since UiScale doesn't impl Clone in Bevy.
-#[pyclass(name = "UiScale", extends = PyResource, eq)]
-#[derive(Debug, Clone, PartialEq)]
+#[resource_storage(UiScale, no_clone, bridge)]
+#[pyclass(name = "UiScale", extends = PyResource)]
+#[derive(Debug)]
 pub struct PyUiScale {
-    pub value: f32,
-}
-
-impl PyUiScale {
-    pub fn from_bevy(scale: &UiScale) -> Self {
-        PyUiScale { value: scale.0 }
-    }
-}
-
-impl From<UiScale> for PyUiScale {
-    fn from(scale: UiScale) -> Self {
-        PyUiScale { value: scale.0 }
-    }
-}
-
-impl From<PyUiScale> for UiScale {
-    fn from(py: PyUiScale) -> Self {
-        UiScale(py.value)
-    }
-}
-
-impl From<&PyUiScale> for UiScale {
-    fn from(py: &PyUiScale) -> Self {
-        UiScale(py.value)
-    }
+    pub(crate) storage: ResourceStorage<UiScale>,
 }
 
 #[pymethods]
@@ -38,24 +15,33 @@ impl PyUiScale {
     #[new]
     #[pyo3(signature = (scale = 1.0))]
     pub fn new(scale: f32) -> (Self, PyResource) {
-        (PyUiScale { value: scale }, PyResource)
+        (
+            Self {
+                storage: ResourceStorage::owned(UiScale(scale)),
+            },
+            PyResource,
+        )
     }
 
     #[getter]
-    pub fn scale(&self) -> f32 {
-        self.value
+    pub fn scale(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.0)
     }
 
     #[setter]
-    pub fn set_scale(&mut self, value: f32) {
-        self.value = value;
+    pub fn set_scale(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.0 = value;
+        Ok(())
     }
 
     pub fn __repr__(&self) -> String {
-        format!("UiScale({})", self.value)
+        match self.as_ref() {
+            Ok(s) => format!("UiScale({})", s.0),
+            Err(_) => "UiScale(<invalid>)".to_string(),
+        }
     }
 
-    pub fn __float__(&self) -> f64 {
-        self.value as f64
+    pub fn __float__(&self) -> PyResult<f64> {
+        Ok(self.as_ref()?.0 as f64)
     }
 }

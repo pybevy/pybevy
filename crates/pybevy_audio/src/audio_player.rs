@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, handle::PyHandle};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(AudioPlayer<AudioSource>)]
+#[component_storage(AudioPlayer<AudioSource>, bridge)]
 #[pyclass(name = "AudioPlayer", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAudioPlayer {

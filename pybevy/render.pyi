@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import numpy as np
 import numpy.typing as npt
 
@@ -6,8 +8,24 @@ from pybevy.assets import Asset
 from pybevy.ecs import Component
 from pybevy.math import Vec2
 from pybevy.pbr import StandardMaterial as StandardMaterial
-from pybevy.wgpu import Face as Face
-from pybevy.wgpu import PowerPreference
+
+class PowerPreference:
+    """GPU power preference for adapter selection."""
+
+    None_: ClassVar[PowerPreference]
+    LowPower: ClassVar[PowerPreference]
+    HighPerformance: ClassVar[PowerPreference]
+    NONE: ClassVar[PowerPreference]
+    LOW_POWER: ClassVar[PowerPreference]
+    HIGH_PERFORMANCE: ClassVar[PowerPreference]
+
+class Face:
+    """Face culling mode."""
+
+    Front: ClassVar[Face]
+    Back: ClassVar[Face]
+    FRONT: ClassVar[Face]
+    BACK: ClassVar[Face]
 
 PyFace = Face
 

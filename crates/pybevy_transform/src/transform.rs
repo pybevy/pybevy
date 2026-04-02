@@ -4,7 +4,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::{PyAffine3A, PyDir3, PyIsometry3d, PyMat4, PyQuat, PyVec3};
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[component_storage(Transform)]
+#[component_storage(Transform, bridge, view_fields = [translation, rotation, scale])]
 #[pyclass(name = "Transform", extends = pybevy_core::PyComponent, eq)]
 #[derive(Debug, Clone)]
 pub struct PyTransform {

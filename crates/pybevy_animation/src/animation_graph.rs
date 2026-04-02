@@ -7,9 +7,9 @@ use pyo3::{
     types::{PyList, PyTuple},
 };
 
-use crate::PyAnimationNodeIndex;
+use crate::animation_node_index::PyAnimationNodeIndex;
 
-#[asset_storage(AnimationGraph)]
+#[asset_storage(AnimationGraph, bridge)]
 #[pyclass(name = "AnimationGraph", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyAnimationGraph {

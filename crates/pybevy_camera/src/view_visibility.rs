@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(ViewVisibility)]
+#[component_storage(ViewVisibility, bridge)]
 #[pyclass(name = "ViewVisibility", extends = PyComponent, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyViewVisibility {

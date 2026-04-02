@@ -8,7 +8,7 @@
 //! ### Bridge-based Dispatch
 //!
 //! PyAssets uses the global AssetBridge registry for all type-specific operations.
-//! Each asset type is registered via `asset_bridge!()` macro, which generates the
+//! Each asset type is registered via `#[asset_storage(T, bridge)]` attribute, which generates the
 //! bridge implementation. This eliminates the need for match blocks over asset types.
 //!
 //! ### Unified Validity and Mutability Tracking

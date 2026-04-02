@@ -8,9 +8,7 @@ use pyo3::{
 
 use crate::PyCascade;
 
-/// Cascades component - read-only, computed by Bevy
-/// Uses no_clone since Cascades is not Clone, and we only need borrowed access
-#[component_storage(Cascades, no_clone)]
+#[component_storage(Cascades, no_clone, bridge)]
 #[pyclass(name = "Cascades", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyCascades {

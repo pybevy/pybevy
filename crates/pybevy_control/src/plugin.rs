@@ -4,7 +4,8 @@ use bevy::{
     app::{App, First, Last, Plugin},
     prelude::{IntoScheduleConfigs, Resource},
 };
-use pybevy_core::PyPlugin;
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
 
 use crate::{
@@ -13,6 +14,7 @@ use crate::{
     server::{AppState, ServerConfig},
 };
 
+#[plugin_storage(ControlBevyPlugin)]
 #[pyclass(name = "McpPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyControlPlugin {
@@ -79,6 +81,16 @@ impl Default for PyControlPlugin {
             execute_python: false,
             api_discovery: true,
         }
+    }
+}
+
+impl PluginBuild for PyControlPlugin {
+    fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        let config: PyRef<'_, PyControlPlugin> = py_plugin.extract()?;
+        app.add_plugins(ControlBevyPlugin {
+            config: config.clone(),
+        });
+        Ok(())
     }
 }
 

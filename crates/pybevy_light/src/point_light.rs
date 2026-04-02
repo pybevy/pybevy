@@ -4,7 +4,16 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(PointLight)]
+#[component_storage(PointLight, bridge, view_fields = [
+    intensity,
+    range,
+    radius,
+    shadow_depth_bias,
+    shadow_normal_bias,
+    shadow_map_near_z,
+    shadows_enabled,
+    affects_lightmapped_mesh_diffuse
+], batch_only_fields = [color])]
 #[pyclass(name = "PointLight", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyPointLight {

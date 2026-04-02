@@ -1,8 +1,9 @@
 use bevy::window::WindowFocused;
 use pybevy_core::{PyEntity, PyMessage};
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pyo3::prelude::*;
 
+#[message_storage(WindowFocused)]
 #[pyclass(name = "WindowFocused", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowFocused {
@@ -40,5 +41,3 @@ impl PyWindowFocused {
         format!("WindowFocused(focused={})", self.focused)
     }
 }
-
-message_bridge!(WindowFocused, PyWindowFocused);

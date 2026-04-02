@@ -3,7 +3,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-#[newtype_storage(MipBias)]
+#[newtype_storage(MipBias, bridge)]
 #[pyclass(name = "MipBias", extends = PyComponent, frozen)]
 #[derive(Clone)]
 pub struct PyMipBias(pub(crate) MipBias);

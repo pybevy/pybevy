@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(Text)]
+#[component_storage(Text, bridge)]
 #[pyclass(name = "Text", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyText {

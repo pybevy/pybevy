@@ -1,8 +1,11 @@
-use pybevy_core::PyPlugin;
+use bevy::app::App;
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
 
 use crate::power_preference::PyPowerPreference;
 
+#[plugin_storage(bevy::render::RenderPlugin)]
 #[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Default)]
 pub struct PyRenderPlugin {
@@ -40,5 +43,24 @@ impl PyRenderPlugin {
         } else {
             format!("RenderPlugin({})", parts.join(", "))
         }
+    }
+}
+
+impl PluginBuild for PyRenderPlugin {
+    fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        let config: PyRef<'_, PyRenderPlugin> = py_plugin.extract()?;
+        let mut wgpu_settings = bevy::render::settings::WgpuSettings::default();
+        if let Some(ref pp) = config.power_preference {
+            wgpu_settings.power_preference = (*pp).into();
+        }
+        let mut render_plugin = bevy::render::RenderPlugin {
+            render_creation: bevy::render::settings::RenderCreation::Automatic(wgpu_settings),
+            ..Default::default()
+        };
+        if let Some(sync) = config.synchronous_pipeline_compilation {
+            render_plugin.synchronous_pipeline_compilation = sync;
+        }
+        app.add_plugins(render_plugin);
+        Ok(())
     }
 }

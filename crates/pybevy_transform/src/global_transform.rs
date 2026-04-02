@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::transform::PyTransform;
 
-#[component_storage(GlobalTransform)]
+#[component_storage(GlobalTransform, bridge, no_insert)]
 #[pyclass(name = "GlobalTransform", extends = pybevy_core::PyComponent, eq)]
 #[derive(Debug, Clone)]
 pub struct PyGlobalTransform {

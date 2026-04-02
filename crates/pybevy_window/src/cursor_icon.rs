@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::cursor::PySystemCursorIcon;
 
-#[component_storage(CursorIcon)]
+#[component_storage(CursorIcon, bridge)]
 #[pyclass(name = "CursorIcon", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCursorIcon {

@@ -192,7 +192,7 @@ impl PyButtonAxisSettings {
     }
 }
 
-#[component_storage(GamepadSettings, no_clone)]
+#[component_storage(GamepadSettings, no_clone, bridge)]
 #[pyclass(name = "GamepadSettings", extends = PyComponent, frozen)]
 pub struct PyGamepadSettings {
     pub(crate) storage: ComponentStorage<GamepadSettings>,

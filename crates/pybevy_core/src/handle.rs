@@ -138,7 +138,7 @@ impl<A: Asset> From<Handle<A>> for PyHandle {
                 bridge.py_type_ptr()
             } else {
                 panic!(
-                    "No AssetBridge registered for type {}. Register with asset_bridge! macro.",
+                    "No AssetBridge registered for type {}. Add `bridge` to #[asset_storage] attribute.",
                     std::any::type_name::<A>()
                 )
             }
@@ -164,7 +164,7 @@ impl<A: Asset> From<&Handle<A>> for PyHandle {
                 bridge.py_type_ptr()
             } else {
                 panic!(
-                    "No AssetBridge registered for type {}. Register with asset_bridge! macro.",
+                    "No AssetBridge registered for type {}. Add `bridge` to #[asset_storage] attribute.",
                     std::any::type_name::<A>()
                 )
             }
@@ -194,7 +194,7 @@ impl<A: Asset> From<&AssetId<A>> for PyHandle {
                 bridge.py_type_ptr()
             } else {
                 panic!(
-                    "No AssetBridge registered for type {}. Register with asset_bridge! macro.",
+                    "No AssetBridge registered for type {}. Add `bridge` to #[asset_storage] attribute.",
                     std::any::type_name::<A>()
                 )
             }

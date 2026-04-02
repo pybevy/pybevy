@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::gradient::PyGradient;
 
-#[component_storage(BackgroundGradient)]
+#[component_storage(BackgroundGradient, bridge)]
 #[pyclass(name = "BackgroundGradient", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyBackgroundGradient {

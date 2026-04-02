@@ -7,7 +7,6 @@ use bevy::{
 use pybevy_core::{BatchComponent, registry::global_registry};
 use pyo3::prelude::*;
 
-/// Batch component data for Visibility components.
 #[pyclass(name = "VisibilityBatch")]
 #[derive(Debug)]
 pub struct PyVisibilityBatch {
@@ -38,7 +37,6 @@ impl PyVisibilityBatch {
     }
 }
 
-/// Bridge implementation for VisibilityBatch dynamic dispatch
 pub struct VisibilityBatchBridge;
 
 impl BatchComponent for VisibilityBatchBridge {

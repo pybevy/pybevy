@@ -4,7 +4,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::PyUVec2;
 use pyo3::prelude::*;
 
-#[component_storage(AtmosphereEnvironmentMapLight)]
+#[component_storage(AtmosphereEnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
 #[pyclass(name = "AtmosphereEnvironmentMapLight", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAtmosphereEnvironmentMapLight {

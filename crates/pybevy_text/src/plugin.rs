@@ -1,6 +1,9 @@
-use pybevy_core::PyPlugin;
+use bevy::{app::App, text::TextPlugin};
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
 
+#[plugin_storage(TextPlugin)]
 #[pyclass(name = "TextPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTextPlugin;
@@ -16,5 +19,12 @@ impl PyTextPlugin {
 impl Default for PyTextPlugin {
     fn default() -> Self {
         PyTextPlugin
+    }
+}
+
+impl PluginBuild for PyTextPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(TextPlugin);
+        Ok(())
     }
 }

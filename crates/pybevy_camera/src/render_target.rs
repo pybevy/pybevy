@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 
 use super::normalized_render_target::PyNormalizedRenderTarget;
 
-#[component_storage(RenderTarget)]
+#[component_storage(RenderTarget, bridge)]
 #[pyclass(name = "RenderTarget", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyRenderTarget {

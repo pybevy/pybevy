@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::frustum::PyFrustum;
 
-#[component_storage(CubemapFrusta)]
+#[component_storage(CubemapFrusta, bridge)]
 #[pyclass(name = "CubemapFrusta", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCubemapFrusta {

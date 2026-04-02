@@ -4,7 +4,7 @@ use bevy::{
 };
 use pyo3::prelude::*;
 
-use crate::PyMonitorSelection;
+use crate::monitor_selection::PyMonitorSelection;
 
 #[pyclass(name = "WindowPosition", eq)]
 #[derive(Debug, Clone, PartialEq)]

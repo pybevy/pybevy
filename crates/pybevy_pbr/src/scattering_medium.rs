@@ -3,7 +3,7 @@ use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
 use pyo3::prelude::*;
 
-#[asset_storage(ScatteringMedium)]
+#[asset_storage(ScatteringMedium, bridge, not_loadable)]
 #[pyclass(name = "ScatteringMedium", extends = PyAsset)]
 pub struct PyScatteringMedium {
     pub(crate) storage: AssetStorage<ScatteringMedium>,

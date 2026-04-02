@@ -119,104 +119,20 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// The main crate then uses `resource_bridge!` to add runtime dispatch.
+/// With bridge generation:
+///
+/// ```rust
+/// #[resource_storage(ClearColor, bridge)]
+/// #[resource_storage(Time, bridge, no_mut)]
+/// #[resource_storage(FontAtlasSet, bridge, no_mut, no_insert)]
+/// ```
+///
+/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`.
 pub fn resource_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let bevy_type: Type = parse_macro_input!(attr as Type);
-    let input = parse_macro_input!(item as ItemStruct);
-
-    let py_type = &input.ident;
-
-    let expanded = quote! {
-        #input
-
-        impl Clone for #py_type {
-            fn clone(&self) -> Self {
-                Self {
-                    storage: self.storage.clone(),
-                }
-            }
-        }
-
-        impl From<#bevy_type> for #py_type {
-            fn from(resource: #bevy_type) -> Self {
-                Self {
-                    storage: pybevy_core::ResourceStorage::owned(resource),
-                }
-            }
-        }
-
-        impl TryFrom<#py_type> for #bevy_type {
-            type Error = PyErr;
-
-            fn try_from(py_resource: #py_type) -> PyResult<Self> {
-                Ok(py_resource.storage.into_owned()?)
-            }
-        }
-
-        impl #py_type {
-            /// Create from an owned resource value. Returns tuple for PyO3 class inheritance.
-            pub fn from_owned(resource: #bevy_type) -> (Self, pybevy_core::PyResource) {
-                (Self { storage: pybevy_core::ResourceStorage::owned(resource) }, pybevy_core::PyResource)
-            }
-
-            /// Create from a borrowed resource storage (for Res/ResMut access).
-            pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> (Self, pybevy_core::PyResource) {
-                (Self { storage }, pybevy_core::PyResource)
-            }
-
-            #[inline(always)]
-            pub fn as_ref(&self) -> PyResult<&#bevy_type> {
-                Ok(self.storage.as_ref()?)
-            }
-
-            #[inline(always)]
-            pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
-                Ok(self.storage.as_mut()?)
-            }
-        }
-    };
-
-    TokenStream::from(expanded)
-}
-
-/// Generates a ResourceBridge struct and implementation for feature crates.
-///
-/// This macro generates:
-/// - A bridge struct (e.g., `GlobalVolumeBridge`)
-/// - `impl ResourceBridge for XBridge` with all required methods
-///
-/// # Usage
-///
-/// ```rust
-/// // In pybevy_audio/src/lib.rs
-/// resource_bridge!(GlobalVolume, PyGlobalVolume);
-/// ```
-///
-/// This generates `GlobalVolumeBridge` struct with full `ResourceBridge` impl.
-///
-/// For resources where the Bevy type name differs from the bridge prefix:
-/// ```rust
-/// resource_bridge!(Time<Fixed>, PyTimeFixed, "TimeFixed");
-/// ```
-///
-/// For read-only resources that cannot be inserted from Python:
-/// ```rust
-/// resource_bridge!(SystemResource, PySystemResource, no_insert);
-/// ```
-///
-/// For resources where get_mut returns read-only access:
-/// ```rust
-/// resource_bridge!(ButtonInput<KeyCode>, PyButtonInput, "ButtonInput", no_mut, default_insert);
-/// ```
-///
-/// For system-managed resources (no insert, no remove):
-/// ```rust
-/// resource_bridge!(SceneSpawner, PySceneSpawner, no_insert, no_remove);
-/// ```
-pub fn resource_bridge(input: TokenStream) -> TokenStream {
-    struct BridgeArgs {
+    struct ResourceStorageArgs {
         bevy_type: Type,
-        py_type: Ident,
+        no_clone: bool,
+        bridge: bool,
         bridge_name: Option<String>,
         no_insert: bool,
         no_mut: bool,
@@ -224,12 +140,11 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
         default_insert: bool,
     }
 
-    impl Parse for BridgeArgs {
+    impl Parse for ResourceStorageArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
+            let mut no_clone = false;
+            let mut bridge = false;
             let mut bridge_name = None;
             let mut no_insert = false;
             let mut no_mut = false;
@@ -238,30 +153,37 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
+                if !input.peek(syn::Ident) && !input.peek(syn::LitStr) {
+                    break;
+                }
                 if input.peek(syn::LitStr) {
                     bridge_name = Some(input.parse::<syn::LitStr>()?.value());
-                } else if input.peek(syn::Ident) {
+                } else {
                     let ident: Ident = input.parse()?;
-                    if ident == "no_insert" {
-                        no_insert = true;
-                    } else if ident == "no_mut" {
-                        no_mut = true;
-                    } else if ident == "no_remove" {
-                        no_remove = true;
-                    } else if ident == "default_insert" {
-                        default_insert = true;
-                    } else {
-                        return Err(syn::Error::new_spanned(
-                            ident,
-                            "expected 'no_insert', 'no_mut', 'no_remove', 'default_insert', or a string literal for bridge name",
-                        ));
+                    match ident.to_string().as_str() {
+                        "no_clone" => no_clone = true,
+                        "bridge" => bridge = true,
+                        "no_insert" => no_insert = true,
+                        "no_mut" => no_mut = true,
+                        "no_remove" => no_remove = true,
+                        "default_insert" => default_insert = true,
+                        other => {
+                            return Err(syn::Error::new_spanned(
+                                ident,
+                                format!(
+                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert",
+                                    other
+                                ),
+                            ));
+                        }
                     }
                 }
             }
 
-            Ok(BridgeArgs {
+            Ok(ResourceStorageArgs {
                 bevy_type,
-                py_type,
+                no_clone,
+                bridge,
                 bridge_name,
                 no_insert,
                 no_mut,
@@ -271,12 +193,113 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
         }
     }
 
-    let args = parse_macro_input!(input as BridgeArgs);
+    let args = parse_macro_input!(attr as ResourceStorageArgs);
     let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
+    let input = parse_macro_input!(item as ItemStruct);
 
+    let py_type = &input.ident;
+
+    let bridge_tokens = if args.bridge {
+        generate_resource_bridge_tokens(
+            bevy_type,
+            py_type,
+            args.bridge_name.as_deref(),
+            args.no_insert || (args.no_clone && !args.default_insert),
+            args.no_mut,
+            args.no_remove,
+            args.default_insert,
+        )
+    } else {
+        quote! {}
+    };
+
+    let storage_impls = if args.no_clone {
+        quote! {
+            impl #py_type {
+                pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> (Self, pybevy_core::PyResource) {
+                    (Self { storage }, pybevy_core::PyResource)
+                }
+
+                #[inline(always)]
+                pub fn as_ref(&self) -> PyResult<&#bevy_type> {
+                    Ok(self.storage.as_ref()?)
+                }
+
+                #[inline(always)]
+                pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+                    Ok(self.storage.as_mut()?)
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl Clone for #py_type {
+                fn clone(&self) -> Self {
+                    Self {
+                        storage: self.storage.clone(),
+                    }
+                }
+            }
+
+            impl From<#bevy_type> for #py_type {
+                fn from(resource: #bevy_type) -> Self {
+                    Self {
+                        storage: pybevy_core::ResourceStorage::owned(resource),
+                    }
+                }
+            }
+
+            impl TryFrom<#py_type> for #bevy_type {
+                type Error = PyErr;
+
+                fn try_from(py_resource: #py_type) -> PyResult<Self> {
+                    Ok(py_resource.storage.into_owned()?)
+                }
+            }
+
+            impl #py_type {
+                pub fn from_owned(resource: #bevy_type) -> (Self, pybevy_core::PyResource) {
+                    (Self { storage: pybevy_core::ResourceStorage::owned(resource) }, pybevy_core::PyResource)
+                }
+
+                pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> (Self, pybevy_core::PyResource) {
+                    (Self { storage }, pybevy_core::PyResource)
+                }
+
+                #[inline(always)]
+                pub fn as_ref(&self) -> PyResult<&#bevy_type> {
+                    Ok(self.storage.as_ref()?)
+                }
+
+                #[inline(always)]
+                pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+                    Ok(self.storage.as_mut()?)
+                }
+            }
+        }
+    };
+
+    let expanded = quote! {
+        #input
+        #storage_impls
+        #bridge_tokens
+    };
+
+    TokenStream::from(expanded)
+}
+
+/// Shared resource bridge code generation used by `#[resource_storage(..., bridge)]`.
+pub(crate) fn generate_resource_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+    no_insert: bool,
+    no_mut: bool,
+    no_remove: bool,
+    default_insert: bool,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
@@ -284,7 +307,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
     let resource_name = &bridge_name_str;
 
     // Generate insert method based on flags
-    let insert_impl = if args.no_insert {
+    let insert_impl = if no_insert {
         quote! {
             fn insert(
                 &self,
@@ -296,7 +319,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
                 ))
             }
         }
-    } else if args.default_insert {
+    } else if default_insert {
         quote! {
             fn insert(
                 &self,
@@ -322,7 +345,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
     };
 
     // Generate get_mut method based on no_mut flag
-    let get_mut_impl = if args.no_mut {
+    let get_mut_impl = if no_mut {
         // Read-only: get_mut returns read-only access (same as get)
         quote! {
             fn get_mut(
@@ -372,7 +395,7 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
     };
 
     // Generate remove method based on no_remove flag
-    let remove_impl = if args.no_remove {
+    let remove_impl = if no_remove {
         quote! {
             fn remove(&self, _world: &mut bevy::ecs::world::World) {
                 // System-managed resource, removal not supported
@@ -445,5 +468,14 @@ pub fn resource_bridge(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    let inventory_submit = quote! {
+        pybevy_core::inventory::submit!(pybevy_core::ResourceBridgeRegistration {
+            create: || std::sync::Arc::new(#bridge_name),
+        });
+    };
+
+    quote! {
+        #expanded
+        #inventory_submit
+    }
 }

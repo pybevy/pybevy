@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use crate::{culling_sphere::PyCullingSphere, half_space::PyHalfSpace};
 
-#[component_storage(Frustum)]
+#[component_storage(Frustum, bridge)]
 #[pyclass(name = "Frustum", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyFrustum {

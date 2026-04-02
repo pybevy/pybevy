@@ -1,17 +1,12 @@
 use std::num::NonZero;
 
 use bevy::app::AppExit;
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pyo3::prelude::*;
 
 use crate::ecs::message::PyMessage;
 
-message_bridge!(AppExit, PyAppExit, writable);
-
-pub fn register_app_exit_bridge() {
-    pybevy_core::registry::global_registry::register_message_bridge(AppExitBridge);
-}
-
+#[message_storage(AppExit, writable)]
 #[pyclass(name = "AppExit", extends = PyMessage, frozen, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyAppExit(pub(crate) AppExit);

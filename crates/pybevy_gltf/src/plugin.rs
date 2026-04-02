@@ -1,5 +1,9 @@
-use pybevy_core::PyPlugin;
+use bevy::{app::App, gltf::GltfPlugin};
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
+
+#[plugin_storage(GltfPlugin)]
 #[pyclass(name = "GltfPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyGltfPlugin;
@@ -15,5 +19,12 @@ impl PyGltfPlugin {
 impl Default for PyGltfPlugin {
     fn default() -> Self {
         PyGltfPlugin
+    }
+}
+
+impl PluginBuild for PyGltfPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(GltfPlugin::default());
+        Ok(())
     }
 }

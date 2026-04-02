@@ -40,6 +40,9 @@ fn _color_materialize(color: &pybevy_color::PyColor, py: Python<'_>) -> PyResult
 /// Populates a PyModule with all pybevy submodules and classes.
 /// Called by both the cdylib (pybevy_python) and native plugin (append_to_inittab).
 pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Collect all inventory-registered bridges from feature crates
+    pybevy_core::bridge_inventory::collect_all();
+
     // Register base classes from pybevy_core FIRST before any modules that use them
     // This ensures classes like GlobalVolume (extends PyResource) use the same base class
     m.add_class::<pybevy_core::PyResource>()?;

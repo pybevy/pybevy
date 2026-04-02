@@ -6,7 +6,116 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::{find_storage_field_type, to_snake_case};
+use crate::{
+    unit::generate_unit_bridge_tokens,
+    util::{find_storage_field_type, to_snake_case},
+};
+
+/// A single field in view_fields/batch_only_fields.
+/// Can be a named field or a tuple index with a Python alias.
+#[derive(Clone)]
+struct BridgeField {
+    /// Token stream for field access: `.intensity` or `.0` or `.0.x`
+    rust_accessor: proc_macro2::TokenStream,
+    /// Token stream for offset_of!: `intensity` or `0` or `0.x`
+    offset_path: proc_macro2::TokenStream,
+    /// Python-visible name used for from_numpy kwargs and View field names
+    python_name: Ident,
+}
+
+impl Parse for BridgeField {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(syn::LitInt) {
+            // Tuple form: `0 as name` or `0.x as name`
+            let idx: syn::LitInt = input.parse()?;
+            let idx_val = idx.base10_parse::<usize>()?;
+            let idx_lit = syn::Index::from(idx_val);
+
+            let mut accessor_tokens = quote! { .#idx_lit };
+            let mut offset_tokens = quote! { #idx_lit };
+
+            // Parse optional `.ident` chain
+            while input.peek(Token![.]) {
+                input.parse::<Token![.]>()?;
+                let sub: Ident = input.parse()?;
+                accessor_tokens = quote! { #accessor_tokens.#sub };
+                offset_tokens = quote! { #offset_tokens.#sub };
+            }
+
+            // Require `as name`
+            input.parse::<Token![as]>()?;
+            let python_name: Ident = input.parse()?;
+
+            Ok(BridgeField {
+                rust_accessor: accessor_tokens,
+                offset_path: offset_tokens,
+                python_name,
+            })
+        } else {
+            // Named field: `intensity`
+            let ident: Ident = input.parse()?;
+            let python_name = ident.clone();
+            Ok(BridgeField {
+                rust_accessor: quote! { .#ident },
+                offset_path: quote! { #ident },
+                python_name,
+            })
+        }
+    }
+}
+
+/// A view-only field with an explicit type annotation.
+#[derive(Clone)]
+#[allow(dead_code)]
+struct ViewOnlyField {
+    /// Token stream for field access
+    rust_accessor: proc_macro2::TokenStream,
+    /// Token stream for offset_of!
+    offset_path: proc_macro2::TokenStream,
+    /// Python-visible name
+    python_name: Ident,
+    /// Explicit Rust type (needed because we can't use Default for type inference)
+    field_type: Type,
+}
+
+impl Parse for ViewOnlyField {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let (rust_accessor, offset_path, python_name) = if input.peek(syn::LitInt) {
+            let idx: syn::LitInt = input.parse()?;
+            let idx_val = idx.base10_parse::<usize>()?;
+            let idx_lit = syn::Index::from(idx_val);
+
+            let mut accessor_tokens = quote! { .#idx_lit };
+            let mut offset_tokens = quote! { #idx_lit };
+
+            while input.peek(Token![.]) {
+                input.parse::<Token![.]>()?;
+                let sub: Ident = input.parse()?;
+                accessor_tokens = quote! { #accessor_tokens.#sub };
+                offset_tokens = quote! { #offset_tokens.#sub };
+            }
+
+            input.parse::<Token![as]>()?;
+            let python_name: Ident = input.parse()?;
+            (accessor_tokens, offset_tokens, python_name)
+        } else {
+            let ident: Ident = input.parse()?;
+            let python_name = ident.clone();
+            (quote! { .#ident }, quote! { #ident }, python_name)
+        };
+
+        // Parse `: Type`
+        input.parse::<Token![:]>()?;
+        let field_type: Type = input.parse()?;
+
+        Ok(ViewOnlyField {
+            rust_accessor,
+            offset_path,
+            python_name,
+            field_type,
+        })
+    }
+}
 
 /// Component macro variant type
 #[derive(Debug)]
@@ -126,25 +235,84 @@ pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ComponentStorageArgs {
         bevy_type: Type,
         no_clone: bool,
+        no_insert: bool,
+        unit: bool,
+        bridge: bool,
+        bridge_name: Option<String>,
+        view_fields: Option<Vec<BridgeField>>,
+        batch_only_fields: Option<Vec<BridgeField>>,
+        view_only_fields: Option<Vec<ViewOnlyField>>,
     }
 
     impl Parse for ComponentStorageArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             let bevy_type: Type = input.parse()?;
-            let no_clone = if input.peek(Token![,]) {
+            let mut no_clone = false;
+            let mut no_insert = false;
+            let mut unit = false;
+            let mut bridge = false;
+            let bridge_name = None;
+            let mut view_fields = None;
+            let mut batch_only_fields = None;
+            let mut view_only_fields = None;
+
+            while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
-                let ident: Ident = input.parse()?;
-                if ident == "no_clone" {
-                    true
-                } else {
-                    return Err(syn::Error::new_spanned(ident, "expected 'no_clone'"));
+                if !input.peek(syn::Ident) {
+                    break;
                 }
-            } else {
-                false
-            };
+                let ident: Ident = input.parse()?;
+                match ident.to_string().as_str() {
+                    "no_clone" => no_clone = true,
+                    "no_insert" => no_insert = true,
+                    "unit" => unit = true,
+                    "bridge" => bridge = true,
+                    "view_fields" => {
+                        bridge = true;
+                        input.parse::<Token![=]>()?;
+                        let content;
+                        syn::bracketed!(content in input);
+                        let fields = content.parse_terminated(BridgeField::parse, Token![,])?;
+                        view_fields = Some(fields.into_iter().collect());
+                    }
+                    "batch_only_fields" => {
+                        bridge = true;
+                        input.parse::<Token![=]>()?;
+                        let content;
+                        syn::bracketed!(content in input);
+                        let fields = content.parse_terminated(BridgeField::parse, Token![,])?;
+                        batch_only_fields = Some(fields.into_iter().collect());
+                    }
+                    "view_only_fields" => {
+                        bridge = true;
+                        input.parse::<Token![=]>()?;
+                        let content;
+                        syn::bracketed!(content in input);
+                        let fields = content.parse_terminated(ViewOnlyField::parse, Token![,])?;
+                        view_only_fields = Some(fields.into_iter().collect());
+                    }
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            ident,
+                            format!(
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, view_fields, batch_only_fields, view_only_fields",
+                                other
+                            ),
+                        ));
+                    }
+                }
+            }
+
             Ok(ComponentStorageArgs {
                 bevy_type,
                 no_clone,
+                no_insert,
+                unit,
+                bridge,
+                bridge_name,
+                view_fields,
+                batch_only_fields,
+                view_only_fields,
             })
         }
     }
@@ -153,6 +321,37 @@ pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     let bevy_type = &args.bevy_type;
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
+
+    // Unit component: no storage field, just the struct + optional bridge
+    if args.unit {
+        let bridge_tokens = if args.bridge {
+            generate_unit_bridge_tokens(bevy_type, py_type, args.bridge_name.as_deref())
+        } else {
+            quote! {}
+        };
+
+        let expanded = quote! {
+            #input
+            #bridge_tokens
+        };
+        return TokenStream::from(expanded);
+    }
+
+    // Generate bridge code if bridge flag is set
+    let bridge_tokens = if args.bridge {
+        generate_bridge_tokens(
+            bevy_type,
+            py_type,
+            args.bridge_name.as_deref(),
+            args.no_clone || args.no_insert, // no_clone or no_insert both disable insert_from_python
+            args.view_fields.as_ref(),
+            args.batch_only_fields.as_ref(),
+            args.view_only_fields.as_ref(),
+            true, // emit inventory registration
+        )
+    } else {
+        quote! {}
+    };
 
     if args.no_clone {
         // Non-Clone component: only generate borrowed access
@@ -175,6 +374,8 @@ pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
                     Ok(self.storage.as_mut()?)
                 }
             }
+
+            #bridge_tokens
         };
         TokenStream::from(expanded)
     } else {
@@ -240,221 +441,26 @@ pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
                     Py::new(py, (Self { storage: self.storage.clone() }, pybevy_core::PyComponent))
                 }
             }
+
+            #bridge_tokens
         };
         TokenStream::from(expanded)
     }
 }
 
-/// Generates a ComponentBridge struct and implementation for feature crates.
-///
-/// This macro generates:
-/// - A bridge struct (e.g., `TransformBridge`)
-/// - `impl ComponentBridge for XBridge` with all required methods
-///
-/// # Usage
-///
-/// ```rust
-/// // In pybevy_transform/src/lib.rs
-/// component_bridge!(Transform, PyTransform);
-/// ```
-///
-/// This generates `TransformBridge` struct with full `ComponentBridge` impl.
-///
-/// For components where the Bevy type name differs from the bridge prefix:
-/// ```rust
-/// component_bridge!(AudioPlayer<AudioSource>, PyAudioPlayer, "AudioPlayer");
-/// ```
-///
-/// For read-only components that cannot be spawned from Python:
-/// ```rust
-/// component_bridge!(AudioSink, PyAudioSink, no_insert);
-/// ```
-pub fn component_bridge(input: TokenStream) -> TokenStream {
-    /// A single field in view_fields/batch_only_fields.
-    /// Can be a named field or a tuple index with a Python alias.
-    #[derive(Clone)]
-    struct BridgeField {
-        /// Token stream for field access: `.intensity` or `.0` or `.0.x`
-        rust_accessor: proc_macro2::TokenStream,
-        /// Token stream for offset_of!: `intensity` or `0` or `0.x`
-        offset_path: proc_macro2::TokenStream,
-        /// Python-visible name used for from_numpy kwargs and View field names
-        python_name: Ident,
-    }
-
-    impl Parse for BridgeField {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            if input.peek(syn::LitInt) {
-                // Tuple form: `0 as name` or `0.x as name`
-                let idx: syn::LitInt = input.parse()?;
-                let idx_val = idx.base10_parse::<usize>()?;
-                let idx_lit = syn::Index::from(idx_val);
-
-                let mut accessor_tokens = quote! { .#idx_lit };
-                let mut offset_tokens = quote! { #idx_lit };
-
-                // Parse optional `.ident` chain
-                while input.peek(Token![.]) {
-                    input.parse::<Token![.]>()?;
-                    let sub: Ident = input.parse()?;
-                    accessor_tokens = quote! { #accessor_tokens.#sub };
-                    offset_tokens = quote! { #offset_tokens.#sub };
-                }
-
-                // Require `as name`
-                input.parse::<Token![as]>()?;
-                let python_name: Ident = input.parse()?;
-
-                Ok(BridgeField {
-                    rust_accessor: accessor_tokens,
-                    offset_path: offset_tokens,
-                    python_name,
-                })
-            } else {
-                // Named field: `intensity`
-                let ident: Ident = input.parse()?;
-                let python_name = ident.clone();
-                Ok(BridgeField {
-                    rust_accessor: quote! { .#ident },
-                    offset_path: quote! { #ident },
-                    python_name,
-                })
-            }
-        }
-    }
-
-    /// A view-only field with an explicit type annotation.
-    #[derive(Clone)]
-    #[allow(dead_code)]
-    struct ViewOnlyField {
-        /// Token stream for field access
-        rust_accessor: proc_macro2::TokenStream,
-        /// Token stream for offset_of!
-        offset_path: proc_macro2::TokenStream,
-        /// Python-visible name
-        python_name: Ident,
-        /// Explicit Rust type (needed because we can't use Default for type inference)
-        field_type: Type,
-    }
-
-    impl Parse for ViewOnlyField {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            // Parse the field part (same logic as BridgeField)
-            let (rust_accessor, offset_path, python_name) = if input.peek(syn::LitInt) {
-                let idx: syn::LitInt = input.parse()?;
-                let idx_val = idx.base10_parse::<usize>()?;
-                let idx_lit = syn::Index::from(idx_val);
-
-                let mut accessor_tokens = quote! { .#idx_lit };
-                let mut offset_tokens = quote! { #idx_lit };
-
-                while input.peek(Token![.]) {
-                    input.parse::<Token![.]>()?;
-                    let sub: Ident = input.parse()?;
-                    accessor_tokens = quote! { #accessor_tokens.#sub };
-                    offset_tokens = quote! { #offset_tokens.#sub };
-                }
-
-                input.parse::<Token![as]>()?;
-                let python_name: Ident = input.parse()?;
-                (accessor_tokens, offset_tokens, python_name)
-            } else {
-                let ident: Ident = input.parse()?;
-                let python_name = ident.clone();
-                (quote! { .#ident }, quote! { #ident }, python_name)
-            };
-
-            // Parse `: Type`
-            input.parse::<Token![:]>()?;
-            let field_type: Type = input.parse()?;
-
-            Ok(ViewOnlyField {
-                rust_accessor,
-                offset_path,
-                python_name,
-                field_type,
-            })
-        }
-    }
-
-    struct BridgeArgs {
-        bevy_type: Type,
-        py_type: Ident,
-        bridge_name: Option<String>,
-        no_insert: bool,
-        view_fields: Option<Vec<BridgeField>>,
-        batch_only_fields: Option<Vec<BridgeField>>,
-        view_only_fields: Option<Vec<ViewOnlyField>>,
-    }
-
-    impl Parse for BridgeArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
-            let mut bridge_name = None;
-            let mut no_insert = false;
-            let mut view_fields = None;
-            let mut batch_only_fields = None;
-            let mut view_only_fields = None;
-
-            while input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                if input.peek(syn::LitStr) {
-                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
-                } else if input.peek(syn::Ident) {
-                    let ident: Ident = input.parse()?;
-                    if ident == "no_insert" {
-                        no_insert = true;
-                    } else if ident == "view_fields" {
-                        // Parse: view_fields = [field1, field2, ...]
-                        input.parse::<Token![=]>()?;
-                        let content;
-                        syn::bracketed!(content in input);
-                        let fields = content.parse_terminated(BridgeField::parse, Token![,])?;
-                        view_fields = Some(fields.into_iter().collect());
-                    } else if ident == "batch_only_fields" {
-                        // Parse: batch_only_fields = [field1, field2, ...]
-                        input.parse::<Token![=]>()?;
-                        let content;
-                        syn::bracketed!(content in input);
-                        let fields = content.parse_terminated(BridgeField::parse, Token![,])?;
-                        batch_only_fields = Some(fields.into_iter().collect());
-                    } else if ident == "view_only_fields" {
-                        // Parse: view_only_fields = [name: Type, ...]
-                        input.parse::<Token![=]>()?;
-                        let content;
-                        syn::bracketed!(content in input);
-                        let fields = content.parse_terminated(ViewOnlyField::parse, Token![,])?;
-                        view_only_fields = Some(fields.into_iter().collect());
-                    } else {
-                        return Err(syn::Error::new_spanned(
-                            ident,
-                            "expected 'no_insert', 'view_fields = [...]', 'batch_only_fields = [...]', 'view_only_fields = [...]', or a string literal for bridge name",
-                        ));
-                    }
-                }
-            }
-
-            Ok(BridgeArgs {
-                bevy_type,
-                py_type,
-                bridge_name,
-                no_insert,
-                view_fields,
-                batch_only_fields,
-                view_only_fields,
-            })
-        }
-    }
-
-    let args = parse_macro_input!(input as BridgeArgs);
-    let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
-
+/// Shared bridge code generation used by `#[component_storage(..., bridge)]`.
+fn generate_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+    no_insert: bool,
+    view_fields: Option<&Vec<BridgeField>>,
+    batch_only_fields: Option<&Vec<BridgeField>>,
+    view_only_fields: Option<&Vec<ViewOnlyField>>,
+    emit_inventory: bool,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
@@ -462,10 +468,10 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
     let component_name = &bridge_name_str;
 
     // Generate view_bridge method if view_fields (or view_only_fields) is specified
-    let has_view_fields = args.view_fields.is_some() || args.view_only_fields.is_some();
+    let has_view_fields = view_fields.is_some() || view_only_fields.is_some();
     let view_bridge_impl = if has_view_fields {
         // Collect all view field names + match arms from view_fields
-        let vf_entries: Vec<_> = args.view_fields.iter().flat_map(|fs| fs.iter()).map(|f| {
+        let vf_entries: Vec<_> = view_fields.iter().flat_map(|fs| fs.iter()).map(|f| {
             let name_str = f.python_name.to_string();
             let accessor = &f.rust_accessor;
             let offset = &f.offset_path;
@@ -482,7 +488,7 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
         }).collect();
 
         // Collect view_only_fields entries (use explicit type instead of type inference)
-        let vof_entries: Vec<_> = args.view_only_fields.iter().flat_map(|fs| fs.iter()).map(|f| {
+        let vof_entries: Vec<_> = view_only_fields.iter().flat_map(|fs| fs.iter()).map(|f| {
             let name_str = f.python_name.to_string();
             let offset = &f.offset_path;
             let field_type = &f.field_type;
@@ -499,13 +505,12 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
         }).collect();
 
         // All view field name strings (union of view_fields + view_only_fields)
-        let all_view_names: Vec<String> = args
-            .view_fields
+        let all_view_names: Vec<String> = view_fields
             .iter()
             .flat_map(|fs| fs.iter())
             .map(|f| f.python_name.to_string())
             .chain(
-                args.view_only_fields
+                view_only_fields
                     .iter()
                     .flat_map(|fs| fs.iter())
                     .map(|f| f.python_name.to_string()),
@@ -515,7 +520,7 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
         let field_names_array = quote! { &[#(#all_view_names_slice),*] };
 
         // Only emit `default_val` when there are view_fields (which need type inference)
-        let default_val_line = if args.view_fields.as_ref().is_some_and(|vf| !vf.is_empty()) {
+        let default_val_line = if view_fields.is_some_and(|vf| !vf.is_empty()) {
             quote! { let default_val = <#bevy_type>::default(); }
         } else {
             quote! {}
@@ -563,7 +568,7 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
     };
 
     // Generate insert methods based on no_insert flag
-    let insert_impl = if args.no_insert {
+    let insert_impl = if no_insert {
         quote! {
             fn insert(
                 &self,
@@ -760,17 +765,16 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
 
     // Generate batch-related functions when view_fields or batch_only_fields is present.
     // Batch code uses the union of view_fields + batch_only_fields (NOT view_only_fields).
-    let all_batch_fields: Option<Vec<BridgeField>> =
-        match (&args.view_fields, &args.batch_only_fields) {
-            (Some(vf), Some(bo)) => {
-                let mut all = vf.clone();
-                all.extend(bo.iter().cloned());
-                Some(all)
-            }
-            (Some(vf), None) => Some(vf.clone()),
-            (None, Some(bo)) => Some(bo.clone()),
-            (None, None) => None,
-        };
+    let all_batch_fields: Option<Vec<BridgeField>> = match (view_fields, batch_only_fields) {
+        (Some(vf), Some(bo)) => {
+            let mut all = vf.to_vec();
+            all.extend(bo.iter().cloned());
+            Some(all)
+        }
+        (Some(vf), None) => Some(vf.to_vec()),
+        (None, Some(bo)) => Some(bo.to_vec()),
+        (None, None) => None,
+    };
     let batch_impl = if let Some(fields) = &all_batch_fields {
         let field_strs: Vec<String> = fields.iter().map(|f| f.python_name.to_string()).collect();
 
@@ -990,7 +994,7 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
     };
 
     // Generate #[pymethods] block with from_numpy staticmethod when batch fields exist
-    let from_numpy_pymethods = if all_batch_fields.is_some() && !args.no_insert {
+    let from_numpy_pymethods = if all_batch_fields.is_some() && !no_insert {
         let snake_name = to_snake_case(&bridge_name_str);
         let from_numpy_fn_name = quote::format_ident!("{}_from_numpy", snake_name);
 
@@ -1019,13 +1023,36 @@ pub fn component_bridge(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let final_expanded = quote! {
+    // Add inventory registration (only when called from component_storage with bridge flag)
+    let inventory_submit = if emit_inventory {
+        let batch_submit = if all_batch_fields.is_some() {
+            let snake_name = to_snake_case(&bridge_name_str);
+            let register_fn_name = quote::format_ident!("register_{}_batch", snake_name);
+            quote! {
+                pybevy_core::inventory::submit!(pybevy_core::BatchRegistration {
+                    register: #register_fn_name,
+                });
+            }
+        } else {
+            quote! {}
+        };
+
+        quote! {
+            pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
+                create: || std::sync::Arc::new(#bridge_name),
+            });
+            #batch_submit
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
         #expanded
         #batch_impl
         #from_numpy_pymethods
-    };
-
-    TokenStream::from(final_expanded)
+        #inventory_submit
+    }
 }
 
 /// Generates boilerplate implementations for PyBevy component wrapper types.

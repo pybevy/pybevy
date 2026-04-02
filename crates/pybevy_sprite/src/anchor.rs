@@ -1,37 +1,14 @@
 use bevy::sprite::Anchor;
 use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::component_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
+#[component_storage(Anchor, bridge)]
 #[pyclass(name = "Anchor", extends = PyComponent, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAnchor {
     pub(crate) storage: ComponentStorage<Anchor>,
-}
-
-impl PyAnchor {
-    pub fn from_owned(value: Anchor) -> (Self, PyComponent) {
-        (
-            PyAnchor {
-                storage: ComponentStorage::owned(value),
-            },
-            PyComponent,
-        )
-    }
-
-    pub fn from_borrowed(storage: ComponentStorage<Anchor>) -> (Self, PyComponent) {
-        (PyAnchor { storage }, PyComponent)
-    }
-
-    #[inline(always)]
-    pub fn as_ref(&self) -> PyResult<&Anchor> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    pub fn as_mut(&mut self) -> PyResult<&mut Anchor> {
-        Ok(self.storage.as_mut()?)
-    }
 }
 
 #[pymethods]

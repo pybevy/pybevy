@@ -1,7 +1,7 @@
 use bevy::window::WindowMode;
 use pyo3::prelude::*;
 
-use crate::{PyMonitorSelection, PyVideoModeSelection};
+use crate::{monitor_selection::PyMonitorSelection, video_mode_selection::PyVideoModeSelection};
 
 #[pyclass(name = "WindowMode", eq)]
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,58 +1,14 @@
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{
-    Ident, Token, Type,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-};
+use syn::{Ident, Type};
 
-/// Generates a ComponentBridge struct for unit/marker components in feature crates.
-///
-/// Unlike `component_bridge!`, this macro handles unit components that have no data/storage.
-/// It generates a simpler bridge that just inserts/extracts the marker component.
-///
-/// # Usage
-///
-/// ```rust
-/// // In pybevy_light/src/lib.rs
-/// unit_bridge!(NotShadowCaster, PyNotShadowCaster);
-/// ```
-///
-/// This generates `NotShadowCasterBridge` struct with `ComponentBridge` impl.
-pub fn unit_bridge(input: TokenStream) -> TokenStream {
-    struct BridgeArgs {
-        bevy_type: Type,
-        py_type: Ident,
-        bridge_name: Option<String>,
-    }
-
-    impl Parse for BridgeArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
-            let bridge_name = if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                Some(input.parse::<syn::LitStr>()?.value())
-            } else {
-                None
-            };
-
-            Ok(BridgeArgs {
-                bevy_type,
-                py_type,
-                bridge_name,
-            })
-        }
-    }
-
-    let args = parse_macro_input!(input as BridgeArgs);
-    let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
-
+/// Shared unit bridge code generation used by `#[component_storage(..., unit, bridge)]`.
+pub(crate) fn generate_unit_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
@@ -188,5 +144,14 @@ pub fn unit_bridge(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    let inventory_submit = quote! {
+        pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
+            create: || std::sync::Arc::new(#bridge_name),
+        });
+    };
+
+    quote! {
+        #expanded
+        #inventory_submit
+    }
 }

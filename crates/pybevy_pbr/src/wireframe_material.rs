@@ -4,7 +4,7 @@ use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
 use pyo3::prelude::*;
 
-#[asset_storage(WireframeMaterial)]
+#[asset_storage(WireframeMaterial, bridge, not_loadable)]
 #[pyclass(name = "WireframeMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyWireframeMaterial {
