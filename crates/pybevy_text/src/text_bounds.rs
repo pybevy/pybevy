@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(TextBounds)]
+#[component_storage(TextBounds, bridge)]
 #[pyclass(name = "TextBounds", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextBounds {

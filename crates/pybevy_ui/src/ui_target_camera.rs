@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(UiTargetCamera)]
+#[component_storage(UiTargetCamera, bridge)]
 #[pyclass(name = "UiTargetCamera", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyUiTargetCamera {

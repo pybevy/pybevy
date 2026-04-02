@@ -203,7 +203,7 @@ impl PyMessages {
                 Ok(Vec::new())
             }
             MessageType::WindowEvent => {
-                use pybevy_window::PyWindowEvent;
+                use pybevy_window::window_event::PyWindowEvent;
                 self.iter_messages::<WindowEvent, _>(py, world, cursor_state, |msg, py| {
                     Ok(Py::new(py, PyWindowEvent::from_bevy(py, msg)?)?.into_any())
                 })
@@ -437,7 +437,7 @@ pub enum MessageType {
     // Python custom messages
     Custom(Py<PyType>),
     /// Dynamic message type registered via global message bridge registry.
-    /// All event types with message_bridge! use this variant.
+    /// All event types with #[message_storage] use this variant.
     Dynamic(*const pyo3::ffi::PyTypeObject),
 }
 
@@ -522,19 +522,19 @@ impl PyMessageType {
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
         use pybevy_input::{PyGamepadRumbleRequest, PyKeyboardInput};
         use pybevy_scene::PySceneInstanceReady;
-        use pybevy_window::PyWindowEvent;
+        use pybevy_window::window_event::PyWindowEvent;
         use pyo3::{PyTypeInfo, types::PyTypeMethods};
 
         let py = message.py();
         let type_ptr = message.as_type_ptr();
 
         // Check global message bridge registry first (dynamic dispatch)
-        // Most message types use this path via message_bridge! macro
+        // Most message types use this path via #[message_storage] attribute
         if pybevy_core::registry::global_registry::contains_message_py_type(type_ptr) {
             return Ok(PyMessageType(MessageType::Dynamic(type_ptr)));
         }
 
-        // Special handling types that don't use message_bridge! (need extra resources/special logic)
+        // Special handling types that don't use #[message_storage] (need extra resources/special logic)
         if message.is(<PyKeyboardInput as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::KeyboardInput));
         }

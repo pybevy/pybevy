@@ -2,27 +2,17 @@ use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     math::Vec2,
 };
-use pybevy_core::PyResource;
+use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_macros::resource_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
 use crate::mouse_scroll_unit::PyMouseScrollUnit;
 
-#[pyclass(name = "AccumulatedMouseMotion", extends = PyResource, eq)]
-#[derive(Debug, Clone, PartialEq)]
+#[resource_storage(AccumulatedMouseMotion, no_clone, bridge)]
+#[pyclass(name = "AccumulatedMouseMotion", extends = PyResource)]
 pub struct PyAccumulatedMouseMotion {
-    pub delta: PyVec2,
-}
-
-impl PyAccumulatedMouseMotion {
-    pub fn from_bevy(resource: &AccumulatedMouseMotion) -> (Self, PyResource) {
-        (
-            PyAccumulatedMouseMotion {
-                delta: resource.delta.into(),
-            },
-            PyResource,
-        )
-    }
+    pub(crate) storage: ResourceStorage<AccumulatedMouseMotion>,
 }
 
 #[pymethods]
@@ -30,21 +20,26 @@ impl PyAccumulatedMouseMotion {
     #[new]
     fn new() -> (Self, PyResource) {
         (
-            PyAccumulatedMouseMotion {
-                delta: Vec2::ZERO.into(),
+            Self {
+                storage: ResourceStorage::owned(AccumulatedMouseMotion { delta: Vec2::ZERO }),
             },
             PyResource,
         )
     }
 
     #[getter]
-    fn delta(&self) -> PyVec2 {
-        self.delta.clone()
+    fn delta(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.delta.into())
     }
 
     fn __repr__(&self) -> String {
-        let d = self.delta.get();
-        format!("AccumulatedMouseMotion(delta=Vec2({}, {}))", d.x, d.y)
+        match self.as_ref() {
+            Ok(m) => format!(
+                "AccumulatedMouseMotion(delta=Vec2({}, {}))",
+                m.delta.x, m.delta.y
+            ),
+            Err(_) => "AccumulatedMouseMotion(<invalid>)".to_string(),
+        }
     }
 }
 

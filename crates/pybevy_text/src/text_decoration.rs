@@ -5,6 +5,7 @@ use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
 // Strikethrough - marker component
+#[component_storage(Strikethrough, unit, bridge)]
 #[pyclass(name = "Strikethrough", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyStrikethrough;
@@ -41,6 +42,7 @@ impl PyStrikethrough {
 }
 
 // Underline - marker component
+#[component_storage(Underline, unit, bridge)]
 #[pyclass(name = "Underline", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyUnderline;
@@ -77,7 +79,7 @@ impl PyUnderline {
 }
 
 // StrikethroughColor - Color wrapper component
-#[component_storage(StrikethroughColor)]
+#[component_storage(StrikethroughColor, bridge)]
 #[pyclass(name = "StrikethroughColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyStrikethroughColor {
@@ -105,7 +107,7 @@ impl PyStrikethroughColor {
 }
 
 // UnderlineColor - Color wrapper component
-#[component_storage(UnderlineColor)]
+#[component_storage(UnderlineColor, bridge)]
 #[pyclass(name = "UnderlineColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyUnderlineColor {

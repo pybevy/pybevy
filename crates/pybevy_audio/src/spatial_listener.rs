@@ -4,7 +4,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::PyVec3;
 use pyo3::prelude::*;
 
-#[component_storage(SpatialListener)]
+#[component_storage(SpatialListener, bridge)]
 #[pyclass(name = "SpatialListener", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PySpatialListener {

@@ -1,8 +1,9 @@
 use bevy::window::WindowCloseRequested;
 use pybevy_core::{PyEntity, PyMessage};
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pyo3::prelude::*;
 
+#[message_storage(WindowCloseRequested)]
 #[pyclass(name = "WindowCloseRequested", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowCloseRequested {
@@ -33,5 +34,3 @@ impl PyWindowCloseRequested {
         "WindowCloseRequested()".to_string()
     }
 }
-
-message_bridge!(WindowCloseRequested, PyWindowCloseRequested);

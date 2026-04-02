@@ -5,7 +5,7 @@ use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::resource_storage;
 use pyo3::prelude::*;
 
-#[resource_storage(Time)]
+#[resource_storage(Time, bridge)]
 #[pyclass(name = "Time", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTime {
@@ -79,7 +79,7 @@ impl PyTime {
     }
 }
 
-#[resource_storage(Time<Fixed>)]
+#[resource_storage(Time<Fixed>, bridge, "TimeFixed")]
 #[pyclass(name = "TimeFixed", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTimeFixed {
@@ -210,7 +210,7 @@ impl PyTimeFixed {
     }
 }
 
-#[resource_storage(Time<Virtual>)]
+#[resource_storage(Time<Virtual>, bridge, "TimeVirtual")]
 #[pyclass(name = "TimeVirtual", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTimeVirtual {

@@ -6,7 +6,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::PyRange;
 use pyo3::prelude::*;
 
-#[component_storage(VisibilityRange)]
+#[component_storage(VisibilityRange, bridge, view_fields = [use_aabb])]
 #[pyclass(name = "VisibilityRange", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyVisibilityRange {

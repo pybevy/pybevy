@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::volume::PyVolume;
 
-#[resource_storage(GlobalVolume)]
+#[resource_storage(GlobalVolume, bridge)]
 #[pyclass(name = "GlobalVolume", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyGlobalVolume {

@@ -34,180 +34,57 @@ pub mod window_resolution;
 pub mod window_theme;
 pub mod winit_settings;
 
-pub use app_lifecycle::PyAppLifecycle;
-use bevy::{
-    app::{App, Plugin},
-    window::{CursorIcon, CursorOptions, Monitor, PrimaryMonitor, PrimaryWindow, Window},
-};
-pub use composite_alpha_mode::PyCompositeAlphaMode;
-pub use cursor::{PyCursorGrabMode, PySystemCursorIcon};
-pub use cursor_events::{PyCursorEntered, PyCursorLeft};
-pub use cursor_icon::PyCursorIcon;
-pub use cursor_moved::PyCursorMoved;
-pub use cursor_options::PyCursorOptions;
-pub use enabled_buttons::PyEnabledButtons;
-pub use exit_condition::PyExitCondition;
-pub use file_drag_and_drop::PyFileDragAndDrop;
-pub use ime::PyIme;
-pub use monitor::PyMonitor;
-pub use monitor_selection::PyMonitorSelection;
-pub use plugin::PyWinitPlugin;
-pub use present_mode::PyPresentMode;
-pub use primary_monitor::PyPrimaryMonitor;
-pub use primary_window::PyPrimaryWindow;
-use pybevy_core::{DynamicComponentRegistry, plugin::plugin_registry, registry::global_registry};
-use pybevy_macros::{component_bridge, plugin_bridge};
 use pyo3::prelude::*;
-pub use request_redraw::PyRequestRedraw;
-pub use resize_constraints::PyWindowResizeConstraints;
-pub use screen_edge::PyScreenEdge;
-pub use update_mode::PyUpdateMode;
-pub use video_mode::PyVideoMode;
-pub use video_mode_selection::PyVideoModeSelection;
-pub use window::{DEFAULT_APP_TITLE, PyWindow};
-pub use window_close_requested::PyWindowCloseRequested;
-pub use window_event::PyWindowEvent;
-pub use window_focused::PyWindowFocused;
-pub use window_level::PyWindowLevel;
-pub use window_mode::PyWindowMode;
-pub use window_plugin::PyWindowPlugin;
-pub use window_position::PyWindowPosition;
-pub use window_resized::PyWindowResized;
-pub use window_resolution::PyWindowResolution;
-pub use window_theme::PyWindowTheme;
-pub use winit_settings::PyWinitSettings;
-
-component_bridge!(CursorIcon, PyCursorIcon);
-component_bridge!(CursorOptions, PyCursorOptions);
-component_bridge!(Monitor, PyMonitor, no_insert);
-component_bridge!(PrimaryMonitor, PyPrimaryMonitor);
-component_bridge!(PrimaryWindow, PyPrimaryWindow);
-component_bridge!(
-    Window,
-    PyWindow,
-    view_fields = [decorations, resizable, transparent]
-);
-
-plugin_bridge!(PyWinitPlugin, bevy::winit::WinitPlugin, |py_plugin, app| {
-    let config: pyo3::PyRef<'_, PyWinitPlugin> = py_plugin.extract()?;
-    if let Some(ref settings) = config.settings {
-        app.insert_resource(bevy::winit::WinitSettings::from(settings.clone()));
-    }
-    app.add_plugins(bevy::winit::WinitPlugin::default());
-    Ok(())
-});
-plugin_bridge!(
-    PyWindowPlugin,
-    bevy::window::WindowPlugin,
-    |py_plugin, app| {
-        let config: pyo3::PyRef<'_, PyWindowPlugin> = py_plugin.extract()?;
-        app.add_plugins(bevy::window::WindowPlugin::try_from(&*config)?);
-        Ok(())
-    }
-);
-
-pub struct PyBevyWindowPlugin;
-
-impl Plugin for PyBevyWindowPlugin {
-    fn build(&self, app: &mut App) {
-        global_registry::register_component_bridge(CursorIconBridge);
-        global_registry::register_component_bridge(CursorOptionsBridge);
-        global_registry::register_component_bridge(MonitorBridge);
-        global_registry::register_component_bridge(PrimaryMonitorBridge);
-        global_registry::register_component_bridge(PrimaryWindowBridge);
-        global_registry::register_component_bridge(WindowBridge);
-
-        if let Some(mut registry) = app
-            .world_mut()
-            .get_resource_mut::<DynamicComponentRegistry>()
-        {
-            registry.register(CursorIconBridge);
-            registry.register(CursorOptionsBridge);
-            registry.register(MonitorBridge);
-            registry.register(PrimaryMonitorBridge);
-            registry.register(PrimaryWindowBridge);
-            registry.register(WindowBridge);
-        }
-    }
-}
-
-pub fn register_window_bridges() {
-    global_registry::register_component_bridge(CursorIconBridge);
-    global_registry::register_component_bridge(CursorOptionsBridge);
-    global_registry::register_component_bridge(MonitorBridge);
-    global_registry::register_component_bridge(PrimaryMonitorBridge);
-    global_registry::register_component_bridge(PrimaryWindowBridge);
-    global_registry::register_component_bridge(WindowBridge);
-    register_window_batch();
-
-    global_registry::register_message_bridge(cursor_events::CursorEnteredBridge);
-    global_registry::register_message_bridge(cursor_events::CursorLeftBridge);
-    global_registry::register_message_bridge(cursor_moved::CursorMovedBridge);
-    global_registry::register_message_bridge(file_drag_and_drop::FileDragAndDropBridge);
-    global_registry::register_message_bridge(ime::ImeBridge);
-    global_registry::register_message_bridge(request_redraw::RequestRedrawBridge);
-    global_registry::register_message_bridge(window_close_requested::WindowCloseRequestedBridge);
-    global_registry::register_message_bridge(window_focused::WindowFocusedBridge);
-    global_registry::register_message_bridge(window_resized::WindowResizedBridge);
-
-    plugin_registry::register_plugin_bridge(WinitPluginBridge);
-    plugin_registry::register_plugin_bridge(WindowPluginBridge);
-}
-
-pub fn add_window_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_window_bridges();
-
-    m.add_class::<PyWinitPlugin>()?;
-    m.add_class::<PyWindowPlugin>()?;
-    m.add_class::<PyAppLifecycle>()?;
-    m.add_class::<PyCompositeAlphaMode>()?;
-    m.add_class::<PyCursorGrabMode>()?;
-    m.add_class::<PyEnabledButtons>()?;
-    m.add_class::<PyExitCondition>()?;
-    m.add_class::<PyMonitorSelection>()?;
-    m.add_class::<PyPresentMode>()?;
-    m.add_class::<PyScreenEdge>()?;
-    m.add_class::<PySystemCursorIcon>()?;
-    m.add_class::<PyVideoMode>()?;
-    m.add_class::<PyVideoModeSelection>()?;
-    m.add_class::<PyWindowLevel>()?;
-    m.add_class::<PyWindowMode>()?;
-    m.add_class::<PyWindowPosition>()?;
-    m.add_class::<PyWindowResizeConstraints>()?;
-    m.add_class::<PyWindowResolution>()?;
-    m.add_class::<PyWindowTheme>()?;
-
-    m.add_class::<PyCursorIcon>()?;
-    m.add_class::<PyCursorOptions>()?;
-    m.add_class::<PyMonitor>()?;
-    m.add_class::<PyPrimaryMonitor>()?;
-    m.add_class::<PyPrimaryWindow>()?;
-    m.add_class::<PyWindow>()?;
-
-    m.add_class::<PyCursorEntered>()?;
-    m.add_class::<PyCursorLeft>()?;
-    m.add_class::<PyCursorMoved>()?;
-    m.add_class::<PyFileDragAndDrop>()?;
-    m.add_class::<PyIme>()?;
-    m.add_class::<PyRequestRedraw>()?;
-    m.add_class::<PyWindowCloseRequested>()?;
-    m.add_class::<PyWindowEvent>()?;
-    m.add_class::<PyWindowFocused>()?;
-    m.add_class::<PyWindowResized>()?;
-
-    Ok(())
-}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "window")?;
-    add_window_classes(&m)?;
+
+    m.add_class::<plugin::PyWinitPlugin>()?;
+    m.add_class::<window_plugin::PyWindowPlugin>()?;
+    m.add_class::<app_lifecycle::PyAppLifecycle>()?;
+    m.add_class::<composite_alpha_mode::PyCompositeAlphaMode>()?;
+    m.add_class::<cursor::PyCursorGrabMode>()?;
+    m.add_class::<enabled_buttons::PyEnabledButtons>()?;
+    m.add_class::<exit_condition::PyExitCondition>()?;
+    m.add_class::<monitor_selection::PyMonitorSelection>()?;
+    m.add_class::<present_mode::PyPresentMode>()?;
+    m.add_class::<screen_edge::PyScreenEdge>()?;
+    m.add_class::<cursor::PySystemCursorIcon>()?;
+    m.add_class::<video_mode::PyVideoMode>()?;
+    m.add_class::<video_mode_selection::PyVideoModeSelection>()?;
+    m.add_class::<window_level::PyWindowLevel>()?;
+    m.add_class::<window_mode::PyWindowMode>()?;
+    m.add_class::<window_position::PyWindowPosition>()?;
+    m.add_class::<resize_constraints::PyWindowResizeConstraints>()?;
+    m.add_class::<window_resolution::PyWindowResolution>()?;
+    m.add_class::<window_theme::PyWindowTheme>()?;
+
+    m.add_class::<cursor_icon::PyCursorIcon>()?;
+    m.add_class::<cursor_options::PyCursorOptions>()?;
+    m.add_class::<monitor::PyMonitor>()?;
+    m.add_class::<primary_monitor::PyPrimaryMonitor>()?;
+    m.add_class::<primary_window::PyPrimaryWindow>()?;
+    m.add_class::<window::PyWindow>()?;
+
+    m.add_class::<cursor_events::PyCursorEntered>()?;
+    m.add_class::<cursor_events::PyCursorLeft>()?;
+    m.add_class::<cursor_moved::PyCursorMoved>()?;
+    m.add_class::<file_drag_and_drop::PyFileDragAndDrop>()?;
+    m.add_class::<ime::PyIme>()?;
+    m.add_class::<request_redraw::PyRequestRedraw>()?;
+    m.add_class::<window_close_requested::PyWindowCloseRequested>()?;
+    m.add_class::<window_event::PyWindowEvent>()?;
+    m.add_class::<window_focused::PyWindowFocused>()?;
+    m.add_class::<window_resized::PyWindowResized>()?;
+
     parent.add_submodule(&m)
 }
 
+// TODO: move to pybevy_winit (#57)
 pub fn add_winit_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "winit")?;
-    m.add_class::<PyWinitPlugin>()?;
-    m.add_class::<PyUpdateMode>()?;
-    m.add_class::<PyWinitSettings>()?;
+    m.add_class::<plugin::PyWinitPlugin>()?;
+    m.add_class::<update_mode::PyUpdateMode>()?;
+    m.add_class::<winit_settings::PyWinitSettings>()?;
     parent.add_submodule(&m)
 }

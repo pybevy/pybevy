@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::gradient::PyGradient;
 
-#[component_storage(BorderGradient)]
+#[component_storage(BorderGradient, bridge)]
 #[pyclass(name = "BorderGradient", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyBorderGradient {

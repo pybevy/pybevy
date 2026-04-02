@@ -10,7 +10,7 @@ use super::{
     animation_player::{PyActiveAnimation, PyAnimationPlayer},
 };
 
-#[component_storage(AnimationTransitions)]
+#[component_storage(AnimationTransitions, bridge)]
 #[pyclass(name = "AnimationTransitions", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAnimationTransitions {

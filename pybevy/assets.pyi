@@ -173,7 +173,7 @@ class AssetServer(Resource):
         Example:
             ```python
             from pybevy.image import ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor
-            from pybevy.wgpu import ImageAddressMode
+            from pybevy.image import ImageAddressMode
 
             settings = ImageLoaderSettings(sampler=ImageSampler.descriptor(
                 ImageSamplerDescriptor(

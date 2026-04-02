@@ -6,7 +6,7 @@ use pybevy_core::{ComponentStorage, PyComponent, PyHandle};
 use pybevy_macros::component_storage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[component_storage(MorphWeights)]
+#[component_storage(MorphWeights, bridge)]
 #[pyclass(name = "MorphWeights", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyMorphWeights {

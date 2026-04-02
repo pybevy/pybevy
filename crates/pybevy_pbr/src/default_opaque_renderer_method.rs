@@ -4,7 +4,7 @@ use pybevy_macros::resource_storage;
 use pybevy_render::PyOpaqueRenderMethod;
 use pyo3::prelude::*;
 
-#[resource_storage(DefaultOpaqueRendererMethod)]
+#[resource_storage(DefaultOpaqueRendererMethod, bridge)]
 #[pyclass(name = "DefaultOpaqueRendererMethod", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyDefaultOpaqueRendererMethod {

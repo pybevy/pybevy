@@ -3,7 +3,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-#[newtype_storage(Tonemapping)]
+#[newtype_storage(Tonemapping, bridge)]
 #[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
 #[derive(Clone, Debug)]
 pub struct PyTonemapping(pub(crate) Tonemapping);

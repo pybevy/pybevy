@@ -39,24 +39,6 @@ pub mod visibility_range;
 pub mod visible_mesh_entities;
 
 pub use aabb::PyAabb;
-use bevy::{
-    camera::{
-        Camera, Camera2d, Camera3d, CameraMainTextureUsages, ClearColor, Exposure, Projection,
-        RenderTarget,
-        primitives::{Aabb, CubemapFrusta, Frustum},
-        visibility::{
-            CubemapVisibleEntities, NoCpuCulling, NoFrustumCulling, RenderLayers, Visibility,
-            VisibilityClass, VisibilityRange, VisibleMeshEntities,
-        },
-    },
-    core_pipeline::{
-        Skybox,
-        prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass},
-        tonemapping::Tonemapping,
-    },
-    post_process::bloom::Bloom,
-    prelude::{InheritedVisibility, ViewVisibility},
-};
 pub use bloom::PyBloom;
 pub use bloom_composite_mode::PyBloomCompositeMode;
 pub use bloom_prefilter::PyBloomPrefilter;
@@ -81,10 +63,6 @@ pub use normalized_render_target::PyNormalizedRenderTarget;
 pub use physical_camera_parameters::PyPhysicalCameraParameters;
 pub use plugin::PyCameraPlugin;
 pub use projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection};
-use pybevy_core::{plugin::plugin_registry, registry::global_registry};
-use pybevy_macros::{
-    component_bridge, newtype_bridge, plugin_bridge, resource_bridge, unit_bridge,
-};
 pub use pybevy_render::{
     PyColorGrading, PyColorGradingGlobal, PyColorGradingSection, PyHdr, PyMipBias, PyMsaa,
     PyNoAutomaticBatching, PyNoIndirectDrawing, PyOcclusionCulling, PyTemporalJitter,
@@ -109,99 +87,10 @@ pub use visibility_class::PyVisibilityClass;
 pub use visibility_range::PyVisibilityRange;
 pub use visible_mesh_entities::PyVisibleMeshEntities;
 
-unit_bridge!(NoCpuCulling, PyNoCpuCulling);
-unit_bridge!(NoFrustumCulling, PyNoFrustumCulling);
-unit_bridge!(Camera2d, PyCamera2d);
-unit_bridge!(DepthPrepass, PyDepthPrepass);
-unit_bridge!(NormalPrepass, PyNormalPrepass);
-unit_bridge!(MotionVectorPrepass, PyMotionVectorPrepass);
-unit_bridge!(DeferredPrepass, PyDeferredPrepass);
-
-component_bridge!(Camera, PyCamera, view_fields = [is_active]);
-component_bridge!(Camera3d, PyCamera3d);
-component_bridge!(InheritedVisibility, PyInheritedVisibility);
-component_bridge!(ViewVisibility, PyViewVisibility);
-component_bridge!(VisibilityRange, PyVisibilityRange, view_fields = [use_aabb]);
-component_bridge!(Exposure, PyExposure, view_fields = [ev100]);
-component_bridge!(RenderLayers, PyRenderLayers);
-component_bridge!(Aabb, PyAabb);
-component_bridge!(
-    Bloom,
-    PyBloom,
-    view_fields = [
-        intensity,
-        low_frequency_boost,
-        low_frequency_boost_curvature,
-        high_pass_frequency,
-        max_mip_dimension
-    ]
-);
-component_bridge!(CubemapFrusta, PyCubemapFrusta);
-component_bridge!(CubemapVisibleEntities, PyCubemapVisibleEntities);
-component_bridge!(Frustum, PyFrustum);
-component_bridge!(Projection, PyProjection);
-component_bridge!(Visibility, PyVisibility);
-component_bridge!(VisibilityClass, PyVisibilityClass);
-component_bridge!(VisibleMeshEntities, PyVisibleMeshEntities);
-component_bridge!(Skybox, PySkybox, view_fields = [brightness]);
-component_bridge!(RenderTarget, PyRenderTarget);
-
-newtype_bridge!(Tonemapping, PyTonemapping);
-newtype_bridge!(CameraMainTextureUsages, PyCameraMainTextureUsages);
-
-resource_bridge!(ClearColor, PyClearColor);
-
-plugin_bridge!(PyCameraPlugin, bevy::camera::CameraPlugin);
-plugin_bridge!(
-    PyCorePipelinePlugin,
-    bevy::core_pipeline::CorePipelinePlugin
-);
-pub fn register_camera_bridges() {
-    global_registry::register_component_bridge(NoCpuCullingBridge);
-    global_registry::register_component_bridge(NoFrustumCullingBridge);
-    global_registry::register_component_bridge(Camera2dBridge);
-    global_registry::register_component_bridge(DepthPrepassBridge);
-    global_registry::register_component_bridge(NormalPrepassBridge);
-    global_registry::register_component_bridge(MotionVectorPrepassBridge);
-    global_registry::register_component_bridge(DeferredPrepassBridge);
-
-    global_registry::register_component_bridge(CameraBridge);
-    global_registry::register_component_bridge(Camera3dBridge);
-    global_registry::register_component_bridge(InheritedVisibilityBridge);
-    global_registry::register_component_bridge(ViewVisibilityBridge);
-    global_registry::register_component_bridge(VisibilityRangeBridge);
-    global_registry::register_component_bridge(ExposureBridge);
-    global_registry::register_component_bridge(RenderLayersBridge);
-    global_registry::register_component_bridge(AabbBridge);
-    global_registry::register_component_bridge(BloomBridge);
-    global_registry::register_component_bridge(CubemapFrustaBridge);
-    global_registry::register_component_bridge(CubemapVisibleEntitiesBridge);
-    global_registry::register_component_bridge(FrustumBridge);
-    global_registry::register_component_bridge(ProjectionBridge);
-    global_registry::register_component_bridge(VisibilityBridge);
-    global_registry::register_component_bridge(VisibilityClassBridge);
-    global_registry::register_component_bridge(VisibleMeshEntitiesBridge);
-    global_registry::register_component_bridge(SkyboxBridge);
-    global_registry::register_component_bridge(RenderTargetBridge);
-
-    global_registry::register_component_bridge(TonemappingBridge);
-    global_registry::register_component_bridge(CameraMainTextureUsagesBridge);
-
-    global_registry::register_resource_bridge(ClearColorBridge);
-
-    plugin_registry::register_plugin_bridge(CameraPluginBridge);
-    plugin_registry::register_plugin_bridge(CorePipelinePluginBridge);
-
+pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     visibility_batch::register_visibility_batch_bridge();
-    register_exposure_batch();
-    register_camera_batch();
-    register_skybox_batch();
-    register_visibility_range_batch();
-    register_bloom_batch();
-}
-pub fn add_camera_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_camera_bridges();
 
+    let m = PyModule::new(parent.py(), "camera")?;
     m.add_class::<PyCameraPlugin>()?;
     m.add_class::<PyCorePipelinePlugin>()?;
     m.add_class::<PyNoCpuCulling>()?;
@@ -260,16 +149,10 @@ pub fn add_camera_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMsaa>()?;
     m.add_class::<PyMipBias>()?;
     m.add_class::<PyClearColor>()?;
-
-    Ok(())
-}
-
-pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "camera")?;
-    add_camera_classes(&m)?;
     parent.add_submodule(&m)
 }
 
+// TODO: extract to pybevy_core_pipeline crate
 pub fn add_core_pipeline_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "core_pipeline")?;
     m.add_class::<PyCorePipelinePlugin>()?;

@@ -3,10 +3,6 @@ use pybevy_core::PyComponent;
 use pybevy_math::PyUVec2;
 use pyo3::prelude::*;
 
-/// Overrides the resolution of the main rendering pass.
-///
-/// When added to a camera entity, forces the main pass to render at
-/// the specified resolution instead of the window/viewport size.
 #[pyclass(name = "MainPassResolutionOverride", extends = PyComponent, frozen, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyMainPassResolutionOverride {

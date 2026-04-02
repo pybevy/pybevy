@@ -5,7 +5,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(Text2dShadow)]
+#[component_storage(Text2dShadow, bridge)]
 #[pyclass(name = "Text2dShadow", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyText2dShadow {

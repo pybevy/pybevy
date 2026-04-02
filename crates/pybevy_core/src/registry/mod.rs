@@ -1,6 +1,6 @@
 //! Runtime type registries for PyBevy
 //!
-//! This module provides the bridge traits and registries that enable
+//! This module provides the bridge traits and global registry that enable
 //! feature crates to register their types without the core crate needing
 //! to import them at compile time.
 //!
@@ -9,17 +9,16 @@
 //! ```text
 //! pybevy_core (this crate)
 //!   └── defines: ComponentBridge, AssetBridge, ResourceBridge traits
-//!   └── defines: DynamicComponentRegistry, DynamicAssetRegistry, DynamicResourceRegistry resources
+//!   └── defines: global_registry (static registries for all bridge types)
 //!
 //! pybevy_audio, pybevy_light, etc. (feature crates)
 //!   └── implements: ComponentBridge for each component
 //!   └── implements: AssetBridge for each asset
 //!   └── implements: ResourceBridge for each resource
-//!   └── registers: bridges during plugin initialization
+//!   └── registers: bridges via global_registry at module init time
 //!
 //! pybevy (main crate)
-//!   └── uses: registries for runtime dispatch
-//!   └── falls back: to static PyComponentType/PyResourceType for built-in types
+//!   └── uses: global_registry for runtime dispatch
 //! ```
 //!
 //! # Usage
@@ -66,8 +65,6 @@ pub use batchable_field::{
 pub use component_bridge::{ComponentBridge, ExtractFn};
 pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta};
 pub use message_bridge::MessageBridge;
-pub use registries::{
-    DynamicAssetRegistry, DynamicComponentRegistry, DynamicResourceRegistry, PluginConfigs,
-};
+pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;
 pub use rust_batch::PyRustComponentBatch;

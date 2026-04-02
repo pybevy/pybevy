@@ -1,170 +1,125 @@
 use bevy::input::touch::{ForceTouch, Touch, Touches};
 use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_macros::resource_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
+#[resource_storage(Touches, no_clone, bridge, no_mut, default_insert)]
 #[pyclass(name = "Touches", extends = PyResource)]
-#[derive(Clone)]
 pub struct PyTouches {
-    storage: Option<ResourceStorage<Touches>>,
-}
-
-impl PyTouches {
-    pub fn from_borrowed(storage: ResourceStorage<Touches>) -> (Self, PyResource) {
-        (
-            PyTouches {
-                storage: Some(storage),
-            },
-            PyResource,
-        )
-    }
-
-    fn get_touches(&self) -> PyResult<&Touches> {
-        match &self.storage {
-            Some(storage) => Ok(storage.as_ref()?),
-            None => {
-                static EMPTY_TOUCHES: std::sync::OnceLock<Touches> = std::sync::OnceLock::new();
-                Ok(EMPTY_TOUCHES.get_or_init(Touches::default))
-            }
-        }
-    }
-
-    fn get_touches_mut(&mut self) -> PyResult<&mut Touches> {
-        match &mut self.storage {
-            Some(storage) => Ok(storage.as_mut()?),
-            None => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Cannot mutate uninitialized Touches resource",
-            )),
-        }
-    }
+    pub(crate) storage: ResourceStorage<Touches>,
 }
 
 #[pymethods]
 impl PyTouches {
     #[new]
     pub fn new() -> (Self, PyResource) {
-        (PyTouches { storage: None }, PyResource)
+        (
+            Self {
+                storage: ResourceStorage::owned(Touches::default()),
+            },
+            PyResource,
+        )
     }
 
     pub fn any_just_pressed(&self) -> PyResult<bool> {
-        let touches = self.get_touches()?;
-        Ok(touches.any_just_pressed())
+        Ok(self.as_ref()?.any_just_pressed())
     }
 
     pub fn any_just_released(&self) -> PyResult<bool> {
-        let touches = self.get_touches()?;
-        Ok(touches.any_just_released())
+        Ok(self.as_ref()?.any_just_released())
     }
 
     pub fn any_just_canceled(&self) -> PyResult<bool> {
-        let touches = self.get_touches()?;
-        Ok(touches.any_just_canceled())
+        Ok(self.as_ref()?.any_just_canceled())
     }
 
     pub fn just_pressed(&self, id: u64) -> PyResult<bool> {
-        let touches = self.get_touches()?;
-        Ok(touches.just_pressed(id))
+        Ok(self.as_ref()?.just_pressed(id))
     }
 
     pub fn just_released(&self, id: u64) -> PyResult<bool> {
-        let touches = self.get_touches()?;
-        Ok(touches.just_released(id))
+        Ok(self.as_ref()?.just_released(id))
     }
 
     pub fn just_canceled(&self, id: u64) -> PyResult<bool> {
-        let touches = self.get_touches()?;
-        Ok(touches.just_canceled(id))
+        Ok(self.as_ref()?.just_canceled(id))
     }
 
     pub fn get_pressed(&self, id: u64) -> PyResult<Option<PyTouch>> {
-        let touches = self.get_touches()?;
-        Ok(touches.get_pressed(id).map(PyTouch::from_bevy))
+        Ok(self.as_ref()?.get_pressed(id).map(PyTouch::from_bevy))
     }
 
     pub fn get_released(&self, id: u64) -> PyResult<Option<PyTouch>> {
-        let touches = self.get_touches()?;
-        Ok(touches.get_released(id).map(PyTouch::from_bevy))
+        Ok(self.as_ref()?.get_released(id).map(PyTouch::from_bevy))
     }
 
     pub fn iter(&self) -> PyResult<Vec<PyTouch>> {
-        let touches = self.get_touches()?;
-        Ok(touches.iter().map(PyTouch::from_bevy).collect())
+        Ok(self.as_ref()?.iter().map(PyTouch::from_bevy).collect())
     }
 
     pub fn iter_just_pressed(&self) -> PyResult<Vec<PyTouch>> {
-        let touches = self.get_touches()?;
-        Ok(touches
+        Ok(self
+            .as_ref()?
             .iter_just_pressed()
             .map(PyTouch::from_bevy)
             .collect())
     }
 
     pub fn iter_just_released(&self) -> PyResult<Vec<PyTouch>> {
-        let touches = self.get_touches()?;
-        Ok(touches
+        Ok(self
+            .as_ref()?
             .iter_just_released()
             .map(PyTouch::from_bevy)
             .collect())
     }
 
     pub fn iter_just_canceled(&self) -> PyResult<Vec<PyTouch>> {
-        let touches = self.get_touches()?;
-        Ok(touches
+        Ok(self
+            .as_ref()?
             .iter_just_canceled()
             .map(PyTouch::from_bevy)
             .collect())
     }
 
     pub fn first_pressed_position(&self) -> PyResult<Option<PyVec2>> {
-        let touches = self.get_touches()?;
-        Ok(touches.first_pressed_position().map(Into::into))
+        Ok(self.as_ref()?.first_pressed_position().map(Into::into))
     }
 
     pub fn clear(&mut self) -> PyResult<()> {
-        let touches = self.get_touches_mut()?;
-        touches.clear();
+        self.as_mut()?.clear();
         Ok(())
     }
 
     pub fn clear_just_pressed(&mut self, id: u64) -> PyResult<bool> {
-        let touches = self.get_touches_mut()?;
-        Ok(touches.clear_just_pressed(id))
+        Ok(self.as_mut()?.clear_just_pressed(id))
     }
 
     pub fn clear_just_released(&mut self, id: u64) -> PyResult<bool> {
-        let touches = self.get_touches_mut()?;
-        Ok(touches.clear_just_released(id))
+        Ok(self.as_mut()?.clear_just_released(id))
     }
 
     pub fn clear_just_canceled(&mut self, id: u64) -> PyResult<bool> {
-        let touches = self.get_touches_mut()?;
-        Ok(touches.clear_just_canceled(id))
+        Ok(self.as_mut()?.clear_just_canceled(id))
     }
 
     pub fn release(&mut self, id: u64) -> PyResult<()> {
-        let touches = self.get_touches_mut()?;
-        touches.release(id);
+        self.as_mut()?.release(id);
         Ok(())
     }
 
     pub fn release_all(&mut self) -> PyResult<()> {
-        let touches = self.get_touches_mut()?;
-        touches.release_all();
+        self.as_mut()?.release_all();
         Ok(())
     }
 
     pub fn reset_all(&mut self) -> PyResult<()> {
-        let touches = self.get_touches_mut()?;
-        touches.reset_all();
+        self.as_mut()?.reset_all();
         Ok(())
     }
 
     fn __repr__(&self) -> String {
-        if self.storage.is_some() {
-            "Touches(initialized)".to_string()
-        } else {
-            "Touches(uninitialized)".to_string()
-        }
+        "Touches(...)".to_string()
     }
 }
 

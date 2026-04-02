@@ -13,12 +13,6 @@ pub mod unit_markers;
 
 pub use alpha_mode::PyAlphaMode;
 pub use atmosphere_mode::PyAtmosphereMode;
-use bevy::render::{
-    batching::NoAutomaticBatching,
-    camera::{MipBias, TemporalJitter},
-    experimental::occlusion_culling::OcclusionCulling,
-    view::{ColorGrading, Hdr, Msaa, NoIndirectDrawing},
-};
 pub use color_grading::{PyColorGradingGlobal, PyColorGradingSection};
 pub use color_grading_component::PyColorGrading;
 pub use face::PyFace;
@@ -27,9 +21,6 @@ pub use msaa::PyMsaa;
 pub use opaque_render_method::PyOpaqueRenderMethod;
 pub use plugin::PyRenderPlugin;
 pub use power_preference::PyPowerPreference;
-use pybevy_core::{plugin::plugin_registry, registry::global_registry};
-pub use pybevy_image::{PyImageAddressMode, PyImageFilterMode, PyImageSampler};
-use pybevy_macros::{component_bridge, newtype_bridge, plugin_bridge, unit_bridge};
 pub use pybevy_shader::{
     PyShader, PyShaderDefVal, PyShaderImport, PyShaderRef, PySource, PyValidateShader,
 };
@@ -38,66 +29,15 @@ use pyo3::prelude::*;
 pub use temporal_jitter::PyTemporalJitter;
 pub use unit_markers::{PyHdr, PyNoAutomaticBatching, PyNoIndirectDrawing, PyOcclusionCulling};
 
-unit_bridge!(Hdr, PyHdr);
-unit_bridge!(NoAutomaticBatching, PyNoAutomaticBatching);
-unit_bridge!(NoIndirectDrawing, PyNoIndirectDrawing);
-unit_bridge!(OcclusionCulling, PyOcclusionCulling);
-
-component_bridge!(TemporalJitter, PyTemporalJitter);
-component_bridge!(ColorGrading, PyColorGrading);
-
-newtype_bridge!(Msaa, PyMsaa, copy);
-newtype_bridge!(MipBias, PyMipBias);
-
-plugin_bridge!(
-    PyRenderPlugin,
-    bevy::render::RenderPlugin,
-    |py_plugin, app| {
-        let config: pyo3::PyRef<'_, PyRenderPlugin> = py_plugin.extract()?;
-        let mut wgpu_settings = bevy::render::settings::WgpuSettings::default();
-        if let Some(ref pp) = config.power_preference {
-            wgpu_settings.power_preference = (*pp).into();
-        }
-        let mut render_plugin = bevy::render::RenderPlugin {
-            render_creation: bevy::render::settings::RenderCreation::Automatic(wgpu_settings),
-            ..Default::default()
-        };
-        if let Some(sync) = config.synchronous_pipeline_compilation {
-            render_plugin.synchronous_pipeline_compilation = sync;
-        }
-        app.add_plugins(render_plugin);
-        Ok(())
-    }
-);
-
-pub fn register_render_bridges() {
-    pybevy_shader::register_shader_bridges();
-    plugin_registry::register_plugin_bridge(RenderPluginBridge);
-
-    global_registry::register_component_bridge(HdrBridge);
-    global_registry::register_component_bridge(NoAutomaticBatchingBridge);
-    global_registry::register_component_bridge(NoIndirectDrawingBridge);
-    global_registry::register_component_bridge(OcclusionCullingBridge);
-    global_registry::register_component_bridge(TemporalJitterBridge);
-    global_registry::register_component_bridge(ColorGradingBridge);
-    global_registry::register_component_bridge(MsaaBridge);
-    global_registry::register_component_bridge(MipBiasBridge);
-}
-
-pub fn add_render_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_render_bridges();
-
+pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "render")?;
     m.add_class::<PyRenderPlugin>()?;
     m.add_class::<PyPowerPreference>()?;
-
     m.add_class::<PyAlphaMode>()?;
     m.add_class::<PyAtmosphereMode>()?;
     m.add_class::<PyExtent3d>()?;
     m.add_class::<PyFace>()?;
     m.add_class::<PyTextureDimension>()?;
-    m.add_class::<PyImageFilterMode>()?;
-    m.add_class::<PyImageAddressMode>()?;
-    m.add_class::<PyImageSampler>()?;
     m.add_class::<PyOpaqueRenderMethod>()?;
     m.add_class::<PyShader>()?;
     m.add_class::<PyShaderDefVal>()?;
@@ -106,7 +46,6 @@ pub fn add_render_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySource>()?;
     m.add_class::<PyTextureFormat>()?;
     m.add_class::<PyValidateShader>()?;
-
     m.add_class::<PyHdr>()?;
     m.add_class::<PyNoAutomaticBatching>()?;
     m.add_class::<PyNoIndirectDrawing>()?;
@@ -117,16 +56,10 @@ pub fn add_render_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyColorGrading>()?;
     m.add_class::<PyColorGradingSection>()?;
     m.add_class::<PyColorGradingGlobal>()?;
-
-    Ok(())
-}
-
-pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "render")?;
-    add_render_classes(&m)?;
     parent.add_submodule(&m)
 }
 
+// TODO: move to pybevy_shader crate
 pub fn add_shader_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "shader")?;
     m.add_class::<PyShader>()?;
@@ -138,8 +71,11 @@ pub fn add_shader_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     parent.add_submodule(&m)
 }
 
+// TODO: move to pybevy_wgpu crate
 pub fn add_wgpu_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "wgpu")?;
-    add_render_classes(&m)?;
+    m.add_class::<PyExtent3d>()?;
+    m.add_class::<PyTextureDimension>()?;
+    m.add_class::<PyTextureFormat>()?;
     parent.add_submodule(&m)
 }

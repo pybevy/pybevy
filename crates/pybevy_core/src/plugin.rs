@@ -98,6 +98,24 @@ impl Default for PyPlugin {
 ///     fn name(&self) -> &'static str { "AudioPlugin" }
 /// }
 /// ```
+/// Trait for Python plugin wrappers to implement their build logic.
+///
+/// Implement this on your `#[pyclass]` struct, then use `#[plugin_storage(BevyPlugin)]`
+/// to generate the bridge and inventory registration automatically.
+///
+/// ```rust
+/// impl PluginBuild for PyWindowPlugin {
+///     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+///         let config: PyRef<'_, PyWindowPlugin> = py_plugin.extract()?;
+///         app.add_plugins(bevy::window::WindowPlugin::try_from(&*config)?);
+///         Ok(())
+///     }
+/// }
+/// ```
+pub trait PluginBuild {
+    fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()>;
+}
+
 pub trait PluginBridge: Send + Sync + 'static {
     /// Get the Rust TypeId of the Python plugin class.
     fn py_type_id(&self) -> TypeId;
@@ -137,7 +155,10 @@ impl PluginRegistry {
     }
 
     fn register(&mut self, bridge: impl PluginBridge) {
-        let bridge = Arc::new(bridge);
+        self.register_arc(Arc::new(bridge));
+    }
+
+    fn register_arc(&mut self, bridge: Arc<dyn PluginBridge>) {
         let type_id = bridge.py_type_id();
         let py_ptr = bridge.py_type_ptr();
 
@@ -170,6 +191,13 @@ pub mod plugin_registry {
         let registry = get_registry();
         let mut guard = registry.write().expect("Plugin registry poisoned");
         guard.register(bridge);
+    }
+
+    /// Register a pre-wrapped Arc plugin bridge (used by inventory auto-registration)
+    pub fn register_plugin_bridge_arc(bridge: Arc<dyn PluginBridge>) {
+        let registry = get_registry();
+        let mut guard = registry.write().expect("Plugin registry poisoned");
+        guard.register_arc(bridge);
     }
 
     /// Look up a plugin bridge by Python type pointer.

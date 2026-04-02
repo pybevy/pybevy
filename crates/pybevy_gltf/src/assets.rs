@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::label::PyGltfAssetLabel;
 
-#[asset_storage(Gltf, no_clone)]
+#[asset_storage(Gltf, no_clone, bridge)]
 #[pyclass(name = "Gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltf {
@@ -102,7 +102,7 @@ impl PyGltf {
     }
 }
 
-#[asset_storage(GltfMesh, no_clone)]
+#[asset_storage(GltfMesh, no_clone, bridge)]
 #[pyclass(name = "GltfMesh", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfMesh {
@@ -141,7 +141,7 @@ impl PyGltfMesh {
     }
 }
 
-#[asset_storage(GltfNode, no_clone)]
+#[asset_storage(GltfNode, no_clone, bridge)]
 #[pyclass(name = "GltfNode", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfNode {
@@ -195,7 +195,7 @@ impl PyGltfNode {
     }
 }
 
-#[asset_storage(GltfPrimitive, no_clone)]
+#[asset_storage(GltfPrimitive, no_clone, bridge)]
 #[pyclass(name = "GltfPrimitive", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfPrimitive {
@@ -252,7 +252,7 @@ impl PyGltfPrimitive {
     }
 }
 
-#[asset_storage(GltfSkin, no_clone)]
+#[asset_storage(GltfSkin, no_clone, bridge)]
 #[pyclass(name = "GltfSkin", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfSkin {

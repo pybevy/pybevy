@@ -4,7 +4,13 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(DirectionalLight)]
+#[component_storage(DirectionalLight, bridge, view_fields = [
+    illuminance,
+    shadow_depth_bias,
+    shadow_normal_bias,
+    shadows_enabled,
+    affects_lightmapped_mesh_diffuse
+], batch_only_fields = [color])]
 #[pyclass(name = "DirectionalLight", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyDirectionalLight {

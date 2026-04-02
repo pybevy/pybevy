@@ -26,11 +26,76 @@ use syn::{
 /// pub struct PyTonemapping(pub(crate) Tonemapping);
 /// ```
 ///
-/// The main crate then uses `newtype_bridge!` to add runtime dispatch.
+/// With bridge generation:
+///
+/// ```rust
+/// #[newtype_storage(Tonemapping, bridge)]
+/// #[newtype_storage(Msaa, bridge, copy)]
+/// ```
 pub fn newtype_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let bevy_type: Type = parse_macro_input!(attr as Type);
+    struct NewtypeStorageArgs {
+        bevy_type: Type,
+        bridge: bool,
+        bridge_name: Option<String>,
+        is_copy: bool,
+    }
+
+    impl Parse for NewtypeStorageArgs {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let bevy_type: Type = input.parse()?;
+            let mut bridge = false;
+            let mut bridge_name = None;
+            let mut is_copy = false;
+
+            while input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+                if !input.peek(syn::Ident) && !input.peek(syn::LitStr) {
+                    break;
+                }
+                if input.peek(syn::LitStr) {
+                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
+                } else {
+                    let ident: Ident = input.parse()?;
+                    match ident.to_string().as_str() {
+                        "bridge" => bridge = true,
+                        "copy" => is_copy = true,
+                        other => {
+                            return Err(syn::Error::new_spanned(
+                                ident,
+                                format!(
+                                    "unknown option '{}', expected one of: bridge, copy",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            Ok(NewtypeStorageArgs {
+                bevy_type,
+                bridge,
+                bridge_name,
+                is_copy,
+            })
+        }
+    }
+
+    let args = parse_macro_input!(attr as NewtypeStorageArgs);
+    let bevy_type = &args.bevy_type;
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
+
+    let bridge_tokens = if args.bridge {
+        generate_newtype_bridge_tokens(
+            bevy_type,
+            py_type,
+            args.bridge_name.as_deref(),
+            args.is_copy,
+        )
+    } else {
+        quote! {}
+    };
 
     let expanded = quote! {
         #input
@@ -63,78 +128,22 @@ pub fn newtype_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
                 (Self(value), pybevy_core::PyComponent)
             }
         }
+
+        #bridge_tokens
     };
 
     TokenStream::from(expanded)
 }
 
-/// Generates a ComponentBridge struct for newtype/wrapper components in feature crates.
-///
-/// Unlike `component_bridge!`, this macro handles newtype components that wrap a Bevy type
-/// directly (like enums or simple structs) without using ComponentStorage.
-///
-/// # Usage
-///
-/// ```rust
-/// // In pybevy_camera/src/lib.rs
-/// newtype_bridge!(Tonemapping, PyTonemapping);
-/// ```
-///
-/// This generates `TonemappingBridge` struct with `ComponentBridge` impl.
-///
-/// For types where Clone is Copy (more efficient):
-/// ```rust
-/// newtype_bridge!(Msaa, PyMsaa, copy);
-/// ```
-pub fn newtype_bridge(input: TokenStream) -> TokenStream {
-    struct BridgeArgs {
-        bevy_type: Type,
-        py_type: Ident,
-        bridge_name: Option<String>,
-        is_copy: bool,
-    }
-
-    impl Parse for BridgeArgs {
-        fn parse(input: ParseStream) -> syn::Result<Self> {
-            let bevy_type: Type = input.parse()?;
-            input.parse::<Token![,]>()?;
-            let py_type: Ident = input.parse()?;
-
-            let mut bridge_name = None;
-            let mut is_copy = false;
-
-            while input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-                if input.peek(syn::LitStr) {
-                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
-                } else if input.peek(syn::Ident) {
-                    let ident: Ident = input.parse()?;
-                    if ident == "copy" {
-                        is_copy = true;
-                    } else {
-                        return Err(syn::Error::new_spanned(
-                            ident,
-                            "expected 'copy' or a string literal for bridge name",
-                        ));
-                    }
-                }
-            }
-
-            Ok(BridgeArgs {
-                bevy_type,
-                py_type,
-                bridge_name,
-                is_copy,
-            })
-        }
-    }
-
-    let args = parse_macro_input!(input as BridgeArgs);
-    let bevy_type = &args.bevy_type;
-    let py_type = &args.py_type;
-
+/// Shared newtype bridge code generation used by `#[newtype_storage(..., bridge)]`.
+pub(crate) fn generate_newtype_bridge_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    bridge_name_override: Option<&str>,
+    is_copy: bool,
+) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = args.bridge_name.unwrap_or_else(|| {
+    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
         name.strip_prefix("Py").unwrap_or(&name).to_string()
     });
@@ -142,7 +151,7 @@ pub fn newtype_bridge(input: TokenStream) -> TokenStream {
     let component_name = &bridge_name_str;
 
     // Clone vs Copy for extraction
-    let clone_expr = if args.is_copy {
+    let clone_expr = if is_copy {
         quote! { *component }
     } else {
         quote! { component.clone() }
@@ -279,5 +288,14 @@ pub fn newtype_bridge(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    let inventory_submit = quote! {
+        pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
+            create: || std::sync::Arc::new(#bridge_name),
+        });
+    };
+
+    quote! {
+        #expanded
+        #inventory_submit
+    }
 }

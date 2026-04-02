@@ -99,15 +99,7 @@ impl PyStage {
     }
 }
 
-/// Register all app-related message bridges with global registry.
-pub fn register_app_bridges() {
-    app_exit::register_app_exit_bridge();
-}
-
 pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Register app message bridges with global registry
-    register_app_bridges();
-
     let app = PyModule::new(m.py(), "app")?;
     app.add_class::<app::PyApp>()?;
     app.add_class::<PyStage>()?;

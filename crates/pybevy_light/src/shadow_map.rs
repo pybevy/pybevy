@@ -3,7 +3,7 @@ use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::resource_storage;
 use pyo3::prelude::*;
 
-#[resource_storage(PointLightShadowMap)]
+#[resource_storage(PointLightShadowMap, bridge)]
 #[pyclass(name = "PointLightShadowMap", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyPointLightShadowMap {
@@ -37,7 +37,7 @@ impl PyPointLightShadowMap {
     }
 }
 
-#[resource_storage(DirectionalLightShadowMap)]
+#[resource_storage(DirectionalLightShadowMap, bridge)]
 #[pyclass(name = "DirectionalLightShadowMap", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyDirectionalLightShadowMap {

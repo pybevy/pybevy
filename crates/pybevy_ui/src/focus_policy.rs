@@ -3,7 +3,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-#[newtype_storage(FocusPolicy)]
+#[newtype_storage(FocusPolicy, bridge)]
 #[pyclass(name = "FocusPolicy", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyFocusPolicy(pub(crate) FocusPolicy);

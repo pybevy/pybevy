@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::PyFogFalloff;
 
-#[component_storage(DistanceFog)]
+#[component_storage(DistanceFog, bridge, view_fields = [directional_light_exponent], batch_only_fields = [color, directional_light_color])]
 #[pyclass(name = "DistanceFog", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyDistanceFog {

@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::spatial_scale::PySpatialScale;
 
-#[resource_storage(DefaultSpatialScale)]
+#[resource_storage(DefaultSpatialScale, bridge)]
 #[pyclass(name = "DefaultSpatialScale", extends = PyResource)]
 pub struct PyDefaultSpatialScale {
     pub(crate) storage: ResourceStorage<DefaultSpatialScale>,

@@ -16,12 +16,7 @@ use bevy::{
     ecs::schedule::{Chain, ExecutorKind, IntoScheduleConfigs, ScheduleConfigs, Schedules},
     log::LogPlugin,
 };
-use pybevy_a11y::PyBevyA11yPlugin;
-use pybevy_audio::PyBevyAudioPlugin;
-use pybevy_core::{
-    DynamicAssetRegistry, DynamicComponentRegistry, PyPlugin as PyPluginBase,
-    plugin::plugin_registry,
-};
+use pybevy_core::{PyPlugin as PyPluginBase, plugin::plugin_registry};
 use pyo3::{
     IntoPyObjectExt,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
@@ -594,16 +589,6 @@ impl PyApp {
                 ..Default::default()
             });
         }
-
-        // Initialize dynamic type registries for runtime component/asset bridge dispatch
-        // These enable feature crates to register their types without compile-time coupling
-        app.insert_resource(DynamicComponentRegistry::new());
-        app.insert_resource(DynamicAssetRegistry::new());
-
-        // Register feature crate plugins that populate the dynamic registries
-        // These plugins register their component/asset bridges at runtime
-        app.add_plugins(PyBevyA11yPlugin);
-        app.add_plugins(PyBevyAudioPlugin);
 
         // Initialize SimTick schedule and insert it into the main schedule order
         // Frame order: First → PreUpdate → SimTick → Update → PostUpdate → Last

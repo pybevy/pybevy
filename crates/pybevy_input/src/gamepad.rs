@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::{PyGamepadAxis, PyGamepadButton, PyGamepadInput};
 
-#[component_storage(Gamepad, no_clone)]
+#[component_storage(Gamepad, no_clone, bridge)]
 #[pyclass(name = "Gamepad", extends = PyComponent, frozen)]
 pub struct PyGamepad {
     pub(crate) storage: ComponentStorage<Gamepad>,

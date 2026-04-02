@@ -15,7 +15,7 @@ use pyo3::{
 };
 
 use crate::{PyIndices, PyMeshVertexAttribute, PyPrimitiveTopology, PyVertexAttributeValues};
-#[asset_storage(Mesh)]
+#[asset_storage(Mesh, bridge)]
 #[pyclass(name = "Mesh", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyMesh {

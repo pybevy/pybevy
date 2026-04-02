@@ -6,7 +6,7 @@
 //! # Pattern
 //!
 //! 1. Feature crate implements `ComponentBridge` for each component
-//! 2. Feature crate's plugin registers bridges at startup
+//! 2. Feature crate registers bridges via `global_registry` at init time
 //! 3. Core uses bridges via runtime dispatch (no compile-time coupling)
 //!
 //! # Example
@@ -22,12 +22,8 @@
 //!     // ... other methods
 //! }
 //!
-//! impl Plugin for PyBevyAudioPlugin {
-//!     fn build(&self, app: &mut App) {
-//!         app.world_mut()
-//!             .resource_mut::<DynamicComponentRegistry>()
-//!             .register(AudioPlayerBridge);
-//!     }
+//! pub fn register_audio_bridges() {
+//!     global_registry::register_component_bridge(AudioPlayerBridge);
 //! }
 //! ```
 

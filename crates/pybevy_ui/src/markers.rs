@@ -3,8 +3,10 @@ use bevy::ui::{
     widget::{Button, Label},
 };
 use pybevy_core::PyComponent;
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
+#[component_storage(Label, unit, bridge)]
 #[pyclass(name = "Label", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyLabel;
@@ -45,6 +47,7 @@ impl PyLabel {
     }
 }
 
+#[component_storage(Checked, unit, bridge)]
 #[pyclass(name = "Checked", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyChecked;
@@ -85,6 +88,7 @@ impl PyChecked {
     }
 }
 
+#[component_storage(Pressed, unit, bridge)]
 #[pyclass(name = "Pressed", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyPressed;
@@ -125,6 +129,7 @@ impl PyPressed {
     }
 }
 
+#[component_storage(InteractionDisabled, unit, bridge)]
 #[pyclass(name = "InteractionDisabled", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyInteractionDisabled;
@@ -165,6 +170,7 @@ impl PyInteractionDisabled {
     }
 }
 
+#[component_storage(IsDefaultUiCamera, unit, bridge)]
 #[pyclass(name = "IsDefaultUiCamera", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyIsDefaultUiCamera;
@@ -201,6 +207,7 @@ impl PyIsDefaultUiCamera {
     }
 }
 
+#[component_storage(Button, unit, bridge)]
 #[pyclass(name = "Button", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyButton;

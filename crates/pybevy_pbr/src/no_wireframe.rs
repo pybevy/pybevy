@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(NoWireframe)]
+#[component_storage(NoWireframe, bridge)]
 #[pyclass(name = "NoWireframe", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyNoWireframe {

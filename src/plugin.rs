@@ -43,7 +43,7 @@ use bevy::{
 };
 #[cfg(feature = "native-hot-reload")]
 use notify::{EventKind, RecursiveMode, Watcher};
-use pybevy_core::{ComponentBridge, DynamicComponentRegistry, registry::global_registry};
+use pybevy_core::{ComponentBridge, registry::global_registry};
 use pyo3::{
     exceptions::{PyAttributeError, PyImportError},
     prelude::*,
@@ -492,21 +492,11 @@ impl Plugin for PyBevyPlugin {
     fn build(&self, app: &mut App) {
         ensure_python_initialized();
 
-        // Register component bridges in both global and Bevy-resource registries,
-        // and inject their Python types into the _pybevy module so Python can import them
+        // Register component bridges in the global registry and inject their
+        // Python types into the _pybevy module so Python can import them
         if !self.component_bridges.is_empty() {
-            // Ensure the DynamicComponentRegistry resource exists
-            if !app.world().contains_resource::<DynamicComponentRegistry>() {
-                app.insert_resource(DynamicComponentRegistry::new());
-            }
-
-            let mut registry = app.world_mut().resource_mut::<DynamicComponentRegistry>();
-
             for bridge in &self.component_bridges {
-                // Register in global registry (for type identification without World)
                 global_registry::register_component_bridge_arc(Arc::clone(bridge));
-                // Register in Bevy resource registry (for runtime dispatch)
-                registry.register_arc(Arc::clone(bridge));
             }
 
             // Inject Python types into the _pybevy module so Python systems can import them:

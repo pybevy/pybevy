@@ -3,10 +3,11 @@ use bevy::{
     math::Vec2,
 };
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
+#[message_storage(PinchGesture)]
 #[pyclass(name = "PinchGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPinchGesture(pub f32);
@@ -40,6 +41,7 @@ impl PyPinchGesture {
     }
 }
 
+#[message_storage(RotationGesture)]
 #[pyclass(name = "RotationGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRotationGesture(pub f32);
@@ -73,6 +75,7 @@ impl PyRotationGesture {
     }
 }
 
+#[message_storage(DoubleTapGesture)]
 #[pyclass(name = "DoubleTapGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDoubleTapGesture;
@@ -101,6 +104,7 @@ impl PyDoubleTapGesture {
     }
 }
 
+#[message_storage(PanGesture)]
 #[pyclass(name = "PanGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPanGesture(pub f32, pub f32);
@@ -143,9 +147,3 @@ impl PyPanGesture {
         format!("PanGesture(x={}, y={})", self.0, self.1)
     }
 }
-
-// Message bridges
-message_bridge!(PinchGesture, PyPinchGesture);
-message_bridge!(RotationGesture, PyRotationGesture);
-message_bridge!(DoubleTapGesture, PyDoubleTapGesture);
-message_bridge!(PanGesture, PyPanGesture);

@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::visible_mesh_entities::PyVisibleMeshEntities;
 
-#[component_storage(CubemapVisibleEntities)]
+#[component_storage(CubemapVisibleEntities, bridge)]
 #[pyclass(name = "CubemapVisibleEntities", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCubemapVisibleEntities {

@@ -1,19 +1,12 @@
 use bevy::light::ShadowFilteringMethod;
 use pybevy_core::PyComponent;
+use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-/// Shadow filtering method for shadow-casting lights.
-///
-/// Determines the quality/performance tradeoff for shadow filtering.
+#[newtype_storage(ShadowFilteringMethod, bridge)]
 #[pyclass(name = "ShadowFilteringMethod", extends = PyComponent, frozen, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyShadowFilteringMethod(pub(crate) ShadowFilteringMethod);
-
-impl PyShadowFilteringMethod {
-    pub fn from_owned(value: ShadowFilteringMethod) -> (Self, PyComponent) {
-        (PyShadowFilteringMethod(value), PyComponent)
-    }
-}
 
 #[pymethods]
 impl PyShadowFilteringMethod {

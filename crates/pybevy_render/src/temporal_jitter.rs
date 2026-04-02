@@ -4,7 +4,7 @@ use pybevy_macros::component_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(TemporalJitter)]
+#[component_storage(TemporalJitter, bridge)]
 #[pyclass(name = "TemporalJitter", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyTemporalJitter {

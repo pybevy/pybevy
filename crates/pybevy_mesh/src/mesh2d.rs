@@ -1,6 +1,9 @@
 use bevy::mesh::Mesh2d;
 use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_macros::handle_storage;
 use pyo3::{exceptions::PyTypeError, prelude::*};
+
+#[handle_storage(Mesh2d)]
 #[pyclass(name = "Mesh2d", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMesh2d(pub(crate) PyHandle);

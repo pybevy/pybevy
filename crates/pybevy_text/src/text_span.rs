@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(TextSpan)]
+#[component_storage(TextSpan, bridge)]
 #[pyclass(name = "TextSpan", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextSpan {

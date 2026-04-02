@@ -5,7 +5,13 @@ use pybevy_macros::component_storage;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
-#[component_storage(FogVolume)]
+#[component_storage(FogVolume, bridge, view_fields = [
+    density_factor,
+    absorption,
+    scattering,
+    scattering_asymmetry,
+    light_intensity
+], batch_only_fields = [fog_color, light_tint])]
 #[pyclass(name = "FogVolume", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyFogVolume {

@@ -293,7 +293,7 @@ impl PyOrthographicProjection {
     }
 }
 
-#[component_storage(Projection)]
+#[component_storage(Projection, bridge)]
 #[pyclass(name = "Projection", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyProjection {

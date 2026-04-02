@@ -22,7 +22,8 @@ use pyo3::prelude::*;
 pub use srgba::PySrgba;
 pub use xyza::PyXyza;
 
-pub fn add_color_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "color")?;
     m.add_class::<PyColor>()?;
     m.add_class::<PyLinearRgba>()?;
     m.add_class::<PySrgba>()?;
@@ -33,11 +34,5 @@ pub fn add_color_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLaba>()?;
     m.add_class::<PyOklaba>()?;
     m.add_class::<PyXyza>()?;
-    Ok(())
-}
-
-pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "color")?;
-    add_color_classes(&m)?;
     parent.add_submodule(&m)
 }

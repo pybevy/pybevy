@@ -3,9 +3,10 @@ use bevy::{
     pbr::{MeshMaterial3d, StandardMaterial},
 };
 use pybevy_core::{
-    AssetStorage, NativeAsset, PyAsset, PyComponent, PyHandle, PyPlugin, extract_handle_from_any,
+    AssetStorage, NativeAsset, PluginBuild, PyAsset, PyComponent, PyHandle, PyPlugin,
+    extract_handle_from_any,
 };
-use pybevy_macros::asset_storage;
+use pybevy_macros::{asset_storage, handle_storage, plugin_storage};
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
     prelude::*,
@@ -16,7 +17,7 @@ use crate::{
     shader_material::{MAX_TEXTURE_SLOTS, ShaderMaterial, ShaderMaterialExtension, ShaderParams},
 };
 
-#[asset_storage(ShaderMaterial)]
+#[asset_storage(ShaderMaterial, bridge, not_loadable)]
 #[pyclass(name = "ShaderMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
@@ -201,6 +202,7 @@ impl PyShaderMaterial {
     }
 }
 
+#[plugin_storage(bevy::pbr::MaterialPlugin::<ShaderMaterial>)]
 #[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
@@ -214,6 +216,16 @@ impl PyShaderMaterialPlugin {
     }
 }
 
+impl PluginBuild for PyShaderMaterialPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut bevy::app::App) -> PyResult<()> {
+        crate::shader_material::clear_shader_registries();
+        app.add_plugins(bevy::pbr::MaterialPlugin::<ShaderMaterial>::default());
+        app.add_systems(bevy::app::Last, crate::shader_material::sync_shader_handles);
+        Ok(())
+    }
+}
+
+#[handle_storage(MeshMaterial3d::<ShaderMaterial>, "MeshMaterial3dShader")]
 #[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial3dShader(pub(crate) PyHandle);

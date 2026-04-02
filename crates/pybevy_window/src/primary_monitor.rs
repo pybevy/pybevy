@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-#[component_storage(PrimaryMonitor)]
+#[component_storage(PrimaryMonitor, bridge)]
 #[pyclass(name = "PrimaryMonitor", extends = PyComponent, frozen)]
 #[derive(Clone)]
 pub struct PyPrimaryMonitor {

@@ -3,7 +3,6 @@ pub mod asset_server;
 pub mod asset_server_mode;
 pub mod asset_type;
 pub mod assets;
-pub mod bridges;
 pub mod dependency_load_state;
 pub mod load_state;
 pub mod loaded_folder;
@@ -68,8 +67,6 @@ impl PyAssetPlugin {
 }
 
 pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    bridges::register_main_crate_asset_bridges();
-
     let assets = PyModule::new(m.py(), "assets")?;
     assets.add_class::<PyAssetPlugin>()?;
     assets.add_class::<PyAsset>()?;

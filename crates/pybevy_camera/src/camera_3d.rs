@@ -9,7 +9,7 @@ const DEFAULT_DEPTH_TEXTURE_USAGE: u32 = TextureUsages::RENDER_ATTACHMENT.bits()
 const DEFAULT_DEPTH_CLEAR_VALUE: f32 = 0.0;
 const DEFAULT_SCREEN_SPACE_TRANSMISSION_STEPS: usize = 1;
 
-#[component_storage(Camera3d)]
+#[component_storage(Camera3d, bridge)]
 #[pyclass(name = "Camera3d", extends = PyComponent, eq)]
 #[derive(Clone)]
 pub struct PyCamera3d {

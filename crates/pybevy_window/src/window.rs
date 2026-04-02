@@ -5,13 +5,16 @@ use pybevy_math::{PyCompassOctant, PyUVec2, PyVec2};
 use pyo3::prelude::*;
 
 use crate::{
-    PyCompositeAlphaMode, PyEnabledButtons, PyPresentMode, PyScreenEdge, PyWindowLevel,
-    PyWindowMode, PyWindowPosition, PyWindowResizeConstraints, PyWindowResolution, PyWindowTheme,
+    composite_alpha_mode::PyCompositeAlphaMode, enabled_buttons::PyEnabledButtons,
+    present_mode::PyPresentMode, resize_constraints::PyWindowResizeConstraints,
+    screen_edge::PyScreenEdge, window_level::PyWindowLevel, window_mode::PyWindowMode,
+    window_position::PyWindowPosition, window_resolution::PyWindowResolution,
+    window_theme::PyWindowTheme,
 };
 
 pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
-#[component_storage(Window)]
+#[component_storage(Window, bridge, view_fields = [decorations, resizable, transparent])]
 #[pyclass(name = "Window", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyWindow {

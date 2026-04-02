@@ -4,7 +4,7 @@ use pybevy_core::{PyResource, ResourceStorage, ResourceStorageInner};
 use pybevy_macros::resource_storage;
 use pyo3::prelude::*;
 
-#[resource_storage(ClearColor)]
+#[resource_storage(ClearColor, bridge)]
 #[pyclass(name = "ClearColor", extends = PyResource, eq)]
 #[derive(Debug)]
 pub struct PyClearColor {

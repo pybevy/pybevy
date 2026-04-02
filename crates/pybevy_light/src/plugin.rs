@@ -1,5 +1,9 @@
-use pybevy_core::PyPlugin;
+use bevy::{app::App, light::LightPlugin};
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
+
+#[plugin_storage(LightPlugin)]
 #[pyclass(name = "LightPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyLightPlugin;
@@ -15,5 +19,12 @@ impl PyLightPlugin {
 impl Default for PyLightPlugin {
     fn default() -> Self {
         PyLightPlugin
+    }
+}
+
+impl PluginBuild for PyLightPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(LightPlugin);
+        Ok(())
     }
 }

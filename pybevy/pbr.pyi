@@ -8,8 +8,7 @@ from pybevy.color import Color, LinearRgba
 from pybevy.ecs import Batchable, Component, Resource
 from pybevy.image import Image
 from pybevy.math import Affine2, Rect, UVec2, UVec3, Vec3
-from pybevy.render import AlphaMode
-from pybevy.wgpu import Face
+from pybevy.render import AlphaMode, Face
 
 class PbrPlugin(Plugin):
     def __init__(self) -> None: ...

@@ -3,7 +3,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::newtype_storage;
 use pyo3::prelude::*;
 
-#[newtype_storage(Interaction)]
+#[newtype_storage(Interaction, bridge)]
 #[pyclass(name = "Interaction", extends = PyComponent, frozen, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyInteraction(pub(crate) Interaction);

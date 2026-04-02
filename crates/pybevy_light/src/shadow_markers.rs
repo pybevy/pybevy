@@ -2,9 +2,10 @@ use bevy::light::{
     LightProbe, NotShadowCaster, NotShadowReceiver, TransmittedShadowReceiver, VolumetricLight,
 };
 use pybevy_core::PyComponent;
+use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-/// Marker component to exclude an entity from shadow casting.
+#[component_storage(NotShadowCaster, unit, bridge)]
 #[pyclass(name = "NotShadowCaster", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNotShadowCaster;
@@ -41,7 +42,7 @@ impl PyNotShadowCaster {
     }
 }
 
-/// Marker component to exclude an entity from receiving shadows.
+#[component_storage(NotShadowReceiver, unit, bridge)]
 #[pyclass(name = "NotShadowReceiver", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNotShadowReceiver;
@@ -78,10 +79,7 @@ impl PyNotShadowReceiver {
     }
 }
 
-/// Marker component for entities that receive shadows from transmissive materials.
-///
-/// This is used for special rendering effects where shadows pass through
-/// semi-transparent materials.
+#[component_storage(TransmittedShadowReceiver, unit, bridge)]
 #[pyclass(name = "TransmittedShadowReceiver", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyTransmittedShadowReceiver;
@@ -118,9 +116,7 @@ impl PyTransmittedShadowReceiver {
     }
 }
 
-/// Marker component for volumetric lighting effects.
-///
-/// When added to a light entity, enables volumetric rendering (god rays, light shafts).
+#[component_storage(VolumetricLight, unit, bridge)]
 #[pyclass(name = "VolumetricLight", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyVolumetricLight;
@@ -157,9 +153,7 @@ impl PyVolumetricLight {
     }
 }
 
-/// Marker component for light probes.
-///
-/// Light probes capture and provide indirect lighting information.
+#[component_storage(LightProbe, unit, bridge)]
 #[pyclass(name = "LightProbe", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyLightProbe;

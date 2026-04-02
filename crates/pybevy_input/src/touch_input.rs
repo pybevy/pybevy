@@ -1,12 +1,13 @@
 use bevy::{ecs::entity::Entity, input::touch::TouchInput};
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pybevy_math::PyVec2;
 use pyo3::prelude::*;
 
 use crate::touch_phase::PyTouchPhase;
 
+#[message_storage(TouchInput)]
 #[pyclass(name = "TouchInput", extends = PyMessage, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyTouchInput {
@@ -96,6 +97,3 @@ impl PyTouchInput {
             && self.window == other.window)
     }
 }
-
-// Message bridge for TouchInput
-message_bridge!(TouchInput, PyTouchInput);

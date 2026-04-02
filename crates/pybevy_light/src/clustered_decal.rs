@@ -14,7 +14,7 @@ fn convert_optional_handle(
     }
 }
 
-#[component_storage(ClusteredDecal)]
+#[component_storage(ClusteredDecal, bridge, view_fields = [tag])]
 #[pyclass(name = "ClusteredDecal", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyClusteredDecal {

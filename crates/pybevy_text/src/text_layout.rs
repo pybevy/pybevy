@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::{PyJustify, PyLineBreak};
 
-#[component_storage(TextLayout)]
+#[component_storage(TextLayout, bridge)]
 #[pyclass(name = "TextLayout", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextLayout {

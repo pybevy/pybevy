@@ -6,7 +6,7 @@ use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::{shadow_style::PyShadowStyle, val::PyVal};
 
-#[component_storage(BoxShadow)]
+#[component_storage(BoxShadow, bridge)]
 #[pyclass(name = "BoxShadow", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyBoxShadow {

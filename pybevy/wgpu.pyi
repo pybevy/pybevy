@@ -1,39 +1,4 @@
-from typing import TYPE_CHECKING, ClassVar
-
-if TYPE_CHECKING:
-    from pybevy.image import ImageSamplerDescriptor
-
-class PowerPreference:
-    """GPU power preference for adapter selection.
-
-    Controls whether the system prefers a low-power (integrated) or
-    high-performance (discrete) GPU.
-
-    Examples:
-        ```python
-        from pybevy import RenderPlugin, PowerPreference
-
-        # Use integrated GPU for battery life
-        RenderPlugin(power_preference=PowerPreference.LowPower)
-
-        # Use discrete GPU for performance
-        RenderPlugin(power_preference=PowerPreference.HighPerformance)
-        ```
-    """
-
-    None_: ClassVar[PowerPreference]
-    """Power usage is not considered when choosing an adapter."""
-    LowPower: ClassVar[PowerPreference]
-    """Prefer adapter using least power (typically integrated GPU)."""
-    HighPerformance: ClassVar[PowerPreference]
-    """Prefer adapter with highest performance (typically discrete GPU)."""
-
-    NONE: ClassVar[PowerPreference]
-    """Power usage is not considered when choosing an adapter."""
-    LOW_POWER: ClassVar[PowerPreference]
-    """Prefer adapter using least power (typically integrated GPU)."""
-    HIGH_PERFORMANCE: ClassVar[PowerPreference]
-    """Prefer adapter with highest performance (typically discrete GPU)."""
+from typing import ClassVar
 
 class Extent3d:
     """3D texture extent (width, height, depth_or_array_layers)."""
@@ -51,120 +16,12 @@ class Extent3d:
     def depth_or_array_layers(self) -> int:
         """Depth for 3D textures, or number of array layers for 2D array textures."""
 
-class Face:
-    """Face culling mode."""
-
-    Front: ClassVar[Face]
-    Back: ClassVar[Face]
-    FRONT: ClassVar[Face]
-    BACK: ClassVar[Face]
-
 class TextureDimension:
     """Texture dimension - 1D, 2D, or 3D."""
 
     D1: ClassVar[TextureDimension]
     D2: ClassVar[TextureDimension]
     D3: ClassVar[TextureDimension]
-
-class ImageFilterMode:
-    """Image filtering mode for texture sampling."""
-
-    Nearest: ClassVar[ImageFilterMode]
-    Linear: ClassVar[ImageFilterMode]
-
-class ImageAddressMode:
-    """Image addressing mode for texture coordinates outside [0, 1] range."""
-
-    ClampToEdge: ClassVar[ImageAddressMode]
-    Repeat: ClassVar[ImageAddressMode]
-    MirrorRepeat: ClassVar[ImageAddressMode]
-    ClampToBorder: ClassVar[ImageAddressMode]
-
-class ImageSampler:
-    """Texture sampler configuration.
-
-    Describes how a texture is sampled (filtering, wrapping, etc.).
-
-    This is a complex enum with variants:
-    - Default: Use the default sampler from ImagePlugin
-    - Descriptor: Use a custom ImageSamplerDescriptor
-    """
-
-    class Default:
-        """Default image sampler variant."""
-
-    class Descriptor:
-        """Custom sampler descriptor variant."""
-
-    @staticmethod
-    def default() -> ImageSampler:
-        """Create a default sampler."""
-
-    @staticmethod
-    def descriptor(desc: ImageSamplerDescriptor) -> ImageSampler:
-        """Create a sampler with a custom descriptor."""
-
-    @staticmethod
-    def linear() -> ImageSampler:
-        """Create a sampler with linear filtering for min, mag, and mipmap filters.
-
-        Linear filtering provides smooth interpolation between pixels, ideal for
-        most textures and images.
-
-        Returns:
-            ImageSampler configured with linear filtering
-
-        Example:
-            >>> from pybevy.image import Image
-            >>> from pybevy.wgpu import ImageSampler, Extent3d
-            >>> img = Image(Extent3d(64, 64, 1))
-            >>> img.sampler = ImageSampler.linear()
-        """
-
-    @staticmethod
-    def nearest() -> ImageSampler:
-        """Create a sampler with nearest neighbor filtering for min, mag, and mipmap filters.
-
-        Nearest filtering provides sharp, pixelated appearance - useful for pixel art
-        and textures where you want to preserve hard edges.
-
-        Returns:
-            ImageSampler configured with nearest neighbor filtering
-
-        Example:
-            >>> from pybevy.image import Image
-            >>> from pybevy.wgpu import ImageSampler, Extent3d
-            >>> img = Image(Extent3d(64, 64, 1))
-            >>> img.sampler = ImageSampler.nearest()  # Good for pixel art
-        """
-
-    @property
-    def is_default(self) -> bool:
-        """Whether this is the default sampler."""
-
-    @property
-    def mag_filter(self) -> ImageFilterMode | None:
-        """Magnification filter mode (None if default sampler)."""
-
-    @property
-    def min_filter(self) -> ImageFilterMode | None:
-        """Minification filter mode (None if default sampler)."""
-
-    @property
-    def mipmap_filter(self) -> ImageFilterMode | None:
-        """Mipmap filter mode (None if default sampler)."""
-
-    @property
-    def address_mode_u(self) -> ImageAddressMode | None:
-        """U coordinate address mode (None if default sampler)."""
-
-    @property
-    def address_mode_v(self) -> ImageAddressMode | None:
-        """V coordinate address mode (None if default sampler)."""
-
-    @property
-    def address_mode_w(self) -> ImageAddressMode | None:
-        """W coordinate address mode (None if default sampler)."""
 
 class TextureFormat:
     """Texture format enumeration - controls how pixel data is interpreted."""

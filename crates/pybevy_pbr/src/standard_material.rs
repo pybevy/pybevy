@@ -33,7 +33,7 @@ fn convert_optional_handle(
     }
 }
 
-#[asset_storage(StandardMaterial)]
+#[asset_storage(StandardMaterial, bridge)]
 #[pyclass(name = "StandardMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyStandardMaterial {

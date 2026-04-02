@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{PyPlaybackMode, PySpatialScale, PyVolume};
 
-#[component_storage(PlaybackSettings)]
+#[component_storage(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
 #[pyclass(name = "PlaybackSettings", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyPlaybackSettings {

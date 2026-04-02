@@ -16,7 +16,7 @@ use crate::assets::configured_asset_plugin;
 fn default_window_plugin() -> bevy::window::WindowPlugin {
     bevy::window::WindowPlugin {
         primary_window: Some(bevy::window::Window {
-            title: pybevy_window::DEFAULT_APP_TITLE.into(),
+            title: pybevy_window::window::DEFAULT_APP_TITLE.into(),
             name: Some("pybevy".into()),
             ..Default::default()
         }),
@@ -273,7 +273,8 @@ impl PyPluginGroupBuilder {
         bevy_app: &mut bevy::app::App,
     ) -> PyResult<()> {
         if let Some(plugin_obj) = self.configured_plugins.get(&PluginConfigType::Winit) {
-            let winit_plugin: PyRef<pybevy_window::PyWinitPlugin> = plugin_obj.extract(py)?;
+            let winit_plugin: PyRef<pybevy_window::plugin::PyWinitPlugin> =
+                plugin_obj.extract(py)?;
             if let Some(ref settings) = winit_plugin.settings {
                 bevy_app.insert_resource(bevy::winit::WinitSettings::from(settings.clone()));
             }
@@ -317,7 +318,8 @@ fn apply_plugin_configuration(
 ) -> PyResult<PluginGroupBuilder> {
     match config_type {
         PluginConfigType::Window => {
-            let window_plugin: PyRef<pybevy_window::PyWindowPlugin> = plugin_obj.extract(py)?;
+            let window_plugin: PyRef<pybevy_window::window_plugin::PyWindowPlugin> =
+                plugin_obj.extract(py)?;
             let bevy_plugin = bevy::window::WindowPlugin::try_from(&*window_plugin)?;
             Ok(builder.set(bevy_plugin))
         }

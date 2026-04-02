@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 
 use crate::{PySpriteImageMode, PyTextureAtlas};
 
-#[component_storage(Sprite)]
+#[component_storage(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
 #[pyclass(name = "Sprite", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PySprite {

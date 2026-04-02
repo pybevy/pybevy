@@ -1,11 +1,12 @@
-use bevy::{prelude::*, render::renderer::RenderDevice};
-use pybevy_core::{PyHandle, plugin::plugin_registry};
-use pybevy_macros::plugin_bridge;
+use bevy::{app::App, prelude::*, render::renderer::RenderDevice};
+use pybevy_core::{PluginBuild, PyHandle};
+use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
 
 use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
 use crate::app::{app::PyApp, plugin::PyPlugin};
 
+#[plugin_storage(ImageCopyPlugin)]
 #[pyclass(name = "ImageCopyPlugin", extends = PyPlugin)]
 pub struct PyImageCopyPlugin;
 
@@ -24,13 +25,11 @@ impl PyImageCopyPlugin {
     }
 }
 
-plugin_bridge!(PyImageCopyPlugin, ImageCopyPlugin, |_py_plugin, app| {
-    app.add_plugins(ImageCopyPlugin);
-    Ok(())
-});
-
-pub(crate) fn register_readback_bridges() {
-    plugin_registry::register_plugin_bridge(ImageCopyPluginBridge);
+impl PluginBuild for PyImageCopyPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(ImageCopyPlugin);
+        Ok(())
+    }
 }
 
 /// Spawn ImageCopier and FrameReceiver on a camera entity

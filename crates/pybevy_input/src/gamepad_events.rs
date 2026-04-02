@@ -4,13 +4,14 @@ use bevy::input::gamepad::{
     GamepadConnection, GamepadConnectionEvent,
 };
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_bridge;
+use pybevy_macros::message_storage;
 use pyo3::prelude::*;
 
 use crate::{
     button_state::PyButtonState, gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton,
 };
 
+#[message_storage(GamepadButtonChanged)]
 #[pyclass(name = "GamepadButtonChanged", extends = PyMessage)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadButtonChanged {
@@ -64,6 +65,7 @@ impl PyGamepadButtonChanged {
     }
 }
 
+#[message_storage(GamepadAxisChanged)]
 #[pyclass(name = "GamepadAxisChanged", extends = PyMessage)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadAxisChanged {
@@ -117,6 +119,7 @@ impl PyGamepadAxisChanged {
     }
 }
 
+#[message_storage(GamepadConnectionEvent)]
 #[pyclass(name = "GamepadConnection", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadConnection {
@@ -234,6 +237,7 @@ impl PyGamepadConnection {
     }
 }
 
+#[message_storage(GamepadButtonStateChangedEvent)]
 #[pyclass(name = "GamepadButtonStateChanged", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonStateChanged {
@@ -287,15 +291,5 @@ impl PyGamepadButtonStateChanged {
     }
 }
 
-// Note: PyGamepadEvent remains in main crate (src/input/events.rs) as it uses PyGamepad
-// which has ComponentStorage that can't easily implement Debug/Clone in feature crate
-
-// Message bridges
-message_bridge!(GamepadButtonChanged, PyGamepadButtonChanged);
-message_bridge!(GamepadAxisChanged, PyGamepadAxisChanged);
-message_bridge!(
-    GamepadConnectionEvent,
-    PyGamepadConnection,
-    "GamepadConnection"
-);
-message_bridge!(GamepadButtonStateChangedEvent, PyGamepadButtonStateChanged);
+// TODO: Review later. PyGamepadEvent remains in main crate (src/input/events.rs) as it uses
+// PyGamepad, which has ComponentStorage that can't easily implement Debug/Clone in feature crate.

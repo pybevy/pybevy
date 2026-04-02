@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, PyEntity, PyHandle};
 use pybevy_macros::component_storage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[component_storage(SkinnedMesh)]
+#[component_storage(SkinnedMesh, bridge)]
 #[pyclass(name = "SkinnedMesh", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PySkinnedMesh {

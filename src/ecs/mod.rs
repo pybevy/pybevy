@@ -50,9 +50,6 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register custom component batch bridge
     custom_batch::register_custom_batch_bridge();
 
-    // Register Disabled component bridge
-    disabled::register_disabled_bridge();
-
     let ecs = PyModule::new(m.py(), "ecs")?;
     ecs.add_class::<commands::PyCommands>()?;
     // Re-export PyComponent so Python can import it from pybevy.ecs

@@ -3,7 +3,7 @@ use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyBytes};
 
-#[asset_storage(Font)]
+#[asset_storage(Font, bridge)]
 #[pyclass(name = "Font", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyFont {

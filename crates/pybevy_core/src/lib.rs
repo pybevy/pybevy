@@ -16,8 +16,7 @@
 //! - `ComponentBridge` - Trait for component type bridges
 //! - `AssetBridge` - Trait for asset type bridges
 //! - `PluginBridge` - Trait for plugin type bridges
-//! - `DynamicComponentRegistry` - Runtime registry for component bridges
-//! - `DynamicAssetRegistry` - Runtime registry for asset bridges
+//! - `global_registry` - Static registries for all bridge types
 //!
 //! The registry system allows feature crates (pybevy_audio, pybevy_light, etc.)
 //! to register their types without the core crate needing to import them at
@@ -30,6 +29,8 @@ pub mod debug_snapshot;
 pub mod entity;
 pub mod handle;
 pub mod hierarchy;
+pub extern crate inventory;
+pub mod bridge_inventory;
 pub mod materializable;
 pub mod message;
 pub mod plugin;
@@ -53,7 +54,7 @@ use bevy::ecs::{
 };
 use pyo3::prelude::*;
 
-// Manual implementation of ChildOfBridge because component_bridge! macro
+// Manual implementation of ChildOfBridge because #[component_storage(..., bridge)]
 // uses pybevy_core:: paths which don't work inside pybevy_core itself.
 pub struct ChildOfBridge;
 
@@ -308,6 +309,10 @@ impl ComponentBridge for ChildrenBridge {
 
 pub use asset::{NativeAsset, PyAsset};
 pub use asset_path::PyAssetPath;
+pub use bridge_inventory::{
+    AssetBridgeRegistration, BatchRegistration, ComponentBridgeRegistration,
+    MessageBridgeRegistration, PluginBridgeRegistration, ResourceBridgeRegistration,
+};
 pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo};
 pub use entity::PyEntity;
@@ -315,7 +320,7 @@ pub use handle::{PyHandle, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};
-pub use plugin::{PluginBridge, PyPlugin};
+pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
     AccessMode, AssetStorage, BorrowableStorage, ComponentStorage, ComponentStorageInner,
     FieldOffset, FieldStorage, FieldStorageInner, FromBorrowedStorage, ListStorage,
@@ -325,9 +330,9 @@ pub use pybevy_storage::{
 };
 pub use registry::{
     AssetBridge, BatchComponent, BatchFieldMeta, BatchableField, ComponentBatchInsertFn,
-    ComponentBatchMeta, ComponentBridge, DynamicAssetRegistry, DynamicComponentRegistry,
-    DynamicResourceRegistry, ExtractFn, MessageBridge, PluginConfigs, PyRustComponentBatch,
-    ResourceBridge, batch_field_meta_for, field_offset_view_meta_for, set_field_from_numpy,
+    ComponentBatchMeta, ComponentBridge, ExtractFn, MessageBridge, PluginConfigs,
+    PyRustComponentBatch, ResourceBridge, batch_field_meta_for, field_offset_view_meta_for,
+    set_field_from_numpy,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,

@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::cursor::PyCursorGrabMode;
 
-#[component_storage(CursorOptions)]
+#[component_storage(CursorOptions, bridge)]
 #[pyclass(name = "CursorOptions", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCursorOptions {
