@@ -5,8 +5,9 @@ use bevy::{
 use pyo3::prelude::*;
 
 use crate::{
-    PyImageAddressMode, PyImageFilterMode, PyImageFormat, PyImageFormatSetting,
-    PyRenderAssetUsages, sampler_descriptor::PyImageSamplerDescriptor,
+    image::PyRenderAssetUsages, image_address_mode::PyImageAddressMode,
+    image_filter_mode::PyImageFilterMode, image_format::PyImageFormat,
+    image_format_setting::PyImageFormatSetting, sampler_descriptor::PyImageSamplerDescriptor,
 };
 
 #[pyclass(name = "ImageSampler", eq)]

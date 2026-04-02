@@ -5,7 +5,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use crate::{PyGamepadAxis, PyGamepadButton};
+use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
 #[pyclass(name = "ButtonSettings", frozen)]
 #[derive(Debug, Clone)]

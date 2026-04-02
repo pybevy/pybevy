@@ -1,13 +1,11 @@
 use bevy::image::{ImageFormat, ImageFormatSetting};
 use pyo3::prelude::*;
 
-use crate::PyImageFormat;
+use crate::image_format::PyImageFormat;
 #[pyclass(name = "ImageFormatSetting", eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyImageFormatSetting {
-    /// Determine format from file extension.
     FromExtension(),
-    /// Guess format from file contents.
     Guess(),
 }
 

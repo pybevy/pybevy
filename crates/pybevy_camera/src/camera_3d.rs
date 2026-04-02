@@ -3,7 +3,11 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-use crate::{PyCamera3dDepthLoadOp, PyCamera3dDepthTextureUsage, PyScreenSpaceTransmissionQuality};
+use crate::{
+    camera_3d_depth_load_op::PyCamera3dDepthLoadOp,
+    camera_3d_depth_texture_usage::PyCamera3dDepthTextureUsage,
+    screen_space_transmission_quality::PyScreenSpaceTransmissionQuality,
+};
 
 const DEFAULT_DEPTH_TEXTURE_USAGE: u32 = TextureUsages::RENDER_ATTACHMENT.bits();
 const DEFAULT_DEPTH_CLEAR_VALUE: f32 = 0.0;

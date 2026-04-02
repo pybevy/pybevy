@@ -5,7 +5,9 @@ use pybevy_core::{
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-use crate::{PyFontSmoothing, font_features::PyFontFeatures, font_weight::PyFontWeight};
+use crate::{
+    font_features::PyFontFeatures, font_smoothing::PyFontSmoothing, font_weight::PyFontWeight,
+};
 
 #[component_storage(TextFont, bridge, view_fields = [font_size])]
 #[pyclass(name = "TextFont", extends = PyComponent)]

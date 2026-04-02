@@ -11,22 +11,20 @@ pub mod spatial_listener;
 pub mod spatial_scale;
 pub mod volume;
 
-pub use audio_player::PyAudioPlayer;
-pub use audio_sink::PyAudioSink;
-pub use audio_source::PyAudioSource;
 use bevy::{app::App, audio::AudioPlugin};
-pub use default_spatial_scale::PyDefaultSpatialScale;
-pub use global_volume::PyGlobalVolume;
-pub use pitch::PyPitch;
-pub use playback_mode::PyPlaybackMode;
-pub use playback_settings::PyPlaybackSettings;
 use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
-pub use spatial_audio_sink::PySpatialAudioSink;
-pub use spatial_listener::PySpatialListener;
-pub use spatial_scale::PySpatialScale;
-pub use volume::PyVolume;
+
+pub mod prelude {
+    pub use crate::{
+        PyAudioPlugin, audio_player::PyAudioPlayer, audio_sink::PyAudioSink,
+        audio_source::PyAudioSource, global_volume::PyGlobalVolume, pitch::PyPitch,
+        playback_mode::PyPlaybackMode, playback_settings::PyPlaybackSettings,
+        spatial_audio_sink::PySpatialAudioSink, spatial_listener::PySpatialListener,
+        spatial_scale::PySpatialScale, volume::PyVolume,
+    };
+}
 
 #[plugin_storage(AudioPlugin)]
 #[pyclass(name = "AudioPlugin", extends = PyPlugin, frozen)]
@@ -57,17 +55,17 @@ impl PluginBuild for PyAudioPlugin {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "audio")?;
     m.add_class::<PyAudioPlugin>()?;
-    m.add_class::<PyAudioPlayer>()?;
-    m.add_class::<PyAudioSink>()?;
-    m.add_class::<PyAudioSource>()?;
-    m.add_class::<PyPitch>()?;
-    m.add_class::<PyPlaybackSettings>()?;
-    m.add_class::<PySpatialListener>()?;
-    m.add_class::<PySpatialAudioSink>()?;
-    m.add_class::<PyGlobalVolume>()?;
-    m.add_class::<PyDefaultSpatialScale>()?;
-    m.add_class::<PyPlaybackMode>()?;
-    m.add_class::<PyVolume>()?;
-    m.add_class::<PySpatialScale>()?;
+    m.add_class::<audio_player::PyAudioPlayer>()?;
+    m.add_class::<audio_sink::PyAudioSink>()?;
+    m.add_class::<audio_source::PyAudioSource>()?;
+    m.add_class::<pitch::PyPitch>()?;
+    m.add_class::<playback_settings::PyPlaybackSettings>()?;
+    m.add_class::<spatial_listener::PySpatialListener>()?;
+    m.add_class::<spatial_audio_sink::PySpatialAudioSink>()?;
+    m.add_class::<global_volume::PyGlobalVolume>()?;
+    m.add_class::<default_spatial_scale::PyDefaultSpatialScale>()?;
+    m.add_class::<playback_mode::PyPlaybackMode>()?;
+    m.add_class::<volume::PyVolume>()?;
+    m.add_class::<spatial_scale::PySpatialScale>()?;
     parent.add_submodule(&m)
 }

@@ -28,7 +28,10 @@ use pybevy_core::{
     handle::PyHandle,
     registry::{AssetBridge, global_registry},
 };
-use pybevy_mesh::{PyMeshBuilder, PyMeshable, meshable_to_mesh};
+use pybevy_mesh::{
+    mesh_builder::PyMeshBuilder,
+    meshable::{PyMeshable, meshable_to_mesh},
+};
 use pyo3::{
     IntoPyObjectExt,
     exceptions::{PyRuntimeError, PyStopIteration, PyTypeError},

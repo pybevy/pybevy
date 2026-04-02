@@ -13,8 +13,8 @@ use pyo3::{
 };
 
 use crate::{
-    PyStandardMaterial,
     shader_material::{MAX_TEXTURE_SLOTS, ShaderMaterial, ShaderMaterialExtension, ShaderParams},
+    standard_material::PyStandardMaterial,
 };
 
 #[asset_storage(ShaderMaterial, bridge, not_loadable)]

@@ -1,5 +1,5 @@
 use bevy::{camera::primitives::HalfSpace, math::Vec4};
-use pybevy_math::PyVec4;
+use pybevy_math::vec4::PyVec4;
 use pyo3::prelude::*;
 
 #[pyclass(name = "HalfSpace")]

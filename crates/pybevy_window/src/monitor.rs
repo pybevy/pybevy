@@ -1,7 +1,7 @@
 use bevy::window::Monitor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::{PyIVec2, PyUVec2};
+use pybevy_math::{ivec2::PyIVec2, uvec2::PyUVec2};
 use pyo3::prelude::*;
 
 use crate::video_mode::PyVideoMode;

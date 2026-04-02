@@ -5,8 +5,10 @@ use pyo3::prelude::*;
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
-    PyGridAutoFlow, PyGridPlacement, PyGridTrack, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyOverflow, PyOverflowClipMargin, PyPositionType, PyRepeatedGridTrack, PyUiRect, PyVal,
+    PyGridAutoFlow, PyJustifyContent, PyJustifyItems, PyJustifySelf, PyPositionType,
+    grid_placement::PyGridPlacement, grid_track::PyGridTrack, overflow::PyOverflow,
+    overflow_clip_margin::PyOverflowClipMargin, repeated_grid_track::PyRepeatedGridTrack,
+    ui_rect::PyUiRect, val::PyVal,
 };
 
 #[component_storage(Node, bridge)]

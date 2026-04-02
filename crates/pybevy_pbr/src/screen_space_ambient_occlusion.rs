@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-use crate::PyScreenSpaceAmbientOcclusionQualityLevel;
+use crate::ssao_quality_level::PyScreenSpaceAmbientOcclusionQualityLevel;
 
 #[component_storage(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness])]
 #[pyclass(name = "ScreenSpaceAmbientOcclusion", extends = PyComponent)]

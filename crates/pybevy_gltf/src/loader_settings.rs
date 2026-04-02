@@ -1,5 +1,5 @@
 use bevy::gltf::GltfLoaderSettings;
-use pybevy_image::{PyImageSamplerDescriptor, PyRenderAssetUsages};
+use pybevy_image::{image::PyRenderAssetUsages, sampler_descriptor::PyImageSamplerDescriptor};
 use pyo3::prelude::*;
 
 // NOTE: Bevy's GltfLoaderSettings also has a `convert_coordinates: Option<GltfConvertCoordinates>`

@@ -1,7 +1,10 @@
 use bevy::{math::Dir3, transform::components::Transform};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::{PyAffine3A, PyDir3, PyIsometry3d, PyMat4, PyQuat, PyVec3};
+use pybevy_math::{
+    affine3a::PyAffine3A, bounding::PyIsometry3d, dir3::PyDir3, mat4::PyMat4, quat::PyQuat,
+    vec3::PyVec3,
+};
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[component_storage(Transform, bridge, view_fields = [translation, rotation, scale])]

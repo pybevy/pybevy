@@ -1,5 +1,5 @@
 use bevy::light::cascade::Cascade;
-use pybevy_math::PyMat4;
+use pybevy_math::mat4::PyMat4;
 use pyo3::prelude::*;
 
 #[pyclass(name = "Cascade", frozen)]

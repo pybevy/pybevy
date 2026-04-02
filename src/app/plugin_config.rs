@@ -1,6 +1,6 @@
 use pybevy_audio::PyAudioPlugin;
-use pybevy_image::PyImagePlugin;
-use pybevy_render::PyRenderPlugin;
+use pybevy_image::plugin::PyImagePlugin;
+use pybevy_render::plugin::PyRenderPlugin;
 use pybevy_window::{plugin::PyWinitPlugin, window_plugin::PyWindowPlugin};
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 

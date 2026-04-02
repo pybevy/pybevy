@@ -1,5 +1,5 @@
 use bevy::{color::Color, pbr::wireframe::WireframeMaterial};
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
 use pyo3::prelude::*;

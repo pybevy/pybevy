@@ -6,20 +6,18 @@ pub mod shader_source;
 pub mod validate_shader;
 
 use pyo3::prelude::*;
-pub use shader::PyShader;
-pub use shader_def_val::PyShaderDefVal;
-pub use shader_import::PyShaderImport;
-pub use shader_ref::PyShaderRef;
-pub use shader_source::PySource;
-pub use validate_shader::PyValidateShader;
+
+pub mod prelude {
+    pub use crate::shader::PyShader;
+}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "shader")?;
-    m.add_class::<PyShader>()?;
-    m.add_class::<PyShaderDefVal>()?;
-    m.add_class::<PyShaderImport>()?;
-    m.add_class::<PyShaderRef>()?;
-    m.add_class::<PySource>()?;
-    m.add_class::<PyValidateShader>()?;
+    m.add_class::<shader::PyShader>()?;
+    m.add_class::<shader_def_val::PyShaderDefVal>()?;
+    m.add_class::<shader_import::PyShaderImport>()?;
+    m.add_class::<shader_ref::PyShaderRef>()?;
+    m.add_class::<shader_source::PySource>()?;
+    m.add_class::<validate_shader::PyValidateShader>()?;
     parent.add_submodule(&m)
 }

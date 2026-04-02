@@ -4,7 +4,7 @@ use bevy::input::{
 };
 use pybevy_core::PyMessage;
 
-use crate::{PyButtonState, PyKeyCode, PyKeyboardInput};
+use crate::{button_state::PyButtonState, key_code::PyKeyCode, keyboard_input::PyKeyboardInput};
 pub trait PyKeyboardInputExt {
     fn from_bevy(
         event: &KeyboardInput,

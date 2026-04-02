@@ -1,5 +1,5 @@
 use bevy::{camera::primitives::Sphere, math::Vec3A};
-use pybevy_math::PyVec3A;
+use pybevy_math::vec3a::PyVec3A;
 use pyo3::prelude::*;
 
 #[pyclass(name = "CullingSphere")]

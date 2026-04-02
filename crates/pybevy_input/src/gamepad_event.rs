@@ -1,7 +1,7 @@
 use bevy::input::gamepad::{GamepadConnection, GamepadEvent};
 use pyo3::prelude::*;
 
-use crate::{PyGamepadAxis, PyGamepadButton};
+use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
 #[pyclass(name = "GamepadEvent")]
 #[derive(Debug, Clone)]

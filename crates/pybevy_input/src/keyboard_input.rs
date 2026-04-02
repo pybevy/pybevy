@@ -2,7 +2,7 @@ use bevy::ecs::entity::Entity;
 use pybevy_core::{PyEntity, PyMessage};
 use pyo3::prelude::*;
 
-use crate::{PyButtonState, PyKeyCode};
+use crate::{button_state::PyButtonState, key_code::PyKeyCode};
 
 #[pyclass(name = "KeyboardInput", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]

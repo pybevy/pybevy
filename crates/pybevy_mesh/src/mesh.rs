@@ -7,14 +7,18 @@ use numpy::{
     ndarray::{ArrayView2, ArrayViewMut2},
 };
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_image::PyRenderAssetUsages;
+use pybevy_image::image::PyRenderAssetUsages;
 use pybevy_macros::asset_storage;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
 };
 
-use crate::{PyIndices, PyMeshVertexAttribute, PyPrimitiveTopology, PyVertexAttributeValues};
+use crate::{
+    indices::PyIndices,
+    primitive_topology::PyPrimitiveTopology,
+    vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues},
+};
 #[asset_storage(Mesh, bridge)]
 #[pyclass(name = "Mesh", extends = PyAsset)]
 #[derive(Debug)]

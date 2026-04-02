@@ -2,8 +2,8 @@ use bevy::{prelude::InColorSpace, ui::ConicGradient};
 use pyo3::prelude::*;
 
 use crate::{
-    PyInterpolationColorSpace, PyVal, angular_color_stop::PyAngularColorStop,
-    ui_position::PyUiPosition,
+    PyInterpolationColorSpace, angular_color_stop::PyAngularColorStop, ui_position::PyUiPosition,
+    val::PyVal,
 };
 
 #[pyclass(name = "ConicGradient", eq)]

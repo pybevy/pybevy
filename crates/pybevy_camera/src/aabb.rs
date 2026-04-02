@@ -1,4 +1,7 @@
-use bevy::{camera::primitives::Aabb, math::Vec3A};
+use bevy::{
+    camera::primitives::Aabb,
+    math::{Vec3, Vec3A},
+};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pybevy_math::{affine3a::PyAffine3A, mat3a::PyMat3A, vec3::PyVec3, vec3a::PyVec3A};
@@ -33,6 +36,14 @@ impl PyAabb {
     pub fn from_min_max(py: Python<'_>, minimum: &PyVec3, maximum: &PyVec3) -> PyResult<Py<Self>> {
         let aabb = Aabb::from_min_max(minimum.into(), maximum.into());
         Py::new(py, Self::from_owned(aabb))
+    }
+
+    #[staticmethod]
+    pub fn enclosing(py: Python<'_>, iter: Vec<PyVec3>) -> PyResult<Option<Py<Self>>> {
+        let iter: Vec<Vec3> = iter.into_iter().map(Into::into).collect();
+        Aabb::enclosing(iter)
+            .map(|aabb| Py::new(py, Self::from_owned(aabb)))
+            .transpose()
     }
 
     #[getter]
@@ -93,5 +104,9 @@ impl PyAabb {
         Ok(self
             .as_ref()?
             .is_in_half_space(&half_space.into(), &world_from_local.get()))
+    }
+
+    pub fn is_in_half_space_identity(&self, half_space: &PyHalfSpace) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_in_half_space_identity(&half_space.into()))
     }
 }

@@ -1,5 +1,5 @@
 use bevy::ui::UiPosition;
-use pybevy_math::PyVec2;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 use crate::val::PyVal;

@@ -1,7 +1,7 @@
 use bevy::pbr::{DefaultOpaqueRendererMethod, OpaqueRendererMethod};
 use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::resource_storage;
-use pybevy_render::PyOpaqueRenderMethod;
+use pybevy_render::opaque_render_method::PyOpaqueRenderMethod;
 use pyo3::prelude::*;
 
 #[resource_storage(DefaultOpaqueRendererMethod, bridge)]

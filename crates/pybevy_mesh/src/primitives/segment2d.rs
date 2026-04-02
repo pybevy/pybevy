@@ -2,7 +2,7 @@ use bevy::mesh::{MeshBuilder, Segment2dMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "Segment2dMeshBuilder", extends = PyMeshBuilder, frozen)]
 pub struct PySegment2dMeshBuilder(Segment2dMeshBuilder);

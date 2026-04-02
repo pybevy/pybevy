@@ -2,7 +2,7 @@ use bevy::mesh::{MeshBuilder, Triangle3dMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "Triangle3dMeshBuilder", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]

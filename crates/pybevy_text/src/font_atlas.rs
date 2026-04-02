@@ -2,7 +2,7 @@ use bevy::text::{FontAtlas, FontAtlasKey};
 use pybevy_core::PyHandle;
 use pyo3::prelude::*;
 
-use crate::PyFontSmoothing;
+use crate::font_smoothing::PyFontSmoothing;
 
 #[pyclass(name = "FontAtlas", frozen)]
 #[derive(Clone)]

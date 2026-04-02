@@ -6,7 +6,7 @@ use pyo3::{
     types::{PyDict, PyList},
 };
 
-use crate::PyCascade;
+use crate::cascade::PyCascade;
 
 #[component_storage(Cascades, no_clone, bridge)]
 #[pyclass(name = "Cascades", extends = PyComponent)]

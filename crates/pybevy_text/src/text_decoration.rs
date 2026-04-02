@@ -1,5 +1,5 @@
 use bevy::text::{Strikethrough, StrikethroughColor, Underline, UnderlineColor};
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
@@ -79,7 +79,7 @@ impl PyUnderline {
 }
 
 // StrikethroughColor - Color wrapper component
-#[component_storage(StrikethroughColor, bridge)]
+#[component_storage(StrikethroughColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "StrikethroughColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyStrikethroughColor {
@@ -107,7 +107,7 @@ impl PyStrikethroughColor {
 }
 
 // UnderlineColor - Color wrapper component
-#[component_storage(UnderlineColor, bridge)]
+#[component_storage(UnderlineColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "UnderlineColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyUnderlineColor {

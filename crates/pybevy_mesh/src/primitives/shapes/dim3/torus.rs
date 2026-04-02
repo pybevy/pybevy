@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Measured3d, Torus},
     mesh::Meshable,
 };
-use pybevy_math::PyTorusKind;
+use pybevy_math::torus_kind::PyTorusKind;
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTorusMeshBuilder};

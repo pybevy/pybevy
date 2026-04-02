@@ -1,5 +1,5 @@
 use bevy::{math::UVec2, window::VideoMode};
-use pybevy_math::PyUVec2;
+use pybevy_math::uvec2::PyUVec2;
 use pyo3::prelude::*;
 
 #[pyclass(name = "VideoMode", eq, frozen)]

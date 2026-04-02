@@ -2,7 +2,8 @@ use bevy::image::ImageSamplerDescriptor;
 use pyo3::prelude::*;
 
 use crate::{
-    PyImageAddressMode, PyImageCompareFunction, PyImageFilterMode, PyImageSamplerBorderColor,
+    image_address_mode::PyImageAddressMode, image_compare_function::PyImageCompareFunction,
+    image_filter_mode::PyImageFilterMode, image_sampler_border_color::PyImageSamplerBorderColor,
 };
 
 #[pyclass(name = "ImageSamplerDescriptor", eq)]

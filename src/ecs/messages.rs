@@ -161,7 +161,9 @@ impl PyMessages {
     }
 
     pub(crate) fn iter_to_python(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        use pybevy_input::{PyKeyboardInput, PyKeyboardInputExt};
+        use pybevy_input::{
+            keyboard_input::PyKeyboardInput, keyboard_input_ext::PyKeyboardInputExt,
+        };
 
         let world = self.world.world_mut()?;
         let mut guard = self.lock_cursor();
@@ -209,7 +211,9 @@ impl PyMessages {
                 })
             }
             MessageType::SceneInstanceReady => {
-                use pybevy_scene::{PySceneInstanceReady, SceneInstanceReadyMessage};
+                use pybevy_scene::{
+                    SceneInstanceReadyMessage, scene_instance_ready::PySceneInstanceReady,
+                };
                 self.iter_messages::<SceneInstanceReadyMessage, _>(
                     py,
                     world,
@@ -520,8 +524,10 @@ pub struct PyMessageType(pub(crate) MessageType);
 
 impl PyMessageType {
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
-        use pybevy_input::{PyGamepadRumbleRequest, PyKeyboardInput};
-        use pybevy_scene::PySceneInstanceReady;
+        use pybevy_input::{
+            gamepad_rumble_request::PyGamepadRumbleRequest, keyboard_input::PyKeyboardInput,
+        };
+        use pybevy_scene::scene_instance_ready::PySceneInstanceReady;
         use pybevy_window::window_event::PyWindowEvent;
         use pyo3::{PyTypeInfo, types::PyTypeMethods};
 

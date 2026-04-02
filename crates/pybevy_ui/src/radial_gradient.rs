@@ -2,8 +2,8 @@ use bevy::{prelude::InColorSpace, ui::RadialGradient};
 use pyo3::prelude::*;
 
 use crate::{
-    PyInterpolationColorSpace, PyVal, color_stop::PyColorStop,
-    radial_gradient_shape::PyRadialGradientShape, ui_position::PyUiPosition,
+    PyInterpolationColorSpace, color_stop::PyColorStop,
+    radial_gradient_shape::PyRadialGradientShape, ui_position::PyUiPosition, val::PyVal,
 };
 
 #[pyclass(name = "RadialGradient", eq)]

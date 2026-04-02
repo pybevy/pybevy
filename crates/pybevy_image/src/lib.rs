@@ -13,45 +13,40 @@ pub mod texture_atlas;
 pub mod texture_atlas_layout;
 pub mod texture_atlas_sources;
 
-pub use image::{
-    ImageDataContext, ImageDataContextMut, ImagePixelContextMut, PyImage, PyRenderAssetUsages,
-};
-pub use image_address_mode::PyImageAddressMode;
-pub use image_array_layout::PyImageArrayLayout;
-pub use image_compare_function::PyImageCompareFunction;
-pub use image_filter_mode::PyImageFilterMode;
-pub use image_format::PyImageFormat;
-pub use image_format_setting::{PyImageFormatSetting, PyImageFormatSettingWithFormat};
-pub use image_sampler_border_color::PyImageSamplerBorderColor;
-pub use loader_settings::{PyImageLoaderSettings, PyImageSampler};
-pub use plugin::PyImagePlugin;
 use pyo3::prelude::*;
-pub use sampler_descriptor::PyImageSamplerDescriptor;
-pub use texture_atlas::PyTextureAtlas;
-pub use texture_atlas_layout::PyTextureAtlasLayout;
-pub use texture_atlas_sources::PyTextureAtlasSources;
+
+pub mod prelude {
+    pub use crate::{
+        image::{PyImage, PyRenderAssetUsages},
+        image_format::PyImageFormat,
+        plugin::PyImagePlugin,
+        texture_atlas::PyTextureAtlas,
+        texture_atlas_layout::PyTextureAtlasLayout,
+        texture_atlas_sources::PyTextureAtlasSources,
+    };
+}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "image")?;
-    m.add_class::<PyImagePlugin>()?;
-    m.add_class::<PyImage>()?;
-    m.add_class::<PyRenderAssetUsages>()?;
-    m.add_class::<ImageDataContext>()?;
-    m.add_class::<ImageDataContextMut>()?;
-    m.add_class::<ImagePixelContextMut>()?;
-    m.add_class::<PyImageCompareFunction>()?;
-    m.add_class::<PyImageFormat>()?;
-    m.add_class::<PyImageFormatSetting>()?;
-    m.add_class::<PyImageFormatSettingWithFormat>()?;
-    m.add_class::<PyImageSamplerBorderColor>()?;
-    m.add_class::<PyImageSamplerDescriptor>()?;
-    m.add_class::<PyImageSampler>()?;
-    m.add_class::<PyImageLoaderSettings>()?;
-    m.add_class::<PyImageAddressMode>()?;
-    m.add_class::<PyImageFilterMode>()?;
-    m.add_class::<PyImageArrayLayout>()?;
-    m.add_class::<PyTextureAtlas>()?;
-    m.add_class::<PyTextureAtlasLayout>()?;
-    m.add_class::<PyTextureAtlasSources>()?;
+    m.add_class::<plugin::PyImagePlugin>()?;
+    m.add_class::<image::PyImage>()?;
+    m.add_class::<image::PyRenderAssetUsages>()?;
+    m.add_class::<image::ImageDataContext>()?;
+    m.add_class::<image::ImageDataContextMut>()?;
+    m.add_class::<image::ImagePixelContextMut>()?;
+    m.add_class::<image_compare_function::PyImageCompareFunction>()?;
+    m.add_class::<image_format::PyImageFormat>()?;
+    m.add_class::<image_format_setting::PyImageFormatSetting>()?;
+    m.add_class::<image_format_setting::PyImageFormatSettingWithFormat>()?;
+    m.add_class::<image_sampler_border_color::PyImageSamplerBorderColor>()?;
+    m.add_class::<sampler_descriptor::PyImageSamplerDescriptor>()?;
+    m.add_class::<loader_settings::PyImageSampler>()?;
+    m.add_class::<loader_settings::PyImageLoaderSettings>()?;
+    m.add_class::<image_address_mode::PyImageAddressMode>()?;
+    m.add_class::<image_filter_mode::PyImageFilterMode>()?;
+    m.add_class::<image_array_layout::PyImageArrayLayout>()?;
+    m.add_class::<texture_atlas::PyTextureAtlas>()?;
+    m.add_class::<texture_atlas_layout::PyTextureAtlasLayout>()?;
+    m.add_class::<texture_atlas_sources::PyTextureAtlasSources>()?;
     parent.add_submodule(&m)
 }

@@ -6,8 +6,8 @@ use bevy::{
 };
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::PyVec3;
-use pybevy_transform::PyTransform;
+use pybevy_math::vec3::PyVec3;
+use pybevy_transform::transform::PyTransform;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::volume::PyVolume;

@@ -5,7 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
-use pybevy_math::PyVec3;
+use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 use super::triangle3d::PyTriangle3d;

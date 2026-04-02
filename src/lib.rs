@@ -26,12 +26,12 @@ pub(crate) mod ecs;
 pub(crate) mod render;
 
 #[pyfunction]
-fn _color_materialize(color: &pybevy_color::PyColor, py: Python<'_>) -> PyResult<Py<PyAny>> {
+fn _color_materialize(color: &pybevy_color::color::PyColor, py: Python<'_>) -> PyResult<Py<PyAny>> {
     let material = bevy::pbr::StandardMaterial {
         base_color: color.0,
         ..Default::default()
     };
-    let py_material: Py<pybevy_pbr::PyStandardMaterial> =
+    let py_material: Py<pybevy_pbr::standard_material::PyStandardMaterial> =
         Py::new(py, (material.into(), pybevy_core::PyAsset))?;
     Ok(py_material.into_any())
 }

@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{CircularSegment, Measured2d},
     mesh::Meshable,
 };
-use pybevy_math::{PyArc2d, PyVec2};
+use pybevy_math::{primitives::PyArc2d, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::{

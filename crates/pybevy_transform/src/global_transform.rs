@@ -1,7 +1,9 @@
 use bevy::transform::components::{GlobalTransform, Transform};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::{PyAffine3A, PyIsometry3d, PyMat4, PyQuat, PyVec3};
+use pybevy_math::{
+    affine3a::PyAffine3A, bounding::PyIsometry3d, mat4::PyMat4, quat::PyQuat, vec3::PyVec3,
+};
 use pyo3::prelude::*;
 
 use crate::transform::PyTransform;

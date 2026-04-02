@@ -2,7 +2,7 @@ use bevy::mesh::{Capsule2dMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "Capsule2dMeshBuilder", extends = PyMeshBuilder)]
 #[derive(Debug)]

@@ -896,6 +896,10 @@ class Aabb(Component):
     def from_min_max(minimum: Vec3, maximum: Vec3) -> Aabb:
         """Creates an Aabb from minimum and maximum points."""
 
+    @staticmethod
+    def enclosing(iter: list[Vec3]) -> Aabb | None:
+        """Returns a bounding box enclosing the specified points, or None if empty."""
+
     def min(self) -> Vec3A:
         """Returns the minimum point of the bounding box."""
 
@@ -923,6 +927,9 @@ class Aabb(Component):
         Returns:
             True if the AABB is on the front side of the plane.
         """
+
+    def is_in_half_space_identity(self, half_space: HalfSpace) -> bool:
+        """Optimized half-space test for an AABB already in world space."""
 
 class Frustum(Component):
     """A region of 3D space defined by the intersection of 6 half-spaces.

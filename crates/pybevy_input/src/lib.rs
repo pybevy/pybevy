@@ -25,77 +25,57 @@ pub mod touch_input;
 pub mod touch_phase;
 pub mod touches;
 
-pub use accumulated_mouse::{PyAccumulatedMouseMotion, PyAccumulatedMouseScroll};
-pub use axis::PyAxis;
-pub use button_input::PyButtonInput;
-pub use button_state::PyButtonState;
-pub use gamepad::PyGamepad;
-pub use gamepad_axis::PyGamepadAxis;
-pub use gamepad_button::PyGamepadButton;
-pub use gamepad_event::PyGamepadEvent;
-pub use gamepad_events::{
-    PyGamepadAxisChanged, PyGamepadButtonChanged, PyGamepadButtonStateChanged, PyGamepadConnection,
-};
-pub use gamepad_input::PyGamepadInput;
-pub use gamepad_rumble_intensity::PyGamepadRumbleIntensity;
-pub use gamepad_rumble_request::PyGamepadRumbleRequest;
-pub use gamepad_settings::{
-    PyAxisSettings, PyButtonAxisSettings, PyButtonSettings, PyGamepadSettings,
-};
-pub use gesture_events::{PyDoubleTapGesture, PyPanGesture, PyPinchGesture, PyRotationGesture};
-pub use key_code::PyKeyCode;
-pub use keyboard_events::PyKeyboardFocusLost;
-pub use keyboard_input::PyKeyboardInput;
-pub use keyboard_input_ext::PyKeyboardInputExt;
-pub use mouse_button::PyMouseButton;
-pub use mouse_events::{PyMouseButtonInput, PyMouseMotion, PyMouseWheel};
-pub use mouse_input::PyMouseInput;
-pub use mouse_scroll_unit::PyMouseScrollUnit;
-pub use plugin::PyInputPlugin;
 use pyo3::prelude::*;
-pub use touch_input::PyTouchInput;
-pub use touch_phase::PyTouchPhase;
-pub use touches::{PyTouch, PyTouches};
+
+pub mod prelude {
+    pub use crate::{
+        axis::PyAxis, button_input::PyButtonInput, gamepad::PyGamepad, gamepad_axis::PyGamepadAxis,
+        gamepad_button::PyGamepadButton, gamepad_settings::PyGamepadSettings, key_code::PyKeyCode,
+        mouse_button::PyMouseButton, plugin::PyInputPlugin, touch_input::PyTouchInput,
+        touches::PyTouches,
+    };
+}
+
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "input")?;
-    m.add_class::<PyInputPlugin>()?;
-    m.add_class::<PyAxis>()?;
-    m.add_class::<PyButtonInput>()?;
-    m.add_class::<PyButtonState>()?;
-    m.add_class::<PyGamepad>()?;
-    m.add_class::<PyGamepadAxis>()?;
-    m.add_class::<PyGamepadButton>()?;
-    m.add_class::<PyGamepadInput>()?;
-    m.add_class::<PyGamepadRumbleIntensity>()?;
-    m.add_class::<PyGamepadRumbleRequest>()?;
-    m.add_class::<PyGamepadSettings>()?;
-    m.add_class::<PyButtonSettings>()?;
-    m.add_class::<PyAxisSettings>()?;
-    m.add_class::<PyButtonAxisSettings>()?;
-    m.add_class::<PyKeyCode>()?;
-    m.add_class::<PyMouseButton>()?;
-    m.add_class::<PyMouseButtonInput>()?;
-    m.add_class::<PyMouseInput>()?;
-    m.add_class::<PyMouseMotion>()?;
-    m.add_class::<PyMouseScrollUnit>()?;
-    m.add_class::<PyMouseWheel>()?;
-    m.add_class::<PyTouchInput>()?;
-    m.add_class::<PyTouchPhase>()?;
+    m.add_class::<plugin::PyInputPlugin>()?;
+    m.add_class::<axis::PyAxis>()?;
+    m.add_class::<button_input::PyButtonInput>()?;
+    m.add_class::<button_state::PyButtonState>()?;
+    m.add_class::<gamepad::PyGamepad>()?;
+    m.add_class::<gamepad_axis::PyGamepadAxis>()?;
+    m.add_class::<gamepad_button::PyGamepadButton>()?;
+    m.add_class::<gamepad_input::PyGamepadInput>()?;
+    m.add_class::<gamepad_rumble_intensity::PyGamepadRumbleIntensity>()?;
+    m.add_class::<gamepad_rumble_request::PyGamepadRumbleRequest>()?;
+    m.add_class::<gamepad_settings::PyGamepadSettings>()?;
+    m.add_class::<gamepad_settings::PyButtonSettings>()?;
+    m.add_class::<gamepad_settings::PyAxisSettings>()?;
+    m.add_class::<gamepad_settings::PyButtonAxisSettings>()?;
+    m.add_class::<key_code::PyKeyCode>()?;
+    m.add_class::<mouse_button::PyMouseButton>()?;
+    m.add_class::<mouse_events::PyMouseButtonInput>()?;
+    m.add_class::<mouse_input::PyMouseInput>()?;
+    m.add_class::<mouse_events::PyMouseMotion>()?;
+    m.add_class::<mouse_scroll_unit::PyMouseScrollUnit>()?;
+    m.add_class::<mouse_events::PyMouseWheel>()?;
+    m.add_class::<touch_input::PyTouchInput>()?;
+    m.add_class::<touch_phase::PyTouchPhase>()?;
 
-    m.add_class::<PyGamepadButtonChanged>()?;
-    m.add_class::<PyGamepadAxisChanged>()?;
-    m.add_class::<PyGamepadConnection>()?;
-    m.add_class::<PyGamepadButtonStateChanged>()?;
-    m.add_class::<PyPinchGesture>()?;
-    m.add_class::<PyRotationGesture>()?;
-    m.add_class::<PyDoubleTapGesture>()?;
-    m.add_class::<PyPanGesture>()?;
-    m.add_class::<PyKeyboardFocusLost>()?;
-    m.add_class::<PyAccumulatedMouseMotion>()?;
-    m.add_class::<PyAccumulatedMouseScroll>()?;
-    m.add_class::<PyGamepadEvent>()?;
-    m.add_class::<PyKeyboardInput>()?;
-    m.add_class::<PyTouch>()?;
-    m.add_class::<PyTouches>()?;
+    m.add_class::<gamepad_events::PyGamepadButtonChanged>()?;
+    m.add_class::<gamepad_events::PyGamepadAxisChanged>()?;
+    m.add_class::<gamepad_events::PyGamepadConnection>()?;
+    m.add_class::<gamepad_events::PyGamepadButtonStateChanged>()?;
+    m.add_class::<gesture_events::PyPinchGesture>()?;
+    m.add_class::<gesture_events::PyRotationGesture>()?;
+    m.add_class::<gesture_events::PyDoubleTapGesture>()?;
+    m.add_class::<gesture_events::PyPanGesture>()?;
+    m.add_class::<keyboard_events::PyKeyboardFocusLost>()?;
+    m.add_class::<accumulated_mouse::PyAccumulatedMouseMotion>()?;
+    m.add_class::<accumulated_mouse::PyAccumulatedMouseScroll>()?;
+    m.add_class::<gamepad_event::PyGamepadEvent>()?;
+    m.add_class::<keyboard_input::PyKeyboardInput>()?;
+    m.add_class::<touches::PyTouch>()?;
+    m.add_class::<touches::PyTouches>()?;
     parent.add_submodule(&m)
 }

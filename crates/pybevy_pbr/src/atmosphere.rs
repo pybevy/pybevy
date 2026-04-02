@@ -1,7 +1,7 @@
 use bevy::pbr::Atmosphere;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::component_storage;
-use pybevy_math::PyVec3;
+use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[component_storage(Atmosphere, bridge, view_only_fields = [bottom_radius: f32, top_radius: f32])]

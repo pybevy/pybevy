@@ -1,5 +1,5 @@
 use bevy::{color::Color, ui::AngularColorStop};
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pyo3::prelude::*;
 
 #[pyclass(name = "AngularColorStop", eq)]

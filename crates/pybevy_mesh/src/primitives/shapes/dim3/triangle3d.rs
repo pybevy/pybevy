@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, Triangle3d},
     mesh::Meshable,
 };
-use pybevy_math::{PyDir3, PyVec3};
+use pybevy_math::{dir3::PyDir3, vec3::PyVec3};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{

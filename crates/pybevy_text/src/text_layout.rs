@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-use crate::{PyJustify, PyLineBreak};
+use crate::{justify::PyJustify, line_break::PyLineBreak};
 
 #[component_storage(TextLayout, bridge)]
 #[pyclass(name = "TextLayout", extends = PyComponent)]

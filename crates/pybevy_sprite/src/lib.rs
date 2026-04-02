@@ -9,33 +9,36 @@ pub mod sprite;
 pub mod sprite_image_mode;
 pub mod texture_slicer;
 
-pub use alpha_mode_2d::PyAlphaMode2d;
-pub use anchor::PyAnchor;
-pub use border_rect::PyBorderRect;
-pub use color_material::PyColorMaterial;
-pub use plugin::{PyColorMaterialPlugin, PySpritePlugin};
 use pyo3::prelude::*;
-pub use scaling_mode::PySpriteScalingMode;
-pub use slice_scale_mode::PySliceScaleMode;
-pub use sprite::PySprite;
-pub use sprite_image_mode::PySpriteImageMode;
-pub use texture_slicer::PyTextureSlicer;
+
+pub mod prelude {
+    pub use crate::{
+        border_rect::PyBorderRect,
+        color_material::PyColorMaterial,
+        plugin::{PyColorMaterialPlugin, PySpritePlugin},
+        scaling_mode::PySpriteScalingMode,
+        slice_scale_mode::PySliceScaleMode,
+        sprite::PySprite,
+        sprite_image_mode::PySpriteImageMode,
+        texture_slicer::PyTextureSlicer,
+    };
+}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "sprite")?;
-    m.add_class::<PySpritePlugin>()?;
-    m.add_class::<PyColorMaterialPlugin>()?;
+    m.add_class::<plugin::PySpritePlugin>()?;
+    m.add_class::<plugin::PyColorMaterialPlugin>()?;
 
-    m.add_class::<PyAnchor>()?;
-    m.add_class::<PySprite>()?;
+    m.add_class::<anchor::PyAnchor>()?;
+    m.add_class::<sprite::PySprite>()?;
 
-    m.add_class::<PyColorMaterial>()?;
+    m.add_class::<color_material::PyColorMaterial>()?;
 
-    m.add_class::<PyAlphaMode2d>()?;
-    m.add_class::<PyBorderRect>()?;
-    m.add_class::<PySpriteScalingMode>()?;
-    m.add_class::<PySliceScaleMode>()?;
-    m.add_class::<PySpriteImageMode>()?;
-    m.add_class::<PyTextureSlicer>()?;
+    m.add_class::<alpha_mode_2d::PyAlphaMode2d>()?;
+    m.add_class::<border_rect::PyBorderRect>()?;
+    m.add_class::<scaling_mode::PySpriteScalingMode>()?;
+    m.add_class::<slice_scale_mode::PySliceScaleMode>()?;
+    m.add_class::<sprite_image_mode::PySpriteImageMode>()?;
+    m.add_class::<texture_slicer::PyTextureSlicer>()?;
     parent.add_submodule(&m)
 }

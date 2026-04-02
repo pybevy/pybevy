@@ -20,7 +20,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<animation_player::PyAnimationPlayer>()?;
     m.add_class::<animation_transitions::PyAnimationTransitions>()?;
     m.add_class::<animation_graph_handle::PyAnimationGraphHandle>()?;
-    m.add_class::<pybevy_mesh::PySkinnedMesh>()?;
+    m.add_class::<pybevy_mesh::skinned_mesh::PySkinnedMesh>()?;
     m.add_class::<animation_player::PyAnimationTarget>()?;
     m.add_class::<animation_player::PyActiveAnimation>()?;
     m.add_class::<animation_clip::PyAnimationClip>()?;

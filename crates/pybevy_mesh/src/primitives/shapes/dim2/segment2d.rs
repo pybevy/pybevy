@@ -2,7 +2,7 @@ use bevy::{
     math::{InvalidDirectionError, Isometry2d, Ray2d, Rot2, primitives::Segment2d},
     mesh::Meshable,
 };
-use pybevy_math::{PyDir2, PyIsometry2d, PyRay2d, PyRot2, PyVec2};
+use pybevy_math::{bounding::PyIsometry2d, dir2::PyDir2, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::{

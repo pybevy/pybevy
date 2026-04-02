@@ -1,7 +1,7 @@
 use bevy::window::WindowResolution;
 use pybevy_core::{FieldStorage, FromBorrowedStorage};
 use pybevy_macros::native_field;
-use pybevy_math::{PyUVec2, PyVec2};
+use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::{PyRefMut, prelude::*};
 
 #[native_field]
