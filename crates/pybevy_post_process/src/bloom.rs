@@ -46,7 +46,6 @@ impl PyBloom {
         max_mip_dimension: u32,
         scale: Option<Bound<'_, PyAny>>,
     ) -> PyResult<(Self, PyComponent)> {
-        // Import PyVec2 from main crate context
         let scale_vec = if let Some(s) = scale {
             Vec2::new(
                 s.getattr("x")?.extract::<f32>()?,

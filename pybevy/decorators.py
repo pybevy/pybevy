@@ -332,17 +332,6 @@ def material(
     return _material_impl(fragment_shader=fragment_shader, vertex_shader=vertex_shader)
 
 
-def post_process(
-    shader: str,
-) -> Callable[[type], type]:
-    """Decorator to define a post-processing effect.
-
-    See pybevy.post_process for full implementation and docs.
-    """
-    from .post_process import post_process as _post_process_impl
-    return _post_process_impl(shader=shader)
-
-
 def entrypoint(func: Callable) -> Callable:
     """Decorator for app entry point functions.
 

@@ -1,7 +1,4 @@
 pub mod aabb;
-pub mod bloom;
-pub mod bloom_composite_mode;
-pub mod bloom_prefilter;
 pub mod camera;
 pub mod camera_3d;
 pub mod camera_3d_depth_load_op;
@@ -9,7 +6,6 @@ pub mod camera_3d_depth_texture_usage;
 pub mod camera_main_texture_usages;
 pub mod clear_color;
 pub mod clear_color_config;
-pub mod core_pipeline_plugin;
 pub mod cubemap_frusta;
 pub mod cubemap_layout;
 pub mod cubemap_visible_entities;
@@ -28,7 +24,6 @@ pub mod render_target;
 pub mod screen_space_transmission_quality;
 pub mod skybox;
 pub mod sub_camera_view;
-pub mod tonemapping;
 pub mod unit_markers;
 pub mod view_visibility;
 pub mod viewport;
@@ -39,9 +34,6 @@ pub mod visibility_range;
 pub mod visible_mesh_entities;
 
 pub use aabb::PyAabb;
-pub use bloom::PyBloom;
-pub use bloom_composite_mode::PyBloomCompositeMode;
-pub use bloom_prefilter::PyBloomPrefilter;
 pub use camera::PyCamera;
 pub use camera_3d::PyCamera3d;
 pub use camera_3d_depth_load_op::PyCamera3dDepthLoadOp;
@@ -49,7 +41,6 @@ pub use camera_3d_depth_texture_usage::PyCamera3dDepthTextureUsage;
 pub use camera_main_texture_usages::PyCameraMainTextureUsages;
 pub use clear_color::PyClearColor;
 pub use clear_color_config::PyClearColorConfig;
-pub use core_pipeline_plugin::PyCorePipelinePlugin;
 pub use cubemap_frusta::PyCubemapFrusta;
 pub use cubemap_layout::PyCubemapLayout;
 pub use cubemap_visible_entities::PyCubemapVisibleEntities;
@@ -63,10 +54,6 @@ pub use normalized_render_target::PyNormalizedRenderTarget;
 pub use physical_camera_parameters::PyPhysicalCameraParameters;
 pub use plugin::PyCameraPlugin;
 pub use projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection};
-pub use pybevy_render::{
-    PyColorGrading, PyColorGradingGlobal, PyColorGradingSection, PyHdr, PyMipBias, PyMsaa,
-    PyNoAutomaticBatching, PyNoIndirectDrawing, PyOcclusionCulling, PyTemporalJitter,
-};
 pub mod scaling_mode;
 use pyo3::prelude::*;
 pub use render_layers::PyRenderLayers;
@@ -75,7 +62,6 @@ pub use scaling_mode::PyScalingMode;
 pub use screen_space_transmission_quality::PyScreenSpaceTransmissionQuality;
 pub use skybox::PySkybox;
 pub use sub_camera_view::PySubCameraView;
-pub use tonemapping::PyTonemapping;
 pub use unit_markers::{
     PyCamera2d, PyDeferredPrepass, PyDepthPrepass, PyMotionVectorPrepass, PyNoCpuCulling,
     PyNoFrustumCulling, PyNormalPrepass,
@@ -92,7 +78,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let m = PyModule::new(parent.py(), "camera")?;
     m.add_class::<PyCameraPlugin>()?;
-    m.add_class::<PyCorePipelinePlugin>()?;
     m.add_class::<PyNoCpuCulling>()?;
     m.add_class::<PyNoFrustumCulling>()?;
     m.add_class::<PyCamera2d>()?;
@@ -100,10 +85,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNormalPrepass>()?;
     m.add_class::<PyMotionVectorPrepass>()?;
     m.add_class::<PyDeferredPrepass>()?;
-    m.add_class::<PyHdr>()?;
-    m.add_class::<PyNoAutomaticBatching>()?;
-    m.add_class::<PyNoIndirectDrawing>()?;
-    m.add_class::<PyOcclusionCulling>()?;
     m.add_class::<PyCamera>()?;
     m.add_class::<PyCamera3d>()?;
     m.add_class::<PyInheritedVisibility>()?;
@@ -112,8 +93,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExposure>()?;
     m.add_class::<PyRenderLayers>()?;
     m.add_class::<PyAabb>()?;
-    m.add_class::<PyBloom>()?;
-    m.add_class::<PyColorGrading>()?;
     m.add_class::<PyCubemapFrusta>()?;
     m.add_class::<PyCubemapVisibleEntities>()?;
     m.add_class::<PyFrustum>()?;
@@ -123,7 +102,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVisibilityClass>()?;
     m.add_class::<PyVisibleMeshEntities>()?;
     m.add_class::<PySkybox>()?;
-    m.add_class::<PyTemporalJitter>()?;
     m.add_class::<PyRenderTarget>()?;
     m.add_class::<PyNormalizedRenderTarget>()?;
     m.add_class::<PyPhysicalCameraParameters>()?;
@@ -132,29 +110,15 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScalingMode>()?;
     m.add_class::<PyCubemapLayout>()?;
     m.add_class::<PyScreenSpaceTransmissionQuality>()?;
-    m.add_class::<PyBloomCompositeMode>()?;
-    m.add_class::<PyBloomPrefilter>()?;
     m.add_class::<PyCamera3dDepthLoadOp>()?;
     m.add_class::<PyCamera3dDepthTextureUsage>()?;
     m.add_class::<PyClearColorConfig>()?;
     m.add_class::<PySubCameraView>()?;
     m.add_class::<PyPerspectiveProjection>()?;
     m.add_class::<PyOrthographicProjection>()?;
-    m.add_class::<PyColorGradingSection>()?;
-    m.add_class::<PyColorGradingGlobal>()?;
-    m.add_class::<PyTonemapping>()?;
     m.add_class::<PyCameraMainTextureUsages>()?;
     m.add_class::<PyMainPassResolutionOverride>()?;
     m.add_class::<PyViewport>()?;
-    m.add_class::<PyMsaa>()?;
-    m.add_class::<PyMipBias>()?;
     m.add_class::<PyClearColor>()?;
-    parent.add_submodule(&m)
-}
-
-// TODO: extract to pybevy_core_pipeline crate
-pub fn add_core_pipeline_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "core_pipeline")?;
-    m.add_class::<PyCorePipelinePlugin>()?;
     parent.add_submodule(&m)
 }

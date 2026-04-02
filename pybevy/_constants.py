@@ -28,10 +28,11 @@ class _ConstantFactory:
 def _apply() -> None:
     """Wrap all UPPERCASE staticmethod factories with ``_ConstantFactory`` descriptors."""
     from .audio import PlaybackSettings, Volume
-    from .camera import Bloom, Exposure, Visibility
+    from .camera import Exposure, Visibility
     from .color import Color, Laba, LinearRgba, Oklaba, Srgba, Xyza
     from .light import SunDisk
     from .math import Affine2, IVec2, Quat, Rot2, URect, UVec2, UVec3, Vec2, Vec3, Vec4
+    from .post_process import Bloom
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
     from .transform import GlobalTransform, Transform
