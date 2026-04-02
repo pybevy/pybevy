@@ -1,6 +1,5 @@
 pub use pybevy_macros::{
-    PyComponent, native_asset, native_component, native_field, native_resource, plugin_bridge,
-    pybevy_app,
+    PyComponent, native_asset, native_component, native_field, native_resource, pybevy_app,
 };
 use pyo3::{prelude::*, types::IntoPyDict};
 
