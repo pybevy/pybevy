@@ -2,7 +2,7 @@ use bevy::mesh::{CylinderMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "CylinderMeshBuilder", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]

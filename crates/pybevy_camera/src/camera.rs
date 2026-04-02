@@ -1,8 +1,11 @@
 use bevy::camera::{Camera, MsaaWriteback};
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::{PyMat4, PyRay3d, PyRect, PyURect, PyUVec2, PyVec2, PyVec3};
-use pybevy_transform::PyGlobalTransform;
+use pybevy_math::{
+    mat4::PyMat4, ray::PyRay3d, rect::PyRect, urect::PyURect, uvec2::PyUVec2, vec2::PyVec2,
+    vec3::PyVec3,
+};
+use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{

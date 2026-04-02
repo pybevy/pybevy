@@ -1,7 +1,7 @@
 use bevy::ui::BorderRadius;
 use pyo3::prelude::*;
 
-use crate::PyVal;
+use crate::val::PyVal;
 
 #[pyclass(name = "BorderRadius", frozen)]
 #[derive(Clone, Debug)]

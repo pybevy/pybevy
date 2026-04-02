@@ -331,7 +331,8 @@ fn apply_plugin_configuration(
         }
 
         PluginConfigType::Render => {
-            let render_plugin: PyRef<pybevy_render::PyRenderPlugin> = plugin_obj.extract(py)?;
+            let render_plugin: PyRef<pybevy_render::plugin::PyRenderPlugin> =
+                plugin_obj.extract(py)?;
             let mut wgpu_settings = bevy::render::settings::WgpuSettings::default();
             if let Some(ref pp) = render_plugin.power_preference {
                 wgpu_settings.power_preference = (*pp).into();

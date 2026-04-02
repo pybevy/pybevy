@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Cuboid, Measured3d},
     mesh::Meshable,
 };
-use pybevy_math::PyVec3;
+use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCuboidMeshBuilder};

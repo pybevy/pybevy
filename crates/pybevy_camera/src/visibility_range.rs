@@ -3,7 +3,7 @@ use std::ops::Range;
 use bevy::camera::visibility::VisibilityRange;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::PyRange;
+use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
 #[component_storage(VisibilityRange, bridge, view_fields = [use_aabb])]

@@ -20,7 +20,7 @@ impl PyTextureSlicer {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
-        border = PyBorderRect::new(pybevy_math::PyVec2::ZERO, pybevy_math::PyVec2::ZERO),
+        border = PyBorderRect::new(pybevy_math::vec2::PyVec2::ZERO, pybevy_math::vec2::PyVec2::ZERO),
         center_tile = false,
         center_stretch_value = 1.0,
         sides_tile = false,

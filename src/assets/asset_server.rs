@@ -4,7 +4,7 @@ use bevy::{
     prelude::World,
 };
 use pybevy_core::{handle::PyHandle, registry::global_registry};
-use pybevy_image::PyImageLoaderSettings;
+use pybevy_image::loader_settings::PyImageLoaderSettings;
 use pyo3::{
     IntoPyObjectExt,
     exceptions::{PyRuntimeError, PyTypeError},

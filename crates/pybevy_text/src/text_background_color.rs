@@ -1,5 +1,5 @@
 use bevy::{color::Color, text::TextBackgroundColor};
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;

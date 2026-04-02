@@ -1,5 +1,5 @@
 use bevy::light::{DirectionalLightTexture, PointLightTexture, SpotLightTexture};
-use pybevy_camera::PyCubemapLayout;
+use pybevy_camera::cubemap_layout::PyCubemapLayout;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;

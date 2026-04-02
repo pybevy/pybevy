@@ -1,10 +1,12 @@
 use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadInput};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::PyVec2;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-use crate::{PyGamepadAxis, PyGamepadButton, PyGamepadInput};
+use crate::{
+    gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton, gamepad_input::PyGamepadInput,
+};
 
 #[component_storage(Gamepad, no_clone, bridge)]
 #[pyclass(name = "Gamepad", extends = PyComponent, frozen)]

@@ -4,7 +4,10 @@ use pybevy_core::AssetStorage;
 use pybevy_macros::asset_storage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use crate::{PyShaderDefVal, PyShaderImport, PySource, PyValidateShader};
+use crate::{
+    shader_def_val::PyShaderDefVal, shader_import::PyShaderImport, shader_source::PySource,
+    validate_shader::PyValidateShader,
+};
 
 #[asset_storage(Shader, bridge)]
 #[pyclass(name = "Shader", extends = pybevy_core::PyAsset)]

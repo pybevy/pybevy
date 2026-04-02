@@ -1,5 +1,5 @@
 use bevy::light::FogVolume;
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::component_storage;
 use pybevy_math::vec3::PyVec3;

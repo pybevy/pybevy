@@ -1,7 +1,7 @@
 use bevy::gltf::{Gltf, GltfMesh, GltfNode, GltfPrimitive, GltfSkin};
 use pybevy_core::{AssetStorage, PyAsset, PyComponent, PyHandle};
 use pybevy_macros::asset_storage;
-use pybevy_transform::PyTransform;
+use pybevy_transform::transform::PyTransform;
 use pyo3::prelude::*;
 
 use crate::label::PyGltfAssetLabel;

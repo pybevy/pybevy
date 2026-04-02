@@ -1,6 +1,6 @@
 use bevy::{camera::MainPassResolutionOverride, math::UVec2};
 use pybevy_core::PyComponent;
-use pybevy_math::PyUVec2;
+use pybevy_math::uvec2::PyUVec2;
 use pyo3::prelude::*;
 
 #[pyclass(name = "MainPassResolutionOverride", extends = PyComponent, frozen, eq)]

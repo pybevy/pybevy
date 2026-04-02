@@ -1,13 +1,11 @@
 use bevy::{
     color::{Alpha, Gray, Laba, LinearRgba, Luminance, Mix, Srgba},
-    math::StableInterpolate,
+    math::{StableInterpolate, Vec3, Vec4},
 };
 use pybevy_core::ValueStorage;
 use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
-
-// === Laba ===
 
 #[pyclass(name = "Laba", eq)]
 #[derive(Debug, Clone, PartialEq)]
@@ -183,29 +181,27 @@ impl PyLaba {
         PyLaba::laba(Laba::lab(color[0], color[1], color[2]))
     }
 
-    pub fn to_vec4(&self) -> PyResult<pybevy_math::PyVec4> {
-        use bevy::math::Vec4;
+    pub fn to_vec4(&self) -> PyResult<pybevy_math::vec4::PyVec4> {
         let c = self.as_ref()?;
         let vec4 = Vec4::new(c.lightness, c.a, c.b, c.alpha);
-        Ok(pybevy_math::PyVec4::from(vec4))
+        Ok(pybevy_math::vec4::PyVec4::from(vec4))
     }
 
-    pub fn to_vec3(&self) -> PyResult<pybevy_math::PyVec3> {
-        use bevy::math::Vec3;
+    pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
         let c = self.as_ref()?;
         let vec3 = Vec3::new(c.lightness, c.a, c.b);
-        Ok(pybevy_math::PyVec3::from(vec3))
+        Ok(pybevy_math::vec3::PyVec3::from(vec3))
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
+        let v: Vec4 = color.into();
         PyLaba::laba(Laba::new(v.x, v.y, v.z, v.w))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
+        let v: Vec3 = color.into();
         PyLaba::laba(Laba::lab(v.x, v.y, v.z))
     }
 

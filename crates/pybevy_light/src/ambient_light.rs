@@ -2,7 +2,7 @@ use bevy::{
     ecs::resource::Resource,
     light::{AmbientLight, GlobalAmbientLight},
 };
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{
     ComponentStorage, PyComponent, PyResource, ResourceStorage, ResourceStorageInner,
 };

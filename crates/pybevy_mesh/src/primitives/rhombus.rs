@@ -2,7 +2,7 @@ use bevy::mesh::{MeshBuilder, RhombusMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "RhombusMeshBuilder", extends = PyMeshBuilder)]
 #[derive(Debug)]

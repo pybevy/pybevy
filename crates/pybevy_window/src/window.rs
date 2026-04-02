@@ -1,7 +1,7 @@
 use bevy::{math::DVec2, window::Window};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::{PyCompassOctant, PyUVec2, PyVec2};
+use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::{

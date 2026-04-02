@@ -23,61 +23,46 @@ pub mod wireframe_color;
 pub mod wireframe_config;
 pub mod wireframe_material;
 
-pub use atmosphere::PyAtmosphere;
-pub use atmosphere_settings::PyAtmosphereSettings;
-pub use default_opaque_renderer_method::PyDefaultOpaqueRendererMethod;
-pub use distance_fog::PyDistanceFog;
-pub use falloff::PyFalloff;
-pub use fog_falloff::PyFogFalloff;
-pub use forward_decal::PyForwardDecal;
-pub use lightmap::PyLightmap;
-pub use no_wireframe::PyNoWireframe;
-pub use opaque_renderer_method::PyOpaqueRendererMethod;
-pub use parallax_mapping_method::PyParallaxMappingMethod;
-pub use plugin::PyPbrPlugin;
 use pyo3::prelude::*;
-pub use scattering_medium::PyScatteringMedium;
-pub use screen_space_ambient_occlusion::PyScreenSpaceAmbientOcclusion;
-pub use screen_space_reflections::PyScreenSpaceReflections;
-pub use shader_material_py::{PyMeshMaterial3dShader, PyShaderMaterial, PyShaderMaterialPlugin};
-pub use ssao_quality_level::PyScreenSpaceAmbientOcclusionQualityLevel;
-pub use standard_material::PyStandardMaterial;
-pub use uv_channel::PyUvChannel;
-pub use wireframe::PyWireframe;
-pub use wireframe_color::PyWireframeColor;
-pub use wireframe_config::PyWireframeConfig;
-pub use wireframe_material::PyWireframeMaterial;
+
+pub mod prelude {
+    pub use crate::{
+        distance_fog::PyDistanceFog, fog_falloff::PyFogFalloff,
+        parallax_mapping_method::PyParallaxMappingMethod, plugin::PyPbrPlugin,
+        standard_material::PyStandardMaterial,
+    };
+}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "pbr")?;
-    m.add_class::<PyPbrPlugin>()?;
-    m.add_class::<PyDistanceFog>()?;
-    m.add_class::<PyFogFalloff>()?;
-    m.add_class::<PyScreenSpaceAmbientOcclusion>()?;
-    m.add_class::<PyScreenSpaceAmbientOcclusionQualityLevel>()?;
-    m.add_class::<PyScreenSpaceReflections>()?;
-    m.add_class::<PyAtmosphere>()?;
-    m.add_class::<PyAtmosphereSettings>()?;
-    m.add_class::<PyParallaxMappingMethod>()?;
-    m.add_class::<PyStandardMaterial>()?;
-    m.add_class::<PyUvChannel>()?;
-    m.add_class::<PyWireframe>()?;
-    m.add_class::<PyWireframeColor>()?;
-    m.add_class::<PyNoWireframe>()?;
-    m.add_class::<PyWireframeConfig>()?;
-    m.add_class::<PyWireframeMaterial>()?;
-    m.add_class::<PyScatteringMedium>()?;
-    m.add_class::<PyDefaultOpaqueRendererMethod>()?;
-    m.add_class::<PyLightmap>()?;
-    m.add_class::<PyForwardDecal>()?;
-    m.add_class::<PyFalloff>()?;
-    m.add_class::<PyOpaqueRendererMethod>()?;
+    m.add_class::<plugin::PyPbrPlugin>()?;
+    m.add_class::<distance_fog::PyDistanceFog>()?;
+    m.add_class::<fog_falloff::PyFogFalloff>()?;
+    m.add_class::<screen_space_ambient_occlusion::PyScreenSpaceAmbientOcclusion>()?;
+    m.add_class::<ssao_quality_level::PyScreenSpaceAmbientOcclusionQualityLevel>()?;
+    m.add_class::<screen_space_reflections::PyScreenSpaceReflections>()?;
+    m.add_class::<atmosphere::PyAtmosphere>()?;
+    m.add_class::<atmosphere_settings::PyAtmosphereSettings>()?;
+    m.add_class::<parallax_mapping_method::PyParallaxMappingMethod>()?;
+    m.add_class::<standard_material::PyStandardMaterial>()?;
+    m.add_class::<uv_channel::PyUvChannel>()?;
+    m.add_class::<wireframe::PyWireframe>()?;
+    m.add_class::<wireframe_color::PyWireframeColor>()?;
+    m.add_class::<no_wireframe::PyNoWireframe>()?;
+    m.add_class::<wireframe_config::PyWireframeConfig>()?;
+    m.add_class::<wireframe_material::PyWireframeMaterial>()?;
+    m.add_class::<scattering_medium::PyScatteringMedium>()?;
+    m.add_class::<default_opaque_renderer_method::PyDefaultOpaqueRendererMethod>()?;
+    m.add_class::<lightmap::PyLightmap>()?;
+    m.add_class::<forward_decal::PyForwardDecal>()?;
+    m.add_class::<falloff::PyFalloff>()?;
+    m.add_class::<opaque_renderer_method::PyOpaqueRendererMethod>()?;
 
-    m.add_class::<PyShaderMaterial>()?;
-    m.add_class::<PyShaderMaterialPlugin>()?;
-    m.add_class::<PyMeshMaterial3dShader>()?;
+    m.add_class::<shader_material_py::PyShaderMaterial>()?;
+    m.add_class::<shader_material_py::PyShaderMaterialPlugin>()?;
+    m.add_class::<shader_material_py::PyMeshMaterial3dShader>()?;
     // TODO: Review. Render types re-exported through the pbr Python module.
-    m.add_class::<pybevy_render::PyOpaqueRenderMethod>()?;
-    m.add_class::<pybevy_render::PyAtmosphereMode>()?;
+    m.add_class::<pybevy_render::opaque_render_method::PyOpaqueRenderMethod>()?;
+    m.add_class::<pybevy_render::atmosphere_mode::PyAtmosphereMode>()?;
     parent.add_submodule(&m)
 }

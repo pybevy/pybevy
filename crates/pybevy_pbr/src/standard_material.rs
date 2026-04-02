@@ -2,14 +2,16 @@ use bevy::{
     color::{Color, LinearRgba},
     pbr::StandardMaterial,
 };
-use pybevy_color::{PyColor, PyLinearRgba};
+use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
 use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
 use pybevy_macros::asset_storage;
-use pybevy_math::PyAffine2;
-use pybevy_render::{PyAlphaMode, PyFace, PyOpaqueRenderMethod};
+use pybevy_math::affine2::PyAffine2;
+use pybevy_render::{
+    alpha_mode::PyAlphaMode, face::PyFace, opaque_render_method::PyOpaqueRenderMethod,
+};
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-use crate::{PyParallaxMappingMethod, PyUvChannel};
+use crate::{parallax_mapping_method::PyParallaxMappingMethod, uv_channel::PyUvChannel};
 
 fn extract_linear_rgba(value: &Bound<'_, PyAny>) -> PyResult<LinearRgba> {
     if let Ok(color) = value.extract::<PyColor>() {

@@ -3,14 +3,14 @@ use bevy::{
     image::Image,
     sprite::{Sprite, SpriteImageMode},
 };
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_image::PyTextureAtlas;
+use pybevy_image::texture_atlas::PyTextureAtlas;
 use pybevy_macros::component_storage;
-use pybevy_math::{PyVec2, rect::PyRect};
+use pybevy_math::{rect::PyRect, vec2::PyVec2};
 use pyo3::prelude::*;
 
-use crate::PySpriteImageMode;
+use crate::sprite_image_mode::PySpriteImageMode;
 
 #[component_storage(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
 #[pyclass(name = "Sprite", extends = PyComponent)]

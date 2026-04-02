@@ -2,11 +2,15 @@ pub mod global_transform;
 pub mod transform;
 
 use bevy::{app::App, transform::TransformPlugin};
-pub use global_transform::PyGlobalTransform;
 use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
-pub use transform::PyTransform;
+
+pub mod prelude {
+    pub use crate::{
+        PyTransformPlugin, global_transform::PyGlobalTransform, transform::PyTransform,
+    };
+}
 
 #[plugin_storage(TransformPlugin)]
 #[pyclass(name = "TransformPlugin", extends = PyPlugin, frozen)]
@@ -37,7 +41,7 @@ impl PluginBuild for PyTransformPlugin {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "transform")?;
     m.add_class::<PyTransformPlugin>()?;
-    m.add_class::<PyTransform>()?;
-    m.add_class::<PyGlobalTransform>()?;
+    m.add_class::<transform::PyTransform>()?;
+    m.add_class::<global_transform::PyGlobalTransform>()?;
     parent.add_submodule(&m)
 }

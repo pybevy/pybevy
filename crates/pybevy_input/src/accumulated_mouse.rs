@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::resource_storage;
-use pybevy_math::PyVec2;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 use crate::mouse_scroll_unit::PyMouseScrollUnit;

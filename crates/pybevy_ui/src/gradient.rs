@@ -1,5 +1,5 @@
 use bevy::ui::Gradient;
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pyo3::prelude::*;
 
 use crate::{

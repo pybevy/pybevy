@@ -257,18 +257,18 @@ impl PyLinearRgba {
         Ok([color.red, color.green, color.blue])
     }
 
-    pub fn to_vec4(&self) -> PyResult<pybevy_math::PyVec4> {
+    pub fn to_vec4(&self) -> PyResult<pybevy_math::vec4::PyVec4> {
         use bevy::math::Vec4;
         let color = self.as_ref()?;
         let vec4 = Vec4::new(color.red, color.green, color.blue, color.alpha);
-        Ok(pybevy_math::PyVec4::from(vec4))
+        Ok(pybevy_math::vec4::PyVec4::from(vec4))
     }
 
-    pub fn to_vec3(&self) -> PyResult<pybevy_math::PyVec3> {
+    pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
         use bevy::math::Vec3;
         let color = self.as_ref()?;
         let vec3 = Vec3::new(color.red, color.green, color.blue);
-        Ok(pybevy_math::PyVec3::from(vec3))
+        Ok(pybevy_math::vec3::PyVec3::from(vec3))
     }
 
     #[staticmethod]
@@ -282,13 +282,13 @@ impl PyLinearRgba {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::PyVec4) -> Self {
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
         let v: bevy::math::Vec4 = color.into();
         PyLinearRgba::linear_rgba(LinearRgba::new(v.x, v.y, v.z, v.w))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::PyVec3) -> Self {
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
         let v: bevy::math::Vec3 = color.into();
         PyLinearRgba::linear_rgba(LinearRgba::rgb(v.x, v.y, v.z))
     }

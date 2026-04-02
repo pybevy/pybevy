@@ -2,7 +2,7 @@ use bevy::mesh::{MeshBuilder, TorusMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "TorusMeshBuilder", extends = PyMeshBuilder)]
 #[derive(Debug)]

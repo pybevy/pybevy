@@ -1,6 +1,6 @@
 use bevy::{math::ops, pbr::FogFalloff};
-use pybevy_color::PyColor;
-use pybevy_math::PyVec3;
+use pybevy_color::color::PyColor;
+use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[pyclass(name = "FogFalloff", frozen)]

@@ -1,7 +1,7 @@
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
-use pybevy_math::PyMat4;
+use pybevy_math::mat4::PyMat4;
 use pyo3::prelude::*;
 
 #[asset_storage(SkinnedMeshInverseBindposes, no_clone, bridge, not_loadable)]

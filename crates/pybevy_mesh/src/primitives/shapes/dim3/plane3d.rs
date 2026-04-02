@@ -1,5 +1,5 @@
 use bevy::{math::primitives::Plane3d, mesh::Meshable};
-use pybevy_math::{PyDir3, PyVec2, PyVec3};
+use pybevy_math::{dir3::PyDir3, vec2::PyVec2, vec3::PyVec3};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};

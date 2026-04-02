@@ -1,5 +1,5 @@
 use bevy::audio::SpatialScale;
-use pybevy_math::PyVec3;
+use pybevy_math::vec3::PyVec3;
 use pyo3::{prelude::*, types::PyFloat};
 
 fn parse_scale_arg(ob: &Bound<'_, PyAny>) -> PyResult<SpatialScale> {

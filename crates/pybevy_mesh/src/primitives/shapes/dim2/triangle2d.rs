@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, Triangle2d},
     mesh::Meshable,
 };
-use pybevy_math::{PyVec2, PyWindingOrder};
+use pybevy_math::{vec2::PyVec2, winding_order::PyWindingOrder};
 use pyo3::prelude::*;
 
 use super::circle::PyCircle;

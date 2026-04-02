@@ -1,8 +1,8 @@
 use bevy::sprite::Text2dShadow;
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::PyVec2;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[component_storage(Text2dShadow, bridge)]

@@ -36,6 +36,24 @@ pub mod winit_settings;
 
 use pyo3::prelude::*;
 
+pub mod prelude {
+    pub use crate::{
+        cursor_events::{PyCursorEntered, PyCursorLeft},
+        cursor_moved::PyCursorMoved,
+        file_drag_and_drop::PyFileDragAndDrop,
+        ime::PyIme,
+        monitor::PyMonitor,
+        monitor_selection::PyMonitorSelection,
+        primary_monitor::PyPrimaryMonitor,
+        primary_window::PyPrimaryWindow,
+        resize_constraints::PyWindowResizeConstraints,
+        video_mode_selection::PyVideoModeSelection,
+        window::PyWindow,
+        window_plugin::PyWindowPlugin,
+        window_position::PyWindowPosition,
+    };
+}
+
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "window")?;
 

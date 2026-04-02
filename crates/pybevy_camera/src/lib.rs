@@ -33,92 +33,75 @@ pub mod visibility_class;
 pub mod visibility_range;
 pub mod visible_mesh_entities;
 
-pub use aabb::PyAabb;
-pub use camera::PyCamera;
-pub use camera_3d::PyCamera3d;
-pub use camera_3d_depth_load_op::PyCamera3dDepthLoadOp;
-pub use camera_3d_depth_texture_usage::PyCamera3dDepthTextureUsage;
-pub use camera_main_texture_usages::PyCameraMainTextureUsages;
-pub use clear_color::PyClearColor;
-pub use clear_color_config::PyClearColorConfig;
-pub use cubemap_frusta::PyCubemapFrusta;
-pub use cubemap_layout::PyCubemapLayout;
-pub use cubemap_visible_entities::PyCubemapVisibleEntities;
-pub use culling_sphere::PyCullingSphere;
-pub use exposure::PyExposure;
-pub use frustum::PyFrustum;
-pub use half_space::PyHalfSpace;
-pub use inherited_visibility::PyInheritedVisibility;
-pub use main_pass_resolution_override::PyMainPassResolutionOverride;
-pub use normalized_render_target::PyNormalizedRenderTarget;
-pub use physical_camera_parameters::PyPhysicalCameraParameters;
-pub use plugin::PyCameraPlugin;
-pub use projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection};
 pub mod scaling_mode;
 use pyo3::prelude::*;
-pub use render_layers::PyRenderLayers;
-pub use render_target::PyRenderTarget;
-pub use scaling_mode::PyScalingMode;
-pub use screen_space_transmission_quality::PyScreenSpaceTransmissionQuality;
-pub use skybox::PySkybox;
-pub use sub_camera_view::PySubCameraView;
-pub use unit_markers::{
-    PyCamera2d, PyDeferredPrepass, PyDepthPrepass, PyMotionVectorPrepass, PyNoCpuCulling,
-    PyNoFrustumCulling, PyNormalPrepass,
-};
-pub use view_visibility::PyViewVisibility;
-pub use viewport::PyViewport;
-pub use visibility::PyVisibility;
-pub use visibility_class::PyVisibilityClass;
-pub use visibility_range::PyVisibilityRange;
-pub use visible_mesh_entities::PyVisibleMeshEntities;
+
+pub mod prelude {
+    pub use crate::{
+        camera::PyCamera,
+        camera_3d::PyCamera3d,
+        clear_color::PyClearColor,
+        clear_color_config::PyClearColorConfig,
+        exposure::PyExposure,
+        inherited_visibility::PyInheritedVisibility,
+        plugin::PyCameraPlugin,
+        projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection},
+        render_layers::PyRenderLayers,
+        scaling_mode::PyScalingMode,
+        skybox::PySkybox,
+        unit_markers::PyCamera2d,
+        view_visibility::PyViewVisibility,
+        viewport::PyViewport,
+        visibility::PyVisibility,
+    };
+}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     visibility_batch::register_visibility_batch_bridge();
 
     let m = PyModule::new(parent.py(), "camera")?;
-    m.add_class::<PyCameraPlugin>()?;
-    m.add_class::<PyNoCpuCulling>()?;
-    m.add_class::<PyNoFrustumCulling>()?;
-    m.add_class::<PyCamera2d>()?;
-    m.add_class::<PyDepthPrepass>()?;
-    m.add_class::<PyNormalPrepass>()?;
-    m.add_class::<PyMotionVectorPrepass>()?;
-    m.add_class::<PyDeferredPrepass>()?;
-    m.add_class::<PyCamera>()?;
-    m.add_class::<PyCamera3d>()?;
-    m.add_class::<PyInheritedVisibility>()?;
-    m.add_class::<PyViewVisibility>()?;
-    m.add_class::<PyVisibilityRange>()?;
-    m.add_class::<PyExposure>()?;
-    m.add_class::<PyRenderLayers>()?;
-    m.add_class::<PyAabb>()?;
-    m.add_class::<PyCubemapFrusta>()?;
-    m.add_class::<PyCubemapVisibleEntities>()?;
-    m.add_class::<PyFrustum>()?;
-    m.add_class::<PyProjection>()?;
-    m.add_class::<PyVisibility>()?;
+    m.add_class::<plugin::PyCameraPlugin>()?;
+    m.add_class::<unit_markers::PyNoCpuCulling>()?;
+    m.add_class::<unit_markers::PyNoFrustumCulling>()?;
+    m.add_class::<unit_markers::PyCamera2d>()?;
+    m.add_class::<unit_markers::PyDepthPrepass>()?;
+    m.add_class::<unit_markers::PyNormalPrepass>()?;
+    m.add_class::<unit_markers::PyMotionVectorPrepass>()?;
+    m.add_class::<unit_markers::PyDeferredPrepass>()?;
+    m.add_class::<camera::PyCamera>()?;
+    m.add_class::<camera_3d::PyCamera3d>()?;
+    m.add_class::<inherited_visibility::PyInheritedVisibility>()?;
+    m.add_class::<view_visibility::PyViewVisibility>()?;
+    m.add_class::<visibility_range::PyVisibilityRange>()?;
+    m.add_class::<exposure::PyExposure>()?;
+    m.add_class::<render_layers::PyRenderLayers>()?;
+    m.add_class::<aabb::PyAabb>()?;
+    m.add_class::<cubemap_frusta::PyCubemapFrusta>()?;
+    m.add_class::<cubemap_visible_entities::PyCubemapVisibleEntities>()?;
+    m.add_class::<frustum::PyFrustum>()?;
+    m.add_class::<projection::PyProjection>()?;
+    m.add_class::<visibility::PyVisibility>()?;
     m.add_class::<visibility_batch::PyVisibilityBatch>()?;
-    m.add_class::<PyVisibilityClass>()?;
-    m.add_class::<PyVisibleMeshEntities>()?;
-    m.add_class::<PySkybox>()?;
-    m.add_class::<PyRenderTarget>()?;
-    m.add_class::<PyNormalizedRenderTarget>()?;
-    m.add_class::<PyPhysicalCameraParameters>()?;
-    m.add_class::<PyHalfSpace>()?;
-    m.add_class::<PyCullingSphere>()?;
-    m.add_class::<PyScalingMode>()?;
-    m.add_class::<PyCubemapLayout>()?;
-    m.add_class::<PyScreenSpaceTransmissionQuality>()?;
-    m.add_class::<PyCamera3dDepthLoadOp>()?;
-    m.add_class::<PyCamera3dDepthTextureUsage>()?;
-    m.add_class::<PyClearColorConfig>()?;
-    m.add_class::<PySubCameraView>()?;
-    m.add_class::<PyPerspectiveProjection>()?;
-    m.add_class::<PyOrthographicProjection>()?;
-    m.add_class::<PyCameraMainTextureUsages>()?;
-    m.add_class::<PyMainPassResolutionOverride>()?;
-    m.add_class::<PyViewport>()?;
-    m.add_class::<PyClearColor>()?;
+    m.add_class::<visibility_class::PyVisibilityClass>()?;
+    m.add_class::<visible_mesh_entities::PyVisibleMeshEntities>()?;
+    m.add_class::<skybox::PySkybox>()?;
+    m.add_class::<render_target::PyRenderTarget>()?;
+    m.add_class::<normalized_render_target::PyNormalizedRenderTarget>()?;
+    m.add_class::<physical_camera_parameters::PyPhysicalCameraParameters>()?;
+    m.add_class::<half_space::PyHalfSpace>()?;
+    m.add_class::<culling_sphere::PyCullingSphere>()?;
+    m.add_class::<scaling_mode::PyScalingMode>()?;
+    m.add_class::<cubemap_layout::PyCubemapLayout>()?;
+    m.add_class::<screen_space_transmission_quality::PyScreenSpaceTransmissionQuality>()?;
+    m.add_class::<camera_3d_depth_load_op::PyCamera3dDepthLoadOp>()?;
+    m.add_class::<camera_3d_depth_texture_usage::PyCamera3dDepthTextureUsage>()?;
+    m.add_class::<clear_color_config::PyClearColorConfig>()?;
+    m.add_class::<sub_camera_view::PySubCameraView>()?;
+    m.add_class::<projection::PyPerspectiveProjection>()?;
+    m.add_class::<projection::PyOrthographicProjection>()?;
+    m.add_class::<camera_main_texture_usages::PyCameraMainTextureUsages>()?;
+    m.add_class::<main_pass_resolution_override::PyMainPassResolutionOverride>()?;
+    m.add_class::<viewport::PyViewport>()?;
+    m.add_class::<clear_color::PyClearColor>()?;
     parent.add_submodule(&m)
 }

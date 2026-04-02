@@ -1,6 +1,9 @@
 use bevy::window::WindowEvent;
 use pybevy_core::PyEntity;
-use pybevy_input::{PyButtonState, PyMouseButton, PyMouseScrollUnit, PyTouchPhase};
+use pybevy_input::{
+    button_state::PyButtonState, mouse_button::PyMouseButton, mouse_scroll_unit::PyMouseScrollUnit,
+    touch_phase::PyTouchPhase,
+};
 use pybevy_math::{ivec2::PyIVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 

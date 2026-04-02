@@ -1,7 +1,7 @@
 use bevy::audio::SpatialListener;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
-use pybevy_math::PyVec3;
+use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[component_storage(SpatialListener, bridge)]

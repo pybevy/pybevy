@@ -12,16 +12,16 @@ use bevy::{
     prelude::*,
     scene::SceneInstanceReady,
 };
-pub use dynamic_scene::PyDynamicScene;
-pub use dynamic_sceneroot::PyDynamicSceneRoot;
-pub use instance_id::PyInstanceId;
 use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
-pub use scene::PyScene;
-pub use scene_instance_ready::PySceneInstanceReady;
-pub use scene_spawner::PySceneSpawner;
-pub use sceneroot::PySceneRoot;
+
+pub mod prelude {
+    pub use crate::{
+        PyScenePlugin, dynamic_scene::PyDynamicScene, dynamic_sceneroot::PyDynamicSceneRoot,
+        scene::PyScene, scene_spawner::PySceneSpawner, sceneroot::PySceneRoot,
+    };
+}
 
 #[derive(Clone, Debug)]
 pub struct SceneInstanceReadyMessage(pub SceneInstanceReady);
@@ -62,12 +62,12 @@ impl PluginBuild for PyScenePlugin {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "scene")?;
     m.add_class::<PyScenePlugin>()?;
-    m.add_class::<PyDynamicScene>()?;
-    m.add_class::<PyDynamicSceneRoot>()?;
-    m.add_class::<PyInstanceId>()?;
-    m.add_class::<PyScene>()?;
-    m.add_class::<PySceneInstanceReady>()?;
-    m.add_class::<PySceneSpawner>()?;
-    m.add_class::<PySceneRoot>()?;
+    m.add_class::<dynamic_scene::PyDynamicScene>()?;
+    m.add_class::<dynamic_sceneroot::PyDynamicSceneRoot>()?;
+    m.add_class::<instance_id::PyInstanceId>()?;
+    m.add_class::<scene::PyScene>()?;
+    m.add_class::<scene_instance_ready::PySceneInstanceReady>()?;
+    m.add_class::<scene_spawner::PySceneSpawner>()?;
+    m.add_class::<sceneroot::PySceneRoot>()?;
     parent.add_submodule(&m)
 }

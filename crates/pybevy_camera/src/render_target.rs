@@ -7,7 +7,7 @@ use bevy::{
 };
 use pybevy_core::{ComponentStorage, PyComponent, PyEntity, PyHandle, extract_handle_from_any};
 use pybevy_macros::component_storage;
-use pybevy_math::PyUVec2;
+use pybevy_math::uvec2::PyUVec2;
 use pyo3::prelude::*;
 
 use super::normalized_render_target::PyNormalizedRenderTarget;

@@ -1,7 +1,7 @@
 use bevy::camera::Viewport;
 use pybevy_core::{FromBorrowedStorage, field_storage::FieldStorage};
 use pybevy_macros::native_field;
-use pybevy_math::PyUVec2;
+use pybevy_math::uvec2::PyUVec2;
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 #[native_field]

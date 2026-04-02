@@ -39,83 +39,71 @@ pub mod val;
 pub mod val2;
 pub mod z_index;
 
-pub use angular_color_stop::PyAngularColorStop;
-pub use background_color::PyBackgroundColor;
-pub use background_gradient::PyBackgroundGradient;
-pub use border_color::PyBorderColor;
-pub use border_gradient::PyBorderGradient;
-pub use border_radius::PyBorderRadius;
-pub use box_shadow::PyBoxShadow;
-pub use color_stop::PyColorStop;
-pub use computed_node::PyComputedNode;
-pub use conic_gradient::PyConicGradient;
-pub use enums::{
+use enums::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
     PyGridAutoFlow, PyInterpolationColorSpace, PyJustifyContent, PyJustifyItems, PyJustifySelf,
     PyOverflowAxis, PyOverflowClipBox, PyPositionType,
 };
-pub use focus_policy::PyFocusPolicy;
-pub use gradient::PyGradient;
-pub use grid_placement::PyGridPlacement;
-pub use grid_track::PyGridTrack;
-pub use image_node::PyImageNode;
-pub use interaction::PyInteraction;
-pub use linear_gradient::PyLinearGradient;
-pub use markers::{
-    PyButton, PyChecked, PyInteractionDisabled, PyIsDefaultUiCamera, PyLabel, PyPressed,
-};
-pub use node::PyNode;
-pub use node_image_mode::PyNodeImageMode;
-pub use outline::PyOutline;
-pub use overflow::PyOverflow;
-pub use overflow_clip_margin::PyOverflowClipMargin;
 use pyo3::prelude::*;
-pub use radial_gradient::PyRadialGradient;
-pub use radial_gradient_shape::PyRadialGradientShape;
-pub use relative_cursor_position::PyRelativeCursorPosition;
-pub use repeated_grid_track::PyRepeatedGridTrack;
-pub use scroll_position::PyScrollPosition;
-pub use shadow_style::PyShadowStyle;
-pub use text::PyText;
-pub use text_shadow::PyTextShadow;
-pub use ui_position::PyUiPosition;
-pub use ui_rect::PyUiRect;
-pub use ui_scale::PyUiScale;
-pub use ui_target_camera::PyUiTargetCamera;
-pub use ui_transform::PyUiTransform;
-pub use val::PyVal;
-pub use val2::PyVal2;
-pub use z_index::{PyGlobalZIndex, PyZIndex};
+
+pub mod prelude {
+    pub use crate::{
+        background_color::PyBackgroundColor,
+        border_color::PyBorderColor,
+        border_radius::PyBorderRadius,
+        enums::{
+            PyAlignContent, PyAlignItems, PyAlignSelf, PyDisplay, PyFlexDirection, PyFlexWrap,
+            PyGridAutoFlow, PyJustifyContent, PyJustifyItems, PyJustifySelf, PyPositionType,
+        },
+        grid_placement::PyGridPlacement,
+        grid_track::PyGridTrack,
+        image_node::PyImageNode,
+        interaction::PyInteraction,
+        markers::{PyButton, PyLabel},
+        node::PyNode,
+        outline::PyOutline,
+        overflow::PyOverflow,
+        text::PyText,
+        ui_position::PyUiPosition,
+        ui_rect::PyUiRect,
+        ui_scale::PyUiScale,
+        ui_target_camera::PyUiTargetCamera,
+        ui_transform::PyUiTransform,
+        val::PyVal,
+        val2::PyVal2,
+        z_index::{PyGlobalZIndex, PyZIndex},
+    };
+}
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "ui")?;
-    m.add_class::<PyBackgroundColor>()?;
-    m.add_class::<PyBackgroundGradient>()?;
-    m.add_class::<PyBorderColor>()?;
-    m.add_class::<PyBorderGradient>()?;
-    m.add_class::<PyBoxShadow>()?;
-    m.add_class::<PyComputedNode>()?;
-    m.add_class::<PyImageNode>()?;
-    m.add_class::<PyNode>()?;
-    m.add_class::<PyOutline>()?;
-    m.add_class::<PyRelativeCursorPosition>()?;
-    m.add_class::<PyScrollPosition>()?;
-    m.add_class::<PyUiTargetCamera>()?;
-    m.add_class::<PyUiTransform>()?;
-    m.add_class::<PyText>()?;
-    m.add_class::<PyTextShadow>()?;
+    m.add_class::<background_color::PyBackgroundColor>()?;
+    m.add_class::<background_gradient::PyBackgroundGradient>()?;
+    m.add_class::<border_color::PyBorderColor>()?;
+    m.add_class::<border_gradient::PyBorderGradient>()?;
+    m.add_class::<box_shadow::PyBoxShadow>()?;
+    m.add_class::<computed_node::PyComputedNode>()?;
+    m.add_class::<image_node::PyImageNode>()?;
+    m.add_class::<node::PyNode>()?;
+    m.add_class::<outline::PyOutline>()?;
+    m.add_class::<relative_cursor_position::PyRelativeCursorPosition>()?;
+    m.add_class::<scroll_position::PyScrollPosition>()?;
+    m.add_class::<ui_target_camera::PyUiTargetCamera>()?;
+    m.add_class::<ui_transform::PyUiTransform>()?;
+    m.add_class::<text::PyText>()?;
+    m.add_class::<text_shadow::PyTextShadow>()?;
 
-    m.add_class::<PyLabel>()?;
-    m.add_class::<PyChecked>()?;
-    m.add_class::<PyPressed>()?;
-    m.add_class::<PyInteractionDisabled>()?;
-    m.add_class::<PyIsDefaultUiCamera>()?;
-    m.add_class::<PyButton>()?;
+    m.add_class::<markers::PyLabel>()?;
+    m.add_class::<markers::PyChecked>()?;
+    m.add_class::<markers::PyPressed>()?;
+    m.add_class::<markers::PyInteractionDisabled>()?;
+    m.add_class::<markers::PyIsDefaultUiCamera>()?;
+    m.add_class::<markers::PyButton>()?;
 
-    m.add_class::<PyFocusPolicy>()?;
-    m.add_class::<PyInteraction>()?;
-    m.add_class::<PyZIndex>()?;
-    m.add_class::<PyGlobalZIndex>()?;
+    m.add_class::<focus_policy::PyFocusPolicy>()?;
+    m.add_class::<interaction::PyInteraction>()?;
+    m.add_class::<z_index::PyZIndex>()?;
+    m.add_class::<z_index::PyGlobalZIndex>()?;
 
     m.add_class::<PyFlexDirection>()?;
     m.add_class::<PyDisplay>()?;
@@ -132,27 +120,27 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGridAutoFlow>()?;
     m.add_class::<PyInterpolationColorSpace>()?;
     m.add_class::<PyOverflowClipBox>()?;
-    m.add_class::<PyOverflow>()?;
-    m.add_class::<PyOverflowClipMargin>()?;
-    m.add_class::<PyNodeImageMode>()?;
-    m.add_class::<PyGridPlacement>()?;
-    m.add_class::<PyRepeatedGridTrack>()?;
+    m.add_class::<overflow::PyOverflow>()?;
+    m.add_class::<overflow_clip_margin::PyOverflowClipMargin>()?;
+    m.add_class::<node_image_mode::PyNodeImageMode>()?;
+    m.add_class::<grid_placement::PyGridPlacement>()?;
+    m.add_class::<repeated_grid_track::PyRepeatedGridTrack>()?;
 
-    m.add_class::<PyBorderRadius>()?;
-    m.add_class::<PyAngularColorStop>()?;
-    m.add_class::<PyGridTrack>()?;
-    m.add_class::<PyVal>()?;
-    m.add_class::<PyUiRect>()?;
-    m.add_class::<PyVal2>()?;
-    m.add_class::<PyRadialGradient>()?;
-    m.add_class::<PyRadialGradientShape>()?;
-    m.add_class::<PyShadowStyle>()?;
-    m.add_class::<PyColorStop>()?;
-    m.add_class::<PyUiPosition>()?;
-    m.add_class::<PyConicGradient>()?;
-    m.add_class::<PyLinearGradient>()?;
-    m.add_class::<PyGradient>()?;
+    m.add_class::<border_radius::PyBorderRadius>()?;
+    m.add_class::<angular_color_stop::PyAngularColorStop>()?;
+    m.add_class::<grid_track::PyGridTrack>()?;
+    m.add_class::<val::PyVal>()?;
+    m.add_class::<ui_rect::PyUiRect>()?;
+    m.add_class::<val2::PyVal2>()?;
+    m.add_class::<radial_gradient::PyRadialGradient>()?;
+    m.add_class::<radial_gradient_shape::PyRadialGradientShape>()?;
+    m.add_class::<shadow_style::PyShadowStyle>()?;
+    m.add_class::<color_stop::PyColorStop>()?;
+    m.add_class::<ui_position::PyUiPosition>()?;
+    m.add_class::<conic_gradient::PyConicGradient>()?;
+    m.add_class::<linear_gradient::PyLinearGradient>()?;
+    m.add_class::<gradient::PyGradient>()?;
 
-    m.add_class::<PyUiScale>()?;
+    m.add_class::<ui_scale::PyUiScale>()?;
     parent.add_submodule(&m)
 }

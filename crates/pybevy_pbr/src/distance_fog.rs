@@ -1,10 +1,10 @@
 use bevy::{color::Color, pbr::DistanceFog};
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pyo3::prelude::*;
 
-use crate::PyFogFalloff;
+use crate::fog_falloff::PyFogFalloff;
 
 #[component_storage(DistanceFog, bridge, view_fields = [directional_light_exponent], batch_only_fields = [color, directional_light_color])]
 #[pyclass(name = "DistanceFog", extends = PyComponent)]

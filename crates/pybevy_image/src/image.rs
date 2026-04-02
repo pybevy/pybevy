@@ -10,14 +10,16 @@ use numpy::{
     PyArray1, PyArrayMethods, PyReadonlyArray1,
     ndarray::{ArrayView1, ArrayViewMut1},
 };
-use pybevy_color::PyColor;
+use pybevy_color::color::PyColor;
 use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::asset_storage;
-use pybevy_math::{PyUVec2, PyUVec3, PyVec2};
-use pybevy_wgpu::{PyExtent3d, PyTextureDimension, PyTextureFormat};
+use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
+use pybevy_wgpu::{
+    extent3d::PyExtent3d, texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
+};
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::{PyImageFormat, PyImageSampler};
+use crate::{image_format::PyImageFormat, loader_settings::PyImageSampler};
 
 // Convert PyImageFormat to image crate's ImageFormat
 fn py_format_to_rust(format: PyImageFormat) -> RustImageFormat {

@@ -1,7 +1,7 @@
 use bevy::window::CursorMoved;
 use pybevy_core::{PyEntity, PyMessage};
 use pybevy_macros::message_storage;
-use pybevy_math::PyVec2;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[message_storage(CursorMoved)]

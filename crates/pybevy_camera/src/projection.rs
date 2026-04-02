@@ -4,7 +4,7 @@ use bevy::camera::{CameraProjection, OrthographicProjection, PerspectiveProjecti
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::component_storage;
 use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A};
-use pybevy_transform::PyGlobalTransform;
+use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};

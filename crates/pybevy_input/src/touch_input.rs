@@ -2,7 +2,7 @@ use bevy::{ecs::entity::Entity, input::touch::TouchInput};
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
 use pybevy_macros::message_storage;
-use pybevy_math::PyVec2;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 use crate::touch_phase::PyTouchPhase;

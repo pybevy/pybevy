@@ -1,9 +1,9 @@
 use bevy::mesh::{MeshBuilder, PlaneMeshBuilder};
 use pybevy_core::PyAsset;
-use pybevy_math::{PyDir3, PyVec2};
+use pybevy_math::{dir3::PyDir3, vec2::PyVec2};
 use pyo3::prelude::*;
 
-use crate::{PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
 #[pyclass(name = "Plane3dMeshBuilder", extends = PyMeshBuilder)]
 #[derive(Debug)]

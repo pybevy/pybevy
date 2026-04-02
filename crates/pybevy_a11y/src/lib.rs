@@ -6,6 +6,10 @@ use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::plugin_storage;
 use pyo3::prelude::*;
 
+pub mod prelude {
+    pub use crate::{PyAccessibilityPlugin, accessibility_node::PyAccessibilityNode, role::PyRole};
+}
+
 #[plugin_storage(AccessibilityPlugin)]
 #[pyclass(name = "AccessibilityPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]

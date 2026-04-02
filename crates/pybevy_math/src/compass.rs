@@ -2,7 +2,7 @@ use bevy::math::{CompassOctant, CompassQuadrant};
 use pybevy_macros::bevy_enum;
 use pyo3::prelude::*;
 
-use crate::PyVec2;
+use crate::vec2::PyVec2;
 
 #[bevy_enum(CompassOctant, from_only)]
 #[pyclass(name = "CompassOctant", eq)]
