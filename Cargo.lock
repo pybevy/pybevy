@@ -4256,6 +4256,7 @@ dependencies = [
  "pybevy_color",
  "pybevy_control",
  "pybevy_core",
+ "pybevy_core_pipeline",
  "pybevy_ecs",
  "pybevy_gltf",
  "pybevy_image",
@@ -4265,6 +4266,7 @@ dependencies = [
  "pybevy_math",
  "pybevy_mesh",
  "pybevy_pbr",
+ "pybevy_post_process",
  "pybevy_reload",
  "pybevy_render",
  "pybevy_scene",
@@ -4274,6 +4276,7 @@ dependencies = [
  "pybevy_time",
  "pybevy_transform",
  "pybevy_ui",
+ "pybevy_wgpu",
  "pybevy_window",
  "pyo3",
  "rayon",
@@ -4412,6 +4415,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pybevy_core_pipeline"
+version = "0.2.1"
+dependencies = [
+ "bevy",
+ "pybevy_core",
+ "pybevy_macros",
+ "pyo3",
+]
+
+[[package]]
 name = "pybevy_ecs"
 version = "0.2.1"
 dependencies = [
@@ -4520,6 +4533,18 @@ dependencies = [
  "pybevy_math",
  "pybevy_render",
  "pybevy_shader_types",
+ "pyo3",
+]
+
+[[package]]
+name = "pybevy_post_process"
+version = "0.2.1"
+dependencies = [
+ "bevy",
+ "numpy",
+ "pybevy_core",
+ "pybevy_macros",
+ "pybevy_math",
  "pyo3",
 ]
 

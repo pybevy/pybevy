@@ -53,7 +53,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_animation::add_module(m)?;
     pybevy_audio::add_module(m)?;
     pybevy_camera::add_module(m)?;
-    pybevy_camera::add_core_pipeline_module(m)?;
+    pybevy_core_pipeline::add_module(m)?;
     pybevy_color::add_module(m)?;
     pybevy_gltf::add_module(m)?;
     pybevy_image::add_module(m)?;
@@ -62,9 +62,10 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_math::add_module(m)?;
     pybevy_mesh::add_module(m)?;
     pybevy_pbr::add_module(m)?;
+    pybevy_post_process::add_module(m)?;
     pybevy_render::add_module(m)?;
     pybevy_shader::add_module(m)?;
-    pybevy_render::add_wgpu_module(m)?;
+    pybevy_wgpu::add_module(m)?;
     pybevy_scene::add_module(m)?;
     pybevy_sprite::add_module(m)?;
     pybevy_text::add_module(m)?;

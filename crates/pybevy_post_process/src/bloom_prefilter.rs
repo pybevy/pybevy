@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 #[native_field]
 #[pyclass(name = "BloomPrefilter")]
 pub struct PyBloomPrefilter {
-    storage: FieldStorage<BloomPrefilter>,
+    pub(crate) storage: FieldStorage<BloomPrefilter>,
 }
 
 #[pymethods]
@@ -14,11 +14,11 @@ impl PyBloomPrefilter {
     #[new]
     #[pyo3(signature = (threshold = 0.0, threshold_softness = 0.0))]
     pub fn new(threshold: f32, threshold_softness: f32) -> Self {
-        let prefilter = BloomPrefilter {
+        BloomPrefilter {
             threshold,
             threshold_softness,
-        };
-        Self::from_owned(prefilter)
+        }
+        .into()
     }
 
     #[getter]
@@ -27,8 +27,8 @@ impl PyBloomPrefilter {
     }
 
     #[setter]
-    pub fn set_threshold(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.threshold = value;
+    pub fn set_threshold(&mut self, threshold: f32) -> PyResult<()> {
+        self.as_mut()?.threshold = threshold;
         Ok(())
     }
 
@@ -38,8 +38,8 @@ impl PyBloomPrefilter {
     }
 
     #[setter]
-    pub fn set_threshold_softness(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.threshold_softness = value;
+    pub fn set_threshold_softness(&mut self, threshold_softness: f32) -> PyResult<()> {
+        self.as_mut()?.threshold_softness = threshold_softness;
         Ok(())
     }
 }

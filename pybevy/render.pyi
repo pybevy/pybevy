@@ -198,6 +198,55 @@ class ColorGradingGlobal:
     @midtones_range.setter
     def midtones_range(self, value: tuple[float, float]) -> None: ...
 
+class ColorGrading(Component):
+    """Filmic color grading for camera post-processing.
+
+    Provides control over exposure, temperature, tint, hue, saturation,
+    and section-specific adjustments for shadows, midtones, and highlights.
+    """
+
+    def __init__(
+        self,
+        global_: ColorGradingGlobal = ...,
+        shadows: ColorGradingSection = ...,
+        midtones: ColorGradingSection = ...,
+        highlights: ColorGradingSection = ...,
+    ) -> None: ...
+
+    @property
+    def global_(self) -> ColorGradingGlobal: ...
+    @global_.setter
+    def global_(self, value: ColorGradingGlobal) -> None: ...
+
+    @property
+    def shadows(self) -> ColorGradingSection: ...
+    @shadows.setter
+    def shadows(self, value: ColorGradingSection) -> None: ...
+
+    @property
+    def midtones(self) -> ColorGradingSection: ...
+    @midtones.setter
+    def midtones(self, value: ColorGradingSection) -> None: ...
+
+    @property
+    def highlights(self) -> ColorGradingSection: ...
+    @highlights.setter
+    def highlights(self, value: ColorGradingSection) -> None: ...
+
+    @staticmethod
+    def with_identical_sections(
+        global_: ColorGradingGlobal, section: ColorGradingSection
+    ) -> ColorGrading:
+        """Create ColorGrading with identical shadow, midtone, and highlight sections.
+
+        Args:
+            global_: Global color grading settings
+            section: Section to use for shadows, midtones, and highlights
+
+        Returns:
+            ColorGrading with the same section applied to all tonal ranges
+        """
+
 class Hdr(Component):
     """Marker component that enables HDR (High Dynamic Range) rendering for a camera."""
 

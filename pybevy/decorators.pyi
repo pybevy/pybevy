@@ -127,18 +127,6 @@ def material(
         vertex_shader: Asset path to custom vertex shader (relative to assets/ directory).
     """
 
-def post_process(
-    shader: str,
-) -> Callable[[type], type]:
-    """Decorator to define a post-processing effect.
-
-    Generates WGSL struct + binding declarations and handles std140 packing.
-    The decorated class acts as a Component that can be spawned on camera entities.
-
-    Args:
-        shader: Asset path to the fragment shader (relative to assets/ directory).
-    """
-
 def entrypoint(func: Callable[[App], App]) -> EntrypointDecoratorResult:
     """Decorator for the main app entry point function.
 

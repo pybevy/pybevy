@@ -39,22 +39,17 @@ from .audio import (
     Volume,
 )
 from .camera import (
-    Bloom,
-    BloomCompositeMode,
-    BloomPrefilter,
     Camera,
     Camera2d,
     Camera3d,
     ClearColor,
     ClearColorConfig,
-    ColorGrading,
     InheritedVisibility,
     OrthographicProjection,
     PerspectiveProjection,
     Projection,
     ScalingMode,
     Skybox,
-    Tonemapping,
     ViewVisibility,
     Visibility,
 )
@@ -70,7 +65,8 @@ from .color import (
     Srgba,
     Xyza,
 )
-from .decorators import component, entrypoint, material, plugin, post_process, resource
+from .core_pipeline import Tonemapping
+from .decorators import component, entrypoint, material, plugin, resource
 from .ecs import (
     Added,
     Changed,
@@ -195,8 +191,10 @@ from .mesh import (
     PrimitiveTopology,
 )
 from .pbr import DistanceFog, FogFalloff, ParallaxMappingMethod, StandardMaterial
+from .post_process import Bloom, BloomCompositeMode, BloomPrefilter
 from .render import (
     AlphaMode,
+    ColorGrading,
     ColorGradingGlobal,
     ColorGradingSection,
     Hdr,
@@ -489,7 +487,6 @@ __all__ = [
     "entrypoint",
     "material",
     "plugin",
-    "post_process",
     "resource",
     # ECS
     "Added",

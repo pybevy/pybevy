@@ -14,7 +14,6 @@ pub use anchor::PyAnchor;
 pub use border_rect::PyBorderRect;
 pub use color_material::PyColorMaterial;
 pub use plugin::{PyColorMaterialPlugin, PySpritePlugin};
-pub use pybevy_image::PyTextureAtlas;
 use pyo3::prelude::*;
 pub use scaling_mode::PySpriteScalingMode;
 pub use slice_scale_mode::PySliceScaleMode;
@@ -37,7 +36,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySpriteScalingMode>()?;
     m.add_class::<PySliceScaleMode>()?;
     m.add_class::<PySpriteImageMode>()?;
-    m.add_class::<PyTextureAtlas>()?;
     m.add_class::<PyTextureSlicer>()?;
     parent.add_submodule(&m)
 }

@@ -56,7 +56,9 @@ pybevy_input = { path = "./crates/pybevy_input", version = "=0.2.1" }
 pybevy_time = { path = "./crates/pybevy_time", version = "=0.2.1" }
 pybevy_window = { path = "./crates/pybevy_window", version = "=0.2.1" }
 pybevy_light = { path = "./crates/pybevy_light", version = "=0.2.1" }
+pybevy_core_pipeline = { path = "./crates/pybevy_core_pipeline", version = "=0.2.1" }
 pybevy_camera = { path = "./crates/pybevy_camera", version = "=0.2.1" }
+pybevy_post_process = { path = "./crates/pybevy_post_process", version = "=0.2.1" }
 pybevy_gltf = { path = "./crates/pybevy_gltf", version = "=0.2.1" }
 pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.2.1" }
 pybevy_mesh = { path = "./crates/pybevy_mesh", version = "=0.2.1" }
@@ -87,11 +89,14 @@ pybevy_input = { workspace = true }
 pybevy_time = { workspace = true }
 pybevy_window = { workspace = true }
 pybevy_light = { workspace = true }
+pybevy_core_pipeline = { workspace = true }
 pybevy_camera = { workspace = true }
+pybevy_post_process = { workspace = true }
 pybevy_gltf = { workspace = true }
 pybevy_mesh = { workspace = true }
 pybevy_render = { workspace = true }
 pybevy_shader = { workspace = true }
+pybevy_wgpu = { workspace = true }
 pybevy_sprite = { workspace = true }
 pybevy_ecs = { workspace = true }
 pybevy_ui = { workspace = true }
