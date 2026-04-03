@@ -1,10 +1,10 @@
 use bevy::render::camera::TemporalJitter;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(TemporalJitter, bridge)]
+#[pycomponent(TemporalJitter, bridge)]
 #[pyclass(name = "TemporalJitter", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyTemporalJitter {

@@ -1,10 +1,10 @@
 use bevy::core_pipeline::Skybox;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
-#[component_storage(Skybox, bridge, view_fields = [brightness])]
+#[pycomponent(Skybox, bridge, view_fields = [brightness])]
 #[pyclass(name = "Skybox", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PySkybox {

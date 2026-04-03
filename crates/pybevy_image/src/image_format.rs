@@ -1,8 +1,8 @@
 use bevy::image::ImageFormat;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(ImageFormat)]
+#[pyenum(ImageFormat)]
 #[pyclass(name = "ImageFormat", eq, hash, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyImageFormat {

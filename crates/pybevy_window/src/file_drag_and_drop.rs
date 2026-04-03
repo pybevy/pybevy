@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use bevy::window::FileDragAndDrop;
 use pybevy_core::{PyEntity, PyMessage};
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,7 +12,7 @@ pub enum FileDragAndDropData {
     HoveredFileCanceled { window: PyEntity },
 }
 
-#[message_storage(FileDragAndDrop)]
+#[pymessage(FileDragAndDrop)]
 #[pyclass(name = "FileDragAndDrop", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyFileDragAndDrop {

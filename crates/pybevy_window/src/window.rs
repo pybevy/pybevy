@@ -1,6 +1,6 @@
 use bevy::{math::DVec2, window::Window};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 
@@ -14,7 +14,7 @@ use crate::{
 
 pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
-#[component_storage(Window, bridge, view_fields = [decorations, resizable, transparent])]
+#[pycomponent(Window, bridge, view_fields = [decorations, resizable, transparent])]
 #[pyclass(name = "Window", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyWindow {

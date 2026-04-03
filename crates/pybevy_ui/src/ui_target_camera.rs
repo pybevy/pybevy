@@ -1,9 +1,9 @@
 use bevy::ui::UiTargetCamera;
 use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(UiTargetCamera, bridge)]
+#[pycomponent(UiTargetCamera, bridge)]
 #[pyclass(name = "UiTargetCamera", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyUiTargetCamera {

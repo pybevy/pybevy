@@ -1,9 +1,9 @@
 use bevy::text::TextBounds;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(TextBounds, bridge)]
+#[pycomponent(TextBounds, bridge)]
 #[pyclass(name = "TextBounds", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextBounds {

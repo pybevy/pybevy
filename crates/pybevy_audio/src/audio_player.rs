@@ -1,9 +1,9 @@
 use bevy::audio::{AudioPlayer, AudioSource};
 use pybevy_core::{ComponentStorage, PyComponent, handle::PyHandle};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(AudioPlayer<AudioSource>, bridge)]
+#[pycomponent(AudioPlayer<AudioSource>, bridge)]
 #[pyclass(name = "AudioPlayer", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAudioPlayer {

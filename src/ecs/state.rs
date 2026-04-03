@@ -652,9 +652,9 @@ fn apply_transition_for_state(
 
     // Scan resources to find State<T> and NextState<T> for this type
     {
-        let resource_storage = world.resource::<PyResourceStorage>();
+        let pyresource = world.resource::<PyResourceStorage>();
 
-        for (_, resource_py) in resource_storage.resources.iter() {
+        for (_, resource_py) in pyresource.resources.iter() {
             let resource = resource_py.bind(py);
 
             // Check if this is NextState for our type
@@ -811,8 +811,8 @@ pub fn apply_state_transitions(py: Python, world: &mut bevy::ecs::world::World) 
     // Discover state type names by scanning PyResourceStorage for NextState<T> resources
     let mut state_type_names = HashSet::new();
     {
-        let resource_storage = world.resource::<PyResourceStorage>();
-        for (_, resource_py) in resource_storage.resources.iter() {
+        let pyresource = world.resource::<PyResourceStorage>();
+        for (_, resource_py) in pyresource.resources.iter() {
             let resource = resource_py.bind(py);
             // Check if this is NextState for any type
             if let Ok(next_state) = resource.cast::<PyNextState>() {

@@ -3,12 +3,12 @@ use bevy::{
     text::{Font, FontAtlasSet},
 };
 use pybevy_core::{ResourceStorage, extract_handle_from_any};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::font_atlas::{PyFontAtlas, PyFontAtlasKey};
 
-#[resource_storage(FontAtlasSet, no_clone, bridge, no_mut, no_insert)]
+#[pyresource(FontAtlasSet, no_clone, bridge, no_mut, no_insert)]
 #[pyclass(name = "FontAtlasSet", extends = pybevy_core::PyResource)]
 pub struct PyFontAtlasSet {
     pub(crate) storage: ResourceStorage<FontAtlasSet>,

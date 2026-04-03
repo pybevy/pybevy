@@ -40,8 +40,8 @@ pub mod resource;
 
 // Storage layer — re-exported from pybevy_storage
 pub use pybevy_storage::{
-    asset_storage, component_storage, field_storage, list_storage, resource_storage, storage_error,
-    storage_traits, validity_guard, value_storage, view_bridge,
+    field_storage, list_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
+    validity_guard, value_storage, view_bridge,
 };
 
 pybevy_storage::impl_py_list!(PyF32List, "F32List", f32);
@@ -54,7 +54,7 @@ use bevy::ecs::{
 };
 use pyo3::prelude::*;
 
-// Manual implementation of ChildOfBridge because #[component_storage(..., bridge)]
+// Manual implementation of ChildOfBridge because #[pycomponent(..., bridge)]
 // uses pybevy_core:: paths which don't work inside pybevy_core itself.
 pub struct ChildOfBridge;
 

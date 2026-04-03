@@ -1,10 +1,10 @@
 use bevy::{asset::Handle, light::EnvironmentMapLight};
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
-#[component_storage(EnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
+#[pycomponent(EnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
 #[pyclass(name = "EnvironmentMapLight", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyEnvironmentMapLight {

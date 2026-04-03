@@ -6,7 +6,7 @@ use syn::{
     parse_macro_input,
 };
 
-/// Arguments for bevy_enum attribute macro
+/// Arguments for pyenum attribute macro
 struct BevyEnumArgs {
     /// The Bevy enum type to convert to/from
     bevy_type: Type,
@@ -53,7 +53,7 @@ impl Parse for BevyEnumArgs {
 /// # Usage
 ///
 /// ```rust
-/// #[bevy_enum(BevyCursorGrabMode)]
+/// #[pyenum(BevyCursorGrabMode)]
 /// #[pyclass(name = "CursorGrabMode", eq)]
 /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// pub enum PyCursorGrabMode {
@@ -91,7 +91,7 @@ fn get_pyo3_variant_name(variant: &syn::Variant) -> Option<String> {
     None
 }
 
-/// Variant kind for bevy_enum processing
+/// Variant kind for pyenum processing
 enum VariantKind {
     /// Unit variant: `Variant`
     Unit,
@@ -101,7 +101,7 @@ enum VariantKind {
     DataTuple,
 }
 
-pub fn bevy_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as BevyEnumArgs);
     let input = parse_macro_input!(item as ItemEnum);
 
@@ -141,9 +141,9 @@ pub fn bevy_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             None => {
                 let msg = if args.empty_tuple {
-                    "bevy_enum only supports unit, empty tuple, and single-field tuple variants"
+                    "pyenum only supports unit, empty tuple, and single-field tuple variants"
                 } else {
-                    "bevy_enum only supports unit and single-field tuple variants (use empty_tuple for Variant() style)"
+                    "pyenum only supports unit and single-field tuple variants (use empty_tuple for Variant() style)"
                 };
                 return syn::Error::new_spanned(variant, msg)
                     .to_compile_error()

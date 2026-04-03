@@ -1,11 +1,11 @@
 use bevy::audio::DefaultSpatialScale;
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::spatial_scale::PySpatialScale;
 
-#[resource_storage(DefaultSpatialScale, bridge)]
+#[pyresource(DefaultSpatialScale, bridge)]
 #[pyclass(name = "DefaultSpatialScale", extends = PyResource)]
 pub struct PyDefaultSpatialScale {
     pub(crate) storage: ResourceStorage<DefaultSpatialScale>,

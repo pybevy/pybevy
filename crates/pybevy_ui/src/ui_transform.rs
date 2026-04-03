@@ -1,12 +1,12 @@
 use bevy::ui::UiTransform;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{rot2::PyRot2, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::val2::PyVal2;
 
-#[component_storage(UiTransform, bridge)]
+#[pycomponent(UiTransform, bridge)]
 #[pyclass(name = "UiTransform", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyUiTransform {

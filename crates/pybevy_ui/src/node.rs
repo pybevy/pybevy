@@ -1,6 +1,6 @@
 use bevy::ui::Node;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     ui_rect::PyUiRect, val::PyVal,
 };
 
-#[component_storage(Node, bridge)]
+#[pycomponent(Node, bridge)]
 #[pyclass(name = "Node", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyNode {

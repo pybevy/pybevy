@@ -1,12 +1,12 @@
 use bevy::{color::Color, ui::BoxShadow};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::{shadow_style::PyShadowStyle, val::PyVal};
 
-#[component_storage(BoxShadow, bridge)]
+#[pycomponent(BoxShadow, bridge)]
 #[pyclass(name = "BoxShadow", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyBoxShadow {

@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use bevy::audio::{PlaybackMode, PlaybackSettings};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume::PyVolume};
 
-#[component_storage(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
+#[pycomponent(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
 #[pyclass(name = "PlaybackSettings", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyPlaybackSettings {

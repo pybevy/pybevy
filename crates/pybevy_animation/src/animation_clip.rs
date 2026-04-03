@@ -1,6 +1,6 @@
 use bevy::animation::{AnimationClip, VariableCurve};
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
 use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId};
@@ -9,7 +9,7 @@ use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationT
 #[derive(Debug, Clone)]
 pub struct PyVariableCurve(pub(crate) VariableCurve);
 
-#[asset_storage(AnimationClip, bridge)]
+#[pyasset(AnimationClip, bridge)]
 #[pyclass(name = "AnimationClip", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyAnimationClip {

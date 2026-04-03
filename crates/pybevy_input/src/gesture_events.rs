@@ -3,11 +3,11 @@ use bevy::{
     math::Vec2,
 };
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[message_storage(PinchGesture)]
+#[pymessage(PinchGesture)]
 #[pyclass(name = "PinchGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPinchGesture(pub f32);
@@ -41,7 +41,7 @@ impl PyPinchGesture {
     }
 }
 
-#[message_storage(RotationGesture)]
+#[pymessage(RotationGesture)]
 #[pyclass(name = "RotationGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRotationGesture(pub f32);
@@ -75,7 +75,7 @@ impl PyRotationGesture {
     }
 }
 
-#[message_storage(DoubleTapGesture)]
+#[pymessage(DoubleTapGesture)]
 #[pyclass(name = "DoubleTapGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDoubleTapGesture;
@@ -104,7 +104,7 @@ impl PyDoubleTapGesture {
     }
 }
 
-#[message_storage(PanGesture)]
+#[pymessage(PanGesture)]
 #[pyclass(name = "PanGesture", extends = PyMessage, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPanGesture(pub f32, pub f32);

@@ -1,9 +1,9 @@
 use bevy::render::view::Msaa;
 use pybevy_core::PyComponent;
-use pybevy_macros::newtype_storage;
+use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
-#[newtype_storage(Msaa, bridge, copy)]
+#[pywrap(Msaa, bridge, copy)]
 #[pyclass(name = "Msaa", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMsaa(pub(crate) Msaa);

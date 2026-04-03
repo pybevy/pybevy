@@ -1,9 +1,9 @@
 use bevy::{animation::AnimationPlugin, app::App};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
-#[plugin_storage(AnimationPlugin)]
+#[pyplugin(AnimationPlugin)]
 #[pyclass(name = "AnimationPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimationPlugin;

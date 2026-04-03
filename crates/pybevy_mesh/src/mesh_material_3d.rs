@@ -1,9 +1,9 @@
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::handle_storage;
+use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
 
-#[handle_storage(MeshMaterial3d::<StandardMaterial>, "MeshMaterial3d")]
+#[pyhandle(MeshMaterial3d::<StandardMaterial>, "MeshMaterial3d")]
 #[pyclass(name = "MeshMaterial3d", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial3d(pub(crate) PyHandle);

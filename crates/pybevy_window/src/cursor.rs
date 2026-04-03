@@ -1,8 +1,8 @@
 use bevy::window::{CursorGrabMode, SystemCursorIcon};
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(CursorGrabMode)]
+#[pyenum(CursorGrabMode)]
 #[pyclass(name = "CursorGrabMode", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyCursorGrabMode {
@@ -12,7 +12,7 @@ pub enum PyCursorGrabMode {
     Locked,
 }
 
-#[bevy_enum(SystemCursorIcon)]
+#[pyenum(SystemCursorIcon)]
 #[pyclass(name = "SystemCursorIcon", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PySystemCursorIcon {

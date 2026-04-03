@@ -1,8 +1,8 @@
 use bevy::image::ImageSamplerBorderColor;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(ImageSamplerBorderColor)]
+#[pyenum(ImageSamplerBorderColor)]
 #[pyclass(name = "ImageSamplerBorderColor", eq, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyImageSamplerBorderColor {

@@ -3,13 +3,13 @@ use bevy::{
     post_process::bloom::{Bloom, BloomPrefilter},
 };
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloomPrefilter};
 
-#[component_storage(Bloom, bridge, view_fields = [
+#[pycomponent(Bloom, bridge, view_fields = [
     intensity,
     low_frequency_boost,
     low_frequency_boost_curvature,

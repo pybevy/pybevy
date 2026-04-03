@@ -1,11 +1,11 @@
 use bevy::{app::App, window::WindowPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::{exit_condition::PyExitCondition, window::PyWindow};
 
-#[plugin_storage(bevy::window::WindowPlugin)]
+#[pyplugin(bevy::window::WindowPlugin)]
 #[pyclass(name = "WindowPlugin", extends = PyPlugin)]
 pub struct PyWindowPlugin {
     primary_window: Option<PyWindow>,

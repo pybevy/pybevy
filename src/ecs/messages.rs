@@ -441,7 +441,7 @@ pub enum MessageType {
     // Python custom messages
     Custom(Py<PyType>),
     /// Dynamic message type registered via global message bridge registry.
-    /// All event types with #[message_storage] use this variant.
+    /// All event types with #[pymessage] use this variant.
     Dynamic(*const pyo3::ffi::PyTypeObject),
 }
 
@@ -535,12 +535,12 @@ impl PyMessageType {
         let type_ptr = message.as_type_ptr();
 
         // Check global message bridge registry first (dynamic dispatch)
-        // Most message types use this path via #[message_storage] attribute
+        // Most message types use this path via #[pymessage] attribute
         if pybevy_core::registry::global_registry::contains_message_py_type(type_ptr) {
             return Ok(PyMessageType(MessageType::Dynamic(type_ptr)));
         }
 
-        // Special handling types that don't use #[message_storage] (need extra resources/special logic)
+        // Special handling types that don't use #[pymessage] (need extra resources/special logic)
         if message.is(<PyKeyboardInput as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::KeyboardInput));
         }

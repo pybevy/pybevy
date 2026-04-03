@@ -1,12 +1,12 @@
 use std::num::NonZero;
 
 use bevy::app::AppExit;
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 use crate::ecs::message::PyMessage;
 
-#[message_storage(AppExit, writable)]
+#[pymessage(AppExit, writable)]
 #[pyclass(name = "AppExit", extends = PyMessage, frozen, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyAppExit(pub(crate) AppExit);

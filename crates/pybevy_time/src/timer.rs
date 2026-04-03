@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[bevy_enum(TimerMode)]
+#[pyenum(TimerMode)]
 #[pyclass(name = "TimerMode", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTimerMode {

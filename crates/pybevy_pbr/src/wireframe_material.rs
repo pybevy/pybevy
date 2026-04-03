@@ -1,10 +1,10 @@
 use bevy::{color::Color, pbr::wireframe::WireframeMaterial};
 use pybevy_color::color::PyColor;
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
-#[asset_storage(WireframeMaterial, bridge, not_loadable)]
+#[pyasset(WireframeMaterial, bridge, not_loadable)]
 #[pyclass(name = "WireframeMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyWireframeMaterial {

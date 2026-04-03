@@ -1,11 +1,11 @@
 use bevy::input::{ButtonInput, keyboard::KeyCode};
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::key_code::PyKeyCode;
 
-#[resource_storage(ButtonInput<KeyCode>, no_clone, bridge, "ButtonInput", no_mut, default_insert)]
+#[pyresource(ButtonInput<KeyCode>, no_clone, bridge, "ButtonInput", no_mut, default_insert)]
 #[pyclass(name = "ButtonInput", extends = PyResource, frozen)]
 pub struct PyButtonInput {
     pub(crate) storage: ResourceStorage<ButtonInput<KeyCode>>,

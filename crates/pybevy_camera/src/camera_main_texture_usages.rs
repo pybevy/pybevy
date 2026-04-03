@@ -1,13 +1,13 @@
 use bevy::{camera::CameraMainTextureUsages, render::render_resource::TextureUsages};
 use pybevy_core::PyComponent;
-use pybevy_macros::newtype_storage;
+use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 const DEFAULT_USAGES: u32 = TextureUsages::RENDER_ATTACHMENT.bits()
     | TextureUsages::TEXTURE_BINDING.bits()
     | TextureUsages::COPY_SRC.bits();
 
-#[newtype_storage(CameraMainTextureUsages, bridge)]
+#[pywrap(CameraMainTextureUsages, bridge)]
 #[pyclass(name = "CameraMainTextureUsages", extends = PyComponent, frozen)]
 #[derive(Clone)]
 pub struct PyCameraMainTextureUsages(pub(crate) CameraMainTextureUsages);

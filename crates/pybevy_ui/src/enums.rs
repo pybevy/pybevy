@@ -3,10 +3,10 @@ use bevy::ui::{
     InterpolationColorSpace, JustifyContent, JustifyItems, JustifySelf, OverflowAxis,
     OverflowClipBox, PositionType,
 };
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(FlexDirection)]
+#[pyenum(FlexDirection)]
 #[pyclass(name = "FlexDirection", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyFlexDirection {
@@ -16,7 +16,7 @@ pub enum PyFlexDirection {
     ColumnReverse = 3,
 }
 
-#[bevy_enum(Display)]
+#[pyenum(Display)]
 #[pyclass(name = "Display", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyDisplay {
@@ -27,7 +27,7 @@ pub enum PyDisplay {
     None = 3,
 }
 
-#[bevy_enum(AlignItems)]
+#[pyenum(AlignItems)]
 #[pyclass(name = "AlignItems", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PyAlignItems {
@@ -42,7 +42,7 @@ pub enum PyAlignItems {
     Stretch = 7,
 }
 
-#[bevy_enum(AlignSelf)]
+#[pyenum(AlignSelf)]
 #[pyclass(name = "AlignSelf", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyAlignSelf {
@@ -56,7 +56,7 @@ pub enum PyAlignSelf {
     Stretch = 7,
 }
 
-#[bevy_enum(AlignContent)]
+#[pyenum(AlignContent)]
 #[pyclass(name = "AlignContent", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PyAlignContent {
@@ -73,7 +73,7 @@ pub enum PyAlignContent {
     SpaceAround = 9,
 }
 
-#[bevy_enum(JustifyContent)]
+#[pyenum(JustifyContent)]
 #[pyclass(name = "JustifyContent", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyJustifyContent {
@@ -89,7 +89,7 @@ pub enum PyJustifyContent {
     Stretch = 9,
 }
 
-#[bevy_enum(JustifyItems)]
+#[pyenum(JustifyItems)]
 #[pyclass(name = "JustifyItems", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyJustifyItems {
@@ -101,7 +101,7 @@ pub enum PyJustifyItems {
     Stretch = 5,
 }
 
-#[bevy_enum(JustifySelf)]
+#[pyenum(JustifySelf)]
 #[pyclass(name = "JustifySelf", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyJustifySelf {
@@ -113,7 +113,7 @@ pub enum PyJustifySelf {
     Stretch = 5,
 }
 
-#[bevy_enum(PositionType)]
+#[pyenum(PositionType)]
 #[pyclass(name = "PositionType", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyPositionType {
@@ -121,7 +121,7 @@ pub enum PyPositionType {
     Absolute = 1,
 }
 
-#[bevy_enum(FlexWrap)]
+#[pyenum(FlexWrap)]
 #[pyclass(name = "FlexWrap", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyFlexWrap {
@@ -130,7 +130,7 @@ pub enum PyFlexWrap {
     WrapReverse = 2,
 }
 
-#[bevy_enum(OverflowAxis)]
+#[pyenum(OverflowAxis)]
 #[pyclass(name = "OverflowAxis", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyOverflowAxis {
@@ -147,7 +147,7 @@ impl PyOverflowAxis {
     }
 }
 
-#[bevy_enum(BoxSizing)]
+#[pyenum(BoxSizing)]
 #[pyclass(name = "BoxSizing", eq, frozen)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PyBoxSizing {
@@ -155,7 +155,7 @@ pub enum PyBoxSizing {
     ContentBox,
 }
 
-#[bevy_enum(GridAutoFlow)]
+#[pyenum(GridAutoFlow)]
 #[pyclass(name = "GridAutoFlow", eq)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PyGridAutoFlow {
@@ -166,7 +166,7 @@ pub enum PyGridAutoFlow {
     ColumnDense,
 }
 
-#[bevy_enum(InterpolationColorSpace)]
+#[pyenum(InterpolationColorSpace)]
 #[pyclass(name = "InterpolationColorSpace", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyInterpolationColorSpace {
@@ -181,7 +181,7 @@ pub enum PyInterpolationColorSpace {
     HsvaLong,
 }
 
-#[bevy_enum(OverflowClipBox)]
+#[pyenum(OverflowClipBox)]
 #[pyclass(name = "OverflowClipBox", eq, frozen)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PyOverflowClipBox {

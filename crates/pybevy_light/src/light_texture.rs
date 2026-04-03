@@ -1,10 +1,10 @@
 use bevy::light::{DirectionalLightTexture, PointLightTexture, SpotLightTexture};
 use pybevy_camera::cubemap_layout::PyCubemapLayout;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(DirectionalLightTexture, bridge, view_only_fields = [tiled: bool])]
+#[pycomponent(DirectionalLightTexture, bridge, view_only_fields = [tiled: bool])]
 #[pyclass(name = "DirectionalLightTexture", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyDirectionalLightTexture {
@@ -45,7 +45,7 @@ impl PyDirectionalLightTexture {
     }
 }
 
-#[component_storage(SpotLightTexture, bridge)]
+#[pycomponent(SpotLightTexture, bridge)]
 #[pyclass(name = "SpotLightTexture", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PySpotLightTexture {
@@ -74,7 +74,7 @@ impl PySpotLightTexture {
     }
 }
 
-#[component_storage(PointLightTexture, bridge)]
+#[pycomponent(PointLightTexture, bridge)]
 #[pyclass(name = "PointLightTexture", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyPointLightTexture {

@@ -1,10 +1,10 @@
 use bevy::window::WindowResolution;
 use pybevy_core::{FieldStorage, FromBorrowedStorage};
-use pybevy_macros::native_field;
+use pybevy_macros::pyfield;
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::{PyRefMut, prelude::*};
 
-#[native_field]
+#[pyfield]
 #[pyclass(name = "WindowResolution")]
 #[derive(Debug)]
 pub struct PyWindowResolution {

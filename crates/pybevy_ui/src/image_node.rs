@@ -1,13 +1,13 @@
 use bevy::{image::Image, prelude::Handle, ui::widget::ImageNode};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::node_image_mode::PyNodeImageMode;
 
-#[component_storage(ImageNode, bridge)]
+#[pycomponent(ImageNode, bridge)]
 #[pyclass(name = "ImageNode", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyImageNode {

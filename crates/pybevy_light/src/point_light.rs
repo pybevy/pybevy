@@ -1,10 +1,10 @@
 use bevy::light::PointLight;
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(PointLight, bridge, view_fields = [
+#[pycomponent(PointLight, bridge, view_fields = [
     intensity,
     range,
     radius,

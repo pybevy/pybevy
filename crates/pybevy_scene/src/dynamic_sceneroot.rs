@@ -1,9 +1,9 @@
 use bevy::scene::DynamicSceneRoot;
 use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::handle_storage;
+use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[handle_storage(DynamicSceneRoot)]
+#[pyhandle(DynamicSceneRoot)]
 #[pyclass(name = "DynamicSceneRoot", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyDynamicSceneRoot(pub(crate) PyHandle);

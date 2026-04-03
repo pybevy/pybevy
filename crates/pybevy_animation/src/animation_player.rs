@@ -1,6 +1,6 @@
 use bevy::animation::{AnimationPlayer, RepeatAnimation, graph::AnimationNodeIndex};
 use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::{PyRefMut, Python, exceptions::PyValueError, prelude::*};
 
 use super::{
@@ -205,7 +205,7 @@ impl PyActiveAnimation {
     }
 }
 
-#[component_storage(AnimationPlayer, bridge)]
+#[pycomponent(AnimationPlayer, bridge)]
 #[pyclass(name = "AnimationPlayer", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAnimationPlayer {

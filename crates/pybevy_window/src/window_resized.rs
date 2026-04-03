@@ -1,9 +1,9 @@
 use bevy::window::WindowResized;
 use pybevy_core::{PyEntity, PyMessage};
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
-#[message_storage(WindowResized)]
+#[pymessage(WindowResized)]
 #[pyclass(name = "WindowResized", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowResized {

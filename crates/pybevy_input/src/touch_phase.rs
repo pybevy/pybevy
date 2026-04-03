@@ -1,8 +1,8 @@
 use bevy::input::touch::TouchPhase;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(TouchPhase)]
+#[pyenum(TouchPhase)]
 #[pyclass(name = "TouchPhase", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyTouchPhase {

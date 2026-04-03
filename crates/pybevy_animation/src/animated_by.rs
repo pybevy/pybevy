@@ -1,9 +1,9 @@
 use bevy::animation::AnimatedBy;
 use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(AnimatedBy, bridge)]
+#[pycomponent(AnimatedBy, bridge)]
 #[pyclass(name = "AnimatedBy", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyAnimatedBy {

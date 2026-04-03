@@ -1,11 +1,11 @@
 use bevy::text::{Justify, LineBreak, TextLayout};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::{justify::PyJustify, line_break::PyLineBreak};
 
-#[component_storage(TextLayout, bridge)]
+#[pycomponent(TextLayout, bridge)]
 #[pyclass(name = "TextLayout", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyTextLayout {

@@ -1,9 +1,9 @@
 use bevy::mesh::MeshTag;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(MeshTag, bridge, view_fields = [0 as value])]
+#[pycomponent(MeshTag, bridge, view_fields = [0 as value])]
 #[pyclass(name = "MeshTag", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyMeshTag {

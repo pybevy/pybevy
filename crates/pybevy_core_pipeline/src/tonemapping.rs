@@ -1,9 +1,9 @@
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use pybevy_core::PyComponent;
-use pybevy_macros::newtype_storage;
+use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
-#[newtype_storage(Tonemapping, bridge)]
+#[pywrap(Tonemapping, bridge)]
 #[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
 #[derive(Clone, Debug)]
 pub struct PyTonemapping(pub(crate) Tonemapping);

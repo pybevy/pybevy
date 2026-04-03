@@ -1,11 +1,11 @@
 use bevy::sprite::Text2dShadow;
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(Text2dShadow, bridge)]
+#[pycomponent(Text2dShadow, bridge)]
 #[pyclass(name = "Text2dShadow", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyText2dShadow {

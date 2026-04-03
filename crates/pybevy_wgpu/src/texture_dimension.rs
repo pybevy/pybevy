@@ -1,8 +1,8 @@
 use bevy::render::render_resource::TextureDimension;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(TextureDimension)]
+#[pyenum(TextureDimension)]
 #[pyclass(name = "TextureDimension")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTextureDimension {

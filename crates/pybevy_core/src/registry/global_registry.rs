@@ -346,7 +346,7 @@ fn get_type_id_registry() -> &'static RwLock<TypeIdRegistry> {
 /// Register a component's TypeId in the global registry
 ///
 /// This should be called by both:
-/// - Feature crate #[component_storage(..., bridge)] attributes
+/// - Feature crate #[pycomponent(..., bridge)] attributes
 /// - Main crate native_component! macros
 ///
 /// # Example

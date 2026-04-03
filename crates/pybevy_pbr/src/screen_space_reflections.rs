@@ -1,9 +1,9 @@
 use bevy::pbr::ScreenSpaceReflections;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(ScreenSpaceReflections, bridge, view_fields = [
+#[pycomponent(ScreenSpaceReflections, bridge, view_fields = [
     perceptual_roughness_threshold,
     thickness,
     linear_steps,

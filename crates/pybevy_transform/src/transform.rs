@@ -1,13 +1,13 @@
 use bevy::{math::Dir3, transform::components::Transform};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine3a::PyAffine3A, bounding::PyIsometry3d, dir3::PyDir3, mat4::PyMat4, quat::PyQuat,
     vec3::PyVec3,
 };
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[component_storage(Transform, bridge, view_fields = [translation, rotation, scale])]
+#[pycomponent(Transform, bridge, view_fields = [translation, rotation, scale])]
 #[pyclass(name = "Transform", extends = pybevy_core::PyComponent, eq)]
 #[derive(Debug, Clone)]
 pub struct PyTransform {

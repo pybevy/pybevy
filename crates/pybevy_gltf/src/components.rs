@@ -2,10 +2,10 @@ use bevy::gltf::{
     GltfExtras, GltfMaterialExtras, GltfMaterialName, GltfMeshExtras, GltfMeshName, GltfSceneExtras,
 };
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(GltfExtras, bridge)]
+#[pycomponent(GltfExtras, bridge)]
 #[pyclass(name = "GltfExtras", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyGltfExtras {
@@ -39,7 +39,7 @@ impl PyGltfExtras {
     }
 }
 
-#[component_storage(GltfMeshName, bridge)]
+#[pycomponent(GltfMeshName, bridge)]
 #[pyclass(name = "GltfMeshName", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyGltfMeshName {
@@ -71,7 +71,7 @@ impl PyGltfMeshName {
     }
 }
 
-#[component_storage(GltfMaterialName, bridge)]
+#[pycomponent(GltfMaterialName, bridge)]
 #[pyclass(name = "GltfMaterialName", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyGltfMaterialName {
@@ -103,7 +103,7 @@ impl PyGltfMaterialName {
     }
 }
 
-#[component_storage(GltfSceneExtras, bridge)]
+#[pycomponent(GltfSceneExtras, bridge)]
 #[pyclass(name = "GltfSceneExtras", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyGltfSceneExtras {
@@ -137,7 +137,7 @@ impl PyGltfSceneExtras {
     }
 }
 
-#[component_storage(GltfMeshExtras, bridge)]
+#[pycomponent(GltfMeshExtras, bridge)]
 #[pyclass(name = "GltfMeshExtras", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyGltfMeshExtras {
@@ -171,7 +171,7 @@ impl PyGltfMeshExtras {
     }
 }
 
-#[component_storage(GltfMaterialExtras, bridge)]
+#[pycomponent(GltfMaterialExtras, bridge)]
 #[pyclass(name = "GltfMaterialExtras", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyGltfMaterialExtras {

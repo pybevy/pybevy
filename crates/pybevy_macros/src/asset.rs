@@ -108,7 +108,7 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Usage in feature crates (e.g., pybevy_audio)
 ///
 /// ```rust
-/// #[asset_storage(AudioSource)]
+/// #[pyasset(AudioSource)]
 /// #[pyclass(name = "AudioSource", extends = PyAsset)]
 /// pub struct PyAudioSource {
 ///     pub(crate) storage: AssetStorage<AudioSource>,
@@ -118,7 +118,7 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// For assets where Clone is not implemented, use `no_clone`:
 ///
 /// ```rust
-/// #[asset_storage(SomeAsset, no_clone)]
+/// #[pyasset(SomeAsset, no_clone)]
 /// #[pyclass(name = "SomeAsset", extends = PyAsset)]
 /// pub struct PySomeAsset {
 ///     pub(crate) storage: AssetStorage<SomeAsset>,
@@ -128,10 +128,10 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// With bridge generation:
 ///
 /// ```rust
-/// #[asset_storage(Mesh, bridge)]
-/// #[asset_storage(TextureAtlasLayout, bridge, not_loadable)]
+/// #[pyasset(Mesh, bridge)]
+/// #[pyasset(TextureAtlasLayout, bridge, not_loadable)]
 /// ```
-pub fn asset_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct AssetStorageArgs {
         bevy_type: Type,
         no_clone: bool,
@@ -271,7 +271,7 @@ pub fn asset_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Shared asset bridge code generation used by `#[asset_storage(..., bridge)]`.
+/// Shared asset bridge code generation used by `#[pyasset(..., bridge)]`.
 pub(crate) fn generate_asset_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
@@ -557,7 +557,7 @@ pub(crate) fn generate_asset_bridge_tokens(
     }
 }
 
-/// Shared handle bridge code generation used by `#[handle_storage]`.
+/// Shared handle bridge code generation used by `#[pyhandle]`.
 pub(crate) fn generate_handle_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
@@ -718,18 +718,18 @@ pub(crate) fn generate_handle_bridge_tokens(
 /// # Usage
 ///
 /// ```rust
-/// #[handle_storage(Mesh3d)]
+/// #[pyhandle(Mesh3d)]
 /// #[pyclass(name = "Mesh3d", extends = PyComponent, frozen)]
 /// pub struct PyMesh3d(pub PyHandle);
 /// ```
 ///
 /// For generic Bevy types:
 /// ```rust
-/// #[handle_storage(MeshMaterial3d<StandardMaterial>, "MeshMaterial3d")]
+/// #[pyhandle(MeshMaterial3d<StandardMaterial>, "MeshMaterial3d")]
 /// #[pyclass(name = "MeshMaterial3d", extends = PyComponent, frozen)]
 /// pub struct PyMeshMaterial3d(pub PyHandle);
 /// ```
-pub fn handle_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pyhandle(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct HandleStorageArgs {
         bevy_type: Type,
         bridge_name: Option<String>,

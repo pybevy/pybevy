@@ -1,12 +1,12 @@
 use accesskit::Node;
 use bevy::a11y::AccessibilityNode;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use super::role::PyRole;
 
-#[component_storage(AccessibilityNode, bridge)]
+#[pycomponent(AccessibilityNode, bridge)]
 #[pyclass(name = "AccessibilityNode", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAccessibilityNode {

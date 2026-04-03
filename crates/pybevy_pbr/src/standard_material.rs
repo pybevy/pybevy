@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
 use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pybevy_math::affine2::PyAffine2;
 use pybevy_render::{
     alpha_mode::PyAlphaMode, face::PyFace, opaque_render_method::PyOpaqueRenderMethod,
@@ -35,7 +35,7 @@ fn convert_optional_handle(
     }
 }
 
-#[asset_storage(StandardMaterial, bridge)]
+#[pyasset(StandardMaterial, bridge)]
 #[pyclass(name = "StandardMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyStandardMaterial {

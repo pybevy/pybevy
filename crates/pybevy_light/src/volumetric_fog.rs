@@ -1,10 +1,10 @@
 use bevy::light::VolumetricFog;
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(VolumetricFog, bridge, view_fields = [ambient_intensity, step_count, jitter], batch_only_fields = [ambient_color])]
+#[pycomponent(VolumetricFog, bridge, view_fields = [ambient_intensity, step_count, jitter], batch_only_fields = [ambient_color])]
 #[pyclass(name = "VolumetricFog", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyVolumetricFog {

@@ -1,11 +1,11 @@
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::ssao_quality_level::PyScreenSpaceAmbientOcclusionQualityLevel;
 
-#[component_storage(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness])]
+#[pycomponent(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness])]
 #[pyclass(name = "ScreenSpaceAmbientOcclusion", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyScreenSpaceAmbientOcclusion {

@@ -1,6 +1,6 @@
 use bevy::light::Cascades;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::{
     prelude::*,
     types::{PyDict, PyList},
@@ -8,7 +8,7 @@ use pyo3::{
 
 use crate::cascade::PyCascade;
 
-#[component_storage(Cascades, no_clone, bridge)]
+#[pycomponent(Cascades, no_clone, bridge)]
 #[pyclass(name = "Cascades", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyCascades {

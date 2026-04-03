@@ -1,9 +1,9 @@
 use bevy::ui::UiScale;
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[resource_storage(UiScale, no_clone, bridge)]
+#[pyresource(UiScale, no_clone, bridge)]
 #[pyclass(name = "UiScale", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyUiScale {

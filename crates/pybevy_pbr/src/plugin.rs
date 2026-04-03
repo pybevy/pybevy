@@ -1,9 +1,9 @@
 use bevy::{app::App, pbr::PbrPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
-#[plugin_storage(PbrPlugin)]
+#[pyplugin(PbrPlugin)]
 #[pyclass(name = "PbrPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyPbrPlugin;

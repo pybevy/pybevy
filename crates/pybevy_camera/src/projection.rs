@@ -2,7 +2,7 @@ use std::f32::consts::FRAC_PI_4;
 
 use bevy::camera::{CameraProjection, OrthographicProjection, PerspectiveProjection, Projection};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A};
 use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::{exceptions::PyTypeError, prelude::*};
@@ -293,7 +293,7 @@ impl PyOrthographicProjection {
     }
 }
 
-#[component_storage(Projection, bridge)]
+#[pycomponent(Projection, bridge)]
 #[pyclass(name = "Projection", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyProjection {

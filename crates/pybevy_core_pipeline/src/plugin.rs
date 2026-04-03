@@ -1,9 +1,9 @@
 use bevy::{app::App, core_pipeline::CorePipelinePlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
-#[plugin_storage(CorePipelinePlugin)]
+#[pyplugin(CorePipelinePlugin)]
 #[pyclass(name = "CorePipelinePlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCorePipelinePlugin;

@@ -1,6 +1,6 @@
 use bevy::render::view::{ColorGradingGlobal, ColorGradingSection};
 use pybevy_core::{FromBorrowedStorage, field_storage::FieldStorage, value_storage::ValueStorage};
-use pybevy_macros::native_field;
+use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 #[pyclass(name = "ColorGradingSection")]
@@ -137,7 +137,7 @@ impl TryFrom<&PyColorGradingSection> for ColorGradingSection {
     }
 }
 
-#[native_field]
+#[pyfield]
 #[pyclass(name = "ColorGradingGlobal")]
 #[derive(Debug)]
 pub struct PyColorGradingGlobal {

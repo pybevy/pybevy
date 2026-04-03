@@ -1,11 +1,11 @@
 use bevy::app::App;
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::winit_settings::PyWinitSettings;
 
-#[plugin_storage(bevy::winit::WinitPlugin)]
+#[pyplugin(bevy::winit::WinitPlugin)]
 #[pyclass(name = "WinitPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Default)]
 pub struct PyWinitPlugin {

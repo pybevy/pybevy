@@ -6,10 +6,10 @@ use pybevy_color::color::PyColor;
 use pybevy_core::{
     ComponentStorage, PyComponent, PyResource, ResourceStorage, ResourceStorageInner,
 };
-use pybevy_macros::{component_storage, resource_storage};
+use pybevy_macros::{pycomponent, pyresource};
 use pyo3::prelude::*;
 
-#[resource_storage(GlobalAmbientLight, bridge)]
+#[pyresource(GlobalAmbientLight, bridge)]
 #[pyclass(name = "GlobalAmbientLight", extends = PyResource, eq)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {
@@ -97,7 +97,7 @@ impl PyGlobalAmbientLight {
     }
 }
 
-#[component_storage(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color])]
+#[pycomponent(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color])]
 #[pyclass(name = "AmbientLight", extends = PyComponent, eq)]
 #[derive(Debug, Clone)]
 pub struct PyAmbientLight {

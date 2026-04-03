@@ -1,10 +1,10 @@
 use bevy::math::{CompassOctant, CompassQuadrant};
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::vec2::PyVec2;
 
-#[bevy_enum(CompassOctant)]
+#[pyenum(CompassOctant)]
 #[pyclass(name = "CompassOctant", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCompassOctant {
@@ -45,7 +45,7 @@ impl PyCompassOctant {
     }
 }
 
-#[bevy_enum(CompassQuadrant)]
+#[pyenum(CompassQuadrant)]
 #[pyclass(name = "CompassQuadrant", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCompassQuadrant {

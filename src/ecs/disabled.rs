@@ -1,9 +1,9 @@
 use bevy::ecs::entity_disabling::Disabled;
 use pybevy_core::PyComponent;
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(Disabled, unit, bridge)]
+#[pycomponent(Disabled, unit, bridge)]
 #[pyclass(name = "Disabled", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyDisabled;

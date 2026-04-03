@@ -1,11 +1,11 @@
 pub use pybevy_macros::{
-    PyComponent, native_asset, native_component, native_field, native_resource, pybevy_app,
+    PyComponent, native_asset, native_component, native_resource, pybevy_app, pyfield,
 };
 use pyo3::{prelude::*, types::IntoPyDict};
 
 pub mod prelude {
     pub use pybevy_macros::{
-        PyComponent, native_asset, native_component, native_field, native_resource, pybevy_app,
+        PyComponent, native_asset, native_component, native_resource, pybevy_app, pyfield,
     };
 
     pub use crate::app::app::PyApp;

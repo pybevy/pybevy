@@ -1,8 +1,8 @@
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 use wgpu_types::Face;
 
-#[bevy_enum(Face)]
+#[pyenum(Face)]
 #[pyclass(name = "Face", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyFace {

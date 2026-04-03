@@ -1,9 +1,9 @@
 use bevy::prelude::InheritedVisibility;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(InheritedVisibility, bridge)]
+#[pycomponent(InheritedVisibility, bridge)]
 #[pyclass(name = "InheritedVisibility", extends = PyComponent, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyInheritedVisibility {

@@ -1,10 +1,10 @@
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pybevy_math::mat4::PyMat4;
 use pyo3::prelude::*;
 
-#[asset_storage(SkinnedMeshInverseBindposes, no_clone, bridge, not_loadable)]
+#[pyasset(SkinnedMeshInverseBindposes, no_clone, bridge, not_loadable)]
 #[pyclass(name = "SkinnedMeshInverseBindposes", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PySkinnedMeshInverseBindposes {

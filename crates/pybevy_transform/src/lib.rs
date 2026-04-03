@@ -3,7 +3,7 @@ pub mod transform;
 
 use bevy::{app::App, transform::TransformPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 pub mod prelude {
@@ -12,7 +12,7 @@ pub mod prelude {
     };
 }
 
-#[plugin_storage(TransformPlugin)]
+#[pyplugin(TransformPlugin)]
 #[pyclass(name = "TransformPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransformPlugin;

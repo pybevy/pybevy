@@ -1,10 +1,10 @@
 use bevy::ui::RelativeCursorPosition;
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(RelativeCursorPosition, bridge)]
+#[pycomponent(RelativeCursorPosition, bridge)]
 #[pyclass(name = "RelativeCursorPosition", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyRelativeCursorPosition {

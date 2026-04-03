@@ -1,6 +1,6 @@
 use bevy::camera::{Camera, MsaaWriteback};
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{
     mat4::PyMat4, ray::PyRay3d, rect::PyRect, urect::PyURect, uvec2::PyUVec2, vec2::PyVec2,
     vec3::PyVec3,
@@ -12,7 +12,7 @@ use super::{
     clear_color_config::PyClearColorConfig, sub_camera_view::PySubCameraView, viewport::PyViewport,
 };
 
-#[component_storage(Camera, bridge, view_fields = [is_active])]
+#[pycomponent(Camera, bridge, view_fields = [is_active])]
 #[pyclass(name = "Camera", extends = PyComponent, eq)]
 #[derive(Clone)]
 pub struct PyCamera {

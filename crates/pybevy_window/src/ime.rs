@@ -1,6 +1,6 @@
 use bevy::window::Ime;
 use pybevy_core::{PyEntity, PyMessage};
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +22,7 @@ pub enum ImeData {
     },
 }
 
-#[message_storage(Ime)]
+#[pymessage(Ime)]
 #[pyclass(name = "Ime", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyIme {

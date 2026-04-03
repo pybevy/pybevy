@@ -12,7 +12,7 @@ use numpy::{
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_wgpu::{
     extent3d::PyExtent3d, texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
@@ -153,7 +153,7 @@ impl ImagePixelContextMut {
     }
 }
 
-#[asset_storage(Image, bridge)]
+#[pyasset(Image, bridge)]
 #[pyclass(name = "Image", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyImage {

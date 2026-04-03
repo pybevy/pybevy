@@ -1,11 +1,11 @@
 use bevy::app::App;
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::power_preference::PyPowerPreference;
 
-#[plugin_storage(bevy::render::RenderPlugin)]
+#[pyplugin(bevy::render::RenderPlugin)]
 #[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Default)]
 pub struct PyRenderPlugin {

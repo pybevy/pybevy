@@ -1,7 +1,7 @@
 use bevy::shader::{Shader, ShaderDefVal};
 use naga::ShaderStage;
 use pybevy_core::AssetStorage;
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
     validate_shader::PyValidateShader,
 };
 
-#[asset_storage(Shader, bridge)]
+#[pyasset(Shader, bridge)]
 #[pyclass(name = "Shader", extends = pybevy_core::PyAsset)]
 #[derive(Debug)]
 pub struct PyShader {

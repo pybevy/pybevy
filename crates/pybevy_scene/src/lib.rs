@@ -13,7 +13,7 @@ use bevy::{
     scene::SceneInstanceReady,
 };
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 pub mod prelude {
@@ -38,7 +38,7 @@ pub fn scene_instance_ready_bridge(trigger: On<SceneInstanceReady>, mut commands
     });
 }
 
-#[plugin_storage(bevy::scene::ScenePlugin)]
+#[pyplugin(bevy::scene::ScenePlugin)]
 #[pyclass(name = "ScenePlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyScenePlugin;

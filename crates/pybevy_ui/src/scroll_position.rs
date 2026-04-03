@@ -1,10 +1,10 @@
 use bevy::ui::ScrollPosition;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(ScrollPosition, bridge, view_fields = [0.x as x, 0.y as y])]
+#[pycomponent(ScrollPosition, bridge, view_fields = [0.x as x, 0.y as y])]
 #[pyclass(name = "ScrollPosition", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyScrollPosition {

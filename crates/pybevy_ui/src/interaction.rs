@@ -1,9 +1,9 @@
 use bevy::ui::Interaction;
 use pybevy_core::PyComponent;
-use pybevy_macros::newtype_storage;
+use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
-#[newtype_storage(Interaction, bridge)]
+#[pywrap(Interaction, bridge)]
 #[pyclass(name = "Interaction", extends = PyComponent, frozen, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyInteraction(pub(crate) Interaction);

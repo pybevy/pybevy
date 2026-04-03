@@ -6,10 +6,10 @@ use bevy::{
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass},
 };
 use pybevy_core::PyComponent;
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(NoCpuCulling, unit, bridge)]
+#[pycomponent(NoCpuCulling, unit, bridge)]
 #[pyclass(name = "NoCpuCulling", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoCpuCulling;
@@ -46,7 +46,7 @@ impl PyNoCpuCulling {
     }
 }
 
-#[component_storage(NoFrustumCulling, unit, bridge)]
+#[pycomponent(NoFrustumCulling, unit, bridge)]
 #[pyclass(name = "NoFrustumCulling", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoFrustumCulling;
@@ -83,7 +83,7 @@ impl PyNoFrustumCulling {
     }
 }
 
-#[component_storage(Camera2d, unit, bridge)]
+#[pycomponent(Camera2d, unit, bridge)]
 #[pyclass(name = "Camera2d", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCamera2d;
@@ -124,7 +124,7 @@ impl PyCamera2d {
     }
 }
 
-#[component_storage(DepthPrepass, unit, bridge)]
+#[pycomponent(DepthPrepass, unit, bridge)]
 #[pyclass(name = "DepthPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDepthPrepass;
@@ -161,7 +161,7 @@ impl PyDepthPrepass {
     }
 }
 
-#[component_storage(NormalPrepass, unit, bridge)]
+#[pycomponent(NormalPrepass, unit, bridge)]
 #[pyclass(name = "NormalPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNormalPrepass;
@@ -198,7 +198,7 @@ impl PyNormalPrepass {
     }
 }
 
-#[component_storage(MotionVectorPrepass, unit, bridge)]
+#[pycomponent(MotionVectorPrepass, unit, bridge)]
 #[pyclass(name = "MotionVectorPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMotionVectorPrepass;
@@ -235,7 +235,7 @@ impl PyMotionVectorPrepass {
     }
 }
 
-#[component_storage(DeferredPrepass, unit, bridge)]
+#[pycomponent(DeferredPrepass, unit, bridge)]
 #[pyclass(name = "DeferredPrepass", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDeferredPrepass;

@@ -1,9 +1,9 @@
 use bevy::{app::App, mesh::MeshPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
-#[plugin_storage(MeshPlugin)]
+#[pyplugin(MeshPlugin)]
 #[pyclass(name = "MeshPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyMeshPlugin;

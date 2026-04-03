@@ -13,11 +13,11 @@ use syn::{
 /// # Usage
 ///
 /// ```rust
-/// #[message_storage(CursorEntered)]
+/// #[pymessage(CursorEntered)]
 /// #[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
 /// pub struct PyCursorEntered { ... }
 /// ```
-pub fn message_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pymessage(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct MessageStorageArgs {
         bevy_type: Type,
         writable: bool,

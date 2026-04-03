@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use bevy::audio::{AudioSink, AudioSinkPlayback};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::volume::PyVolume;
 
-#[component_storage(AudioSink, no_clone, bridge)]
+#[pycomponent(AudioSink, no_clone, bridge)]
 #[pyclass(name = "AudioSink", extends = PyComponent)]
 pub struct PyAudioSink {
     pub(crate) storage: ComponentStorage<AudioSink>,

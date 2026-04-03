@@ -1,11 +1,11 @@
 use bevy::window::CursorOptions;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::cursor::PyCursorGrabMode;
 
-#[component_storage(CursorOptions, bridge)]
+#[pycomponent(CursorOptions, bridge)]
 #[pyclass(name = "CursorOptions", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCursorOptions {

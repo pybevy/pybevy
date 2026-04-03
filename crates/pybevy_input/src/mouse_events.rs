@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
@@ -12,7 +12,7 @@ use crate::{
     button_state::PyButtonState, mouse_button::PyMouseButton, mouse_scroll_unit::PyMouseScrollUnit,
 };
 
-#[message_storage(MouseButtonInput)]
+#[pymessage(MouseButtonInput)]
 #[pyclass(name = "MouseButtonInput", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseButtonInput {
@@ -86,7 +86,7 @@ impl PyMouseButtonInput {
     }
 }
 
-#[message_storage(MouseMotion)]
+#[pymessage(MouseMotion)]
 #[pyclass(name = "MouseMotion", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseMotion {
@@ -130,7 +130,7 @@ impl PyMouseMotion {
     }
 }
 
-#[message_storage(MouseWheel)]
+#[pymessage(MouseWheel)]
 #[pyclass(name = "MouseWheel", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseWheel {

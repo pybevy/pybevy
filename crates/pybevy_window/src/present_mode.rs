@@ -1,8 +1,8 @@
 use bevy::window::PresentMode;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(PresentMode)]
+#[pyenum(PresentMode)]
 #[pyclass(name = "PresentMode", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyPresentMode {

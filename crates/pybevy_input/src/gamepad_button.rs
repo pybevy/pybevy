@@ -1,8 +1,8 @@
 use bevy::input::gamepad::GamepadButton;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(GamepadButton, empty_tuple)]
+#[pyenum(GamepadButton, empty_tuple)]
 #[pyclass(name = "GamepadButton", eq, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGamepadButton {

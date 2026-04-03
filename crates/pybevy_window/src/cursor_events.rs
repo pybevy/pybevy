@@ -1,10 +1,10 @@
 use bevy::window::{CursorEntered, CursorLeft};
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
-#[message_storage(CursorEntered)]
+#[pymessage(CursorEntered)]
 #[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorEntered {
@@ -38,7 +38,7 @@ impl PyCursorEntered {
     }
 }
 
-#[message_storage(CursorLeft)]
+#[pymessage(CursorLeft)]
 #[pyclass(name = "CursorLeft", extends = PyMessage, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorLeft {

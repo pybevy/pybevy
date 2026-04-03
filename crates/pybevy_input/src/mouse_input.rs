@@ -1,11 +1,11 @@
 use bevy::input::{ButtonInput, mouse::MouseButton};
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::mouse_button::PyMouseButton;
 
-#[resource_storage(ButtonInput<MouseButton>, no_clone, bridge, "MouseInput", no_mut, default_insert)]
+#[pyresource(ButtonInput<MouseButton>, no_clone, bridge, "MouseInput", no_mut, default_insert)]
 #[pyclass(name = "MouseInput", extends = PyResource, frozen)]
 pub struct PyMouseInput {
     pub(crate) storage: ResourceStorage<ButtonInput<MouseButton>>,

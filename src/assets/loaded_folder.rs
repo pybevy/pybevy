@@ -1,9 +1,9 @@
 use bevy::{asset::LoadedFolder, log::warn};
 use pybevy_core::{AssetStorage, PyAsset, handle::PyHandle};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
-#[asset_storage(LoadedFolder, no_clone, bridge)]
+#[pyasset(LoadedFolder, no_clone, bridge)]
 #[pyclass(name = "LoadedFolder", extends = pybevy_core::PyAsset)]
 pub struct PyLoadedFolder {
     storage: AssetStorage<LoadedFolder>,
