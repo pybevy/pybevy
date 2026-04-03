@@ -14,7 +14,7 @@ Adding third-party Bevy plugins written in Rust (e.g., custom physics engines, p
 
 ### Expression-Only Bytecode VM
 
-The bytecode VM (View API, Tier 2) supports arithmetic expressions, transcendental functions, and branchless conditional masking (`.where()`), but **not** general control flow (loops, data-dependent branching). Complex game logic requires either per-entity Python iteration (Query) or Numba JIT kernels.
+The bytecode VM (View API) supports arithmetic expressions, transcendental functions, and branchless conditional masking (`.where()`), but **not** general control flow (loops, data-dependent branching). Complex game logic requires either per-entity Python iteration (Query) or Numba JIT kernels.
 
 ### Wrapper Storage Memory Overhead
 

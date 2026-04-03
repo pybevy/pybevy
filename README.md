@@ -69,8 +69,6 @@ ALSA warnings about missing audio devices are harmless and can be ignored.
 
 PyBevy supports Python's free-threaded mode (PEP 703). Non-conflicting Python systems run truly in parallel on separate cores via Bevy's multi-threaded scheduler — no GIL serialization. Validated on CPython 3.14t. Performance depends on workload and scene complexity; see [Benchmarks](docs/benchmarks.md) for methodology and numbers.
 
-> **Note:** The Numba JIT path (View API Tier 3) is not yet available on free-threaded Python — `llvmlite` does not ship 3.14t wheels yet. Tracked in [#8](https://github.com/pybevy/pybevy/issues/8).
-
 ## Quick Example
 
 Parent-child entity hierarchy with a rotating parent cube. The child cube inherits the parent's transform automatically.

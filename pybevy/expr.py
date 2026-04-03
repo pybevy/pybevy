@@ -111,7 +111,6 @@ class Expr:
         """In-place modulo: self %= other"""
         return self.__mod__(other)
 
-    # Tier 2: Mathematical functions
 
     def sin(self) -> "Expr":
         """Sine function: sin(self)"""
@@ -173,7 +172,6 @@ class Expr:
         """Clamp value between min and max: clamp(self, min_val, max_val)"""
         return Expr(op="clamp", args=[self, min_val, max_val])
 
-    # Tier 4: Additional math operations
     def exp(self) -> "Expr":
         """Exponential function: e^self"""
         return Expr(op="exp", args=[self])
@@ -274,7 +272,6 @@ class Expr:
         """
         return Expr(op="where", args=[self, true_value, false_value])
 
-    # Tier 2/3: Comparison operators (return bool expressions in Tier 3)
     def __eq__(self, other: Union["Expr", float, int]) -> "Expr":  # type: ignore[override]
         """Equal to: self == other"""
         return Expr(op="eq", args=[self, other])
@@ -299,7 +296,6 @@ class Expr:
         """Greater than or equal: self >= other"""
         return Expr(op="ge", args=[self, other])
 
-    # Tier 3: Logical operators (for combining boolean expressions)
     def __and__(self, other: Union["Expr", float, int]) -> "Expr":
         """Logical AND: self & other
 
@@ -859,7 +855,7 @@ def where(
     """
     Conditional selection: choose between two values based on a boolean condition.
 
-    This is the Tier 3 conditional logic operation that enables per-entity branching.
+    This is the conditional logic operation that enables per-entity branching.
     For each entity, if the condition evaluates to true, the true_value is selected,
     otherwise the false_value is selected.
 

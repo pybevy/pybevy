@@ -99,7 +99,6 @@ class Mesh(Asset):
     ) -> Mesh: ...
     def insert_indices(self, indices: Indices | np.ndarray | list[int]) -> None: ...
 
-    # Zero-copy attribute access (Tier 2 - Context Managers)
     def positions(self) -> MeshAttributeContext:
         """Get zero-copy read-only access to vertex positions via context manager.
 
@@ -144,7 +143,6 @@ class Mesh(Asset):
     def attribute_mut(self, id: MeshVertexAttribute) -> MeshAttributeContextMut:
         """Get zero-copy mutable access to any vertex attribute via context manager."""
 
-    # Tier 1 - Safe copy methods
     def positions_copy(self) -> np.ndarray:
         """Get an owned copy of vertex positions as numpy array with shape (N, 3)."""
 
