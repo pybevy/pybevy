@@ -1,7 +1,8 @@
 use pybevy_audio::PyAudioPlugin;
 use pybevy_image::plugin::PyImagePlugin;
 use pybevy_render::plugin::PyRenderPlugin;
-use pybevy_window::{plugin::PyWinitPlugin, window_plugin::PyWindowPlugin};
+use pybevy_window::window_plugin::PyWindowPlugin;
+use pybevy_winit::plugin::PyWinitPlugin;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 
 use crate::app::task_pool::PyTaskPoolPlugin;

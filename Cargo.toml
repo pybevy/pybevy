@@ -55,6 +55,7 @@ pybevy_a11y = { path = "./crates/pybevy_a11y", version = "=0.2.1" }
 pybevy_input = { path = "./crates/pybevy_input", version = "=0.2.1" }
 pybevy_time = { path = "./crates/pybevy_time", version = "=0.2.1" }
 pybevy_window = { path = "./crates/pybevy_window", version = "=0.2.1" }
+pybevy_winit = { path = "./crates/pybevy_winit", version = "=0.2.1" }
 pybevy_light = { path = "./crates/pybevy_light", version = "=0.2.1" }
 pybevy_core_pipeline = { path = "./crates/pybevy_core_pipeline", version = "=0.2.1" }
 pybevy_camera = { path = "./crates/pybevy_camera", version = "=0.2.1" }
@@ -88,6 +89,7 @@ pybevy_a11y = { workspace = true }
 pybevy_input = { workspace = true }
 pybevy_time = { workspace = true }
 pybevy_window = { workspace = true }
+pybevy_winit = { workspace = true }
 pybevy_light = { workspace = true }
 pybevy_core_pipeline = { workspace = true }
 pybevy_camera = { workspace = true }
