@@ -11,14 +11,12 @@ pub mod file_drag_and_drop;
 pub mod ime;
 pub mod monitor;
 pub mod monitor_selection;
-pub mod plugin;
 pub mod present_mode;
 pub mod primary_monitor;
 pub mod primary_window;
 pub mod request_redraw;
 pub mod resize_constraints;
 pub mod screen_edge;
-pub mod update_mode;
 pub mod video_mode;
 pub mod video_mode_selection;
 pub mod window;
@@ -32,7 +30,6 @@ pub mod window_position;
 pub mod window_resized;
 pub mod window_resolution;
 pub mod window_theme;
-pub mod winit_settings;
 
 use pyo3::prelude::*;
 
@@ -57,7 +54,6 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "window")?;
 
-    m.add_class::<plugin::PyWinitPlugin>()?;
     m.add_class::<window_plugin::PyWindowPlugin>()?;
     m.add_class::<app_lifecycle::PyAppLifecycle>()?;
     m.add_class::<composite_alpha_mode::PyCompositeAlphaMode>()?;
@@ -95,14 +91,5 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<window_focused::PyWindowFocused>()?;
     m.add_class::<window_resized::PyWindowResized>()?;
 
-    parent.add_submodule(&m)
-}
-
-// TODO: move to pybevy_winit (#57)
-pub fn add_winit_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "winit")?;
-    m.add_class::<plugin::PyWinitPlugin>()?;
-    m.add_class::<update_mode::PyUpdateMode>()?;
-    m.add_class::<winit_settings::PyWinitSettings>()?;
     parent.add_submodule(&m)
 }

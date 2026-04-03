@@ -4278,6 +4278,7 @@ dependencies = [
  "pybevy_ui",
  "pybevy_wgpu",
  "pybevy_window",
+ "pybevy_winit",
  "pyo3",
  "rayon",
  "serde",
@@ -4693,6 +4694,16 @@ dependencies = [
  "pybevy_input",
  "pybevy_macros",
  "pybevy_math",
+ "pyo3",
+]
+
+[[package]]
+name = "pybevy_winit"
+version = "0.2.1"
+dependencies = [
+ "bevy",
+ "pybevy_core",
+ "pybevy_macros",
  "pyo3",
 ]
 

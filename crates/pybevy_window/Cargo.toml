@@ -3,7 +3,6 @@ name = "pybevy_window"
 version = "0.2.1"
 edition = "2024"
 description = "Window components for PyBevy"
-rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
@@ -18,4 +17,4 @@ numpy = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = ["bevy_window", "bevy_winit"]
+features = ["bevy_window"]

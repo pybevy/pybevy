@@ -11,7 +11,6 @@ from pybevy.input import (  # noqa: F401
     TouchPhase,
 )
 from pybevy.math import CompassOctant, IVec2, UVec2, Vec2
-from pybevy.winit import WinitSettings
 
 class ExitCondition(Enum):
     """Determines when the application should exit based on window state.
@@ -61,11 +60,6 @@ class WindowPlugin(Plugin):
 class AudioPlugin(Plugin):
     """Audio plugin - can be disabled for silent applications."""
     def __init__(self) -> None: ...
-    def build(self, app: App) -> None: ...
-
-class WinitPlugin(Plugin):
-    """Winit windowing plugin - disable for headless mode."""
-    def __init__(self, settings: WinitSettings | None = None) -> None: ...
     def build(self, app: App) -> None: ...
 
 class WindowResolution:

@@ -273,7 +273,7 @@ impl PyPluginGroupBuilder {
         bevy_app: &mut bevy::app::App,
     ) -> PyResult<()> {
         if let Some(plugin_obj) = self.configured_plugins.get(&PluginConfigType::Winit) {
-            let winit_plugin: PyRef<pybevy_window::plugin::PyWinitPlugin> =
+            let winit_plugin: PyRef<pybevy_winit::plugin::PyWinitPlugin> =
                 plugin_obj.extract(py)?;
             if let Some(ref settings) = winit_plugin.settings {
                 bevy_app.insert_resource(bevy::winit::WinitSettings::from(settings.clone()));

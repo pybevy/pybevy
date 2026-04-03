@@ -73,7 +73,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_ui::add_module(m)?;
     pybevy_transform::add_module(m)?;
     pybevy_window::add_module(m)?;
-    pybevy_window::add_winit_module(m)?;
+    pybevy_winit::add_module(m)?;
 
     #[cfg(feature = "mcp")]
     {
