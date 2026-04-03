@@ -453,9 +453,6 @@ class Image(Asset):
     def copy_on_resize(self, value: bool) -> None:
         """Set whether to copy data when resizing."""
 
-    # Data access
-
-    # Zero-copy data access (Tier 2 - Context Managers)
     def data(self) -> ImageDataContext:
         """Get zero-copy read-only access to image pixel data via context manager.
 
@@ -618,7 +615,6 @@ class Image(Asset):
             - For bulk modifications, use `data_mut()` instead
         """
 
-    # Tier 1 - Safe copy methods
     def data_copy(self) -> np.ndarray:
         """Get an owned copy of the image pixel data as a NumPy array.
 
