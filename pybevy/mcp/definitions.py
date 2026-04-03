@@ -452,21 +452,6 @@ def builtin_tools() -> list[JsonDict]:
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
-            "name": "register_tool",
-            "description": "Register a custom tool from Python (namespaced as custom.*)",
-            "feature_gate": None,
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Tool name (will be prefixed with 'custom.')"},
-                    "description": {"type": "string", "description": "Tool description"},
-                    "input_schema": {"type": "object", "description": "JSON Schema for tool input"},
-                    "python_function": {"type": "string", "description": "Python function name or code"},
-                },
-                "required": ["name", "description", "python_function"],
-            },
-        },
-        {
             "name": "schedule_actions",
             "description": (
                 "Submit batched, timed tool calls that execute inside the engine frame loop "

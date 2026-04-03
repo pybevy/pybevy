@@ -96,11 +96,4 @@ pub trait ControlRuntime: 'static {
         asset_type: String,
         fields: Value,
     ) -> Result<Value, ControlError>;
-
-    fn call_custom_tool(
-        &mut self,
-        world: &mut World,
-        name: String,
-        arguments: Value,
-    ) -> Result<Value, ControlError>;
 }

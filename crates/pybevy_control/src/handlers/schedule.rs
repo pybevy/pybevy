@@ -662,16 +662,6 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
             max_width: get_u32("max_width"),
         })),
 
-        // Custom tools
-        _ if tool.starts_with("custom.") => {
-            let name = tool.to_string();
-            let arguments = args.clone();
-            Ok(ControlOperation::Other(OtherOp::CallCustomTool {
-                name,
-                arguments,
-            }))
-        }
-
         _ => Err(format!("unknown tool: '{}'", tool)),
     }
 }

@@ -161,13 +161,4 @@ impl ControlRuntime for Pyo3ControlRuntime {
     ) -> Result<Value, ControlError> {
         handlers::pyo3::asset::mutate_asset(world, entity, component, asset_type, fields)
     }
-
-    fn call_custom_tool(
-        &mut self,
-        world: &mut World,
-        name: String,
-        arguments: Value,
-    ) -> Result<Value, ControlError> {
-        handlers::pyo3::custom::call_custom_tool(world, name, arguments)
-    }
 }

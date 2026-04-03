@@ -173,9 +173,6 @@ fn dispatch_other(
             asset_type,
             fields,
         } => runtime.mutate_asset(world, entity, component, asset_type, fields),
-        OtherOp::CallCustomTool { name, arguments } => {
-            runtime.call_custom_tool(world, name, arguments)
-        }
         OtherOp::GetConfig { key } => {
             let configs = world.get_resource::<pybevy_core::PluginConfigs>();
             match configs.and_then(|c| c.get(&key).cloned()) {
