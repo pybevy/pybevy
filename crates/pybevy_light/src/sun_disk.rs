@@ -1,9 +1,9 @@
 use bevy::light::SunDisk;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(SunDisk, bridge, view_fields = [angular_size, intensity])]
+#[pycomponent(SunDisk, bridge, view_fields = [angular_size, intensity])]
 #[pyclass(name = "SunDisk", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PySunDisk {

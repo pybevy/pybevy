@@ -8,7 +8,7 @@ PyBevy is split into modular feature crates.
 |-------|-------------|
 | [`pybevy_core`](pybevy_core/) | Base classes (PyComponent, PyResource, PyAsset, PyPlugin), storage types, registry |
 | [`pybevy_ecs`](pybevy_ecs/) | ECS module: queries, views, commands, systems, components, resources |
-| [`pybevy_macros`](pybevy_macros/) | Proc macros (component_storage, bridge macros, bevy_enum, etc.) |
+| [`pybevy_macros`](pybevy_macros/) | Proc macros (pycomponent, bridge macros, pyenum, etc.) |
 | [`pybevy_python`](pybevy_python/) | cdylib entry point (`_pybevy` module) |
 | [`pybevy_bytecodevm`](pybevy_bytecodevm/) | Bytecode VM for lazy View expressions |
 | [`pybevy_storage`](pybevy_storage/) | PyO3-free storage primitives (ComponentStorage, ValueStorage, etc.) |

@@ -1,11 +1,11 @@
 use bevy::camera::primitives::CubemapFrusta;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::frustum::PyFrustum;
 
-#[component_storage(CubemapFrusta, bridge)]
+#[pycomponent(CubemapFrusta, bridge)]
 #[pyclass(name = "CubemapFrusta", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCubemapFrusta {

@@ -2,10 +2,10 @@ use std::time::Duration;
 
 use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[resource_storage(Time, bridge)]
+#[pyresource(Time, bridge)]
 #[pyclass(name = "Time", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTime {
@@ -79,7 +79,7 @@ impl PyTime {
     }
 }
 
-#[resource_storage(Time<Fixed>, bridge, "TimeFixed")]
+#[pyresource(Time<Fixed>, bridge, "TimeFixed")]
 #[pyclass(name = "TimeFixed", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTimeFixed {
@@ -210,7 +210,7 @@ impl PyTimeFixed {
     }
 }
 
-#[resource_storage(Time<Virtual>, bridge, "TimeVirtual")]
+#[pyresource(Time<Virtual>, bridge, "TimeVirtual")]
 #[pyclass(name = "TimeVirtual", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTimeVirtual {
@@ -337,7 +337,7 @@ impl PyTimeVirtual {
     }
 }
 
-#[resource_storage(Time<Real>)]
+#[pyresource(Time<Real>)]
 #[pyclass(name = "TimeReal", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyTimeReal {

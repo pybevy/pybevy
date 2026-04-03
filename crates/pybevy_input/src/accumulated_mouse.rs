@@ -3,13 +3,13 @@ use bevy::{
     math::Vec2,
 };
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 use crate::mouse_scroll_unit::PyMouseScrollUnit;
 
-#[resource_storage(AccumulatedMouseMotion, no_clone, bridge)]
+#[pyresource(AccumulatedMouseMotion, no_clone, bridge)]
 #[pyclass(name = "AccumulatedMouseMotion", extends = PyResource)]
 pub struct PyAccumulatedMouseMotion {
     pub(crate) storage: ResourceStorage<AccumulatedMouseMotion>,

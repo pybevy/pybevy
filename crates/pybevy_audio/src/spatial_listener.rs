@@ -1,10 +1,10 @@
 use bevy::audio::SpatialListener;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
-#[component_storage(SpatialListener, bridge)]
+#[pycomponent(SpatialListener, bridge)]
 #[pyclass(name = "SpatialListener", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PySpatialListener {

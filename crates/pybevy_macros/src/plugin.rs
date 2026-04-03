@@ -10,7 +10,7 @@ use syn::{ItemStruct, Type, parse_macro_input};
 /// # Usage
 ///
 /// ```rust
-/// #[plugin_storage(bevy::window::WindowPlugin)]
+/// #[pyplugin(bevy::window::WindowPlugin)]
 /// #[pyclass(name = "WindowPlugin", extends = PyPlugin)]
 /// pub struct PyWindowPlugin { ... }
 ///
@@ -22,7 +22,7 @@ use syn::{ItemStruct, Type, parse_macro_input};
 ///     }
 /// }
 /// ```
-pub fn plugin_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
     let bevy_type: Type = parse_macro_input!(attr as Type);
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;

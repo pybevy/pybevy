@@ -1,8 +1,8 @@
 use bevy::pbr::AtmosphereMode;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(AtmosphereMode)]
+#[pyenum(AtmosphereMode)]
 #[pyclass(name = "AtmosphereMode", frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyAtmosphereMode {

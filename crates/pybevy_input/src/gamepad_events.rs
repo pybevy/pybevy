@@ -4,14 +4,14 @@ use bevy::input::gamepad::{
     GamepadConnection, GamepadConnectionEvent,
 };
 pub use pybevy_core::PyMessage;
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 use crate::{
     button_state::PyButtonState, gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton,
 };
 
-#[message_storage(GamepadButtonChanged)]
+#[pymessage(GamepadButtonChanged)]
 #[pyclass(name = "GamepadButtonChanged", extends = PyMessage)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadButtonChanged {
@@ -65,7 +65,7 @@ impl PyGamepadButtonChanged {
     }
 }
 
-#[message_storage(GamepadAxisChanged)]
+#[pymessage(GamepadAxisChanged)]
 #[pyclass(name = "GamepadAxisChanged", extends = PyMessage)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadAxisChanged {
@@ -119,7 +119,7 @@ impl PyGamepadAxisChanged {
     }
 }
 
-#[message_storage(GamepadConnectionEvent)]
+#[pymessage(GamepadConnectionEvent)]
 #[pyclass(name = "GamepadConnection", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadConnection {
@@ -237,7 +237,7 @@ impl PyGamepadConnection {
     }
 }
 
-#[message_storage(GamepadButtonStateChangedEvent)]
+#[pymessage(GamepadButtonStateChangedEvent)]
 #[pyclass(name = "GamepadButtonStateChanged", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonStateChanged {

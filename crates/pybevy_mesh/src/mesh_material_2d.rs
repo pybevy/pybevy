@@ -1,9 +1,9 @@
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
 use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::handle_storage;
+use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[handle_storage(MeshMaterial2d::<ColorMaterial>, "MeshMaterial2d")]
+#[pyhandle(MeshMaterial2d::<ColorMaterial>, "MeshMaterial2d")]
 #[pyclass(name = "MeshMaterial2d", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial2d(pub(crate) PyHandle);

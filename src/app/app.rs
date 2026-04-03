@@ -463,14 +463,14 @@ fn despawn_on_state_change_impl(
     let mut changes: Vec<(Py<PyAny>, Py<PyAny>)> = Vec::new(); // (old_state, new_state)
 
     {
-        let resource_storage = match world.get_resource::<pybevy_core::PyResourceStorage>() {
+        let pyresource = match world.get_resource::<pybevy_core::PyResourceStorage>() {
             Some(rs) => rs,
             None => return Ok(()),
         };
 
         let mut prev = previous_states.lock().unwrap();
 
-        for (&comp_id, resource_py) in resource_storage.resources.iter() {
+        for (&comp_id, resource_py) in pyresource.resources.iter() {
             let resource = resource_py.bind(py);
             if let Ok(state) = resource.cast::<crate::ecs::state::PyState>() {
                 let current_value = state.borrow().current_value(py);

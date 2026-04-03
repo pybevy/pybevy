@@ -1,12 +1,12 @@
 use bevy::{color::Color, math::Affine2, sprite_render::ColorMaterial};
 use pybevy_color::color::PyColor;
 use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 use crate::alpha_mode_2d::PyAlphaMode2d;
 
-#[asset_storage(ColorMaterial, bridge)]
+#[pyasset(ColorMaterial, bridge)]
 #[pyclass(name = "ColorMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyColorMaterial {

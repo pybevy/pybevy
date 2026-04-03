@@ -1,10 +1,10 @@
 use bevy::input::touch::{ForceTouch, Touch, Touches};
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[resource_storage(Touches, no_clone, bridge, no_mut, default_insert)]
+#[pyresource(Touches, no_clone, bridge, no_mut, default_insert)]
 #[pyclass(name = "Touches", extends = PyResource)]
 pub struct PyTouches {
     pub(crate) storage: ResourceStorage<Touches>,

@@ -6,13 +6,13 @@ use bevy::{
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_image::texture_atlas::PyTextureAtlas;
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{rect::PyRect, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::sprite_image_mode::PySpriteImageMode;
 
-#[component_storage(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
+#[pycomponent(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
 #[pyclass(name = "Sprite", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PySprite {

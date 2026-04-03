@@ -1,8 +1,8 @@
 use bevy::text::FontSmoothing;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(FontSmoothing)]
+#[pyenum(FontSmoothing)]
 #[pyclass(name = "FontSmoothing", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyFontSmoothing {

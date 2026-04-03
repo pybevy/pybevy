@@ -1,10 +1,10 @@
 use bevy::image::TextureAtlasLayout;
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pybevy_math::{urect::PyURect, uvec2::PyUVec2};
 use pyo3::prelude::*;
 
-#[asset_storage(TextureAtlasLayout, bridge, not_loadable)]
+#[pyasset(TextureAtlasLayout, bridge, not_loadable)]
 #[pyclass(name = "TextureAtlasLayout", extends = PyAsset, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyTextureAtlasLayout {

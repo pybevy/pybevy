@@ -5,14 +5,14 @@ use bevy::{
     transform::components::Transform,
 };
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pybevy_transform::transform::PyTransform;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::volume::PyVolume;
 
-#[component_storage(SpatialAudioSink, no_clone, bridge)]
+#[pycomponent(SpatialAudioSink, no_clone, bridge)]
 #[pyclass(name = "SpatialAudioSink", extends = PyComponent)]
 pub struct PySpatialAudioSink {
     pub(crate) storage: ComponentStorage<SpatialAudioSink>,

@@ -207,7 +207,7 @@ impl Parse for ComponentArgs {
 /// # Usage in feature crates (e.g., pybevy_transform)
 ///
 /// ```rust
-/// #[component_storage(Transform)]
+/// #[pycomponent(Transform)]
 /// #[pyclass(name = "Transform", extends = PyComponent, eq)]
 /// #[derive(Debug, Clone)]
 /// pub struct PyTransform {
@@ -221,7 +221,7 @@ impl Parse for ComponentArgs {
 /// use the `no_clone` option:
 ///
 /// ```rust
-/// #[component_storage(AudioSink, no_clone)]
+/// #[pycomponent(AudioSink, no_clone)]
 /// #[pyclass(name = "AudioSink", extends = PyComponent)]
 /// pub struct PyAudioSink {
 ///     pub(crate) storage: ComponentStorage<AudioSink>,
@@ -231,7 +231,7 @@ impl Parse for ComponentArgs {
 /// This skips the `From`, `TryFrom`, and `from_owned` implementations that require `Clone`.
 ///
 /// The main crate then adds `NativeComponent` impl separately.
-pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ComponentStorageArgs {
         bevy_type: Type,
         no_clone: bool,
@@ -448,7 +448,7 @@ pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-/// Shared bridge code generation used by `#[component_storage(..., bridge)]`.
+/// Shared bridge code generation used by `#[pycomponent(..., bridge)]`.
 fn generate_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
@@ -1023,7 +1023,7 @@ fn generate_bridge_tokens(
         quote! {}
     };
 
-    // Add inventory registration (only when called from component_storage with bridge flag)
+    // Add inventory registration (only when called from pycomponent with bridge flag)
     let inventory_submit = if emit_inventory {
         let batch_submit = if all_batch_fields.is_some() {
             let snake_name = to_snake_case(&bridge_name_str);

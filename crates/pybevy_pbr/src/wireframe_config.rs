@@ -1,10 +1,10 @@
 use bevy::{color::Color, pbr::wireframe::WireframeConfig};
 use pybevy_color::color::PyColor;
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[resource_storage(WireframeConfig, bridge)]
+#[pyresource(WireframeConfig, bridge)]
 #[pyclass(name = "WireframeConfig", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyWireframeConfig {

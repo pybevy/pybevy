@@ -1,8 +1,8 @@
 use bevy::asset::AssetServerMode;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(AssetServerMode)]
+#[pyenum(AssetServerMode)]
 #[pyclass(name = "AssetServerMode", eq, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyAssetServerMode {

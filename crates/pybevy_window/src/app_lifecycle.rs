@@ -1,8 +1,8 @@
 use bevy::window::AppLifecycle;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(AppLifecycle)]
+#[pyenum(AppLifecycle)]
 #[pyclass(name = "AppLifecycle", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyAppLifecycle {

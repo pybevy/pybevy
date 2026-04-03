@@ -1,12 +1,12 @@
 use bevy::{app::App, prelude::*, render::renderer::RenderDevice};
 use pybevy_core::{PluginBuild, PyHandle};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
 use crate::app::{app::PyApp, plugin::PyPlugin};
 
-#[plugin_storage(ImageCopyPlugin)]
+#[pyplugin(ImageCopyPlugin)]
 #[pyclass(name = "ImageCopyPlugin", extends = PyPlugin)]
 pub struct PyImageCopyPlugin;
 

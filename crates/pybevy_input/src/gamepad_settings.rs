@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::input::gamepad::{AxisSettings, ButtonAxisSettings, ButtonSettings, GamepadSettings};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
@@ -192,7 +192,7 @@ impl PyButtonAxisSettings {
     }
 }
 
-#[component_storage(GamepadSettings, no_clone, bridge)]
+#[pycomponent(GamepadSettings, no_clone, bridge)]
 #[pyclass(name = "GamepadSettings", extends = PyComponent, frozen)]
 pub struct PyGamepadSettings {
     pub(crate) storage: ComponentStorage<GamepadSettings>,

@@ -1,10 +1,10 @@
 use bevy::{color::Color, ui::BackgroundColor};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(BackgroundColor, bridge)]
+#[pycomponent(BackgroundColor, bridge)]
 #[pyclass(name = "BackgroundColor", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyBackgroundColor {

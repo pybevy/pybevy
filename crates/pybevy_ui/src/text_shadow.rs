@@ -1,11 +1,11 @@
 use bevy::{color::Color, math::Vec2, prelude::TextShadow};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(TextShadow, bridge)]
+#[pycomponent(TextShadow, bridge)]
 #[pyclass(name = "TextShadow", extends = PyComponent, eq)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyTextShadow {

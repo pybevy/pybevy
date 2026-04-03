@@ -1,9 +1,9 @@
 use bevy::mesh::Mesh3d;
 use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::handle_storage;
+use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[handle_storage(Mesh3d)]
+#[pyhandle(Mesh3d)]
 #[pyclass(name = "Mesh3d", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMesh3d(pub(crate) PyHandle);

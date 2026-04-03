@@ -1,8 +1,8 @@
 use bevy::input::gamepad::GamepadAxis;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(GamepadAxis, empty_tuple)]
+#[pyenum(GamepadAxis, empty_tuple)]
 #[pyclass(name = "GamepadAxis", eq, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGamepadAxis {

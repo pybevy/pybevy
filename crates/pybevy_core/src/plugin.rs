@@ -100,7 +100,7 @@ impl Default for PyPlugin {
 /// ```
 /// Trait for Python plugin wrappers to implement their build logic.
 ///
-/// Implement this on your `#[pyclass]` struct, then use `#[plugin_storage(BevyPlugin)]`
+/// Implement this on your `#[pyclass]` struct, then use `#[pyplugin(BevyPlugin)]`
 /// to generate the bridge and inventory registration automatically.
 ///
 /// ```rust

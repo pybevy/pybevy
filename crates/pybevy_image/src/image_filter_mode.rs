@@ -1,8 +1,8 @@
 use bevy::image::ImageFilterMode;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(ImageFilterMode)]
+#[pyenum(ImageFilterMode)]
 #[pyclass(name = "ImageFilterMode", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyImageFilterMode {

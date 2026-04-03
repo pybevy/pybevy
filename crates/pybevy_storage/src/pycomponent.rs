@@ -1,7 +1,7 @@
 //! Generic component storage supporting both owned and borrowed instances
 //!
 //! This module provides a unified storage mechanism for all PyBevy component types.
-//! See the main crate's `component_storage.rs` for detailed safety documentation.
+//! See the main crate's `pycomponent.rs` for detailed safety documentation.
 
 use bevy::ecs::component::Component;
 
@@ -36,7 +36,7 @@ pub enum ComponentStorageInner<T: Component> {
     },
 }
 
-// SAFETY: See main crate's component_storage.rs for detailed safety analysis
+// SAFETY: See main crate's pycomponent.rs for detailed safety analysis
 unsafe impl<T: Component + Send> Send for ComponentStorage<T> {}
 unsafe impl<T: Component + Sync> Sync for ComponentStorage<T> {}
 

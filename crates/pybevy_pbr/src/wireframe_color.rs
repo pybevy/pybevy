@@ -1,10 +1,10 @@
 use bevy::{color::Color, pbr::wireframe::WireframeColor};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(WireframeColor, bridge, batch_only_fields = [color])]
+#[pycomponent(WireframeColor, bridge, batch_only_fields = [color])]
 #[pyclass(name = "WireframeColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyWireframeColor {

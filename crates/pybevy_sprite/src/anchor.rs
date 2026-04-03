@@ -1,10 +1,10 @@
 use bevy::sprite::Anchor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(Anchor, bridge)]
+#[pycomponent(Anchor, bridge)]
 #[pyclass(name = "Anchor", extends = PyComponent, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAnchor {

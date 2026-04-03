@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::animation::transition::AnimationTransitions;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use super::{
@@ -10,7 +10,7 @@ use super::{
     animation_player::{PyActiveAnimation, PyAnimationPlayer},
 };
 
-#[component_storage(AnimationTransitions, bridge)]
+#[pycomponent(AnimationTransitions, bridge)]
 #[pyclass(name = "AnimationTransitions", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAnimationTransitions {

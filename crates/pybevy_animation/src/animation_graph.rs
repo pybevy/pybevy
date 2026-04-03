@@ -1,6 +1,6 @@
 use bevy::animation::graph::{AnimationGraph, AnimationGraphNode, AnimationNodeType};
 use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::{
     PyRefMut,
     prelude::*,
@@ -9,7 +9,7 @@ use pyo3::{
 
 use crate::animation_node_index::PyAnimationNodeIndex;
 
-#[asset_storage(AnimationGraph, bridge)]
+#[pyasset(AnimationGraph, bridge)]
 #[pyclass(name = "AnimationGraph", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyAnimationGraph {

@@ -1,9 +1,9 @@
 use bevy::camera::visibility::VisibleMeshEntities;
 use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(VisibleMeshEntities, bridge)]
+#[pycomponent(VisibleMeshEntities, bridge)]
 #[pyclass(name = "VisibleMeshEntities", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyVisibleMeshEntities {

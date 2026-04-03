@@ -1,8 +1,8 @@
 use bevy::text::Justify;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(Justify)]
+#[pyenum(Justify)]
 #[pyclass(name = "Justify", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyJustify {

@@ -1,12 +1,12 @@
 use bevy::window::Monitor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{ivec2::PyIVec2, uvec2::PyUVec2};
 use pyo3::prelude::*;
 
 use crate::video_mode::PyVideoMode;
 
-#[component_storage(Monitor, no_clone, bridge)]
+#[pycomponent(Monitor, no_clone, bridge)]
 #[pyclass(name = "Monitor", extends = PyComponent)]
 pub struct PyMonitor {
     pub(crate) storage: ComponentStorage<Monitor>,

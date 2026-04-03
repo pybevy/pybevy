@@ -1,9 +1,9 @@
 use bevy::text::Font;
 use pybevy_core::{AssetStorage, PyAsset};
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyBytes};
 
-#[asset_storage(Font, bridge)]
+#[pyasset(Font, bridge)]
 #[pyclass(name = "Font", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyFont {

@@ -1,10 +1,10 @@
 use bevy::light::DirectionalLight;
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(DirectionalLight, bridge, view_fields = [
+#[pycomponent(DirectionalLight, bridge, view_fields = [
     illuminance,
     shadow_depth_bias,
     shadow_normal_bias,

@@ -1,11 +1,11 @@
 use bevy::camera::Exposure;
-use pybevy_core::{PyComponent, component_storage::ComponentStorage};
-use pybevy_macros::component_storage;
+use pybevy_core::{PyComponent, pycomponent::ComponentStorage};
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::physical_camera_parameters::PyPhysicalCameraParameters;
 
-#[component_storage(Exposure, bridge, view_fields = [ev100])]
+#[pycomponent(Exposure, bridge, view_fields = [ev100])]
 #[pyclass(name = "Exposure", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyExposure {

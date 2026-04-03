@@ -1,8 +1,8 @@
 use bevy::input::ButtonState;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(ButtonState, empty_tuple)]
+#[pyenum(ButtonState, empty_tuple)]
 #[pyclass(name = "ButtonState", eq, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyButtonState {

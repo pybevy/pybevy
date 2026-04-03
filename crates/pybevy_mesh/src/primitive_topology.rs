@@ -1,8 +1,8 @@
 use bevy::mesh::PrimitiveTopology;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(PrimitiveTopology)]
+#[pyenum(PrimitiveTopology)]
 #[pyclass(name = "PrimitiveTopology", eq, eq_int, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyPrimitiveTopology {

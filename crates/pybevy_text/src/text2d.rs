@@ -1,9 +1,9 @@
 use bevy::sprite::Text2d;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(Text2d, bridge)]
+#[pycomponent(Text2d, bridge)]
 #[pyclass(name = "Text2d", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyText2d {

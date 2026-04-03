@@ -1,8 +1,8 @@
 use bevy::camera::primitives::CubemapLayout;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(CubemapLayout)]
+#[pyenum(CubemapLayout)]
 #[pyclass(name = "CubemapLayout", frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum PyCubemapLayout {

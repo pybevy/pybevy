@@ -1,9 +1,9 @@
 use bevy::window::RequestRedraw;
 use pybevy_core::PyMessage;
-use pybevy_macros::message_storage;
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
-#[message_storage(RequestRedraw)]
+#[pymessage(RequestRedraw)]
 #[pyclass(name = "RequestRedraw", extends = PyMessage, eq)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyRequestRedraw;

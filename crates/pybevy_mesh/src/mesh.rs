@@ -8,7 +8,7 @@ use numpy::{
 };
 use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_image::image::PyRenderAssetUsages;
-use pybevy_macros::asset_storage;
+use pybevy_macros::pyasset;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -19,7 +19,7 @@ use crate::{
     primitive_topology::PyPrimitiveTopology,
     vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues},
 };
-#[asset_storage(Mesh, bridge)]
+#[pyasset(Mesh, bridge)]
 #[pyclass(name = "Mesh", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyMesh {

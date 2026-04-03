@@ -1,11 +1,11 @@
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::color_grading::{PyColorGradingGlobal, PyColorGradingSection};
 
-#[component_storage(ColorGrading, bridge)]
+#[pycomponent(ColorGrading, bridge)]
 #[pyclass(name = "ColorGrading", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyColorGrading {

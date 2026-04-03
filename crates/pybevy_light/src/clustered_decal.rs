@@ -1,6 +1,6 @@
 use bevy::light::ClusteredDecal;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 fn convert_optional_handle(
     handle: Option<&Bound<'_, PyAny>>,
@@ -14,7 +14,7 @@ fn convert_optional_handle(
     }
 }
 
-#[component_storage(ClusteredDecal, bridge, view_fields = [tag])]
+#[pycomponent(ClusteredDecal, bridge, view_fields = [tag])]
 #[pyclass(name = "ClusteredDecal", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyClusteredDecal {

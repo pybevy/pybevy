@@ -3,13 +3,13 @@ use bevy::{
     math::{Vec3, Vec3A},
 };
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{affine3a::PyAffine3A, mat3a::PyMat3A, vec3::PyVec3, vec3a::PyVec3A};
 use pyo3::prelude::*;
 
 use crate::half_space::PyHalfSpace;
 
-#[component_storage(Aabb, bridge)]
+#[pycomponent(Aabb, bridge)]
 #[pyclass(name = "Aabb", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyAabb {

@@ -20,7 +20,7 @@ use syn::{
 /// # Usage in feature crates
 ///
 /// ```rust
-/// #[newtype_storage(Tonemapping)]
+/// #[pywrap(Tonemapping)]
 /// #[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
 /// #[derive(Clone, Debug)]
 /// pub struct PyTonemapping(pub(crate) Tonemapping);
@@ -29,10 +29,10 @@ use syn::{
 /// With bridge generation:
 ///
 /// ```rust
-/// #[newtype_storage(Tonemapping, bridge)]
-/// #[newtype_storage(Msaa, bridge, copy)]
+/// #[pywrap(Tonemapping, bridge)]
+/// #[pywrap(Msaa, bridge, copy)]
 /// ```
-pub fn newtype_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct NewtypeStorageArgs {
         bevy_type: Type,
         bridge: bool,
@@ -135,7 +135,7 @@ pub fn newtype_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Shared newtype bridge code generation used by `#[newtype_storage(..., bridge)]`.
+/// Shared newtype bridge code generation used by `#[pywrap(..., bridge)]`.
 pub(crate) fn generate_newtype_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,

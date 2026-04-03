@@ -1,9 +1,9 @@
 use bevy::window::PrimaryWindow;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(PrimaryWindow, bridge)]
+#[pycomponent(PrimaryWindow, bridge)]
 #[pyclass(name = "PrimaryWindow", extends = PyComponent, frozen, eq)]
 #[derive(Clone, PartialEq)]
 pub struct PyPrimaryWindow {

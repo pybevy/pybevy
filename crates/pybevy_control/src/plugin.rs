@@ -5,7 +5,7 @@ use bevy::{
     prelude::{IntoScheduleConfigs, Resource},
 };
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     server::{AppState, ServerConfig},
 };
 
-#[plugin_storage(ControlBevyPlugin)]
+#[pyplugin(ControlBevyPlugin)]
 #[pyclass(name = "McpPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyControlPlugin {

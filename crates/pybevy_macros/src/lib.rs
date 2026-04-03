@@ -26,18 +26,18 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn asset_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    asset::asset_storage(attr, item)
+pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
+    asset::pyasset(attr, item)
 }
 
 #[proc_macro_attribute]
-pub fn handle_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    asset::handle_storage(attr, item)
+pub fn pyhandle(attr: TokenStream, item: TokenStream) -> TokenStream {
+    asset::pyhandle(attr, item)
 }
 
 #[proc_macro_attribute]
-pub fn component_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    component::component_storage(attr, item)
+pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
+    component::pycomponent(attr, item)
 }
 
 #[proc_macro_attribute]
@@ -51,28 +51,28 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn bevy_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
-    enums::bevy_enum(attr, item)
+pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
+    enums::pyenum(attr, item)
 }
 
 #[proc_macro_attribute]
-pub fn native_field(attr: TokenStream, item: TokenStream) -> TokenStream {
-    field::native_field(attr, item)
+pub fn pyfield(attr: TokenStream, item: TokenStream) -> TokenStream {
+    field::pyfield(attr, item)
 }
 
 #[proc_macro_attribute]
-pub fn message_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    message::message_storage(attr, item)
+pub fn pymessage(attr: TokenStream, item: TokenStream) -> TokenStream {
+    message::pymessage(attr, item)
 }
 
 #[proc_macro_attribute]
-pub fn newtype_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    newtype::newtype_storage(attr, item)
+pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
+    newtype::pywrap(attr, item)
 }
 
 #[proc_macro_attribute]
-pub fn plugin_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    plugin::plugin_storage(attr, item)
+pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
+    plugin::pyplugin(attr, item)
 }
 
 #[proc_macro_attribute]
@@ -81,6 +81,6 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn resource_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
-    resource::resource_storage(attr, item)
+pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
+    resource::pyresource(attr, item)
 }

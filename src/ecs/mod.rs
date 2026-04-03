@@ -5,7 +5,6 @@ pub mod change_tracking;
 pub mod commands;
 pub(crate) mod component;
 pub mod component_layout;
-pub mod component_storage;
 pub mod component_type;
 pub mod component_wrapper;
 pub mod conditional_system;
@@ -18,6 +17,7 @@ pub mod entity_commands;
 pub mod filter;
 pub mod helpers;
 pub mod lazy_wrapper_proxy;
+pub mod pycomponent;
 
 // Re-exports from pybevy_core
 #[allow(unused_imports)]

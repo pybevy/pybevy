@@ -3,14 +3,14 @@ pub mod role;
 
 use bevy::{a11y::AccessibilityPlugin, app::App};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{PyAccessibilityPlugin, accessibility_node::PyAccessibilityNode, role::PyRole};
 }
 
-#[plugin_storage(AccessibilityPlugin)]
+#[pyplugin(AccessibilityPlugin)]
 #[pyclass(name = "AccessibilityPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAccessibilityPlugin;

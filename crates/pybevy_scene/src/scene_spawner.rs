@@ -3,12 +3,12 @@ use bevy::{
     scene::{DynamicScene, Scene, SceneSpawner},
 };
 use pybevy_core::{PyEntity, PyHandle, PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::instance_id::PyInstanceId;
 
-#[resource_storage(SceneSpawner, no_clone, bridge, no_insert, no_remove)]
+#[pyresource(SceneSpawner, no_clone, bridge, no_insert, no_remove)]
 #[pyclass(name = "SceneSpawner", extends = PyResource)]
 pub struct PySceneSpawner {
     pub(crate) storage: ResourceStorage<SceneSpawner>,

@@ -1,7 +1,7 @@
 //! Generic component storage supporting both owned and borrowed instances
 //!
 //! This module re-exports the unified storage mechanism from pybevy_core.
-//! See pybevy_core's component_storage module for implementation details.
+//! See pybevy_core's pycomponent module for implementation details.
 //!
 //! # Safety Model
 //!

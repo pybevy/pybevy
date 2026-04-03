@@ -1,9 +1,9 @@
 use bevy::{app::App, sprite::SpritePlugin, sprite_render::ColorMaterialPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
-#[plugin_storage(SpritePlugin)]
+#[pyplugin(SpritePlugin)]
 #[pyclass(name = "SpritePlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpritePlugin;
@@ -29,7 +29,7 @@ impl PluginBuild for PySpritePlugin {
     }
 }
 
-#[plugin_storage(ColorMaterialPlugin)]
+#[pyplugin(ColorMaterialPlugin)]
 #[pyclass(name = "ColorMaterialPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyColorMaterialPlugin;

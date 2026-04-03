@@ -1044,11 +1044,11 @@ RuntimeError: Cannot write to component - query does not have mutable access
 
 - **Core Storage Layer** (`crates/pybevy_core/src/`):
   - `validity_guard.rs` - ValidityFlag, ValidityGuard (RAII), AccessMode
-  - `component_storage.rs` - Owned/Borrowed component storage
+  - `pycomponent.rs` - Owned/Borrowed component storage
   - `value_storage.rs` - Copy-type field storage (Vec3, Quat, f32, etc.)
   - `field_storage.rs` - Non-Copy field storage (TextureAtlas, WindowResolution, etc.)
   - `list_storage.rs` - Vec<T> field storage with Python list interface
-  - `storage/asset_storage.rs` - Asset storage (read-only vs mutable variants)
+  - `storage/pyasset.rs` - Asset storage (read-only vs mutable variants)
 - **Parameter Validation**: `src/ecs/dynamic_system.rs` (`validate_parameters()`, `validate_component_access_internal()`)
 - **Borrowed Fields**: `src/math/vec2.rs`, `src/math/vec3.rs`, `src/math/quat.rs`
 - **Component Pattern**: `src/transform/transform.rs`, `src/light/point_light.rs`
@@ -1078,11 +1078,11 @@ cargo test -p pybevy_core    # 63 tests, ~0s runtime
 | Module | Tests | What's Tested |
 |--------|-------|---------------|
 | `validity_guard` | 10 | Flag lifecycle, read/write/invalid modes, RAII guard drop, clone propagation, ValidityFlagWithMode |
-| `component_storage` | 9 | Owned/borrowed modes, mutation persistence, validity enforcement, write permissions, into_owned |
-| `value_storage` | 8 | Same as component_storage for Copy types (Vec3, f32, etc.) |
+| `pycomponent` | 9 | Owned/borrowed modes, mutation persistence, validity enforcement, write permissions, into_owned |
+| `value_storage` | 8 | Same as pycomponent for Copy types (Vec3, f32, etc.) |
 | `field_storage` | 12 | Owned/borrowed, borrow_field chains (owned→field, borrowed→field), mutation persistence through nested borrows, Drop invalidation, clone independence |
 | `list_storage` | 11 | Vec storage, mutation persistence, validity/write enforcement, normalize_index edge cases |
-| `asset_storage` | 8 | Read-only vs mutable variants, take/consume, validity enforcement |
+| `pyasset` | 8 | Read-only vs mutable variants, take/consume, validity enforcement |
 | `handle` | 2 | UUID handling |
 | `global_registry` | 2 | Registry basics |
 | **Total** | **63** | |

@@ -1,9 +1,9 @@
 use bevy::ecs::name::Name;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(Name, bridge)]
+#[pycomponent(Name, bridge)]
 #[pyclass(name = "Name", extends = PyComponent, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyName {

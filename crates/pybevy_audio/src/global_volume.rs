@@ -1,11 +1,11 @@
 use bevy::audio::GlobalVolume;
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::volume::PyVolume;
 
-#[resource_storage(GlobalVolume, bridge)]
+#[pyresource(GlobalVolume, bridge)]
 #[pyclass(name = "GlobalVolume", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyGlobalVolume {

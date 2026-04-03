@@ -6,7 +6,7 @@ use pybevy_core::{
     AssetStorage, NativeAsset, PluginBuild, PyAsset, PyComponent, PyHandle, PyPlugin,
     extract_handle_from_any,
 };
-use pybevy_macros::{asset_storage, handle_storage, plugin_storage};
+use pybevy_macros::{pyasset, pyhandle, pyplugin};
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
     prelude::*,
@@ -17,7 +17,7 @@ use crate::{
     standard_material::PyStandardMaterial,
 };
 
-#[asset_storage(ShaderMaterial, bridge, not_loadable)]
+#[pyasset(ShaderMaterial, bridge, not_loadable)]
 #[pyclass(name = "ShaderMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
@@ -202,7 +202,7 @@ impl PyShaderMaterial {
     }
 }
 
-#[plugin_storage(bevy::pbr::MaterialPlugin::<ShaderMaterial>)]
+#[pyplugin(bevy::pbr::MaterialPlugin::<ShaderMaterial>)]
 #[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
@@ -225,7 +225,7 @@ impl PluginBuild for PyShaderMaterialPlugin {
     }
 }
 
-#[handle_storage(MeshMaterial3d::<ShaderMaterial>, "MeshMaterial3dShader")]
+#[pyhandle(MeshMaterial3d::<ShaderMaterial>, "MeshMaterial3dShader")]
 #[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial3dShader(pub(crate) PyHandle);

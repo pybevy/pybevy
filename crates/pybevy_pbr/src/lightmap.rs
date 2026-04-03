@@ -1,10 +1,10 @@
 use bevy::pbr::Lightmap;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
 use pyo3::prelude::*;
 
-#[component_storage(Lightmap, bridge, view_fields = [bicubic_sampling])]
+#[pycomponent(Lightmap, bridge, view_fields = [bicubic_sampling])]
 #[pyclass(name = "Lightmap", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyLightmap {

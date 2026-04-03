@@ -1,9 +1,9 @@
 use bevy::text::LineHeight;
 use pybevy_core::PyComponent;
-use pybevy_macros::newtype_storage;
+use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
-#[newtype_storage(LineHeight, bridge, copy)]
+#[pywrap(LineHeight, bridge, copy)]
 #[pyclass(name = "LineHeight", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyLineHeight(pub(crate) LineHeight);

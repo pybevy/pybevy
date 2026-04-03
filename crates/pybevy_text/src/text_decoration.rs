@@ -1,11 +1,11 @@
 use bevy::text::{Strikethrough, StrikethroughColor, Underline, UnderlineColor};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 // Strikethrough - marker component
-#[component_storage(Strikethrough, unit, bridge)]
+#[pycomponent(Strikethrough, unit, bridge)]
 #[pyclass(name = "Strikethrough", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyStrikethrough;
@@ -42,7 +42,7 @@ impl PyStrikethrough {
 }
 
 // Underline - marker component
-#[component_storage(Underline, unit, bridge)]
+#[pycomponent(Underline, unit, bridge)]
 #[pyclass(name = "Underline", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyUnderline;
@@ -79,7 +79,7 @@ impl PyUnderline {
 }
 
 // StrikethroughColor - Color wrapper component
-#[component_storage(StrikethroughColor, bridge, batch_only_fields = [0 as color])]
+#[pycomponent(StrikethroughColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "StrikethroughColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyStrikethroughColor {
@@ -107,7 +107,7 @@ impl PyStrikethroughColor {
 }
 
 // UnderlineColor - Color wrapper component
-#[component_storage(UnderlineColor, bridge, batch_only_fields = [0 as color])]
+#[pycomponent(UnderlineColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "UnderlineColor", extends = PyComponent)]
 #[derive(Debug, Clone)]
 pub struct PyUnderlineColor {

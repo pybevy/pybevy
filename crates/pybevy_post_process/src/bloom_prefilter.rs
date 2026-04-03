@@ -1,9 +1,9 @@
 use bevy::post_process::bloom::BloomPrefilter;
 use pybevy_core::{FromBorrowedStorage, field_storage::FieldStorage};
-use pybevy_macros::native_field;
+use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
-#[native_field]
+#[pyfield]
 #[pyclass(name = "BloomPrefilter")]
 pub struct PyBloomPrefilter {
     pub(crate) storage: FieldStorage<BloomPrefilter>,

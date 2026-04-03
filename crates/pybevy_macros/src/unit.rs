@@ -1,7 +1,7 @@
 use quote::quote;
 use syn::{Ident, Type};
 
-/// Shared unit bridge code generation used by `#[component_storage(..., unit, bridge)]`.
+/// Shared unit bridge code generation used by `#[pycomponent(..., unit, bridge)]`.
 pub(crate) fn generate_unit_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,

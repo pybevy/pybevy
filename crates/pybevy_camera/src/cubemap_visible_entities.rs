@@ -1,11 +1,11 @@
 use bevy::camera::visibility::CubemapVisibleEntities;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::visible_mesh_entities::PyVisibleMeshEntities;
 
-#[component_storage(CubemapVisibleEntities, bridge)]
+#[pycomponent(CubemapVisibleEntities, bridge)]
 #[pyclass(name = "CubemapVisibleEntities", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyCubemapVisibleEntities {

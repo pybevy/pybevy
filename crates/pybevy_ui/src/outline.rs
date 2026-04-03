@@ -1,12 +1,12 @@
 use bevy::{color::Color, ui::Outline};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[component_storage(Outline, bridge)]
+#[pycomponent(Outline, bridge)]
 #[pyclass(name = "Outline", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyOutline {

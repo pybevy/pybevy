@@ -1,8 +1,8 @@
 use bevy_math::curve::{Curve, EaseFunction, easing::JumpAt};
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(JumpAt)]
+#[pyenum(JumpAt)]
 #[pyclass(name = "JumpAt", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyJumpAt {

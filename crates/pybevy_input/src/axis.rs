@@ -1,11 +1,11 @@
 use bevy::input::{Axis, gamepad::GamepadAxis};
 use pybevy_core::{PyResource, ResourceStorage};
-use pybevy_macros::resource_storage;
+use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 use crate::gamepad_axis::PyGamepadAxis;
 
-#[resource_storage(Axis<GamepadAxis>, no_clone, bridge, "Axis", no_mut, no_insert)]
+#[pyresource(Axis<GamepadAxis>, no_clone, bridge, "Axis", no_mut, no_insert)]
 #[pyclass(name = "Axis", extends = PyResource)]
 pub struct PyAxis {
     pub(crate) storage: ResourceStorage<Axis<GamepadAxis>>,

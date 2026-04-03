@@ -13,7 +13,7 @@ pub mod volume;
 
 use bevy::{app::App, audio::AudioPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::plugin_storage;
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 pub mod prelude {
@@ -26,7 +26,7 @@ pub mod prelude {
     };
 }
 
-#[plugin_storage(AudioPlugin)]
+#[pyplugin(AudioPlugin)]
 #[pyclass(name = "AudioPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAudioPlugin;

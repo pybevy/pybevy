@@ -1,11 +1,11 @@
 use bevy::pbr::AtmosphereSettings;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3};
 use pybevy_render::atmosphere_mode::PyAtmosphereMode;
 use pyo3::prelude::*;
 
-#[component_storage(AtmosphereSettings, bridge, view_fields = [
+#[pycomponent(AtmosphereSettings, bridge, view_fields = [
     transmittance_lut_samples,
     multiscattering_lut_dirs,
     multiscattering_lut_samples,

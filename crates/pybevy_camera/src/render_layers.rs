@@ -1,9 +1,9 @@
 use bevy::camera::visibility::RenderLayers;
-use pybevy_core::{PyComponent, component_storage::ComponentStorage};
-use pybevy_macros::component_storage;
+use pybevy_core::{PyComponent, pycomponent::ComponentStorage};
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(RenderLayers, bridge)]
+#[pycomponent(RenderLayers, bridge)]
 #[pyclass(name = "RenderLayers", extends = PyComponent, eq)]
 #[derive(Debug, Clone)]
 pub struct PyRenderLayers {

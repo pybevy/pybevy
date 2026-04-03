@@ -3,13 +3,13 @@ use bevy::{
     math::{Mat4, Vec3},
 };
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::{affine3a::PyAffine3A, mat4::PyMat4, vec3::PyVec3};
 use pyo3::prelude::*;
 
 use crate::{culling_sphere::PyCullingSphere, half_space::PyHalfSpace};
 
-#[component_storage(Frustum, bridge)]
+#[pycomponent(Frustum, bridge)]
 #[pyclass(name = "Frustum", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyFrustum {

@@ -1,9 +1,9 @@
 use bevy::{asset::Handle, image::Image, light::IrradianceVolume};
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[component_storage(IrradianceVolume, bridge, view_fields = [intensity, affects_lightmapped_meshes])]
+#[pycomponent(IrradianceVolume, bridge, view_fields = [intensity, affects_lightmapped_meshes])]
 #[pyclass(name = "IrradianceVolume", extends = PyComponent)]
 #[derive(Clone)]
 pub struct PyIrradianceVolume {

@@ -1,8 +1,8 @@
 use bevy::pbr::UvChannel;
-use pybevy_macros::bevy_enum;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[bevy_enum(UvChannel)]
+#[pyenum(UvChannel)]
 #[pyclass(name = "UvChannel", frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyUvChannel {

@@ -1,9 +1,9 @@
 use bevy::animation::graph::AnimationGraphHandle;
 use pybevy_core::{PyComponent, PyHandle};
-use pybevy_macros::handle_storage;
+use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
-#[handle_storage(AnimationGraphHandle)]
+#[pyhandle(AnimationGraphHandle)]
 #[pyclass(name = "AnimationGraphHandle", extends = PyComponent, eq, frozen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAnimationGraphHandle(pub(crate) PyHandle);

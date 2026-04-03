@@ -1,9 +1,9 @@
 use bevy::render::camera::MipBias;
 use pybevy_core::PyComponent;
-use pybevy_macros::newtype_storage;
+use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
-#[newtype_storage(MipBias, bridge)]
+#[pywrap(MipBias, bridge)]
 #[pyclass(name = "MipBias", extends = PyComponent, frozen)]
 #[derive(Clone)]
 pub struct PyMipBias(pub(crate) MipBias);

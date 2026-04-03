@@ -1,10 +1,10 @@
 use bevy::ui::ComputedNode;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::component_storage;
+use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[component_storage(ComputedNode, no_clone, bridge)]
+#[pycomponent(ComputedNode, no_clone, bridge)]
 #[pyclass(name = "ComputedNode", extends = PyComponent)]
 #[derive(Clone, Debug)]
 pub struct PyComputedNode {

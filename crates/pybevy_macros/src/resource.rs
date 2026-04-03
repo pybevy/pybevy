@@ -112,7 +112,7 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Usage in feature crates (e.g., pybevy_audio)
 ///
 /// ```rust
-/// #[resource_storage(GlobalVolume)]
+/// #[pyresource(GlobalVolume)]
 /// #[pyclass(name = "GlobalVolume", extends = PyResource)]
 /// pub struct PyGlobalVolume {
 ///     pub(crate) storage: ResourceStorage<GlobalVolume>,
@@ -122,13 +122,13 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// With bridge generation:
 ///
 /// ```rust
-/// #[resource_storage(ClearColor, bridge)]
-/// #[resource_storage(Time, bridge, no_mut)]
-/// #[resource_storage(FontAtlasSet, bridge, no_mut, no_insert)]
+/// #[pyresource(ClearColor, bridge)]
+/// #[pyresource(Time, bridge, no_mut)]
+/// #[pyresource(FontAtlasSet, bridge, no_mut, no_insert)]
 /// ```
 ///
 /// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`.
-pub fn resource_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ResourceStorageArgs {
         bevy_type: Type,
         no_clone: bool,
@@ -288,7 +288,7 @@ pub fn resource_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Shared resource bridge code generation used by `#[resource_storage(..., bridge)]`.
+/// Shared resource bridge code generation used by `#[pyresource(..., bridge)]`.
 pub(crate) fn generate_resource_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
