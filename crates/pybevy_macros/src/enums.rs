@@ -10,8 +10,6 @@ use syn::{
 struct BevyEnumArgs {
     /// The Bevy enum type to convert to/from
     bevy_type: Type,
-    /// If true, only generate From impls (no #[pymethods])
-    from_only: bool,
     /// If true, map empty tuple variants Variant() to Bevy's unit variants Variant
     empty_tuple: bool,
 }
@@ -20,21 +18,16 @@ impl Parse for BevyEnumArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let bevy_type: Type = input.parse()?;
 
-        let mut from_only = false;
         let mut empty_tuple = false;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let option: Ident = input.parse()?;
             match option.to_string().as_str() {
-                "from_only" => from_only = true,
                 "empty_tuple" => empty_tuple = true,
                 other => {
                     return Err(syn::Error::new_spanned(
                         option,
-                        format!(
-                            "unknown option '{}', expected: from_only, empty_tuple",
-                            other
-                        ),
+                        format!("unknown option '{}', expected: empty_tuple", other),
                     ));
                 }
             }
@@ -42,7 +35,6 @@ impl Parse for BevyEnumArgs {
 
         Ok(BevyEnumArgs {
             bevy_type,
-            from_only,
             empty_tuple,
         })
     }
@@ -53,7 +45,7 @@ impl Parse for BevyEnumArgs {
 /// This macro generates:
 /// - `impl From<BevyType> for PyType` (by matching variant names)
 /// - `impl From<PyType> for BevyType` (by matching variant names)
-/// - `#[pymethods]` with `__repr__` (unless `from_only` is specified)
+/// - `#[pymethods]` with `__repr__`
 ///
 /// **Important**: This macro only works for enums with unit variants (no data).
 /// For enums with tuple/struct variants, implement conversions manually.
@@ -61,7 +53,6 @@ impl Parse for BevyEnumArgs {
 /// # Usage
 ///
 /// ```rust
-/// // Full generation (From impls + __repr__)
 /// #[bevy_enum(BevyCursorGrabMode)]
 /// #[pyclass(name = "CursorGrabMode", eq)]
 /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,15 +60,6 @@ impl Parse for BevyEnumArgs {
 ///     None,
 ///     Confined,
 ///     Locked,
-/// }
-///
-/// // From impls only (when you have custom #[pymethods])
-/// #[bevy_enum(BevyTimerMode, from_only)]
-/// #[pyclass(name = "TimerMode")]
-/// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// pub enum PyTimerMode {
-///     Once,
-///     Repeating,
 /// }
 /// ```
 ///
@@ -190,40 +172,36 @@ pub fn bevy_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
-    // Generate pymethods block if not from_only
-    let pymethods_block = if args.from_only {
-        quote! {}
-    } else {
-        // Extract the type name for __repr__ (strip "Py" prefix if present)
-        let type_name = py_type.to_string();
-        let type_repr_name = type_name.strip_prefix("Py").unwrap_or(&type_name);
+    // Extract the type name for __repr__ (strip "Py" prefix if present)
+    let type_name = py_type.to_string();
+    let type_repr_name = type_name.strip_prefix("Py").unwrap_or(&type_name);
 
-        // Generate __repr__ match arms (using pyo3 name if present)
-        let repr_arms = variants.iter().map(|v| {
-            let ident = v.ident;
-            match v.kind {
-                VariantKind::Unit => {
-                    let repr_str = format!("{}.{}", type_repr_name, v.repr_name);
-                    quote! { #py_type::#ident => #repr_str.to_string() }
-                }
-                VariantKind::EmptyTuple => {
-                    let repr_str = format!("{}.{}", type_repr_name, v.repr_name);
-                    quote! { #py_type::#ident() => #repr_str.to_string() }
-                }
-                VariantKind::DataTuple => {
-                    let repr_prefix = format!("{}.{}(", type_repr_name, v.repr_name);
-                    quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, v) }
-                }
+    // Generate __repr__ match arms (using pyo3 name if present)
+    let repr_arms = variants.iter().map(|v| {
+        let ident = v.ident;
+        match v.kind {
+            VariantKind::Unit => {
+                let repr_str = format!("{}.{}", type_repr_name, v.repr_name);
+                quote! { #py_type::#ident => #repr_str.to_string() }
             }
-        });
+            VariantKind::EmptyTuple => {
+                let repr_str = format!("{}.{}", type_repr_name, v.repr_name);
+                quote! { #py_type::#ident() => #repr_str.to_string() }
+            }
+            VariantKind::DataTuple => {
+                let repr_prefix = format!("{}.{}(", type_repr_name, v.repr_name);
+                quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, v) }
+            }
+        }
+    });
 
-        quote! {
-            #[pymethods]
-            impl #py_type {
-                pub fn __repr__(&self) -> String {
-                    match self {
-                        #(#repr_arms,)*
-                    }
+    // Always generate __repr__ (uses multiple-pymethods feature)
+    let pymethods_block = quote! {
+        #[pymethods]
+        impl #py_type {
+            pub fn __repr__(&self) -> String {
+                match self {
+                    #(#repr_arms,)*
                 }
             }
         }

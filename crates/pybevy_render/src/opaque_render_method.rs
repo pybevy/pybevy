@@ -2,7 +2,7 @@ use bevy::pbr::OpaqueRendererMethod;
 use pybevy_macros::bevy_enum;
 use pyo3::prelude::*;
 
-#[bevy_enum(OpaqueRendererMethod, from_only)]
+#[bevy_enum(OpaqueRendererMethod)]
 #[pyclass(name = "OpaqueRenderMethod", frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyOpaqueRenderMethod {

@@ -130,7 +130,7 @@ pub enum PyFlexWrap {
     WrapReverse = 2,
 }
 
-#[bevy_enum(OverflowAxis, from_only)]
+#[bevy_enum(OverflowAxis)]
 #[pyclass(name = "OverflowAxis", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyOverflowAxis {
@@ -144,15 +144,6 @@ pub enum PyOverflowAxis {
 impl PyOverflowAxis {
     pub fn is_visible(&self) -> bool {
         matches!(self, PyOverflowAxis::Visible)
-    }
-
-    pub fn __repr__(&self) -> &'static str {
-        match self {
-            PyOverflowAxis::Visible => "OverflowAxis.Visible",
-            PyOverflowAxis::Clip => "OverflowAxis.Clip",
-            PyOverflowAxis::Hidden => "OverflowAxis.Hidden",
-            PyOverflowAxis::Scroll => "OverflowAxis.Scroll",
-        }
     }
 }
 
