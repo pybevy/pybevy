@@ -15,6 +15,4 @@ pub enum SseEvent {
     ReloadStarted { mode: String, generation: u32 },
     #[serde(rename = "reload_completed")]
     ReloadCompleted { mode: String, generation: u32 },
-    #[serde(rename = "tool_registered")]
-    ToolRegistered { name: String },
 }

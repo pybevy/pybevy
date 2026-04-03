@@ -715,10 +715,6 @@ class McpBridge:
             schedule_id = arguments.get("schedule_id", "")
             url = f"{base}/api/v1/schedule/{schedule_id}"
             resp = httpx.get(url, timeout=timeout)
-        elif tool_name == "register_tool":
-            name = arguments.get("name", "")
-            url = f"{base}/api/v1/tools/{name}"
-            resp = httpx.post(url, json=arguments, timeout=timeout)
         elif tool_name == "query_spatial":
             if "radius" in arguments:
                 # Neighborhood mode
@@ -769,8 +765,8 @@ class McpBridge:
             else:
                 resp = httpx.request(method, url, json=arguments, timeout=timeout)
         else:
-            url = f"{base}/api/v1/tools/{tool_name}"
-            resp = httpx.post(url, json=arguments, timeout=timeout)
+            msg = f"Unknown tool: {tool_name}"
+            raise ValueError(msg)
 
         resp.raise_for_status()
         return resp.json()

@@ -28,10 +28,4 @@ impl SseEventBroadcaster {
             generation,
         });
     }
-
-    pub fn tool_registered(&self, name: &str) {
-        self.send(&SseEvent::ToolRegistered {
-            name: name.to_string(),
-        });
-    }
 }

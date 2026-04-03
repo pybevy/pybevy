@@ -185,8 +185,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/schedule/{id}",
             get(get_schedule_status).delete(cancel_schedule),
         )
-        // Custom tools
-        .route("/api/v1/tools/{name}", post(call_custom_tool))
         // Plugin configs
         .route("/api/v1/config", get(list_configs))
         .route("/api/v1/config/{key}", get(get_config))
@@ -1123,21 +1121,6 @@ async fn cancel_schedule(
             StatusCode::NOT_FOUND,
             &format!("Schedule '{}' not found or already completed", id),
         )
-    }
-}
-async fn call_custom_tool(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-    Json(arguments): Json<serde_json::Value>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::Other(OtherOp::CallCustomTool { name, arguments }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
     }
 }
 async fn list_configs(State(state): State<AppState>) -> impl IntoResponse {

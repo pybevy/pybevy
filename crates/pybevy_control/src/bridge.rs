@@ -193,7 +193,7 @@ pub enum SpatialOp {
     },
 }
 
-/// Other operations (execute, performance, assets, custom tools, configs, schedule)
+/// Other operations (execute, performance, assets, configs, schedule)
 #[derive(Debug)]
 pub enum OtherOp {
     ExecutePython {
@@ -205,10 +205,6 @@ pub enum OtherOp {
         component: String,
         asset_type: String,
         fields: serde_json::Value,
-    },
-    CallCustomTool {
-        name: String,
-        arguments: serde_json::Value,
     },
     GetConfig {
         key: String,
