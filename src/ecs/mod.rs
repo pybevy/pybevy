@@ -17,7 +17,6 @@ pub mod entity_commands;
 pub mod filter;
 pub mod helpers;
 pub mod lazy_wrapper_proxy;
-pub mod pycomponent;
 
 // Re-exports from pybevy_core
 #[allow(unused_imports)]
