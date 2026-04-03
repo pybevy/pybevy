@@ -43,7 +43,6 @@ impl PyCompassOctant {
     pub fn __neg__(&self) -> Self {
         self.opposite()
     }
-
 }
 
 #[bevy_enum(CompassQuadrant)]
@@ -76,5 +75,4 @@ impl PyCompassQuadrant {
     pub fn __neg__(&self) -> Self {
         self.opposite()
     }
-
 }

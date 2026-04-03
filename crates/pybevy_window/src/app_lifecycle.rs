@@ -19,5 +19,4 @@ impl PyAppLifecycle {
         let bevy_lifecycle: AppLifecycle = (*self).into();
         bevy_lifecycle.is_active()
     }
-
 }

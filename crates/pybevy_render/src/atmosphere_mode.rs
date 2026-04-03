@@ -16,5 +16,4 @@ impl PyAtmosphereMode {
     pub const LOOKUP_TEXTURE: Self = PyAtmosphereMode::LookupTexture;
     #[classattr]
     pub const RAYMARCHED: Self = PyAtmosphereMode::Raymarched;
-
 }

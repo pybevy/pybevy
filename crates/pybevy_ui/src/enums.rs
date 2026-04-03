@@ -145,7 +145,6 @@ impl PyOverflowAxis {
     pub fn is_visible(&self) -> bool {
         matches!(self, PyOverflowAxis::Visible)
     }
-
 }
 
 #[bevy_enum(BoxSizing)]
