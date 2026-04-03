@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::vec2::PyVec2;
 
-#[bevy_enum(CompassOctant, from_only)]
+#[bevy_enum(CompassOctant)]
 #[pyclass(name = "CompassOctant", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCompassOctant {
@@ -44,22 +44,9 @@ impl PyCompassOctant {
         self.opposite()
     }
 
-    fn __repr__(&self) -> String {
-        let name = match self {
-            Self::North => "North",
-            Self::NorthEast => "NorthEast",
-            Self::East => "East",
-            Self::SouthEast => "SouthEast",
-            Self::South => "South",
-            Self::SouthWest => "SouthWest",
-            Self::West => "West",
-            Self::NorthWest => "NorthWest",
-        };
-        format!("CompassOctant.{name}")
-    }
 }
 
-#[bevy_enum(CompassQuadrant, from_only)]
+#[bevy_enum(CompassQuadrant)]
 #[pyclass(name = "CompassQuadrant", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCompassQuadrant {
@@ -90,13 +77,4 @@ impl PyCompassQuadrant {
         self.opposite()
     }
 
-    fn __repr__(&self) -> String {
-        let name = match self {
-            Self::North => "North",
-            Self::East => "East",
-            Self::South => "South",
-            Self::West => "West",
-        };
-        format!("CompassQuadrant.{name}")
-    }
 }

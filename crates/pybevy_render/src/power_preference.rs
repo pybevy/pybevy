@@ -2,7 +2,7 @@ use pybevy_macros::bevy_enum;
 use pyo3::prelude::*;
 use wgpu_types::PowerPreference;
 
-#[bevy_enum(PowerPreference, from_only)]
+#[bevy_enum(PowerPreference)]
 #[pyclass(name = "PowerPreference", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyPowerPreference {

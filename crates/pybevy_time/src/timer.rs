@@ -4,7 +4,7 @@ use bevy::time::{Timer, TimerMode};
 use pybevy_macros::bevy_enum;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[bevy_enum(TimerMode, from_only)]
+#[bevy_enum(TimerMode)]
 #[pyclass(name = "TimerMode", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTimerMode {

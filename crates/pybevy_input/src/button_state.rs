@@ -2,7 +2,7 @@ use bevy::input::ButtonState;
 use pybevy_macros::bevy_enum;
 use pyo3::prelude::*;
 
-#[bevy_enum(ButtonState, empty_tuple, from_only)]
+#[bevy_enum(ButtonState, empty_tuple)]
 #[pyclass(name = "ButtonState", eq, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyButtonState {
@@ -14,13 +14,6 @@ pub enum PyButtonState {
 impl PyButtonState {
     pub fn is_pressed(&self) -> bool {
         matches!(self, PyButtonState::Pressed())
-    }
-
-    fn __repr__(&self) -> String {
-        match self {
-            PyButtonState::Pressed() => "ButtonState.Pressed".to_string(),
-            PyButtonState::Released() => "ButtonState.Released".to_string(),
-        }
     }
 
     fn __str__(&self) -> String {
