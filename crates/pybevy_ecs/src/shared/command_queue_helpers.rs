@@ -1,5 +1,7 @@
-use bevy::ecs::system::Commands;
-use bevy::ecs::world::{CommandQueue, unsafe_world_cell::UnsafeWorldCell};
+use bevy::ecs::{
+    system::Commands,
+    world::{CommandQueue, unsafe_world_cell::UnsafeWorldCell},
+};
 
 /// Create `Commands` from an existing `CommandQueue` and an `UnsafeWorldCell`.
 ///

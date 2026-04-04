@@ -15,6 +15,9 @@ use bevy::{
     },
     prelude::*,
 };
+use pybevy_ecs::shared::access_validation::{
+    self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
+};
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     ffi::{PyObject, PyTypeObject},
@@ -22,10 +25,6 @@ use pyo3::{
     types::{PyTuple, PyType},
 };
 use smallvec::SmallVec;
-
-use pybevy_ecs::shared::access_validation::{
-    self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
-};
 
 use crate::{
     assets::{asset_server::PyAssetServer, assets::PyAssets},

@@ -9,6 +9,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{ExtractFn, registry::global_registry};
+use pybevy_ecs::shared::query_builder_ext::{QueryBuildSpec, build_query_state};
 use pyo3::{
     exceptions::{PyRuntimeError, PyStopIteration},
     ffi::PyTypeObject,
@@ -26,7 +27,6 @@ use crate::ecs::{
     lazy_wrapper_proxy::PyLazyWrapperProxy,
     query::query_param::{PyQueryParam, QueryData},
 };
-use pybevy_ecs::shared::query_builder_ext::{QueryBuildSpec, build_query_state};
 
 /// Runtime query iterator that can be passed to Python systems.
 /// Uses Bevy's QueryState for efficient cached iteration.
