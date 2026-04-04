@@ -333,7 +333,7 @@ impl PyLazyWrapperProxy {
         self.serialize_field(py, name, &value)?;
 
         // Mark component as changed using stored entity context
-        crate::ecs::change_tracking::mark_component_changed_explicit(
+        pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
             self.entity,
             self.world_ptr,
             self.component_id,

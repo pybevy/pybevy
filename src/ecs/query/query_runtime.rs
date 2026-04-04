@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, ptr::NonNull, sync::Arc};
 use bevy::{
     ecs::{
         component::ComponentId,
-        query::{QueryBuilder, QueryIter, QueryState},
+        query::{QueryIter, QueryState},
         world::FilteredEntityMut,
     },
     prelude::*,
@@ -26,6 +26,7 @@ use crate::ecs::{
     lazy_wrapper_proxy::PyLazyWrapperProxy,
     query::query_param::{PyQueryParam, QueryData},
 };
+use pybevy_ecs::shared::query_builder_ext::{QueryBuildSpec, build_query_state};
 
 /// Runtime query iterator that can be passed to Python systems.
 /// Uses Bevy's QueryState for efficient cached iteration.
@@ -205,45 +206,16 @@ impl PyQueryIter {
             }
         }
 
-        // Build the QueryState once - this will be cached and reused for efficient iteration
-        let mut builder = QueryBuilder::<FilteredEntityMut>::new(world);
-
-        for &(id, optional) in component_ids.iter() {
-            if optional {
-                builder.optional(|b| {
-                    b.mut_id(id);
-                });
-            } else {
-                builder.mut_id(id);
-            }
-        }
-
-        for &id in with_filter_ids.iter() {
-            builder.with_id(id);
-        }
-
-        for &id in without_filter_ids.iter() {
-            builder.without_id(id);
-        }
-
-        for &id in changed_filter_ids.iter() {
-            builder.ref_id(id);
-        }
-
-        for &id in added_filter_ids.iter() {
-            builder.ref_id(id);
-        }
-
-        // Apply AnyOf filter using or() builder API
-        if !anyof_filter_ids.is_empty() {
-            builder.or(|b| {
-                for &id in anyof_filter_ids.iter() {
-                    b.with_id(id);
-                }
-            });
-        }
-
-        let query_state = builder.build();
+        // Build the QueryState once
+        let spec = QueryBuildSpec {
+            components: component_ids.clone(),
+            with_filters: with_filter_ids,
+            without_filters: without_filter_ids,
+            changed_filters: changed_filter_ids,
+            added_filters: added_filter_ids,
+            anyof_filters: anyof_filter_ids,
+        };
+        let query_state = build_query_state(world, &spec);
 
         // SAFETY: Transmute to erase lifetime - the caller guarantees this is only used
         // within the system execution scope where the World reference is valid
@@ -568,7 +540,7 @@ impl PyQueryIter {
     /// Returns the next query result
     fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
         // Clear previous entity's context
-        crate::ecs::change_tracking::clear_entity_context();
+        pybevy_ecs::shared::change_tracking::clear_entity_context();
 
         // Mark that iteration is in progress (for nested iteration detection)
         self.iterating = true;
@@ -607,7 +579,7 @@ impl PyQueryIter {
                 .world_ptr
                 .expect("Query used outside system execution")
                 .as_ptr();
-            crate::ecs::change_tracking::set_entity_context(entity, world_ptr);
+            pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_ptr);
 
             // Extract components using the shared helper
             self.extract_components_from_entity(&mut entity_mut, py)?;
@@ -622,7 +594,7 @@ impl PyQueryIter {
         } else {
             // Iterator exhausted - clear final entity context and iteration flag
             self.iterating = false;
-            crate::ecs::change_tracking::clear_entity_context();
+            pybevy_ecs::shared::change_tracking::clear_entity_context();
             Err(PyStopIteration::new_err(""))
         }
     }
@@ -682,7 +654,7 @@ impl PyQueryIter {
                     .world_ptr
                     .expect("Query used outside system execution")
                     .as_ptr();
-                crate::ecs::change_tracking::set_entity_context(entity, world_ptr);
+                pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_ptr);
 
                 self.values_buffer.clear();
 

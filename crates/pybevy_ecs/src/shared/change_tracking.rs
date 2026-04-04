@@ -36,11 +36,6 @@ pub fn set_entity_context(entity: Entity, world_ptr: *mut World) {
     WORLD_PTR.with(|w| w.set(Some(world_ptr)));
 }
 
-/// Mark a specific component on the current entity as changed (thread-local context).
-///
-/// This is called by LazyWrapperProxy's __setattr__ when a field is mutated.
-/// It immediately marks the component in Bevy's ECS, no delayed flush needed.
-
 /// Mark a specific component as changed using explicit entity and world pointer.
 ///
 /// Unlike `mark_component_changed()`, this does not rely on the thread-local context.
@@ -50,6 +45,7 @@ pub fn set_entity_context(entity: Entity, world_ptr: *mut World) {
 /// # Safety
 /// - `world_ptr` must be valid (protected by ValidityFlag on the caller)
 /// - `entity` must exist in the world (guaranteed during system execution)
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn mark_component_changed_explicit(
     entity: Entity,
     world_ptr: *mut World,
