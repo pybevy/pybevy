@@ -27,7 +27,7 @@ jobs:
       matrix:
         os: ["ubuntu-latest"]
         rust: ["stable"] # nightly
-        python-version: ["3.13"] # 3.12
+        python-version: ["3.13", "3.14", "3.14t"]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -46,6 +46,7 @@ jobs:
         run: pipx install poetry==2.1.4
 
       - name: Set up Python ${{ matrix.python-version }}
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -85,7 +86,7 @@ jobs:
           RUSTC_WRAPPER: sccache
 
       - name: Poetry env
-        run: poetry env use ${{ matrix.python-version }}
+        run: poetry env use ${{ steps.setup-python.outputs.python-path }}
 
       - name: Build and install Rust extension with Maturin
         run: poetry run maturin develop --locked
