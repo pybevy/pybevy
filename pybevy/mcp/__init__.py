@@ -6,6 +6,7 @@ from .. import _pybevy  # type: ignore
 
 _native = _pybevy.mcp
 _mcp_dir = os.path.dirname(__file__)
+_native.__name__ = __name__  # type: ignore
 _native.__path__ = [_mcp_dir]  # type: ignore
 _native.__package__ = __name__  # type: ignore
 sys.modules[__name__] = _native  # type: ignore

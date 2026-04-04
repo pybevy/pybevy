@@ -2,4 +2,5 @@ import sys
 
 from . import _pybevy  # type: ignore
 
-sys.modules[__name__] = _pybevy.ui # type: ignore
+_pybevy.ui.__name__ = __name__  # type: ignore
+sys.modules[__name__] = _pybevy.ui  # type: ignore
