@@ -1,9 +1,9 @@
+use bevy::ecs::world::World;
 use bevy::ecs::{
     component::ComponentId,
     query::{QueryBuilder, QueryState},
     world::FilteredEntityMut,
 };
-use bevy::ecs::world::World;
 
 /// Specification for building a Bevy QueryState.
 ///

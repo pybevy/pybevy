@@ -454,10 +454,7 @@ impl System for DynamicSystem {
             })
             .unwrap_or(false);
 
-        pybevy_ecs::shared::system_flags::compute_system_flags(
-            needs_exclusive,
-            self.needs_commands,
-        )
+        pybevy_ecs::shared::system_flags::compute_system_flags(needs_exclusive, self.needs_commands)
     }
 
     unsafe fn run_unsafe(
@@ -971,8 +968,7 @@ impl System for DynamicSystem {
         let accesses = Self::to_param_accesses(&params, |comp_type| {
             self.get_component_id_for_validation(world, comp_type)
         });
-        shared_validation::validate_access(&accesses)
-        .map_err(|conflict| {
+        shared_validation::validate_access(&accesses).map_err(|conflict| {
             let error_msg = format!(
                 "System '{}' has conflicting component access:\n\
                  - Parameter {} requests {} access to {}\n\
@@ -1249,8 +1245,7 @@ impl DynamicSystem {
             inner.system_func.as_ref().unwrap().params.clone()
         };
         let accesses = Self::to_param_accesses(&params, |comp_type| comp_type.to_string());
-        shared_validation::validate_access(&accesses)
-        .map_err(|conflict| {
+        shared_validation::validate_access(&accesses).map_err(|conflict| {
             PyRuntimeError::new_err(format!(
                 "System '{}' has conflicting component access:\n\
                  - Parameter {} requests {} access to {}\n\

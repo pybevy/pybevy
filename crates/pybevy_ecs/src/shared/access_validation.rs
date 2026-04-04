@@ -94,8 +94,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
     // Track component access across all parameters.
     // Uses Vec to support N-way disjoint checking: each new query is checked
     // against ALL previous queries for that component, not just the first.
-    let mut component_access: HashMap<K, Vec<(usize, bool, String, QueryFilters)>> =
-        HashMap::new();
+    let mut component_access: HashMap<K, Vec<(usize, bool, String, QueryFilters)>> = HashMap::new();
 
     // Track resource access (for Res/ResMut conflicts)
     let mut resource_access: HashMap<usize, (usize, bool, String)> = HashMap::new();
@@ -155,13 +154,8 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 }
             }
 
-            ParamAccess::Resource {
-                key,
-                name,
-                mutable,
-            } => {
-                if let Some((existing_idx, existing_mut, existing_name)) =
-                    resource_access.get(key)
+            ParamAccess::Resource { key, name, mutable } => {
+                if let Some((existing_idx, existing_mut, existing_name)) = resource_access.get(key)
                 {
                     if *mutable || *existing_mut {
                         return Err(ComponentAccessConflict {
@@ -190,14 +184,8 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 }
             }
 
-            ParamAccess::Assets {
-                key,
-                name,
-                mutable,
-            } => {
-                if let Some((existing_idx, existing_mut, existing_name)) =
-                    assets_access.get(key)
-                {
+            ParamAccess::Assets { key, name, mutable } => {
+                if let Some((existing_idx, existing_mut, existing_name)) = assets_access.get(key) {
                     if *mutable || *existing_mut {
                         return Err(ComponentAccessConflict {
                             param_idx,
