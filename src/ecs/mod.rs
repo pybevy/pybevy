@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 
 pub mod batch_spawn;
-pub mod change_tracking;
 pub mod commands;
 pub(crate) mod component;
 pub mod component_layout;

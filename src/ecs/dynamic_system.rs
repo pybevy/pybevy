@@ -9,7 +9,7 @@ use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
         component::ComponentId,
-        query::{FilteredAccess, FilteredAccessSet},
+        query::FilteredAccessSet,
         system::{RunSystemError, System, SystemIn, SystemParamValidationError, SystemStateFlags},
         world::{CommandQueue, DeferredWorld, World, unsafe_world_cell::UnsafeWorldCell},
     },
@@ -22,6 +22,10 @@ use pyo3::{
     types::{PyTuple, PyType},
 };
 use smallvec::SmallVec;
+
+use pybevy_ecs::shared::access_validation::{
+    self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
+};
 
 use crate::{
     assets::{asset_server::PyAssetServer, assets::PyAssets},
@@ -146,110 +150,70 @@ pub struct DynamicSystem {
 unsafe impl Send for DynamicSystem {}
 unsafe impl Sync for DynamicSystem {}
 
-/// Conflict information for component access validation errors
-struct ComponentAccessConflict {
-    param_idx: usize,
-    mutable: bool,
-    comp_name: String,
-    existing_idx: usize,
-    existing_mut: bool,
-    existing_name: String,
+/// Extract QueryFilters from a PyQueryParam for disjointness checking.
+///
+/// Includes implicit With for all queried component types, matching Bevy's
+/// behavior where `Query<&T>` implies `With<T>` for access checking.
+fn query_filters_from_query_param(
+    query_param: &crate::ecs::query::query_param::PyQueryParam,
+) -> QueryFilters {
+    let mut filters = QueryFilters::default();
+
+    for data in &query_param.data {
+        if let QueryData::Component { ty, .. } = data {
+            filters.with.insert(ty.to_string());
+        }
+    }
+
+    for filter in &query_param.filters {
+        match filter {
+            QueryFilter::With(with) => {
+                for comp in &with.values {
+                    filters.with.insert(comp.to_string());
+                }
+            }
+            QueryFilter::Without(without) => {
+                for comp in &without.values {
+                    filters.without.insert(comp.to_string());
+                }
+            }
+            QueryFilter::Changed(_)
+            | QueryFilter::Added(_)
+            | QueryFilter::Has(_)
+            | QueryFilter::AnyOf(_) => {}
+        }
+    }
+    filters
 }
 
-/// Filter information for disjointness checking
-#[derive(Debug, Clone, Default)]
-struct QueryFilters {
-    /// Component types that must be present (With[...])
-    with: HashSet<String>,
-    /// Component types that must be absent (Without[...])
-    without: HashSet<String>,
-}
+/// Extract QueryFilters from a PyViewParam for disjointness checking.
+///
+/// Includes implicit With for all viewed component types, matching Bevy's
+/// behavior where accessing a component implies `With<T>`.
+fn query_filters_from_view_param(
+    view_param: &crate::ecs::view::view_param::PyViewParam,
+) -> QueryFilters {
+    let mut filters = QueryFilters::default();
 
-impl QueryFilters {
-    /// Extract With/Without filters from a QueryParam.
-    ///
-    /// Includes implicit With for all queried component types, matching Bevy's
-    /// behavior where `Query<&T>` implies `With<T>` for access checking.
-    fn from_query_param(query_param: &crate::ecs::query::query_param::PyQueryParam) -> Self {
-        let mut filters = QueryFilters::default();
-
-        // Querying a component implies With<T> (matches Bevy's FilteredAccess)
-        for data in &query_param.data {
-            if let crate::ecs::query::query_param::QueryData::Component { ty, .. } = data {
-                filters.with.insert(ty.to_string());
-            }
-        }
-
-        for filter in &query_param.filters {
-            match filter {
-                crate::ecs::filter::QueryFilter::With(with) => {
-                    for comp in &with.values {
-                        filters.with.insert(comp.to_string());
-                    }
-                }
-                crate::ecs::filter::QueryFilter::Without(without) => {
-                    for comp in &without.values {
-                        filters.without.insert(comp.to_string());
-                    }
-                }
-                _ => {} // Changed, Added, Has, AnyOf don't affect disjointness
-            }
-        }
-        filters
+    for param_type in &view_param.parameters {
+        let ViewParamType::Component { comp_type, .. } = param_type;
+        filters.with.insert(comp_type.to_string());
     }
 
-    /// Extract With/Without filters from a ViewParam.
-    ///
-    /// Includes implicit With for all viewed component types, matching Bevy's
-    /// behavior where accessing a component implies `With<T>`.
-    fn from_view_param(view_param: &crate::ecs::view::view_param::PyViewParam) -> Self {
-        let mut filters = QueryFilters::default();
-
-        // Viewing a component implies With<T>
-        for param_type in &view_param.parameters {
-            let crate::ecs::view::view_param::ViewParamType::Component { comp_type, .. } =
-                param_type;
-            filters.with.insert(comp_type.to_string());
-        }
-
-        for comp in &view_param.with_filters {
-            filters.with.insert(comp.to_string());
-        }
-        for comp in &view_param.without_filters {
-            filters.without.insert(comp.to_string());
-        }
-        // Changed/Added filters imply With (component must be present)
-        for comp in &view_param.changed_filters {
-            filters.with.insert(comp.to_string());
-        }
-        for comp in &view_param.added_filters {
-            filters.with.insert(comp.to_string());
-        }
-        filters
+    for comp in &view_param.with_filters {
+        filters.with.insert(comp.to_string());
     }
-
-    /// Check if two filter sets prove that queries are disjoint.
-    ///
-    /// Two queries are disjoint if:
-    /// - Query A has With[X] AND Query B has Without[X], OR
-    /// - Query A has Without[X] AND Query B has With[X]
-    ///
-    /// This matches Bevy's FilteredAccess::is_ruled_out_by() logic.
-    fn is_disjoint_from(&self, other: &QueryFilters) -> bool {
-        // Check if any of our With components are in their Without set
-        for comp in &self.with {
-            if other.without.contains(comp) {
-                return true;
-            }
-        }
-        // Check if any of our Without components are in their With set
-        for comp in &self.without {
-            if other.with.contains(comp) {
-                return true;
-            }
-        }
-        false
+    for comp in &view_param.without_filters {
+        filters.without.insert(comp.to_string());
     }
+    // Changed/Added filters imply With (component must be present)
+    for comp in &view_param.changed_filters {
+        filters.with.insert(comp.to_string());
+    }
+    for comp in &view_param.added_filters {
+        filters.with.insert(comp.to_string());
+    }
+    filters
 }
 
 impl DynamicSystem {
@@ -368,184 +332,63 @@ impl DynamicSystem {
         }
     }
 
-    /// Internal validation logic shared by both validation methods.
-    /// Takes params slice directly so it can be called without holding &self
-    /// (needed when params are behind a Mutex).
-    fn validate_component_access_internal<K: std::hash::Hash + Eq + Clone>(
+    /// Convert system parameters to ParamAccess for validation.
+    fn to_param_accesses<K: std::hash::Hash + Eq + Clone>(
         params: &[crate::ecs::system::SystemParam],
-        func_name: &str,
         mut get_key: impl FnMut(&PyComponentType) -> K,
-    ) -> Result<(), ComponentAccessConflict> {
-        // Suppress unused variable warning - func_name is available for future diagnostics
-        let _ = func_name;
-
-        // Track component access across all parameters to detect conflicts.
-        // Uses Vec to support N-way disjoint checking: each new query is checked
-        // against ALL previous queries for that component, not just the first.
-        let mut component_access: HashMap<K, Vec<(usize, bool, String, QueryFilters)>> =
-            HashMap::new();
-
-        // Track resource access (for Res/ResMut conflicts)
-        // Maps type_obj pointer -> (parameter_index, is_mutable, type_name)
-        let mut resource_access: HashMap<usize, (usize, bool, String)> = HashMap::new();
-
-        // Track assets access (for Res<Assets<T>> / ResMut<Assets<T>> conflicts)
-        // Maps asset type name -> (parameter_index, is_mutable, type_name)
-        let mut assets_access: HashMap<String, (usize, bool, String)> = HashMap::new();
-
-        // Track if World parameter exists (World is exclusive with everything)
-        let mut world_param_idx: Option<usize> = None;
-
-        for (param_idx, param) in params.iter().enumerate() {
-            match &param.ty {
+    ) -> Vec<ParamAccess<K>> {
+        params
+            .iter()
+            .map(|param| match &param.ty {
                 SystemParamType::Query { param: query_param } => {
-                    // Extract filters for this query (for disjointness checking)
-                    let current_filters = QueryFilters::from_query_param(query_param);
-
-                    // Check Query component access
-                    for param_type in &query_param.data {
-                        if let QueryData::Component {
-                            ty: comp_type,
-                            mutable,
-                            ..
-                        } = param_type
-                        {
-                            let key = get_key(comp_type);
-                            let comp_name = comp_type.to_string();
-
-                            // Check against ALL previous accesses to this component
-                            if let Some(existing_accesses) = component_access.get(&key) {
-                                for (existing_idx, existing_mut, existing_name, existing_filters) in
-                                    existing_accesses
-                                {
-                                    if (*mutable || *existing_mut)
-                                        && !current_filters.is_disjoint_from(existing_filters)
-                                    {
-                                        return Err(ComponentAccessConflict {
-                                            param_idx,
-                                            mutable: *mutable,
-                                            comp_name,
-                                            existing_idx: *existing_idx,
-                                            existing_mut: *existing_mut,
-                                            existing_name: existing_name.clone(),
-                                        });
-                                    }
-                                }
-                            }
-
-                            // Always record this access for future checks
-                            component_access.entry(key).or_default().push((
-                                param_idx,
-                                *mutable,
-                                comp_name,
-                                current_filters.clone(),
-                            ));
-                        }
-                    }
-
-                    // Check for World conflict
-                    if let Some(world_idx) = world_param_idx {
-                        return Err(ComponentAccessConflict {
-                            param_idx,
-                            mutable: false,
-                            comp_name: "Query".to_string(),
-                            existing_idx: world_idx,
-                            existing_mut: true,
-                            existing_name: "World".to_string(),
-                        });
-                    }
-                }
-
-                SystemParamType::View { param: view_param } => {
-                    // Extract filters for this view (for disjointness checking)
-                    let current_filters = QueryFilters::from_view_param(view_param);
-
-                    // Check View component access (same as Query)
-                    for param_type in &view_param.parameters {
-                        let crate::ecs::view::view_param::ViewParamType::Component {
-                            comp_type,
-                            mutable,
-                        } = param_type;
-                        let key = get_key(comp_type);
-                        let comp_name = comp_type.to_string();
-
-                        // Check against ALL previous accesses to this component
-                        if let Some(existing_accesses) = component_access.get(&key) {
-                            for (existing_idx, existing_mut, existing_name, existing_filters) in
-                                existing_accesses
+                    let filters = query_filters_from_query_param(query_param);
+                    let accesses = query_param
+                        .data
+                        .iter()
+                        .filter_map(|d| {
+                            if let QueryData::Component {
+                                ty: comp_type,
+                                mutable,
+                                ..
+                            } = d
                             {
-                                if (*mutable || *existing_mut)
-                                    && !current_filters.is_disjoint_from(existing_filters)
-                                {
-                                    return Err(ComponentAccessConflict {
-                                        param_idx,
-                                        mutable: *mutable,
-                                        comp_name,
-                                        existing_idx: *existing_idx,
-                                        existing_mut: *existing_mut,
-                                        existing_name: existing_name.clone(),
-                                    });
-                                }
+                                Some(ComponentAccess {
+                                    key: get_key(comp_type),
+                                    name: comp_type.to_string(),
+                                    mutable: *mutable,
+                                })
+                            } else {
+                                None
                             }
-                        }
-
-                        // Always record this access for future checks
-                        component_access.entry(key).or_default().push((
-                            param_idx,
-                            *mutable,
-                            comp_name,
-                            current_filters.clone(),
-                        ));
-                    }
-
-                    // Check for World conflict
-                    if let Some(world_idx) = world_param_idx {
-                        return Err(ComponentAccessConflict {
-                            param_idx,
-                            mutable: false,
-                            comp_name: "View".to_string(),
-                            existing_idx: world_idx,
-                            existing_mut: true,
-                            existing_name: "World".to_string(),
-                        });
-                    }
+                        })
+                        .collect();
+                    ParamAccess::Components { accesses, filters }
                 }
-
+                SystemParamType::View { param: view_param } => {
+                    let filters = query_filters_from_view_param(view_param);
+                    let accesses = view_param
+                        .parameters
+                        .iter()
+                        .map(|vpt| {
+                            let ViewParamType::Component { comp_type, mutable } = vpt;
+                            ComponentAccess {
+                                key: get_key(comp_type),
+                                name: comp_type.to_string(),
+                                mutable: *mutable,
+                            }
+                        })
+                        .collect();
+                    ParamAccess::Components { accesses, filters }
+                }
                 SystemParamType::Resource { type_obj, mutable } => {
                     let type_ptr = type_obj.as_ptr() as usize;
                     let type_name = format!("Resource@{:x}", type_ptr);
-
-                    // Check for resource conflicts
-                    if let Some((existing_idx, existing_mut, existing_name)) =
-                        resource_access.get(&type_ptr)
-                    {
-                        if *mutable || *existing_mut {
-                            return Err(ComponentAccessConflict {
-                                param_idx,
-                                mutable: *mutable,
-                                comp_name: type_name,
-                                existing_idx: *existing_idx,
-                                existing_mut: *existing_mut,
-                                existing_name: existing_name.clone(),
-                            });
-                        }
-                    } else {
-                        resource_access.insert(type_ptr, (param_idx, *mutable, type_name));
-                    }
-
-                    // Check for World conflict
-                    if let Some(world_idx) = world_param_idx {
-                        return Err(ComponentAccessConflict {
-                            param_idx,
-                            mutable: *mutable,
-                            comp_name: if *mutable { "ResMut" } else { "Res" }.to_string(),
-                            existing_idx: world_idx,
-                            existing_mut: true,
-                            existing_name: "World".to_string(),
-                        });
+                    ParamAccess::Resource {
+                        key: type_ptr,
+                        name: type_name,
+                        mutable: *mutable,
                     }
                 }
-
                 SystemParamType::Assets {
                     type_ptr,
                     wrapper_class,
@@ -560,93 +403,16 @@ impl DynamicSystem {
                     } else {
                         format!("{:p}", type_ptr.0)
                     };
-
-                    // Check for Assets conflicts
-                    if let Some((existing_idx, existing_mut, existing_name)) =
-                        assets_access.get(&asset_type_name)
-                    {
-                        if *mutable || *existing_mut {
-                            return Err(ComponentAccessConflict {
-                                param_idx,
-                                mutable: *mutable,
-                                comp_name: format!("Assets<{}>", asset_type_name),
-                                existing_idx: *existing_idx,
-                                existing_mut: *existing_mut,
-                                existing_name: format!("Assets<{}>", existing_name),
-                            });
-                        }
-                    } else {
-                        assets_access.insert(
-                            asset_type_name.clone(),
-                            (param_idx, *mutable, asset_type_name.clone()),
-                        );
-                    }
-
-                    // Check for World conflict
-                    if let Some(world_idx) = world_param_idx {
-                        return Err(ComponentAccessConflict {
-                            param_idx,
-                            mutable: *mutable,
-                            comp_name: format!("Assets<{}>", asset_type_name),
-                            existing_idx: world_idx,
-                            existing_mut: true,
-                            existing_name: "World".to_string(),
-                        });
+                    ParamAccess::Assets {
+                        key: asset_type_name.clone(),
+                        name: asset_type_name,
+                        mutable: *mutable,
                     }
                 }
-
-                SystemParamType::World => {
-                    // World is exclusive - conflicts with everything
-                    if let Some(world_idx) = world_param_idx {
-                        // Two World parameters
-                        return Err(ComponentAccessConflict {
-                            param_idx,
-                            mutable: true,
-                            comp_name: "World".to_string(),
-                            existing_idx: world_idx,
-                            existing_mut: true,
-                            existing_name: "World".to_string(),
-                        });
-                    }
-
-                    // Check if any other parameters exist
-                    if !component_access.is_empty()
-                        || !resource_access.is_empty()
-                        || !assets_access.is_empty()
-                    {
-                        // Find the first conflicting parameter
-                        let (existing_idx, existing_name) =
-                            if let Some(entries) = component_access.values().next() {
-                                let (idx, _, name, _) = &entries[0];
-                                (*idx, name.clone())
-                            } else if let Some((idx, _, name)) = resource_access.values().next() {
-                                (*idx, name.clone())
-                            } else if let Some((idx, _, name)) = assets_access.values().next() {
-                                (*idx, name.clone())
-                            } else {
-                                unreachable!()
-                            };
-
-                        return Err(ComponentAccessConflict {
-                            param_idx,
-                            mutable: true,
-                            comp_name: "World".to_string(),
-                            existing_idx,
-                            existing_mut: false,
-                            existing_name,
-                        });
-                    }
-
-                    world_param_idx = Some(param_idx);
-                }
-
-                _ => {
-                    // Other parameter types (Commands, Local, etc.) don't conflict
-                }
-            }
-        }
-
-        Ok(())
+                SystemParamType::World => ParamAccess::World,
+                _ => ParamAccess::None,
+            })
+            .collect()
     }
 
     /// Get the cached function (for DynamicCondition)
@@ -678,7 +444,6 @@ impl System for DynamicSystem {
         if inner.gutted {
             return SystemStateFlags::empty();
         }
-        // Check if World parameter is used - if so, require exclusive access
         let needs_exclusive = inner
             .system_func
             .as_ref()
@@ -689,15 +454,7 @@ impl System for DynamicSystem {
             })
             .unwrap_or(false);
 
-        if needs_exclusive {
-            SystemStateFlags::EXCLUSIVE
-        } else if self.needs_commands {
-            // Systems with Commands use a per-system CommandQueue that needs
-            // to be applied at ApplyDeferred sync points
-            SystemStateFlags::DEFERRED
-        } else {
-            SystemStateFlags::empty()
-        }
+        pybevy_ecs::shared::system_flags::compute_system_flags(needs_exclusive, self.needs_commands)
     }
 
     unsafe fn run_unsafe(
@@ -751,9 +508,11 @@ impl System for DynamicSystem {
                 None
             };
             let mut commands_storage = if let Some(ref mut queue) = local_command_queue {
-                let allocator = world.entities_allocator();
-                let entities = world.entities();
-                Some(Commands::new_from_entities(queue, allocator, entities))
+                Some(
+                    pybevy_ecs::shared::command_queue_helpers::create_commands_from_queue(
+                        queue, world,
+                    ),
+                )
             } else {
                 None
             };
@@ -1206,10 +965,10 @@ impl System for DynamicSystem {
             }
             inner.system_func.as_ref().unwrap().params.clone()
         };
-        Self::validate_component_access_internal(&params, &self.func_name, |comp_type| {
+        let accesses = Self::to_param_accesses(&params, |comp_type| {
             self.get_component_id_for_validation(world, comp_type)
-        })
-        .map_err(|conflict| {
+        });
+        shared_validation::validate_access(&accesses).map_err(|conflict| {
             let error_msg = format!(
                 "System '{}' has conflicting component access:\n\
                  - Parameter {} requests {} access to {}\n\
@@ -1250,9 +1009,6 @@ impl System for DynamicSystem {
             }
             inner.system_func.as_ref().unwrap().params.clone()
         };
-
-        let mut set = FilteredAccessSet::default();
-        let mut access = FilteredAccess::default();
 
         // Collect component IDs and filters first to avoid borrow conflicts
         let mut read_ids: Vec<ComponentId> = Vec::new();
@@ -1448,7 +1204,7 @@ impl System for DynamicSystem {
             }
         }
 
-        // Now apply the collected IDs
+        // Apply the collected IDs to self for tracking
         for id in read_ids {
             self.add_read(id);
         }
@@ -1459,18 +1215,11 @@ impl System for DynamicSystem {
             self.add_with(id);
         }
 
-        for &id in &self.components_to_write {
-            access.add_component_write(id);
-        }
-        for &id in &self.components_to_read {
-            access.add_component_read(id);
-        }
-        for &id in &self.with_filters {
-            access.and_with(id);
-        }
-
-        set.add(access);
-        set
+        pybevy_ecs::shared::access_sets::build_access_set(
+            &self.components_to_read,
+            &self.components_to_write,
+            &self.with_filters,
+        )
     }
 
     fn check_change_tick(&mut self, _check: CheckChangeTicks) {}
@@ -1495,10 +1244,8 @@ impl DynamicSystem {
             }
             inner.system_func.as_ref().unwrap().params.clone()
         };
-        Self::validate_component_access_internal(&params, &self.func_name, |comp_type| {
-            comp_type.to_string()
-        })
-        .map_err(|conflict| {
+        let accesses = Self::to_param_accesses(&params, |comp_type| comp_type.to_string());
+        shared_validation::validate_access(&accesses).map_err(|conflict| {
             PyRuntimeError::new_err(format!(
                 "System '{}' has conflicting component access:\n\
                  - Parameter {} requests {} access to {}\n\

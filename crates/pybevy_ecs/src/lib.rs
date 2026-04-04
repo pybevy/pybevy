@@ -1,4 +1,5 @@
 pub mod name;
+pub mod shared;
 
 use pyo3::prelude::*;
 
