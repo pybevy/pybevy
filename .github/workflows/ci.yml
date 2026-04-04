@@ -21,14 +21,64 @@ permissions:
   contents: read
 
 jobs:
+  check:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get -y update && sudo apt-get install -y libasound-dev libudev-dev libwayland-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Install poetry
+        run: pipx install poetry==2.1.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "poetry"
+
+      - uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
+        with:
+          prefix-key: pybevy-lint
+          cache-on-failure: true
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad
+
+      - name: Cargo fmt
+        run: cargo fmt --check
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Lint with Ruff
+        run: poetry run ruff check tests examples benches pybevy
+
+      - name: Lint with Mypy
+        run: poetry run mypy tests examples benches pybevy
+
+      # - name: Cargo clippy
+      #   run: cargo clippy --locked
+
+      - name: Cargo tests
+        run: cargo test --locked --all-features
+        env:
+          RUSTC_WRAPPER: sccache
+
   test:
     timeout-minutes: 90
     strategy:
       matrix:
-        os: ["ubuntu-latest"]
-        rust: ["stable"] # nightly
         python-version: ["3.13", "3.14", "3.14t"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Free disk space
@@ -54,8 +104,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0
         with:
-          toolchain: ${{matrix.rust}}
-          components: rustfmt, clippy
+          toolchain: stable
 
       - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
         with:
@@ -65,25 +114,8 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad
 
-      - name: Cargo fmt
-        run: cargo fmt --check
-
       - name: Install dependencies
         run: poetry install --no-interaction
-
-      - name: Lint with Ruff
-        run: poetry run ruff check tests examples benches pybevy
-
-      - name: Lint with Mypy
-        run: poetry run mypy tests examples benches pybevy
-
-      # - name: Cargo clippy
-      #   run: cargo clippy --locked
-
-      - name: Cargo tests
-        run: cargo test --locked --all-features
-        env:
-          RUSTC_WRAPPER: sccache
 
       - name: Poetry env
         run: poetry env use ${{ steps.setup-python.outputs.python-path }}
