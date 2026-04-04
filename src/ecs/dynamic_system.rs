@@ -24,7 +24,7 @@ use pyo3::{
 use smallvec::SmallVec;
 
 use pybevy_ecs::shared::access_validation::{
-    self as shared_validation, ComponentAccess, ComponentAccessConflict, ParamAccess, QueryFilters,
+    self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
 };
 
 use crate::{

@@ -43,10 +43,11 @@ pub fn set_entity_context(entity: Entity, world_ptr: *mut World) {
 /// loop (e.g., items collected via `list(query)`).
 ///
 /// # Safety
-/// - `world_ptr` must be valid (protected by ValidityFlag on the caller)
-/// - `entity` must exist in the world (guaranteed during system execution)
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn mark_component_changed_explicit(
+/// - `world_ptr` must point to a valid `World` (caller must ensure the pointer
+///   has not been invalidated, e.g. via `ValidityFlag`).
+/// - `entity` must exist in the world.
+/// - No other mutable reference to the `World` may be live at the call site.
+pub unsafe fn mark_component_changed_explicit(
     entity: Entity,
     world_ptr: *mut World,
     component_id: ComponentId,
