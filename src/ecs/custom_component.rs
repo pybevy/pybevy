@@ -90,11 +90,15 @@ impl PyCustomComponent {
 
         // Mark component as changed using stored entity context.
         // This works both during iteration and after collection (list(query)).
-        crate::ecs::change_tracking::mark_component_changed_explicit(
-            slf.storage.entity,
-            slf.storage.world_ptr,
-            slf.storage.component_id,
-        );
+        // SAFETY: world_ptr is valid (protected by ValidityFlag on CustomComponentProxy),
+        // entity was extracted from a live query during system execution.
+        unsafe {
+            pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
+                slf.storage.entity,
+                slf.storage.world_ptr,
+                slf.storage.component_id,
+            );
+        }
 
         Ok(())
     }

@@ -332,12 +332,16 @@ impl PyLazyWrapperProxy {
         // Serialize and write back immediately
         self.serialize_field(py, name, &value)?;
 
-        // Mark component as changed using stored entity context
-        crate::ecs::change_tracking::mark_component_changed_explicit(
-            self.entity,
-            self.world_ptr,
-            self.component_id,
-        );
+        // Mark component as changed using stored entity context.
+        // SAFETY: world_ptr is valid (protected by ValidityFlag on LazyWrapperProxy),
+        // entity was extracted from a live query during system execution.
+        unsafe {
+            pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
+                self.entity,
+                self.world_ptr,
+                self.component_id,
+            );
+        }
 
         Ok(())
     }
