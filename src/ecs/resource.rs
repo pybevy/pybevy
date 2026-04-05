@@ -1,9 +1,46 @@
 pub use pybevy_core::PyResource;
 use pyo3::{
+    PyTypeInfo,
     exceptions::PyTypeError,
     prelude::*,
     types::{PyTuple, PyType},
 };
+
+/// Descriptor returned by `Res[T]` or `ResMut[T]`.
+///
+/// Provides `__origin__` and `__args__` for annotation parser compatibility,
+/// and `__repr__` using `T.__name__` (not `__qualname__`) for clean display.
+#[pyclass(name = "ResParam", frozen)]
+pub struct PyResParam {
+    mutable: bool,
+    type_obj: Py<PyAny>,
+    type_name: String,
+}
+
+#[pymethods]
+impl PyResParam {
+    #[getter]
+    pub fn __origin__(&self, py: Python) -> Py<PyAny> {
+        if self.mutable {
+            PyResMut::type_object(py).into_any().unbind()
+        } else {
+            PyRes::type_object(py).into_any().unbind()
+        }
+    }
+
+    #[getter]
+    pub fn __args__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, [self.type_obj.bind(py)])
+    }
+
+    pub fn __repr__(&self) -> String {
+        if self.mutable {
+            format!("ResMut[{}]", self.type_name)
+        } else {
+            format!("Res[{}]", self.type_name)
+        }
+    }
+}
 
 /// Read-only access to a Bevy resource
 #[pyclass(name = "Res")]
@@ -28,20 +65,23 @@ impl PyRes {
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
-        cls: &Bound<'_, PyType>,
+        _cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        // Create a GenericAlias like types.GenericAlias(Res, (key,))
-        // This allows the system parameter parser to detect Res[T] properly
-        let py = cls.py();
-        let types_mod = py.import("types")?;
-        let generic_alias_cls = types_mod.getattr("GenericAlias")?;
-
-        // Create GenericAlias(Res, (key,))
-        let args = PyTuple::new(py, [key])?;
-        let generic = generic_alias_cls.call1((cls, args))?;
-
-        Ok(generic.unbind())
+        let py = _cls.py();
+        let type_name = key
+            .getattr("__name__")
+            .and_then(|n| n.extract::<String>())
+            .unwrap_or_else(|_| key.repr().map(|r| r.to_string()).unwrap_or_default());
+        Py::new(
+            py,
+            PyResParam {
+                mutable: false,
+                type_obj: key.clone().unbind(),
+                type_name,
+            },
+        )
+        .map(|p| p.into_any())
     }
 
     /// Proxy attribute access to the wrapped resource (read-only)
@@ -81,20 +121,23 @@ impl PyResMut {
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
-        cls: &Bound<'_, PyType>,
+        _cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        // Create a GenericAlias like types.GenericAlias(ResMut, (key,))
-        // This allows the system parameter parser to detect ResMut[T] properly
-        let py = cls.py();
-        let types_mod = py.import("types")?;
-        let generic_alias_cls = types_mod.getattr("GenericAlias")?;
-
-        // Create GenericAlias(ResMut, (key,))
-        let args = PyTuple::new(py, [key])?;
-        let generic = generic_alias_cls.call1((cls, args))?;
-
-        Ok(generic.unbind())
+        let py = _cls.py();
+        let type_name = key
+            .getattr("__name__")
+            .and_then(|n| n.extract::<String>())
+            .unwrap_or_else(|_| key.repr().map(|r| r.to_string()).unwrap_or_default());
+        Py::new(
+            py,
+            PyResParam {
+                mutable: true,
+                type_obj: key.clone().unbind(),
+                type_name,
+            },
+        )
+        .map(|p| p.into_any())
     }
 
     /// Proxy attribute access to the wrapped resource

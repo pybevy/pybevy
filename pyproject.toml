@@ -159,6 +159,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--benchmark-sort=name --continue-on-collection-errors --ignore=tests/types -m 'not window' -p no:deepeval"
+filterwarnings = [
+    "ignore::RuntimeWarning:runpy",
+]
 markers = [
     "window: marks tests requiring DefaultPlugins (deselected by default due to event loop limitation)",
 ]

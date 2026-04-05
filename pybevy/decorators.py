@@ -122,7 +122,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         )
 
     # Check for data fields without @dataclass or custom __init__
-    own_annotations = cls.__dict__.get("__annotations__", {})
+    own_annotations = cls.__annotations__
     has_own_init = "__init__" in cls.__dict__
     if own_annotations and not dataclasses.is_dataclass(cls) and not has_own_init:
         raise TypeError(
