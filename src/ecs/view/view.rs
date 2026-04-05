@@ -20,7 +20,6 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
     ptr::NonNull,
     sync::{
         Arc, Mutex,
@@ -39,7 +38,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_bytecodevm::{
-    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType as VmFieldType},
+    bytecode::{CompiledBytecode, Compiler, FieldType as VmFieldType},
     expr::RustExpr,
     view_engine::{self, ViewFilter},
 };
@@ -57,27 +56,6 @@ use crate::ecs::{
     helpers::validity_guard::ValidityFlag,
     view::{construct_view_class_item, view_column::PyViewColumn},
 };
-
-/// A unique key for caching compiled bytecode
-/// Uses Python object identity for fast cache lookups
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ExprKey {
-    /// The destination field being assigned to
-    dest_field: (ComponentId, usize), // (component_id, offset)
-    /// Python object identity (memory address) for the expression
-    /// This is valid because the same expression object always produces the same bytecode
-    expr_identity: usize,
-}
-
-/// Secondary cache key using expression hash for when identity doesn't match
-/// This handles cases where the same expression is recreated (different object, same semantics)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ExprHashKey {
-    /// The destination field being assigned to
-    dest_field: (ComponentId, usize),
-    /// Hash of the expression structure
-    expr_hash: u64,
-}
 
 /// View parameter for batch operations
 ///
@@ -121,13 +99,8 @@ pub struct PyView {
     /// Master validity flag - invalidated when system exits
     validity: ValidityFlag,
 
-    /// Primary cache of compiled bytecode (keyed by Python object identity)
-    /// Fast path: same Python object always produces same bytecode
-    expr_cache: RefCell<HashMap<ExprKey, Arc<CompiledBytecode>>>,
-
-    /// Secondary cache (keyed by expression hash)
-    /// Fallback when object identity doesn't match but expression is semantically same
-    expr_hash_cache: RefCell<HashMap<ExprHashKey, Arc<CompiledBytecode>>>,
+    /// Bytecode cache for compiled expressions (keyed by dest field + expression hash)
+    bytecode_cache: RefCell<view_engine::BytecodeCache>,
 
     /// Component ID lookup cache
     component_ids: RefCell<HashMap<PyComponentType, ComponentId>>,
@@ -217,16 +190,37 @@ impl PyView {
             borrowed_mut: RefCell::new(HashSet::new()),
             world_ptr: Some(NonNull::from(world)),
             validity,
-            expr_cache: RefCell::new(HashMap::new()),
-            expr_hash_cache: RefCell::new(HashMap::new()),
+            bytecode_cache: RefCell::new(view_engine::BytecodeCache::new()),
             component_ids: RefCell::new(HashMap::new()),
             batch_validity_tokens: RefCell::new(Vec::new()),
         }
     }
 
-    /// Returns true if this view has any per-entity tick filters (Changed or Added)
-    fn has_tick_filters(&self) -> bool {
-        !self.changed_filter_types.is_empty() || !self.added_filter_types.is_empty()
+    /// Build a `ViewFilter` from this view's filter types for use with `view_engine` functions.
+    fn build_view_filter(&self, component_ids: HashSet<ComponentId>) -> PyResult<ViewFilter> {
+        Ok(ViewFilter {
+            component_ids,
+            with_ids: self
+                .filter_types
+                .iter()
+                .filter_map(|ft| self.get_component_id(ft).ok())
+                .collect(),
+            without_ids: self
+                .without_filter_types
+                .iter()
+                .filter_map(|ft| self.get_component_id(ft).ok())
+                .collect(),
+            changed_ids: self
+                .changed_filter_types
+                .iter()
+                .filter_map(|ft| self.get_component_id(ft).ok())
+                .collect(),
+            added_ids: self
+                .added_filter_types
+                .iter()
+                .filter_map(|ft| self.get_component_id(ft).ok())
+                .collect(),
+        })
     }
 
     /// Get or register a component ID
@@ -1207,9 +1201,8 @@ impl PyViewColMut {
     /// Called by `__setattr__` for direct assignments (e.g., `pos.x = expr`)
     /// and by Vec3Expr/QuatExpr for nested assignments (e.g., `pos.translation.y = expr`).
     ///
-    /// Uses a two-level cache:
-    /// 1. Primary: Python object identity (fastest - no parsing needed)
-    /// 2. Secondary: Expression hash (fallback for recreated expressions)
+    /// Uses `BytecodeCache` from `view_engine` for frame-persistent caching
+    /// keyed by (component_id, field_offset, expression_hash).
     #[pyo3(name = "_trigger_assignment")]
     fn _trigger_assignment(
         &self,
@@ -1219,84 +1212,29 @@ impl PyViewColMut {
     ) -> PyResult<()> {
         self.validity.check()?;
 
-        // Get field offset and type for destination
         let (dest_offset, dest_field_type) =
             get_component_field_info(&self.component_type, field_name)?;
 
-        // Get view reference
         let view = unsafe { &*self.view_ptr };
 
-        // OPTIMIZATION: First try identity-based cache (no parsing needed!)
-        let expr_identity = value.as_ptr() as usize;
-        let identity_key = ExprKey {
-            dest_field: (self.component_id, dest_offset),
-            expr_identity,
-        };
-
-        // Check identity cache first
-        {
-            let cache = view.expr_cache.borrow();
-            if let Some(cached) = cache.get(&identity_key) {
-                // Fast path: same Python object, skip parsing entirely
-                return self.execute_batch(py, cached);
-            }
-        }
-
-        // Cache miss - need to parse the expression
+        // Parse the Python expression to RustExpr
         let expr = RustExpr::from_py_object(py, value)?;
+        let expr_hash = view_engine::BytecodeCache::expr_hash(&expr);
 
-        // Compute hash for secondary cache
-        let expr_hash = {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            format!("{:?}", expr).hash(&mut hasher);
-            hasher.finish()
-        };
+        // Get or compile bytecode (cached across frames)
+        let bytecode = view
+            .bytecode_cache
+            .borrow_mut()
+            .get_or_compile(
+                self.component_id,
+                dest_offset,
+                dest_field_type,
+                &expr,
+                expr_hash,
+            )
+            .clone();
 
-        let hash_key = ExprHashKey {
-            dest_field: (self.component_id, dest_offset),
-            expr_hash,
-        };
-
-        // Check hash cache
-        let bytecode = {
-            let hash_cache = view.expr_hash_cache.borrow();
-            if let Some(cached) = hash_cache.get(&hash_key) {
-                // Found in hash cache - also add to identity cache for next time
-                let arc_compiled = cached.clone();
-                drop(hash_cache); // Release borrow before taking mutable borrow
-
-                let mut identity_cache = view.expr_cache.borrow_mut();
-                identity_cache.insert(identity_key, arc_compiled.clone());
-
-                arc_compiled
-            } else {
-                drop(hash_cache); // Release borrow
-
-                // Full cache miss - compile the expression
-                let dest_field = FieldId {
-                    component_id: self.component_id,
-                    offset: dest_offset,
-                    field_type: dest_field_type,
-                };
-
-                let compiled = RustExpr::compile_assignment(dest_field, &expr)?;
-                let arc_compiled = Arc::new(compiled);
-
-                // Store in both caches
-                let mut identity_cache = view.expr_cache.borrow_mut();
-                let mut hash_cache = view.expr_hash_cache.borrow_mut();
-
-                identity_cache.insert(identity_key, arc_compiled.clone());
-                hash_cache.insert(hash_key, arc_compiled.clone());
-
-                arc_compiled
-            }
-        };
-
-        // Execute the bytecode on all matching entities
-        self.execute_batch(py, &bytecode)?;
-
-        Ok(())
+        self.execute_batch(py, &bytecode)
     }
 }
 
@@ -1335,43 +1273,10 @@ impl PyViewColMut {
     ) -> PyResult<()> {
         // Execute based on component type using concrete types
         match &self.component_type {
-            PyComponentType::Dynamic(type_ptr) => {
-                // Dynamic component - use ViewBridge from ComponentBridge
-                let bridge = global_registry::get_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
+            PyComponentType::Dynamic(_type_ptr) => {
+                let filter = view.build_view_filter([self.component_id].into_iter().collect())?;
 
-                let view_bridge = bridge.view_bridge().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Dynamic component '{}' does not support View batch execution (no view_bridge)",
-                        bridge.name()
-                    ))
-                })?;
-
-                // Get component ID via the view_bridge
-                let component_id = (view_bridge.component_id)(world);
-
-                // Build query using ComponentId (like Custom path does)
-                let mut query_builder = QueryBuilder::<FilteredEntityMut>::new(world);
-                query_builder.mut_id(component_id);
-                view.apply_filters_to_query_builder(&mut query_builder, Some(&self.component_type));
-
-                let mut query_state = query_builder.build();
-
-                let tick_filters = view.resolve_tick_filters();
-
-                // Execute on all entities in parallel
-                query_state.par_iter_mut(world).for_each(|mut entity_mut| {
-                    // Per-entity tick filter check
-                    if !tick_filters.entity_passes(&entity_mut) {
-                        return;
-                    }
-                    if let Some(mut untyped) = entity_mut.get_mut_by_id(component_id) {
-                        let ptr = untyped.as_mut().as_ptr();
-                        // SAFETY: ptr from get_mut_by_id() points to valid component data
-                        unsafe { self.execute_on_wrapper_data(ptr, bytecode) };
-                    }
-                });
-
+                view_engine::execute_query_assignment(world, self.component_id, &filter, bytecode);
                 Ok(())
             }
             PyComponentType::Custom(type_ptr) => {
@@ -1450,9 +1355,8 @@ impl PyViewColMut {
 
     /// Execute bytecode on multiple components (cross-component expressions)
     ///
-    /// Uses batch execution with table iteration for performance.
-    /// Delegates to `view_engine` for archetype gathering, batch execution,
-    /// and change tick marking.
+    /// Uses `ViewExecutionContext` for cached batch execution with automatic
+    /// change tick marking.
     fn execute_batch_multi_component(
         &self,
         world: &mut World,
@@ -1460,47 +1364,15 @@ impl PyViewColMut {
         bytecode: &CompiledBytecode,
         component_ids: HashSet<ComponentId>,
     ) -> PyResult<()> {
-        let filter = ViewFilter {
-            component_ids,
-            with_ids: view
-                .filter_types
-                .iter()
-                .filter_map(|ft| view.get_component_id(ft).ok())
-                .collect(),
-            without_ids: view
-                .without_filter_types
-                .iter()
-                .filter_map(|ft| view.get_component_id(ft).ok())
-                .collect(),
-            changed_ids: view
-                .changed_filter_types
-                .iter()
-                .filter_map(|ft| view.get_component_id(ft).ok())
-                .collect(),
-            added_ids: view
-                .added_filter_types
-                .iter()
-                .filter_map(|ft| view.get_component_id(ft).ok())
-                .collect(),
-        };
+        let filter = view.build_view_filter(component_ids)?;
 
-        let strides = view_engine::resolve_component_strides(world, &filter.component_ids)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
-
-        let last_run = view.last_run;
-        let this_run = view.this_run;
-        let batches = view_engine::gather_table_batches(world, &filter, last_run, this_run);
+        let ctx =
+            view_engine::ViewExecutionContext::new(world, &filter, view.last_run, view.this_run)
+                .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
 
         unsafe {
-            if view.has_tick_filters() {
-                view_engine::execute_filtered_assignment(&batches, bytecode, &strides, true);
-            } else {
-                view_engine::execute_batch_assignment(&batches, bytecode, &strides, true);
-            }
+            ctx.execute(world, bytecode, self.component_id);
         }
-
-        view_engine::mark_component_changed(world, &batches, self.component_id);
-
         Ok(())
     }
 

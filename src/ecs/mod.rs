@@ -105,6 +105,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<query::single_runtime::PySingleQuery>()?;
     ecs.add_class::<resource::PyRes>()?;
     ecs.add_class::<resource::PyResMut>()?;
+    ecs.add_class::<resource::PyResParam>()?;
     // Re-export PyResource so Python can import it from pybevy.ecs
     ecs.add_class::<resource::PyResource>()?;
     ecs.add_class::<state::PyState>()?;

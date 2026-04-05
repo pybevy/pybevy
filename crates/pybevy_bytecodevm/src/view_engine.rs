@@ -4,17 +4,24 @@
 //! execution across entity batches. Python-agnostic — works only with
 //! bevy_ecs types and the bytecodevm's CompiledBytecode/VM.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
+};
 
 use bevy_ecs::{
     change_detection::Tick,
     component::ComponentId,
+    prelude::QueryBuilder,
     storage::{Table, TableId},
-    world::World,
+    world::{FilteredEntityMut, World},
 };
 use smallvec::SmallVec;
 
-use crate::bytecode::{CompiledBytecode, VM};
+use crate::{
+    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op, VM},
+    expr::RustExpr,
+};
 
 /// Maximum field pointers to stack-allocate before heap fallback.
 type FieldPtrVec = SmallVec<[*mut u8; 8]>;
@@ -488,5 +495,377 @@ pub fn mark_component_changed(
                 }
             }
         }
+    }
+}
+
+/// Key for bytecode cache: (component_id, field_offset, expression_hash).
+type CacheKey = (ComponentId, usize, u64);
+
+/// Frame-persistent cache for compiled bytecodes.
+///
+/// Store per-system (or thread-local) to avoid recompiling the same
+/// expression every frame. The cache is keyed by destination field +
+/// expression identity.
+#[derive(Clone, Default)]
+pub struct BytecodeCache {
+    cache: HashMap<CacheKey, CompiledBytecode>,
+}
+
+impl BytecodeCache {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Hash a RustExpr for cache lookup.
+    pub fn expr_hash(expr: &RustExpr) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{:?}", expr).hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Get cached bytecode or compile and cache it.
+    pub fn get_or_compile(
+        &mut self,
+        dest_component_id: ComponentId,
+        dest_offset: usize,
+        dest_field_type: FieldType,
+        expr: &RustExpr,
+        expr_hash: u64,
+    ) -> &CompiledBytecode {
+        let key: CacheKey = (dest_component_id, dest_offset, expr_hash);
+        self.cache.entry(key).or_insert_with(|| {
+            compile_assignment(dest_component_id, dest_offset, dest_field_type, expr)
+        })
+    }
+}
+
+/// Compile a field assignment expression to bytecode.
+pub fn compile_assignment(
+    dest_component_id: ComponentId,
+    dest_offset: usize,
+    dest_field_type: FieldType,
+    expr: &RustExpr,
+) -> CompiledBytecode {
+    let mut compiler = Compiler::new();
+    compile_expr(expr, &mut compiler);
+    let dest = FieldId {
+        component_id: dest_component_id,
+        offset: dest_offset,
+        field_type: dest_field_type,
+    };
+    let dest_idx = compiler.add_field(dest);
+    compiler.emit(Op::StoreField(dest_idx));
+    compiler.finalize()
+}
+
+/// Compile a RustExpr to bytecode operations.
+fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
+    match expr {
+        RustExpr::Field {
+            component_id,
+            offset,
+            field_type,
+        } => {
+            let fid = FieldId {
+                component_id: *component_id,
+                offset: *offset,
+                field_type: *field_type,
+            };
+            let idx = c.add_field(fid);
+            c.emit(Op::PushField(idx));
+        }
+        RustExpr::Const(v) => {
+            let idx = c.add_constant(*v);
+            c.emit(Op::PushConst(idx));
+        }
+        RustExpr::Add(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Add);
+        }
+        RustExpr::Sub(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Sub);
+        }
+        RustExpr::Mul(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Mul);
+        }
+        RustExpr::Div(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Div);
+        }
+        RustExpr::Neg(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Neg);
+        }
+        RustExpr::Sin(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Sin);
+        }
+        RustExpr::Cos(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Cos);
+        }
+        RustExpr::Tan(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Tan);
+        }
+        RustExpr::Asin(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Asin);
+        }
+        RustExpr::Acos(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Acos);
+        }
+        RustExpr::Atan(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Atan);
+        }
+        RustExpr::Sqrt(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Sqrt);
+        }
+        RustExpr::Abs(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Abs);
+        }
+        RustExpr::Floor(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Floor);
+        }
+        RustExpr::Ceil(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Ceil);
+        }
+        RustExpr::Round(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Round);
+        }
+        RustExpr::Exp(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Exp);
+        }
+        RustExpr::Ln(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Ln);
+        }
+        RustExpr::Log10(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Log10);
+        }
+        RustExpr::Log2(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Log2);
+        }
+        RustExpr::Sign(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Sign);
+        }
+        RustExpr::Fract(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Fract);
+        }
+        RustExpr::Mod(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Mod);
+        }
+        RustExpr::Pow(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Pow);
+        }
+        RustExpr::Min(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Min);
+        }
+        RustExpr::Max(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Max);
+        }
+        RustExpr::Clamp(val, min, max) => {
+            compile_expr(val, c);
+            compile_expr(min, c);
+            compile_expr(max, c);
+            c.emit(Op::Clamp);
+        }
+        RustExpr::Lerp(a, b, t) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            compile_expr(t, c);
+            c.emit(Op::Lerp);
+        }
+        // Comparison/logical ops — compile to 1.0/0.0 result
+        RustExpr::Eq(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Eq);
+        }
+        RustExpr::Ne(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Ne);
+        }
+        RustExpr::Lt(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Lt);
+        }
+        RustExpr::Le(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Le);
+        }
+        RustExpr::Gt(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Gt);
+        }
+        RustExpr::Ge(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Ge);
+        }
+        RustExpr::And(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::And);
+        }
+        RustExpr::Or(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::Or);
+        }
+        RustExpr::Not(a) => {
+            compile_expr(a, c);
+            c.emit(Op::Not);
+        }
+        RustExpr::Where(cond, true_expr, false_expr) => {
+            compile_expr(cond, c);
+            compile_expr(true_expr, c);
+            compile_expr(false_expr, c);
+            c.emit(Op::Where);
+        }
+        RustExpr::Random => {
+            c.emit(Op::Random);
+        }
+        RustExpr::RandomRange(min, max) => {
+            compile_expr(min, c);
+            compile_expr(max, c);
+            c.emit(Op::RandomRange);
+        }
+    }
+}
+
+/// Execute a single-component assignment via Bevy's query system.
+///
+/// Optimized path for the common case where all bytecode fields reference
+/// the same component. Uses `QueryBuilder` + `par_iter_mut` for parallel
+/// execution with proper Bevy change detection.
+///
+/// Prefer this over `execute_batch_assignment` for single-component views —
+/// it avoids `gather_table_batches` overhead and parallelizes automatically.
+pub fn execute_query_assignment(
+    world: &mut World,
+    component_id: ComponentId,
+    filter: &ViewFilter,
+    bytecode: &CompiledBytecode,
+) {
+    let mut qb = QueryBuilder::<FilteredEntityMut>::new(world);
+    qb.mut_id(component_id);
+    for &id in &filter.with_ids {
+        qb.with_id(id);
+    }
+    for &id in &filter.without_ids {
+        qb.without_id(id);
+    }
+    // Data components that aren't the target still need read access
+    for &id in &filter.component_ids {
+        if id != component_id {
+            qb.ref_id(id);
+        }
+    }
+    let mut qs = qb.build();
+
+    qs.par_iter_mut(world).for_each(|mut em| {
+        if let Some(mut untyped) = em.get_mut_by_id(component_id) {
+            let ptr = untyped.as_mut().as_ptr();
+            unsafe { execute_on_ptr(ptr, bytecode) };
+        }
+    });
+}
+
+/// Cached view execution context.
+///
+/// Caches table batches and component strides across multiple assignments
+/// within the same frame. Create once per system execution, reuse for all
+/// View assignments.
+pub struct ViewExecutionContext {
+    pub batches: Vec<TableBatch>,
+    pub strides: HashMap<ComponentId, usize>,
+}
+
+impl ViewExecutionContext {
+    /// Create a new execution context by gathering batches and resolving strides.
+    ///
+    /// `last_run` and `this_run` are the system's change-detection ticks,
+    /// used to build per-entity tick masks for `Changed`/`Added` filters.
+    pub fn new(
+        world: &mut World,
+        filter: &ViewFilter,
+        last_run: Tick,
+        this_run: Tick,
+    ) -> Result<Self, ViewEngineError> {
+        let strides = resolve_component_strides(world, &filter.component_ids)?;
+        let batches = gather_table_batches(world, filter, last_run, this_run);
+        Ok(Self { batches, strides })
+    }
+
+    /// Execute a pre-compiled bytecode assignment using cached batches/strides.
+    ///
+    /// Automatically selects the filtered execution path when any batch has a
+    /// tick mask (from `Changed`/`Added` filters), or the fast batch path otherwise.
+    ///
+    /// # Safety
+    ///
+    /// World must not be structurally modified since this context was created.
+    pub unsafe fn execute(
+        &self,
+        world: &mut World,
+        bytecode: &CompiledBytecode,
+        dest_component_id: ComponentId,
+    ) {
+        let has_tick_masks = self.batches.iter().any(|b| b.tick_mask.is_some());
+        unsafe {
+            if has_tick_masks {
+                execute_filtered_assignment(
+                    &self.batches,
+                    bytecode,
+                    &self.strides,
+                    cfg!(feature = "parallel"),
+                );
+            } else {
+                execute_batch_assignment(
+                    &self.batches,
+                    bytecode,
+                    &self.strides,
+                    cfg!(feature = "parallel"),
+                );
+            }
+        }
+        mark_component_changed(world, &self.batches, dest_component_id);
+    }
+
+    pub fn entity_count(&self) -> usize {
+        self.batches.iter().map(|b| b.entity_count).sum()
     }
 }

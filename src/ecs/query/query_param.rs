@@ -45,6 +45,11 @@ impl PyQueryParam {
     pub fn _filter_len(&self) -> usize {
         self.filters.len()
     }
+
+    pub fn __repr__(&self) -> String {
+        let parts: Vec<String> = self.data.iter().map(|d| d.to_string()).collect();
+        format!("Query[{}]", parts.join(", "))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

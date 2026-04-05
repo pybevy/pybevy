@@ -35,8 +35,14 @@ const STACK_PARAMS: usize = 8;
 /// Global cache for parsed system parameters to avoid re-parsing the same function
 /// Key: Python function pointer address (as usize)
 /// Value: Parsed parameters
-static SYSTEM_PARAM_CACHE: Mutex<Option<HashMap<usize, SmallVec<[SystemParam; STACK_PARAMS]>>>> =
-    Mutex::new(None);
+/// Cache entry: (code_object_ptr, params).
+///
+/// We store the `__code__` object address alongside the params so we can detect
+/// address reuse: if CPython recycles a function's memory for a new closure with
+/// different parameters, the `__code__` pointer will differ and we re-parse.
+static SYSTEM_PARAM_CACHE: Mutex<
+    Option<HashMap<usize, (usize, SmallVec<[SystemParam; STACK_PARAMS]>)>>,
+> = Mutex::new(None);
 
 /// Represents a pythonic system function with its parameters cached for efficient calls
 #[derive(Debug)]
@@ -83,15 +89,33 @@ impl SystemFunction {
         }
 
         let func_addr = func.as_ptr() as usize;
+        // Use __code__ object pointer as a fingerprint so we detect CPython address
+        // reuse: if a new closure is allocated at the same address as a GC'd one,
+        // its __code__ will differ and the stale cache entry is discarded.
+        let code_ptr = func
+            .getattr("__code__")
+            .map(|c| c.as_ptr() as usize)
+            .unwrap_or(0);
 
         // Try to get from cache first
         let params = {
             let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
             let cache = cache_guard.get_or_insert_with(HashMap::new);
 
-            if let Some(cached_params) = cache.get(&func_addr) {
-                // Found in cache - clone and return
-                cached_params.clone()
+            if let Some((cached_code, cached_params)) = cache.get(&func_addr) {
+                if *cached_code == code_ptr {
+                    // Same function - return cached params
+                    cached_params.clone()
+                } else {
+                    // Address was reused for a different function - discard stale entry
+                    cache.remove(&func_addr);
+                    drop(cache_guard);
+                    let parsed_params = Self::parse_system_parameters(&func, py)?;
+                    let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
+                    let cache = cache_guard.get_or_insert_with(HashMap::new);
+                    cache.insert(func_addr, (code_ptr, parsed_params.clone()));
+                    parsed_params
+                }
             } else {
                 // Not in cache - parse and insert
                 drop(cache_guard); // Release lock before parsing
@@ -100,7 +124,7 @@ impl SystemFunction {
                 // Insert into cache
                 let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
                 let cache = cache_guard.get_or_insert_with(HashMap::new);
-                cache.insert(func_addr, parsed_params.clone());
+                cache.insert(func_addr, (code_ptr, parsed_params.clone()));
 
                 parsed_params
             }

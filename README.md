@@ -65,6 +65,16 @@ apt install -y libwayland-client0 libasound2t64 mesa-vulkan-drivers
 
 ALSA warnings about missing audio devices are harmless and can be ignored.
 
+**Building from source** additionally requires development headers:
+
+```bash
+# Debian/Ubuntu
+sudo apt install libwayland-dev libasound2-dev
+
+# Fedora/RHEL
+sudo dnf install wayland-devel alsa-lib-devel
+```
+
 ### Free-Threaded Python (3.13t+)
 
 PyBevy supports Python's free-threaded mode (PEP 703). Non-conflicting Python systems run truly in parallel on separate cores via Bevy's multi-threaded scheduler — no GIL serialization. Validated on CPython 3.14t. Performance depends on workload and scene complexity; see [Benchmarks](docs/benchmarks.md) for methodology and numbers.
