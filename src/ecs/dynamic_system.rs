@@ -15,8 +15,10 @@ use bevy::{
     },
     prelude::*,
 };
-use pybevy_ecs::shared::access_validation::{
-    self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
+use pybevy_core::registry::global_registry;
+use pybevy_ecs::shared::{
+    access_sets::build_full_access_set,
+    access_validation::{self as shared_validation, ComponentAccess, ParamAccess, QueryFilters},
 };
 use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
 use pyo3::{
@@ -115,6 +117,8 @@ pub struct DynamicSystem {
     components_to_write: Vec<ComponentId>,
     components_to_read: Vec<ComponentId>,
     with_filters: Vec<ComponentId>,
+    resources_to_read: Vec<ComponentId>,
+    resources_to_write: Vec<ComponentId>,
     /// Maps custom component type pointers to their registered ComponentIds
     custom_component_ids: HashMap<*const PyTypeObject, ComponentId>,
     /// Shared inner state holding Python references - can be gutted externally
@@ -287,6 +291,8 @@ impl DynamicSystem {
             components_to_write: Vec::new(),
             components_to_read: Vec::new(),
             with_filters: Vec::new(),
+            resources_to_read: Vec::new(),
+            resources_to_write: Vec::new(),
             custom_component_ids: HashMap::new(),
             inner,
             func_name,
@@ -1110,14 +1116,36 @@ impl System for DynamicSystem {
                         }
                     }
                 }
-                SystemParamType::Resource {
-                    type_obj: _,
-                    mutable: _,
-                } => {
-                    // Resources will be handled differently - they don't affect filtered access
+                SystemParamType::Resource { type_obj, mutable } => {
+                    let resource_type = Python::attach(|py| {
+                        let type_bound = type_obj.bind(py);
+                        PyResourceType::try_from((type_bound, py)).ok()
+                    });
+                    if let Some(rt) = resource_type {
+                        if let Some(id) = rt.get_component_id(world) {
+                            if *mutable {
+                                self.resources_to_write.push(id);
+                            } else {
+                                self.resources_to_read.push(id);
+                            }
+                        }
+                    }
                 }
-                SystemParamType::Assets { .. } => {
-                    // Assets are resources - they don't affect filtered access
+                SystemParamType::Assets {
+                    type_ptr,
+                    wrapper_class,
+                    mutable,
+                } => {
+                    let key = wrapper_class.unwrap_or(*type_ptr).0;
+                    if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(key) {
+                        if let Some(id) = bridge.resource_id(world) {
+                            if *mutable {
+                                self.resources_to_write.push(id);
+                            } else {
+                                self.resources_to_read.push(id);
+                            }
+                        }
+                    }
                 }
                 SystemParamType::View { param } => {
                     // Extract component types and mutability from PyViewParam
@@ -1210,10 +1238,12 @@ impl System for DynamicSystem {
             self.add_with(id);
         }
 
-        pybevy_ecs::shared::access_sets::build_access_set(
+        build_full_access_set(
             &self.components_to_read,
             &self.components_to_write,
             &self.with_filters,
+            &self.resources_to_read,
+            &self.resources_to_write,
         )
     }
 
@@ -1327,6 +1357,9 @@ impl DynamicSystem {
 ///
 /// # Arguments
 /// * `py` - Python GIL token
+/// Get or create a synthetic ComponentId for an asset type, keyed by Python type pointer.
+/// Used to register `Res[Assets[T]]`/`ResMut[Assets[T]]` access in FilteredAccessSet
+/// so Bevy's scheduler prevents cross-system data races on the same asset type.
 /// * `system_func` - The parsed system function with parameters
 /// * `world` - Mutable world reference
 /// * `on_param` - The On trigger parameter (required for observer dispatch)

@@ -31,7 +31,7 @@ use std::any::TypeId;
 
 use bevy::{
     asset::{AssetPath, AssetServer, UntypedHandle},
-    ecs::world::World,
+    ecs::{component::ComponentId, world::World},
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
@@ -66,6 +66,10 @@ pub trait AssetBridge: Send + Sync + 'static {
 
     /// Human-readable name for error messages
     fn name(&self) -> &'static str;
+
+    /// Get the ComponentId of the `Assets<T>` resource in the world.
+    /// Used by FilteredAccessSet to track cross-system asset access.
+    fn resource_id(&self, world: &World) -> Option<ComponentId>;
 
     /// Get asset from Assets resource and convert to Python object (read-only)
     ///
