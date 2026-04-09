@@ -15,10 +15,10 @@ use bevy::{
     },
     prelude::*,
 };
-use pybevy_ecs::shared::access_sets::build_full_access_set;
 use pybevy_core::registry::global_registry;
-use pybevy_ecs::shared::access_validation::{
-    self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
+use pybevy_ecs::shared::{
+    access_sets::build_full_access_set,
+    access_validation::{self as shared_validation, ComponentAccess, ParamAccess, QueryFilters},
 };
 use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
 use pyo3::{
@@ -1137,9 +1137,7 @@ impl System for DynamicSystem {
                     mutable,
                 } => {
                     let key = wrapper_class.unwrap_or(*type_ptr).0;
-                    if let Some(bridge) =
-                        global_registry::get_asset_bridge_by_py_type(key)
-                    {
+                    if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(key) {
                         if let Some(id) = bridge.resource_id(world) {
                             if *mutable {
                                 self.resources_to_write.push(id);

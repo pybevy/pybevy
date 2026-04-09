@@ -3,30 +3,12 @@ use bevy::ecs::{
     query::{FilteredAccess, FilteredAccessSet},
 };
 
-/// Build a `FilteredAccessSet` from collected component access information.
+/// Build a `FilteredAccessSet` from component and resource access information.
 ///
 /// Constructs the Bevy scheduler metadata from resolved ComponentIds.
 /// Tells Bevy's scheduler what components this system reads, writes, and
-/// filters on, enabling parallel scheduling.
-pub fn build_access_set(
-    components_to_read: &[ComponentId],
-    components_to_write: &[ComponentId],
-    with_filters: &[ComponentId],
-) -> FilteredAccessSet {
-    build_full_access_set(
-        components_to_read,
-        components_to_write,
-        with_filters,
-        &[],
-        &[],
-    )
-}
-
-/// Build a `FilteredAccessSet` from component AND resource access information.
-///
-/// Extends `build_access_set` with resource read/write tracking, telling Bevy's
-/// scheduler about `Res<T>`, `ResMut<T>`, and `Assets<T>` accesses so it can
-/// prevent cross-system data races.
+/// filters on, as well as `Res<T>`, `ResMut<T>`, and `Assets<T>` resource
+/// accesses, enabling parallel scheduling and preventing cross-system data races.
 pub fn build_full_access_set(
     components_to_read: &[ComponentId],
     components_to_write: &[ComponentId],
