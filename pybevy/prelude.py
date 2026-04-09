@@ -294,9 +294,7 @@ FixedPostUpdate = Stage.FixedPostUpdate
 FixedLast = Stage.FixedLast
 
 
-# ---------------------------------------------------------------------------
 # Bevy prelude items NOT YET available in PyBevy
-# ---------------------------------------------------------------------------
 #
 # Math:
 #   BVec2, BVec3, BVec4, BVec3A, BVec4A, Dir3A, IVec3, IVec4, UVec4, IRect
@@ -404,7 +402,6 @@ FixedLast = Stage.FixedLast
 # Other:
 #   BevyError, DebugName, NameOrEntity, ShortName,
 #   StaticTransformOptimizations, TransformHelper, TransformTreeChanged
-# ---------------------------------------------------------------------------
 
 
 __all__ = [

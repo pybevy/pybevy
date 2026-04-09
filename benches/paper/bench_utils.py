@@ -14,10 +14,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-# =============================================================================
-# System Information
-# =============================================================================
-
 
 def get_cpu_model() -> str:
     """Get CPU model name from /proc/cpuinfo or platform."""
@@ -90,10 +86,6 @@ def print_system_info() -> None:
     print("=" * 64)
     print()
 
-
-# =============================================================================
-# Statistical Framework
-# =============================================================================
 
 
 @dataclass
@@ -175,9 +167,6 @@ def run_benchmark(
     )
 
 
-# =============================================================================
-# Table Formatting
-# =============================================================================
 
 
 def print_table_header(
@@ -210,9 +199,6 @@ def compute_speedup(baseline: BenchResult, optimized: BenchResult) -> str:
     return f"{ratio:.1f}x"
 
 
-# =============================================================================
-# CLI Argument Helpers
-# =============================================================================
 
 
 def add_bench_args(parser: argparse.ArgumentParser) -> None:

@@ -153,7 +153,6 @@ impl HotReloadStateAccess for HotReloadState {
     }
 }
 
-/// Bevy resource that holds the hot reload state
 #[derive(Resource, Clone)]
 pub struct HotReloadResource {
     pub state: HotReloadState,

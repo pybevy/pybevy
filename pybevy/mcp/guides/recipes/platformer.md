@@ -19,7 +19,7 @@ JUMP_FORCE = 8.0
 GRAVITY = -20.0
 GROUND_Y = 0.0
 
-# ── Components ──
+# Components
 
 @component
 class Player(Component):

@@ -11,7 +11,6 @@ pub struct DebugSnapshot {
     /// Whether this snapshot has been populated at least once
     pub populated: bool,
 
-    // -- Reload info --
     pub reload_count: u32,
     pub last_reload_mode: Option<String>,
     /// Whether the last reload attempt failed (app running previous generation)
@@ -19,32 +18,26 @@ pub struct DebugSnapshot {
     /// Reason for reload failure, if any
     pub reload_failure_reason: Option<String>,
 
-    // -- System resources --
     pub memory_mb: f64,
     pub total_memory_mb: f64,
     pub cpu_percent: f32,
     pub cpu_core_count: usize,
 
-    // -- Performance --
     pub fps_average: f32,
     pub fps_current: f32,
     pub uptime_secs: f64,
 
-    // -- Scene --
     pub entity_count: usize,
     /// Asset type name → count (e.g. "Mesh" → 9)
     pub asset_counts: Vec<(String, usize)>,
 
-    // -- Python info --
     pub gil_enabled: bool,
 
-    // -- System profiling --
     /// Top update/last systems: (name, avg_ms)
     pub update_profiles: Vec<(String, f64)>,
     /// Startup systems: (name, avg_ms)
     pub startup_profiles: Vec<(String, f64)>,
 
-    // -- Memory profiling (per-reload) --
     /// Total number of systems across all schedules
     pub total_schedule_systems: usize,
     /// Python GC tracked objects (gen0 + gen1 + gen2)

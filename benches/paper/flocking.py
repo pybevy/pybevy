@@ -63,9 +63,6 @@ class Velocity(Component):
     vel: Vec3 = field(default_factory=lambda: Vec3.ZERO)
 
 
-# =============================================================================
-# Query (Python) implementation
-# =============================================================================
 
 
 def _make_query_app(entity_count: int) -> App:
@@ -193,9 +190,6 @@ def _make_query_app(entity_count: int) -> App:
     return app
 
 
-# =============================================================================
-# Numba JIT implementation
-# =============================================================================
 
 
 def _get_numba_flocking(parallel: bool = True):  # type: ignore[no-untyped-def]
@@ -335,9 +329,6 @@ def _make_numba_app(entity_count: int, parallel: bool = True) -> App:
     return app
 
 
-# =============================================================================
-# Benchmark Runner
-# =============================================================================
 
 
 def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
@@ -370,9 +361,6 @@ def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
     )
 
 
-# =============================================================================
-# Main
-# =============================================================================
 
 
 def main() -> None:

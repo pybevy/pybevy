@@ -1,7 +1,5 @@
 from pybevy.app import Plugin
 
-# ── Plugins ─────────────────────────────────────────────────────────────────
-
 class McpPlugin(Plugin):
     """MCP (Model Context Protocol) server plugin for AI agent integration.
 

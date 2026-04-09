@@ -43,6 +43,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::registry::global_registry;
+use pybevy_reload::{HotReloadGeneration, HotReloadable, SystemStage};
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
@@ -51,10 +52,7 @@ use pyo3::{
 };
 
 use crate::{
-    app::{
-        PyStage,
-        hot_reload::{HotReloadable, SystemStage},
-    },
+    app::PyStage,
     assets::{asset_type::PyAssetTypeParam, assets::PyAssets},
     ecs::{
         PyEntity,
@@ -979,7 +977,7 @@ impl PyWorld {
         // Read current hot-reload generation so the system's expected_generation
         // matches and run_unsafe doesn't silently skip execution.
         let generation = world
-            .get_resource::<crate::app::hot_reload::HotReloadGeneration>()
+            .get_resource::<HotReloadGeneration>()
             .map(|res| res.current)
             .unwrap_or(0);
 

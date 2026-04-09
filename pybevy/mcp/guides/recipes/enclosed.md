@@ -21,7 +21,7 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    # ── Camera ──
+    # Camera
     # Low bloom for enclosed spaces — high bloom blows out emissive objects
     commands.spawn(
         Camera3d(),
@@ -37,7 +37,7 @@ def setup(
         Name("camera"),
     )
 
-    # ── Lighting ──
+    # Lighting
     # Directional still helps even indoors — gives general fill through walls
     commands.spawn(
         DirectionalLight(
@@ -55,17 +55,17 @@ def setup(
     ))
     commands.insert_resource(ClearColor(Color.srgb(0.02, 0.02, 0.05)))
 
-    # ── Room dimensions ──
+    # Room dimensions
     HALF_W = 6.0   # half-width
     WALL_H = 5.0   # wall height
 
-    # ── Meshes ──
+    # Meshes
     floor_mesh = meshes.add(Plane3d(Vec3.Y, half_size=Vec2(HALF_W, HALF_W)))
     ceiling_mesh = meshes.add(Plane3d(Vec3(0.0, -1.0, 0.0), half_size=Vec2(HALF_W, HALF_W)))
     wall_long = meshes.add(Cuboid(HALF_W * 2, WALL_H, 0.3))
     wall_side = meshes.add(Cuboid(0.3, WALL_H, HALF_W * 2))
 
-    # ── Materials ──
+    # Materials
     # Start with visible base colors (0.15–0.25 range), not near-black
     floor_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.18, 0.16, 0.24),
@@ -80,7 +80,7 @@ def setup(
         metallic=0.6, perceptual_roughness=0.5,
     ))
 
-    # ── Room geometry ──
+    # Room geometry
     commands.spawn(Mesh3d(floor_mesh), MeshMaterial3d(floor_mat), Name("floor"))
     commands.spawn(Mesh3d(ceiling_mesh), MeshMaterial3d(ceiling_mat),
                    Transform.from_xyz(0, WALL_H, 0), Name("ceiling"))
@@ -93,7 +93,7 @@ def setup(
     commands.spawn(Mesh3d(wall_side), MeshMaterial3d(wall_mat),
                    Transform.from_xyz(-HALF_W, WALL_H / 2, 0), Name("wall_w"))
 
-    # ── Accent emissive object ──
+    # Accent emissive object
     # With unlit=True, base_color IS the visible surface — set it BRIGHT
     glow_mesh = meshes.add(Sphere(0.5).mesh().ico(4))
     glow_mat = materials.add(StandardMaterial(
@@ -107,7 +107,7 @@ def setup(
         Name("glow_orb"),
     )
 
-    # ── Point lights — primary illumination for enclosed spaces ──
+    # Point lights — primary illumination for enclosed spaces
     # Central accent light (matches the emissive object color)
     commands.spawn(
         PointLight(intensity=500000.0, color=Color.srgb(0.6, 0.2, 1.0),
@@ -121,7 +121,7 @@ def setup(
             Transform.from_xyz(float(x), WALL_H - 0.5, float(z)),
         )
 
-    # ── Scene content placeholder ──
+    # Scene content placeholder
     box_mesh = meshes.add(Cuboid(1.0, 1.0, 1.0))
     box_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.7, 0.45, 0.1),

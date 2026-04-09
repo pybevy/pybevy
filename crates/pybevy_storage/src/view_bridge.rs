@@ -17,6 +17,8 @@
 //!
 //! Field offsets are compile-time verified via `offset_of!` macro.
 
+use bevy::ecs::{component::ComponentId, storage::Column, world::World};
+
 /// Field metadata for View API access
 ///
 /// Contains the byte offset and type metadata of a field within a component struct.
@@ -92,7 +94,7 @@ pub struct ViewBridge {
     ///
     /// This is called during View query building to register the component
     /// with the world and get its ComponentId.
-    pub component_id: fn(world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId,
+    pub component_id: fn(world: &mut World) -> ComponentId,
 
     /// Column data pointer function
     ///
@@ -105,8 +107,7 @@ pub struct ViewBridge {
     /// `entity_count` must equal the column's actual length.
     /// The returned pointer is valid only for the lifetime of the column.
     /// Caller must ensure proper synchronization for mutable access.
-    pub column_data_ptr:
-        unsafe fn(column: &bevy::ecs::storage::Column, entity_count: usize) -> *const u8,
+    pub column_data_ptr: unsafe fn(column: &Column, entity_count: usize) -> *const u8,
 }
 
 impl std::fmt::Debug for ViewBridge {

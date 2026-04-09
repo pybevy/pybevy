@@ -68,8 +68,6 @@ class SessionRecorder:
         self._log_file.write(json.dumps(entry, default=str) + "\n")
         self._log_file.flush()
 
-    # ──────────────────────────────────────────────
-
     def _summarise_result(self, result: Any) -> Any:  # noqa: ANN401
         """Return a JSON-safe summary, saving images to disk."""
         if not isinstance(result, dict):

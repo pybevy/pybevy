@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use bevy::prelude::Resource;
 use pyo3::prelude::*;
 
@@ -8,9 +10,10 @@ use crate::ecs::dynamic_system::DynamicSystemHandle;
 /// even though the DynamicSystem structs remain in Bevy's schedule.
 #[derive(Resource, Default)]
 pub(crate) struct DynamicSystemRegistry {
-    pub(crate) generations: std::collections::HashMap<u32, Vec<DynamicSystemHandle>>,
+    pub(crate) generations: HashMap<u32, Vec<DynamicSystemHandle>>,
+
     /// System names from the most recent generation, for detecting renames/removals
-    pub(crate) known_systems: std::collections::HashSet<String>,
+    pub(crate) known_systems: HashSet<String>,
 }
 
 impl DynamicSystemRegistry {
@@ -49,10 +52,7 @@ impl DynamicSystemRegistry {
     }
 
     /// Compare new system names against known set, update tracker, return removed names.
-    pub(crate) fn detect_system_delta(
-        &mut self,
-        new_systems: std::collections::HashSet<String>,
-    ) -> Vec<String> {
+    pub(crate) fn detect_system_delta(&mut self, new_systems: HashSet<String>) -> Vec<String> {
         if self.known_systems.is_empty() {
             // First reload: record the initial set
             self.known_systems = new_systems;
@@ -64,6 +64,7 @@ impl DynamicSystemRegistry {
             .difference(&new_systems)
             .cloned()
             .collect();
+
         self.known_systems = new_systems;
         removed
     }

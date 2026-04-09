@@ -60,7 +60,6 @@ from pybevy.decorators import component
 from pybevy.ecs import Commands, Component
 from pybevy.transform import Transform
 
-# --- Wrapper storage: 3 floats (Vec3 equivalent) ---
 @component
 @dataclass
 class WVelocity(Component):
@@ -68,7 +67,6 @@ class WVelocity(Component):
     vy: float
     vz: float
 
-# --- PyObject storage: 3 floats + string ---
 @component(storage="python")
 @dataclass
 class POVelocityStr(Component):
@@ -77,7 +75,6 @@ class POVelocityStr(Component):
     vz: float
     label: str
 
-# --- Wrapper storage: 3 floats + string (forces pyobject) ---
 @component(storage="python")
 @dataclass
 class POVelocity(Component):

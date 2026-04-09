@@ -81,7 +81,6 @@ The `pybevy-python` cdylib crate (which produces the `_pybevy.so`/`.pyd` Python 
 
 ```
 pybevy-python feature    →    pybevy feature
-─────────────────────         ──────────────
 linux-display            →    linux-display   →  bevy/x11 + bevy/wayland
 mcp                      →    mcp             →  dep:pybevy_mcp
 ```

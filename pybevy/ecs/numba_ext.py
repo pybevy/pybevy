@@ -29,13 +29,8 @@ except ImportError:
         "Install with: pip install numba"
     )
 
-# Import the Rust type and Python wrappers
 from . import ViewColumn
 from .view_accessors import QuatViewColumn, Vec3ViewColumn
-
-# ============================================================================
-# Step 1: Define the Numba type
-# ============================================================================
 
 
 class ViewColumnType(types.Type):
@@ -47,8 +42,6 @@ class ViewColumnType(types.Type):
     - ViewColumnType('f8') for float64 columns
     - ViewColumnType('i4') for int32 columns
     - ViewColumnType('i8') for int64 columns
-
-    This eliminates runtime dtype branching in getitem/setitem.
     """
 
     def __init__(self, dtype: str = 'f4') -> None:
@@ -62,12 +55,11 @@ class ViewColumnType(types.Type):
         return (self.name, self.dtype)
 
 
-# Default types for common cases (cached singletons)
 view_column_type_f32 = ViewColumnType('f4')
 view_column_type_f64 = ViewColumnType('f8')
 view_column_type_i32 = ViewColumnType('i4')
 view_column_type_i64 = ViewColumnType('i8')
-# Backwards compatibility alias
+# TODO: is this needed anymore - backwards compatibility alias
 view_column_type = view_column_type_f32
 
 # Dtype code constants (must match unbox logic)
@@ -77,7 +69,6 @@ _DTYPE_I32 = 2
 _DTYPE_I64 = 3
 
 
-# Tell Numba what type to use for ViewColumn objects
 @typeof_impl.register(ViewColumn)
 def typeof_view_column(val, c):
     """
@@ -96,9 +87,6 @@ def typeof_view_column(val, c):
             return view_column_type_f32
 
 
-# ============================================================================
-# Step 2: Define the native representation (C struct layout)
-# ============================================================================
 
 
 @register_model(ViewColumnType)
@@ -122,24 +110,18 @@ class ViewColumnModel(models.StructModel):
         models.StructModel.__init__(self, dmm, fe_type, members)
 
 
-# Make fields accessible in JIT code (for advanced users)
 make_attribute_wrapper(ViewColumnType, "ptr", "ptr")
 make_attribute_wrapper(ViewColumnType, "len", "len")
 make_attribute_wrapper(ViewColumnType, "stride", "stride")
 make_attribute_wrapper(ViewColumnType, "is_f64", "is_f64")
 
 
-# ============================================================================
-# Step 3: Unboxing (Python → Native) - THE SAFETY CHECK!
-# ============================================================================
 
 
 @numba.extending.unbox(ViewColumnType)
 def unbox_view_column(typ, obj, c):
     """
     Convert Python ViewColumn object to native struct.
-
-    THIS IS WHERE THE SAFETY CHECK HAPPENS!
 
     If the validity token is poisoned (system ended), this raises
     a RuntimeError instead of causing a segfault.
@@ -195,7 +177,6 @@ def unbox_view_column(typ, obj, c):
             view_val.is_f64 = code
 
         with invalid:
-            # Raise exception
             c.pyapi.err_set_string(
                 "PyExc_RuntimeError",
                 "CRITICAL: Accessing stale ViewColumn!\n"
@@ -211,9 +192,6 @@ def unbox_view_column(typ, obj, c):
     return numba.core.pythonapi.NativeValue(view_val._getvalue(), is_error=is_error)
 
 
-# ============================================================================
-# Step 4: Implement operations (getitem, setitem, len)
-# ============================================================================
 
 
 @overload(len)
@@ -360,7 +338,6 @@ def view_column_setitem_overload(view_col, idx, val):
             return setitem_impl
 
 
-# Lower-level implementations for direct LLVM codegen (f32 columns)
 @lower_builtin("setitem", view_column_type_f32, types.Integer, types.Float)
 def view_column_setitem_float(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float_value (f32 column)"""
@@ -414,7 +391,6 @@ def view_column_setitem_float64(context, builder, sig, args):
     return context.get_dummy_value()
 
 
-# Lower-level implementations for i32 columns
 @lower_builtin("setitem", view_column_type_i32, types.Integer, types.Float)
 def view_column_i32_setitem_float(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float_value (i32 column)"""
@@ -442,7 +418,6 @@ def view_column_i32_setitem_int(context, builder, sig, args):
     offset = builder.mul(idx_val, view.stride)
     addr = builder.add(view.ptr, offset)
 
-    # Truncate to i32 if needed
     i32_val = builder.trunc(value_val, context.get_value_type(types.int32))
     i32_ptr_t = context.get_value_type(types.int32).as_pointer()
     ptr = builder.inttoptr(addr, i32_ptr_t)
@@ -470,7 +445,6 @@ def view_column_i32_setitem_float64(context, builder, sig, args):
     return context.get_dummy_value()
 
 
-# Lower-level implementations for i64 columns
 @lower_builtin("setitem", view_column_type_i64, types.Integer, types.Float)
 def view_column_i64_setitem_float(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float_value (i64 column)"""
@@ -498,7 +472,6 @@ def view_column_i64_setitem_int(context, builder, sig, args):
     offset = builder.mul(idx_val, view.stride)
     addr = builder.add(view.ptr, offset)
 
-    # Sign-extend to i64 if needed
     i64_val = builder.sext(value_val, context.get_value_type(types.int64))
     i64_ptr_t = context.get_value_type(types.int64).as_pointer()
     ptr = builder.inttoptr(addr, i64_ptr_t)
@@ -526,9 +499,6 @@ def view_column_i64_setitem_float64(context, builder, sig, args):
     return context.get_dummy_value()
 
 
-# ============================================================================
-# Step 5: Helper for range iteration
-# ============================================================================
 
 
 @overload(range)
@@ -546,9 +516,6 @@ def view_column_range(view):
         return impl
 
 
-# ============================================================================
-# Vec3ViewColumn Numba Extension
-# ============================================================================
 
 
 class Vec3ViewColumnType(types.Type):
@@ -585,7 +552,6 @@ class Vec3ViewColumnModel(models.StructModel):
         models.StructModel.__init__(self, dmm, fe_type, members)
 
 
-# Make fields accessible in JIT code
 make_attribute_wrapper(Vec3ViewColumnType, "x", "x")
 make_attribute_wrapper(Vec3ViewColumnType, "y", "y")
 make_attribute_wrapper(Vec3ViewColumnType, "z", "z")
@@ -622,9 +588,6 @@ def unbox_vec3_view_column(typ, obj, c):
     return numba.core.pythonapi.NativeValue(vec3_val._getvalue(), is_error=err)
 
 
-# ============================================================================
-# QuatViewColumn Numba Extension
-# ============================================================================
 
 
 class QuatViewColumnType(types.Type):
@@ -662,7 +625,6 @@ class QuatViewColumnModel(models.StructModel):
         models.StructModel.__init__(self, dmm, fe_type, members)
 
 
-# Make fields accessible in JIT code
 make_attribute_wrapper(QuatViewColumnType, "x", "x")
 make_attribute_wrapper(QuatViewColumnType, "y", "y")
 make_attribute_wrapper(QuatViewColumnType, "z", "z")
@@ -703,9 +665,6 @@ def unbox_quat_view_column(typ, obj, c):
     return numba.core.pythonapi.NativeValue(quat_val._getvalue(), is_error=err)
 
 
-# ============================================================================
-# Export the type for type hints
-# ============================================================================
 
 __all__ = [
     "QuatViewColumn",

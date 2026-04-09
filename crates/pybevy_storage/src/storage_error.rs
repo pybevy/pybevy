@@ -6,6 +6,8 @@
 //! `PyResult`, keeping call sites unchanged while decoupling the storage layer
 //! from PyO3.
 
+use std::fmt;
+
 /// Error message for accessing components outside system execution
 const ERR_OUTSIDE_SYSTEM: &str = "PyBevy component accessed outside of system execution. \
      Query parameters are only valid during the system's execution. \
@@ -16,33 +18,33 @@ const ERR_OUTSIDE_SYSTEM: &str = "PyBevy component accessed outside of system ex
 /// Each variant maps to a specific Python exception via `From<StorageError> for PyErr`.
 #[derive(Debug, Clone)]
 pub enum StorageError {
-    /// Accessed outside system execution (→ `RuntimeError`)
+    /// Accessed outside system execution (`RuntimeError`)
     InvalidAccess,
 
-    /// Write on read-only component (→ `RuntimeError`)
+    /// Write on read-only component (`RuntimeError`)
     ReadOnly,
 
-    /// Asset already consumed by `Assets<T>.add()` (→ `RuntimeError`)
+    /// Asset already consumed by `Assets<T>.add()` (`RuntimeError`)
     AssetConsumed,
 
-    /// Can't take ownership of borrowed asset (→ `RuntimeError`)
+    /// Can't take ownership of borrowed asset (`RuntimeError`)
     AssetBorrowed,
 
-    /// Can't modify read-only asset (→ `RuntimeError`)
+    /// Can't modify read-only asset (`RuntimeError`)
     AssetReadOnly,
 
-    /// List index out of range (→ `IndexError`)
+    /// List index out of range (`IndexError`)
     IndexOutOfRange,
 
-    /// Mutation on a field extracted from an owned/temporary component (→ `RuntimeError`)
+    /// Mutation on a field extracted from an owned/temporary component (`RuntimeError`)
     OwnedFieldReadOnly,
 
-    /// Pop from empty list (→ `IndexError`)
+    /// Pop from empty list (`IndexError`)
     EmptyList,
 }
 
-impl std::fmt::Display for StorageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StorageError::InvalidAccess => f.write_str(ERR_OUTSIDE_SYSTEM),
             StorageError::ReadOnly => f.write_str(

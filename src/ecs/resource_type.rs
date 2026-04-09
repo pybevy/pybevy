@@ -6,7 +6,7 @@ use pybevy_core::registry::global_registry;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::{
-    app::hot_reload::PyHotReloadControl,
+    app::hot_reload::bindings::PyHotReloadControl,
     assets::{asset_server::PyAssetServer, assets::PyAssets},
     ecs::{
         component_type::create_python_object_descriptor,

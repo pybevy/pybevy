@@ -25,10 +25,7 @@ from .pbr import MeshMaterial3dShader, ShaderMaterial, StandardMaterial
 
 _MAX_TEXTURE_SLOTS = 4
 
-# ── WGSL type mapping ────────────────────────────────────────────────
-#
-# Each entry: (wgsl_type, size_bytes, align_bytes, num_floats)
-
+# Types: (wgsl_type, size_bytes, align_bytes, num_floats)
 _TYPE_MAP: dict[type, tuple[str, int, int, int]] = {
     float: ("f32", 4, 4, 1),
     int: ("f32", 4, 4, 1),
@@ -42,8 +39,6 @@ _TYPE_MAP: dict[type, tuple[str, int, int, int]] = {
 def _align_up(offset: int, alignment: int) -> int:
     return (offset + alignment - 1) & ~(alignment - 1)
 
-
-# ── Layout computation ───────────────────────────────────────────────
 
 class _FieldLayout:
     __slots__ = ("default", "name", "num_floats", "offset", "python_type", "size", "wgsl_type")
@@ -206,8 +201,6 @@ def _read_value(
     return None
 
 
-# ── WGSL generation ──────────────────────────────────────────────────
-
 def _generate_wgsl(
     class_name: str,
     fields: list[_FieldLayout],
@@ -253,8 +246,6 @@ def _generate_wgsl(
 
     return "\n".join(lines)
 
-
-# ── Decorator ────────────────────────────────────────────────────────
 
 _SENTINEL = object()
 

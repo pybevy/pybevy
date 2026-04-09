@@ -7,8 +7,6 @@ use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-// === Xyza ===
-
 #[pyclass(name = "Xyza", eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyXyza {
