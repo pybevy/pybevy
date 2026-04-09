@@ -44,6 +44,7 @@ use bevy::{
 #[cfg(feature = "native-hot-reload")]
 use notify::{EventKind, RecursiveMode, Watcher};
 use pybevy_core::{ComponentBridge, registry::global_registry};
+use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     exceptions::{PyAttributeError, PyImportError},
     prelude::*,
@@ -55,9 +56,8 @@ use crate::{
     app::{
         PyStage, SimTick,
         hot_reload::{
-            HotReloadGeneration, HotReloadResource, HotReloadState, SystemStage,
-            check_hot_reload_system, generation_matches, handle_f5_reload_system,
-            startup_or_reload,
+            state::{HotReloadResource, HotReloadState},
+            systems::{check_hot_reload_system, handle_f5_reload_system},
         },
     },
     ecs::dynamic_system::DynamicSystem,
