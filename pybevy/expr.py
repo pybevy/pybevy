@@ -28,8 +28,6 @@ class Expr:
         self.op = op
         self.args = args
 
-    # Binary operators
-
     def __add__(self, other: Union["Expr", float, int]) -> "Expr":
         """Addition: self + other"""
         return Expr(op="add", args=[self, other])
@@ -78,14 +76,11 @@ class Expr:
         """Right modulo: other % self"""
         return Expr(op="mod", args=[other, self])
 
-    # Unary operators
-
     def __neg__(self) -> "Expr":
         """Negation: -self"""
         return Expr(op="neg", args=[self])
 
-    # In-place operators (return new expressions, expressions are immutable)
-    # Note: These are overridden in FieldExpr to trigger immediate assignment
+
 
     def __iadd__(self, other: Union["Expr", float, int]) -> "Expr":
         """In-place addition: self += other"""
@@ -110,6 +105,7 @@ class Expr:
     def __imod__(self, other: Union["Expr", float, int]) -> "Expr":
         """In-place modulo: self %= other"""
         return self.__mod__(other)
+
 
 
     def sin(self) -> "Expr":
@@ -376,8 +372,6 @@ class FieldExpr(Expr):
         """Internal: Set the parent proxy for assignment triggering."""
         self._parent_proxy = parent
 
-    # Override in-place operators to trigger immediate assignment
-    # This allows: transform.translation.x += velocity.x * dt
 
     def __iadd__(self, other: Union["Expr", float, int]) -> "FieldExpr":
         """In-place addition: self += other.
@@ -551,7 +545,6 @@ class Vec3Expr:
         """Internal: Set the parent proxy for assignment triggering."""
         self._parent_proxy = parent
 
-    # Vec3 arithmetic operators - return Vec3Expression
 
     def __add__(
         self, other: Union["Vec3Expr", "Vec3Expression"]

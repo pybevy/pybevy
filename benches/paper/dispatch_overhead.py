@@ -41,9 +41,6 @@ from pybevy.transform import Transform
 DEFAULT_ENTITIES = 1_000_000
 
 
-# =============================================================================
-# App Factories (3 workload types)
-# =============================================================================
 
 
 def _make_increment_app(entity_count: int) -> App:
@@ -105,9 +102,6 @@ def _make_multi_field_app(entity_count: int) -> App:
     return app
 
 
-# =============================================================================
-# Benchmark Runner
-# =============================================================================
 
 
 def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
@@ -140,10 +134,6 @@ def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
         round_medians=round_medians,
     )
 
-
-# =============================================================================
-# Main
-# =============================================================================
 
 
 WORKLOADS = [

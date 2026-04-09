@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use super::{runtime_pyo3::Pyo3ReloadRuntime, state::HotReloadResource};
 
 /// Built-in system that checks for F5/F6 keypress and triggers reload or mode toggle
-/// This runs automatically when hot reload is enabled - no user code needed
+/// This runs automatically when hot reload is enabled
 pub(crate) fn handle_f5_reload_system(world: &mut World) {
     // Read all key states upfront, then drop the immutable borrow
     let (f5_pressed, f6_pressed, f7_pressed, space_pressed) = {

@@ -18,6 +18,7 @@ use bevy::{
 use pybevy_ecs::shared::access_validation::{
     self as shared_validation, ComponentAccess, ParamAccess, QueryFilters,
 };
+use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     ffi::{PyObject, PyTypeObject},
@@ -133,7 +134,7 @@ pub struct DynamicSystem {
     /// Expected generation this system was created for (for debugging)
     expected_generation: u32,
     /// Stage where this system runs (for profiler)
-    stage: crate::app::hot_reload::SystemStage,
+    stage: SystemStage,
     /// Per-system command queue for thread-safe Commands support.
     /// Each system gets its own queue so parallel systems don't need &mut World.
     /// The queue is flushed to the world via queue_deferred() after each run.
@@ -220,7 +221,7 @@ impl DynamicSystem {
         func: Py<PyAny>,
         generation: u32,
         error_state: Arc<Mutex<Vec<PyErr>>>,
-        stage: crate::app::hot_reload::SystemStage,
+        stage: SystemStage,
     ) -> PyResult<Self> {
         let (system_func, func_name, module_name, function_name) = Python::attach(|py| {
             let func_bound = func.bind(py);
@@ -469,7 +470,7 @@ impl System for DynamicSystem {
         {
             let world_ref = unsafe { world.world() };
             let current_gen = world_ref
-                .get_resource::<crate::app::hot_reload::HotReloadGeneration>()
+                .get_resource::<HotReloadGeneration>()
                 .map(|res| res.current)
                 .unwrap_or(0);
             if current_gen != self.expected_generation {
@@ -763,9 +764,7 @@ impl System for DynamicSystem {
                 // Get current generation and refresh function if needed
                 let current_generation = {
                     let world_ref = unsafe { world.world() };
-                    if let Some(gen_res) =
-                        world_ref.get_resource::<crate::app::hot_reload::HotReloadGeneration>()
-                    {
+                    if let Some(gen_res) = world_ref.get_resource::<HotReloadGeneration>() {
                         gen_res.current
                     } else {
                         0 // No hot reload, use generation 0
@@ -868,8 +867,7 @@ impl System for DynamicSystem {
                     // in systems actually fail tests and standalone scripts.
                     let hot_reload_active = {
                         let wr = unsafe { world.world() };
-                        wr.get_resource::<crate::app::hot_reload::HotReloadGeneration>()
-                            .is_some()
+                        wr.get_resource::<HotReloadGeneration>().is_some()
                     };
                     if !hot_reload_active {
                         let mut error_lock = self.error_state.lock().unwrap();
@@ -929,9 +927,7 @@ impl System for DynamicSystem {
             // Record timing at the end of system execution (captures entire execution block)
             let duration = start_time.elapsed();
             let world_ref = unsafe { world.world() };
-            if let Some(profiler) =
-                world_ref.get_resource::<crate::app::hot_reload::SystemProfiler>()
-            {
+            if let Some(profiler) = world_ref.get_resource::<SystemProfiler>() {
                 // Get current time from Time resource for startup visibility tracking
                 let current_time = world_ref
                     .get_resource::<Time>()

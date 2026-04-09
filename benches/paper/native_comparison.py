@@ -50,9 +50,6 @@ NATIVE_PHYSICS_1M_MS = 0.672
 DEFAULT_ENTITIES = 1_000_000
 
 
-# =============================================================================
-# Numba Kernel
-# =============================================================================
 
 
 def _get_increment_column():  # type: ignore[no-untyped-def]
@@ -66,9 +63,6 @@ def _get_increment_column():  # type: ignore[no-untyped-def]
     return increment_column
 
 
-# =============================================================================
-# App Factories
-# =============================================================================
 
 
 def _make_query_app(entity_count: int) -> App:
@@ -130,9 +124,6 @@ def _make_numba_app(entity_count: int) -> App:
     return app
 
 
-# =============================================================================
-# App Factories (Physics Workload)
-# =============================================================================
 
 
 def _get_physics_column():  # type: ignore[no-untyped-def]
@@ -225,9 +216,6 @@ def _make_numba_physics_app(entity_count: int) -> App:
     return app
 
 
-# =============================================================================
-# Benchmark Runner
-# =============================================================================
 
 
 def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
@@ -261,9 +249,6 @@ def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
     )
 
 
-# =============================================================================
-# Main
-# =============================================================================
 
 
 def main() -> None:
@@ -391,9 +376,6 @@ def main() -> None:
     print("Workload: increment Transform.translation.x by 1.0")
     print()
 
-    # =========================================================================
-    # Physics Workload
-    # =========================================================================
 
     print("=" * 80)
     title_phys = (

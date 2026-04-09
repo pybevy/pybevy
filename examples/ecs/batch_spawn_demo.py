@@ -55,7 +55,7 @@ def setup(
     ))
     commands.spawn(Mesh3d(ground_mesh), MeshMaterial3d(ground_mat), Transform.IDENTITY)
 
-    # --- Batch spawn 5,000 balls ---
+    # Batch spawn 5,000 balls
     rng = np.random.default_rng(42)
 
     positions = np.zeros((BALL_COUNT, 3), dtype=np.float32)

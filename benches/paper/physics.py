@@ -36,9 +36,6 @@ from pybevy.transform import Transform
 DEFAULT_ENTITIES = 5_000
 
 
-# =============================================================================
-# Numba Kernel
-# =============================================================================
 
 
 def _get_numba_physics():  # type: ignore[no-untyped-def]
@@ -57,9 +54,6 @@ def _get_numba_physics():  # type: ignore[no-untyped-def]
     return numba_physics
 
 
-# =============================================================================
-# App Factories
-# =============================================================================
 
 
 def _make_query_app(entity_count: int) -> App:
@@ -133,9 +127,6 @@ def _make_numba_app(entity_count: int) -> App:
     return app
 
 
-# =============================================================================
-# Benchmark Runner
-# =============================================================================
 
 
 def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
@@ -169,9 +160,6 @@ def _bench_app(app: App, cfg: BenchConfig) -> BenchResult:
     )
 
 
-# =============================================================================
-# Main
-# =============================================================================
 
 
 def main() -> None:

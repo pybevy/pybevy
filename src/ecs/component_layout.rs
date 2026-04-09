@@ -303,6 +303,22 @@ pub fn serialize_to_wrapper(obj: &Bound<'_, PyAny>, layout: &ComponentLayout) ->
     let mut buffer = vec![0u8; layout.wrapper_size.size_bytes()];
 
     for field in &layout.fields {
+        debug_assert!(
+            field.offset % field.field_type.alignment() == 0,
+            "field '{}' at offset {} is not aligned to {} bytes",
+            field.name,
+            field.offset,
+            field.field_type.alignment()
+        );
+        debug_assert!(
+            field.offset + field.field_type.size_bytes() <= buffer.len(),
+            "field '{}' at offset {} + size {} exceeds buffer length {}",
+            field.name,
+            field.offset,
+            field.field_type.size_bytes(),
+            buffer.len()
+        );
+
         let value = obj.getattr(field.name.as_str())?;
 
         // Extract primitive value and write to buffer at the correct offset

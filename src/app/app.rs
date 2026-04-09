@@ -10,19 +10,32 @@ use std::{
 
 use bevy::{
     app::{
-        App, First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate, Last,
-        Main, MainScheduleOrder, PostStartup, PostUpdate, PreStartup, PreUpdate, Startup, Update,
+        App, AppExit, First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate,
+        Last, Main, MainScheduleOrder, PostStartup, PostUpdate, PreStartup, PreUpdate, Startup,
+        Update,
     },
-    ecs::schedule::{Chain, ExecutorKind, IntoScheduleConfigs, ScheduleConfigs, Schedules},
+    ecs::{
+        component::ComponentId,
+        entity::Entity,
+        message::MessageWriter,
+        resource::Resource,
+        schedule::{Chain, ExecutorKind, IntoScheduleConfigs, ScheduleConfigs, Schedules},
+        system::Res,
+        world::World,
+    },
     log::LogPlugin,
 };
-use pybevy_core::{PyPlugin as PyPluginBase, plugin::plugin_registry};
+use pybevy_core::{
+    CustomComponentInfo, PyMessage, PyPlugin as PyPluginBase, PyResourceStorage,
+    plugin::plugin_registry,
+};
+use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     IntoPyObjectExt,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
-    types::{PyModule, PyTuple, PyType},
+    types::{PyList, PyModule, PyTuple, PyType},
 };
 
 use crate::{
@@ -32,8 +45,9 @@ use crate::{
         chained_systems::PyChainedSystems,
         error_messages,
         hot_reload::{
-            HotReloadState, PyAppReloadState, SystemStage, add_hot_reload_system,
-            clear_entities_and_resources, generation_matches, startup_or_reload,
+            bindings::{PyAppReloadState, add_hot_reload_system},
+            cleanup::clear_entities_and_resources,
+            state::HotReloadState,
         },
         plugin::{PyPlugin, PyPluginGroup},
         plugins::{PyDefaultPlugins, PyPluginGroupBuilder},
@@ -41,7 +55,7 @@ use crate::{
     ecs::{
         conditional_system::PyConditionalSystem,
         dynamic_condition::DynamicCondition,
-        dynamic_system::DynamicSystem,
+        dynamic_system::{DynamicSystem, clear_system_param_cache},
         messages::MessageRegistry,
         observer_registry::ObserverRegistry,
         state::{
@@ -114,7 +128,7 @@ fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) 
         return Err(errors.into_iter().next().unwrap());
     }
     // Multiple errors: create ExceptionGroup
-    let exceptions = pyo3::types::PyList::empty(py);
+    let exceptions = PyList::empty(py);
     for err in errors {
         exceptions.append(err.value(py))?;
     }
@@ -127,18 +141,18 @@ fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) 
 /// Bevy resource that shares the error state Arc with the `run()` loop.
 /// A `Last`-schedule system checks this and sends `AppExit` when errors are present
 /// so that `app.run()` exits and we can raise the error in Python.
-#[derive(bevy::prelude::Resource)]
+#[derive(Resource)]
 struct SystemErrorCheck {
     errors: Arc<Mutex<Vec<PyErr>>>,
 }
 
 fn check_system_errors_and_exit(
-    error_check: bevy::prelude::Res<SystemErrorCheck>,
-    mut exit: bevy::prelude::MessageWriter<bevy::app::AppExit>,
+    error_check: Res<SystemErrorCheck>,
+    mut exit: MessageWriter<AppExit>,
 ) {
     let lock = error_check.errors.lock().unwrap();
     if !lock.is_empty() {
-        exit.write(bevy::app::AppExit::from_code(1));
+        exit.write(AppExit::from_code(1));
     }
 }
 
@@ -255,7 +269,7 @@ impl PyApp {
     }
 
     /// Helper to get SystemStage for profiling based on PyStage
-    fn get_system_stage(stage: PyStage) -> crate::app::hot_reload::SystemStage {
+    fn get_system_stage(stage: PyStage) -> SystemStage {
         match stage {
             PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup => SystemStage::Startup,
             _ => SystemStage::UpdateOrLast,
@@ -376,20 +390,14 @@ impl PyApp {
             let app = self.get_app_mut(&mut apps)?;
 
             // Wrap the apply_state_transitions function in a closure for PreUpdate
-            let system_fn = move |py: Python, world: &mut bevy::ecs::world::World| {
-                apply_state_transitions(py, world)
-            };
+            let system_fn = move |py: Python, world: &mut World| apply_state_transitions(py, world);
 
             // Add state transition processing to PreUpdate so it runs
             // after First (where transitions may be queued) and before Update
-            if !app
-                .world()
-                .resource::<bevy::ecs::schedule::Schedules>()
-                .contains(PreUpdate)
-            {
+            if !app.world().resource::<Schedules>().contains(PreUpdate) {
                 app.init_schedule(PreUpdate);
             }
-            app.add_systems(PreUpdate, move |world: &mut bevy::ecs::world::World| {
+            app.add_systems(PreUpdate, move |world: &mut World| {
                 Python::attach(|py| {
                     if let Err(e) = system_fn(py, world) {
                         eprintln!("State transition error: {}", e);
@@ -425,10 +433,10 @@ impl PyApp {
             let app = self.get_app_mut(&mut apps)?;
 
             // Track previous state values keyed by resource ComponentId
-            let previous_states: Arc<Mutex<HashMap<bevy::ecs::component::ComponentId, Py<PyAny>>>> =
+            let previous_states: Arc<Mutex<HashMap<ComponentId, Py<PyAny>>>> =
                 Arc::new(Mutex::new(HashMap::new()));
 
-            let system_fn = move |world: &mut bevy::ecs::world::World| {
+            let system_fn = move |world: &mut World| {
                 Python::attach(|py| {
                     if let Err(e) = despawn_on_state_change_impl(py, world, &previous_states) {
                         eprintln!("DespawnOnExit system error: {}", e);
@@ -436,11 +444,7 @@ impl PyApp {
                 });
             };
 
-            if !app
-                .world()
-                .resource::<bevy::ecs::schedule::Schedules>()
-                .contains(PostUpdate)
-            {
+            if !app.world().resource::<Schedules>().contains(PostUpdate) {
                 app.init_schedule(PostUpdate);
             }
             app.add_systems(PostUpdate, system_fn);
@@ -456,14 +460,14 @@ impl PyApp {
 /// Runs in PostUpdate after state transitions (PreUpdate) and user systems (Update).
 fn despawn_on_state_change_impl(
     py: Python,
-    world: &mut bevy::ecs::world::World,
-    previous_states: &Arc<Mutex<HashMap<bevy::ecs::component::ComponentId, Py<PyAny>>>>,
+    world: &mut World,
+    previous_states: &Arc<Mutex<HashMap<ComponentId, Py<PyAny>>>>,
 ) -> PyResult<()> {
     // Collect current state values and detect changes
     let mut changes: Vec<(Py<PyAny>, Py<PyAny>)> = Vec::new(); // (old_state, new_state)
 
     {
-        let pyresource = match world.get_resource::<pybevy_core::PyResourceStorage>() {
+        let pyresource = match world.get_resource::<PyResourceStorage>() {
             Some(rs) => rs,
             None => return Ok(()),
         };
@@ -472,7 +476,7 @@ fn despawn_on_state_change_impl(
 
         for (&comp_id, resource_py) in pyresource.resources.iter() {
             let resource = resource_py.bind(py);
-            if let Ok(state) = resource.cast::<crate::ecs::state::PyState>() {
+            if let Ok(state) = resource.cast::<PyState>() {
                 let current_value = state.borrow().current_value(py);
                 match prev.get(&comp_id) {
                     None => {
@@ -497,7 +501,7 @@ fn despawn_on_state_change_impl(
     }
 
     // Find ComponentIds for DespawnOnExit and DespawnOnEnter from CustomComponentInfo
-    let custom_info = match world.get_resource::<pybevy_core::CustomComponentInfo>() {
+    let custom_info = match world.get_resource::<CustomComponentInfo>() {
         Some(ci) => ci,
         None => return Ok(()),
     };
@@ -516,11 +520,11 @@ fn despawn_on_state_change_impl(
     }
 
     // Collect entities to despawn (can't despawn while iterating)
-    let mut entities_to_despawn: Vec<bevy::ecs::entity::Entity> = Vec::new();
+    let mut entities_to_despawn: Vec<Entity> = Vec::new();
 
     {
-        let mut query_state = world.query::<bevy::ecs::entity::Entity>();
-        let entity_list: Vec<bevy::ecs::entity::Entity> = query_state.iter(world).collect();
+        let mut query_state = world.query::<Entity>();
+        let entity_list: Vec<Entity> = query_state.iter(world).collect();
 
         for entity in &entity_list {
             let entity_ref = match world.get_entity(*entity) {
@@ -676,7 +680,7 @@ impl PyApp {
                                     .resource_mut::<Schedules>()
                                     .get_mut($lbl.clone())
                                     .ok_or_else(|| {
-                                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                        PyRuntimeError::new_err(format!(
                                             "Failed to initialize state schedule {:?}",
                                             $lbl
                                         ))
@@ -699,7 +703,7 @@ impl PyApp {
                             system.unbind(),
                             current_generation,
                             error_state.clone(),
-                            crate::app::hot_reload::SystemStage::UpdateOrLast, // State systems treated like Update
+                            SystemStage::UpdateOrLast, // State systems treated like Update
                         )?;
 
                         match &schedule_type {
@@ -811,11 +815,7 @@ impl PyApp {
                                 $app.add_systems(FixedUpdate, $system);
                             }
                             PyStage::SimTick => {
-                                if !$app
-                                    .world()
-                                    .resource::<bevy::ecs::schedule::Schedules>()
-                                    .contains(SimTick)
-                                {
+                                if !$app.world().resource::<Schedules>().contains(SimTick) {
                                     $app.init_schedule(SimTick);
                                 }
                                 $app.add_systems(SimTick, $system);
@@ -962,7 +962,7 @@ impl PyApp {
                                 let is_startup_schedule = matches!(stage, PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup);
                                 let expected_gen = current_generation;
 
-                                let combined_condition = move |generation_res: Option<bevy::ecs::system::Res<crate::app::hot_reload::HotReloadGeneration>>| -> bool {
+                                let combined_condition = move |generation_res: Option<Res<HotReloadGeneration>>| -> bool {
                                     // First check generation
                                     let gen_check = if is_startup_schedule {
                                         // Startup schedules use startup_or_reload logic
@@ -1087,9 +1087,9 @@ impl PyApp {
                         let mro_names: Vec<String> = mro_tuple
                             .try_iter()?
                             .map(|t_result| {
-                                t_result.and_then(|t: Bound<'_, pyo3::PyAny>| {
+                                t_result.and_then(|t: Bound<'_, PyAny>| {
                                     t.getattr("__name__")
-                                        .and_then(|n: Bound<'_, pyo3::PyAny>| n.extract::<String>())
+                                        .and_then(|n: Bound<'_, PyAny>| n.extract::<String>())
                                 })
                             })
                             .collect::<Result<Vec<_>, _>>()?;
@@ -1160,9 +1160,8 @@ impl PyApp {
 
             // If this is a PluginGroupBuilder, also register its source type (e.g., DefaultPlugins)
             // This prevents duplicates when mixing DefaultPlugins and DefaultPlugins().build()
-            if plugin_instance.is_instance_of::<crate::app::plugins::PyPluginGroupBuilder>() {
-                let builder =
-                    plugin_instance.cast_exact::<crate::app::plugins::PyPluginGroupBuilder>()?;
+            if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
+                let builder = plugin_instance.cast_exact::<PyPluginGroupBuilder>()?;
                 if let Some(source_type_id) = builder.borrow().source_type {
                     let app_borrow = pyself.borrow(py);
                     app_borrow
@@ -1505,7 +1504,7 @@ impl PyApp {
     pub fn _run_systems_once<'py>(
         &self,
         py: Python<'py>,
-        funcs: &Bound<'py, pyo3::types::PyTuple>,
+        funcs: &Bound<'py, PyTuple>,
     ) -> PyResult<()> {
         self.ensure_active()?;
 
@@ -1753,10 +1752,7 @@ impl PyApp {
         BEVY_APPS.with(|apps_cell| {
             let mut apps = apps_cell.borrow_mut();
             if let Some(app) = apps.get_mut(&app_id) {
-                let has_hot_reload = app
-                    .world()
-                    .get_resource::<crate::app::hot_reload::HotReloadGeneration>()
-                    .is_some();
+                let has_hot_reload = app.world().get_resource::<HotReloadGeneration>().is_some();
                 if !has_hot_reload {
                     app.insert_resource(SystemErrorCheck {
                         errors: error_state.clone(),
@@ -1782,7 +1778,7 @@ impl PyApp {
 
             // Clear the system parameter cache after the app finishes
             // to prevent stale entries when function objects are recycled
-            crate::ecs::dynamic_system::clear_system_param_cache();
+            clear_system_param_cache();
         });
 
         // After the event loop exits, check for system errors and raise them
@@ -1841,7 +1837,7 @@ impl PyApp {
     /// Returns the AppExit value if an exit has been requested, None otherwise.
     /// This allows checking exit status programmatically for conditional logic or tests.
     /// Can be called before or after run() to check the exit status.
-    pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<crate::app::app_exit::PyAppExit>>> {
+    pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<PyAppExit>>> {
         BEVY_APPS.with(|apps_cell| {
             let apps = apps_cell.borrow();
             let app = apps.get(&self.app_id).ok_or_else(|| {
@@ -1853,8 +1849,7 @@ impl PyApp {
 
             match app.should_exit() {
                 Some(exit) => {
-                    let py_exit =
-                        Py::new(py, (PyAppExit::from(exit), crate::ecs::message::PyMessage))?;
+                    let py_exit = Py::new(py, (PyAppExit::from(exit), PyMessage))?;
                     Ok(Some(py_exit))
                 }
                 None => Ok(None),
@@ -2021,7 +2016,7 @@ impl Drop for PyApp {
 
             // Clear the system parameter cache to prevent stale entries
             // when function objects are recycled (e.g., across tests)
-            crate::ecs::dynamic_system::clear_system_param_cache();
+            clear_system_param_cache();
         }
     }
 }

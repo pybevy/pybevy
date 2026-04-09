@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 import click
 
-# Import shared hot reload utilities
 from .util.hot_reload import (
     setup_component_caching,
     watch_for_changes,

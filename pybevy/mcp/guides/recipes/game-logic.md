@@ -15,7 +15,7 @@ from pybevy.prelude import *
 
 CELL = 2.0  # world units per grid cell
 
-# ── Grid helpers ──
+# Grid helpers
 
 MAZE = [
     [1,1,1,1,1],
@@ -41,7 +41,7 @@ def get_neighbors(gx: int, gz: int) -> list:
     return result
 
 
-# ── Components ──
+# Components
 
 @component
 @dataclass

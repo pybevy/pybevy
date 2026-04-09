@@ -45,8 +45,6 @@ def _is_log_error_line(line: str) -> bool:
     return len(parts) >= 2 and parts[1] == "ERROR"
 
 
-# ── Bridge-only tool definitions (not forwarded to engine) ──
-
 LOAD_SCENE_TOOL: JsonDict = {
     "name": "run_scene",
     "description": (
@@ -253,8 +251,6 @@ class McpBridge:
             self._stop_subprocess()
             self._cleanup_hub_session()
 
-    # ── Dispatch ──
-
     def _has_engine(self) -> bool:
         if self._hub_session_id is not None:
             return True
@@ -318,8 +314,6 @@ class McpBridge:
             return self._handle_prompts_get_full(req_id, params)
         return self._error(req_id, -32601, f"Method not found: {method}")
 
-    # ── Initialize ──
-
     def _handle_initialize(self, req_id: JsonId) -> JsonDict:
         return self._success(
             req_id,
@@ -335,8 +329,6 @@ class McpBridge:
                 "instructions": self._instructions,
             },
         )
-
-    # ── Mode A: Tools ──
 
     def _handle_tools_list_local(self, req_id: JsonId) -> JsonDict:
         # Expose ALL tools even without engine — some MCP clients (Codex, Gemini)
@@ -361,8 +353,6 @@ class McpBridge:
         return self._error(
             req_id, -32603, "No scene loaded. Use the 'run_scene' tool first to start a Bevy app."
         )
-
-    # ── Mode A: Resources ──
 
     def _handle_resources_list_local(self, req_id: JsonId) -> JsonDict:
         # Expose all resources including scene:// — clients that don't support
@@ -414,8 +404,6 @@ class McpBridge:
 
         return self._error(req_id, -32602, f"Unknown resource: {uri}")
 
-    # ── Prompts ──
-
     def _handle_prompts_list(self, req_id: JsonId) -> JsonDict:
         prompts = [{"name": p["name"], "description": p["description"], "arguments": []} for p in self._prompts]
         return self._success(req_id, {"prompts": prompts})
@@ -437,8 +425,6 @@ class McpBridge:
 
     def _handle_prompts_get_full(self, req_id: JsonId, params: JsonDict) -> JsonDict:
         return self._handle_prompts_get(req_id, params)
-
-    # ── Mode B: Full list builders ──
 
     def _handle_tools_list_full(self, req_id: JsonId) -> JsonDict:
         tools: list[JsonDict] = []
@@ -464,8 +450,6 @@ class McpBridge:
         if uri.startswith("scene://"):
             return self._forward_scene_resource(req_id, uri)
         return self._handle_resources_read_local(req_id, params)
-
-    # ── Mode B: Tool calls (forwarded via HTTP) ──
 
     def _handle_tools_call_forwarded(self, req_id: JsonId, params: JsonDict) -> JsonDict | None:
         tool_name = str(params.get("name", ""))
@@ -797,8 +781,6 @@ class McpBridge:
         except Exception as e:
             return self._error(req_id, -32603, f"Failed to read {uri}: {e}")
 
-    # ── Bridge-local tool handlers ──
-
     def _handle_get_started(self, req_id: JsonId, arguments: JsonDict | None = None) -> JsonDict:
         key = str((arguments or {}).get("confirmation_key", ""))
         if key == "pybevy-ready":
@@ -956,8 +938,6 @@ class McpBridge:
 
         return self._success(req_id, {"content": [{"type": "text", "text": output}]})
 
-    # ── Hub integration ──
-
     def _try_hub_create_session(self, scene_path: str) -> JsonDict | None:
         import httpx  # noqa: PLC0415
 
@@ -999,8 +979,6 @@ class McpBridge:
             return resp.status_code == 200
         except Exception:
             return False
-
-    # ── Subprocess management ──
 
     def _start_subprocess(self, path: str) -> None:
         port = find_free_port()
@@ -1129,8 +1107,6 @@ class McpBridge:
             blocks.append(current_block)
 
         return "\n\n".join("\n".join(b) for b in blocks)
-
-    # ── JSON-RPC helpers ──
 
     def _success(self, req_id: JsonId, result: object) -> JsonDict:
         return {"jsonrpc": "2.0", "id": req_id, "result": result}

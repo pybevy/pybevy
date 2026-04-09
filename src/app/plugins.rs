@@ -2,21 +2,38 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::{
     DefaultPlugins,
-    app::{PluginGroupBuilder, ScheduleRunnerPlugin, TaskPoolPlugin},
+    app::{App, PluginGroupBuilder, ScheduleRunnerPlugin, TaskPoolPlugin},
+    audio::AudioPlugin,
     diagnostic::FrameCountPlugin,
+    image::ImagePlugin,
+    log::LogPlugin,
     prelude::PluginGroup,
+    render::{
+        RenderPlugin,
+        settings::{RenderCreation, WgpuSettings},
+    },
     time::TimePlugin,
+    window::{Window, WindowPlugin},
+    winit::{WinitPlugin, WinitSettings},
 };
 use pybevy_core::PyPlugin;
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
+use pybevy_render::plugin::PyRenderPlugin;
+use pybevy_window::{prelude::PyWindowPlugin, window::DEFAULT_APP_TITLE};
+use pybevy_winit::plugin::PyWinitPlugin;
+use pyo3::{
+    exceptions::{PyRuntimeError, PyTypeError},
+    ffi::PyTypeObject,
+    prelude::*,
+    types::PyType,
+};
 
 use super::{app::PyApp, plugin::PyPluginGroup, plugin_config::PluginConfigType};
-use crate::assets::configured_asset_plugin;
+use crate::{assets::configured_asset_plugin, render::wgpu_error_handler::WgpuErrorHandlerPlugin};
 
-fn default_window_plugin() -> bevy::window::WindowPlugin {
-    bevy::window::WindowPlugin {
-        primary_window: Some(bevy::window::Window {
-            title: pybevy_window::window::DEFAULT_APP_TITLE.into(),
+fn default_window_plugin() -> WindowPlugin {
+    WindowPlugin {
+        primary_window: Some(Window {
+            title: DEFAULT_APP_TITLE.into(),
             name: Some("pybevy".into()),
             ..Default::default()
         }),
@@ -63,9 +80,9 @@ impl PyDefaultPlugins {
                 DefaultPlugins
                     .set(configured_asset_plugin())
                     .set(default_window_plugin())
-                    .disable::<bevy::log::LogPlugin>(),
+                    .disable::<LogPlugin>(),
             );
-            bevy_app.add_plugins(crate::render::wgpu_error_handler::WgpuErrorHandlerPlugin);
+            bevy_app.add_plugins(WgpuErrorHandlerPlugin);
 
             // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
             // works without requiring an explicit ScenePlugin() addition.
@@ -87,10 +104,10 @@ enum PluginPosition {
 /// Safety: These pointers are only used for comparison/hashing (opaque identifiers),
 /// never dereferenced, so they are safe to send between threads.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct PluginTypeId(*const pyo3::ffi::PyTypeObject);
+pub(crate) struct PluginTypeId(*const PyTypeObject);
 
 impl PluginTypeId {
-    pub(crate) fn as_ptr(self) -> *const pyo3::ffi::PyTypeObject {
+    pub(crate) fn as_ptr(self) -> *const PyTypeObject {
         self.0
     }
 }
@@ -141,7 +158,7 @@ impl PyPluginGroupBuilder {
     }
 
     /// Set the source plugin group type (for duplicate detection)
-    fn with_source_type(mut self, source_type: *const pyo3::ffi::PyTypeObject) -> Self {
+    fn with_source_type(mut self, source_type: *const PyTypeObject) -> Self {
         self.source_type = Some(PluginTypeId(source_type));
         self
     }
@@ -253,7 +270,7 @@ impl PyPluginGroupBuilder {
             self.insert_pre_plugin_resources(app.py(), bevy_app)?;
             let builder = self.apply_to_bevy(app.py())?;
             bevy_app.add_plugins(builder);
-            bevy_app.add_plugins(crate::render::wgpu_error_handler::WgpuErrorHandlerPlugin);
+            bevy_app.add_plugins(WgpuErrorHandlerPlugin);
             // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
             // works without requiring an explicit ScenePlugin() addition.
             bevy_app.add_observer(pybevy_scene::scene_instance_ready_bridge);
@@ -267,16 +284,11 @@ impl PyPluginGroupBuilder {
     ///
     /// WinitSettings must be inserted before WinitPlugin::build() because the plugin
     /// uses `init_resource::<WinitSettings>()` which is a no-op if already present.
-    fn insert_pre_plugin_resources(
-        &self,
-        py: Python,
-        bevy_app: &mut bevy::app::App,
-    ) -> PyResult<()> {
+    fn insert_pre_plugin_resources(&self, py: Python, bevy_app: &mut App) -> PyResult<()> {
         if let Some(plugin_obj) = self.configured_plugins.get(&PluginConfigType::Winit) {
-            let winit_plugin: PyRef<pybevy_winit::plugin::PyWinitPlugin> =
-                plugin_obj.extract(py)?;
+            let winit_plugin: PyRef<PyWinitPlugin> = plugin_obj.extract(py)?;
             if let Some(ref settings) = winit_plugin.settings {
-                bevy_app.insert_resource(bevy::winit::WinitSettings::from(settings.clone()));
+                bevy_app.insert_resource(WinitSettings::from(settings.clone()));
             }
         }
         Ok(())
@@ -286,7 +298,7 @@ impl PyPluginGroupBuilder {
         let mut builder = DefaultPlugins
             .set(configured_asset_plugin())
             .set(default_window_plugin())
-            .disable::<bevy::log::LogPlugin>();
+            .disable::<LogPlugin>();
 
         // Apply configured plugins
         for (config_type, plugin_obj) in &self.configured_plugins {
@@ -318,27 +330,25 @@ fn apply_plugin_configuration(
 ) -> PyResult<PluginGroupBuilder> {
     match config_type {
         PluginConfigType::Window => {
-            let window_plugin: PyRef<pybevy_window::window_plugin::PyWindowPlugin> =
-                plugin_obj.extract(py)?;
-            let bevy_plugin = bevy::window::WindowPlugin::try_from(&*window_plugin)?;
+            let window_plugin: PyRef<PyWindowPlugin> = plugin_obj.extract(py)?;
+            let bevy_plugin = WindowPlugin::try_from(&*window_plugin)?;
             Ok(builder.set(bevy_plugin))
         }
 
         PluginConfigType::Winit => {
             // WinitPlugin itself has no config fields - WinitSettings is a resource
             // handled by insert_pre_plugin_resources() in build()
-            Ok(builder.set(bevy::winit::WinitPlugin::default()))
+            Ok(builder.set(WinitPlugin::default()))
         }
 
         PluginConfigType::Render => {
-            let render_plugin: PyRef<pybevy_render::plugin::PyRenderPlugin> =
-                plugin_obj.extract(py)?;
-            let mut wgpu_settings = bevy::render::settings::WgpuSettings::default();
+            let render_plugin: PyRef<PyRenderPlugin> = plugin_obj.extract(py)?;
+            let mut wgpu_settings = WgpuSettings::default();
             if let Some(ref pp) = render_plugin.power_preference {
                 wgpu_settings.power_preference = (*pp).into();
             }
-            let mut bevy_plugin = bevy::render::RenderPlugin {
-                render_creation: bevy::render::settings::RenderCreation::Automatic(wgpu_settings),
+            let mut bevy_plugin = RenderPlugin {
+                render_creation: RenderCreation::Automatic(wgpu_settings),
                 ..Default::default()
             };
             if let Some(sync) = render_plugin.synchronous_pipeline_compilation {
@@ -347,7 +357,7 @@ fn apply_plugin_configuration(
             Ok(builder.set(bevy_plugin))
         }
 
-        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+        _ => Err(PyRuntimeError::new_err(format!(
             "Plugin configuration not yet implemented: {:?}",
             config_type
         ))),
@@ -359,12 +369,12 @@ fn disable_plugin(
     config_type: &PluginConfigType,
 ) -> PyResult<PluginGroupBuilder> {
     match config_type {
-        PluginConfigType::Window => Ok(builder.disable::<bevy::window::WindowPlugin>()),
-        PluginConfigType::Audio => Ok(builder.disable::<bevy::audio::AudioPlugin>()),
-        PluginConfigType::Winit => Ok(builder.disable::<bevy::winit::WinitPlugin>()),
-        PluginConfigType::Render => Ok(builder.disable::<bevy::render::RenderPlugin>()),
-        PluginConfigType::Image => Ok(builder.disable::<bevy::image::ImagePlugin>()),
+        PluginConfigType::Audio => Ok(builder.disable::<AudioPlugin>()),
+        PluginConfigType::Image => Ok(builder.disable::<ImagePlugin>()),
+        PluginConfigType::Render => Ok(builder.disable::<RenderPlugin>()),
         PluginConfigType::TaskPool => Ok(builder.disable::<TaskPoolPlugin>()),
+        PluginConfigType::Window => Ok(builder.disable::<WindowPlugin>()),
+        PluginConfigType::Winit => Ok(builder.disable::<WinitPlugin>()),
     }
 }
 

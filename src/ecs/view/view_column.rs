@@ -47,7 +47,7 @@ use pyo3::{
 #[pyclass(name = "ViewColumn")]
 pub struct PyViewColumn {
     /// Raw pointer to the data (NOT exposed directly to Python).
-    ptr: usize,
+    ptr: *mut u8,
 
     /// Number of elements.
     len: usize,
@@ -82,7 +82,7 @@ impl PyViewColumn {
         component_type: *const pyo3::ffi::PyTypeObject,
     ) -> Self {
         Self {
-            ptr: ptr as usize,
+            ptr: ptr as *mut u8,
             len,
             stride,
             dtype,
@@ -103,7 +103,7 @@ impl PyViewColumn {
         builtin_component_type: crate::ecs::component_type::PyComponentType,
     ) -> Self {
         Self {
-            ptr: ptr as usize,
+            ptr: ptr as *mut u8,
             len,
             stride,
             dtype,
@@ -128,34 +128,34 @@ impl PyViewColumn {
 
     /// Read element at `index` as f64, respecting stride and dtype.
     fn read_f64_at(&self, index: usize) -> f64 {
-        let addr = self.ptr + index * self.stride;
+        let ptr = unsafe { self.ptr.add(index * self.stride) };
         unsafe {
             match self.dtype.as_str() {
-                "u1" => *(addr as *const u8) as f64,
-                "f4" => *(addr as *const f32) as f64,
-                "f8" => *(addr as *const f64),
-                "i4" => *(addr as *const i32) as f64,
-                "i8" => *(addr as *const i64) as f64,
-                "u4" => *(addr as *const u32) as f64,
-                "u8" => *(addr as *const u64) as f64,
-                _ => *(addr as *const f32) as f64,
+                "u1" => *(ptr as *const u8) as f64,
+                "f4" => *(ptr as *const f32) as f64,
+                "f8" => *(ptr as *const f64),
+                "i4" => *(ptr as *const i32) as f64,
+                "i8" => *(ptr as *const i64) as f64,
+                "u4" => *(ptr as *const u32) as f64,
+                "u8" => *(ptr as *const u64) as f64,
+                _ => *(ptr as *const f32) as f64,
             }
         }
     }
 
     /// Write f64 value at `index`, respecting stride and dtype.
     fn write_f64_at(&self, index: usize, value: f64) {
-        let addr = self.ptr + index * self.stride;
+        let ptr = unsafe { self.ptr.add(index * self.stride) };
         unsafe {
             match self.dtype.as_str() {
-                "u1" => *(addr as *mut u8) = (value != 0.0) as u8,
-                "f4" => *(addr as *mut f32) = value as f32,
-                "f8" => *(addr as *mut f64) = value,
-                "i4" => *(addr as *mut i32) = value as i32,
-                "i8" => *(addr as *mut i64) = value as i64,
-                "u4" => *(addr as *mut u32) = value as u32,
-                "u8" => *(addr as *mut u64) = value as u64,
-                _ => *(addr as *mut f32) = value as f32,
+                "u1" => *(ptr as *mut u8) = (value != 0.0) as u8,
+                "f4" => *(ptr as *mut f32) = value as f32,
+                "f8" => *(ptr as *mut f64) = value,
+                "i4" => *(ptr as *mut i32) = value as i32,
+                "i8" => *(ptr as *mut i64) = value as i64,
+                "u4" => *(ptr as *mut u32) = value as u32,
+                "u8" => *(ptr as *mut u64) = value as u64,
+                _ => *(ptr as *mut f32) = value as f32,
             }
         }
     }
@@ -183,25 +183,23 @@ impl PyViewColumn {
     ) -> PyResult<Self> {
         let elem_size = Self::dtype_size(dtype)?;
         let mut buf = vec![0u8; len * elem_size];
-        let buf_ptr = buf.as_mut_ptr() as usize;
         // Write using the target dtype
         for (i, val) in iter.enumerate() {
-            let addr = buf_ptr + i * elem_size;
+            let ptr = unsafe { buf.as_mut_ptr().add(i * elem_size) };
             unsafe {
                 match dtype {
-                    "f4" => *(addr as *mut f32) = val as f32,
-                    "f8" => *(addr as *mut f64) = val,
-                    "i4" => *(addr as *mut i32) = val as i32,
-                    "i8" => *(addr as *mut i64) = val as i64,
-                    "u4" => *(addr as *mut u32) = val as u32,
-                    "u8" => *(addr as *mut u64) = val as u64,
-                    _ => *(addr as *mut f32) = val as f32,
+                    "f4" => *(ptr as *mut f32) = val as f32,
+                    "f8" => *(ptr as *mut f64) = val,
+                    "i4" => *(ptr as *mut i32) = val as i32,
+                    "i8" => *(ptr as *mut i64) = val as i64,
+                    "u4" => *(ptr as *mut u32) = val as u32,
+                    "u8" => *(ptr as *mut u64) = val as u64,
+                    _ => *(ptr as *mut f32) = val as f32,
                 }
             }
         }
-        let ptr = buf.as_ptr() as usize;
         Ok(Self {
-            ptr,
+            ptr: buf.as_mut_ptr(),
             len,
             stride: elem_size,
             dtype: dtype.to_string(),
@@ -313,7 +311,7 @@ impl PyViewColumn {
                  Do not store this object in global variables.",
             ));
         }
-        Ok(self.ptr)
+        Ok(self.ptr as usize)
     }
 
     /// Get the number of elements.
@@ -362,7 +360,7 @@ impl PyViewColumn {
             )));
         }
         Ok(Self {
-            ptr: self.ptr + offset,
+            ptr: unsafe { self.ptr.add(offset) },
             len: self.len,
             stride: self.stride,
             dtype: dtype.to_string(),
@@ -628,11 +626,10 @@ impl PyViewColumn {
         let elem_size = Self::dtype_size(&self.dtype)?;
         let mut buf = vec![0u8; self.len * elem_size];
         for i in 0..self.len {
-            let src_addr = self.ptr + i * self.stride;
             let dst_offset = i * elem_size;
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    src_addr as *const u8,
+                    self.ptr.add(i * self.stride),
                     buf[dst_offset..].as_mut_ptr(),
                     elem_size,
                 );
@@ -661,12 +658,11 @@ impl PyViewColumn {
             )));
         }
         for i in 0..self.len {
-            let dst_addr = self.ptr + i * self.stride;
             let src_offset = i * elem_size;
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     data[src_offset..].as_ptr(),
-                    dst_addr as *mut u8,
+                    self.ptr.add(i * self.stride),
                     elem_size,
                 );
             }

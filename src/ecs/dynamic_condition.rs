@@ -14,9 +14,10 @@ use bevy::{
     },
     prelude::*,
 };
+use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::prelude::*;
 
-use crate::{app::hot_reload::HotReloadGeneration, ecs::dynamic_system::DynamicSystem};
+use crate::ecs::dynamic_system::DynamicSystem;
 
 /// A condition system that wraps a Python function returning bool
 /// Unlike DynamicSystem which returns (), this extracts and returns the bool result
@@ -26,7 +27,7 @@ pub struct DynamicCondition {
     /// Expected generation for hot reload
     generation: u32,
     /// System stage (Startup vs Update/Last)
-    stage: crate::app::hot_reload::SystemStage,
+    stage: SystemStage,
 }
 
 impl DynamicCondition {
@@ -34,7 +35,7 @@ impl DynamicCondition {
         func: Py<PyAny>,
         generation: u32,
         error_state: Arc<Mutex<Vec<PyErr>>>,
-        stage: crate::app::hot_reload::SystemStage,
+        stage: SystemStage,
     ) -> PyResult<Self> {
         let wrapped_func = Python::attach(|py| -> PyResult<Py<PyAny>> {
             // Import functools
@@ -119,11 +120,11 @@ impl System for DynamicCondition {
         let world_ref = unsafe { world.world() };
         let gen_check = match world_ref.get_resource::<HotReloadGeneration>() {
             Some(res) => match self.stage {
-                crate::app::hot_reload::SystemStage::Startup => {
+                SystemStage::Startup => {
                     // Startup: run if current == expected OR current == expected + 1 (reload)
                     res.current == self.generation || res.current == self.generation + 1
                 }
-                crate::app::hot_reload::SystemStage::UpdateOrLast => {
+                SystemStage::UpdateOrLast => {
                     // Update/Last: only run if current == expected
                     res.current == self.generation
                 }

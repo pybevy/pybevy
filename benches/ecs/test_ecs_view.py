@@ -24,7 +24,7 @@ def numba_sum(col):
 
 @numba.jit(nopython=True)
 def numba_physics(positions, velocities, dt):
-    """Realistic physics-like computation."""
+    """Physics-like computation."""
     for i in range(len(positions)):
         vel = velocities[i]
         pos = positions[i]
@@ -35,8 +35,6 @@ def numba_physics(positions, velocities, dt):
 @component
 @dataclass
 class Position(Component):
-    """Custom component for View API benchmarks."""
-
     x: float
     y: float
     z: float
@@ -45,8 +43,6 @@ class Position(Component):
 @component
 @dataclass
 class Velocity(Component):
-    """Custom component for View API benchmarks."""
-
     vx: float
     vy: float
     vz: float
@@ -55,7 +51,7 @@ class Velocity(Component):
 @component
 @dataclass
 class Marker(Component):
-    """Empty marker component."""
+    pass
 
 
 _numba_warmed_up = False

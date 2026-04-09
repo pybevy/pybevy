@@ -19,8 +19,6 @@ from pybevy.ecs import Commands, Component, Mut, Query, View
 @component
 @dataclass
 class WrapperPosition(Component):
-    """Wrapper storage component (primitive-only fields)."""
-
     x: float
     y: float
     z: float
@@ -29,8 +27,6 @@ class WrapperPosition(Component):
 @component
 @dataclass
 class WrapperVelocity(Component):
-    """Wrapper storage component (primitive-only fields)."""
-
     vx: float
     vy: float
     vz: float
@@ -39,18 +35,16 @@ class WrapperVelocity(Component):
 @component(storage="python")
 @dataclass
 class PyObjectPosition(Component):
-    """PyObject storage component (contains non-primitive field)."""
-
     x: float
     y: float
     z: float
-    data: str  # Forces PyObject storage
+    data: str
 
 
 @component
 @dataclass
 class Marker(Component):
-    """Marker component for filtering."""
+    pass
 
 
 

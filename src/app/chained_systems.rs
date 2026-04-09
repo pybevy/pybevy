@@ -1,4 +1,4 @@
-use pyo3::{prelude::*, types::PyTuple};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
 #[pyclass(name = "ChainedSystems")]
 pub struct PyChainedSystems {
@@ -27,7 +27,7 @@ impl PyChainedSystems {
 #[pyo3(signature = (*systems))]
 pub fn chain(systems: Bound<'_, PyTuple>) -> PyResult<PyChainedSystems> {
     if systems.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err(
+        return Err(PyValueError::new_err(
             "chain() requires at least one system",
         ));
     }

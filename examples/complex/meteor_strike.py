@@ -240,7 +240,7 @@ def setup(
     body_data: list[tuple[str, str, dict[str, float], list[float], list[float] | None]] = []
     body_idx = 0
 
-    # -- Ground (static) --
+    # Ground
     commands.spawn(
         Mesh3d(meshes.add(Cuboid(200.0, 0.3, 200.0))),
         MeshMaterial3d(materials.add(StandardMaterial(
@@ -253,7 +253,7 @@ def setup(
                        [0.0, -0.15, 0.0, 0.0, 0.0, 0.0, 1.0], None))
     body_idx += 1  # ground = body 0
 
-    # -- Cube wall --
+    # Cube wall
     cube_mesh = meshes.add(Cuboid.from_length(CUBE_SIZE))
     half = CUBE_SIZE / 2.0
     cube_density = 1000.0
@@ -302,7 +302,7 @@ def setup(
     total_cubes = WALL_COLS * WALL_ROWS * WALL_DEPTH
     print(f"Wall: {total_cubes} cubes — spawn={1e3*(t_wall-t_start):.0f}ms")
 
-    # -- Meteor (fiery glowing sphere) --
+    # Meteor (fiery glowing sphere)
     meteor_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(1.0, 0.6, 0.15),
         emissive=LinearRgba.rgb(40.0, 16.0, 3.0),
@@ -325,7 +325,7 @@ def setup(
                        [METEOR_SPEED, 0.0, 0.0, 0.0, 0.0, 0.0]))
     body_idx += 1
 
-    # -- Ember trail (small additive-blend spheres orbiting the meteor) --
+    # Ember trail (small additive-blend spheres orbiting the meteor)
     ember_meshes = [
         meshes.add(Sphere(0.12)),
         meshes.add(Sphere(0.20)),
@@ -364,7 +364,7 @@ def setup(
             Transform.from_xyz(-20.0, impact_y, 0.0),
         )
 
-    # -- Fog volumes --
+    # Fog volumes
     commands.spawn(
         FogVolume(
             density_factor=0.2,
@@ -386,7 +386,7 @@ def setup(
         Transform.from_xyz(-20.0, impact_y, 0.0).with_scale(Vec3(8.0, 4.0, 6.0)),
     )
 
-    # -- Camera --
+    # Camera
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(-22.0, 10.0, 22.0).looking_at(Vec3(-2.0, 3.5, 0.0), Vec3.Y),
@@ -405,7 +405,7 @@ def setup(
         ),
     )
 
-    # -- Lights --
+    # Lights
     # Key light (warm sun with volumetric god rays)
     commands.spawn(
         DirectionalLight(illuminance=10000.0, color=Color.srgb(1.0, 0.92, 0.8), shadows_enabled=True),
@@ -428,7 +428,7 @@ def setup(
         Transform.from_xyz(15.0, 10.0, 0.0),
     )
 
-    # -- Status text (UI overlay) --
+    # Status text (UI overlay)
     root_node = Node()
     root_node.position_type = 1  # Absolute
     root_node.width = Val.px(800.0)
@@ -444,7 +444,7 @@ def setup(
         TextLayout(justify=Justify.Center),
     )
 
-    # -- Start background Newton build --
+    # Start background Newton build
     sim._body_data = body_data
     sim.start_rebuild()
 

@@ -9,18 +9,17 @@ use crate::app::task_pool::PyTaskPoolPlugin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PluginConfigType {
-    Window,
     Audio,
-    Winit,
-    TaskPool,
-    Render,
     Image,
+    Render,
+    TaskPool,
+    Window,
+    Winit,
 }
 
 impl PluginConfigType {
-    /// Extract plugin type from Python type object using type equality comparison
     pub fn from_py_type(py: Python<'_>, py_type: &Bound<'_, PyType>) -> PyResult<Self> {
-        // Compare by type equality using PyTypeInfo trait
+        // FIXME: auto-generate this mapping from the plugin type definitions to avoid hardcoding
         if py_type.is(<PyWindowPlugin as PyTypeInfo>::type_object(py)) {
             return Ok(PluginConfigType::Window);
         }
@@ -40,7 +39,6 @@ impl PluginConfigType {
             return Ok(PluginConfigType::Winit);
         }
 
-        // Unknown plugin type
         let type_name = py_type.name()?.to_string();
         Err(PyTypeError::new_err(format!(
             "Unknown plugin type: {}",

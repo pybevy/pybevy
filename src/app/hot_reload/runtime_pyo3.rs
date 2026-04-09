@@ -28,7 +28,6 @@ use crate::{
 };
 
 /// Container for definitions loaded from the Python loader function.
-/// Replaces the 5-tuple that was previously threaded through perform_reload.
 pub(crate) struct PendingDefinitions {
     pub systems: Vec<(PyStage, Vec<Py<PyAny>>)>,
     pub resources: Vec<Py<PyAny>>,
@@ -120,7 +119,6 @@ fn add_systems_to_schedule(
     }
 }
 
-/// PyO3/CPython implementation of the ReloadRuntime trait.
 pub(crate) struct Pyo3ReloadRuntime {
     pub loader_func: Py<PyAny>,
     pub error_state: Arc<Mutex<Vec<PyErr>>>,

@@ -2,6 +2,7 @@ use bevy::ecs::{
     entity::Entity, hierarchy::ChildOf, ptr::OwningPtr, system::Commands, world::World,
 };
 use pybevy_core::registry::global_registry;
+use pybevy_reload::HotReloadable;
 use pyo3::{
     exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
@@ -17,17 +18,14 @@ use super::{
     resource_type::PyResourceType,
     world::PyWorld,
 };
-use crate::{
-    app::hot_reload::HotReloadable,
-    ecs::{
-        batch_spawn::SpawnBatchCommand,
-        component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
-        component_type::ComponentRegistry,
-        component_wrapper::*,
-        dynamic_system::execute_system_func,
-        observer::{BundleFilter, PyEvent, PyOn},
-        observer_registry::ObserverRegistry,
-    },
+use crate::ecs::{
+    batch_spawn::SpawnBatchCommand,
+    component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
+    component_type::ComponentRegistry,
+    component_wrapper::*,
+    dynamic_system::execute_system_func,
+    observer::{BundleFilter, PyEvent, PyOn},
+    observer_registry::ObserverRegistry,
 };
 
 /// Wrapper to make PyTypeObject pointer Send-safe by storing it as usize
@@ -722,7 +720,6 @@ fn remove_components_from_entity(
 
 #[pymethods]
 impl PyCommands {
-    /// Spawn a new empty entity
     pub fn spawn_empty(&self, _py: Python<'_>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
 
@@ -734,7 +731,6 @@ impl PyCommands {
         Ok(PyEntityCommands::with_commands(entity, self))
     }
 
-    /// Spawn an entity with components
     #[pyo3(signature = (*components))]
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
@@ -789,16 +785,6 @@ impl PyCommands {
         Ok(PyEntityCommands::with_commands(entity_id, self))
     }
 
-    /// Spawn multiple entities. Supports two calling patterns:
-    ///
-    /// 1. Batch/uniform components (numpy fast path):
-    ///    `commands.spawn_batch(Transform.from_numpy(positions=...), Marker(), count=None)`
-    ///
-    /// 2. Iterable of component bundles (legacy path):
-    ///    `commands.spawn_batch([(Transform(...), Marker()), ...])`
-    ///
-    /// Detection: if called with a single list/iterable arg, uses the legacy path.
-    /// Otherwise, uses the batch path.
     #[pyo3(signature = (*args, count=None))]
     pub fn spawn_batch(
         &self,
@@ -836,7 +822,7 @@ impl PyCommands {
         }
     }
 
-    /// Legacy spawn_batch: iterate through Python bundles one by one
+    // FIXME: is this needed anymore?
     fn spawn_batch_iter(&self, py: Python, batch: Bound<'_, PyAny>) -> PyResult<()> {
         let iter = batch.call_method0("__iter__")?;
         loop {
@@ -865,8 +851,6 @@ impl PyCommands {
         Ok(())
     }
 
-    /// Get entity commands for an existing entity
-    /// Raises ValueError if the entity does not exist
     pub fn entity(&self, entity: &PyEntity) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
         if self.is_world {
@@ -879,7 +863,6 @@ impl PyCommands {
         Ok(PyEntityCommands::with_commands(entity.0, self))
     }
 
-    /// Get entity commands for an existing entity, returns None if not found
     pub fn get_entity(&self, entity: &PyEntity) -> PyResult<Option<PyEntityCommands>> {
         self.check_valid()?;
         if self.is_world {
@@ -891,7 +874,6 @@ impl PyCommands {
         Ok(Some(PyEntityCommands::with_commands(entity.0, self)))
     }
 
-    /// Despawn an entity
     pub fn despawn(&self, entity: &PyEntity) -> PyResult<()> {
         self.check_valid()?;
         let entity_id = entity.0;
@@ -948,7 +930,6 @@ impl PyCommands {
         Ok(())
     }
 
-    /// Insert a resource into the world
     pub fn insert_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
 
@@ -979,7 +960,6 @@ impl PyCommands {
         Ok(())
     }
 
-    /// Remove a resource from the world
     pub fn remove_resource(&self, py: Python, resource_type: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
 
@@ -1007,24 +987,6 @@ impl PyCommands {
         Ok(())
     }
 
-    /// Trigger an event, either immediately (if backed by World) or deferred (if backed by Commands).
-    ///
-    /// This is the deferred version of World.trigger() - events will be triggered
-    /// after the system completes and commands are applied.
-    ///
-    /// # Arguments
-    /// * `event` - An instance of an Event subclass to trigger
-    ///
-    /// # Example
-    /// ```python
-    /// @dataclass
-    /// class PlayerDied(Event):
-    ///     player_id: int
-    ///
-    /// def my_system(commands: Commands) -> None:
-    ///     # This will trigger after the system completes
-    ///     commands.trigger(PlayerDied(player_id=42))
-    /// ```
     pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
 

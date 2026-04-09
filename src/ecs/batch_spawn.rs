@@ -2,7 +2,13 @@ use std::sync::Arc;
 
 use bevy::ecs::{entity::Entity, ptr::OwningPtr, world::World};
 use pybevy_core::{BatchComponent, registry::global_registry};
-use pyo3::{exceptions::PyValueError, ffi::PyTypeObject, prelude::*, types::PyTuple};
+use pybevy_reload::HotReloadable;
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    ffi::PyTypeObject,
+    prelude::*,
+    types::{PyTuple, PyType},
+};
 
 use super::{
     component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
@@ -10,7 +16,6 @@ use super::{
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,
 };
-use crate::app::hot_reload::HotReloadable;
 
 /// Enum to represent either a batch component or a uniform component
 enum ComponentData {
@@ -155,7 +160,7 @@ fn insert_uniform_bulk(
             if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr) {
                 bridge.insert_bulk_uniform(component, entities, world)?;
             } else {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                return Err(PyRuntimeError::new_err(format!(
                     "No component bridge registered for Dynamic type {:?}",
                     type_ptr
                 )));
@@ -168,10 +173,10 @@ fn insert_uniform_bulk(
 
             // Determine storage type and pre-serialize for wrapper storage
             let py_type = unsafe {
-                pyo3::Bound::from_borrowed_ptr(py, type_ptr.as_ptr() as *mut pyo3::ffi::PyObject)
+                Bound::from_borrowed_ptr(py, type_ptr.as_ptr() as *mut pyo3::ffi::PyObject)
             };
 
-            let wrapper_bytes = if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
+            let wrapper_bytes = if let Ok(cls) = py_type.cast::<PyType>() {
                 let storage_type = ComponentStorageType::from_python_class(cls)
                     .unwrap_or(ComponentStorageType::PyObject);
 

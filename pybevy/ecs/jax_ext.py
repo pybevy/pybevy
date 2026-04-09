@@ -36,9 +36,6 @@ _DTYPE_MAP: dict[str, np.dtype[np.generic]] = {
 }
 
 
-# ============================================================================
-# ViewColumn → JAX
-# ============================================================================
 
 
 def _to_jax(self: ViewColumn) -> JaxArray:
@@ -52,9 +49,6 @@ def _to_jax(self: ViewColumn) -> JaxArray:
     return jnp.array(np_arr)
 
 
-# ============================================================================
-# JAX → ViewColumn
-# ============================================================================
 
 
 def _from_jax(self: ViewColumn, arr: JaxArray) -> None:
@@ -67,17 +61,11 @@ def _from_jax(self: ViewColumn, arr: JaxArray) -> None:
     self.write_from_buffer(np_arr.tobytes())
 
 
-# ============================================================================
-# Monkey-patch ViewColumn
-# ============================================================================
 
 ViewColumn.to_jax = _to_jax  # type: ignore[method-assign,attr-defined]
 ViewColumn.from_jax = _from_jax  # type: ignore[method-assign,attr-defined]
 
 
-# ============================================================================
-# Vec3ViewColumn / QuatViewColumn write-back
-# ============================================================================
 
 
 def _vec3_from_jax(
@@ -131,12 +119,6 @@ Vec3ViewColumn.from_jax = _vec3_from_jax  # type: ignore[attr-defined]
 QuatViewColumn.from_jax = _quat_from_jax  # type: ignore[attr-defined]
 
 
-# ============================================================================
-# JAX pytree registration
-# ============================================================================
-
-# ViewColumn as pytree leaf — JAX auto-converts via to_jax() at JIT boundary.
-# This replaces the deprecated __jax_array__ protocol (removed in JAX 0.9+).
 
 
 def _viewcolumn_flatten(v: ViewColumn) -> tuple[list[JaxArray], None]:
@@ -173,8 +155,6 @@ jax.tree_util.register_pytree_node(ViewColumn, _viewcolumn_flatten, _viewcolumn_
 jax.tree_util.register_pytree_node(Vec3ViewColumn, _vec3_flatten, _vec3_unflatten)  # type: ignore[arg-type]
 jax.tree_util.register_pytree_node(QuatViewColumn, _quat_flatten, _quat_unflatten)  # type: ignore[arg-type]
 
-# SimpleNamespace is used as return type from Vec3/Quat unflatten and from @jax.jit
-# functions that return structured results. Register it so JAX can trace through it.
 
 
 def _sns_flatten(ns: SimpleNamespace) -> tuple[list[object], list[str]]:

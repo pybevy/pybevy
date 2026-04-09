@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+# TYPE: actually type out the tool schema
 type JsonDict = dict[str, Any]
 
 

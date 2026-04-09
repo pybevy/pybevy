@@ -153,10 +153,6 @@ def not_(condition: Callable[[], bool]) -> Callable[[], bool]:
     return negated
 
 
-# Parameterized conditions (require system parameters)
-#
-# These helpers create condition functions with proper type annotations
-# by dynamically setting __annotations__ on the returned functions.
 
 
 def input_just_pressed(key_code):
@@ -180,13 +176,11 @@ def input_just_pressed(key_code):
         )
         ```
     """
-    # Import at runtime to avoid circular dependencies
     from ..input import ButtonInput
 
     def condition(input_state: ButtonInput) -> bool:
         return input_state.just_pressed(key_code)
 
-    # Ensure annotations are set (they should be from the signature above)
     condition.__name__ = f"input_just_pressed_{key_code}"
     return condition
 
@@ -217,7 +211,6 @@ def state_is_active(state_type: type, target_value: int):
         )
         ```
     """
-    # Import at runtime to avoid circular dependencies
     from . import Res
 
     def condition(res: Res) -> bool:  # type: ignore

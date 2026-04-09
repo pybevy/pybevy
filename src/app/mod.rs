@@ -21,9 +21,7 @@ pub mod plugins;
 pub mod schedule_runner;
 pub mod task_pool;
 
-/// Custom schedule label for RL simulation workloads.
 /// Runs between PreUpdate and Update in the frame lifecycle.
-/// Sim kernels go in SimTick, visual sync goes in Update.
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimTick;
 
@@ -105,14 +103,12 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     app.add_class::<PyStage>()?;
     app.add_class::<app_exit::PyAppExit>()?;
     app.add_class::<chained_systems::PyChainedSystems>()?;
-    app.add_class::<hot_reload::PyAppReloadState>()?;
-    app.add_class::<hot_reload::PyHotReloadControl>()?;
-    app.add_class::<hot_reload::PyHotReloadPlugin>()?;
+    app.add_class::<hot_reload::bindings::PyAppReloadState>()?;
+    app.add_class::<hot_reload::bindings::PyHotReloadControl>()?;
+    app.add_class::<hot_reload::bindings::PyHotReloadPlugin>()?;
     app.add_class::<plugins::PyDefaultPlugins>()?;
     app.add_class::<plugins::PyPluginGroupBuilder>()?;
     app.add_class::<plugins::PyMinimalPlugins>()?;
-    // Re-export PyPlugin from the app module so Python can import it from pybevy.app
-    // The actual class is registered at root level from pybevy_core to ensure single type identity
     app.add_class::<plugin::PyPlugin>()?;
     app.add_class::<plugin::PyPluginGroup>()?;
     app.add_class::<schedule_runner::PyScheduleRunnerPlugin>()?;
@@ -120,11 +116,12 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     app.add_class::<task_pool::PyTaskPoolPlugin>()?;
     app.add_function(wrap_pyfunction!(chained_systems::chain, &app)?)?;
 
-    // Test-only functions for verifying atexit cleanup behavior
+    // Internal test-only functions
     app.add_function(wrap_pyfunction!(app::_test_get_app_count, &app)?)?;
     app.add_function(wrap_pyfunction!(app::_test_force_cleanup, &app)?)?;
 
     // Add schedule label constants for convenient imports
+    // TODO: use a macro for these? auto-generated from PyStage
     app.add("Startup", PyStage::Startup)?;
     app.add("Update", PyStage::Update)?;
     app.add("Last", PyStage::Last)?;
