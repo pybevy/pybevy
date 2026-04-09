@@ -319,6 +319,10 @@ pub(crate) fn generate_asset_bridge_tokens(
                 #asset_name
             }
 
+            fn resource_id(&self, world: &bevy::ecs::world::World) -> Option<bevy::ecs::component::ComponentId> {
+                world.components().resource_id::<bevy::asset::Assets<#bevy_type>>()
+            }
+
             #is_loadable_impl
 
             fn get(
