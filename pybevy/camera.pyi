@@ -836,7 +836,7 @@ class NoCpuCulling(Component):
 
     def __init__(self) -> None: ...
 
-class CullingSphere:
+class Sphere:
     """A bounding sphere used for frustum culling calculations.
 
     This is the camera primitive Sphere used with Frustum.intersects_sphere().
@@ -968,7 +968,7 @@ class Frustum(Component):
             A new Frustum with the specified far plane
         """
 
-    def intersects_sphere(self, sphere: CullingSphere, intersect_far: bool) -> bool:
+    def intersects_sphere(self, sphere: Sphere, intersect_far: bool) -> bool:
         """Checks if a sphere intersects with the frustum.
 
         Args:

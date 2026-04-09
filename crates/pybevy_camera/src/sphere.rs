@@ -2,36 +2,36 @@ use bevy::{camera::primitives::Sphere, math::Vec3A};
 use pybevy_math::vec3a::PyVec3A;
 use pyo3::prelude::*;
 
-#[pyclass(name = "CullingSphere")]
+#[pyclass(name = "Sphere")]
 #[derive(Debug, Clone)]
-pub struct PyCullingSphere {
+pub struct PySphere {
     pub(crate) inner: Sphere,
 }
 
-impl From<Sphere> for PyCullingSphere {
+impl From<Sphere> for PySphere {
     fn from(sphere: Sphere) -> Self {
-        PyCullingSphere { inner: sphere }
+        PySphere { inner: sphere }
     }
 }
 
-impl From<&PyCullingSphere> for Sphere {
-    fn from(py_sphere: &PyCullingSphere) -> Self {
+impl From<&PySphere> for Sphere {
+    fn from(py_sphere: &PySphere) -> Self {
         py_sphere.inner.clone()
     }
 }
 
-impl From<PyCullingSphere> for Sphere {
-    fn from(py_sphere: PyCullingSphere) -> Self {
+impl From<PySphere> for Sphere {
+    fn from(py_sphere: PySphere) -> Self {
         py_sphere.inner
     }
 }
 
 #[pymethods]
-impl PyCullingSphere {
+impl PySphere {
     #[new]
     #[pyo3(signature = (center=PyVec3A::vec3a(Vec3A::ZERO), radius=0.0))]
     pub fn new(center: PyVec3A, radius: f32) -> Self {
-        PyCullingSphere {
+        PySphere {
             inner: Sphere {
                 center: center.into(),
                 radius,
@@ -61,7 +61,7 @@ impl PyCullingSphere {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "CullingSphere(center={:?}, radius={})",
+            "Sphere(center={:?}, radius={})",
             self.inner.center, self.inner.radius
         )
     }

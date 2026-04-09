@@ -9,7 +9,7 @@ pub mod clear_color_config;
 pub mod cubemap_frusta;
 pub mod cubemap_layout;
 pub mod cubemap_visible_entities;
-pub mod culling_sphere;
+pub mod sphere;
 pub mod exposure;
 pub mod frustum;
 pub mod half_space;
@@ -89,7 +89,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<normalized_render_target::PyNormalizedRenderTarget>()?;
     m.add_class::<physical_camera_parameters::PyPhysicalCameraParameters>()?;
     m.add_class::<half_space::PyHalfSpace>()?;
-    m.add_class::<culling_sphere::PyCullingSphere>()?;
+    m.add_class::<sphere::PySphere>()?;
     m.add_class::<scaling_mode::PyScalingMode>()?;
     m.add_class::<cubemap_layout::PyCubemapLayout>()?;
     m.add_class::<screen_space_transmission_quality::PyScreenSpaceTransmissionQuality>()?;
