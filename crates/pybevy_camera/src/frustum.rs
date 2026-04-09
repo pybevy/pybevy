@@ -7,7 +7,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::{affine3a::PyAffine3A, mat4::PyMat4, vec3::PyVec3};
 use pyo3::prelude::*;
 
-use crate::{sphere::PySphere, half_space::PyHalfSpace};
+use crate::{half_space::PyHalfSpace, sphere::PySphere};
 
 #[pycomponent(Frustum, bridge)]
 #[pyclass(name = "Frustum", extends = PyComponent)]
@@ -82,11 +82,7 @@ impl PyFrustum {
         Ok("Frustum(...)".to_string())
     }
 
-    pub fn intersects_sphere(
-        &self,
-        sphere: &PySphere,
-        intersect_far: bool,
-    ) -> PyResult<bool> {
+    pub fn intersects_sphere(&self, sphere: &PySphere, intersect_far: bool) -> PyResult<bool> {
         Ok(self
             .as_ref()?
             .intersects_sphere(&sphere.into(), intersect_far))
