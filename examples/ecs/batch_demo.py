@@ -1,4 +1,4 @@
-"""Batch spawn + View API demo: 5000 glowing spheres orbiting in a vortex."""
+"""Batch spawn + View API demo: glowing spheres orbiting in a vortex."""
 
 import math
 from dataclasses import dataclass

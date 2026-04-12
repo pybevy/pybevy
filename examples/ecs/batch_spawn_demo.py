@@ -1,4 +1,4 @@
-"""Batch spawn demo: 5,000 bouncing balls using spawn_batch + View API."""
+"""Batch spawn demo: bouncing balls using spawn_batch + View API."""
 from dataclasses import dataclass, field
 
 import numpy as np
