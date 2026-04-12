@@ -82,7 +82,7 @@ class RightSprite(Component):
 
 def setup(
     commands: Commands,
-    asset_server: AssetServer,
+    asset_server: Res[AssetServer],
     texture_atlas_layouts: ResMut[Assets[TextureAtlasLayout]],
 ) -> None:
     """Set up the scene with camera and animated sprites."""

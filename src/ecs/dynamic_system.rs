@@ -30,7 +30,7 @@ use pyo3::{
 use smallvec::SmallVec;
 
 use crate::{
-    assets::{asset_server::PyAssetServer, assets::PyAssets},
+    assets::assets::PyAssets,
     ecs::{
         commands::PyCommands,
         component_type::{PyComponentType, register_component_id, register_custom_component},
@@ -670,14 +670,6 @@ impl System for DynamicSystem {
                         let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
                         self.args_buffer.push(obj.into_any());
                     }
-                    SystemParamType::AssetServer => {
-                        // Create PyAssetServer wrapper with world access
-                        let py_asset_server =
-                            unsafe { PyAssetServer::new(world_mut, validity.clone()) };
-                        let obj = Py::new(py, (py_asset_server, PyResource))
-                            .expect("Failed to create PyAssetServer");
-                        self.args_buffer.push(obj.into_any());
-                    }
                     SystemParamType::Commands => {
                         // Use the pre-created Commands from commands_storage
                         let commands = commands_storage
@@ -1201,9 +1193,6 @@ impl System for DynamicSystem {
                 SystemParamType::Local(_) => {
                     // Local state doesn't affect world access
                 }
-                SystemParamType::AssetServer => {
-                    // AssetServer is a resource - doesn't affect filtered access
-                }
                 SystemParamType::World => {
                     // World access requires exclusive access - no filtering needed
                 }
@@ -1442,12 +1431,6 @@ pub(crate) fn execute_system_func(
                         .expect("Failed to create PyRes");
                     args_buffer.push(res_wrapper.into_any());
                 }
-            }
-            SystemParamType::AssetServer => {
-                let py_asset_server = unsafe { PyAssetServer::new(world, validity.clone()) };
-                let obj = Py::new(py, (py_asset_server, PyResource))
-                    .expect("Failed to create PyAssetServer");
-                args_buffer.push(obj.into_any());
             }
             SystemParamType::World => {
                 let py_world = unsafe { PyWorld::new(world, validity.clone()) };
