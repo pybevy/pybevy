@@ -20,7 +20,7 @@ use super::{
     world::PyWorld,
 };
 use crate::{
-    assets::{asset_server::PyAssetServer, asset_type::PyAssetTypeParam},
+    assets::asset_type::PyAssetTypeParam,
     ecs::{
         component_type::PyComponentType,
         messages::MessageType,
@@ -282,8 +282,6 @@ impl SystemFunction {
                     wrapper_class: asset_param.wrapper_class().map(AssetTypePtr),
                     mutable: is_mutable,
                 }
-            } else if annotation.is(PyAssetServer::type_object(py)) {
-                SystemParamType::AssetServer
             } else if annotation.is(PyWorld::type_object(py)) {
                 SystemParamType::World
             } else if annotation.is(PyCommands::type_object(py)) {
@@ -392,7 +390,6 @@ pub enum SystemParamType {
         wrapper_class: Option<AssetTypePtr>,
         mutable: bool,
     },
-    AssetServer,
     World,
     Commands,
     MessageWriter {
@@ -430,7 +427,6 @@ impl Clone for SystemParamType {
                 wrapper_class: *wrapper_class,
                 mutable: *mutable,
             },
-            SystemParamType::AssetServer => SystemParamType::AssetServer,
             SystemParamType::World => SystemParamType::World,
             SystemParamType::Commands => SystemParamType::Commands,
             SystemParamType::MessageWriter { message_type } => SystemParamType::MessageWriter {

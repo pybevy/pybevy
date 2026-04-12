@@ -44,7 +44,7 @@ class RotateToPlayer(Component):
     rotation_speed: float = 0.0  # Radians per second
 
 
-def setup(commands: Commands, assets: AssetServer) -> None:
+def setup(commands: Commands, assets: Res[AssetServer]) -> None:
     """Set up the game entities and camera."""
     ship_handle = assets.load_image("bevy/textures/simplespace/ship_C.png")
     enemy_a_handle = assets.load_image("bevy/textures/simplespace/enemy_A.png")
