@@ -7,7 +7,7 @@ import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
-from pybevy.ecs import Component
+from pybevy.ecs import Component, Entity
 from pybevy.image import RenderAssetUsages
 from pybevy.math import Dir3, Vec2
 from pybevy.pbr import StandardMaterial
@@ -366,3 +366,49 @@ class SkinnedMeshInverseBindposes(Asset):
     def get(self, index: int) -> object | None: ...
     def to_list(self) -> list: ...
     def __len__(self) -> int: ...
+
+class SkinnedMesh(Component):
+    """Component that defines a skinned mesh for skeletal animation.
+
+    A skinned mesh deforms its vertices based on a hierarchy of bone entities (joints).
+    Each vertex is influenced by one or more bones, weighted by the inverse bind pose matrices.
+
+    This component is typically created automatically when loading GLTF files with skeletal
+    animations, but can also be constructed manually for procedural skinned meshes.
+    """
+
+    def __init__(self, inverse_bindposes: Handle, joints: list[Entity]) -> None:
+        """Create a new SkinnedMesh component.
+
+        Args:
+            inverse_bindposes: Handle to SkinnedMeshInverseBindposes asset containing
+                the inverse bind pose matrices for each joint
+            joints: List of Entity references representing the bone hierarchy
+        """
+
+    @property
+    def inverse_bindposes(self) -> Handle:
+        """Get the handle to the inverse bind pose matrices asset."""
+
+    @property
+    def joints(self) -> list[Entity]:
+        """Get the list of joint (bone) entities."""
+
+    def joint_count(self) -> int:
+        """Get the number of joints in the skeleton."""
+
+    def get_joint(self, index: int) -> Entity:
+        """Get a specific joint entity by index.
+
+        Args:
+            index: Zero-based index of the joint to retrieve
+
+        Returns:
+            The Entity at the specified index
+
+        Raises:
+            ValueError: If index is out of bounds
+        """
+
+    def __len__(self) -> int:
+        """Get the number of joints in the skeleton."""

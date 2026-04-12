@@ -21,7 +21,7 @@ Scene hierarchy:
 
 import math
 
-from pybevy.animation import SkinnedMesh
+from pybevy.mesh import SkinnedMesh
 from pybevy.prelude import *
 
 
