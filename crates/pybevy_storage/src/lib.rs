@@ -35,4 +35,4 @@ pub use storage_error::StorageError;
 pub use storage_traits::{BorrowableStorage, FromBorrowedStorage};
 pub use validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard};
 pub use value_storage::{ValueStorage, ValueStorageInner};
-pub use view_bridge::{FieldOffset, ViewBridge, ViewFieldAccess};
+pub use view_bridge::{FieldOffset, FieldType, ViewBridge, ViewFieldAccess};

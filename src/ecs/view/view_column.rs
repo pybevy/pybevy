@@ -8,15 +8,27 @@
 //! boundary (in the unbox() function) and in bulk read/write methods,
 //! preventing use-after-free bugs.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    mem,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
+use bevy::transform::components::Transform;
+use pybevy_bytecodevm::bytecode::{read_field_value, write_field_value};
+use pybevy_core::FieldType;
 use pyo3::{
     exceptions::PyRuntimeError,
     prelude::*,
     types::{PyBytes, PyList},
+};
+
+use crate::ecs::{
+    component_layout::{ComponentLayout, PrimitiveType},
+    component_type::PyComponentType,
+    view::view::get_component_field_info,
 };
 
 /// Opaque column view that can only be accessed through Numba JIT.
@@ -55,8 +67,8 @@ pub struct PyViewColumn {
     /// Stride between elements in bytes.
     stride: usize,
 
-    /// NumPy dtype string (e.g., "f4" for float32, "i4" for int32).
-    dtype: String,
+    /// Field type (`None` for opaque whole-component views with no single representable type, e.g. Transform or Quat).
+    field_type: Option<FieldType>,
 
     /// Validity token shared across all views from the same batch.
     validity_token: Arc<AtomicBool>,
@@ -65,19 +77,24 @@ pub struct PyViewColumn {
     component_type: Option<*const pyo3::ffi::PyTypeObject>,
 
     /// Built-in component type for trait-based field access (None for custom/primitive columns)
-    builtin_component_type: Option<crate::ecs::component_type::PyComponentType>,
+    builtin_component_type: Option<PyComponentType>,
 
     /// Owned buffer for temporary arithmetic results (None = ECS-backed pointer)
     owned_data: Option<Vec<u8>>,
 }
 
 impl PyViewColumn {
-    /// Create a ViewColumn with component type info for dynamic field access
+    /// Create a ViewColumn with component type info for dynamic field access.
+    /// Whole-component columns are always opaque structs (field_type = None).
+    ///
+    /// # Safety
+    /// `ptr` must point to the first element of a valid ECS column with `len` elements
+    /// spaced `stride` bytes apart. The pointer must remain valid for the lifetime of
+    /// the validity token (i.e. until the system finishes execution).
     pub(crate) unsafe fn from_raw_parts_with_type(
         ptr: *const u8,
         len: usize,
         stride: usize,
-        dtype: String,
         validity_token: Arc<AtomicBool>,
         component_type: *const pyo3::ffi::PyTypeObject,
     ) -> Self {
@@ -85,7 +102,7 @@ impl PyViewColumn {
             ptr: ptr as *mut u8,
             len,
             stride,
-            dtype,
+            field_type: None,
             validity_token,
             component_type: Some(component_type),
             builtin_component_type: None,
@@ -93,20 +110,23 @@ impl PyViewColumn {
         }
     }
 
-    /// Create a ViewColumn with built-in component type for trait-based field access
+    /// Create a ViewColumn with built-in component type for trait-based field access.
+    /// Whole-component columns are always opaque structs (field_type = None).
+    ///
+    /// # Safety
+    /// Same requirements as `from_raw_parts_with_type`.
     pub(crate) unsafe fn from_raw_parts_with_builtin_type(
         ptr: *const u8,
         len: usize,
         stride: usize,
-        dtype: String,
         validity_token: Arc<AtomicBool>,
-        builtin_component_type: crate::ecs::component_type::PyComponentType,
+        builtin_component_type: PyComponentType,
     ) -> Self {
         Self {
             ptr: ptr as *mut u8,
             len,
             stride,
-            dtype,
+            field_type: None,
             validity_token,
             component_type: None,
             builtin_component_type: Some(builtin_component_type),
@@ -114,63 +134,58 @@ impl PyViewColumn {
         }
     }
 
-    /// Byte size for a given dtype string.
-    fn dtype_size(dtype: &str) -> PyResult<usize> {
-        match dtype {
-            "u1" => Ok(1),
-            "f4" | "i4" | "u4" => Ok(4),
-            "f8" | "i8" | "u8" => Ok(8),
-            _ => Err(PyRuntimeError::new_err(format!(
-                "Arithmetic not supported for dtype '{dtype}'"
-            ))),
-        }
-    }
-
-    /// Read element at `index` as f64, respecting stride and dtype.
+    /// Read element at `index` as f64, respecting stride and field type.
+    ///
+    /// # Panics
+    /// Panics if `field_type` is None or a composite variant. Callers must ensure
+    /// `check_numeric()` has been called first.
     fn read_f64_at(&self, index: usize) -> f64 {
+        let ft = self
+            .field_type
+            .expect("read_f64_at called on composite/struct column");
+        // Safety: `index < len` is enforced by all callers. `ptr` is valid for the
+        // system lifetime, guaranteed by the validity token checked in `check_numeric`.
         let ptr = unsafe { self.ptr.add(index * self.stride) };
-        unsafe {
-            match self.dtype.as_str() {
-                "u1" => *(ptr as *const u8) as f64,
-                "f4" => *(ptr as *const f32) as f64,
-                "f8" => *(ptr as *const f64),
-                "i4" => *(ptr as *const i32) as f64,
-                "i8" => *(ptr as *const i64) as f64,
-                "u4" => *(ptr as *const u32) as f64,
-                "u8" => *(ptr as *const u64) as f64,
-                _ => *(ptr as *const f32) as f64,
-            }
-        }
+        // Safety: ptr is aligned and valid for `ft`; `ft` is a scalar variant (not Vec2/Vec3/Vec4).
+        unsafe { read_field_value(ptr, ft) }
     }
 
-    /// Write f64 value at `index`, respecting stride and dtype.
+    /// Write f64 value at `index`, respecting stride and field type.
+    ///
+    /// # Panics
+    /// Panics if `field_type` is None or a composite variant. Callers must ensure
+    /// `check_numeric()` has been called first.
     fn write_f64_at(&self, index: usize, value: f64) {
+        let ft = self
+            .field_type
+            .expect("write_f64_at called on composite/struct column");
+        // Safety: same as `read_f64_at`.
         let ptr = unsafe { self.ptr.add(index * self.stride) };
-        unsafe {
-            match self.dtype.as_str() {
-                "u1" => *(ptr as *mut u8) = (value != 0.0) as u8,
-                "f4" => *(ptr as *mut f32) = value as f32,
-                "f8" => *(ptr as *mut f64) = value,
-                "i4" => *(ptr as *mut i32) = value as i32,
-                "i8" => *(ptr as *mut i64) = value as i64,
-                "u4" => *(ptr as *mut u32) = value as u32,
-                "u8" => *(ptr as *mut u64) = value as u64,
-                _ => *(ptr as *mut f32) = value as f32,
-            }
-        }
+        // Safety: ptr is aligned, valid, and not aliased for the duration of this write.
+        unsafe { write_field_value(ptr, value, ft) }
     }
 
-    /// Check validity and reject non-numeric dtypes.
-    fn check_numeric(&self) -> PyResult<()> {
+    /// Check validity and that this is a scalar field type. Returns the `FieldType` on success.
+    fn check_numeric(&self) -> PyResult<FieldType> {
         if !self.validity_token.load(Ordering::Relaxed) {
             return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
         }
-        match self.dtype.as_str() {
-            "f4" | "f8" | "i4" | "i8" | "u4" | "u8" | "u1" => Ok(()),
-            _ => Err(PyRuntimeError::new_err(format!(
-                "Arithmetic not supported for dtype '{}'",
-                self.dtype
-            ))),
+        match self.field_type {
+            Some(
+                ft @ (FieldType::F32
+                | FieldType::F64
+                | FieldType::I32
+                | FieldType::I64
+                | FieldType::U32
+                | FieldType::U64
+                | FieldType::Bool),
+            ) => Ok(ft),
+            Some(FieldType::Vec2) | Some(FieldType::Vec3) | Some(FieldType::Vec4) | None => {
+                Err(PyRuntimeError::new_err(format!(
+                    "Arithmetic not supported for dtype '{}'",
+                    self.dtype()
+                )))
+            }
         }
     }
 
@@ -178,31 +193,22 @@ impl PyViewColumn {
     fn from_f64_iter(
         iter: impl Iterator<Item = f64>,
         len: usize,
-        dtype: &str,
+        field_type: FieldType,
         validity_token: &Arc<AtomicBool>,
     ) -> PyResult<Self> {
-        let elem_size = Self::dtype_size(dtype)?;
+        let elem_size = field_type.size_bytes();
         let mut buf = vec![0u8; len * elem_size];
-        // Write using the target dtype
         for (i, val) in iter.enumerate() {
+            // Safety: `i * elem_size` is within `buf` (allocated as `len * elem_size` bytes).
             let ptr = unsafe { buf.as_mut_ptr().add(i * elem_size) };
-            unsafe {
-                match dtype {
-                    "f4" => *(ptr as *mut f32) = val as f32,
-                    "f8" => *(ptr as *mut f64) = val,
-                    "i4" => *(ptr as *mut i32) = val as i32,
-                    "i8" => *(ptr as *mut i64) = val as i64,
-                    "u4" => *(ptr as *mut u32) = val as u32,
-                    "u8" => *(ptr as *mut u64) = val as u64,
-                    _ => *(ptr as *mut f32) = val as f32,
-                }
-            }
+            // Safety: ptr is aligned for `field_type`; buf is exclusively owned here.
+            unsafe { write_field_value(ptr, val, field_type) };
         }
         Ok(Self {
             ptr: buf.as_mut_ptr(),
             len,
             stride: elem_size,
-            dtype: dtype.to_string(),
+            field_type: Some(field_type),
             validity_token: validity_token.clone(),
             component_type: None,
             builtin_component_type: None,
@@ -212,18 +218,18 @@ impl PyViewColumn {
 
     /// Apply a unary f64→f64 function element-wise, returning an owned ViewColumn.
     fn unary_op(&self, f: impl Fn(f64) -> f64) -> PyResult<Self> {
-        self.check_numeric()?;
+        let ft = self.check_numeric()?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i))),
             self.len,
-            &self.dtype,
+            ft,
             &self.validity_token,
         )
     }
 
     /// Apply a binary (col, col) → col function element-wise.
     fn binary_op_col(&self, other: &Self, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
-        self.check_numeric()?;
+        let ft = self.check_numeric()?;
         other.check_numeric()?;
         if self.len != other.len {
             return Err(PyRuntimeError::new_err(format!(
@@ -234,35 +240,78 @@ impl PyViewColumn {
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i), other.read_f64_at(i))),
             self.len,
-            &self.dtype,
+            ft,
             &self.validity_token,
         )
     }
 
     /// Apply a binary (col, scalar) → col function element-wise.
     fn binary_op_scalar(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
-        self.check_numeric()?;
+        let ft = self.check_numeric()?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i), scalar)),
             self.len,
-            &self.dtype,
+            ft,
             &self.validity_token,
         )
     }
 
     /// Apply a binary (scalar, col) → col function element-wise.
     fn binary_op_scalar_left(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
-        self.check_numeric()?;
+        let ft = self.check_numeric()?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(scalar, self.read_f64_at(i))),
             self.len,
-            &self.dtype,
+            ft,
             &self.validity_token,
         )
     }
+
+    /// Create a sub-column view at a byte offset with a known `FieldType`.
+    ///
+    /// Internal API — Rust callers should prefer this over `at_offset` to avoid string parsing.
+    pub(crate) fn at_offset_typed(
+        &self,
+        offset: usize,
+        field_type: Option<FieldType>,
+    ) -> PyResult<Self> {
+        if self.owned_data.is_some() {
+            return Err(PyRuntimeError::new_err(
+                "Cannot access sub-columns on a temporary ViewColumn from arithmetic.\n\
+                 Assign it back to an ECS-backed column first.",
+            ));
+        }
+        // Validate against the element extent: for typed columns use the type's byte size,
+        // for opaque struct columns fall back to the stride.
+        let extent = match self.field_type {
+            Some(ft) => ft.size_bytes(),
+            None => self.stride,
+        };
+        if extent > 0 && offset >= extent {
+            return Err(PyRuntimeError::new_err(format!(
+                "Offset {offset} out of bounds for '{}' ({} bytes)",
+                self.dtype(),
+                extent,
+            )));
+        }
+        Ok(Self {
+            // Safety: `offset < extent <= stride`, so the resulting pointer is still within
+            // the same ECS column allocation. Validity is inherited via the shared token.
+            ptr: unsafe { self.ptr.add(offset) },
+            len: self.len,
+            stride: self.stride,
+            field_type,
+            validity_token: self.validity_token.clone(),
+            component_type: None,
+            builtin_component_type: None,
+            owned_data: None,
+        })
+    }
 }
 
-// Implement Sync + Send since we're manually managing the Arc
+// Safety: `ptr` is only accessed while the validity token is live (checked before every
+// read/write), and `Arc<AtomicBool>` coordinates access across threads. The raw pointer
+// is never aliased mutably while any shared reference exists.
 unsafe impl Send for PyViewColumn {}
 unsafe impl Sync for PyViewColumn {}
 
@@ -331,51 +380,46 @@ impl PyViewColumn {
         self.stride
     }
 
-    /// Get the NumPy dtype string.
+    /// Get the NumPy dtype string (e.g., "f4", "i8", "u1", "struct").
     #[getter]
-    fn dtype(&self) -> &str {
-        &self.dtype
+    fn dtype(&self) -> &'static str {
+        match self.field_type {
+            Some(ft) => ft.to_numpy_dtype_str(),
+            None => "struct",
+        }
     }
 
     /// Create a sub-column view at a byte offset (for field peeling).
     ///
-    /// This is used to implement `.translation.y` syntax by creating a new
-    /// view with adjusted pointer offset.
+    /// This is the Python-facing API; Rust internals should use `at_offset_typed`.
     ///
     /// # Arguments
     ///
     /// - `offset`: Byte offset from the current pointer
-    /// - `dtype`: NumPy dtype string for the sub-column
+    /// - `dtype`: NumPy dtype string (e.g., "f4", "i8", "u1") or "struct" for composite
     pub fn at_offset(&self, offset: usize, dtype: &str) -> PyResult<Self> {
-        if self.owned_data.is_some() {
-            return Err(PyRuntimeError::new_err(
-                "Cannot access sub-columns on a temporary ViewColumn from arithmetic.\n\
-                 Assign it back to an ECS-backed column first.",
-            ));
-        }
-        if self.stride > 0 && offset >= self.stride {
-            return Err(PyRuntimeError::new_err(format!(
-                "Offset {offset} exceeds stride {} — would read out of bounds",
-                self.stride
-            )));
-        }
-        Ok(Self {
-            ptr: unsafe { self.ptr.add(offset) },
-            len: self.len,
-            stride: self.stride,
-            dtype: dtype.to_string(),
-            validity_token: self.validity_token.clone(),
-            component_type: None,
-            builtin_component_type: None,
-            owned_data: None,
-        })
+        let field_type = match dtype {
+            "u1" => Some(FieldType::Bool),
+            "f4" => Some(FieldType::F32),
+            "f8" => Some(FieldType::F64),
+            "i4" => Some(FieldType::I32),
+            "i8" => Some(FieldType::I64),
+            "u4" => Some(FieldType::U32),
+            "u8" => Some(FieldType::U64),
+            "struct" => None,
+            _ => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "Unknown dtype '{}'. Use one of: f4, f8, i4, i8, u4, u8, u1, struct",
+                    dtype
+                )));
+            }
+        };
+        self.at_offset_typed(offset, field_type)
     }
 
     /// Helper method for debugging: peek at a single value (with safety check).
     pub fn peek(&self, index: usize) -> PyResult<f64> {
-        if !self.is_valid() {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        self.check_numeric()?;
         if index >= self.len {
             return Err(PyRuntimeError::new_err(format!(
                 "Index {} out of bounds (len = {})",
@@ -387,9 +431,7 @@ impl PyViewColumn {
 
     /// Helper method for debugging: convert to Python list (with copy).
     pub fn to_list(&self, py: Python) -> PyResult<Py<PyAny>> {
-        if !self.is_valid() {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        self.check_numeric()?;
         let values: Vec<f64> = (0..self.len).map(|i| self.read_f64_at(i)).collect();
         Ok(PyList::new(py, values)?.into_any().unbind())
     }
@@ -399,12 +441,6 @@ impl PyViewColumn {
         // Priority 1: Built-in component with trait-based field access
         // Skip Transform here - it has composite fields (Vec3/Quat) that need special wrapper handling
         if let Some(ref comp_type) = self.builtin_component_type {
-            use pybevy_bytecodevm::bytecode::FieldType;
-
-            use crate::ecs::{
-                component_type::PyComponentType, view::view::get_component_field_info,
-            };
-
             // Transform has composite fields (Vec3/Quat), handle in hardcoded fallback
             let is_composite = match comp_type {
                 PyComponentType::Dynamic(type_ptr) => {
@@ -417,15 +453,8 @@ impl PyViewColumn {
             if !is_composite
                 && let Ok((offset, field_type)) = get_component_field_info(comp_type, name)
             {
-                let dtype = match field_type {
-                    FieldType::F32 => "f4",
-                    FieldType::F64 => "f8",
-                    FieldType::I32 => "i4",
-                    FieldType::I64 => "i8",
-                    FieldType::U32 => "u4",
-                    FieldType::U64 => "u8",
-                    FieldType::Bool => "u1",
-                    FieldType::Vec3 | FieldType::Vec2 => {
+                match field_type {
+                    FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
                         // Composite fields for built-in components shouldn't reach here
                         // (they use bridge which returns individual scalar sub-fields)
                         return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
@@ -434,17 +463,18 @@ impl PyViewColumn {
                             name, name, name, name,
                         )));
                     }
-                };
-
-                let field_col = self.at_offset(offset, dtype)?;
-                return Ok(Py::new(py, field_col)?.into());
+                    _ => {
+                        let field_col = self.at_offset_typed(offset, Some(field_type))?;
+                        return Ok(Py::new(py, field_col)?.into());
+                    }
+                }
             }
         }
 
         // Priority 2: Custom component with dynamic field access
         if let Some(type_ptr) = self.component_type {
-            use crate::ecs::component_layout::{ComponentLayout, PrimitiveType};
-
+            // Safety: `type_ptr` was captured from a live Python type object and the GIL
+            // is held here, so the pointer is valid for the duration of this call.
             let py_type =
                 unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
 
@@ -454,17 +484,10 @@ impl PyViewColumn {
                 // Find field in layout
                 for field in &layout.fields {
                     if field.name == name {
-                        // Determine dtype from field type
-                        let dtype = match field.field_type {
-                            PrimitiveType::F32 => "f4",
-                            PrimitiveType::F64 => "f8",
-                            PrimitiveType::I32 => "i4",
-                            PrimitiveType::I64 => "i8",
-                            PrimitiveType::U32 => "u4",
-                            PrimitiveType::U64 => "u8",
-                            PrimitiveType::Bool => "u1",
+                        match field.field_type {
                             PrimitiveType::Vec3 => {
-                                let vec3_col = self.at_offset(field.offset, "struct")?;
+                                let vec3_col =
+                                    self.at_offset_typed(field.offset, Some(FieldType::Vec3))?;
                                 let viewcolumn_accessors =
                                     py.import("pybevy.ecs.view_accessors")?;
                                 let vec3_wrapper =
@@ -472,17 +495,22 @@ impl PyViewColumn {
                                 return Ok(vec3_wrapper.call1((vec3_col,))?.into());
                             }
                             PrimitiveType::Vec2 => {
-                                let vec2_col = self.at_offset(field.offset, "struct")?;
+                                let vec2_col =
+                                    self.at_offset_typed(field.offset, Some(FieldType::Vec2))?;
                                 let viewcolumn_accessors =
                                     py.import("pybevy.ecs.view_accessors")?;
                                 let vec2_wrapper =
                                     viewcolumn_accessors.getattr("Vec2ViewColumn")?;
                                 return Ok(vec2_wrapper.call1((vec2_col,))?.into());
                             }
-                        };
-
-                        let field_col = self.at_offset(field.offset, dtype)?;
-                        return Ok(Py::new(py, field_col)?.into());
+                            _ => {
+                                let field_col = self.at_offset_typed(
+                                    field.offset,
+                                    Some(field.field_type.to_field_type()),
+                                )?;
+                                return Ok(Py::new(py, field_col)?.into());
+                            }
+                        }
                     }
                 }
 
@@ -500,40 +528,32 @@ impl PyViewColumn {
         let viewcolumn_accessors = py.import("pybevy.ecs.view_accessors")?;
 
         match name {
-            // Transform fields (Bevy layout: rotation @ 0, translation @ 16, scale @ 28)
+            // Transform fields — offsets derived from the actual type, validated by layout_assertions.rs
             "rotation" => {
-                let quat_col = self.at_offset(0, "struct")?;
+                let quat_col = self
+                    .at_offset_typed(mem::offset_of!(Transform, rotation), Some(FieldType::Vec4))?;
                 let quat_wrapper = viewcolumn_accessors.getattr("QuatViewColumn")?;
                 Ok(quat_wrapper.call1((quat_col,))?.into())
             }
             "translation" => {
-                let vec3_col = self.at_offset(16, "struct")?;
+                let vec3_col = self.at_offset_typed(
+                    mem::offset_of!(Transform, translation),
+                    Some(FieldType::Vec3),
+                )?;
                 let vec3_wrapper = viewcolumn_accessors.getattr("Vec3ViewColumn")?;
                 Ok(vec3_wrapper.call1((vec3_col,))?.into())
             }
             "scale" => {
-                let vec3_col = self.at_offset(28, "struct")?;
+                let vec3_col =
+                    self.at_offset_typed(mem::offset_of!(Transform, scale), Some(FieldType::Vec3))?;
                 let vec3_wrapper = viewcolumn_accessors.getattr("Vec3ViewColumn")?;
                 Ok(vec3_wrapper.call1((vec3_col,))?.into())
             }
-            // Vec3 fields
-            "x" => {
-                let x_col = self.at_offset(0, "f4")?;
-                Ok(Py::new(py, x_col)?.into())
-            }
-            "y" => {
-                let y_col = self.at_offset(4, "f4")?;
-                Ok(Py::new(py, y_col)?.into())
-            }
-            "z" => {
-                let z_col = self.at_offset(8, "f4")?;
-                Ok(Py::new(py, z_col)?.into())
-            }
-            // Quat w component (x, y, z already handled above)
-            "w" => {
-                let w_col = self.at_offset(12, "f4")?;
-                Ok(Py::new(py, w_col)?.into())
-            }
+            // Vec2/Vec3/Vec4 scalar sub-fields
+            "x" => Ok(Py::new(py, self.at_offset_typed(0, Some(FieldType::F32))?)?.into()),
+            "y" => Ok(Py::new(py, self.at_offset_typed(4, Some(FieldType::F32))?)?.into()),
+            "z" => Ok(Py::new(py, self.at_offset_typed(8, Some(FieldType::F32))?)?.into()),
+            "w" => Ok(Py::new(py, self.at_offset_typed(12, Some(FieldType::F32))?)?.into()),
             _ => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
                 "ViewColumn has no attribute '{}'",
                 name
@@ -545,21 +565,23 @@ impl PyViewColumn {
         if self.is_valid() {
             format!(
                 "ViewColumn(len={}, stride={}, dtype='{}', valid=True)",
-                self.len, self.stride, self.dtype
+                self.len,
+                self.stride,
+                self.dtype()
             )
         } else {
             format!(
                 "ViewColumn(len={}, stride={}, dtype='{}', valid=False [STALE])",
-                self.len, self.stride, self.dtype
+                self.len,
+                self.stride,
+                self.dtype()
             )
         }
     }
 
     /// Support indexing for Numba JIT compatibility.
     fn __getitem__(&self, index: isize) -> PyResult<f64> {
-        if !self.is_valid() {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        self.check_numeric()?;
 
         let idx = if index < 0 {
             let neg_idx = (-index) as usize;
@@ -586,9 +608,7 @@ impl PyViewColumn {
 
     /// Support item assignment for Numba JIT compatibility.
     fn __setitem__(&mut self, index: isize, value: f64) -> PyResult<()> {
-        if !self.is_valid() {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        self.check_numeric()?;
 
         let idx = if index < 0 {
             let neg_idx = (-index) as usize;
@@ -623,10 +643,17 @@ impl PyViewColumn {
         if !self.is_valid() {
             return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
         }
-        let elem_size = Self::dtype_size(&self.dtype)?;
+        let elem_size = self
+            .field_type
+            .ok_or_else(|| {
+                PyRuntimeError::new_err("Cannot get bytes from a composite/struct column")
+            })?
+            .size_bytes();
         let mut buf = vec![0u8; self.len * elem_size];
         for i in 0..self.len {
             let dst_offset = i * elem_size;
+            // Safety: source pointer is within a valid ECS column (validity checked above);
+            // destination is within the exclusively-owned `buf`. Ranges don't overlap.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.ptr.add(i * self.stride),
@@ -646,7 +673,10 @@ impl PyViewColumn {
         if !self.validity_token.load(Ordering::Relaxed) {
             return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
         }
-        let elem_size = Self::dtype_size(&self.dtype)?;
+        let elem_size = self
+            .field_type
+            .ok_or_else(|| PyRuntimeError::new_err("Cannot write to a composite/struct column"))?
+            .size_bytes();
         let expected_len = self.len * elem_size;
         if data.len() != expected_len {
             return Err(PyRuntimeError::new_err(format!(
@@ -659,6 +689,8 @@ impl PyViewColumn {
         }
         for i in 0..self.len {
             let src_offset = i * elem_size;
+            // Safety: source is a validated slice of the correct length; destination is a
+            // valid ECS column pointer (validity checked above). Ranges don't overlap.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     data[src_offset..].as_ptr(),
@@ -908,15 +940,11 @@ impl PyViewColumn {
     /// Used by Python `__setattr__` on wrapper classes to enable:
     ///     batch.column_mut(Transform).translation.y = (col * 0.5).sin()
     pub fn set(&self, value: &Bound<PyAny>) -> PyResult<()> {
-        if !self.validity_token.load(Ordering::Relaxed) {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        self.check_numeric()?;
 
         if let Ok(col) = value.cast::<PyViewColumn>() {
             let src = col.borrow();
-            if !src.validity_token.load(Ordering::Relaxed) {
-                return Err(PyRuntimeError::new_err("Source ViewColumn is stale!"));
-            }
+            src.check_numeric()?;
             if self.len != src.len {
                 return Err(PyRuntimeError::new_err(format!(
                     "ViewColumn length mismatch: {} vs {}",

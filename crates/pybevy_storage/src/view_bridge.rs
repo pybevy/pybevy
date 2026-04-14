@@ -19,18 +19,63 @@
 
 use bevy::ecs::{component::ComponentId, storage::Column, world::World};
 
-/// Field metadata for View API access
+/// Primitive field types supported by the View API and bytecode VM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FieldType {
+    F32,
+    F64,
+    I32,
+    I64,
+    U32,
+    U64,
+    Bool,
+    Vec2,
+    Vec3,
+    Vec4,
+}
+
+impl FieldType {
+    /// Size in bytes of this field type.
+    pub const fn size_bytes(&self) -> usize {
+        match self {
+            FieldType::F32 => 4,
+            FieldType::F64 => 8,
+            FieldType::I32 => 4,
+            FieldType::I64 => 8,
+            FieldType::U32 => 4,
+            FieldType::U64 => 8,
+            FieldType::Bool => 1,
+            FieldType::Vec2 => 8,
+            FieldType::Vec3 => 12,
+            FieldType::Vec4 => 16,
+        }
+    }
+
+    /// NumPy dtype string for this field type (e.g., "f4" for F32, "u1" for Bool).
+    pub const fn to_numpy_dtype_str(self) -> &'static str {
+        match self {
+            FieldType::F32 => "f4",
+            FieldType::F64 => "f8",
+            FieldType::I32 => "i4",
+            FieldType::I64 => "i8",
+            FieldType::U32 => "u4",
+            FieldType::U64 => "u8",
+            FieldType::Bool => "u1",
+            FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => "f4",
+        }
+    }
+}
+
+/// Field metadata for View API access.
 ///
-/// Contains the byte offset and type metadata of a field within a component struct.
+/// Contains the byte offset and type of a field within a component struct.
 /// Used for direct memory access in the View API bytecode VM.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldOffset {
     /// Byte offset of the field within the component struct
     pub offset: usize,
-    /// Size in bytes of a single element (4 for f32, 1 for bool, etc.)
-    pub element_size: usize,
-    /// View API dtype string (e.g., "f4" for f32, "u1" for bool)
-    pub dtype: &'static str,
+    /// Type of the field
+    pub field_type: FieldType,
 }
 
 /// Trait for components that support View API field access
@@ -44,8 +89,8 @@ pub struct FieldOffset {
 /// impl ViewFieldAccess for PyPointLight {
 ///     fn field_offset(field_name: &str) -> Option<FieldOffset> {
 ///         match field_name {
-///             "intensity" => Some(FieldOffset { offset: offset_of!(PointLight, intensity), element_size: 4, dtype: "f4" }),
-///             "range" => Some(FieldOffset { offset: offset_of!(PointLight, range), element_size: 4, dtype: "f4" }),
+///             "intensity" => Some(FieldOffset { offset: offset_of!(PointLight, intensity), field_type: FieldType::F32 }),
+///             "range" => Some(FieldOffset { offset: offset_of!(PointLight, range), field_type: FieldType::F32 }),
 ///             _ => None,
 ///         }
 ///     }

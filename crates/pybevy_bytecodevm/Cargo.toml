@@ -16,6 +16,7 @@ pyo3.workspace = true
 bevy_ecs = "0.18"
 smallvec = "1.0"
 rayon = { version = "1.10", optional = true }
+pybevy_storage = { path = "../pybevy_storage", version = "=0.2.1" }
 
 [dev-dependencies]
 criterion = "0.5"
