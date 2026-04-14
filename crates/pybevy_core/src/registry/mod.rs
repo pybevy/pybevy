@@ -17,8 +17,7 @@ pub mod rust_batch;
 pub use asset_bridge::AssetBridge;
 pub use batch_bridge::BatchComponent;
 pub use batchable_field::{
-    BatchFieldMeta, BatchableField, batch_field_meta_for, field_offset_view_meta_for,
-    set_field_from_numpy,
+    BatchFieldMeta, BatchableField, batch_field_meta_for, field_type_of, set_field_from_numpy,
 };
 pub use component_bridge::{ComponentBridge, ExtractFn};
 pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta};

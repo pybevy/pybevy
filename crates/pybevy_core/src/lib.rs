@@ -326,7 +326,7 @@ pub use message::{PyMessage, PyMessageId};
 pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
     AccessMode, AssetStorage, BorrowableStorage, ComponentStorage, ComponentStorageInner,
-    FieldOffset, FieldStorage, FieldStorageInner, FromBorrowedStorage, ListStorage,
+    FieldOffset, FieldStorage, FieldStorageInner, FieldType, FromBorrowedStorage, ListStorage,
     ListStorageInner, ResourceStorage, ResourceStorageInner, StorageError, ValidityFlag,
     ValidityFlagWithMode, ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge,
     ViewFieldAccess, normalize_index,
@@ -334,7 +334,7 @@ pub use pybevy_storage::{
 pub use registry::{
     AssetBridge, BatchComponent, BatchFieldMeta, BatchableField, ComponentBatchInsertFn,
     ComponentBatchMeta, ComponentBridge, ExtractFn, MessageBridge, PluginConfigs,
-    PyRustComponentBatch, ResourceBridge, batch_field_meta_for, field_offset_view_meta_for,
+    PyRustComponentBatch, ResourceBridge, batch_field_meta_for, field_type_of,
     set_field_from_numpy,
 };
 pub use reload_request::{

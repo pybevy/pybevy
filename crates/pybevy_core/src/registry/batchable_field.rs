@@ -9,6 +9,7 @@ use bevy::{
     color::{Color, Srgba},
     math::{Quat, Vec2, Vec3, Vec4},
 };
+use pybevy_storage::FieldType;
 
 /// A component field type that can be populated from numpy float32 data.
 ///
@@ -24,13 +25,8 @@ pub trait BatchableField: Sized + Copy {
     /// Number of columns in the numpy array (same as ELEMENT_COUNT)
     const NUMPY_COLUMNS: usize;
 
-    /// View API dtype string (e.g., "f4" for f32, "u1" for bool).
-    /// Only meaningful for types used in `view_fields`.
-    const VIEW_DTYPE: &'static str;
-
-    /// Native size in bytes of a single element for View API access.
-    /// Only meaningful for types used in `view_fields`.
-    const VIEW_ELEMENT_SIZE: usize;
+    /// View API field type. Only meaningful for types used in `view_fields`.
+    const VIEW_FIELD_TYPE: FieldType;
 
     /// Construct a value from a contiguous f32 slice at the given entity index.
     ///
@@ -43,8 +39,7 @@ impl BatchableField for f32 {
     const ELEMENT_COUNT: usize = 1;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 1;
-    const VIEW_DTYPE: &'static str = "f4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::F32;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -56,8 +51,7 @@ impl BatchableField for bool {
     const ELEMENT_COUNT: usize = 1;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 1;
-    const VIEW_DTYPE: &'static str = "u1";
-    const VIEW_ELEMENT_SIZE: usize = 1;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::Bool;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -69,8 +63,7 @@ impl BatchableField for u32 {
     const ELEMENT_COUNT: usize = 1;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 1;
-    const VIEW_DTYPE: &'static str = "u4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::U32;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -82,9 +75,7 @@ impl BatchableField for Color {
     const ELEMENT_COUNT: usize = 4;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 4;
-    // Color is batch-only (enum with discriminant), these are not used in View API
-    const VIEW_DTYPE: &'static str = "f4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::F32;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -102,8 +93,7 @@ impl BatchableField for Vec2 {
     const ELEMENT_COUNT: usize = 2;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 2;
-    const VIEW_DTYPE: &'static str = "f4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::Vec2;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -116,8 +106,7 @@ impl BatchableField for Vec3 {
     const ELEMENT_COUNT: usize = 3;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 3;
-    const VIEW_DTYPE: &'static str = "f4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::Vec3;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -130,8 +119,7 @@ impl BatchableField for Vec4 {
     const ELEMENT_COUNT: usize = 4;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 4;
-    const VIEW_DTYPE: &'static str = "f4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::F32;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -144,8 +132,7 @@ impl BatchableField for Quat {
     const ELEMENT_COUNT: usize = 4;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 4;
-    const VIEW_DTYPE: &'static str = "f4";
-    const VIEW_ELEMENT_SIZE: usize = 4;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::F32;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -177,19 +164,19 @@ pub fn batch_field_meta_for<T: BatchableField>(_field: &T, name: &'static str) -
     }
 }
 
-/// View API metadata helper: returns (view_dtype, view_element_size) for a field type.
+/// View API metadata helper: returns the `FieldType` for a field type.
 ///
 /// Uses type inference to resolve T from a `&field` reference, then returns
-/// the dtype string and element size for View API FieldOffset construction.
+/// the `FieldType` for View API `FieldOffset` construction.
 ///
 /// Usage in macro-generated code:
 /// ```ignore
 /// let default = PointLight::default();
-/// let (dtype, elem_size) = field_offset_view_meta_for(&default.shadows_enabled);
-/// // T = bool → dtype = "u1", elem_size = 1
+/// let field_type = field_type_of(&default.shadows_enabled);
+/// // T = bool → FieldType::Bool
 /// ```
-pub fn field_offset_view_meta_for<T: BatchableField>(_field: &T) -> (&'static str, usize) {
-    (T::VIEW_DTYPE, T::VIEW_ELEMENT_SIZE)
+pub fn field_type_of<T: BatchableField>(_field: &T) -> FieldType {
+    T::VIEW_FIELD_TYPE
 }
 
 /// Assignment helper: compiler resolves T from `&mut field`.

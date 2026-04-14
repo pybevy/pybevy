@@ -203,38 +203,7 @@ pub enum Op {
     RandomRange,
 }
 
-/// Field types supported by the VM
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FieldType {
-    F32,
-    F64,
-    I32,
-    I64,
-    U32,
-    U64,
-    Bool,
-    /// Composite signal type: 3 × f32 (12 bytes). VM decomposes to individual F32 sub-fields.
-    Vec3,
-    /// Composite signal type: 2 × f32 (8 bytes). VM decomposes to individual F32 sub-fields.
-    Vec2,
-}
-
-impl FieldType {
-    /// Size in bytes of this field type
-    pub const fn size_bytes(&self) -> usize {
-        match self {
-            FieldType::F32 => 4,
-            FieldType::F64 => 8,
-            FieldType::I32 => 4,
-            FieldType::I64 => 8,
-            FieldType::U32 => 4,
-            FieldType::U64 => 8,
-            FieldType::Bool => 1,
-            FieldType::Vec3 => 12,
-            FieldType::Vec2 => 8,
-        }
-    }
-}
+pub use pybevy_storage::FieldType;
 
 /// Identifies a specific field within a component
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -415,10 +384,10 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
         FieldType::U32 => unsafe { *(ptr as *const u32) as f64 },
         FieldType::U64 => unsafe { *(ptr as *const u64) as f64 },
         FieldType::Bool => unsafe { if *(ptr as *const bool) { 1.0 } else { 0.0 } },
-        // Vec3/Vec2 are composite signal types — the VM decomposes them to individual F32 sub-fields
+        // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
         // before execution, so these should never appear in read_field_value
-        FieldType::Vec3 | FieldType::Vec2 => {
-            unreachable!("VM should decompose Vec3/Vec2 to F32 sub-fields")
+        FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
+            unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
         }
     }
 }
@@ -451,8 +420,8 @@ pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType)
         FieldType::Bool => unsafe {
             *(ptr as *mut bool) = value >= 0.5;
         },
-        FieldType::Vec3 | FieldType::Vec2 => {
-            unreachable!("VM should decompose Vec3/Vec2 to F32 sub-fields")
+        FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
+            unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
         }
     }
 }

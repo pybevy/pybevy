@@ -1023,19 +1023,7 @@ pub(crate) fn get_component_field_info(
                 ))
             })?;
 
-            // Map FieldOffset dtype to VM FieldType
-            let vm_field_type = match offset_info.dtype {
-                "u1" => VmFieldType::Bool,
-                "f4" => VmFieldType::F32,
-                "f8" => VmFieldType::F64,
-                "i4" => VmFieldType::I32,
-                "i8" => VmFieldType::I64,
-                "u4" => VmFieldType::U32,
-                "u8" => VmFieldType::U64,
-                _ => VmFieldType::F32,
-            };
-
-            Ok((offset_info.offset, vm_field_type))
+            Ok((offset_info.offset, offset_info.field_type))
         }
     }
 }
@@ -1056,6 +1044,7 @@ fn create_field_proxy<'py>(
     let field_type_str = format!("{:?}", field_type); // FieldType Debug prints as "F32", "I64", etc.
 
     // For Vec3/Vec2 fields (any component, including custom), return composite proxy
+    // Vec4 fields fall through to `_` - no Vec4Expr proxy yet
     match field_type {
         pybevy_bytecodevm::bytecode::FieldType::Vec3 => {
             let vec3_proxy = expr_module.getattr("Vec3Expr")?;
@@ -1542,15 +1531,12 @@ impl PyBatch {
             }
         };
 
-        let dtype = "struct".to_string();
-
         let view_column = unsafe {
             match comp_type {
                 PyComponentType::Custom(type_ptr) => PyViewColumn::from_raw_parts_with_type(
                     ptr,
                     entity_count,
                     stride,
-                    dtype,
                     self.validity_token.clone(),
                     type_ptr,
                 ),
@@ -1558,7 +1544,6 @@ impl PyBatch {
                     ptr,
                     entity_count,
                     stride,
-                    dtype,
                     self.validity_token.clone(),
                     comp_type,
                 ),
@@ -1684,15 +1669,12 @@ impl PyBatch {
             }
         };
 
-        let dtype = "struct".to_string();
-
         let view_column = unsafe {
             match comp_type {
                 PyComponentType::Custom(type_ptr) => PyViewColumn::from_raw_parts_with_type(
                     ptr,
                     entity_count,
                     stride,
-                    dtype,
                     self.validity_token.clone(),
                     type_ptr,
                 ),
@@ -1700,7 +1682,6 @@ impl PyBatch {
                     ptr,
                     entity_count,
                     stride,
-                    dtype,
                     self.validity_token.clone(),
                     comp_type,
                 ),

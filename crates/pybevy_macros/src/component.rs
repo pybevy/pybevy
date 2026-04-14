@@ -471,21 +471,24 @@ fn generate_bridge_tokens(
     let has_view_fields = view_fields.is_some() || view_only_fields.is_some();
     let view_bridge_impl = if has_view_fields {
         // Collect all view field names + match arms from view_fields
-        let vf_entries: Vec<_> = view_fields.iter().flat_map(|fs| fs.iter()).map(|f| {
-            let name_str = f.python_name.to_string();
-            let accessor = &f.rust_accessor;
-            let offset = &f.offset_path;
-            quote! {
-                #name_str => {
-                    let (dtype, element_size) = pybevy_core::field_offset_view_meta_for(&default_val #accessor);
-                    Some(pybevy_core::FieldOffset {
-                        offset: std::mem::offset_of!(#bevy_type, #offset),
-                        element_size,
-                        dtype,
-                    })
+        let vf_entries: Vec<_> = view_fields
+            .iter()
+            .flat_map(|fs| fs.iter())
+            .map(|f| {
+                let name_str = f.python_name.to_string();
+                let accessor = &f.rust_accessor;
+                let offset = &f.offset_path;
+                quote! {
+                    #name_str => {
+                        let field_type = pybevy_core::field_type_of(&default_val #accessor);
+                        Some(pybevy_core::FieldOffset {
+                            offset: std::mem::offset_of!(#bevy_type, #offset),
+                            field_type,
+                        })
+                    }
                 }
-            }
-        }).collect();
+            })
+            .collect();
 
         // Collect view_only_fields entries (use explicit type instead of type inference)
         let vof_entries: Vec<_> = view_only_fields.iter().flat_map(|fs| fs.iter()).map(|f| {
@@ -494,11 +497,9 @@ fn generate_bridge_tokens(
             let field_type = &f.field_type;
             quote! {
                 #name_str => {
-                    let (dtype, element_size) = (<#field_type as pybevy_core::BatchableField>::VIEW_DTYPE, <#field_type as pybevy_core::BatchableField>::VIEW_ELEMENT_SIZE);
                     Some(pybevy_core::FieldOffset {
                         offset: std::mem::offset_of!(#bevy_type, #offset),
-                        element_size,
-                        dtype,
+                        field_type: <#field_type as pybevy_core::BatchableField>::VIEW_FIELD_TYPE,
                     })
                 }
             }
@@ -528,7 +529,6 @@ fn generate_bridge_tokens(
 
         quote! {
             fn view_bridge(&self) -> Option<pybevy_core::ViewBridge> {
-                // Generate field_offset function with dtype/element_size metadata
                 fn field_offset_fn(field_name: &str) -> Option<pybevy_core::FieldOffset> {
                     #default_val_line
                     match field_name {

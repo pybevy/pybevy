@@ -4370,6 +4370,7 @@ version = "0.2.1"
 dependencies = [
  "bevy_ecs",
  "criterion",
+ "pybevy_storage",
  "pyo3",
  "rayon",
  "smallvec",
