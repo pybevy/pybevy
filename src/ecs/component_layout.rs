@@ -57,6 +57,10 @@ impl PrimitiveType {
     }
 
     /// Try to parse a Python type annotation into a PrimitiveType
+    ///
+    /// TODO: replace string-based dispatch with PyO3 type-identity comparisons
+    /// (e.g. `ty.is(<PyVec3 as PyTypeInfo>::type_object(py))`) for O(1) pointer
+    /// equality instead of string allocation + matching on every field registration.
     pub fn from_python_type(ty: &Bound<'_, PyAny>) -> PyResult<Option<Self>> {
         let ty_str_bound = ty.str()?;
         let ty_str = ty_str_bound.to_str()?;

@@ -364,6 +364,7 @@ fn apply_plugin_configuration(
     }
 }
 
+// TODO: generate this match automatically from PluginConfigType variants (macro or build.rs)
 fn disable_plugin(
     builder: PluginGroupBuilder,
     config_type: &PluginConfigType,

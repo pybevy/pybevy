@@ -172,6 +172,7 @@ impl PyAssets {
         // Builder pattern handlings
         if asset.is_instance_of::<PyMeshBuilder>() {
             let bridge = self.bridge()?;
+            // TODO: replace string comparison with a proper type-level check (e.g. bridge type ID)
             if bridge.name() != "Mesh" {
                 return Err(PyTypeError::new_err(format!(
                     "Asset type mismatch: expected `{}` but got `Mesh`",
