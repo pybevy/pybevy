@@ -43,12 +43,8 @@ use crate::{FilteredEntityAccess, ValidityFlagWithMode, ViewBridge};
 /// This allows caching the extract function directly to avoid vtable dispatch.
 /// Takes a `FilteredEntityAccess` which wraps either `FilteredEntityRef` (read-only)
 /// or `FilteredEntityMut` (read-write) depending on query mutability.
-pub type ExtractFn = fn(
-    &mut FilteredEntityAccess,
-    ComponentId,
-    ValidityFlagWithMode,
-    Python,
-) -> PyResult<Py<PyAny>>;
+pub type ExtractFn =
+    fn(&mut FilteredEntityAccess, ComponentId, ValidityFlagWithMode, Python) -> PyResult<Py<PyAny>>;
 
 /// Trait that bridges a Bevy component to its Python wrapper.
 ///

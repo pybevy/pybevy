@@ -89,11 +89,17 @@ impl ErasedQueryState {
         let (read_only, p) = self.parts();
         unsafe {
             if read_only {
-                (&*(p as *const QueryState<FilteredEntityRef>))
-                    .is_empty(world, last_tick, current_tick)
+                (&*(p as *const QueryState<FilteredEntityRef>)).is_empty(
+                    world,
+                    last_tick,
+                    current_tick,
+                )
             } else {
-                (&*(p as *const QueryState<FilteredEntityMut>))
-                    .is_empty(world, last_tick, current_tick)
+                (&*(p as *const QueryState<FilteredEntityMut>)).is_empty(
+                    world,
+                    last_tick,
+                    current_tick,
+                )
             }
         }
     }
@@ -309,7 +315,11 @@ impl PyQueryIter {
             } = param_type
             {
                 let id = register_component_id(world, comp_type, &custom_component_ids);
-                component_ids.push(QueryComponent { id, optional: *optional, mutable: *mutable });
+                component_ids.push(QueryComponent {
+                    id,
+                    optional: *optional,
+                    mutable: *mutable,
+                });
             }
         }
 
@@ -388,7 +398,8 @@ impl PyQueryIter {
         for param_type in param.data.iter() {
             if let QueryData::Component { ty, .. } = param_type {
                 // Get the corresponding ComponentId from the component_ids vec
-                if let Some(&QueryComponent { id: comp_id, .. }) = component_ids.get(component_idx) {
+                if let Some(&QueryComponent { id: comp_id, .. }) = component_ids.get(component_idx)
+                {
                     // For built-in components, verify by TypeId
                     let type_id = ty.type_id();
 
@@ -704,8 +715,7 @@ impl PyQueryIter {
             let world_ptr = self.world_ptr.expect("Query used outside system execution");
             let (read_only, qs_ptr) = self.query_state.parts();
             // SAFETY: world_ptr and qs_ptr are valid during system execution
-            self.query_iter =
-                Some(unsafe { erased_create_iter(read_only, qs_ptr, world_ptr) });
+            self.query_iter = Some(unsafe { erased_create_iter(read_only, qs_ptr, world_ptr) });
         }
 
         // Advance iterator — get raw pointer to avoid borrow conflict with self
@@ -774,12 +784,12 @@ impl PyQueryIter {
                     (None, _) => {
                         return Err(PyRuntimeError::new_err(
                             "Query returned no entities. Expected exactly one.",
-                        ))
+                        ));
                     }
                     (Some(_), true) => {
                         return Err(PyRuntimeError::new_err(
                             "Query returned multiple entities. Expected exactly one.",
-                        ))
+                        ));
                     }
                     (Some(e), false) => FilteredEntityAccess::Ref(e),
                 }
@@ -792,12 +802,12 @@ impl PyQueryIter {
                     (None, _) => {
                         return Err(PyRuntimeError::new_err(
                             "Query returned no entities. Expected exactly one.",
-                        ))
+                        ));
                     }
                     (Some(_), true) => {
                         return Err(PyRuntimeError::new_err(
                             "Query returned multiple entities. Expected exactly one.",
-                        ))
+                        ));
                     }
                     (Some(e), false) => FilteredEntityAccess::Mut(e),
                 }
@@ -835,7 +845,9 @@ impl PyQueryIter {
         let last_tick = world.last_change_tick();
         let current_tick = world.read_change_tick();
 
-        Ok(self.query_state.is_empty_check(world, last_tick, current_tick))
+        Ok(self
+            .query_state
+            .is_empty_check(world, last_tick, current_tick))
     }
 
     /// Get components for a specific entity by ID.

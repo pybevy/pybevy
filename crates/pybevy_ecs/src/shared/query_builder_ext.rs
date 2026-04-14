@@ -106,7 +106,10 @@ pub fn build_query_state_ref<'a>(
     let mut builder = QueryBuilder::<FilteredEntityRef>::new(world);
 
     for comp in &spec.components {
-        debug_assert!(!comp.mutable, "build_query_state_ref called with mutable component");
+        debug_assert!(
+            !comp.mutable,
+            "build_query_state_ref called with mutable component"
+        );
         if comp.optional {
             builder.optional(|b| {
                 b.ref_id(comp.id);
