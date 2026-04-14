@@ -27,6 +27,7 @@ pub mod asset_path;
 pub mod component;
 pub mod debug_snapshot;
 pub mod entity;
+pub mod filtered_entity_access;
 pub mod handle;
 pub mod hierarchy;
 pub extern crate inventory;
@@ -50,7 +51,7 @@ use bevy::ecs::{
     component::ComponentId,
     entity::Entity,
     hierarchy::{ChildOf, Children},
-    world::{FilteredEntityMut, World},
+    world::World,
 };
 use pyo3::prelude::*;
 
@@ -84,7 +85,7 @@ impl ComponentBridge for ChildOfBridge {
     #[inline(always)]
     fn extract(
         &self,
-        entity: &mut FilteredEntityMut,
+        entity: &mut FilteredEntityAccess,
         component_id: ComponentId,
         _validity: ValidityFlagWithMode,
         py: Python,
@@ -129,7 +130,7 @@ impl ComponentBridge for ChildOfBridge {
     fn extract_fn(&self) -> ExtractFn {
         #[inline(always)]
         fn extract_impl(
-            entity: &mut FilteredEntityMut,
+            entity: &mut FilteredEntityAccess,
             component_id: ComponentId,
             _validity: ValidityFlagWithMode,
             py: Python,
@@ -159,7 +160,8 @@ impl ComponentBridge for ChildOfBridge {
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
         if let Some(component) = entity.get::<ChildOf>() {
-            let ptr = component as *const ChildOf as *mut ChildOf;
+            // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
+                    let ptr = component as *const ChildOf as *mut ChildOf;
             let storage = unsafe { ComponentStorage::borrowed(ptr, validity) };
             let obj = Py::new(py, hierarchy::PyChildOf::from_borrowed(storage))?;
             Ok(Some(obj.into_any()))
@@ -214,7 +216,7 @@ impl ComponentBridge for ChildrenBridge {
     #[inline(always)]
     fn extract(
         &self,
-        entity: &mut FilteredEntityMut,
+        entity: &mut FilteredEntityAccess,
         component_id: ComponentId,
         _validity: ValidityFlagWithMode,
         py: Python,
@@ -254,7 +256,7 @@ impl ComponentBridge for ChildrenBridge {
     fn extract_fn(&self) -> ExtractFn {
         #[inline(always)]
         fn extract_impl(
-            entity: &mut FilteredEntityMut,
+            entity: &mut FilteredEntityAccess,
             component_id: ComponentId,
             _validity: ValidityFlagWithMode,
             py: Python,
@@ -316,6 +318,7 @@ pub use bridge_inventory::{
 pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo};
 pub use entity::PyEntity;
+pub use filtered_entity_access::FilteredEntityAccess;
 pub use handle::{PyHandle, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;

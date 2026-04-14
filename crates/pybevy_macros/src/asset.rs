@@ -604,7 +604,7 @@ pub(crate) fn generate_handle_bridge_tokens(
 
             fn extract(
                 &self,
-                entity: &mut bevy::ecs::world::FilteredEntityMut,
+                entity: &mut pybevy_core::FilteredEntityAccess,
                 component_id: bevy::ecs::component::ComponentId,
                 _validity: pybevy_core::ValidityFlagWithMode,
                 py: pyo3::Python,
@@ -623,7 +623,7 @@ pub(crate) fn generate_handle_bridge_tokens(
             fn extract_fn(&self) -> pybevy_core::ExtractFn {
                 #[inline(always)]
                 fn extract_impl(
-                    entity: &mut bevy::ecs::world::FilteredEntityMut,
+                    entity: &mut pybevy_core::FilteredEntityAccess,
                     component_id: bevy::ecs::component::ComponentId,
                     _validity: pybevy_core::ValidityFlagWithMode,
                     py: pyo3::Python,

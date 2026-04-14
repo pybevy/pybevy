@@ -4,12 +4,14 @@ use bevy::{
     ecs::{
         component::ComponentId,
         query::{QueryIter, QueryState},
-        world::FilteredEntityMut,
+        world::{FilteredEntityMut, FilteredEntityRef},
     },
     prelude::*,
 };
-use pybevy_core::{ExtractFn, registry::global_registry};
-use pybevy_ecs::shared::query_builder_ext::{QueryBuildSpec, build_query_state};
+use pybevy_core::{ExtractFn, FilteredEntityAccess, registry::global_registry};
+use pybevy_ecs::shared::query_builder_ext::{
+    QueryBuildSpec, QueryComponent, build_query_state, build_query_state_ref,
+};
 use pyo3::{
     exceptions::{PyRuntimeError, PyStopIteration},
     ffi::PyTypeObject,
@@ -27,6 +29,186 @@ use crate::ecs::{
     lazy_wrapper_proxy::PyLazyWrapperProxy,
     query::query_param::{PyQueryParam, QueryData},
 };
+
+/// Type-erased Bevy QueryState. Owns a heap-allocated QueryState behind a raw pointer.
+///
+/// SAFETY: The caller must guarantee the erased lifetimes (tied to system execution scope).
+/// Drop reconstructs the correct Box type to deallocate.
+///
+/// Methods that produce borrows (`create_iter`, `get_entity`) are intentionally designed
+/// to not borrow `self`, so that PyQueryIter can call them without conflicting with
+/// borrows of other fields (e.g. `extract_components_from_entity`).
+enum ErasedQueryState {
+    /// `QueryState<FilteredEntityRef>` - all components read-only.
+    ReadOnly(*mut ()),
+    /// `QueryState<FilteredEntityMut>` - at least one `Mut[T]` component.
+    Mutable(*mut ()),
+}
+
+impl ErasedQueryState {
+    fn from_ref(qs: QueryState<FilteredEntityRef>) -> Self {
+        Self::ReadOnly(Box::into_raw(Box::new(qs)) as *mut ())
+    }
+
+    fn from_mut(qs: QueryState<FilteredEntityMut>) -> Self {
+        Self::Mutable(Box::into_raw(Box::new(qs)) as *mut ())
+    }
+
+    /// Returns (is_read_only, raw_pointer) for use in methods that need to avoid
+    /// borrowing self (to prevent conflicts with other field borrows on PyQueryIter).
+    fn parts(&self) -> (bool, *mut ()) {
+        match self {
+            Self::ReadOnly(p) => (true, *p),
+            Self::Mutable(p) => (false, *p),
+        }
+    }
+
+    /// Count matching entities (O(n) - iterates all).
+    fn count(&self, world: &World) -> usize {
+        let (read_only, p) = self.parts();
+        unsafe {
+            if read_only {
+                (&*(p as *const QueryState<FilteredEntityRef>))
+                    .iter_manual(world)
+                    .count()
+            } else {
+                (&*(p as *const QueryState<FilteredEntityMut>))
+                    .iter_manual(world)
+                    .count()
+            }
+        }
+    }
+
+    /// Check if no entities match.
+    fn is_empty_check(
+        &self,
+        world: &World,
+        last_tick: bevy::ecs::change_detection::Tick,
+        current_tick: bevy::ecs::change_detection::Tick,
+    ) -> bool {
+        let (read_only, p) = self.parts();
+        unsafe {
+            if read_only {
+                (&*(p as *const QueryState<FilteredEntityRef>))
+                    .is_empty(world, last_tick, current_tick)
+            } else {
+                (&*(p as *const QueryState<FilteredEntityMut>))
+                    .is_empty(world, last_tick, current_tick)
+            }
+        }
+    }
+}
+
+/// Create a new lazy iterator. Freestanding to avoid borrowing ErasedQueryState.
+///
+/// SAFETY: `qs_ptr` must point to a valid QueryState of the type indicated by `read_only`.
+/// `world_ptr` must point to a valid World for the duration of iteration.
+unsafe fn erased_create_iter(
+    read_only: bool,
+    qs_ptr: *mut (),
+    mut world_ptr: NonNull<World>,
+) -> ErasedQueryIter {
+    if read_only {
+        let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>) };
+        let iter = qs.iter(unsafe { world_ptr.as_ref() });
+        ErasedQueryIter::ReadOnly(Box::into_raw(Box::new(iter)) as *mut ())
+    } else {
+        let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>) };
+        let iter = qs.iter_mut(unsafe { world_ptr.as_mut() });
+        ErasedQueryIter::Mutable(Box::into_raw(Box::new(iter)) as *mut ())
+    }
+}
+
+/// Look up a single entity by ID. Freestanding to avoid borrowing ErasedQueryState.
+///
+/// SAFETY: `qs_ptr` must point to a valid QueryState of the type indicated by `read_only`.
+/// `world_ptr` must point to a valid World.
+unsafe fn erased_get_entity<'a>(
+    read_only: bool,
+    qs_ptr: *mut (),
+    mut world_ptr: NonNull<World>,
+    entity: Entity,
+) -> Option<FilteredEntityAccess<'a, 'a>> {
+    if read_only {
+        let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>) };
+        qs.get(unsafe { world_ptr.as_ref() }, entity)
+            .ok()
+            .map(FilteredEntityAccess::Ref)
+    } else {
+        let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>) };
+        qs.get_mut(unsafe { world_ptr.as_mut() }, entity)
+            .ok()
+            .map(FilteredEntityAccess::Mut)
+    }
+}
+
+impl Drop for ErasedQueryState {
+    fn drop(&mut self) {
+        let p = match self {
+            Self::ReadOnly(p) | Self::Mutable(p) => *p,
+        };
+        if p.is_null() {
+            return;
+        }
+        unsafe {
+            match self {
+                Self::ReadOnly(_) => {
+                    let _ = Box::from_raw(p as *mut QueryState<FilteredEntityRef>);
+                }
+                Self::Mutable(_) => {
+                    let _ = Box::from_raw(p as *mut QueryState<FilteredEntityMut>);
+                }
+            }
+        }
+    }
+}
+
+/// Type-erased Bevy QueryIter. Owns a heap-allocated iterator behind a raw pointer.
+///
+/// SAFETY: The erased lifetimes are tied to the system execution scope.
+enum ErasedQueryIter {
+    ReadOnly(*mut ()),
+    Mutable(*mut ()),
+}
+
+impl ErasedQueryIter {
+    /// Advance the iterator, returning the next entity wrapped in `FilteredEntityAccess`.
+    fn next(&mut self) -> Option<FilteredEntityAccess<'_, '_>> {
+        unsafe {
+            match self {
+                Self::ReadOnly(p) => {
+                    let iter = &mut *(*p as *mut QueryIter<FilteredEntityRef, ()>);
+                    iter.next().map(FilteredEntityAccess::Ref)
+                }
+                Self::Mutable(p) => {
+                    let iter = &mut *(*p as *mut QueryIter<FilteredEntityMut, ()>);
+                    iter.next().map(FilteredEntityAccess::Mut)
+                }
+            }
+        }
+    }
+}
+
+impl Drop for ErasedQueryIter {
+    fn drop(&mut self) {
+        let p = match self {
+            Self::ReadOnly(p) | Self::Mutable(p) => *p,
+        };
+        if p.is_null() {
+            return;
+        }
+        unsafe {
+            match self {
+                Self::ReadOnly(_) => {
+                    let _ = Box::from_raw(p as *mut QueryIter<FilteredEntityRef, ()>);
+                }
+                Self::Mutable(_) => {
+                    let _ = Box::from_raw(p as *mut QueryIter<FilteredEntityMut, ()>);
+                }
+            }
+        }
+    }
+}
 
 /// Runtime query iterator that can be passed to Python systems.
 /// Uses Bevy's QueryState for efficient cached iteration.
@@ -48,16 +230,11 @@ pub struct PyQueryIter {
     /// The query parameter information (shared via Arc to avoid clones)
     param: Arc<PyQueryParam>,
 
-    /// The Bevy QueryState with lifetime erased via transmute
-    /// SAFETY: This is created from a QueryState<FilteredEntityMut<'w, 's>> in new()
-    /// The actual type is QueryState<FilteredEntityMut<'static, 'static>> due to transmute
-    /// but the real lifetimes are tied to the system execution and guaranteed by caller
-    query_state_ptr: *mut (),
+    /// The Bevy QueryState (type-erased, owns the heap allocation).
+    query_state: ErasedQueryState,
 
-    /// Current iterator state (also lifetime-erased)
-    /// Stores the actual Bevy QueryIter - we call .next() on it incrementally
-    /// Type is QueryIter<'w, 's, FilteredEntityMut, ()> with lifetime erased
-    iterator_ptr: Option<*mut ()>,
+    /// Current lazy iterator state (created on first `__next__` call).
+    query_iter: Option<ErasedQueryIter>,
 
     /// Raw pointer to the World (only valid during system execution)
     /// SAFETY: This pointer is only valid within the scope of the system execution
@@ -105,27 +282,6 @@ pub struct PyQueryIter {
     >,
 }
 
-impl Drop for PyQueryIter {
-    fn drop(&mut self) {
-        // Clean up the QueryState
-        if !self.query_state_ptr.is_null() {
-            unsafe {
-                // SAFETY: We created this from a valid QueryState in new()
-                let _ = Box::from_raw(self.query_state_ptr as *mut QueryState<FilteredEntityMut>);
-            }
-        }
-        // Clean up the iterator if it exists
-        if let Some(iter_ptr) = self.iterator_ptr
-            && !iter_ptr.is_null()
-        {
-            unsafe {
-                // SAFETY: We created this from a valid QueryIter
-                let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
-            }
-        }
-    }
-}
-
 // SAFETY: PyQueryIter is only used during system execution on a single thread.
 // The world pointer and query state are only accessed during system execution and never across threads.
 // Arc<PyQueryParam> and Arc<HashMap> are already Send/Sync.
@@ -142,17 +298,18 @@ impl PyQueryIter {
         custom_component_ids: Arc<HashMap<*const PyTypeObject, ComponentId>>,
         validity: ValidityFlag,
     ) -> Self {
-        // First, collect and register all component IDs (tracking optional status)
+        // First, collect and register all component IDs (tracking optional and mutable status)
         let mut component_ids = Vec::new();
         for param_type in &param.data {
             if let QueryData::Component {
                 ty: comp_type,
                 optional,
+                mutable,
                 ..
             } = param_type
             {
                 let id = register_component_id(world, comp_type, &custom_component_ids);
-                component_ids.push((id, *optional));
+                component_ids.push(QueryComponent { id, optional: *optional, mutable: *mutable });
             }
         }
 
@@ -215,12 +372,15 @@ impl PyQueryIter {
             added_filters: added_filter_ids,
             anyof_filters: anyof_filter_ids,
         };
-        let query_state = build_query_state(world, &spec);
-
-        // SAFETY: Transmute to erase lifetime - the caller guarantees this is only used
-        // within the system execution scope where the World reference is valid
-        let query_state_boxed = Box::new(query_state);
-        let query_state_ptr = Box::into_raw(query_state_boxed) as *mut ();
+        // Build the correct QueryState variant.
+        // SAFETY: Lifetime is erased — the caller guarantees this is only used
+        // within the system execution scope where the World reference is valid.
+        // Use FilteredEntityRef for all-read-only queries to enable parallel scheduling.
+        let query_state = if spec.is_read_only() {
+            ErasedQueryState::from_ref(build_query_state_ref(world, &spec))
+        } else {
+            ErasedQueryState::from_mut(build_query_state(world, &spec))
+        };
 
         // Build component ID cache by mapping TypeId back to PyComponentType
         let mut component_id_cache = HashMap::new();
@@ -228,7 +388,7 @@ impl PyQueryIter {
         for param_type in param.data.iter() {
             if let QueryData::Component { ty, .. } = param_type {
                 // Get the corresponding ComponentId from the component_ids vec
-                if let Some(&(comp_id, _optional)) = component_ids.get(component_idx) {
+                if let Some(&QueryComponent { id: comp_id, .. }) = component_ids.get(component_idx) {
                     // For built-in components, verify by TypeId
                     let type_id = ty.type_id();
 
@@ -293,8 +453,8 @@ impl PyQueryIter {
 
         Self {
             param,
-            query_state_ptr,
-            iterator_ptr: None,
+            query_state,
+            query_iter: None,
             world_ptr: Some(NonNull::from(world)),
             component_id_cache,
             custom_component_ids,
@@ -326,7 +486,7 @@ impl PyQueryIter {
     pub(crate) fn extract_custom_component(
         &self,
         type_ptr: *const PyTypeObject,
-        entity_mut: &mut FilteredEntityMut,
+        entity: &mut FilteredEntityAccess,
         component_id: ComponentId,
         param_idx: usize,
         py: Python,
@@ -369,7 +529,7 @@ impl PyQueryIter {
         match storage_type {
             ComponentStorageType::Wrapper(wrapper_size) => {
                 let data_ptr: *mut u8 = {
-                    let untyped = entity_mut
+                    let untyped = entity
                         .get_by_id(component_id)
                         .expect("Custom component should exist on matched entity");
                     unsafe { wrapper_size.get_ref_ptr_as_mut(untyped) }
@@ -378,7 +538,7 @@ impl PyQueryIter {
                 let layout = cached_layout.expect("Wrapper storage must have layout");
 
                 // Create lazy wrapper proxy
-                let entity = entity_mut.id();
+                let entity_id = entity.id();
                 let access_mode = self.param_access_modes[param_idx];
                 let validity = self.validity.with_access_mode(access_mode);
                 let mutable = access_mode == AccessMode::Write;
@@ -394,7 +554,7 @@ impl PyQueryIter {
                         validity,
                         mutable, // true for Mut[T], false for read-only
                         component_id,
-                        entity,
+                        entity_id,
                         world_ptr,
                     )
                 };
@@ -406,13 +566,13 @@ impl PyQueryIter {
                 // PyObject storage - return borrowed reference to ECS-stored Python object
                 use crate::ecs::custom_component::PyCustomComponent;
 
-                let entity = entity_mut.id();
+                let entity_id = entity.id();
 
                 // Get pointer to the PyAny in ECS storage
                 // SAFETY: We know this is a Py<PyAny> because that's how we registered it
                 // NOTE: We use get_by_id() for both mutable and immutable access.
                 // Change detection is handled by __setattr__ hook + stored entity context.
-                let untyped_ptr = entity_mut
+                let untyped_ptr = entity
                     .get_by_id(component_id)
                     .expect("Custom component should exist on matched entity")
                     .as_ptr();
@@ -434,7 +594,7 @@ impl PyQueryIter {
                     py_obj_ptr,
                     validity,
                     component_id,
-                    entity,
+                    entity_id,
                     world_ptr,
                 );
 
@@ -451,7 +611,7 @@ impl PyQueryIter {
     /// __next__(), single(), and get() methods.
     fn extract_components_from_entity(
         &mut self,
-        entity_mut: &mut FilteredEntityMut,
+        entity: &mut FilteredEntityAccess,
         py: Python,
     ) -> PyResult<()> {
         self.values_buffer.clear();
@@ -459,7 +619,7 @@ impl PyQueryIter {
         for (param_idx, param_type) in self.param.data.iter().enumerate() {
             match param_type {
                 QueryData::Entity => {
-                    let py_entity = PyEntity(entity_mut.id());
+                    let py_entity = PyEntity(entity.id());
                     let obj = Py::new(py, py_entity).expect("Failed to create PyEntity");
                     self.values_buffer.push(obj.into_any());
                 }
@@ -481,7 +641,7 @@ impl PyQueryIter {
                     };
 
                     // For optional components, check if entity has the component
-                    if *optional && entity_mut.get_by_id(component_id).is_none() {
+                    if *optional && entity.get_by_id(component_id).is_none() {
                         self.values_buffer.push(py.None());
                         continue;
                     }
@@ -492,7 +652,7 @@ impl PyQueryIter {
 
                     // Use macro-generated dispatch method (handles all component types)
                     let obj = ty.extract_from_entity(
-                        entity_mut,
+                        entity,
                         component_id,
                         validity,
                         py,
@@ -525,14 +685,8 @@ impl PyQueryIter {
                 ));
             }
 
-            // Reset iterator for sequential re-iteration
-            if let Some(iter_ptr) = borrowed.iterator_ptr.take()
-                && !iter_ptr.is_null()
-            {
-                unsafe {
-                    let _ = Box::from_raw(iter_ptr as *mut QueryIter<FilteredEntityMut, ()>);
-                }
-            }
+            // Reset iterator for sequential re-iteration (Drop handles cleanup)
+            borrowed.query_iter.take();
         }
         Ok(slf)
     }
@@ -546,35 +700,24 @@ impl PyQueryIter {
         self.iterating = true;
 
         // Create iterator on first call
-        if self.iterator_ptr.is_none() {
-            // SAFETY: world_ptr is guaranteed to be valid during system execution
-            let world = unsafe {
-                self.world_ptr
-                    .expect("Query used outside system execution")
-                    .as_mut()
-            };
-
-            // SAFETY: We transmuted this pointer from a valid QueryState in new()
-            // and the lifetime is tied to the system execution
-            let query_state =
-                unsafe { &mut *(self.query_state_ptr as *mut QueryState<FilteredEntityMut>) };
-
-            // Create the iterator - NO pre-collection, truly lazy
-            let iter = query_state.iter_mut(world);
-            let boxed = Box::new(iter);
-            self.iterator_ptr = Some(Box::into_raw(boxed) as *mut ());
+        if self.query_iter.is_none() {
+            let world_ptr = self.world_ptr.expect("Query used outside system execution");
+            let (read_only, qs_ptr) = self.query_state.parts();
+            // SAFETY: world_ptr and qs_ptr are valid during system execution
+            self.query_iter =
+                Some(unsafe { erased_create_iter(read_only, qs_ptr, world_ptr) });
         }
 
-        // SAFETY: We created this as QueryIter in the block above
-        let iter =
-            unsafe { &mut *(self.iterator_ptr.unwrap() as *mut QueryIter<FilteredEntityMut, ()>) };
+        // Advance iterator — get raw pointer to avoid borrow conflict with self
+        let iter_ref = self.query_iter.as_mut().unwrap() as *mut ErasedQueryIter;
+        // SAFETY: iter_ref is valid; we don't access self.query_iter again until
+        // entity_access is dropped (after extract_components_from_entity).
+        let next_entity = unsafe { (*iter_ref).next() };
 
-        // Call .next() on the Bevy iterator - truly incremental
-        if let Some(mut entity_mut) = iter.next() {
-            let entity = entity_mut.id();
+        if let Some(mut entity_access) = next_entity {
+            let entity = entity_access.id();
 
             // Set entity context for lazy change tracking
-            // SAFETY: world_ptr is valid during query iteration
             let world_ptr = self
                 .world_ptr
                 .expect("Query used outside system execution")
@@ -582,7 +725,7 @@ impl PyQueryIter {
             pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_ptr);
 
             // Extract components using the shared helper
-            self.extract_components_from_entity(&mut entity_mut, py)?;
+            self.extract_components_from_entity(&mut entity_access, py)?;
 
             // Return single value or tuple based on whether query was Query[T] or Query[tuple[...]]
             if self.param.single {
@@ -599,120 +742,115 @@ impl PyQueryIter {
         }
     }
 
-    /// Returns the number of entities matching the query
-    /// Note: Since we use a lazy iterator, this requires iterating through
-    /// all remaining entities to count them, which consumes the iterator.
-    /// It's better to avoid calling len() if possible.
+    /// Returns the number of entities matching the query.
+    ///
+    /// **Warning: O(n)** - this iterates all matching entities to count them.
+    /// Python users calling `len(query)` may expect O(1) but Bevy's
+    /// `QueryState` does not cache entity counts.
     fn __len__(&self) -> usize {
         let world = match self.world_ptr {
             Some(ptr) => unsafe { ptr.as_ref() },
             None => return 0,
         };
-        if self.query_state_ptr.is_null() {
-            return 0;
-        }
-        let query_state =
-            unsafe { &*(self.query_state_ptr as *const QueryState<FilteredEntityMut>) };
-        // SAFETY: We only need a read-only count; iter_manual requires &World
-        query_state.iter_manual(world).count()
+        self.query_state.count(world)
     }
 
     /// Get exactly one entity from the query.
     /// Returns an error if there are 0 or 2+ entities matching the query.
     fn single(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        // SAFETY: world_ptr is guaranteed to be valid during system execution
-        let world = unsafe {
-            self.world_ptr
-                .expect("Query used outside system execution")
-                .as_mut()
-        };
+        let mut world_ptr = self.world_ptr.expect("Query used outside system execution");
+        let (read_only, qs_ptr) = self.query_state.parts();
 
-        // SAFETY: We transmuted this pointer from a valid QueryState in new()
-        let query_state =
-            unsafe { &mut *(self.query_state_ptr as *mut QueryState<FilteredEntityMut>) };
-
-        // Collect all matching entities
-        let mut iter = query_state.iter_mut(world);
-
-        let first = iter.next();
-        let second = iter.next();
-
-        match (first, second) {
-            (None, _) => Err(PyRuntimeError::new_err(
-                "Query returned no entities. Expected exactly one.",
-            )),
-            (Some(_), Some(_)) => Err(PyRuntimeError::new_err(
-                "Query returned multiple entities. Expected exactly one.",
-            )),
-            (Some(mut entity_mut), None) => {
-                // Exactly one entity - extract components
-                let entity = entity_mut.id();
-
-                // Set entity context for lazy change tracking
-                // SAFETY: world_ptr is valid during query iteration
-                let world_ptr = self
-                    .world_ptr
-                    .expect("Query used outside system execution")
-                    .as_ptr();
-                pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_ptr);
-
-                self.values_buffer.clear();
-
-                self.extract_components_from_entity(&mut entity_mut, py)?;
-
-                // Return single value or tuple based on whether query was Query[T] or Query[tuple[...]]
-                if self.param.single {
-                    Ok(self.values_buffer[0].clone_ref(py))
-                } else {
-                    let tuple = PyTuple::new(py, &self.values_buffer)?;
-                    Ok(tuple.into_any().unbind())
+        // Validate exactly one entity exists and get it for extraction.
+        // SAFETY: world_ptr and qs_ptr are valid during system execution.
+        // We use raw pointer casts to avoid holding borrows across extraction.
+        let mut entity_access: FilteredEntityAccess = unsafe {
+            if read_only {
+                let qs = &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>);
+                let mut iter = qs.iter(world_ptr.as_ref());
+                let first = iter.next();
+                let has_second = iter.next().is_some();
+                match (first, has_second) {
+                    (None, _) => {
+                        return Err(PyRuntimeError::new_err(
+                            "Query returned no entities. Expected exactly one.",
+                        ))
+                    }
+                    (Some(_), true) => {
+                        return Err(PyRuntimeError::new_err(
+                            "Query returned multiple entities. Expected exactly one.",
+                        ))
+                    }
+                    (Some(e), false) => FilteredEntityAccess::Ref(e),
+                }
+            } else {
+                let qs = &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>);
+                let mut iter = qs.iter_mut(world_ptr.as_mut());
+                let first = iter.next();
+                let has_second = iter.next().is_some();
+                match (first, has_second) {
+                    (None, _) => {
+                        return Err(PyRuntimeError::new_err(
+                            "Query returned no entities. Expected exactly one.",
+                        ))
+                    }
+                    (Some(_), true) => {
+                        return Err(PyRuntimeError::new_err(
+                            "Query returned multiple entities. Expected exactly one.",
+                        ))
+                    }
+                    (Some(e), false) => FilteredEntityAccess::Mut(e),
                 }
             }
+        };
+
+        let entity = entity_access.id();
+        let world_raw = self
+            .world_ptr
+            .expect("Query used outside system execution")
+            .as_ptr();
+        pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_raw);
+
+        self.extract_components_from_entity(&mut entity_access, py)?;
+
+        if self.param.single {
+            Ok(self.values_buffer[0].clone_ref(py))
+        } else {
+            let tuple = PyTuple::new(py, &self.values_buffer)?;
+            Ok(tuple.into_any().unbind())
         }
     }
 
     /// Check if the query has no matching entities.
     /// Returns true if there are no entities matching the query filters.
     fn is_empty(&self) -> PyResult<bool> {
-        // SAFETY: world_ptr is guaranteed to be valid during system execution
+        // SAFETY: world_ptr is guaranteed to be valid during system execution.
+        // Only shared access needed - last_change_tick/read_change_tick/is_empty all take &World.
         let world = unsafe {
             self.world_ptr
                 .expect("Query used outside system execution")
-                .as_mut()
+                .as_ref()
         };
 
-        // Get the ticks before borrowing world for the query
         let last_tick = world.last_change_tick();
-        let current_tick = world.change_tick();
+        let current_tick = world.read_change_tick();
 
-        // SAFETY: We transmuted this pointer from a valid QueryState in new()
-        let query_state =
-            unsafe { &*(self.query_state_ptr as *const QueryState<FilteredEntityMut>) };
-
-        Ok(query_state.is_empty(world, last_tick, current_tick))
+        Ok(self.query_state.is_empty_check(world, last_tick, current_tick))
     }
 
     /// Get components for a specific entity by ID.
     /// Returns None if the entity doesn't match the query filters.
     /// Returns an error if the entity doesn't have the queried components.
     fn get(&mut self, entity: PyEntity, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        // SAFETY: world_ptr is guaranteed to be valid during system execution
-        let world = unsafe {
-            self.world_ptr
-                .expect("Query used outside system execution")
-                .as_mut()
-        };
+        let world_ptr = self.world_ptr.expect("Query used outside system execution");
+        let (read_only, qs_ptr) = self.query_state.parts();
+        // SAFETY: world_ptr and qs_ptr are valid during system execution
+        let result = unsafe { erased_get_entity(read_only, qs_ptr, world_ptr, entity.0) };
 
-        // SAFETY: We transmuted this pointer from a valid QueryState in new()
-        let query_state =
-            unsafe { &mut *(self.query_state_ptr as *mut QueryState<FilteredEntityMut>) };
+        match result {
+            Some(mut entity_access) => {
+                self.extract_components_from_entity(&mut entity_access, py)?;
 
-        // Try to get the specific entity
-        match query_state.get_mut(world, entity.0) {
-            Ok(mut entity_mut) => {
-                self.extract_components_from_entity(&mut entity_mut, py)?;
-
-                // Return single value or tuple based on whether query was Query[T] or Query[tuple[...]]
                 if self.param.single {
                     Ok(Some(self.values_buffer[0].clone_ref(py)))
                 } else {
@@ -720,10 +858,7 @@ impl PyQueryIter {
                     Ok(Some(tuple.into_any().unbind()))
                 }
             }
-            Err(_) => {
-                // Entity doesn't match query filters
-                Ok(None)
-            }
+            None => Ok(None),
         }
     }
 
@@ -745,44 +880,26 @@ impl PyQueryIter {
     ///     pass
     /// ```
     fn iter_many(&mut self, entities: &Bound<'_, PyAny>, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        // SAFETY: world_ptr is guaranteed to be valid during system execution
-        let world = unsafe {
-            self.world_ptr
-                .expect("Query used outside system execution")
-                .as_mut()
-        };
-
-        // SAFETY: We transmuted this pointer from a valid QueryState in new()
-        let query_state =
-            unsafe { &mut *(self.query_state_ptr as *mut QueryState<FilteredEntityMut>) };
-
         let mut results = Vec::new();
+        let world_ptr = self.world_ptr.expect("Query used outside system execution");
+        let (read_only, qs_ptr) = self.query_state.parts();
 
-        // Iterate over the provided entities
         for entity_obj in entities.try_iter()? {
-            let entity_obj = entity_obj?;
-            let entity_id: PyEntity = entity_obj.extract()?;
+            let entity_id: PyEntity = entity_obj?.extract()?;
 
-            // Try to get this specific entity
-            match query_state.get_mut(world, entity_id.0) {
-                Ok(mut entity_mut) => {
-                    self.extract_components_from_entity(&mut entity_mut, py)?;
-
-                    // Return single value or tuple based on whether query was Query[T] or Query[tuple[...]]
-                    let result = if self.param.single {
-                        self.values_buffer[0].clone_ref(py)
-                    } else {
-                        let tuple =
-                            PyTuple::new(py, &self.values_buffer).expect("Failed to create tuple");
-                        tuple.into_any().unbind()
-                    };
-
-                    results.push(result);
-                }
-                Err(_) => {
-                    // Entity doesn't match query filters - skip it
-                    continue;
-                }
+            // SAFETY: world_ptr and qs_ptr are valid during system execution
+            if let Some(mut access) =
+                unsafe { erased_get_entity(read_only, qs_ptr, world_ptr, entity_id.0) }
+            {
+                self.extract_components_from_entity(&mut access, py)?;
+                let result = if self.param.single {
+                    self.values_buffer[0].clone_ref(py)
+                } else {
+                    let tuple =
+                        PyTuple::new(py, &self.values_buffer).expect("Failed to create tuple");
+                    tuple.into_any().unbind()
+                };
+                results.push(result);
             }
         }
 
