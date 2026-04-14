@@ -32,17 +32,19 @@ use std::any::TypeId;
 use bevy::ecs::{
     component::ComponentId,
     entity::Entity,
-    world::{EntityRef, EntityWorldMut, FilteredEntityMut, World},
+    world::{EntityRef, EntityWorldMut, World},
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
-use crate::{ValidityFlagWithMode, ViewBridge};
+use crate::{FilteredEntityAccess, ValidityFlagWithMode, ViewBridge};
 
 /// Function pointer type for component extraction.
 ///
 /// This allows caching the extract function directly to avoid vtable dispatch.
+/// Takes a `FilteredEntityAccess` which wraps either `FilteredEntityRef` (read-only)
+/// or `FilteredEntityMut` (read-write) depending on query mutability.
 pub type ExtractFn =
-    fn(&mut FilteredEntityMut, ComponentId, ValidityFlagWithMode, Python) -> PyResult<Py<PyAny>>;
+    fn(&mut FilteredEntityAccess, ComponentId, ValidityFlagWithMode, Python) -> PyResult<Py<PyAny>>;
 
 /// Trait that bridges a Bevy component to its Python wrapper.
 ///
@@ -91,7 +93,7 @@ pub trait ComponentBridge: Send + Sync + 'static {
     /// Returns error if component extraction or Python conversion fails.
     fn extract(
         &self,
-        entity: &mut FilteredEntityMut,
+        entity: &mut FilteredEntityAccess,
         component_id: ComponentId,
         validity: ValidityFlagWithMode,
         py: Python,

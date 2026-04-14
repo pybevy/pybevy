@@ -212,18 +212,24 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
 
             fn extract(
                 &self,
-                entity: &mut bevy::ecs::world::FilteredEntityMut,
+                entity: &mut #core_path::FilteredEntityAccess,
                 component_id: bevy::ecs::component::ComponentId,
                 validity: #core_path::ValidityFlagWithMode,
                 py: #pyo3_path::Python,
             ) -> #pyo3_path::PyResult<#pyo3_path::Py<#pyo3_path::PyAny>> {
-                let mut untyped = entity.get_mut_by_id(component_id).ok_or_else(|| {
-                    #pyo3_path::exceptions::PyRuntimeError::new_err(concat!(#bevy_type_str, " not found"))
-                })?;
-
-                // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
-                let ptr = unsafe {
-                    untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type
+                let ptr = if validity.access_mode() == #core_path::AccessMode::Write {
+                    let mut untyped = entity.get_mut_by_id(component_id).ok_or_else(|| {
+                        #pyo3_path::exceptions::PyRuntimeError::new_err(concat!(#bevy_type_str, " not found"))
+                    })?;
+                    unsafe { untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type }
+                } else {
+                    let untyped = entity.get_by_id(component_id).ok_or_else(|| {
+                        #pyo3_path::exceptions::PyRuntimeError::new_err(concat!(#bevy_type_str, " not found"))
+                    })?;
+                    // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
+                    // SAFETY: component_id was registered for #bevy_type; pointer is not written through
+                    // because AccessMode::Read prevents mutation at the Python boundary.
+                    unsafe { untyped.deref::<#bevy_type>() as *const #bevy_type as *mut #bevy_type }
                 };
 
                 // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
@@ -265,18 +271,25 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             fn extract_fn(&self) -> #core_path::ExtractFn {
                 #[inline(always)]
                 fn extract_impl(
-                    entity: &mut bevy::ecs::world::FilteredEntityMut,
+                    entity: &mut #core_path::FilteredEntityAccess,
                     component_id: bevy::ecs::component::ComponentId,
                     validity: #core_path::ValidityFlagWithMode,
                     py: #pyo3_path::Python,
                 ) -> #pyo3_path::PyResult<#pyo3_path::Py<#pyo3_path::PyAny>> {
-                    let mut untyped = entity.get_mut_by_id(component_id).ok_or_else(|| {
-                        #pyo3_path::exceptions::PyRuntimeError::new_err("Component not found")
-                    })?;
-
-                    // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.
-                    let ptr = unsafe {
-                        untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type
+                    let ptr = if validity.access_mode() == #core_path::AccessMode::Write {
+                        let mut untyped = entity.get_mut_by_id(component_id).ok_or_else(|| {
+                            #pyo3_path::exceptions::PyRuntimeError::new_err("Component not found")
+                        })?;
+                        // SAFETY: component_id was registered for this type; MutUntyped guarantees valid mutable access.
+                        unsafe { untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type }
+                    } else {
+                        let untyped = entity.get_by_id(component_id).ok_or_else(|| {
+                            #pyo3_path::exceptions::PyRuntimeError::new_err("Component not found")
+                        })?;
+                        // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
+                        // SAFETY: component_id was registered for this type; pointer is not written through
+                        // because AccessMode::Read prevents mutation at the Python boundary.
+                        unsafe { untyped.deref::<#bevy_type>() as *const #bevy_type as *mut #bevy_type }
                     };
 
                     // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
@@ -301,6 +314,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
                 py: #pyo3_path::Python,
             ) -> #pyo3_path::PyResult<Option<#pyo3_path::Py<#pyo3_path::PyAny>>> {
                 if let Some(component) = entity.get::<#bevy_type>() {
+                    // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
                     let ptr = component as *const #bevy_type as *mut #bevy_type;
                     // SAFETY: ptr is from a valid entity.get() borrow; validity flag invalidates storage when borrow expires.
                     let storage = unsafe {

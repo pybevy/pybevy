@@ -358,6 +358,7 @@ pub(crate) fn generate_resource_bridge_tokens(
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
 
+                // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
                 let ptr = resource as *const #bevy_type as *mut #bevy_type;
                 // Override to read mode even though caller requested write
                 let read_validity = validity.flag.with_access_mode(pybevy_core::AccessMode::Read);
@@ -442,6 +443,7 @@ pub(crate) fn generate_resource_bridge_tokens(
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
 
+                // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
                 let ptr = resource as *const #bevy_type as *mut #bevy_type;
                 // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {

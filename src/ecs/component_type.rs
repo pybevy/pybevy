@@ -193,7 +193,7 @@ impl PyComponentType {
     /// For custom components: Delegates to QueryRuntime helper (handles wrapper/PyObject storage).
     pub fn extract_from_entity<'py>(
         &self,
-        entity_mut: &mut bevy::ecs::world::FilteredEntityMut,
+        entity: &mut pybevy_core::FilteredEntityAccess,
         component_id: bevy::ecs::component::ComponentId,
         validity: crate::ecs::helpers::validity_guard::ValidityFlagWithMode,
         py: pyo3::Python<'py>,
@@ -204,11 +204,11 @@ impl PyComponentType {
             PyComponentType::Dynamic(type_ptr) => {
                 // Use pre-cached extraction function pointer indexed by param position
                 if let Some(extract_fn) = query_iter.get_extract_fn(param_idx) {
-                    extract_fn(entity_mut, component_id, validity, py)
+                    extract_fn(entity, component_id, validity, py)
                 } else {
                     // Fallback to global registry
                     if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr) {
-                        bridge.extract(entity_mut, component_id, validity, py)
+                        bridge.extract(entity, component_id, validity, py)
                     } else {
                         Err(pyo3::exceptions::PyRuntimeError::new_err(
                             "Dynamic component bridge not found",
@@ -217,7 +217,7 @@ impl PyComponentType {
                 }
             }
             PyComponentType::Custom(ptr) => {
-                query_iter.extract_custom_component(*ptr, entity_mut, component_id, param_idx, py)
+                query_iter.extract_custom_component(*ptr, entity, component_id, param_idx, py)
             }
         }
     }
