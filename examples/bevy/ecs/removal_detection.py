@@ -1,6 +1,6 @@
 """This example shows how you can know when a Component has been removed.
 
-When a Component is removed from an Entity, all observers with an OnRemove trigger
+When a Component is removed from an Entity, all observers with a Remove trigger
 for that Component will be notified. These observers will be called immediately
 after the Component is removed.
 """
@@ -31,7 +31,7 @@ def remove_component(
                 commands.entity(entity).remove(MyComponent)
 
 
-def react_on_removal(trigger: On[OnRemove, MyComponent], query: Query[Mut[Sprite]]) -> None:
+def react_on_removal(trigger: On[Remove, MyComponent], query: Query[Mut[Sprite]]) -> None:
     """React to component removal by changing sprite color."""
     entity = trigger.entity()
     if entity is not None:

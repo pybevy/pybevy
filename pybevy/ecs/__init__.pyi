@@ -272,18 +272,18 @@ class On(Generic[Unpack[OnTypes]]):
     - On[EventType] - Observe any event of this type
     - On[EventType, ComponentType] - Only trigger if entity has single component
     - On[EventType, tuple[CompA, CompB, ...]] - Only trigger if entity has all components in tuple
-    - On[OnAdd, ComponentType] - Observe component addition lifecycle events
-    - On[OnInsert, ComponentType] - Observe component insertion lifecycle events
-    - On[OnRemove, ComponentType] - Observe component removal lifecycle events
-    - On[OnReplace, ComponentType] - Observe component replacement lifecycle events
-    - On[OnDespawn, ComponentType] - Observe entity despawn lifecycle events
+    - On[Add, ComponentType] - Observe component addition lifecycle events
+    - On[Insert, ComponentType] - Observe component insertion lifecycle events
+    - On[Remove, ComponentType] - Observe component removal lifecycle events
+    - On[Replace, ComponentType] - Observe component replacement lifecycle events
+    - On[Despawn, ComponentType] - Observe entity despawn lifecycle events
 
     Example:
         def on_player_died(trigger: On[PlayerDied]) -> None:
             event = trigger.event()
             print(f"Player {event.player_id} died")
 
-        def on_transform_added(trigger: On[OnAdd, Transform]) -> None:
+        def on_transform_added(trigger: On[Add, Transform]) -> None:
             entity = trigger.entity()
             print(f"Transform added to {entity}")
 
@@ -320,38 +320,38 @@ class OnTypeParam:
     Users typically don't need to reference this type directly.
     """
 
-class OnAdd:
+class Add:
     """Lifecycle event marker for component addition.
 
-    Use with On[OnAdd, ComponentType] to observe when components are added to entities
+    Use with On[Add, ComponentType] to observe when components are added to entities
     via spawn() or the first insert() on an entity.
     """
 
-class OnInsert:
+class Insert:
     """Lifecycle event marker for component insertion.
 
-    Use with On[OnInsert, ComponentType] to observe when components are inserted
+    Use with On[Insert, ComponentType] to observe when components are inserted
     via insert(), whether the entity already has the component or not.
     """
 
-class OnRemove:
+class Remove:
     """Lifecycle event marker for component removal.
 
-    Use with On[OnRemove, ComponentType] to observe when components are removed
+    Use with On[Remove, ComponentType] to observe when components are removed
     from entities via remove().
     """
 
-class OnReplace:
+class Replace:
     """Lifecycle event marker for component replacement.
 
-    Use with On[OnReplace, ComponentType] to observe when components are replaced
+    Use with On[Replace, ComponentType] to observe when components are replaced
     (inserted when entity already has the component).
     """
 
-class OnDespawn:
+class Despawn:
     """Lifecycle event marker for entity despawn.
 
-    Use with On[OnDespawn, ComponentType] to observe when entities with the
+    Use with On[Despawn, ComponentType] to observe when entities with the
     component are despawned.
     """
 

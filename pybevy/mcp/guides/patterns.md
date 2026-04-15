@@ -487,8 +487,8 @@ def on_player_died(trigger: On[PlayerDied]) -> None:
 
 app.add_observer(on_player_died)
 
-# Lifecycle hooks: OnAdd, OnInsert, OnRemove, OnReplace, OnDespawn
-def on_transform_added(trigger: On[OnAdd, Transform]) -> None:
+# Lifecycle hooks: Add, Insert, Remove, Replace, Despawn
+def on_transform_added(trigger: On[Add, Transform]) -> None:
     entity = trigger.entity()
 
 app.add_observer(on_transform_added)

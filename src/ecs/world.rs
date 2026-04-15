@@ -369,7 +369,7 @@ impl PyWorld {
             components,
         )?;
 
-        // Trigger OnAdd lifecycle events for added components
+        // Trigger Add lifecycle events for added components
         if !component_types.is_empty() {
             Self::trigger_lifecycle_events_for_add(world_ptr, entity_id, &component_types);
         }
@@ -392,7 +392,7 @@ impl PyWorld {
         // Despawn the entity
         world.despawn(entity.0);
 
-        // Trigger OnDespawn lifecycle events
+        // Trigger Despawn lifecycle events
         if !component_types.is_empty() {
             Self::trigger_lifecycle_events_for_despawn(world_ptr, entity.0, &component_types);
         }
@@ -1144,7 +1144,7 @@ impl PyWorld {
     }
 
     /// Trigger lifecycle events for components inserted to an entity.
-    /// OnInsert triggers on both initial add and replacement.
+    /// Insert triggers on both initial add and replacement.
     pub(crate) fn trigger_lifecycle_events_for_insert(
         world_ptr: *mut World,
         entity: bevy::ecs::entity::Entity,
@@ -1163,7 +1163,7 @@ impl PyWorld {
     }
 
     /// Trigger lifecycle events for entity despawn.
-    /// This triggers OnDespawn for each component type on the entity.
+    /// This triggers Despawn for each component type on the entity.
     pub(crate) fn trigger_lifecycle_events_for_despawn(
         world_ptr: *mut World,
         entity: bevy::ecs::entity::Entity,

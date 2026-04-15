@@ -174,7 +174,7 @@ impl PyComponentType {
     }
 
     /// Check if an entity has this component type.
-    /// Used by observer lifecycle events (OnAdd, OnInsert, etc).
+    /// Used by observer lifecycle events (Add, Insert, etc).
     pub fn entity_contains(&self, entity: &bevy::ecs::world::EntityRef) -> bool {
         match self {
             PyComponentType::Dynamic(type_ptr) => {

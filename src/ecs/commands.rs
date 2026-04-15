@@ -213,7 +213,7 @@ pub(crate) fn insert_components_to_entity_helper(
         }
     }
 
-    // Check which components already exist (for OnReplace)
+    // Check which components already exist (for Replace)
     let existing_components = if commands.is_world {
         let world = unsafe { &*(commands.commands_ptr as *const World) };
         component_types
@@ -230,14 +230,14 @@ pub(crate) fn insert_components_to_entity_helper(
     // Insert the components
     insert_components_to_entity(commands, py, entity_id, components)?;
 
-    // Trigger OnInsert lifecycle events (deferred if using Commands)
+    // Trigger Insert lifecycle events (deferred if using Commands)
     if !component_types.is_empty() {
         if commands.is_world {
             // Immediate execution - trigger now
             let world_ptr = commands.commands_ptr as *mut World;
             PyWorld::trigger_lifecycle_events_for_insert(world_ptr, entity_id, &component_types);
 
-            // Trigger OnReplace for components that already existed
+            // Trigger Replace for components that already existed
             if !existing_components.is_empty() {
                 PyWorld::trigger_lifecycle_events_for_replace(
                     world_ptr,
@@ -246,8 +246,8 @@ pub(crate) fn insert_components_to_entity_helper(
                 );
             }
         } else {
-            // Deferred execution - queue the OnInsert trigger
-            // Note: OnReplace is not supported for deferred Commands due to ordering constraints
+            // Deferred execution - queue the Insert trigger
+            // Note: Replace is not supported for deferred Commands due to ordering constraints
             // (we can't check which components exist before the insert operations are applied)
             let component_types_clone = component_types.clone();
             commands.execute_or_queue(move |world| {
@@ -614,7 +614,7 @@ pub(crate) fn remove_components_from_entity_helper(
     // Remove the components
     remove_components_from_entity(commands, py, entity_id, components)?;
 
-    // Trigger OnRemove lifecycle events (deferred if using Commands)
+    // Trigger Remove lifecycle events (deferred if using Commands)
     if !component_types.is_empty() {
         if commands.is_world {
             // Immediate execution - trigger now
@@ -893,7 +893,7 @@ impl PyCommands {
             // Despawn the entity
             world.despawn(entity_id);
 
-            // Trigger OnDespawn lifecycle events
+            // Trigger Despawn lifecycle events
             if !component_types.is_empty() {
                 PyWorld::trigger_lifecycle_events_for_despawn(
                     world_ptr,
@@ -916,7 +916,7 @@ impl PyCommands {
                 // Despawn the entity
                 world.despawn(entity_id);
 
-                // Trigger OnDespawn lifecycle events
+                // Trigger Despawn lifecycle events
                 if !component_types.is_empty() {
                     PyWorld::trigger_lifecycle_events_for_despawn(
                         world as *mut World,
