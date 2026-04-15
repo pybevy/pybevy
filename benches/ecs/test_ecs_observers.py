@@ -3,7 +3,7 @@
 import pytest
 
 from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
-from pybevy.ecs import Commands, On, OnAdd, OnDespawn, OnInsert, OnRemove, World
+from pybevy.ecs import Add, Commands, Despawn, Insert, On, Remove, World
 from pybevy.transform import Transform
 
 
@@ -19,11 +19,11 @@ def test_performance_many_observers_same_event(benchmark) -> None:
         for i in range(num_observers):
             exec(
                 f"""
-def on_add_{i}(trigger: On[OnAdd, Transform]) -> None:
+def on_add_{i}(trigger: On[Add, Transform]) -> None:
     _ = trigger.entity()
 app.add_observer(on_add_{i})
 """,
-                {"app": app, "On": On, "OnAdd": OnAdd, "Transform": Transform},
+                {"app": app, "On": On, "Add": Add, "Transform": Transform},
             )
 
         def spawn_entity(commands: Commands) -> None:
@@ -46,7 +46,7 @@ def test_performance_many_entities_lifecycle_events(benchmark) -> None:
 
         call_count = []
 
-        def on_add(trigger: On[OnAdd, Transform]) -> None:
+        def on_add(trigger: On[Add, Transform]) -> None:
             call_count.append(1)
 
         app.add_observer(on_add)
@@ -72,7 +72,7 @@ def test_performance_lifecycle_event_overhead(benchmark) -> None:
         app = App()
         app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
 
-        def on_add(trigger: On[OnAdd, Transform]) -> None:
+        def on_add(trigger: On[Add, Transform]) -> None:
             pass
 
         app.add_observer(on_add)
@@ -89,7 +89,7 @@ def test_performance_lifecycle_event_overhead(benchmark) -> None:
 
 @pytest.mark.benchmark(group="observer-insert-remove")
 def test_performance_insert_remove_lifecycle(benchmark) -> None:
-    """Test performance of OnInsert and OnRemove lifecycle events."""
+    """Test performance of Insert and Remove lifecycle events."""
     num_operations = 100
 
     def insert_remove_cycle():
@@ -99,10 +99,10 @@ def test_performance_insert_remove_lifecycle(benchmark) -> None:
         insert_count = []
         remove_count = []
 
-        def on_insert(trigger: On[OnInsert, Transform]) -> None:
+        def on_insert(trigger: On[Insert, Transform]) -> None:
             insert_count.append(1)
 
-        def on_remove(trigger: On[OnRemove, Transform]) -> None:
+        def on_remove(trigger: On[Remove, Transform]) -> None:
             remove_count.append(1)
 
         app.add_observer(on_insert)
@@ -150,7 +150,7 @@ def test_performance_filtered_observers(benchmark) -> None:
 
         filtered_count = []
 
-        def on_add_filtered(trigger: On[OnAdd, Transform]) -> None:
+        def on_add_filtered(trigger: On[Add, Transform]) -> None:
             filtered_count.append(1)
 
         app.add_observer(on_add_filtered)
@@ -172,7 +172,7 @@ def test_performance_filtered_observers(benchmark) -> None:
 
 @pytest.mark.benchmark(group="observer-despawn")
 def test_performance_despawn_lifecycle(benchmark) -> None:
-    """Test performance of OnDespawn lifecycle events."""
+    """Test performance of Despawn lifecycle events."""
     num_entities = 100
 
     def spawn_and_despawn():
@@ -181,7 +181,7 @@ def test_performance_despawn_lifecycle(benchmark) -> None:
 
         despawn_count = []
 
-        def on_despawn(trigger: On[OnDespawn, Transform]) -> None:
+        def on_despawn(trigger: On[Despawn, Transform]) -> None:
             despawn_count.append(1)
 
         app.add_observer(on_despawn)

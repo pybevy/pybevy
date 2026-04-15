@@ -43,34 +43,34 @@ impl PyEvent {
 }
 
 /// Marker class for component addition lifecycle events.
-/// Use with On[OnAdd, ComponentType] to observe when components are added.
-#[pyclass(name = "OnAdd")]
+/// Use with On[Add, ComponentType] to observe when components are added.
+#[pyclass(name = "Add")]
 #[derive(Debug, Clone)]
-pub struct PyOnAdd;
+pub struct PyAdd;
 
 /// Marker class for component insertion lifecycle events.
-/// Use with On[OnInsert, ComponentType] to observe when components are inserted.
-#[pyclass(name = "OnInsert")]
+/// Use with On[Insert, ComponentType] to observe when components are inserted.
+#[pyclass(name = "Insert")]
 #[derive(Debug, Clone)]
-pub struct PyOnInsert;
+pub struct PyInsert;
 
 /// Marker class for component removal lifecycle events.
-/// Use with On[OnRemove, ComponentType] to observe when components are removed.
-#[pyclass(name = "OnRemove")]
+/// Use with On[Remove, ComponentType] to observe when components are removed.
+#[pyclass(name = "Remove")]
 #[derive(Debug, Clone)]
-pub struct PyOnRemove;
+pub struct PyRemove;
 
 /// Marker class for component replacement lifecycle events.
-/// Use with On[OnReplace, ComponentType] to observe when components are replaced.
-#[pyclass(name = "OnReplace")]
+/// Use with On[Replace, ComponentType] to observe when components are replaced.
+#[pyclass(name = "Replace")]
 #[derive(Debug, Clone)]
-pub struct PyOnReplace;
+pub struct PyReplace;
 
 /// Marker class for entity despawn lifecycle events.
-/// Use with On[OnDespawn, ComponentType] to observe when entities with the component are despawned.
-#[pyclass(name = "OnDespawn")]
+/// Use with On[Despawn, ComponentType] to observe when entities with the component are despawned.
+#[pyclass(name = "Despawn")]
 #[derive(Debug, Clone)]
-pub struct PyOnDespawn;
+pub struct PyDespawn;
 
 /// System parameter for observers that provides access to the triggered event.
 ///
@@ -125,13 +125,13 @@ impl PyOn {
             let first_type_obj = first_key.cast_exact::<PyType>()?;
 
             // Check for lifecycle event markers
-            if first_type_obj.is(PyOnAdd::type_object(py)) {
-                // On[OnAdd, Component] - component addition lifecycle event
+            if first_type_obj.is(PyAdd::type_object(py)) {
+                // On[Add, Component] - component addition lifecycle event
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
                     return Err(PyTypeError::new_err(
-                        "Second parameter to On[OnAdd, ...] must be a Component type",
+                        "Second parameter to On[Add, ...] must be a Component type",
                     ));
                 };
                 return Py::new(
@@ -142,12 +142,12 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(PyOnInsert::type_object(py)) {
+            } else if first_type_obj.is(PyInsert::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
                     return Err(PyTypeError::new_err(
-                        "Second parameter to On[OnInsert, ...] must be a Component type",
+                        "Second parameter to On[Insert, ...] must be a Component type",
                     ));
                 };
                 return Py::new(
@@ -158,12 +158,12 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(PyOnRemove::type_object(py)) {
+            } else if first_type_obj.is(PyRemove::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
                     return Err(PyTypeError::new_err(
-                        "Second parameter to On[OnRemove, ...] must be a Component type",
+                        "Second parameter to On[Remove, ...] must be a Component type",
                     ));
                 };
                 return Py::new(
@@ -174,12 +174,12 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(PyOnReplace::type_object(py)) {
+            } else if first_type_obj.is(PyReplace::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
                     return Err(PyTypeError::new_err(
-                        "Second parameter to On[OnReplace, ...] must be a Component type",
+                        "Second parameter to On[Replace, ...] must be a Component type",
                     ));
                 };
                 return Py::new(
@@ -190,12 +190,12 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(PyOnDespawn::type_object(py)) {
+            } else if first_type_obj.is(PyDespawn::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
                     return Err(PyTypeError::new_err(
-                        "Second parameter to On[OnDespawn, ...] must be a Component type",
+                        "Second parameter to On[Despawn, ...] must be a Component type",
                     ));
                 };
                 return Py::new(
