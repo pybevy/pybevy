@@ -138,6 +138,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         bridge: bool,
         bridge_name: Option<String>,
         not_loadable: bool,
+        input_converter: bool,
     }
 
     impl Parse for AssetStorageArgs {
@@ -147,6 +148,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut bridge = false;
             let mut bridge_name = None;
             let mut not_loadable = false;
+            let mut input_converter = false;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -161,11 +163,12 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "no_clone" => no_clone = true,
                         "bridge" => bridge = true,
                         "not_loadable" => not_loadable = true,
+                        "input_converter" => input_converter = true,
                         other => {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, not_loadable",
+                                    "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter",
                                     other
                                 ),
                             ));
@@ -174,12 +177,20 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
+            if input_converter && !bridge {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "`input_converter` requires `bridge`",
+                ));
+            }
+
             Ok(AssetStorageArgs {
                 bevy_type,
                 no_clone,
                 bridge,
                 bridge_name,
                 not_loadable,
+                input_converter,
             })
         }
     }
@@ -209,6 +220,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             py_type,
             args.bridge_name.as_deref(),
             args.not_loadable,
+            args.input_converter,
         )
     } else {
         quote! {}
@@ -277,6 +289,7 @@ pub(crate) fn generate_asset_bridge_tokens(
     py_type: &Ident,
     bridge_name_override: Option<&str>,
     not_loadable: bool,
+    input_converter: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -290,6 +303,20 @@ pub(crate) fn generate_asset_bridge_tokens(
         quote! {
             fn is_loadable(&self) -> bool {
                 false
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let try_convert_input_impl = if input_converter {
+        quote! {
+            fn try_convert_input<'py>(
+                &self,
+                asset: &pyo3::Bound<'py, pyo3::PyAny>,
+                py: pyo3::Python<'py>,
+            ) -> pyo3::PyResult<Option<pyo3::Bound<'py, pyo3::PyAny>>> {
+                <#py_type as pybevy_core::AssetInputConverter>::try_convert_input(asset, py)
             }
         }
     } else {
@@ -324,6 +351,8 @@ pub(crate) fn generate_asset_bridge_tokens(
             }
 
             #is_loadable_impl
+
+            #try_convert_input_impl
 
             fn get(
                 &self,

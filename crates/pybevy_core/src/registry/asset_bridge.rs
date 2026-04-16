@@ -154,6 +154,27 @@ pub trait AssetBridge: Send + Sync + 'static {
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>>;
 
+    /// Convert a Python input into a form acceptable by `add()`.
+    ///
+    /// Used for builder/factory inputs - e.g. `MeshBridge` accepts both `Mesh`
+    /// instances and `MeshBuilder` / `Meshable` shapes via this hook.
+    ///
+    /// Returns `Ok(Some(converted))` if the input was a recognized convertible
+    /// form; the converted value is then passed to `add()` in place of the
+    /// original. Returns `Ok(None)` if the input is not a recognized form -
+    /// the caller will then run the standard type check against the bridge's
+    /// asset type.
+    ///
+    /// Default: no conversion. Bridges with builder support set this via
+    /// `#[pyasset(T, bridge, input_converter = path::to::fn)]`.
+    fn try_convert_input<'py>(
+        &self,
+        _asset: &Bound<'py, PyAny>,
+        _py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        Ok(None)
+    }
+
     /// Get the number of assets in the Assets<T> resource
     fn len(&self, world: &World) -> PyResult<usize>;
 

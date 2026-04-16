@@ -5,7 +5,7 @@ use bevy::{
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
-use crate::{meshable::PyMeshable, primitives::PySphereMeshBuilder};
+use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySphereMeshBuilder};
 
 #[pyclass(name = "Sphere", extends = PyMeshable, eq)]
 #[derive(Debug, Clone, PartialEq)]
@@ -50,7 +50,7 @@ impl PySphere {
     }
 
     pub fn mesh(&self, py: Python) -> PyResult<Py<PySphereMeshBuilder>> {
-        Py::new(py, (self.0.mesh().into(), PyMeshable))
+        Py::new(py, (self.0.mesh().into(), PyMeshBuilder))
     }
 }
 

@@ -5,6 +5,7 @@
 //! to import them at compile time.
 
 mod asset_bridge;
+mod asset_input_converter;
 mod batch_bridge;
 pub mod batchable_field;
 mod component_bridge;
@@ -15,6 +16,7 @@ mod resource_bridge;
 pub mod rust_batch;
 
 pub use asset_bridge::AssetBridge;
+pub use asset_input_converter::AssetInputConverter;
 pub use batch_bridge::BatchComponent;
 pub use batchable_field::{
     BatchFieldMeta, BatchableField, batch_field_meta_for, field_type_of, set_field_from_numpy,

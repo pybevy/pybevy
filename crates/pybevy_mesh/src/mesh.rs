@@ -6,7 +6,7 @@ use numpy::{
     PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
     ndarray::{ArrayView2, ArrayViewMut2},
 };
-use pybevy_core::{AssetStorage, PyAsset};
+use pybevy_core::{AssetInputConverter, AssetStorage, PyAsset};
 use pybevy_image::image::PyRenderAssetUsages;
 use pybevy_macros::pyasset;
 use pyo3::{
@@ -16,14 +16,34 @@ use pyo3::{
 
 use crate::{
     indices::PyIndices,
+    mesh_builder::PyMeshBuilder,
+    meshable::{PyMeshable, meshable_to_mesh},
     primitive_topology::PyPrimitiveTopology,
     vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues},
 };
-#[pyasset(Mesh, bridge)]
+#[pyasset(Mesh, bridge, input_converter)]
 #[pyclass(name = "Mesh", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyMesh {
     pub(crate) storage: AssetStorage<Mesh>,
+}
+
+impl AssetInputConverter for PyMesh {
+    fn try_convert_input<'py>(
+        asset: &Bound<'py, PyAny>,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if asset.is_instance_of::<PyMeshBuilder>() {
+            return Ok(Some(asset.call_method0("build")?));
+        }
+        if asset.is_instance_of::<PyMeshable>() {
+            // Wrap in a fresh PyMesh so bridge.add() can uniformly extract+take.
+            let mesh = meshable_to_mesh(asset)?;
+            let py_mesh = Py::new(py, PyMesh::from_owned(mesh))?;
+            return Ok(Some(py_mesh.into_bound(py).into_any()));
+        }
+        Ok(None)
+    }
 }
 
 macro_rules! mesh_with {
