@@ -20,9 +20,9 @@
 //!   - `get()` allowed, `get_mut()` raises error
 //! - **Mutable access** (`ResMut[Assets[T]]`): Creates validity with `AccessMode::Write`
 //!   - Both `get()` and `get_mut()` allowed
-use std::{collections::VecDeque, sync::Arc};
+use std::{any::TypeId, collections::VecDeque, sync::Arc};
 
-use bevy::prelude::World;
+use bevy::{mesh::Mesh, pbr::StandardMaterial, prelude::World};
 use pybevy_core::{
     PyMaterializable,
     handle::PyHandle,
@@ -172,8 +172,7 @@ impl PyAssets {
         // Builder pattern handlings
         if asset.is_instance_of::<PyMeshBuilder>() {
             let bridge = self.bridge()?;
-            // TODO: replace string comparison with a proper type-level check (e.g. bridge type ID)
-            if bridge.name() != "Mesh" {
+            if bridge.bevy_type_id() != TypeId::of::<Mesh>() {
                 return Err(PyTypeError::new_err(format!(
                     "Asset type mismatch: expected `{}` but got `Mesh`",
                     bridge.name()
@@ -185,7 +184,7 @@ impl PyAssets {
             return Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr));
         } else if asset.is_instance_of::<PyMeshable>() {
             let bridge = self.bridge()?;
-            if bridge.name() != "Mesh" {
+            if bridge.bevy_type_id() != TypeId::of::<Mesh>() {
                 return Err(PyTypeError::new_err(format!(
                     "Asset type mismatch: expected `{}` but got `Mesh`",
                     bridge.name()
@@ -208,7 +207,7 @@ impl PyAssets {
             return Ok(PyHandle::from_untyped(handle.untyped(), self.type_ptr));
         } else if asset.is_instance_of::<PyMaterializable>() {
             let bridge = self.bridge()?;
-            if bridge.name() != "StandardMaterial" {
+            if bridge.bevy_type_id() != TypeId::of::<StandardMaterial>() {
                 return Err(PyTypeError::new_err(format!(
                     "Asset type mismatch: expected `{}` but got `StandardMaterial`",
                     bridge.name()
