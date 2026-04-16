@@ -20,17 +20,12 @@
 //!   - `get()` allowed, `get_mut()` raises error
 //! - **Mutable access** (`ResMut[Assets[T]]`): Creates validity with `AccessMode::Write`
 //!   - Both `get()` and `get_mut()` allowed
-use std::{any::TypeId, collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};
 
-use bevy::{mesh::Mesh, pbr::StandardMaterial, prelude::World};
+use bevy::prelude::World;
 use pybevy_core::{
-    PyMaterializable,
     handle::PyHandle,
     registry::{AssetBridge, global_registry},
-};
-use pybevy_mesh::{
-    mesh_builder::PyMeshBuilder,
-    meshable::{PyMeshable, meshable_to_mesh},
 };
 use pyo3::{
     IntoPyObjectExt,
@@ -168,73 +163,16 @@ impl PyAssets {
 
     pub fn add(&mut self, asset: Bound<'_, PyAny>) -> PyResult<PyHandle> {
         let py = asset.py();
+        let bridge = self.bridge()?;
 
-        // Builder pattern handlings
-        if asset.is_instance_of::<PyMeshBuilder>() {
-            let bridge = self.bridge()?;
-            if bridge.bevy_type_id() != TypeId::of::<Mesh>() {
-                return Err(PyTypeError::new_err(format!(
-                    "Asset type mismatch: expected `{}` but got `Mesh`",
-                    bridge.name()
-                )));
-            }
-            let py_mesh = asset.call_method0("build")?;
-            let world = self.world_mut()?;
-            let untyped_handle = bridge.add(world, &py_mesh, py)?;
-            return Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr));
-        } else if asset.is_instance_of::<PyMeshable>() {
-            let bridge = self.bridge()?;
-            if bridge.bevy_type_id() != TypeId::of::<Mesh>() {
-                return Err(PyTypeError::new_err(format!(
-                    "Asset type mismatch: expected `{}` but got `Mesh`",
-                    bridge.name()
-                )));
-            }
-            // Some mesh builders (e.g. SphereMeshBuilder) extend PyMeshable instead of
-            // PyMeshBuilder. Try build() first for builders, then meshable_to_mesh() for shapes.
-            if let Ok(py_mesh) = asset.call_method0("build") {
-                let world = self.world_mut()?;
-                let untyped_handle = bridge.add(world, &py_mesh, py)?;
-                return Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr));
-            }
-            // Convert meshable shape to mesh entirely in Rust, bypassing Python method resolution
-            let mesh = meshable_to_mesh(&asset)?;
-            let world = self.world_mut()?;
-            let mut assets = world
-                .get_resource_mut::<bevy::asset::Assets<bevy::mesh::Mesh>>()
-                .ok_or_else(|| PyRuntimeError::new_err("Assets<Mesh> resource not found"))?;
-            let handle = assets.add(mesh);
-            return Ok(PyHandle::from_untyped(handle.untyped(), self.type_ptr));
-        } else if asset.is_instance_of::<PyMaterializable>() {
-            let bridge = self.bridge()?;
-            if bridge.bevy_type_id() != TypeId::of::<StandardMaterial>() {
-                return Err(PyTypeError::new_err(format!(
-                    "Asset type mismatch: expected `{}` but got `StandardMaterial`",
-                    bridge.name()
-                )));
-            }
-            let material = asset.call_method0("materialize")?;
-            let world = self.world_mut()?;
-            let untyped_handle = bridge.add(world, &material, py)?;
-            return Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr));
-        }
+        let asset = match bridge.try_convert_input(&asset, py)? {
+            Some(converted) => converted,
+            None => asset,
+        };
 
         // Validate asset type matches container type
         let asset_type_ptr = asset.get_type().as_type_ptr() as *const PyTypeObject;
         if asset_type_ptr != self.type_ptr {
-            // Check for @material auto-conversion (to_shader_material)
-            if let Ok(converter) = asset.getattr("to_shader_material") {
-                let converted = converter.call0()?;
-                let converted_type_ptr = converted.get_type().as_type_ptr() as *const PyTypeObject;
-                if converted_type_ptr == self.type_ptr {
-                    let bridge = self.bridge()?;
-                    let world = self.world_mut()?;
-                    let untyped_handle = bridge.add(world, &converted, py)?;
-                    return Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr));
-                }
-            }
-
-            let bridge = self.bridge()?;
             let asset_bridge = global_registry::get_asset_bridge_by_py_type(asset_type_ptr);
             let asset_name = asset_bridge.as_ref().map(|b| b.name()).unwrap_or("Unknown");
             return Err(PyTypeError::new_err(format!(
@@ -244,7 +182,6 @@ impl PyAssets {
             )));
         }
 
-        let bridge = self.bridge()?;
         let world = self.world_mut()?;
         let untyped_handle = bridge.add(world, &asset, py)?;
         Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr))

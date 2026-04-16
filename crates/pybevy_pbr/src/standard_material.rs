@@ -3,7 +3,9 @@ use bevy::{
     pbr::StandardMaterial,
 };
 use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
-use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
+use pybevy_core::{
+    AssetInputConverter, AssetStorage, PyAsset, PyHandle, PyMaterializable, extract_handle_from_any,
+};
 use pybevy_macros::pyasset;
 use pybevy_math::affine2::PyAffine2;
 use pybevy_render::{
@@ -35,11 +37,23 @@ fn convert_optional_handle(
     }
 }
 
-#[pyasset(StandardMaterial, bridge)]
+#[pyasset(StandardMaterial, bridge, input_converter)]
 #[pyclass(name = "StandardMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyStandardMaterial {
     pub(crate) storage: AssetStorage<StandardMaterial>,
+}
+
+impl AssetInputConverter for PyStandardMaterial {
+    fn try_convert_input<'py>(
+        asset: &Bound<'py, PyAny>,
+        _py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if asset.is_instance_of::<PyMaterializable>() {
+            return Ok(Some(asset.call_method0("materialize")?));
+        }
+        Ok(None)
+    }
 }
 
 #[pymethods]

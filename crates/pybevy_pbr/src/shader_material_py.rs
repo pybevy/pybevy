@@ -3,8 +3,8 @@ use bevy::{
     pbr::{MeshMaterial3d, StandardMaterial},
 };
 use pybevy_core::{
-    AssetStorage, NativeAsset, PluginBuild, PyAsset, PyComponent, PyHandle, PyPlugin,
-    extract_handle_from_any,
+    AssetInputConverter, AssetStorage, NativeAsset, PluginBuild, PyAsset, PyComponent, PyHandle,
+    PyPlugin, extract_handle_from_any,
 };
 use pybevy_macros::{pyasset, pyhandle, pyplugin};
 use pyo3::{
@@ -17,11 +17,24 @@ use crate::{
     standard_material::PyStandardMaterial,
 };
 
-#[pyasset(ShaderMaterial, bridge, not_loadable)]
+#[pyasset(ShaderMaterial, bridge, not_loadable, input_converter)]
 #[pyclass(name = "ShaderMaterial", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
     pub storage: AssetStorage<ShaderMaterial>,
+}
+
+impl AssetInputConverter for PyShaderMaterial {
+    fn try_convert_input<'py>(
+        asset: &Bound<'py, PyAny>,
+        _py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        // `to_shader_material` is the `@material` decorator's auto-conversion hook.
+        if let Ok(converter) = asset.getattr("to_shader_material") {
+            return Ok(Some(converter.call0()?));
+        }
+        Ok(None)
+    }
 }
 
 #[pymethods]

@@ -332,9 +332,9 @@ pub use pybevy_storage::{
     ViewFieldAccess, normalize_index,
 };
 pub use registry::{
-    AssetBridge, BatchComponent, BatchFieldMeta, BatchableField, ComponentBatchInsertFn,
-    ComponentBatchMeta, ComponentBridge, ExtractFn, MessageBridge, PluginConfigs,
-    PyRustComponentBatch, ResourceBridge, batch_field_meta_for, field_type_of,
+    AssetBridge, AssetInputConverter, BatchComponent, BatchFieldMeta, BatchableField,
+    ComponentBatchInsertFn, ComponentBatchMeta, ComponentBridge, ExtractFn, MessageBridge,
+    PluginConfigs, PyRustComponentBatch, ResourceBridge, batch_field_meta_for, field_type_of,
     set_field_from_numpy,
 };
 pub use reload_request::{

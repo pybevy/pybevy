@@ -2,9 +2,9 @@ use bevy::mesh::{MeshBuilder, SphereMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use crate::{mesh::PyMesh, meshable::PyMeshable, sphere_kind::PySphereKind};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, sphere_kind::PySphereKind};
 
-#[pyclass(name = "SphereMeshBuilder", extends = PyMeshable, frozen)]
+#[pyclass(name = "SphereMeshBuilder", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PySphereMeshBuilder(SphereMeshBuilder);
 
