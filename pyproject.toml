@@ -46,17 +46,17 @@ classifiers = [
 
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.4.1"
+pytest = "^9.0.3"
 maturin = { extras = ["patchelf"], version = "^1.9.2" }
 mypy = "^1.17.1"
 ruff = "^0.12.7"
 numba = "^0.65.0"
-pytest-benchmark = "^5.1.0"
+pytest-benchmark = "^5.2.3"
 pytest-xdist = "^3.8.0"
-pillow = "^12.1.1"
+pillow = "^12.2.0"
 types-pillow = "^10.2.0"
 jax = {extras = ["cpu"], version = "^0.9.1"}
-pytest-cov = "^7.0.0"
+pytest-cov = "^7.1.0"
 
 [tool.poetry.group.eval]
 optional = true
@@ -158,7 +158,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--benchmark-sort=name --continue-on-collection-errors --ignore=tests/types -m 'not window' -p no:deepeval"
+addopts = "--continue-on-collection-errors --ignore=tests/types -m 'not window' -p no:deepeval"
 filterwarnings = [
     "ignore::RuntimeWarning:runpy",
 ]
