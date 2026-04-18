@@ -1,6 +1,9 @@
+use std::time::Instant;
+
 use bevy::{
     app::Startup,
     ecs::{entity::Entity, query::With, schedule::Schedules, world::World},
+    time::{Real, Time},
 };
 
 use crate::{
@@ -363,6 +366,15 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                     rss_mb, growth, profile.peak_rss_mb, gc_objects, schedule_systems, warning
                 );
             }
+        }
+    }
+
+    // Update Time<Real>'s last-seen instant so the next frame's delta doesn't
+    // include time spent performing the reload. Must be at the very end so the
+    // delta between here and the next time_system call is minimal.
+    if mode == ReloadMode::Full {
+        if let Some(mut time_real) = world.get_resource_mut::<Time<Real>>() {
+            time_real.update_with_instant(Instant::now());
         }
     }
 

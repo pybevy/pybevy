@@ -6,6 +6,7 @@ use bevy::{
     mesh::Mesh,
     pbr::StandardMaterial,
     scene::Scene,
+    time::{Time, Virtual},
 };
 
 use crate::{HotReloadable, runtime::ReloadRuntime};
@@ -99,4 +100,15 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         eprintln!("   → Clearing custom resources");
     }
     runtime.clear_custom_resources(world, verbose);
+
+    // Reset game time so elapsed_secs() starts from zero after full reload.
+    if world.get_resource::<Time<Virtual>>().is_some() {
+        world.insert_resource(Time::<Virtual>::default());
+        if verbose {
+            eprintln!("   → Reset virtual time to zero");
+        }
+    }
+    if world.get_resource::<Time>().is_some() {
+        world.insert_resource(Time::<()>::default());
+    }
 }
