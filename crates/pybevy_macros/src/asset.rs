@@ -575,12 +575,70 @@ pub(crate) fn generate_asset_bridge_tokens(
             ) -> Option<bevy::asset::UntypedHandle> {
                 asset_server.get_handle::<#bevy_type>(path).map(|h| h.untyped())
             }
+
+            fn clear_programmatic(&self, world: &mut bevy::ecs::world::World, verbose: bool) {
+                use bevy::asset::{Assets, AssetServer};
+
+                let ids_to_remove: Vec<_> = {
+                    let Some(asset_server) = world.get_resource::<AssetServer>() else {
+                        // No AssetServer - clear all assets (no file-loaded assets to preserve)
+                        if let Some(mut assets) = world.get_resource_mut::<Assets<#bevy_type>>() {
+                            let count = assets.len();
+                            if count > 0 {
+                                let handles: Vec<_> = assets.ids().map(|id| id.untyped()).collect();
+                                for handle in handles {
+                                    assets.remove(handle.typed::<#bevy_type>());
+                                }
+                                if verbose {
+                                    eprintln!("      Cleared {} {} (no AssetServer)", count, #asset_name);
+                                }
+                            }
+                        }
+                        return;
+                    };
+                    let Some(assets) = world.get_resource::<Assets<#bevy_type>>() else {
+                        return;
+                    };
+                    assets
+                        .ids()
+                        .filter(|id| asset_server.get_path(id.untyped()).is_none())
+                        .collect()
+                };
+
+                if ids_to_remove.is_empty() {
+                    return;
+                }
+
+                if let Some(mut assets) = world.get_resource_mut::<Assets<#bevy_type>>() {
+                    for id in &ids_to_remove {
+                        assets.remove(*id);
+                    }
+                }
+
+                if verbose {
+                    let preserved = world.get_resource::<Assets<#bevy_type>>().map_or(0, |a| a.len());
+                    eprintln!(
+                        "      Cleared {} programmatic {} (preserved {} file-loaded)",
+                        ids_to_remove.len(),
+                        #asset_name,
+                        preserved
+                    );
+                }
+            }
         }
     };
 
     let inventory_submit = quote! {
         pybevy_core::inventory::submit!(pybevy_core::AssetBridgeRegistration {
             create: || std::sync::Arc::new(#bridge_name),
+        });
+
+        pybevy_core::inventory::submit!(pybevy_core::AssetCleanupRegistration {
+            clear: |world, verbose| {
+                use pybevy_core::AssetBridge;
+                #bridge_name.clear_programmatic(world, verbose);
+            },
+            name: #asset_name,
         });
     };
 

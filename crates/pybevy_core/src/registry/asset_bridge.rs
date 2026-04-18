@@ -227,4 +227,10 @@ pub trait AssetBridge: Send + Sync + 'static {
     ///
     /// `Some(handle)` if asset is already loaded, `None` otherwise.
     fn get_handle(&self, asset_server: &AssetServer, path: AssetPath) -> Option<UntypedHandle>;
+
+    /// Clear programmatic assets of this type from the world.
+    ///
+    /// Removes assets created via `assets.add()` (no file path in AssetServer).
+    /// File-loaded assets are preserved so that AssetServer handles remain valid.
+    fn clear_programmatic(&self, world: &mut World, verbose: bool);
 }
