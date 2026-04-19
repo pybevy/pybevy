@@ -24,15 +24,15 @@ class UvChannel:
 
     def __init__(self) -> None: ...
 
-class OpaqueRenderMethod:
+class OpaqueRendererMethod:
     """Opaque rendering method selection."""
 
-    Forward: ClassVar[OpaqueRenderMethod]
-    Deferred: ClassVar[OpaqueRenderMethod]
-    Auto: ClassVar[OpaqueRenderMethod]
-    FORWARD: ClassVar[OpaqueRenderMethod]
-    DEFERRED: ClassVar[OpaqueRenderMethod]
-    AUTO: ClassVar[OpaqueRenderMethod]
+    Forward: ClassVar[OpaqueRendererMethod]
+    Deferred: ClassVar[OpaqueRendererMethod]
+    Auto: ClassVar[OpaqueRendererMethod]
+    FORWARD: ClassVar[OpaqueRendererMethod]
+    DEFERRED: ClassVar[OpaqueRendererMethod]
+    AUTO: ClassVar[OpaqueRendererMethod]
 
 class ParallaxMappingMethod:
     OCCLUSION: ClassVar[ParallaxMappingMethod]
@@ -83,7 +83,7 @@ class StandardMaterial(Asset):
         parallax_mapping_method: ParallaxMappingMethod = ParallaxMappingMethod.Occlusion(),
         max_parallax_layer_count: float = 16.0,
         lightmap_exposure: float = 1.0,
-        opaque_render_method: OpaqueRenderMethod = OpaqueRenderMethod.Auto,
+        opaque_render_method: OpaqueRendererMethod = OpaqueRendererMethod.Auto,
         deferred_lighting_pass_id: int = 1,
         uv_transform: Affine2 = Affine2.IDENTITY,
         clearcoat: float = 0.0,
@@ -128,7 +128,7 @@ class StandardMaterial(Asset):
     parallax_mapping_method: ParallaxMappingMethod
     max_parallax_layer_count: float
     lightmap_exposure: float
-    opaque_render_method: OpaqueRenderMethod
+    opaque_render_method: OpaqueRendererMethod
     deferred_lighting_pass_id: int
     uv_transform: Affine2
     clearcoat: float
@@ -504,10 +504,10 @@ class DefaultOpaqueRendererMethod(Resource):
     """Default opaque rendering method resource.
 
     Controls the default rendering method (forward or deferred)
-    used for opaque materials that specify OpaqueRenderMethod.Auto.
+    used for opaque materials that specify OpaqueRendererMethod.Auto.
     """
 
-    def __init__(self, method: OpaqueRenderMethod = ...) -> None: ...
+    def __init__(self, method: OpaqueRendererMethod = ...) -> None: ...
 
     @staticmethod
     def forward() -> DefaultOpaqueRendererMethod:

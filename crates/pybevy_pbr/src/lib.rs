@@ -57,12 +57,10 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<forward_decal::PyForwardDecal>()?;
     m.add_class::<falloff::PyFalloff>()?;
     m.add_class::<opaque_renderer_method::PyOpaqueRendererMethod>()?;
-
     m.add_class::<shader_material_py::PyShaderMaterial>()?;
     m.add_class::<shader_material_py::PyShaderMaterialPlugin>()?;
     m.add_class::<shader_material_py::PyMeshMaterial3dShader>()?;
-    // TODO: Review. Render types re-exported through the pbr Python module.
-    m.add_class::<pybevy_render::opaque_render_method::PyOpaqueRenderMethod>()?;
+    // TODO(pybevy/pybevy#110): Render type re-exported through the pbr Python module
     m.add_class::<pybevy_render::atmosphere_mode::PyAtmosphereMode>()?;
     parent.add_submodule(&m)
 }

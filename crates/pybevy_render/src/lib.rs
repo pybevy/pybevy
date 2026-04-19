@@ -5,7 +5,6 @@ pub mod color_grading_component;
 pub mod face;
 pub mod mip_bias;
 pub mod msaa;
-pub mod opaque_render_method;
 pub mod plugin;
 pub mod power_preference;
 pub mod temporal_jitter;
@@ -33,7 +32,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<alpha_mode::PyAlphaMode>()?;
     m.add_class::<atmosphere_mode::PyAtmosphereMode>()?;
     m.add_class::<face::PyFace>()?;
-    m.add_class::<opaque_render_method::PyOpaqueRenderMethod>()?;
     m.add_class::<unit_markers::PyHdr>()?;
     m.add_class::<unit_markers::PyNoAutomaticBatching>()?;
     m.add_class::<unit_markers::PyNoIndirectDrawing>()?;

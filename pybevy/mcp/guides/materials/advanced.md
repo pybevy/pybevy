@@ -172,7 +172,7 @@ Controls whether the material uses forward or deferred rendering:
 ```python
 # Force deferred for complex lighting scenes
 mat = materials.add(StandardMaterial(
-    opaque_render_method=OpaqueRenderMethod.Deferred,
+    opaque_render_method=OpaqueRendererMethod.Deferred,
 ))
 ```
 

@@ -8,9 +8,9 @@ use pybevy_core::{
 };
 use pybevy_macros::pyasset;
 use pybevy_math::affine2::PyAffine2;
-use pybevy_render::{
-    alpha_mode::PyAlphaMode, face::PyFace, opaque_render_method::PyOpaqueRenderMethod,
-};
+use pybevy_render::{alpha_mode::PyAlphaMode, face::PyFace};
+
+use crate::opaque_renderer_method::PyOpaqueRendererMethod;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::{parallax_mapping_method::PyParallaxMappingMethod, uv_channel::PyUvChannel};
@@ -97,7 +97,7 @@ impl PyStandardMaterial {
         parallax_mapping_method = PyParallaxMappingMethod::Occlusion(),
         max_parallax_layer_count = 16.0,
         lightmap_exposure = 1.0,
-        opaque_render_method = PyOpaqueRenderMethod::Auto,
+        opaque_render_method = PyOpaqueRendererMethod::Auto,
         deferred_lighting_pass_id = 1,
         uv_transform = PyAffine2::IDENTITY,
         clearcoat = 0.0,
@@ -142,7 +142,7 @@ impl PyStandardMaterial {
         parallax_mapping_method: PyParallaxMappingMethod,
         max_parallax_layer_count: f32,
         lightmap_exposure: f32,
-        opaque_render_method: PyOpaqueRenderMethod,
+        opaque_render_method: PyOpaqueRendererMethod,
         deferred_lighting_pass_id: u8,
         uv_transform: PyAffine2,
         clearcoat: f32,
@@ -635,12 +635,12 @@ impl PyStandardMaterial {
     }
 
     #[getter]
-    pub fn opaque_render_method(&self) -> PyResult<PyOpaqueRenderMethod> {
+    pub fn opaque_render_method(&self) -> PyResult<PyOpaqueRendererMethod> {
         Ok(self.as_ref()?.opaque_render_method.into())
     }
 
     #[setter]
-    pub fn set_opaque_render_method(&mut self, method: PyOpaqueRenderMethod) -> PyResult<()> {
+    pub fn set_opaque_render_method(&mut self, method: PyOpaqueRendererMethod) -> PyResult<()> {
         self.as_mut()?.opaque_render_method = method.into();
         Ok(())
     }
