@@ -85,8 +85,9 @@ fn get_entity_context() -> (Option<Entity>, Option<*mut World>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bevy::ecs::component::Component;
+
+    use super::*;
 
     #[derive(Component)]
     struct Health;
@@ -149,7 +150,10 @@ mod tests {
 
         // Before marking, component should not appear changed since last_run
         let this_run = world.read_change_tick();
-        let ticks = world.entity(entity).get_change_ticks_by_id(component_id).unwrap();
+        let ticks = world
+            .entity(entity)
+            .get_change_ticks_by_id(component_id)
+            .unwrap();
         assert!(!ticks.is_changed(last_run, this_run));
 
         // Mark it
@@ -158,7 +162,10 @@ mod tests {
 
         // Now it should appear changed
         let this_run = world.read_change_tick();
-        let ticks = world.entity(entity).get_change_ticks_by_id(component_id).unwrap();
+        let ticks = world
+            .entity(entity)
+            .get_change_ticks_by_id(component_id)
+            .unwrap();
         assert!(
             ticks.is_changed(last_run, this_run),
             "component should be marked as changed after mark_component_changed_explicit"
@@ -188,4 +195,3 @@ mod tests {
         unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
     }
 }
-

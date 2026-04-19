@@ -68,10 +68,7 @@ fn apply_filters<D: QueryData>(builder: &mut QueryBuilder<D>, spec: &QueryBuildS
 ///
 /// Registers component access (ref or mut, required or optional) and applies
 /// all filters. Call `builder.build()` afterwards to obtain the `QueryState`.
-pub fn configure_mut_query(
-    builder: &mut QueryBuilder<FilteredEntityMut>,
-    spec: &QueryBuildSpec,
-) {
+pub fn configure_mut_query(builder: &mut QueryBuilder<FilteredEntityMut>, spec: &QueryBuildSpec) {
     for comp in &spec.components {
         if comp.optional {
             builder.optional(|b| {
@@ -94,10 +91,7 @@ pub fn configure_mut_query(
 /// Configure a `QueryBuilder<FilteredEntityRef>` from a read-only specification.
 ///
 /// This should only be called when `spec.is_read_only()` returns true.
-pub fn configure_ref_query(
-    builder: &mut QueryBuilder<FilteredEntityRef>,
-    spec: &QueryBuildSpec,
-) {
+pub fn configure_ref_query(builder: &mut QueryBuilder<FilteredEntityRef>, spec: &QueryBuildSpec) {
     for comp in &spec.components {
         debug_assert!(
             !comp.mutable,
@@ -144,8 +138,9 @@ pub fn build_query_state_ref<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bevy::ecs::component::Component;
+
+    use super::*;
 
     #[derive(Component)]
     struct A;
@@ -184,8 +179,16 @@ mod tests {
         let mut world = World::new();
         let (a, b, _) = ids(&mut world);
         let spec = spec_with(vec![
-            QueryComponent { id: a, optional: false, mutable: false },
-            QueryComponent { id: b, optional: false, mutable: false },
+            QueryComponent {
+                id: a,
+                optional: false,
+                mutable: false,
+            },
+            QueryComponent {
+                id: b,
+                optional: false,
+                mutable: false,
+            },
         ]);
         assert!(spec.is_read_only());
     }
@@ -195,8 +198,16 @@ mod tests {
         let mut world = World::new();
         let (a, b, _) = ids(&mut world);
         let spec = spec_with(vec![
-            QueryComponent { id: a, optional: false, mutable: false },
-            QueryComponent { id: b, optional: false, mutable: true },
+            QueryComponent {
+                id: a,
+                optional: false,
+                mutable: false,
+            },
+            QueryComponent {
+                id: b,
+                optional: false,
+                mutable: true,
+            },
         ]);
         assert!(!spec.is_read_only());
     }
@@ -210,9 +221,11 @@ mod tests {
         world.spawn(B); // should not match
         world.spawn((A, B));
 
-        let spec = spec_with(vec![
-            QueryComponent { id: a_id, optional: false, mutable: false },
-        ]);
+        let spec = spec_with(vec![QueryComponent {
+            id: a_id,
+            optional: false,
+            mutable: false,
+        }]);
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
         let mut state = builder.build();
@@ -228,9 +241,11 @@ mod tests {
         world.spawn((A, B));
 
         let spec = QueryBuildSpec {
-            components: vec![
-                QueryComponent { id: a_id, optional: false, mutable: false },
-            ],
+            components: vec![QueryComponent {
+                id: a_id,
+                optional: false,
+                mutable: false,
+            }],
             with_filters: vec![b_id],
             without_filters: vec![],
             changed_filters: vec![],
@@ -252,9 +267,11 @@ mod tests {
         world.spawn((A, B));
 
         let spec = QueryBuildSpec {
-            components: vec![
-                QueryComponent { id: a_id, optional: false, mutable: false },
-            ],
+            components: vec![QueryComponent {
+                id: a_id,
+                optional: false,
+                mutable: false,
+            }],
             with_filters: vec![],
             without_filters: vec![b_id],
             changed_filters: vec![],
@@ -277,8 +294,16 @@ mod tests {
 
         // A required, B optional - should match both entities
         let spec = spec_with(vec![
-            QueryComponent { id: a_id, optional: false, mutable: false },
-            QueryComponent { id: b_id, optional: true, mutable: false },
+            QueryComponent {
+                id: a_id,
+                optional: false,
+                mutable: false,
+            },
+            QueryComponent {
+                id: b_id,
+                optional: true,
+                mutable: false,
+            },
         ]);
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -293,9 +318,11 @@ mod tests {
 
         world.spawn(A);
 
-        let spec = spec_with(vec![
-            QueryComponent { id: a_id, optional: false, mutable: true },
-        ]);
+        let spec = spec_with(vec![QueryComponent {
+            id: a_id,
+            optional: false,
+            mutable: true,
+        }]);
         let mut builder = QueryBuilder::<FilteredEntityMut>::new(&mut world);
         configure_mut_query(&mut builder, &spec);
         let mut state = builder.build();
@@ -307,15 +334,17 @@ mod tests {
         let mut world = World::new();
         let (a_id, b_id, c_id) = ids(&mut world);
 
-        world.spawn(A);         // has A but no B or C -> no match
-        world.spawn((A, B));    // has B -> matches
-        world.spawn((A, C));    // has C -> matches
-        world.spawn(B);         // no A -> no match
+        world.spawn(A); // has A but no B or C -> no match
+        world.spawn((A, B)); // has B -> matches
+        world.spawn((A, C)); // has C -> matches
+        world.spawn(B); // no A -> no match
 
         let spec = QueryBuildSpec {
-            components: vec![
-                QueryComponent { id: a_id, optional: false, mutable: false },
-            ],
+            components: vec![QueryComponent {
+                id: a_id,
+                optional: false,
+                mutable: false,
+            }],
             with_filters: vec![],
             without_filters: vec![],
             changed_filters: vec![],

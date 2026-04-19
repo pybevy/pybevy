@@ -20,8 +20,9 @@ pub fn create_commands_from_queue<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bevy::ecs::{component::Component, world::World};
+
+    use super::*;
 
     #[derive(Component)]
     struct Marker;
