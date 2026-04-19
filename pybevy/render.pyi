@@ -97,16 +97,6 @@ class AlphaMode:
     @staticmethod
     def AlphaToCoverage() -> AlphaMode: ...
 
-class OpaqueRenderMethod:
-    """Opaque rendering method selection (render module re-export)."""
-
-    Forward: OpaqueRenderMethod
-    Deferred: OpaqueRenderMethod
-    Auto: OpaqueRenderMethod
-    FORWARD: OpaqueRenderMethod
-    DEFERRED: OpaqueRenderMethod
-    AUTO: OpaqueRenderMethod
-
 class ColorGradingSection:
     """Color grading values applied to a specific tonal range (shadows, midtones, or highlights).
 
