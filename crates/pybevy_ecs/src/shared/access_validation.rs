@@ -262,3 +262,453 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn filters(with: &[&str], without: &[&str]) -> QueryFilters {
+        QueryFilters {
+            with: with.iter().map(|s| s.to_string()).collect(),
+            without: without.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn comp(key: &str, mutable: bool) -> ComponentAccess<String> {
+        ComponentAccess {
+            key: key.to_string(),
+            name: key.to_string(),
+            mutable,
+        }
+    }
+
+    fn query(components: Vec<ComponentAccess<String>>, f: QueryFilters) -> ParamAccess<String> {
+        ParamAccess::Components {
+            accesses: components,
+            filters: f,
+        }
+    }
+
+    fn res(key: usize, name: &str, mutable: bool) -> ParamAccess<String> {
+        ParamAccess::Resource {
+            key,
+            name: name.to_string(),
+            mutable,
+        }
+    }
+
+    fn assets(key: &str, mutable: bool) -> ParamAccess<String> {
+        ParamAccess::Assets {
+            key: key.to_string(),
+            name: key.to_string(),
+            mutable,
+        }
+    }
+
+    #[test]
+    fn empty_filters_not_disjoint() {
+        let a = QueryFilters::default();
+        let b = QueryFilters::default();
+        assert!(!a.is_disjoint_from(&b));
+    }
+
+    #[test]
+    fn with_vs_without_is_disjoint() {
+        let a = filters(&["Transform"], &[]);
+        let b = filters(&[], &["Transform"]);
+        assert!(a.is_disjoint_from(&b));
+    }
+
+    #[test]
+    fn without_vs_with_is_disjoint() {
+        let a = filters(&[], &["Transform"]);
+        let b = filters(&["Transform"], &[]);
+        assert!(a.is_disjoint_from(&b));
+    }
+
+    #[test]
+    fn same_with_not_disjoint() {
+        let a = filters(&["Transform"], &[]);
+        let b = filters(&["Transform"], &[]);
+        assert!(!a.is_disjoint_from(&b));
+    }
+
+    #[test]
+    fn unrelated_filters_not_disjoint() {
+        let a = filters(&["Transform"], &[]);
+        let b = filters(&["Velocity"], &[]);
+        assert!(!a.is_disjoint_from(&b));
+    }
+
+    #[test]
+    fn partial_overlap_disjoint() {
+        // A: With[Player, Transform], Without[]
+        // B: With[Enemy], Without[Player]
+        // Player in A's with, Player in B's without → disjoint
+        let a = filters(&["Player", "Transform"], &[]);
+        let b = filters(&["Enemy"], &["Player"]);
+        assert!(a.is_disjoint_from(&b));
+    }
+
+    #[test]
+    fn empty_params_ok() {
+        assert!(validate_access::<String>(&[]).is_ok());
+    }
+
+    #[test]
+    fn single_readonly_query_ok() {
+        let params = [query(
+            vec![comp("Transform", false)],
+            filters(&["Transform"], &[]),
+        )];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn none_params_ignored() {
+        let params = [ParamAccess::<String>::None, ParamAccess::None];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn two_readonly_same_component_ok() {
+        let params = [
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn read_and_mut_same_component_conflicts() {
+        let params = [
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.existing_idx, 0);
+        assert!(err.mutable);
+        assert_eq!(err.comp_name, "Transform");
+    }
+
+    #[test]
+    fn two_mut_same_component_conflicts() {
+        let params = [
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.existing_idx, 0);
+    }
+
+    #[test]
+    fn mut_overlap_with_disjoint_filters_ok() {
+        // Query[Mut[Transform], With[Player]] vs Query[Mut[Transform], With[Enemy]]
+        // Disjoint because Player in A's With, Player absent from B → not disjoint
+        // BUT: With[Player] vs Without[Player] would be disjoint
+        // Actually need: A With[Player], B Without[Player]
+        let params = [
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &[]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform"], &["Player"]),
+            ),
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn mut_overlap_non_disjoint_filters_conflicts() {
+        // Both have With[Player] — not disjoint
+        let params = [
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &[]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &[]),
+            ),
+        ];
+        assert!(validate_access(&params).is_err());
+    }
+
+    #[test]
+    fn different_components_ok() {
+        let params = [
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+            query(vec![comp("Velocity", true)], filters(&["Velocity"], &[])),
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn multi_component_query_partial_overlap_conflicts() {
+        // Query[Mut[Transform], Velocity] vs Query[Mut[Transform], Health]
+        // Transform is mut in both → conflict
+        let params = [
+            query(
+                vec![comp("Transform", true), comp("Velocity", false)],
+                filters(&["Transform", "Velocity"], &[]),
+            ),
+            query(
+                vec![comp("Transform", true), comp("Health", false)],
+                filters(&["Transform", "Health"], &[]),
+            ),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.comp_name, "Transform");
+    }
+
+    #[test]
+    fn three_way_conflict_detected() {
+        // A: read Transform, B: read Transform, C: mut Transform
+        // A-B ok, A-C conflict (or B-C conflict — C is param_idx=2)
+        let params = [
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 2);
+        // Conflicts with first reader (idx 0)
+        assert_eq!(err.existing_idx, 0);
+    }
+
+    #[test]
+    fn two_res_same_resource_ok() {
+        let params = [res(1, "Time", false), res(1, "Time", false)];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn res_and_resmut_same_resource_conflicts() {
+        let params = [res(1, "Time", false), res(1, "Time", true)];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.existing_idx, 0);
+        assert!(err.mutable);
+    }
+
+    #[test]
+    fn resmut_and_res_same_resource_conflicts() {
+        let params = [res(1, "Time", true), res(1, "Time", false)];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.existing_idx, 0);
+    }
+
+    #[test]
+    fn two_resmut_same_resource_conflicts() {
+        let params = [res(1, "Time", true), res(1, "Time", true)];
+        assert!(validate_access(&params).is_err());
+    }
+
+    #[test]
+    fn different_resources_ok() {
+        let params = [res(1, "Time", true), res(2, "Score", true)];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn two_res_assets_same_type_ok() {
+        let params = [assets("Mesh", false), assets("Mesh", false)];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn res_and_resmut_assets_same_type_conflicts() {
+        let params = [assets("Mesh", false), assets("Mesh", true)];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert!(err.comp_name.contains("Mesh"));
+    }
+
+    #[test]
+    fn different_asset_types_ok() {
+        let params = [assets("Mesh", true), assets("StandardMaterial", true)];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn world_alone_ok() {
+        let params = [ParamAccess::<String>::World];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn world_with_none_ok() {
+        let params = [ParamAccess::<String>::World, ParamAccess::None];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn world_after_query_conflicts() {
+        let params = [
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+            ParamAccess::World,
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.comp_name, "World");
+    }
+
+    #[test]
+    fn query_after_world_conflicts() {
+        let params = [
+            ParamAccess::World,
+            query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.existing_name, "World");
+    }
+
+    #[test]
+    fn world_after_res_conflicts() {
+        let params = [res(1, "Time", false), ParamAccess::World];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.comp_name, "World");
+    }
+
+    #[test]
+    fn res_after_world_conflicts() {
+        let params = [ParamAccess::World, res(1, "Time", false)];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.existing_name, "World");
+    }
+
+    #[test]
+    fn world_after_assets_conflicts() {
+        let params = [assets("Mesh", false), ParamAccess::World];
+        assert!(validate_access(&params).is_err());
+    }
+
+    #[test]
+    fn assets_after_world_conflicts() {
+        let params = [ParamAccess::World, assets("Mesh", false)];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.existing_name, "World");
+    }
+
+    #[test]
+    fn two_worlds_conflict() {
+        let params = [ParamAccess::<String>::World, ParamAccess::World];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 1);
+        assert_eq!(err.existing_idx, 0);
+        assert_eq!(err.comp_name, "World");
+        assert_eq!(err.existing_name, "World");
+    }
+
+    #[test]
+    fn query_plus_res_plus_commands_ok() {
+        let params = [
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+            res(1, "Time", false),
+            ParamAccess::None, // Commands
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn query_plus_different_assets_ok() {
+        let params = [
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+            assets("Mesh", true),
+            assets("StandardMaterial", false),
+            res(1, "Time", false),
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn complex_disjoint_system_ok() {
+        // Simulates: fn sys(
+        //   q1: Query[Mut[Transform], With[Player]],
+        //   q2: Query[Mut[Transform], Without[Player]],
+        //   time: Res[Time],
+        //   commands: Commands,
+        // )
+        let params = [
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &[]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform"], &["Player"]),
+            ),
+            res(1, "Time", false),
+            ParamAccess::None,
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn conflict_reports_correct_indices() {
+        // params: [None, Res(Time, ro), None, ResMut(Time)]
+        let params = [
+            ParamAccess::<String>::None,
+            res(1, "Time", false),
+            ParamAccess::None,
+            res(1, "Time", true),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.existing_idx, 1);
+        assert_eq!(err.param_idx, 3);
+    }
+
+    #[test]
+    fn n_way_disjoint_three_queries_ok() {
+        // Three mutually-disjoint queries on the same component:
+        //   Query[Mut[Transform], With[Player], Without[Enemy]]
+        //   Query[Mut[Transform], With[Enemy], Without[Player]]
+        //   Query[Mut[Transform], Without[Player], Without[Enemy]]
+        let params = [
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &["Enemy"]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Enemy"], &["Player"]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform"], &["Player", "Enemy"]),
+            ),
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn n_way_third_query_conflicts_with_first() {
+        // Two disjoint + third overlaps with first:
+        //   Query[Mut[Transform], With[Player]]
+        //   Query[Mut[Transform], Without[Player]]  — disjoint with first
+        //   Query[Mut[Transform], With[Player]]      — conflicts with first
+        let params = [
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &[]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform"], &["Player"]),
+            ),
+            query(
+                vec![comp("Transform", true)],
+                filters(&["Transform", "Player"], &[]),
+            ),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(err.param_idx, 2);
+        assert_eq!(err.existing_idx, 0);
+    }
+}

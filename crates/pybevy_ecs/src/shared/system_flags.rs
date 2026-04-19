@@ -13,3 +13,33 @@ pub fn compute_system_flags(needs_exclusive: bool, needs_commands: bool) -> Syst
         SystemStateFlags::empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_takes_priority_over_commands() {
+        let flags = compute_system_flags(true, true);
+        assert!(flags.contains(SystemStateFlags::EXCLUSIVE));
+    }
+
+    #[test]
+    fn exclusive_without_commands() {
+        let flags = compute_system_flags(true, false);
+        assert!(flags.contains(SystemStateFlags::EXCLUSIVE));
+    }
+
+    #[test]
+    fn commands_only() {
+        let flags = compute_system_flags(false, true);
+        assert!(flags.contains(SystemStateFlags::DEFERRED));
+        assert!(!flags.contains(SystemStateFlags::EXCLUSIVE));
+    }
+
+    #[test]
+    fn neither_exclusive_nor_commands() {
+        let flags = compute_system_flags(false, false);
+        assert!(flags.is_empty());
+    }
+}

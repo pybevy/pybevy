@@ -11,7 +11,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  RUST_COVERAGE_THRESHOLD: 0
+  RUST_COVERAGE_THRESHOLD: 29
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -157,6 +157,7 @@ jobs:
             -p pybevy_storage \
             -p pybevy_bytecodevm \
             -p pybevy_core \
+            -p pybevy_ecs \
             --summary-only 2>&1 | tee coverage-summary.txt
 
       - name: Check coverage threshold
