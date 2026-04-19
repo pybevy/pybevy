@@ -185,3 +185,154 @@ pub struct PyResourceStorage {
 // SAFETY: We ensure all Python access happens within Python::attach
 unsafe impl Send for PyResourceStorage {}
 unsafe impl Sync for PyResourceStorage {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_component_id(index: usize) -> ComponentId {
+        ComponentId::new(index)
+    }
+
+    fn make_entry(name: &str) -> CustomComponentEntry {
+        CustomComponentEntry {
+            type_ptr: std::ptr::null(),
+            name: name.to_string(),
+            is_pyobject_storage: false,
+        }
+    }
+
+    fn make_resource_entry(name: &str) -> CustomResourceEntry {
+        CustomResourceEntry {
+            type_ptr: std::ptr::null(),
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn reload_mode_equality() {
+        assert_eq!(ReloadRequestMode::Full, ReloadRequestMode::Full);
+        assert_eq!(ReloadRequestMode::Partial, ReloadRequestMode::Partial);
+        assert_ne!(ReloadRequestMode::Full, ReloadRequestMode::Partial);
+    }
+
+    #[test]
+    fn pending_reload_default_is_none() {
+        let req = PendingReloadRequest::default();
+        assert!(req.mode.is_none());
+    }
+
+    #[test]
+    fn component_info_insert_and_get() {
+        let mut info = CustomComponentInfo::default();
+        let id = make_component_id(0);
+        info.insert(id, make_entry("Health"));
+        assert!(info.get(id).is_some());
+        assert_eq!(info.get(id).unwrap().name, "Health");
+    }
+
+    #[test]
+    fn component_info_get_missing() {
+        let info = CustomComponentInfo::default();
+        assert!(info.get(make_component_id(99)).is_none());
+    }
+
+    #[test]
+    fn component_info_overwrite() {
+        let mut info = CustomComponentInfo::default();
+        let id = make_component_id(0);
+        info.insert(id, make_entry("Old"));
+        info.insert(id, make_entry("New"));
+        assert_eq!(info.get(id).unwrap().name, "New");
+    }
+
+    #[test]
+    fn component_info_iter() {
+        let mut info = CustomComponentInfo::default();
+        info.insert(make_component_id(0), make_entry("A"));
+        info.insert(make_component_id(1), make_entry("B"));
+        let names: Vec<String> = info.iter().map(|(_, e)| e.name.clone()).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"A".to_string()));
+        assert!(names.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn component_info_clear() {
+        let mut info = CustomComponentInfo::default();
+        info.insert(make_component_id(0), make_entry("A"));
+        info.insert(make_component_id(1), make_entry("B"));
+        info.clear();
+        assert!(info.get(make_component_id(0)).is_none());
+        assert_eq!(info.iter().count(), 0);
+    }
+
+    #[test]
+    fn component_info_update_type_ptr() {
+        let mut info = CustomComponentInfo::default();
+        let id = make_component_id(0);
+        info.insert(id, make_entry("Health"));
+        assert!(info.get(id).unwrap().type_ptr.is_null());
+
+        let fake_ptr = 0xDEAD as *const PyTypeObject;
+        info.update_type_ptr(id, fake_ptr);
+        assert_eq!(info.get(id).unwrap().type_ptr, fake_ptr);
+    }
+
+    #[test]
+    fn component_info_update_type_ptr_missing_is_noop() {
+        let mut info = CustomComponentInfo::default();
+        let fake_ptr = 0xDEAD as *const PyTypeObject;
+        // Should not panic
+        info.update_type_ptr(make_component_id(99), fake_ptr);
+    }
+
+    #[test]
+    fn resource_info_insert_and_get() {
+        let mut info = CustomResourceInfo::default();
+        let id = make_component_id(0);
+        info.insert(id, make_resource_entry("Score"));
+        assert_eq!(info.get(id).unwrap().name, "Score");
+    }
+
+    #[test]
+    fn resource_info_clear() {
+        let mut info = CustomResourceInfo::default();
+        info.insert(make_component_id(0), make_resource_entry("A"));
+        info.clear();
+        assert_eq!(info.iter().count(), 0);
+    }
+
+    #[test]
+    fn resource_info_update_type_ptr() {
+        let mut info = CustomResourceInfo::default();
+        let id = make_component_id(0);
+        info.insert(id, make_resource_entry("Score"));
+
+        let fake_ptr = 0xBEEF as *const PyTypeObject;
+        info.update_type_ptr(id, fake_ptr);
+        assert_eq!(info.get(id).unwrap().type_ptr, fake_ptr);
+    }
+
+    #[test]
+    fn reload_result_default() {
+        let r = ReloadResult::default();
+        assert!(!r.escalated);
+        assert!(!r.failed);
+        assert!(r.actual_mode.is_none());
+        assert!(r.escalation_reason.is_none());
+        assert!(r.failure_reason.is_none());
+        assert!(!r.running_previous_generation);
+        assert!(r.plugins_added.is_none());
+        assert!(r.plugins_removed.is_none());
+        assert!(r.systems_removed.is_none());
+    }
+
+    #[test]
+    fn last_system_error_default() {
+        let e = LastSystemError::default();
+        assert!(e.error.is_none());
+        assert!(e.traceback.is_none());
+        assert_eq!(e.timestamp_secs, 0.0);
+    }
+}

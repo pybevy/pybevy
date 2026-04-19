@@ -52,19 +52,10 @@ fn get_global_registry() -> &'static RwLock<GlobalBridgeRegistry> {
     GLOBAL_COMPONENT_BRIDGES.get_or_init(|| RwLock::new(GlobalBridgeRegistry::default()))
 }
 
-/// Register a component bridge in the global registry
+/// Register a component bridge in the global registry.
 ///
 /// This should be called by feature crates during initialization.
 /// The bridge must have a valid py_type_ptr() - null pointers are ignored.
-///
-/// # Example
-///
-/// ```ignore
-/// use pybevy_core::registry::global_registry;
-///
-/// // In feature crate's module init or plugin build
-/// global_registry::register_component_bridge(AudioPlayerBridge);
-/// ```
 pub fn register_component_bridge<B: ComponentBridge>(bridge: B) {
     register_component_bridge_arc(Arc::new(bridge));
 }
@@ -83,19 +74,9 @@ pub fn register_component_bridge_arc(bridge: Arc<dyn ComponentBridge>) {
     guard.by_py_type.insert(ptr, bridge);
 }
 
-/// Check if a Python type pointer is registered in the global registry
+/// Check if a Python type pointer is registered in the global registry.
 ///
 /// Returns the bridge if found, None otherwise.
-///
-/// # Example
-///
-/// ```ignore
-/// let ptr = py_type.as_type_ptr();
-/// if let Some(bridge) = global_registry::get_bridge_by_py_type(ptr) {
-///     // Type is dynamically registered
-///     return Ok(PyComponentType::Dynamic(ptr));
-/// }
-/// ```
 pub fn get_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn ComponentBridge>> {
     let registry = get_global_registry();
     let guard = registry.read().expect("Global registry lock poisoned");
@@ -142,19 +123,10 @@ fn get_global_resource_registry() -> &'static RwLock<GlobalResourceBridgeRegistr
     GLOBAL_RESOURCE_BRIDGES.get_or_init(|| RwLock::new(GlobalResourceBridgeRegistry::default()))
 }
 
-/// Register a resource bridge in the global registry
+/// Register a resource bridge in the global registry.
 ///
 /// This should be called by feature crates during initialization.
 /// The bridge must have a valid py_type_ptr() - null pointers are ignored.
-///
-/// # Example
-///
-/// ```ignore
-/// use pybevy_core::registry::global_registry;
-///
-/// // In feature crate's module init or plugin build
-/// global_registry::register_resource_bridge(GlobalVolumeBridge);
-/// ```
 pub fn register_resource_bridge<B: ResourceBridge>(bridge: B) {
     register_resource_bridge_arc(Arc::new(bridge));
 }
@@ -232,19 +204,10 @@ fn get_global_asset_registry() -> &'static RwLock<GlobalAssetBridgeRegistry> {
     GLOBAL_ASSET_BRIDGES.get_or_init(|| RwLock::new(GlobalAssetBridgeRegistry::default()))
 }
 
-/// Register an asset bridge in the global registry
+/// Register an asset bridge in the global registry.
 ///
 /// This should be called by feature crates during initialization.
 /// The bridge must have a valid py_type_ptr() - null pointers are ignored.
-///
-/// # Example
-///
-/// ```ignore
-/// use pybevy_core::registry::global_registry;
-///
-/// // In feature crate's module init or plugin build
-/// global_registry::register_asset_bridge(AudioSourceBridge);
-/// ```
 pub fn register_asset_bridge<B: AssetBridge>(bridge: B) {
     register_asset_bridge_arc(Arc::new(bridge));
 }
@@ -343,19 +306,11 @@ fn get_type_id_registry() -> &'static RwLock<TypeIdRegistry> {
     GLOBAL_TYPE_ID_REGISTRY.get_or_init(|| RwLock::new(TypeIdRegistry::default()))
 }
 
-/// Register a component's TypeId in the global registry
+/// Register a component's TypeId in the global registry.
 ///
 /// This should be called by both:
 /// - Feature crate #[pycomponent(..., bridge)] attributes
 /// - Main crate native_component! macros
-///
-/// # Example
-///
-/// ```ignore
-/// use pybevy_core::registry::global_registry;
-///
-/// global_registry::register_type_id::<MyPyComponent, MyBevyComponent>();
-/// ```
 pub fn register_type_id<P: pyo3::PyTypeInfo, B: 'static>() {
     pyo3::Python::attach(|py| {
         let ptr = P::type_object(py).as_type_ptr();
@@ -404,19 +359,10 @@ fn get_global_message_registry() -> &'static RwLock<GlobalMessageBridgeRegistry>
     GLOBAL_MESSAGE_BRIDGES.get_or_init(|| RwLock::new(GlobalMessageBridgeRegistry::default()))
 }
 
-/// Register a message bridge in the global registry
+/// Register a message bridge in the global registry.
 ///
 /// This should be called by feature crates during initialization.
 /// The bridge must have a valid py_type_ptr() - null pointers are ignored.
-///
-/// # Example
-///
-/// ```ignore
-/// use pybevy_core::registry::global_registry;
-///
-/// // In feature crate's module init or plugin build
-/// global_registry::register_message_bridge(KeyboardInputBridge);
-/// ```
 pub fn register_message_bridge<B: MessageBridge>(bridge: B) {
     register_message_bridge_arc(Arc::new(bridge));
 }
@@ -656,4 +602,23 @@ pub fn run_system_once(
         .get()
         .ok_or("run_system_once function not registered")?;
     f(world, py, func)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Note: Can't easily test registration without a real ComponentBridge impl
+    // These are basic sanity tests
+
+    #[test]
+    fn test_empty_registry() {
+        // Registry should be accessible
+        assert!(get_bridge_by_py_type(std::ptr::null()).is_none());
+    }
+
+    #[test]
+    fn test_null_pointer_not_found() {
+        assert!(!contains_py_type(std::ptr::null()));
+    }
 }
