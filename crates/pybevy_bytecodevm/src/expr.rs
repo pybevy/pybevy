@@ -906,3 +906,384 @@ impl RustExpr {
         Ok(compiler.finalize())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::VM;
+
+    // Helper: compile an expression and return bytecode
+    fn compile_expr(expr: &RustExpr) -> CompiledBytecode {
+        let mut compiler = Compiler::new();
+        expr.compile(&mut compiler);
+        compiler.finalize()
+    }
+
+    // Helper: compile and execute with no fields, return top of stack
+    fn eval_const_expr(expr: &RustExpr) -> f64 {
+        let bytecode = compile_expr(expr);
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        vm.stack[0].as_float()
+    }
+
+    fn c(v: f64) -> Box<RustExpr> {
+        Box::new(RustExpr::Const(v))
+    }
+
+    #[test]
+    fn test_compile_simple_add() {
+        let expr = RustExpr::Add(c(5.0), c(3.0));
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.bytecode.len(), 3);
+        assert_eq!(bytecode.constants.len(), 2);
+    }
+
+    #[test]
+    fn test_compile_assignment() {
+        let component_id = ComponentId::new(0);
+        let field_id = FieldId {
+            component_id,
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id,
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            c(10.0),
+        );
+
+        let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
+        // PushField(0), PushConst(10.0), Add, StoreField(0)
+        assert_eq!(bytecode.bytecode.len(), 4);
+    }
+
+    #[test]
+    fn test_compile_all_binary_ops() {
+        assert_eq!(eval_const_expr(&RustExpr::Add(c(3.0), c(2.0))), 5.0);
+        assert_eq!(eval_const_expr(&RustExpr::Sub(c(10.0), c(4.0))), 6.0);
+        assert_eq!(eval_const_expr(&RustExpr::Mul(c(3.0), c(7.0))), 21.0);
+        assert_eq!(eval_const_expr(&RustExpr::Div(c(15.0), c(3.0))), 5.0);
+        assert_eq!(eval_const_expr(&RustExpr::Pow(c(2.0), c(10.0))), 1024.0);
+        assert_eq!(eval_const_expr(&RustExpr::Mod(c(10.0), c(3.0))), 1.0);
+        assert_eq!(eval_const_expr(&RustExpr::Min(c(3.0), c(7.0))), 3.0);
+        assert_eq!(eval_const_expr(&RustExpr::Max(c(3.0), c(7.0))), 7.0);
+    }
+
+    #[test]
+    fn test_compile_all_unary_ops() {
+        assert_eq!(eval_const_expr(&RustExpr::Neg(c(5.0))), -5.0);
+        assert_eq!(eval_const_expr(&RustExpr::Abs(c(-7.0))), 7.0);
+        assert_eq!(eval_const_expr(&RustExpr::Floor(c(3.7))), 3.0);
+        assert_eq!(eval_const_expr(&RustExpr::Ceil(c(3.2))), 4.0);
+        assert_eq!(eval_const_expr(&RustExpr::Round(c(3.5))), 4.0);
+        assert_eq!(eval_const_expr(&RustExpr::Sqrt(c(25.0))), 5.0);
+        assert_eq!(eval_const_expr(&RustExpr::Sign(c(-42.0))), -1.0);
+        assert_eq!(eval_const_expr(&RustExpr::Sign(c(0.0))), 0.0);
+        assert_eq!(eval_const_expr(&RustExpr::Fract(c(3.75))), 0.75);
+        assert!((eval_const_expr(&RustExpr::Exp(c(0.0))) - 1.0).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Ln(c(1.0)))).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Log10(c(100.0))) - 2.0).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Log2(c(8.0))) - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compile_trig_ops() {
+        use std::f64::consts::PI;
+        assert!((eval_const_expr(&RustExpr::Sin(c(PI / 2.0))) - 1.0).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Cos(c(0.0))) - 1.0).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Tan(c(0.0)))).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Asin(c(1.0))) - PI / 2.0).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Acos(c(1.0)))).abs() < 1e-10);
+        assert!((eval_const_expr(&RustExpr::Atan(c(0.0)))).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compile_clamp() {
+        // clamp(15.0, 0.0, 10.0) = 10.0
+        let expr = RustExpr::Clamp(c(15.0), c(0.0), c(10.0));
+        assert_eq!(eval_const_expr(&expr), 10.0);
+
+        // clamp(-5.0, 0.0, 10.0) = 0.0
+        let expr = RustExpr::Clamp(c(-5.0), c(0.0), c(10.0));
+        assert_eq!(eval_const_expr(&expr), 0.0);
+
+        // clamp(5.0, 0.0, 10.0) = 5.0
+        let expr = RustExpr::Clamp(c(5.0), c(0.0), c(10.0));
+        assert_eq!(eval_const_expr(&expr), 5.0);
+    }
+
+    #[test]
+    fn test_compile_lerp() {
+        // lerp(0.0, 10.0, 0.5) = 5.0
+        let expr = RustExpr::Lerp(c(0.0), c(10.0), c(0.5));
+        assert_eq!(eval_const_expr(&expr), 5.0);
+
+        // lerp(0.0, 10.0, 0.0) = 0.0
+        let expr = RustExpr::Lerp(c(0.0), c(10.0), c(0.0));
+        assert_eq!(eval_const_expr(&expr), 0.0);
+
+        // lerp(0.0, 10.0, 1.0) = 10.0
+        let expr = RustExpr::Lerp(c(0.0), c(10.0), c(1.0));
+        assert_eq!(eval_const_expr(&expr), 10.0);
+    }
+
+    #[test]
+    fn test_compile_where() {
+        // where(5 > 3, 100, 200) = 100
+        let expr = RustExpr::Where(Box::new(RustExpr::Gt(c(5.0), c(3.0))), c(100.0), c(200.0));
+        assert_eq!(eval_const_expr(&expr), 100.0);
+
+        // where(1 > 5, 100, 200) = 200
+        let expr = RustExpr::Where(Box::new(RustExpr::Gt(c(1.0), c(5.0))), c(100.0), c(200.0));
+        assert_eq!(eval_const_expr(&expr), 200.0);
+    }
+
+    #[test]
+    fn test_compile_comparisons() {
+        let bytecode = compile_expr(&RustExpr::Eq(c(5.0), c(5.0)));
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        let bytecode = compile_expr(&RustExpr::Ne(c(5.0), c(3.0)));
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        let bytecode = compile_expr(&RustExpr::Lt(c(3.0), c(5.0)));
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        let bytecode = compile_expr(&RustExpr::Le(c(5.0), c(5.0)));
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        let bytecode = compile_expr(&RustExpr::Gt(c(5.0), c(3.0)));
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        let bytecode = compile_expr(&RustExpr::Ge(c(3.0), c(5.0)));
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), false);
+    }
+
+    #[test]
+    fn test_compile_logical() {
+        // true AND false = false
+        let expr = RustExpr::And(
+            Box::new(RustExpr::Gt(c(5.0), c(3.0))),
+            Box::new(RustExpr::Lt(c(5.0), c(3.0))),
+        );
+        let bytecode = compile_expr(&expr);
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), false);
+
+        // true OR false = true
+        let expr = RustExpr::Or(
+            Box::new(RustExpr::Gt(c(5.0), c(3.0))),
+            Box::new(RustExpr::Lt(c(5.0), c(3.0))),
+        );
+        let bytecode = compile_expr(&expr);
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        // NOT true = false
+        let expr = RustExpr::Not(Box::new(RustExpr::Gt(c(5.0), c(3.0))));
+        let bytecode = compile_expr(&expr);
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_bool(), false);
+    }
+
+    #[test]
+    fn test_compile_random() {
+        let expr = RustExpr::Random;
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.bytecode.len(), 1);
+        assert!(matches!(bytecode.bytecode[0], Op::Random));
+    }
+
+    #[test]
+    fn test_compile_random_range() {
+        let expr = RustExpr::RandomRange(c(0.0), c(100.0));
+        let bytecode = compile_expr(&expr);
+        // PushConst(0), PushConst(100), RandomRange
+        assert_eq!(bytecode.bytecode.len(), 3);
+    }
+
+    #[test]
+    fn test_compile_field_access() {
+        let expr = RustExpr::Field {
+            component_id: ComponentId::new(5),
+            offset: 16,
+            field_type: FieldType::F32,
+        };
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.bytecode.len(), 1);
+        assert!(matches!(bytecode.bytecode[0], Op::PushField(0)));
+        assert_eq!(bytecode.field_map[0].offset, 16);
+        assert_eq!(bytecode.field_map[0].field_type, FieldType::F32);
+    }
+
+    #[test]
+    fn test_field_deduplication() {
+        // Same field referenced twice should get same index
+        let field = RustExpr::Field {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let expr = RustExpr::Add(Box::new(field.clone()), Box::new(field));
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.field_map.len(), 1); // deduplicated
+        assert!(matches!(bytecode.bytecode[0], Op::PushField(0)));
+        assert!(matches!(bytecode.bytecode[1], Op::PushField(0)));
+    }
+
+    #[test]
+    fn test_different_fields_get_different_indices() {
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id: ComponentId::new(0),
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            Box::new(RustExpr::Field {
+                component_id: ComponentId::new(0),
+                offset: 4,
+                field_type: FieldType::F32,
+            }),
+        );
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.field_map.len(), 2);
+    }
+
+    #[test]
+    fn test_constant_deduplication() {
+        // Same value used twice → one constant pool entry
+        let expr = RustExpr::Add(c(42.0), c(42.0));
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.constants.len(), 1);
+        assert_eq!(bytecode.constants[0], 42.0);
+    }
+
+    #[test]
+    fn test_different_constants() {
+        let expr = RustExpr::Add(c(1.0), c(2.0));
+        let bytecode = compile_expr(&expr);
+        assert_eq!(bytecode.constants.len(), 2);
+    }
+
+    #[test]
+    fn test_deeply_nested() {
+        // ((1 + 2) * 3) - 4 = 5
+        let expr = RustExpr::Sub(
+            Box::new(RustExpr::Mul(
+                Box::new(RustExpr::Add(c(1.0), c(2.0))),
+                c(3.0),
+            )),
+            c(4.0),
+        );
+        assert_eq!(eval_const_expr(&expr), 5.0);
+    }
+
+    #[test]
+    fn test_complex_nested_with_unary() {
+        // abs(neg(5)) + sqrt(16) = 5 + 4 = 9
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Abs(Box::new(RustExpr::Neg(c(5.0))))),
+            Box::new(RustExpr::Sqrt(c(16.0))),
+        );
+        assert_eq!(eval_const_expr(&expr), 9.0);
+    }
+
+    #[test]
+    fn test_assignment_constant_folding() {
+        // field = 5.0 + 3.0 → should optimize to field = 8.0
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let expr = RustExpr::Add(c(5.0), c(3.0));
+        let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
+        // After folding: PushConst(8.0), StoreField(0)
+        assert_eq!(bytecode.bytecode.len(), 2);
+    }
+
+    #[test]
+    fn test_assignment_no_folding_with_field() {
+        // field = field + 10.0 → can't fold (PushField breaks pattern)
+        let component_id = ComponentId::new(0);
+        let field_id = FieldId {
+            component_id,
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id,
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            c(10.0),
+        );
+        let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
+        // No folding possible: PushField(0), PushConst(10), Add, StoreField(0)
+        assert_eq!(bytecode.bytecode.len(), 4);
+    }
+
+    #[test]
+    fn test_optimizer_div_by_zero_not_folded() {
+        let mut compiler = Compiler::new();
+        let a = compiler.add_constant(10.0);
+        let b = compiler.add_constant(0.0);
+        compiler.emit(Op::PushConst(a));
+        compiler.emit(Op::PushConst(b));
+        compiler.emit(Op::Div);
+        compiler.optimize();
+        let bytecode = compiler.finalize();
+        // Should NOT fold: 10.0 / 0.0 kept as 3 ops
+        assert_eq!(bytecode.bytecode.len(), 3);
+    }
+
+    #[test]
+    fn test_optimizer_chained_constants() {
+        // 2.0 + 3.0 gets folded to 5.0
+        let mut compiler = Compiler::new();
+        let a = compiler.add_constant(2.0);
+        let b = compiler.add_constant(3.0);
+        compiler.emit(Op::PushConst(a));
+        compiler.emit(Op::PushConst(b));
+        compiler.emit(Op::Add);
+        compiler.optimize();
+        let bytecode = compiler.finalize();
+        assert_eq!(bytecode.bytecode.len(), 1);
+        assert_eq!(bytecode.constants[2], 5.0); // folded constant at index 2
+    }
+
+    #[test]
+    fn test_optimizer_pow_folding() {
+        let mut compiler = Compiler::new();
+        let a = compiler.add_constant(2.0);
+        let b = compiler.add_constant(8.0);
+        compiler.emit(Op::PushConst(a));
+        compiler.emit(Op::PushConst(b));
+        compiler.emit(Op::Pow);
+        compiler.optimize();
+        let bytecode = compiler.finalize();
+        assert_eq!(bytecode.bytecode.len(), 1);
+        assert_eq!(bytecode.constants[2], 256.0);
+    }
+}

@@ -869,3 +869,328 @@ impl ViewExecutionContext {
         self.batches.iter().map(|b| b.entity_count).sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use bevy_ecs::component::ComponentId;
+
+    use super::*;
+    use crate::bytecode::{Compiler, FieldId, FieldType, Op};
+
+    /// Helper: compile `field[0] = field[0] + constant`
+    fn make_add_bytecode(
+        component_id: ComponentId,
+        offset: usize,
+        constant: f64,
+    ) -> CompiledBytecode {
+        let mut compiler = Compiler::new();
+        let field_id = FieldId {
+            component_id,
+            offset,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_idx = compiler.add_constant(constant);
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_idx));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+        compiler.finalize()
+    }
+
+    /// Helper: compile expression that just reads field[0]
+    fn make_read_bytecode(component_id: ComponentId, offset: usize) -> CompiledBytecode {
+        let mut compiler = Compiler::new();
+        let field_id = FieldId {
+            component_id,
+            offset,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        compiler.emit(Op::PushField(field_idx));
+        compiler.finalize()
+    }
+
+    #[test]
+    fn test_execute_on_ptr() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_add_bytecode(cid, 0, 10.0);
+
+        let mut value = 5.0_f32;
+        let ptr = &mut value as *mut f32 as *mut u8;
+        unsafe { execute_on_ptr(ptr, &bytecode) };
+        assert_eq!(value, 15.0);
+    }
+
+    #[test]
+    fn test_evaluate_on_ptr() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_read_bytecode(cid, 0);
+
+        let value = 42.0_f32;
+        let ptr = &value as *const f32 as *const u8;
+        let result = unsafe { evaluate_on_ptr(ptr, &bytecode) };
+        assert!((result - 42.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_execute_on_ptr_multiple_executions() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_add_bytecode(cid, 0, 1.0);
+
+        let mut value = 0.0_f32;
+        let ptr = &mut value as *mut f32 as *mut u8;
+        for _ in 0..100 {
+            unsafe { execute_on_ptr(ptr, &bytecode) };
+        }
+        assert!((value - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_build_entity_field_ptrs() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_read_bytecode(cid, 4); // offset=4
+
+        let mut data = [0u8; 64];
+        let base = data.as_mut_ptr();
+
+        let mut component_bases = HashMap::new();
+        component_bases.insert(cid, base);
+
+        let field_strides = vec![16usize]; // stride=16 per entity
+
+        let ptrs =
+            unsafe { build_entity_field_ptrs(&bytecode, &component_bases, &field_strides, 2) };
+        // Expected: base + offset(4) + entity_idx(2) * stride(16) = base + 36
+        assert_eq!(ptrs.len(), 1);
+        assert_eq!(ptrs[0], unsafe { base.add(36) });
+    }
+
+    #[test]
+    fn test_resolve_component_strides_missing() {
+        let world = World::new();
+        let mut ids = HashSet::new();
+        ids.insert(ComponentId::new(9999));
+        let result = resolve_component_strides(&world, &ids);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_execute_batch_assignment_serial() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_add_bytecode(cid, 0, 1.0);
+
+        // Simulate 3 entities, each an f32 (stride=4)
+        let mut data = [0.0_f32; 3];
+        data[0] = 10.0;
+        data[1] = 20.0;
+        data[2] = 30.0;
+
+        let base = data.as_mut_ptr() as *mut u8;
+        let mut component_bases = HashMap::new();
+        component_bases.insert(cid, base);
+
+        let batches = vec![TableBatch {
+            table_id: TableId::from_u32(0),
+            component_bases,
+            entity_count: 3,
+            tick_mask: None,
+        }];
+
+        let mut strides = HashMap::new();
+        strides.insert(cid, 4usize); // f32 stride
+
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+
+        assert_eq!(data[0], 11.0);
+        assert_eq!(data[1], 21.0);
+        assert_eq!(data[2], 31.0);
+    }
+
+    #[test]
+    fn test_execute_filtered_assignment_with_mask() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_add_bytecode(cid, 0, 100.0);
+
+        let mut data = [0.0_f32; 4];
+        data[0] = 1.0;
+        data[1] = 2.0;
+        data[2] = 3.0;
+        data[3] = 4.0;
+
+        let base = data.as_mut_ptr() as *mut u8;
+        let mut component_bases = HashMap::new();
+        component_bases.insert(cid, base);
+
+        // Only entities 1 and 3 pass the tick filter
+        let batches = vec![TableBatch {
+            table_id: TableId::from_u32(0),
+            component_bases,
+            entity_count: 4,
+            tick_mask: Some(vec![false, true, false, true]),
+        }];
+
+        let mut strides = HashMap::new();
+        strides.insert(cid, 4usize);
+
+        unsafe { execute_filtered_assignment(&batches, &bytecode, &strides, false) };
+
+        assert_eq!(data[0], 1.0); // unchanged
+        assert_eq!(data[1], 102.0); // +100
+        assert_eq!(data[2], 3.0); // unchanged
+        assert_eq!(data[3], 104.0); // +100
+    }
+
+    #[test]
+    fn test_execute_batch_assignment_empty() {
+        let cid = ComponentId::new(0);
+        let bytecode = make_add_bytecode(cid, 0, 1.0);
+
+        let batches: Vec<TableBatch> = vec![];
+        let strides = HashMap::new();
+
+        // Should not panic on empty batches
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+    }
+
+    #[test]
+    fn test_bytecode_cache_new_is_empty() {
+        let cache = BytecodeCache::new();
+        assert_eq!(cache.cache.len(), 0);
+    }
+
+    #[test]
+    fn test_bytecode_cache_get_or_compile_caches() {
+        let mut cache = BytecodeCache::new();
+        let cid = ComponentId::new(0);
+
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id: cid,
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            Box::new(RustExpr::Const(10.0)),
+        );
+        let hash = BytecodeCache::expr_hash(&expr);
+
+        // First call compiles
+        let bc1 = cache
+            .get_or_compile(cid, 0, FieldType::F32, &expr, hash)
+            .clone();
+        assert_eq!(cache.cache.len(), 1);
+
+        // Second call returns cached (same bytecode length)
+        let bc2 = cache
+            .get_or_compile(cid, 0, FieldType::F32, &expr, hash)
+            .clone();
+        assert_eq!(cache.cache.len(), 1);
+        assert_eq!(bc1.bytecode.len(), bc2.bytecode.len());
+    }
+
+    #[test]
+    fn test_bytecode_cache_different_dest_different_entry() {
+        let mut cache = BytecodeCache::new();
+        let cid = ComponentId::new(0);
+
+        let expr = RustExpr::Const(1.0);
+        let hash = BytecodeCache::expr_hash(&expr);
+
+        cache.get_or_compile(cid, 0, FieldType::F32, &expr, hash);
+        cache.get_or_compile(cid, 4, FieldType::F32, &expr, hash);
+
+        // Different dest_offset → different cache entries
+        assert_eq!(cache.cache.len(), 2);
+    }
+
+    #[test]
+    fn test_bytecode_cache_different_expr_different_entry() {
+        let mut cache = BytecodeCache::new();
+        let cid = ComponentId::new(0);
+
+        let expr_a = RustExpr::Const(1.0);
+        let expr_b = RustExpr::Const(2.0);
+        let hash_a = BytecodeCache::expr_hash(&expr_a);
+        let hash_b = BytecodeCache::expr_hash(&expr_b);
+
+        cache.get_or_compile(cid, 0, FieldType::F32, &expr_a, hash_a);
+        cache.get_or_compile(cid, 0, FieldType::F32, &expr_b, hash_b);
+
+        assert_eq!(cache.cache.len(), 2);
+    }
+
+    #[test]
+    fn test_bytecode_cache_expr_hash_deterministic() {
+        let cid = ComponentId::new(0);
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id: cid,
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            Box::new(RustExpr::Const(5.0)),
+        );
+        let h1 = BytecodeCache::expr_hash(&expr);
+        let h2 = BytecodeCache::expr_hash(&expr);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_bytecode_cache_expr_hash_different_exprs() {
+        let expr_a = RustExpr::Const(1.0);
+        let expr_b = RustExpr::Const(2.0);
+        let h_a = BytecodeCache::expr_hash(&expr_a);
+        let h_b = BytecodeCache::expr_hash(&expr_b);
+        assert_ne!(h_a, h_b);
+    }
+
+    #[test]
+    fn test_bytecode_cache_compiled_bytecode_executes_correctly() {
+        let mut cache = BytecodeCache::new();
+        let cid = ComponentId::new(0);
+
+        // field[0] + 10.0 → field[0]
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id: cid,
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            Box::new(RustExpr::Const(10.0)),
+        );
+        let hash = BytecodeCache::expr_hash(&expr);
+        let bytecode = cache
+            .get_or_compile(cid, 0, FieldType::F32, &expr, hash)
+            .clone();
+
+        // Execute on actual data
+        let mut value = 5.0_f32;
+        let ptr = &mut value as *mut f32 as *mut u8;
+        unsafe { execute_on_ptr(ptr, &bytecode) };
+        assert_eq!(value, 15.0);
+    }
+
+    #[test]
+    fn test_compile_assignment_produces_valid_bytecode() {
+        let cid = ComponentId::new(0);
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Field {
+                component_id: cid,
+                offset: 0,
+                field_type: FieldType::F32,
+            }),
+            Box::new(RustExpr::Const(3.0)),
+        );
+
+        let bytecode = compile_assignment(cid, 0, FieldType::F32, &expr);
+        // PushField(0), PushConst(3.0), Add, StoreField(0)
+        assert_eq!(bytecode.bytecode.len(), 4);
+
+        let mut value = 7.0_f32;
+        let ptr = &mut value as *mut f32 as *mut u8;
+        unsafe { execute_on_ptr(ptr, &bytecode) };
+        assert_eq!(value, 10.0);
+    }
+}

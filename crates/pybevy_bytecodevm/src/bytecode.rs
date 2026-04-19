@@ -464,6 +464,12 @@ impl PooledVM {
     pub fn get_mut(&mut self) -> &mut VM {
         self.vm.as_mut().expect("VM already released")
     }
+
+    /// Check if this guard still holds a VM (for testing)
+    #[cfg(test)]
+    pub fn has_vm(&self) -> bool {
+        self.vm.is_some()
+    }
 }
 
 impl Drop for PooledVM {
@@ -1200,5 +1206,964 @@ impl VM {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_arithmetic() {
+        let mut compiler = Compiler::new();
+
+        // Expression: 5.0 + 3.0 * 2.0 = 11.0
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+        let const_2 = compiler.add_constant(2.0);
+
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_2));
+        compiler.emit(Op::Mul); // 3.0 * 2.0 = 6.0
+        compiler.emit(Op::Add); // 5.0 + 6.0 = 11.0
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        // No field access, just check the stack
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 11.0);
+    }
+
+    #[test]
+    fn test_constant_folding() {
+        let mut compiler = Compiler::new();
+
+        // Expression: 5.0 + 3.0 (should fold to 8.0)
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::Add);
+
+        compiler.optimize();
+
+        let bytecode = compiler.finalize();
+
+        // After optimization, should be just PushConst(8.0)
+        assert_eq!(bytecode.bytecode.len(), 1);
+        assert!(matches!(bytecode.bytecode[0], Op::PushConst(_)));
+    }
+
+    #[test]
+    fn test_field_store() {
+        let mut compiler = Compiler::new();
+
+        // Expression: field[0] = field[0] + 10.0
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        // Create a test field
+        let mut field_value = 5.0_f32;
+        let field_ptr = &mut field_value as *mut f32 as *mut u8;
+
+        unsafe {
+            vm.execute(&bytecode, &[field_ptr], 0);
+        }
+
+        assert_eq!(field_value, 15.0);
+    }
+
+    #[test]
+    fn test_trig_functions() {
+        use std::f64::consts::PI;
+        let mut compiler = Compiler::new();
+
+        // Test sin(PI/2) = 1.0
+        let const_pi_2 = compiler.add_constant(PI / 2.0);
+        compiler.emit(Op::PushConst(const_pi_2));
+        compiler.emit(Op::Sin);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert!((vm.stack[0].as_float() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_numeric_functions() {
+        let mut compiler = Compiler::new();
+
+        // Test sqrt(16.0) = 4.0
+        let const_16 = compiler.add_constant(16.0);
+        compiler.emit(Op::PushConst(const_16));
+        compiler.emit(Op::Sqrt);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 4.0);
+    }
+
+    #[test]
+    fn test_abs_floor_ceil() {
+        let mut compiler = Compiler::new();
+
+        // Test abs(-5.3)
+        let const_neg = compiler.add_constant(-5.3);
+        compiler.emit(Op::PushConst(const_neg));
+        compiler.emit(Op::Abs);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 5.3);
+    }
+
+    #[test]
+    fn test_min_max() {
+        let mut compiler = Compiler::new();
+
+        // Test min(10.0, 5.0) = 5.0
+        let const_10 = compiler.add_constant(10.0);
+        let const_5 = compiler.add_constant(5.0);
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::Min);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 5.0);
+    }
+
+    #[test]
+    fn test_clamp() {
+        let mut compiler = Compiler::new();
+
+        // Test clamp(15.0, 0.0, 10.0) = 10.0
+        let const_15 = compiler.add_constant(15.0);
+        let const_0 = compiler.add_constant(0.0);
+        let const_10 = compiler.add_constant(10.0);
+        compiler.emit(Op::PushConst(const_15));
+        compiler.emit(Op::PushConst(const_0));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Clamp);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 10.0);
+    }
+
+    #[test]
+    fn test_complex_expression() {
+        let mut compiler = Compiler::new();
+
+        // Test: sqrt(abs(-16.0)) + 2.0 = 6.0
+        let const_neg16 = compiler.add_constant(-16.0);
+        let const_2 = compiler.add_constant(2.0);
+
+        compiler.emit(Op::PushConst(const_neg16));
+        compiler.emit(Op::Abs); // 16.0
+        compiler.emit(Op::Sqrt); // 4.0
+        compiler.emit(Op::PushConst(const_2));
+        compiler.emit(Op::Add); // 6.0
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 6.0);
+    }
+
+    #[test]
+    fn test_comparison_operators() {
+        let mut compiler = Compiler::new();
+
+        // Test: 5.0 < 3.0 => false
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::Lt);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), false);
+
+        // Test: 3.0 <= 5.0 => true
+        let mut compiler = Compiler::new();
+        let const_3 = compiler.add_constant(3.0);
+        let const_5 = compiler.add_constant(5.0);
+
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::Le);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        // Test: 5.0 == 5.0 => true
+        let mut compiler = Compiler::new();
+        let const_5a = compiler.add_constant(5.0);
+        let const_5b = compiler.add_constant(5.0);
+
+        compiler.emit(Op::PushConst(const_5a));
+        compiler.emit(Op::PushConst(const_5b));
+        compiler.emit(Op::Eq);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), true);
+    }
+
+    #[test]
+    fn test_where_conditional() {
+        let mut compiler = Compiler::new();
+
+        // Test: where(5.0 > 3.0, 100.0, 200.0) => 100.0 (true branch)
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+        let const_100 = compiler.add_constant(100.0);
+        let const_200 = compiler.add_constant(200.0);
+
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::Gt); // 5.0 > 3.0 => true
+        compiler.emit(Op::PushConst(const_100)); // true value
+        compiler.emit(Op::PushConst(const_200)); // false value
+        compiler.emit(Op::Where);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 100.0);
+
+        // Test: where(2.0 > 5.0, 100.0, 200.0) => 200.0 (false branch)
+        let mut compiler = Compiler::new();
+        let const_2 = compiler.add_constant(2.0);
+        let const_5 = compiler.add_constant(5.0);
+        let const_100 = compiler.add_constant(100.0);
+        let const_200 = compiler.add_constant(200.0);
+
+        compiler.emit(Op::PushConst(const_2));
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::Gt); // 2.0 > 5.0 => false
+        compiler.emit(Op::PushConst(const_100)); // true value
+        compiler.emit(Op::PushConst(const_200)); // false value
+        compiler.emit(Op::Where);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_float(), 200.0);
+    }
+
+    #[test]
+    fn test_logical_operators() {
+        // Test: true && false => false
+        let mut compiler = Compiler::new();
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::Gt); // 5.0 > 3.0 => true
+
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Gt); // 3.0 > 10.0 => false
+
+        compiler.emit(Op::And); // true && false => false
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), false);
+
+        // Test: true || false => true
+        let mut compiler = Compiler::new();
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::Gt); // 5.0 > 3.0 => true
+
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Gt); // 3.0 > 10.0 => false
+
+        compiler.emit(Op::Or); // true || false => true
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        // Test: !false => true
+        let mut compiler = Compiler::new();
+        let const_3 = compiler.add_constant(3.0);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Gt); // 3.0 > 10.0 => false
+        compiler.emit(Op::Not); // !false => true
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), true);
+
+        // Test complex: (true && false) || !false => true
+        let mut compiler = Compiler::new();
+        let const_5 = compiler.add_constant(5.0);
+        let const_3 = compiler.add_constant(3.0);
+        let const_10 = compiler.add_constant(10.0);
+
+        // Left side: true && false
+        compiler.emit(Op::PushConst(const_5));
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::Gt); // 5.0 > 3.0 => true
+
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Gt); // 3.0 > 10.0 => false
+
+        compiler.emit(Op::And); // true && false => false
+
+        // Right side: !false
+        compiler.emit(Op::PushConst(const_3));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Gt); // 3.0 > 10.0 => false
+        compiler.emit(Op::Not); // !false => true
+
+        compiler.emit(Op::Or); // false || true => true
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[], 0);
+        }
+
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.stack[0].as_bool(), true);
+    }
+
+    #[test]
+    fn test_pooled_vm_acquire_and_release() {
+        // Acquire a VM from pool
+        let mut pooled = PooledVM::acquire();
+        let vm = pooled.get_mut();
+
+        // VM should be valid with pre-allocated stack
+        assert_eq!(vm.stack.capacity(), 32);
+
+        // Drop should return to pool (no panic)
+        drop(pooled);
+
+        // Acquire again - should get a recycled VM
+        let pooled2 = PooledVM::acquire();
+        drop(pooled2);
+    }
+
+    #[test]
+    fn test_pooled_vm_reset() {
+        let mut pooled = PooledVM::acquire();
+        let vm = pooled.get_mut();
+
+        // Add some state
+        vm.stack.push(StackValue::Float(42.0));
+        vm.entity_index = 999;
+
+        // Reset should clear state
+        vm.reset();
+
+        assert!(vm.stack.is_empty());
+        assert_eq!(vm.entity_index, 0);
+
+        // But stack capacity should be preserved
+        assert_eq!(vm.stack.capacity(), 32);
+    }
+
+    #[test]
+    fn test_pooled_vm_executes_correctly() {
+        // Create simple bytecode: value = value + 10
+        let mut compiler = Compiler::new();
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+
+        // Test with pooled VM
+        let mut value = 5.0_f32;
+        let ptr = &mut value as *mut f32 as *mut u8;
+
+        {
+            let mut pooled = PooledVM::acquire();
+            let vm = pooled.get_mut();
+            vm.reset();
+            unsafe {
+                vm.execute(&bytecode, &[ptr], 0);
+            }
+        }
+
+        assert_eq!(value, 15.0);
+
+        // Execute again with same pooled VM pattern
+        {
+            let mut pooled = PooledVM::acquire();
+            let vm = pooled.get_mut();
+            vm.reset();
+            unsafe {
+                vm.execute(&bytecode, &[ptr], 0);
+            }
+        }
+
+        assert_eq!(value, 25.0);
+    }
+
+    #[test]
+    fn test_pooled_vm_multiple_entities() {
+        // Simulate processing multiple entities with pooled VM
+        let mut compiler = Compiler::new();
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_1 = compiler.add_constant(1.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_1));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+
+        // Process 100 entities
+        let mut values: Vec<f32> = (0..100).map(|i| i as f32).collect();
+
+        for (i, value) in values.iter_mut().enumerate() {
+            let mut pooled = PooledVM::acquire();
+            let vm = pooled.get_mut();
+            vm.reset();
+            let ptr = value as *mut f32 as *mut u8;
+            unsafe {
+                vm.execute(&bytecode, &[ptr], i);
+            }
+        }
+
+        // Each value should be incremented by 1
+        for (i, value) in values.iter().enumerate() {
+            assert_eq!(*value, (i + 1) as f32);
+        }
+    }
+
+    #[test]
+    fn test_pool_bounded_size() {
+        // Acquire many VMs to test pool size bounding
+        let mut vms: Vec<PooledVM> = Vec::new();
+
+        // Acquire 20 VMs (more than pool limit of 16)
+        for _ in 0..20 {
+            vms.push(PooledVM::acquire());
+        }
+
+        // Drop all - only 16 should go back to pool
+        drop(vms);
+
+        // Verify pool works after this
+        let pooled = PooledVM::acquire();
+        assert!(pooled.has_vm());
+    }
+
+    #[test]
+    fn test_f64_field_store() {
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let mut field_value = 5.0_f64;
+        let field_ptr = &mut field_value as *mut f64 as *mut u8;
+
+        unsafe {
+            vm.execute(&bytecode, &[field_ptr], 0);
+        }
+
+        assert_eq!(field_value, 15.0);
+    }
+
+    #[test]
+    fn test_f64_precision_preserved() {
+        // 0.1 + 0.2 in f64 has a specific representation that differs from f32
+        // This value would lose precision if truncated to f32 and back
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+
+        // Store a value that requires f64 precision: 1_000_000.123_456_789
+        let precise_value: f64 = 1_000_000.123_456_789;
+        let const_val = compiler.add_constant(precise_value);
+
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let mut field_value = 0.0_f64;
+        let field_ptr = &mut field_value as *mut f64 as *mut u8;
+
+        unsafe {
+            vm.execute(&bytecode, &[field_ptr], 0);
+        }
+
+        // f64 preserves this exactly; f32 would give 1000000.125
+        assert_eq!(field_value, precise_value);
+    }
+
+    #[test]
+    fn test_f32_roundtrip_lossless() {
+        // f32 → f64 (load) → f64 arithmetic → f32 (store) should be lossless
+        // for values that are exactly representable in f32
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(0.0);
+
+        // field = field + 0.0 (identity operation to force roundtrip)
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        // Test with various f32 values
+        let test_values: Vec<f32> = vec![
+            0.0,
+            1.0,
+            -1.0,
+            0.5,
+            f32::MAX,
+            f32::MIN,
+            f32::MIN_POSITIVE,
+            std::f32::consts::PI,
+            123.456,
+        ];
+
+        for &original in &test_values {
+            let mut field_value = original;
+            let field_ptr = &mut field_value as *mut f32 as *mut u8;
+
+            unsafe {
+                vm.reset();
+                vm.execute(&bytecode, &[field_ptr], 0);
+            }
+
+            assert_eq!(
+                field_value, original,
+                "f32 roundtrip failed for {}",
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_field_load_store() {
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::I64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_10 = compiler.add_constant(10.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_10));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let mut field_value = 42_i64;
+        let field_ptr = &mut field_value as *mut i64 as *mut u8;
+
+        unsafe {
+            vm.execute(&bytecode, &[field_ptr], 0);
+        }
+
+        assert_eq!(field_value, 52);
+    }
+
+    #[test]
+    fn test_bool_field_load_store() {
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::Bool,
+        };
+        let field_idx = compiler.add_field(field_id);
+
+        // Load bool, push to stack — true should become 1.0
+        compiler.emit(Op::PushField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let mut field_value = true;
+        let field_ptr = &mut field_value as *mut bool as *mut u8;
+
+        unsafe {
+            vm.execute(&bytecode, &[field_ptr], 0);
+        }
+
+        assert_eq!(vm.stack[0].as_float(), 1.0);
+
+        // Now test store: value >= 0.5 → true, < 0.5 → false
+        let mut compiler = Compiler::new();
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::Bool,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(0.3); // < 0.5, should store false
+
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let mut field_value = true;
+        let field_ptr = &mut field_value as *mut bool as *mut u8;
+
+        unsafe {
+            vm.execute(&bytecode, &[field_ptr], 0);
+        }
+
+        assert!(!field_value);
+    }
+
+    #[test]
+    fn test_execute_batch_f64_add_const() {
+        // Tests the f64 fast path: field += const
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(100.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        // Contiguous f64 values (stride = 8 bytes)
+        let count = 10;
+        let mut values: Vec<f64> = (0..count).map(|i| i as f64).collect();
+        let base_ptr = values.as_mut_ptr() as *mut u8;
+
+        unsafe {
+            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f64>(), count);
+        }
+
+        for (i, value) in values.iter().enumerate() {
+            assert_eq!(
+                *value,
+                i as f64 + 100.0,
+                "batch f64 add failed at index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_execute_batch_f64_mul_const() {
+        // Tests the f64 fast path: field *= const
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(2.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::Mul);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let count = 10;
+        let mut values: Vec<f64> = (1..=count).map(|i| i as f64).collect();
+        let base_ptr = values.as_mut_ptr() as *mut u8;
+
+        unsafe {
+            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f64>(), count);
+        }
+
+        for (i, value) in values.iter().enumerate() {
+            assert_eq!(
+                *value,
+                (i + 1) as f64 * 2.0,
+                "batch f64 mul failed at index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_execute_batch_f64_set_const() {
+        // Tests the f64 fast path: field = const
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(42.5);
+
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let count = 10;
+        let mut values: Vec<f64> = vec![0.0; count];
+        let base_ptr = values.as_mut_ptr() as *mut u8;
+
+        unsafe {
+            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f64>(), count);
+        }
+
+        for value in &values {
+            assert_eq!(*value, 42.5);
+        }
+    }
+
+    #[test]
+    fn test_execute_batch_f32_preserves_precision() {
+        // Verify f32 batch fast path still works correctly
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(1.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        // Use > 4 entities to test the unrolled loop
+        let count = 10;
+        let mut values: Vec<f32> = (0..count).map(|i| i as f32).collect();
+        let base_ptr = values.as_mut_ptr() as *mut u8;
+
+        unsafe {
+            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f32>(), count);
+        }
+
+        for (i, value) in values.iter().enumerate() {
+            assert_eq!(
+                *value,
+                (i + 1) as f32,
+                "batch f32 add failed at index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_execute_and_reduce_f64() {
+        let mut compiler = Compiler::new();
+
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_val = compiler.add_constant(3.0);
+
+        // Expression: field * 3.0
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_val));
+        compiler.emit(Op::Mul);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        let mut field_value = 7.0_f64;
+        let field_ptr = &mut field_value as *mut f64 as *mut u8;
+
+        let result = unsafe { vm.execute_and_reduce(&bytecode, &[field_ptr], 0) };
+
+        assert_eq!(result, 21.0);
+        // Original value should be unchanged (reduce doesn't store)
+        assert_eq!(field_value, 7.0);
     }
 }
