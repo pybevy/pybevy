@@ -58,7 +58,7 @@ These components work normally with `Query[Inventory]` and `Query[Mut[Inventory]
 
 ### Eager Marking on Mutable Access
 
-Wrapper storage components support Bevy's `Changed<T>` filter via `__setattr__` hooks that call `mark_component_changed()` through a thread-local entity context. However, `Changed<T>` fires for any entity accessed through `Query[Mut[T]]`, regardless of whether fields were actually modified — matching Bevy's own semantics for `&mut T`. Use `Query[T]` (read-only) when you don't intend to mutate.
+Wrapper storage components support Bevy's `Changed<T>` filter via `__setattr__` hooks that call `mark_component_changed_explicit()`. However, `Changed<T>` fires for any entity accessed through `Query[Mut[T]]`, regardless of whether fields were actually modified - matching Bevy's own semantics for `&mut T`. Use `Query[T]` (read-only) when you don't intend to mutate.
 
 PyObject storage components do **not** support `Changed[T]` — field mutations modify the Python object directly without notifying Bevy's change tracker. `Added[T]` still works for detecting newly spawned entities.
 
