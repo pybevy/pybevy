@@ -1,4 +1,5 @@
 pub mod atmosphere;
+pub mod atmosphere_mode;
 pub mod atmosphere_settings;
 pub mod default_opaque_renderer_method;
 pub mod distance_fog;
@@ -60,7 +61,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<shader_material_py::PyShaderMaterial>()?;
     m.add_class::<shader_material_py::PyShaderMaterialPlugin>()?;
     m.add_class::<shader_material_py::PyMeshMaterial3dShader>()?;
-    // TODO(pybevy/pybevy#110): Render type re-exported through the pbr Python module
-    m.add_class::<pybevy_render::atmosphere_mode::PyAtmosphereMode>()?;
+    m.add_class::<atmosphere_mode::PyAtmosphereMode>()?;
     parent.add_submodule(&m)
 }
