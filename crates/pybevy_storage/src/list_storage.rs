@@ -270,3 +270,137 @@ macro_rules! impl_py_list {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[test]
+    fn test_owned_storage() {
+        let storage = ListStorage::owned(vec![1.0f32, 2.0, 3.0]);
+        assert_eq!(storage.as_ref().unwrap(), &vec![1.0, 2.0, 3.0]);
+        assert_eq!(storage.len().unwrap(), 3);
+        assert!(!storage.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_owned_empty() {
+        let storage = ListStorage::<f32>::owned(vec![]);
+        assert_eq!(storage.len().unwrap(), 0);
+        assert!(storage.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_owned_mutation() {
+        let mut storage = ListStorage::owned(vec![1.0f32, 2.0]);
+        storage.as_mut().unwrap().push(3.0);
+        assert_eq!(storage.as_ref().unwrap(), &vec![1.0, 2.0, 3.0]);
+
+        storage.as_mut().unwrap()[0] = 10.0;
+        assert_eq!(storage.as_ref().unwrap()[0], 10.0);
+    }
+
+    #[test]
+    fn test_borrowed_storage() {
+        let mut vec = vec![1.0f32, 2.0, 3.0];
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage = unsafe { ListStorage::borrowed(&mut vec as *mut Vec<f32>, validity.clone()) };
+
+        assert_eq!(storage.as_ref().unwrap(), &vec![1.0, 2.0, 3.0]);
+        assert_eq!(storage.len().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_borrowed_mutation_persists() {
+        let mut vec = vec![1.0f32, 2.0, 3.0];
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+
+        let mut storage =
+            unsafe { ListStorage::borrowed(&mut vec as *mut Vec<f32>, validity.clone()) };
+
+        storage.as_mut().unwrap().push(4.0);
+        // Mutation persists to the original Vec
+        assert_eq!(vec, vec![1.0, 2.0, 3.0, 4.0]);
+
+        storage.as_mut().unwrap()[0] = 99.0;
+        assert_eq!(vec[0], 99.0);
+    }
+
+    #[test]
+    fn test_validity_enforcement() {
+        let mut vec = vec![1.0f32];
+        let flag = ValidityFlag::new();
+        let validity = flag.with_access_mode(AccessMode::Read);
+
+        let storage = unsafe { ListStorage::borrowed(&mut vec as *mut Vec<f32>, validity.clone()) };
+
+        // Should work while guard is active
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            assert!(storage.as_ref().is_ok());
+            assert!(storage.len().is_ok());
+            assert!(storage.is_empty().is_ok());
+        }
+
+        // Should fail after guard dropped
+        assert!(storage.as_ref().is_err());
+        assert!(storage.len().is_err());
+        assert!(storage.is_empty().is_err());
+    }
+
+    #[test]
+    fn test_write_permission_enforcement() {
+        let mut vec = vec![1.0f32];
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let mut storage =
+            unsafe { ListStorage::borrowed(&mut vec as *mut Vec<f32>, validity.clone()) };
+
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            // Read should work
+            assert!(storage.as_ref().is_ok());
+            // Write should fail (borrowed as Read)
+            assert!(storage.as_mut().is_err());
+        }
+    }
+
+    #[test]
+    fn test_get_returns_clone() {
+        let storage = ListStorage::owned(vec![1.0f32, 2.0]);
+        let cloned = storage.get().unwrap();
+        assert_eq!(cloned, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn test_clone_owned_creates_independent_storage() {
+        let mut storage = ListStorage::owned(vec![1.0f32, 2.0]);
+        let cloned = storage.clone();
+
+        storage.as_mut().unwrap().push(3.0);
+        // Clone should not be affected
+        assert_eq!(cloned.as_ref().unwrap(), &vec![1.0, 2.0]);
+        assert_eq!(storage.as_ref().unwrap(), &vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_normalize_index_positive() {
+        assert_eq!(normalize_index(0, 3).unwrap(), 0);
+        assert_eq!(normalize_index(2, 3).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_normalize_index_negative() {
+        assert_eq!(normalize_index(-1, 3).unwrap(), 2);
+        assert_eq!(normalize_index(-3, 3).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_normalize_index_out_of_bounds() {
+        assert!(normalize_index(3, 3).is_err());
+        assert!(normalize_index(-4, 3).is_err());
+        assert!(normalize_index(0, 0).is_err());
+    }
+}

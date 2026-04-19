@@ -328,3 +328,211 @@ impl<T: Asset> AssetStorage<T> {
         self.take()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::asset::{Asset, Handle};
+
+    use super::*;
+    use crate::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[derive(Clone, Debug, PartialEq, bevy::reflect::TypePath)]
+    struct TestAsset {
+        value: i32,
+    }
+
+    impl bevy::asset::VisitAssetDependencies for TestAsset {
+        fn visit_dependencies(&self, _visit: &mut impl FnMut(bevy::asset::UntypedAssetId)) {}
+    }
+
+    impl Asset for TestAsset {}
+
+    /// Create a test handle for use in tests
+    fn test_handle() -> bevy::asset::UntypedHandle {
+        Handle::<TestAsset>::default().untyped()
+    }
+
+    #[test]
+    fn test_owned_storage() {
+        let storage = AssetStorage::owned(TestAsset { value: 42 });
+        assert!(storage.is_owned());
+        assert!(!storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_owned_mutation() {
+        let mut storage = AssetStorage::owned(TestAsset { value: 42 });
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_borrowed_readonly_storage() {
+        let asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_read();
+        let handle = test_handle();
+
+        let storage = unsafe {
+            AssetStorage::borrowed_readonly(
+                &asset as *const TestAsset,
+                validity.with_access_mode(AccessMode::Read),
+                handle,
+            )
+        };
+
+        assert!(!storage.is_owned());
+        assert!(storage.is_borrowed());
+
+        // Activate validity guard to allow access
+        let _guard = ValidityGuard::new(validity.clone());
+        assert_eq!(storage.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_borrowed_readonly_mutation_fails() {
+        let asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_read();
+        let handle = test_handle();
+
+        let mut storage = unsafe {
+            AssetStorage::borrowed_readonly(
+                &asset as *const TestAsset,
+                validity.with_access_mode(AccessMode::Read),
+                handle,
+            )
+        };
+
+        // Activate validity guard
+        let _guard = ValidityGuard::new(validity.clone());
+
+        // Read should work
+        assert!(storage.as_ref().is_ok());
+
+        // Write should fail - borrowed as read-only
+        assert!(storage.as_mut().is_err());
+    }
+
+    #[test]
+    fn test_borrowed_mut_storage() {
+        let mut asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_write();
+        let handle = test_handle();
+
+        let mut storage = unsafe {
+            AssetStorage::borrowed_mut(
+                &mut asset as *mut TestAsset,
+                validity.with_access_mode(AccessMode::Write),
+                handle,
+            )
+        };
+
+        assert!(!storage.is_owned());
+        assert!(storage.is_borrowed());
+
+        // Activate validity guard to allow access
+        let _guard = ValidityGuard::new(validity.clone());
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(asset.value, 100);
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_validity_enforcement() {
+        let asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_read();
+        let handle = test_handle();
+
+        let storage = unsafe {
+            AssetStorage::borrowed_readonly(
+                &asset as *const TestAsset,
+                validity.with_access_mode(AccessMode::Read),
+                handle,
+            )
+        };
+
+        // Should work while valid (after guard activation)
+        {
+            let _guard = ValidityGuard::new(validity.clone());
+            assert!(storage.as_ref().is_ok());
+        }
+
+        // Should fail when invalid (guard dropped)
+        assert!(storage.as_ref().is_err());
+    }
+
+    #[test]
+    fn test_into_owned_from_owned() {
+        let storage = AssetStorage::owned(TestAsset { value: 42 });
+        let asset = storage.into_owned().unwrap();
+        assert_eq!(asset.value, 42);
+    }
+
+    #[test]
+    fn test_into_owned_from_borrowed_fails() {
+        let asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_read();
+        let handle = test_handle();
+
+        let storage = unsafe {
+            AssetStorage::borrowed_readonly(
+                &asset as *const TestAsset,
+                validity.with_access_mode(AccessMode::Read),
+                handle,
+            )
+        };
+
+        // Borrowed storage cannot be converted to owned
+        assert!(storage.into_owned().is_err());
+    }
+
+    #[test]
+    fn test_access_after_take_fails() {
+        let mut storage = AssetStorage::owned(TestAsset { value: 42 });
+        let _ = storage.take().unwrap();
+
+        assert!(matches!(storage.as_ref(), Err(StorageError::AssetConsumed)));
+        assert!(matches!(storage.as_mut(), Err(StorageError::AssetConsumed)));
+    }
+
+    #[test]
+    fn test_double_take_fails() {
+        let mut storage = AssetStorage::owned(TestAsset { value: 42 });
+        assert!(storage.take().is_ok());
+        assert!(matches!(storage.take(), Err(StorageError::AssetConsumed)));
+    }
+
+    #[test]
+    fn test_take_on_borrowed_readonly_fails() {
+        let asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_read();
+        let handle = test_handle();
+
+        let mut storage = unsafe {
+            AssetStorage::borrowed_readonly(
+                &asset as *const TestAsset,
+                validity.with_access_mode(AccessMode::Read),
+                handle,
+            )
+        };
+
+        assert!(matches!(storage.take(), Err(StorageError::AssetBorrowed)));
+    }
+
+    #[test]
+    fn test_take_on_borrowed_mut_fails() {
+        let mut asset = TestAsset { value: 42 };
+        let validity = ValidityFlag::new_write();
+        let handle = test_handle();
+
+        let mut storage = unsafe {
+            AssetStorage::borrowed_mut(
+                &mut asset as *mut TestAsset,
+                validity.with_access_mode(AccessMode::Write),
+                handle,
+            )
+        };
+
+        assert!(matches!(storage.take(), Err(StorageError::AssetBorrowed)));
+    }
+}

@@ -307,4 +307,263 @@ impl<T: Clone> FieldStorage<T> {
     {
         Ok(W::from_borrowed(self.borrow_field(field_accessor)?))
     }
+
+    /// Check if this storage contains an owned value (including read-only snapshots)
+    #[cfg(test)]
+    pub fn is_owned(&self) -> bool {
+        matches!(
+            self.inner,
+            FieldStorageInner::Owned { .. } | FieldStorageInner::OwnedReadOnly { .. }
+        )
+    }
+
+    #[cfg(test)]
+    pub fn is_borrowed(&self) -> bool {
+        matches!(self.inner, FieldStorageInner::Borrowed { .. })
+    }
+
+    /// Check if this storage is a read-only snapshot
+    #[cfg(test)]
+    pub fn is_owned_read_only(&self) -> bool {
+        matches!(self.inner, FieldStorageInner::OwnedReadOnly { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct TestField {
+        name: String,
+        values: Vec<i32>,
+    }
+
+    #[test]
+    fn test_owned_storage() {
+        let storage = FieldStorage::owned(TestField {
+            name: "test".into(),
+            values: vec![1, 2, 3],
+        });
+        assert!(storage.is_owned());
+        assert!(!storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().name, "test");
+        assert_eq!(storage.as_ref().unwrap().values, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_owned_mutation() {
+        let mut storage = FieldStorage::owned(TestField {
+            name: "test".into(),
+            values: vec![1, 2, 3],
+        });
+        storage.as_mut().unwrap().name = "modified".into();
+        storage.as_mut().unwrap().values.push(4);
+        assert_eq!(storage.as_ref().unwrap().name, "modified");
+        assert_eq!(storage.as_ref().unwrap().values, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_borrowed_storage() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![1, 2, 3],
+        };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        assert!(!storage.is_owned());
+        assert!(storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().name, "test");
+    }
+
+    #[test]
+    fn test_borrowed_mutation_persists() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![1, 2, 3],
+        };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+
+        let mut storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        storage.as_mut().unwrap().name = "modified".into();
+        // Mutation persists through the raw pointer to the original
+        assert_eq!(field.name, "modified");
+        assert_eq!(storage.as_ref().unwrap().name, "modified");
+    }
+
+    #[test]
+    fn test_validity_enforcement() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![],
+        };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        // Should work while valid (with guard active)
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            assert!(storage.as_ref().is_ok());
+        }
+
+        // Should fail when invalid (guard dropped)
+        assert!(storage.as_ref().is_err());
+    }
+
+    #[test]
+    fn test_write_permission_enforcement() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![],
+        };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let mut storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            assert!(storage.as_ref().is_ok());
+            // Write should fail (borrowed as Read, not Write)
+            assert!(storage.as_mut().is_err());
+        }
+    }
+
+    #[test]
+    fn test_get_returns_clone() {
+        let storage = FieldStorage::owned(TestField {
+            name: "test".into(),
+            values: vec![1, 2],
+        });
+        let cloned = storage.get().unwrap();
+        assert_eq!(cloned.name, "test");
+        assert_eq!(cloned.values, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_drop_invalidates_owned() {
+        let validity_clone;
+        {
+            let storage = FieldStorage::owned(TestField {
+                name: "test".into(),
+                values: vec![],
+            });
+            // Get the validity flag before drop
+            match &storage.inner {
+                FieldStorageInner::Owned { validity, .. } => {
+                    validity_clone = validity.clone();
+                }
+                _ => unreachable!(),
+            }
+            // Validity is write (owned is always valid)
+            assert_eq!(validity_clone.get_mode(), AccessMode::Write);
+        }
+        // After drop, the validity flag should be Invalid
+        assert_eq!(validity_clone.get_mode(), AccessMode::Invalid);
+    }
+
+    #[test]
+    fn test_clone_owned_creates_independent_storage() {
+        let mut storage = FieldStorage::owned(TestField {
+            name: "original".into(),
+            values: vec![1],
+        });
+        let mut cloned = storage.clone();
+
+        // Mutating one shouldn't affect the other
+        storage.as_mut().unwrap().name = "modified".into();
+        assert_eq!(cloned.as_ref().unwrap().name, "original");
+
+        cloned.as_mut().unwrap().values.push(2);
+        assert_eq!(storage.as_ref().unwrap().values, vec![1]);
+        assert_eq!(cloned.as_ref().unwrap().values, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_borrow_field_from_owned() {
+        let storage = FieldStorage::owned(TestField {
+            name: "test".into(),
+            values: vec![10, 20, 30],
+        });
+
+        // Field from owned storage is a read-only snapshot
+        let result: FieldStorage<Vec<i32>> = storage.borrow_field(|f| &f.values).unwrap();
+
+        assert!(result.is_owned_read_only());
+        assert_eq!(result.as_ref().unwrap(), &vec![10, 20, 30]);
+
+        // Mutation is not allowed on read-only snapshots
+        let mut result = result;
+        assert!(matches!(
+            result.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[test]
+    fn test_borrow_field_from_borrowed() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![10, 20],
+        };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+
+        let storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        let borrowed: FieldStorage<Vec<i32>> = storage.borrow_field(|f| &f.values).unwrap();
+
+        assert!(borrowed.is_borrowed());
+        assert_eq!(borrowed.as_ref().unwrap(), &vec![10, 20]);
+    }
+
+    #[test]
+    fn test_borrow_field_mutation_persists_to_parent() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![10, 20],
+        };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+
+        let storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        let mut borrowed: FieldStorage<Vec<i32>> = storage.borrow_field(|f| &f.values).unwrap();
+
+        borrowed.as_mut().unwrap().push(30);
+        // Mutation persists all the way to the original
+        assert_eq!(field.values, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn test_borrow_field_invalid_after_guard_dropped() {
+        let mut field = TestField {
+            name: "test".into(),
+            values: vec![],
+        };
+        let flag = ValidityFlag::new();
+        let validity = flag.with_access_mode(AccessMode::Write);
+
+        let storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
+
+        let borrowed: FieldStorage<Vec<i32>>;
+
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            borrowed = storage.borrow_field(|f| &f.values).unwrap();
+            assert!(borrowed.as_ref().is_ok());
+        }
+
+        // Guard dropped — borrowed field should also be invalid
+        assert!(borrowed.as_ref().is_err());
+    }
 }
