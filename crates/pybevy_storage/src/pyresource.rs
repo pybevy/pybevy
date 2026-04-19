@@ -251,3 +251,222 @@ impl<T: Resource + Clone> ResourceStorage<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::prelude::Resource;
+
+    use super::*;
+    use crate::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[derive(Clone, Debug, PartialEq, Resource)]
+    struct TestResource {
+        value: i32,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Resource)]
+    struct NestedResource {
+        x: f32,
+        y: f32,
+    }
+
+    #[test]
+    fn test_owned_storage() {
+        let storage = ResourceStorage::owned(TestResource { value: 42 });
+        assert!(storage.is_owned());
+        assert!(!storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_owned_mutation() {
+        let mut storage = ResourceStorage::owned(TestResource { value: 42 });
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_borrowed_read_storage() {
+        let resource = TestResource { value: 42 };
+        let validity = ValidityFlag::new_read();
+
+        let storage = unsafe {
+            ResourceStorage::borrowed_read(&resource as *const TestResource, validity.clone())
+        };
+
+        assert!(!storage.is_owned());
+        assert!(storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_borrowed_read_rejects_writes() {
+        let resource = TestResource { value: 42 };
+        let validity = ValidityFlag::new_read();
+
+        let mut storage = unsafe {
+            ResourceStorage::borrowed_read(&resource as *const TestResource, validity.clone())
+        };
+
+        assert!(storage.as_ref().is_ok());
+        assert!(storage.as_mut().is_err());
+    }
+
+    #[test]
+    fn test_borrowed_write_storage() {
+        let mut resource = TestResource { value: 42 };
+        let validity = ValidityFlag::new_write();
+
+        let mut storage = unsafe {
+            ResourceStorage::borrowed_write(&mut resource as *mut TestResource, validity.clone())
+        };
+
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(resource.value, 100);
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_validity_enforcement() {
+        let resource = TestResource { value: 42 };
+        let flag = ValidityFlag::new();
+
+        let storage = unsafe {
+            ResourceStorage::borrowed_read(&resource as *const TestResource, flag.clone())
+        };
+
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            assert!(storage.as_ref().is_ok());
+        }
+
+        assert!(storage.as_ref().is_err());
+    }
+
+    #[test]
+    fn test_write_permission_enforcement() {
+        let resource = TestResource { value: 42 };
+        let flag = ValidityFlag::new();
+
+        let mut storage = unsafe {
+            ResourceStorage::borrowed_read(&resource as *const TestResource, flag.clone())
+        };
+
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            assert!(storage.as_ref().is_ok());
+            assert!(storage.as_mut().is_err());
+        }
+    }
+
+    #[test]
+    fn test_into_owned_from_owned() {
+        let storage = ResourceStorage::owned(TestResource { value: 42 });
+        let resource = storage.into_owned().unwrap();
+        assert_eq!(resource.value, 42);
+    }
+
+    #[test]
+    fn test_into_owned_from_borrowed() {
+        let resource = TestResource { value: 42 };
+        let validity = ValidityFlag::new_read();
+
+        let storage =
+            unsafe { ResourceStorage::borrowed_read(&resource as *const TestResource, validity) };
+
+        let owned = storage.into_owned().unwrap();
+        assert_eq!(owned.value, 42);
+    }
+
+    #[test]
+    fn test_into_owned_from_invalid_borrowed_fails() {
+        let resource = TestResource { value: 42 };
+        let flag = ValidityFlag::new();
+
+        let storage = unsafe {
+            ResourceStorage::borrowed_read(&resource as *const TestResource, flag.clone())
+        };
+
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+        }
+
+        assert!(storage.into_owned().is_err());
+    }
+
+    #[test]
+    fn test_drop_invalidates_owned() {
+        let validity_clone;
+        {
+            let storage = ResourceStorage::owned(TestResource { value: 42 });
+            match &storage.inner {
+                ResourceStorageInner::Owned { validity, .. } => {
+                    validity_clone = validity.clone();
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(validity_clone.get_mode(), AccessMode::Write);
+        }
+        assert_eq!(validity_clone.get_mode(), AccessMode::Invalid);
+    }
+
+    #[test]
+    fn test_clone_owned_creates_independent_storage() {
+        let mut storage = ResourceStorage::owned(TestResource { value: 42 });
+        let mut cloned = storage.clone();
+
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(cloned.as_ref().unwrap().value, 42);
+
+        cloned.as_mut().unwrap().value = 200;
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_borrow_field_from_owned() {
+        use crate::value_storage::ValueStorage;
+
+        let storage = ResourceStorage::owned(NestedResource { x: 1.0, y: 2.0 });
+        let field: ValueStorage<f32> = storage.borrow_field(|r| &r.x).unwrap();
+
+        assert!(field.is_owned_read_only());
+        assert_eq!(field.get().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_borrow_field_from_borrowed() {
+        use crate::value_storage::ValueStorage;
+
+        let mut resource = NestedResource { x: 5.0, y: 6.0 };
+        let validity = ValidityFlag::new_write();
+
+        let storage = unsafe {
+            ResourceStorage::borrowed_write(&mut resource as *mut NestedResource, validity)
+        };
+
+        let field: ValueStorage<f32> = storage.borrow_field(|r| &r.x).unwrap();
+        assert!(field.is_borrowed());
+        assert_eq!(field.get().unwrap(), 5.0);
+    }
+
+    #[test]
+    fn test_borrow_field_invalid_after_guard_dropped() {
+        use crate::value_storage::ValueStorage;
+
+        let mut resource = NestedResource { x: 1.0, y: 2.0 };
+        let flag = ValidityFlag::new();
+
+        let storage = unsafe {
+            ResourceStorage::borrowed_write(&mut resource as *mut NestedResource, flag.clone())
+        };
+
+        let field: ValueStorage<f32>;
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            field = storage.borrow_field(|r| &r.x).unwrap();
+            assert!(field.as_ref().is_ok());
+        }
+
+        assert!(field.as_ref().is_err());
+    }
+}

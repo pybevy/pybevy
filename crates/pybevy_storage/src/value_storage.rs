@@ -201,6 +201,27 @@ impl<T: Copy> ValueStorage<T> {
         }
     }
 
+    /// Check if this storage contains an owned value (including read-only snapshots)
+    #[cfg(test)]
+    pub fn is_owned(&self) -> bool {
+        matches!(
+            self.inner,
+            ValueStorageInner::Owned(_) | ValueStorageInner::OwnedReadOnly(_)
+        )
+    }
+
+    /// Check if this storage contains a borrowed value
+    #[cfg(test)]
+    pub fn is_borrowed(&self) -> bool {
+        matches!(self.inner, ValueStorageInner::Borrowed { .. })
+    }
+
+    /// Check if this storage is a read-only snapshot
+    #[cfg(test)]
+    pub fn is_owned_read_only(&self) -> bool {
+        matches!(self.inner, ValueStorageInner::OwnedReadOnly(_))
+    }
+
     /// Get the current value (returns a copy)
     ///
     /// For owned values, returns a copy.
@@ -270,5 +291,195 @@ impl<T: Copy> ValueStorage<T> {
         W: FromBorrowedStorage<S>,
     {
         Ok(W::from_borrowed(self.borrow_field(field_accessor)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct TestValue {
+        x: f32,
+        y: f32,
+    }
+
+    #[test]
+    fn test_owned_storage() {
+        let storage = ValueStorage::owned(TestValue { x: 1.0, y: 2.0 });
+        assert!(storage.is_owned());
+        assert!(!storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().x, 1.0);
+    }
+
+    #[test]
+    fn test_owned_mutation() {
+        let mut storage = ValueStorage::owned(TestValue { x: 1.0, y: 2.0 });
+        storage.as_mut().unwrap().x = 42.0;
+        assert_eq!(storage.as_ref().unwrap().x, 42.0);
+    }
+
+    #[test]
+    fn test_borrowed_storage() {
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage =
+            unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
+
+        assert!(!storage.is_owned());
+        assert!(storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().x, 1.0);
+    }
+
+    #[test]
+    fn test_borrowed_mutation() {
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+
+        let mut storage =
+            unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
+
+        storage.as_mut().unwrap().x = 42.0;
+        assert_eq!(value.x, 42.0);
+        assert_eq!(storage.as_ref().unwrap().x, 42.0);
+    }
+
+    #[test]
+    fn test_validity_enforcement() {
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage =
+            unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
+
+        // Should work while valid (with guard active)
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            assert!(storage.as_ref().is_ok());
+        }
+
+        // Should fail when invalid (guard dropped)
+        assert!(storage.as_ref().is_err());
+    }
+
+    #[test]
+    fn test_write_permission_enforcement() {
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read); // Read-only borrow!
+
+        let mut storage =
+            unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
+
+        // Read should work (with guard active)
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            assert!(storage.as_ref().is_ok());
+
+            // Write should fail (borrowed as Read, not Write)
+            assert!(storage.as_mut().is_err());
+        }
+    }
+
+    #[test]
+    fn test_get_owned() {
+        let storage = ValueStorage::owned(TestValue { x: 1.0, y: 2.0 });
+        let value = storage.get().unwrap();
+        assert_eq!(value.x, 1.0);
+        assert_eq!(value.y, 2.0);
+    }
+
+    #[test]
+    fn test_get_borrowed() {
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage = unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity) };
+
+        let copied = storage.get().unwrap();
+        assert_eq!(copied.x, 1.0);
+        assert_eq!(copied.y, 2.0);
+    }
+
+    #[test]
+    fn test_snapshot_creates_owned_read_only() {
+        let value = TestValue { x: 1.0, y: 2.0 };
+        let storage = ValueStorage::snapshot(&value);
+        assert!(storage.is_owned_read_only());
+        assert!(storage.is_owned());
+        assert!(!storage.is_borrowed());
+    }
+
+    #[test]
+    fn test_owned_read_only_allows_reads() {
+        let value = TestValue { x: 3.0, y: 4.0 };
+        let storage = ValueStorage::snapshot(&value);
+        assert_eq!(storage.as_ref().unwrap().x, 3.0);
+        assert_eq!(storage.as_ref().unwrap().y, 4.0);
+        assert_eq!(storage.get().unwrap(), value);
+    }
+
+    #[test]
+    fn test_owned_read_only_rejects_writes() {
+        let value = TestValue { x: 1.0, y: 2.0 };
+        let mut storage = ValueStorage::snapshot(&value);
+        assert!(matches!(
+            storage.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[test]
+    fn test_owned_read_only_is_independent_copy() {
+        let value = TestValue { x: 1.0, y: 2.0 };
+        let storage = ValueStorage::snapshot(&value);
+        // Snapshot is a copy — doesn't alias the original
+        assert_eq!(storage.as_ref().unwrap().x, 1.0);
+        assert_eq!(storage.as_ref().unwrap().y, 2.0);
+    }
+
+    #[test]
+    fn test_owned_read_only_clone() {
+        let value = TestValue { x: 5.0, y: 6.0 };
+        let storage = ValueStorage::snapshot(&value);
+        let cloned = storage.clone();
+        assert!(cloned.is_owned_read_only());
+        assert_eq!(cloned.as_ref().unwrap().x, 5.0);
+    }
+
+    #[test]
+    fn test_owned_read_only_borrow_field_returns_snapshot() {
+        let value = TestValue { x: 7.0, y: 8.0 };
+        let storage = ValueStorage::snapshot(&value);
+        let field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
+        assert!(field.is_owned_read_only());
+        assert_eq!(field.get().unwrap(), 7.0);
+        // Sub-field is also read-only
+        let mut field = field;
+        assert!(matches!(
+            field.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[test]
+    fn test_owned_borrow_field_returns_snapshot() {
+        // Even plain Owned (not OwnedReadOnly) returns snapshot sub-fields
+        let storage = ValueStorage::owned(TestValue { x: 10.0, y: 20.0 });
+        let field: ValueStorage<f32> = storage.borrow_field(|v| &v.y).unwrap();
+        assert!(field.is_owned_read_only());
+        assert_eq!(field.get().unwrap(), 20.0);
+    }
+
+    #[test]
+    fn test_borrowed_borrow_field_returns_borrowed() {
+        // Borrowed storage still returns borrowed sub-fields (not snapshot)
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let storage =
+            unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
+        let field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
+        assert!(field.is_borrowed());
     }
 }

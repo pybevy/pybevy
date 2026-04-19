@@ -239,3 +239,195 @@ impl<T: Component + Clone> ComponentStorage<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::component::Component;
+
+    use super::*;
+    use crate::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[derive(Clone, Debug, PartialEq, Component)]
+    struct TestComponent {
+        value: i32,
+    }
+
+    #[test]
+    fn test_owned_storage() {
+        let storage = ComponentStorage::owned(TestComponent { value: 42 });
+        assert!(storage.is_owned());
+        assert!(!storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_owned_mutation() {
+        let mut storage = ComponentStorage::owned(TestComponent { value: 42 });
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_borrowed_storage() {
+        let mut component = TestComponent { value: 42 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage = unsafe {
+            ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
+        };
+
+        assert!(!storage.is_owned());
+        assert!(storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_borrowed_mutation() {
+        let mut component = TestComponent { value: 42 };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+
+        let mut storage = unsafe {
+            ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
+        };
+
+        storage.as_mut().unwrap().value = 100;
+        assert_eq!(component.value, 100);
+        assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn test_validity_enforcement() {
+        let mut component = TestComponent { value: 42 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage = unsafe {
+            ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
+        };
+
+        // Should work while valid (with guard active)
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            assert!(storage.as_ref().is_ok());
+        }
+
+        // Should fail when invalid (guard dropped)
+        assert!(storage.as_ref().is_err());
+    }
+
+    #[test]
+    fn test_write_permission_enforcement() {
+        let mut component = TestComponent { value: 42 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read); // Read-only borrow!
+
+        let mut storage = unsafe {
+            ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
+        };
+
+        // Read should work (with guard active)
+        {
+            let _guard = ValidityGuard::new(validity.flag.clone());
+            assert!(storage.as_ref().is_ok());
+
+            // Write should fail (borrowed as Ref, not Mut)
+            assert!(storage.as_mut().is_err());
+        }
+    }
+
+    #[test]
+    fn test_into_owned_from_owned() {
+        let storage = ComponentStorage::owned(TestComponent { value: 42 });
+        let component = storage.into_owned().unwrap();
+        assert_eq!(component.value, 42);
+    }
+
+    #[test]
+    fn test_into_owned_from_borrowed() {
+        let mut component = TestComponent { value: 42 };
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+
+        let storage =
+            unsafe { ComponentStorage::borrowed(&mut component as *mut TestComponent, validity) };
+
+        let owned = storage.into_owned().unwrap();
+        assert_eq!(owned.value, 42);
+    }
+
+    #[test]
+    fn test_into_owned_from_invalid_borrowed_fails() {
+        let mut component = TestComponent { value: 42 };
+        let validity_flag = ValidityFlag::new_read();
+        let validity = validity_flag.with_access_mode(AccessMode::Read);
+
+        let storage = unsafe {
+            ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
+        };
+
+        // Activate then drop guard to invalidate
+        {
+            let _guard = ValidityGuard::new(validity_flag.clone());
+        }
+        // Guard dropped - validity is now Invalid
+
+        // Should fail because validity was invalidated
+        assert!(storage.into_owned().is_err());
+    }
+
+    #[derive(Clone, Debug, PartialEq, Component)]
+    struct NestedComponent {
+        x: f32,
+        y: f32,
+    }
+
+    #[test]
+    fn test_owned_borrow_field_returns_read_only_snapshot() {
+        use crate::value_storage::ValueStorage;
+
+        let storage = ComponentStorage::owned(NestedComponent { x: 1.0, y: 2.0 });
+        let field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
+
+        // Should be an OwnedReadOnly snapshot, not a borrowed pointer
+        assert!(field.is_owned_read_only());
+        assert_eq!(field.get().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_owned_borrow_field_snapshot_rejects_writes() {
+        use crate::value_storage::ValueStorage;
+
+        let storage = ComponentStorage::owned(NestedComponent { x: 1.0, y: 2.0 });
+        let mut field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
+
+        assert!(matches!(
+            field.as_mut(),
+            Err(crate::StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[test]
+    fn test_owned_borrow_field_snapshot_survives_parent_drop() {
+        use crate::value_storage::ValueStorage;
+
+        let field: ValueStorage<f32>;
+        {
+            let storage = ComponentStorage::owned(NestedComponent { x: 42.0, y: 0.0 });
+            field = storage.borrow_field(|c| &c.x).unwrap();
+            // storage dropped here
+        }
+        // Snapshot is independent — still readable after parent is dropped
+        assert_eq!(field.get().unwrap(), 42.0);
+    }
+
+    #[test]
+    fn test_borrowed_borrow_field_still_returns_borrowed() {
+        use crate::value_storage::ValueStorage;
+
+        let mut component = NestedComponent { x: 5.0, y: 6.0 };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let storage =
+            unsafe { ComponentStorage::borrowed(&mut component as *mut NestedComponent, validity) };
+
+        let field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
+        // Borrowed storage still returns borrowed sub-fields
+        assert!(field.is_borrowed());
+    }
+}

@@ -1,7 +1,4 @@
-//! PyO3-free storage primitives for PyBevy
-//!
-//! This crate provides the foundational storage types that are independent of PyO3,
-//! enabling reuse from both the CPython (PyO3) and RustPython/WASM backends.
+//! Storage primitives for PyBevy
 //!
 //! ## Storage Primitives
 //!

@@ -206,3 +206,124 @@ impl Drop for ValidityGuard {
         self.flag.set_invalid();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validity_flag_starts_invalid() {
+        let flag = ValidityFlag::new();
+        assert!(flag.check().is_err());
+        assert!(flag.check_read().is_err());
+        assert!(flag.check_write().is_err());
+    }
+
+    #[test]
+    fn test_validity_guard_enables_flag() {
+        let flag = ValidityFlag::new();
+        let _guard = ValidityGuard::new(flag.clone());
+        assert!(flag.check().is_ok());
+        assert!(flag.check_read().is_ok());
+        assert!(flag.check_write().is_ok()); // ValidityGuard sets to Write mode
+    }
+
+    #[test]
+    fn test_validity_guard_disables_on_drop() {
+        let flag = ValidityFlag::new();
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            assert!(flag.check().is_ok());
+        } // guard dropped here
+        assert!(flag.check().is_err());
+    }
+
+    #[test]
+    fn test_validity_flag_can_be_cloned() {
+        let flag1 = ValidityFlag::new();
+        let flag2 = flag1.clone();
+
+        let _guard = ValidityGuard::new(flag1.clone());
+
+        // Both clones see the same state
+        assert!(flag1.check().is_ok());
+        assert!(flag2.check().is_ok());
+    }
+
+    #[test]
+    fn test_read_only_flag() {
+        let flag = ValidityFlag::new_read();
+
+        // Read access should work
+        assert!(flag.check_read().is_ok());
+
+        // Write access should fail
+        assert!(flag.check_write().is_err());
+    }
+
+    #[test]
+    fn test_write_flag() {
+        let flag = ValidityFlag::new_write();
+
+        // Both read and write should work
+        assert!(flag.check_read().is_ok());
+        assert!(flag.check_write().is_ok());
+    }
+
+    #[test]
+    fn test_access_mode_error_cases() {
+        // Read-only flag should reject writes
+        let read_flag = ValidityFlag::new_read();
+        assert!(read_flag.check_read().is_ok());
+        assert!(read_flag.check_write().is_err());
+
+        // Invalid flag should reject both reads and writes
+        let invalid_flag = ValidityFlag::new();
+        assert!(invalid_flag.check_read().is_err());
+        assert!(invalid_flag.check_write().is_err());
+
+        // Write flag should accept both
+        let write_flag = ValidityFlag::new_write();
+        assert!(write_flag.check_read().is_ok());
+        assert!(write_flag.check_write().is_ok());
+    }
+
+    #[test]
+    fn test_validity_flag_with_mode_error_cases() {
+        // ValidityFlagWithMode with Read mode should reject writes even when flag is valid
+        let flag = ValidityFlag::new_write(); // valid flag
+        let read_mode = flag.with_access_mode(AccessMode::Read);
+        assert!(read_mode.check_read().is_ok());
+        assert!(read_mode.check_write().is_err());
+
+        // ValidityFlagWithMode with Write mode should allow both
+        let write_mode = flag.with_access_mode(AccessMode::Write);
+        assert!(write_mode.check_read().is_ok());
+        assert!(write_mode.check_write().is_ok());
+
+        // When underlying flag becomes Invalid, both modes should reject
+        flag.set_invalid();
+        assert!(read_mode.check_read().is_err());
+        assert!(write_mode.check_read().is_err());
+    }
+
+    #[test]
+    fn test_guard_invalidates_across_clones() {
+        let flag = ValidityFlag::new();
+        let clone1 = flag.clone();
+        let clone2 = flag.clone();
+        let with_mode = flag.with_access_mode(AccessMode::Write);
+
+        {
+            let _guard = ValidityGuard::new(flag.clone());
+            assert!(clone1.check_read().is_ok());
+            assert!(clone2.check_write().is_ok());
+            assert!(with_mode.check_write().is_ok());
+        }
+
+        // Guard dropped — all clones and with_mode see Invalid
+        assert!(clone1.check_read().is_err());
+        assert!(clone2.check_write().is_err());
+        assert!(with_mode.check_read().is_err());
+    }
+}
