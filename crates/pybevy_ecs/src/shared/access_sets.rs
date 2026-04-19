@@ -38,3 +38,170 @@ pub fn build_full_access_set(
     set.add(access);
     set
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::{component::Component, world::World};
+
+    use super::*;
+
+    #[derive(Component)]
+    struct A;
+    #[derive(Component)]
+    struct B;
+    #[derive(Component)]
+    struct C;
+
+    fn ids(world: &mut World) -> (ComponentId, ComponentId, ComponentId) {
+        (
+            world.register_component::<A>(),
+            world.register_component::<B>(),
+            world.register_component::<C>(),
+        )
+    }
+
+    #[test]
+    fn empty_inputs_produces_empty_set() {
+        let set = build_full_access_set(&[], &[], &[], &[], &[]);
+        assert!(!set.combined_access().has_any_component_read());
+        assert!(!set.combined_access().has_any_component_write());
+    }
+
+    #[test]
+    fn read_components_registered() {
+        let mut world = World::new();
+        let (a, b, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[a, b], &[], &[], &[], &[]);
+        let combined = set.combined_access();
+        assert!(combined.has_component_read(a));
+        assert!(combined.has_component_read(b));
+        assert!(!combined.has_component_write(a));
+    }
+
+    #[test]
+    fn write_components_registered() {
+        let mut world = World::new();
+        let (a, _, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[], &[a], &[], &[], &[]);
+        let combined = set.combined_access();
+        assert!(combined.has_component_write(a));
+    }
+
+    #[test]
+    fn read_and_write_together() {
+        let mut world = World::new();
+        let (a, b, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[a], &[b], &[], &[], &[]);
+        let combined = set.combined_access();
+        assert!(combined.has_component_read(a));
+        assert!(combined.has_component_write(b));
+        assert!(!combined.has_component_write(a));
+    }
+
+    #[test]
+    fn unrelated_component_not_registered() {
+        let mut world = World::new();
+        let (a, b, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[a], &[], &[], &[], &[]);
+        let combined = set.combined_access();
+        assert!(!combined.has_component_read(b));
+    }
+
+    #[test]
+    fn full_access_set_all_fields() {
+        let mut world = World::new();
+        let (a, b, c) = ids(&mut world);
+
+        // a: component read, b: component write, c: resource read
+        // also register a as resource write to test resource tracking
+        let set = build_full_access_set(&[a], &[b], &[], &[c], &[a]);
+        let combined = set.combined_access();
+        assert!(combined.has_component_read(a));
+        assert!(combined.has_component_write(b));
+        assert!(!combined.has_component_read(c));
+        assert!(combined.has_resource_read(c));
+        assert!(combined.has_resource_write(a));
+        assert!(!combined.has_resource_read(b));
+    }
+
+    #[test]
+    fn resource_read_registered() {
+        let mut world = World::new();
+        let (a, _, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[], &[], &[], &[a], &[]);
+        let combined = set.combined_access();
+        assert!(combined.has_resource_read(a));
+        assert!(!combined.has_resource_write(a));
+    }
+
+    #[test]
+    fn resource_write_registered() {
+        let mut world = World::new();
+        let (a, _, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[], &[], &[], &[], &[a]);
+        let combined = set.combined_access();
+        assert!(combined.has_resource_write(a));
+    }
+
+    #[test]
+    fn resource_and_component_together() {
+        let mut world = World::new();
+        let (a, b, _) = ids(&mut world);
+
+        let set = build_full_access_set(&[a], &[], &[], &[], &[b]);
+        let combined = set.combined_access();
+        assert!(combined.has_component_read(a));
+        assert!(combined.has_resource_write(b));
+    }
+
+    #[test]
+    fn two_resource_write_sets_conflict() {
+        let mut world = World::new();
+        let (a, _, _) = ids(&mut world);
+
+        let set1 = build_full_access_set(&[], &[], &[], &[], &[a]);
+        let set2 = build_full_access_set(&[], &[], &[], &[], &[a]);
+
+        // Combined access of set1 should conflict with set2's access
+        assert!(!set1.is_compatible(&set2));
+    }
+
+    #[test]
+    fn resource_read_and_write_conflict() {
+        let mut world = World::new();
+        let (a, _, _) = ids(&mut world);
+
+        let set1 = build_full_access_set(&[], &[], &[], &[a], &[]);
+        let set2 = build_full_access_set(&[], &[], &[], &[], &[a]);
+
+        assert!(!set1.is_compatible(&set2));
+    }
+
+    #[test]
+    fn resource_reads_compatible() {
+        let mut world = World::new();
+        let (a, _, _) = ids(&mut world);
+
+        let set1 = build_full_access_set(&[], &[], &[], &[a], &[]);
+        let set2 = build_full_access_set(&[], &[], &[], &[a], &[]);
+
+        assert!(set1.is_compatible(&set2));
+    }
+
+    #[test]
+    fn different_resources_write_compatible() {
+        let mut world = World::new();
+        let (a, b, _) = ids(&mut world);
+
+        let set1 = build_full_access_set(&[], &[], &[], &[], &[a]);
+        let set2 = build_full_access_set(&[], &[], &[], &[], &[b]);
+
+        assert!(set1.is_compatible(&set2));
+    }
+}

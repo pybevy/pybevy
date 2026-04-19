@@ -13,7 +13,9 @@
 
 use std::cell::Cell;
 
-use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+use bevy::ecs::{
+    change_detection::DetectChangesMut, component::ComponentId, entity::Entity, world::World,
+};
 
 thread_local! {
     /// Current entity being accessed during query iteration
@@ -58,9 +60,9 @@ pub unsafe fn mark_component_changed_explicit(
     unsafe {
         let world = &mut *world_ptr;
         if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
-            // Mark component as changed by getting mutable access
-            // get_mut_by_id() triggers Bevy's DerefMut, which calls set_changed()
-            let _ = entity_mut.get_mut_by_id(component_id);
+            if let Ok(mut comp) = entity_mut.get_mut_by_id(component_id) {
+                comp.set_changed();
+            }
         }
     }
 }
@@ -72,3 +74,118 @@ pub fn clear_entity_context() {
     CURRENT_ENTITY.with(|e| e.set(None));
     WORLD_PTR.with(|w| w.set(None));
 }
+
+/// Read the current entity context (test-only).
+#[cfg(test)]
+fn get_entity_context() -> (Option<Entity>, Option<*mut World>) {
+    let entity = CURRENT_ENTITY.with(|e| e.get());
+    let world_ptr = WORLD_PTR.with(|w| w.get());
+    (entity, world_ptr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::component::Component;
+
+    #[derive(Component)]
+    struct Health;
+
+    #[test]
+    fn context_initially_empty() {
+        clear_entity_context();
+        let (entity, world_ptr) = get_entity_context();
+        assert!(entity.is_none());
+        assert!(world_ptr.is_none());
+    }
+
+    #[test]
+    fn set_and_clear_context() {
+        let entity = Entity::from_bits(42);
+        set_entity_context(entity, std::ptr::null_mut());
+
+        let (e, w) = get_entity_context();
+        assert_eq!(e, Some(entity));
+        assert!(w.is_some());
+
+        clear_entity_context();
+        let (e, w) = get_entity_context();
+        assert!(e.is_none());
+        assert!(w.is_none());
+    }
+
+    #[test]
+    fn set_overwrites_previous_context() {
+        let a = Entity::from_bits(10);
+        let b = Entity::from_bits(20);
+
+        set_entity_context(a, std::ptr::null_mut());
+        set_entity_context(b, std::ptr::null_mut());
+
+        let (e, _) = get_entity_context();
+        assert_eq!(e, Some(b));
+
+        clear_entity_context();
+    }
+
+    #[test]
+    fn clear_is_idempotent() {
+        clear_entity_context();
+        clear_entity_context();
+        let (e, _) = get_entity_context();
+        assert!(e.is_none());
+    }
+
+    #[test]
+    fn mark_changed_updates_change_tick() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Health>();
+        let entity = world.spawn(Health).id();
+
+        // Advance change ticks so the initial "added" change is in the past
+        let last_run = world.read_change_tick();
+        world.increment_change_tick();
+        world.increment_change_tick();
+
+        // Before marking, component should not appear changed since last_run
+        let this_run = world.read_change_tick();
+        let ticks = world.entity(entity).get_change_ticks_by_id(component_id).unwrap();
+        assert!(!ticks.is_changed(last_run, this_run));
+
+        // Mark it
+        let world_ptr: *mut World = &mut world;
+        unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
+
+        // Now it should appear changed
+        let this_run = world.read_change_tick();
+        let ticks = world.entity(entity).get_change_ticks_by_id(component_id).unwrap();
+        assert!(
+            ticks.is_changed(last_run, this_run),
+            "component should be marked as changed after mark_component_changed_explicit"
+        );
+    }
+
+    #[test]
+    fn mark_changed_nonexistent_entity_does_not_panic() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Health>();
+        let entity = Entity::from_bits(9999);
+
+        let world_ptr: *mut World = &mut world;
+        // Should silently do nothing
+        unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
+    }
+
+    #[test]
+    fn mark_changed_missing_component_does_not_panic() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Health>();
+        // Spawn entity without Health
+        let entity = world.spawn_empty().id();
+
+        let world_ptr: *mut World = &mut world;
+        // Should silently do nothing
+        unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
+    }
+}
+
