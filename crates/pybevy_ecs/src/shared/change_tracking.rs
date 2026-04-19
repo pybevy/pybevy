@@ -1,48 +1,16 @@
-//! Thread-local change tracking for custom components with PyObject storage.
+//! Change tracking for custom components.
 //!
-//! This module implements lazy change detection that matches Bevy's semantics:
+//! Implements lazy change detection that matches Bevy's semantics:
 //! - Query[Mut[T]] iteration does NOT mark components as changed
 //! - Only actual field mutations (via __setattr__) mark components as changed
 //!
-//! Architecture:
-//! 1. When query iteration starts for an entity, set_entity_context() stores entity + world_ptr
-//! 2. When __setattr__ is called, it calls mark_component_changed() with the component_id
-//! 3. mark_component_changed() immediately marks that specific component as changed
-//!
 //! Safety: World pointer is only dereferenced during valid query iteration (protected by ValidityFlag)
-
-use std::cell::Cell;
 
 use bevy::ecs::{
     change_detection::DetectChangesMut, component::ComponentId, entity::Entity, world::World,
 };
 
-thread_local! {
-    /// Current entity being accessed during query iteration
-    static CURRENT_ENTITY: Cell<Option<Entity>> = const { Cell::new(None) };
-
-    /// World pointer valid during query iteration
-    static WORLD_PTR: Cell<Option<*mut World>> = const { Cell::new(None) };
-}
-
-/// Set the entity context at the start of processing an entity in a query.
-///
-/// This must be called when starting to process each entity in a query iteration.
-/// It stores the entity and world pointer for use by mark_component_changed().
-///
-/// # Safety
-/// - world_ptr must be valid for the duration of processing this entity
-/// - Must call clear_entity_context() when done with this entity
-pub fn set_entity_context(entity: Entity, world_ptr: *mut World) {
-    CURRENT_ENTITY.with(|e| e.set(Some(entity)));
-    WORLD_PTR.with(|w| w.set(Some(world_ptr)));
-}
-
 /// Mark a specific component as changed using explicit entity and world pointer.
-///
-/// Unlike `mark_component_changed()`, this does not rely on the thread-local context.
-/// This allows change detection to work for components accessed outside the iteration
-/// loop (e.g., items collected via `list(query)`).
 ///
 /// # Safety
 /// - `world_ptr` must point to a valid `World` (caller must ensure the pointer
@@ -67,22 +35,6 @@ pub unsafe fn mark_component_changed_explicit(
     }
 }
 
-/// Clear the entity context.
-///
-/// This must be called when done processing an entity.
-pub fn clear_entity_context() {
-    CURRENT_ENTITY.with(|e| e.set(None));
-    WORLD_PTR.with(|w| w.set(None));
-}
-
-/// Read the current entity context (test-only).
-#[cfg(test)]
-fn get_entity_context() -> (Option<Entity>, Option<*mut World>) {
-    let entity = CURRENT_ENTITY.with(|e| e.get());
-    let world_ptr = WORLD_PTR.with(|w| w.get());
-    (entity, world_ptr)
-}
-
 #[cfg(test)]
 mod tests {
     use bevy::ecs::component::Component;
@@ -91,51 +43,6 @@ mod tests {
 
     #[derive(Component)]
     struct Health;
-
-    #[test]
-    fn context_initially_empty() {
-        clear_entity_context();
-        let (entity, world_ptr) = get_entity_context();
-        assert!(entity.is_none());
-        assert!(world_ptr.is_none());
-    }
-
-    #[test]
-    fn set_and_clear_context() {
-        let entity = Entity::from_bits(42);
-        set_entity_context(entity, std::ptr::null_mut());
-
-        let (e, w) = get_entity_context();
-        assert_eq!(e, Some(entity));
-        assert!(w.is_some());
-
-        clear_entity_context();
-        let (e, w) = get_entity_context();
-        assert!(e.is_none());
-        assert!(w.is_none());
-    }
-
-    #[test]
-    fn set_overwrites_previous_context() {
-        let a = Entity::from_bits(10);
-        let b = Entity::from_bits(20);
-
-        set_entity_context(a, std::ptr::null_mut());
-        set_entity_context(b, std::ptr::null_mut());
-
-        let (e, _) = get_entity_context();
-        assert_eq!(e, Some(b));
-
-        clear_entity_context();
-    }
-
-    #[test]
-    fn clear_is_idempotent() {
-        clear_entity_context();
-        clear_entity_context();
-        let (e, _) = get_entity_context();
-        assert!(e.is_none());
-    }
 
     #[test]
     fn mark_changed_updates_change_tick() {
