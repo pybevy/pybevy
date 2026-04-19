@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[cfg(feature = "bevy_winit")]
+use bevy::winit::UpdateMode;
 use bevy::{
     app::{App, First, Last, Plugin},
     prelude::{IntoScheduleConfigs, Resource},
@@ -232,8 +234,6 @@ impl Plugin for ControlBevyPlugin {
 /// window is not focused, without spinning at uncapped FPS.
 #[cfg(feature = "bevy_winit")]
 fn configure_mcp_update_mode(settings: Option<bevy::prelude::ResMut<bevy::winit::WinitSettings>>) {
-    use bevy::winit::UpdateMode;
-
     let Some(mut settings) = settings else {
         return;
     };
@@ -246,4 +246,51 @@ fn configure_mcp_update_mode(settings: Option<bevy::prelude::ResMut<bevy::winit:
     }
     settings.unfocused_mode = target;
     bevy::log::info!("[Control] Set unfocused_mode to Reactive(16ms) for MCP responsiveness");
+}
+
+#[cfg(all(test, feature = "bevy_winit"))]
+mod tests {
+    use bevy::{
+        ecs::{system::RunSystemOnce, world::World},
+        winit::{UpdateMode, WinitSettings},
+    };
+
+    use super::configure_mcp_update_mode;
+
+    #[test]
+    fn upgrades_continuous_to_reactive() {
+        let mut world = World::new();
+        world.insert_resource(WinitSettings {
+            unfocused_mode: UpdateMode::Continuous,
+            ..Default::default()
+        });
+        world.run_system_once(configure_mcp_update_mode).unwrap();
+        let settings = world.resource::<WinitSettings>();
+        assert!(matches!(
+            settings.unfocused_mode,
+            UpdateMode::Reactive { .. }
+        ));
+    }
+
+    #[test]
+    fn preserves_already_reactive() {
+        let mut world = World::new();
+        world.insert_resource(WinitSettings {
+            unfocused_mode: UpdateMode::reactive(std::time::Duration::from_secs(1)),
+            ..Default::default()
+        });
+        world.run_system_once(configure_mcp_update_mode).unwrap();
+        let settings = world.resource::<WinitSettings>();
+        // Should keep the existing reactive mode, not overwrite it
+        assert!(matches!(
+            settings.unfocused_mode,
+            UpdateMode::Reactive { .. }
+        ));
+    }
+
+    #[test]
+    fn no_op_without_winit_settings() {
+        let mut world = World::new();
+        world.run_system_once(configure_mcp_update_mode).unwrap();
+    }
 }

@@ -1563,3 +1563,1310 @@ fn finalize_schedule(schedule: ActiveSchedule) {
         guard.results = schedule.results;
     }
 }
+#[cfg(test)]
+mod tests {
+    use bevy::math::Vec3;
+
+    use super::*;
+    use crate::handlers::pyo3::mutate::has_embedded_errors;
+
+    #[test]
+    fn test_validate_empty_actions() {
+        let req = ScheduleRequest {
+            actions: vec![],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        assert!(validate_schedule(&req).is_err());
+    }
+
+    #[test]
+    fn test_validate_too_many_actions() {
+        let actions: Vec<ScheduleAction> = (0..257)
+            .map(|_| ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            })
+            .collect();
+        let req = ScheduleRequest {
+            actions,
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        assert!(validate_schedule(&req).is_err());
+    }
+
+    #[test]
+    fn test_validate_non_schedulable_tool() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "schedule_actions".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("not schedulable"));
+    }
+
+    #[test]
+    fn test_validate_non_monotonic_at() {
+        let req = ScheduleRequest {
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(5.0),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(3.0),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                },
+            ],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("monotonically"));
+    }
+
+    #[test]
+    fn test_validate_mixed_at_and_at_frame() {
+        let req = ScheduleRequest {
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: Some(10),
+                    label: None,
+                    skip_if_error: None,
+                },
+            ],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("cannot mix"));
+    }
+
+    #[test]
+    fn test_validate_both_at_and_at_frame() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: Some(0),
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("cannot specify both"));
+    }
+
+    #[test]
+    fn test_validate_negative_at() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(-1.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("non-negative"));
+    }
+
+    #[test]
+    fn test_validate_infinite_at() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(f64::INFINITY),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("finite"));
+    }
+
+    #[test]
+    fn test_validate_invalid_mode() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "invalid".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("mode"));
+    }
+
+    #[test]
+    fn test_validate_valid_schedule() {
+        let req = ScheduleRequest {
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: Some("p".to_string()),
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(5.0),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                },
+            ],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        assert!(validate_schedule(&req).is_ok());
+    }
+
+    #[test]
+    fn test_validate_default_at() {
+        let req = ScheduleRequest {
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                },
+            ],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        assert!(validate_schedule(&req).is_ok());
+    }
+
+    #[test]
+    fn test_validate_at_frame_monotonic() {
+        let req = ScheduleRequest {
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: Some(0),
+                    label: None,
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: Some(10),
+                    label: None,
+                    skip_if_error: None,
+                },
+            ],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        assert!(validate_schedule(&req).is_ok());
+    }
+
+    #[test]
+    fn test_tool_to_operation_pause() {
+        let op = tool_to_operation("pause_time", &serde_json::Value::Null).unwrap();
+        assert!(matches!(op, ControlOperation::Time(TimeOp::PauseTime)));
+    }
+
+    #[test]
+    fn test_tool_to_operation_resume() {
+        let op = tool_to_operation("resume_time", &serde_json::Value::Null).unwrap();
+        assert!(matches!(op, ControlOperation::Time(TimeOp::ResumeTime)));
+    }
+
+    #[test]
+    fn test_tool_to_operation_seek() {
+        let op = tool_to_operation("seek_time", &serde_json::json!({"seconds": 5.0})).unwrap();
+        assert!(
+            matches!(op, ControlOperation::Time(TimeOp::SeekTime { seconds, pause }) if (seconds - 5.0).abs() < 0.001 && pause)
+        );
+    }
+
+    #[test]
+    fn test_tool_to_operation_set_time_scale() {
+        let op = tool_to_operation("set_time_scale", &serde_json::json!({"scale": 2.0})).unwrap();
+        assert!(
+            matches!(op, ControlOperation::Time(TimeOp::SetTimeScale { scale }) if (scale - 2.0).abs() < 0.001)
+        );
+    }
+
+    #[test]
+    fn test_tool_to_operation_set_component() {
+        let op = tool_to_operation(
+            "set_component",
+            &serde_json::json!({"name": "MyEntity", "component": "Transform", "fields": {"translation": [0, 1, 0]}}),
+        )
+        .unwrap();
+        assert!(
+            matches!(op, ControlOperation::Mutate(MutateOp::SetComponent { entity: EntityRef::Name(n), component, .. }) if n == "MyEntity" && component == "Transform")
+        );
+    }
+
+    #[test]
+    fn test_tool_to_operation_screenshot() {
+        let op = tool_to_operation("capture_screenshot", &serde_json::json!({"max_width": 768}))
+            .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Visual(VisualOp::CaptureScreenshot {
+                max_width: Some(768),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_unknown() {
+        let result = tool_to_operation("nonexistent_tool", &serde_json::Value::Null);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_deferred_tool() {
+        assert!(is_deferred_tool("capture_screenshot"));
+        assert!(is_deferred_tool("reload"));
+        assert!(is_deferred_tool("reload_and_capture"));
+        assert!(is_deferred_tool("capture_timeline"));
+        assert!(is_deferred_tool("capture_turnaround"));
+        assert!(is_deferred_tool("capture_depth"));
+        assert!(!is_deferred_tool("pause_time"));
+        assert!(!is_deferred_tool("set_component"));
+    }
+
+    #[test]
+    fn test_is_non_schedulable() {
+        assert!(is_non_schedulable("schedule_actions"));
+        assert!(is_non_schedulable("run_scene"));
+        assert!(is_non_schedulable("get_started"));
+        assert!(is_non_schedulable("get_logs"));
+        assert!(!is_non_schedulable("pause_time"));
+        assert!(!is_non_schedulable("capture_screenshot"));
+    }
+
+    #[test]
+    fn test_action_result_serialization() {
+        let result = ActionResult {
+            index: 0,
+            label: Some("test".to_string()),
+            tool: "pause_time".to_string(),
+            at: 0.0,
+            fired_at_game_time: 1.5,
+            status: "ok".to_string(),
+            result: Some(serde_json::json!({"paused": true})),
+            error: None,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["index"], 0);
+        assert_eq!(json["label"], "test");
+        assert_eq!(json["status"], "ok");
+        assert!(json.get("error").is_none()); // skip_serializing_if
+    }
+
+    #[test]
+    fn test_shared_schedule_registry() {
+        let registry = SharedScheduleRegistry::default();
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-1", 3)));
+        registry.insert("s-1".to_string(), shared.clone());
+
+        let state = registry.get("s-1").unwrap();
+        assert_eq!(state.schedule_id, "s-1");
+        assert_eq!(state.status, "running");
+        assert_eq!(state.total_actions, 3);
+
+        // Update via the Arc directly (same as schedule state machine does)
+        shared.lock().unwrap().completed_actions = 2;
+        let state = registry.get("s-1").unwrap();
+        assert_eq!(state.completed_actions, 2);
+
+        assert!(registry.cancel("s-1"));
+        let state = registry.get("s-1").unwrap();
+        assert!(state.cancelled);
+
+        assert!(!registry.cancel("nonexistent"));
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_tool_to_operation_query_spatial_pairwise() {
+        let op = tool_to_operation(
+            "query_spatial",
+            &serde_json::json!({"name_a": "A", "name_b": "B"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Spatial(SpatialOp::QuerySpatial { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_query_spatial_neighborhood() {
+        let op = tool_to_operation(
+            "query_spatial",
+            &serde_json::json!({"name": "A", "radius": 5.0}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Spatial(SpatialOp::QuerySpatialNeighborhood { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_check_overlaps_single() {
+        let op = tool_to_operation("check_overlaps", &serde_json::json!({"name": "A"})).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Spatial(SpatialOp::CheckOverlaps { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_check_overlaps_all() {
+        let op = tool_to_operation("check_overlaps", &serde_json::json!({})).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Spatial(SpatialOp::CheckAllOverlaps { .. })
+        ));
+    }
+
+    #[test]
+    fn test_abort_remaining() {
+        let mut schedule = ActiveSchedule {
+            schedule_id: "test".to_string(),
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: Some("a".to_string()),
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(1.0),
+                    at_frame: None,
+                    label: Some("b".to_string()),
+                    skip_if_error: None,
+                },
+            ],
+            results: vec![],
+            current_index: 0,
+            state: ScheduleState::WaitingForTime,
+            t0_game_time: 0.0,
+            frame_counter: 0,
+            stop_on_error: true,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: None,
+            deferred_rx: None,
+        };
+        abort_remaining(&mut schedule, 0);
+        assert_eq!(schedule.results.len(), 2);
+        assert_eq!(schedule.results[0].status, "aborted");
+        assert_eq!(schedule.results[1].status, "aborted");
+    }
+
+    #[test]
+    fn test_is_time_control_tool() {
+        assert!(is_time_control_tool("seek_time"));
+        assert!(is_time_control_tool("pause_time"));
+        assert!(is_time_control_tool("resume_time"));
+        assert!(is_time_control_tool("set_time_scale"));
+        assert!(!is_time_control_tool("capture_screenshot"));
+        assert!(!is_time_control_tool("set_component"));
+        assert!(!is_time_control_tool("query_entities"));
+        assert!(!is_time_control_tool("get_scene_summary"));
+    }
+
+    /// Verifies that the registry and ActiveSchedule share the same Arc,
+    /// so updates from the schedule state machine are visible via registry.get().
+    /// This was bug #3: the registry previously stored a separate copy.
+    #[test]
+    fn test_registry_shares_arc_with_schedule() {
+        let registry = SharedScheduleRegistry::default();
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-1", 2)));
+        registry.insert("s-1".to_string(), shared.clone());
+
+        // Simulate what finalize_schedule does
+        {
+            let mut guard = shared.lock().unwrap();
+            guard.status = "completed".to_string();
+            guard.completed_actions = 2;
+            guard.results.push(ActionResult {
+                index: 0,
+                label: Some("a".to_string()),
+                tool: "pause_time".to_string(),
+                at: 0.0,
+                fired_at_game_time: 1.0,
+                status: "ok".to_string(),
+                result: Some(serde_json::json!({"paused": true})),
+                error: None,
+            });
+        }
+
+        // Registry should see the updated state via the shared Arc
+        let state = registry.get("s-1").unwrap();
+        assert_eq!(state.status, "completed");
+        assert_eq!(state.completed_actions, 2);
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.results[0].tool, "pause_time");
+    }
+
+    /// Verifies cancel propagates through the shared Arc so the schedule
+    /// state machine sees it on the next frame poll.
+    #[test]
+    fn test_registry_cancel_visible_through_arc() {
+        let registry = SharedScheduleRegistry::default();
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-2", 1)));
+        registry.insert("s-2".to_string(), shared.clone());
+
+        // Cancel via registry (HTTP handler path)
+        assert!(registry.cancel("s-2"));
+
+        // Schedule state machine reads from its own Arc clone
+        let guard = shared.lock().unwrap();
+        assert!(guard.cancelled);
+    }
+
+    #[test]
+    fn propagate_transforms_updates_root() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        // Modify Transform without running propagation
+        world.get_mut::<Transform>(entity).unwrap().translation = Vec3::new(10.0, 20.0, 30.0);
+
+        // GlobalTransform should still be at origin
+        let gt = world.get::<GlobalTransform>(entity).unwrap();
+        assert_eq!(gt.translation(), Vec3::ZERO);
+
+        // Propagate
+        propagate_transforms(&mut world);
+
+        // Now GlobalTransform should match
+        let gt = world.get::<GlobalTransform>(entity).unwrap();
+        assert_eq!(gt.translation(), Vec3::new(10.0, 20.0, 30.0));
+    }
+
+    #[test]
+    fn schedule_actions_run_code_failure_status() {
+        // Simulate what happens when run_code returns {"success": false, "error": "..."}
+        let value = serde_json::json!({"success": false, "error": "NameError: x is not defined"});
+        let has_errors = has_embedded_errors(&value);
+        let has_run_code_failure = value
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .is_some_and(|s| !s);
+        let status = if has_errors {
+            "partial"
+        } else if has_run_code_failure {
+            "error"
+        } else {
+            "ok"
+        };
+        assert!(!has_errors, "run_code failure has no 'errors' array");
+        assert!(has_run_code_failure, "run_code failure has success=false");
+        assert_eq!(status, "error");
+    }
+
+    #[test]
+    fn schedule_actions_stop_on_error_with_run_code() {
+        // Verify that a run_code failure with success=false triggers stop_on_error logic.
+        // The stop_on_error path calls abort_remaining, so we test that the remaining
+        // actions would be aborted after a run_code failure.
+        let mut schedule = ActiveSchedule {
+            schedule_id: "test-stop".to_string(),
+            actions: vec![
+                ScheduleAction {
+                    tool: "run_code".to_string(),
+                    args: serde_json::json!({"code": "x"}),
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: Some("failing_code".to_string()),
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: Some("should_abort".to_string()),
+                    skip_if_error: None,
+                },
+            ],
+            results: vec![],
+            current_index: 1, // Simulate that first action already processed
+            state: ScheduleState::WaitingForTime,
+            t0_game_time: 0.0,
+            frame_counter: 0,
+            stop_on_error: true,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: None,
+            deferred_rx: None,
+        };
+        abort_remaining(&mut schedule, 1);
+        assert_eq!(schedule.results.len(), 1);
+        assert_eq!(schedule.results[0].status, "aborted");
+        assert_eq!(schedule.results[0].tool, "pause_time");
+    }
+
+    #[test]
+    fn schedule_actions_run_code_success_is_ok() {
+        // Verify that run_code with success=true gets status "ok"
+        let value = serde_json::json!({"success": true});
+        let has_errors = has_embedded_errors(&value);
+        let has_run_code_failure = value
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .is_some_and(|s| !s);
+        let status = if has_errors {
+            "partial"
+        } else if has_run_code_failure {
+            "error"
+        } else {
+            "ok"
+        };
+        assert_eq!(status, "ok");
+    }
+
+    #[test]
+    fn test_is_transform_mutation_tool() {
+        assert!(is_transform_mutation_tool("set_component"));
+        assert!(is_transform_mutation_tool("spawn_entity"));
+        assert!(is_transform_mutation_tool("batch"));
+        assert!(!is_transform_mutation_tool("pause_time"));
+        assert!(!is_transform_mutation_tool("query_entities"));
+        assert!(!is_transform_mutation_tool("capture_screenshot"));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_time_status() {
+        let op = tool_to_operation("get_time_status", &serde_json::Value::Null).unwrap();
+        assert!(matches!(op, ControlOperation::Time(TimeOp::GetTimeStatus)));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_performance() {
+        let op = tool_to_operation("get_performance", &serde_json::Value::Null).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Other(OtherOp::GetPerformance)
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_scene_summary() {
+        let op = tool_to_operation("get_scene_summary", &serde_json::Value::Null).unwrap();
+        assert!(matches!(op, ControlOperation::Scene(SceneOp::SceneSummary)));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_registry() {
+        let op = tool_to_operation("get_registry", &serde_json::Value::Null).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Scene(SceneOp::DebugRegistry)
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_reload_status() {
+        let op = tool_to_operation("get_reload_status", &serde_json::Value::Null).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Reload(ReloadOp::GetReloadStatus)
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_last_error() {
+        let op = tool_to_operation("get_last_error", &serde_json::Value::Null).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Reload(ReloadOp::GetLastError)
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_bounding_box() {
+        let op =
+            tool_to_operation("get_bounding_box", &serde_json::json!({"name": "Box"})).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Scene(SceneOp::GetBoundingBox { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_spawn_entity() {
+        let op = tool_to_operation(
+            "spawn_entity",
+            &serde_json::json!({"components": {"Transform": {}}}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Mutate(MutateOp::SpawnEntity { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_despawn_entity() {
+        let op =
+            tool_to_operation("despawn_entity", &serde_json::json!({"name": "MyEntity"})).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Mutate(MutateOp::DespawnEntity { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_remove_component() {
+        let op = tool_to_operation(
+            "remove_component",
+            &serde_json::json!({"name": "E", "component": "Marker"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Mutate(MutateOp::RemoveComponent { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_set_resource() {
+        let op = tool_to_operation(
+            "set_resource",
+            &serde_json::json!({"resource_type": "GameSettings", "value": {}}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Mutate(MutateOp::InsertResource { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_remove_resource() {
+        let op = tool_to_operation(
+            "remove_resource",
+            &serde_json::json!({"resource_type": "GameSettings"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Mutate(MutateOp::RemoveResource { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_run_code() {
+        let op = tool_to_operation("run_code", &serde_json::json!({"code": "print(1)"})).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Other(OtherOp::ExecutePython { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_batch() {
+        let op = tool_to_operation(
+            "batch",
+            &serde_json::json!({"operations": [{"type": "spawn"}]}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Mutate(MutateOp::BatchMutate { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_set_asset() {
+        let op = tool_to_operation(
+            "set_asset",
+            &serde_json::json!({"name": "E", "component": "MeshMaterial3d", "asset_type": "StandardMaterial", "fields": {}}),
+        ).unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Other(OtherOp::MutateAsset { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_capture_timeline() {
+        let op = tool_to_operation(
+            "capture_timeline",
+            &serde_json::json!({"total_frames": 120, "capture_count": 6}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Visual(VisualOp::CaptureTimeline { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_capture_turnaround() {
+        let op = tool_to_operation(
+            "capture_turnaround",
+            &serde_json::json!({"view_count": 8, "distance": 15.0}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Visual(VisualOp::CaptureTurnaround { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_capture_depth() {
+        let op = tool_to_operation(
+            "capture_depth",
+            &serde_json::json!({"grid_density": 4, "include_rgb": false}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Visual(VisualOp::CaptureDepth { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_reload() {
+        let op = tool_to_operation("reload", &serde_json::json!({"mode": "partial"})).unwrap();
+        assert!(
+            matches!(op, ControlOperation::Reload(ReloadOp::TriggerReload { mode, .. }) if mode == "partial")
+        );
+    }
+
+    #[test]
+    fn test_tool_to_operation_reload_and_capture() {
+        let op = tool_to_operation(
+            "reload_and_capture",
+            &serde_json::json!({"mode": "full", "delay_frames": 10}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Reload(ReloadOp::ReloadAndCapture { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_component_schema() {
+        let op = tool_to_operation(
+            "get_component_schema",
+            &serde_json::json!({"name": "Transform"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Scene(SceneOp::GetComponentSchema { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_component_missing_name() {
+        let result = tool_to_operation("get_component_schema", &serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_component_missing_component() {
+        let result = tool_to_operation("get_component", &serde_json::json!({"name": "E"}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tool_to_operation_seek_missing_seconds() {
+        let result = tool_to_operation("seek_time", &serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tool_to_operation_screenshot_with_gizmos() {
+        let op = tool_to_operation(
+            "capture_screenshot",
+            &serde_json::json!({"gizmos": true, "max_width": 1024}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Visual(VisualOp::CaptureWithGizmos { .. })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_entity_ref_by_id() {
+        let op = tool_to_operation(
+            "get_component",
+            &serde_json::json!({"entity_id": 42, "component": "Transform"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Scene(SceneOp::GetComponent {
+                entity: EntityRef::Id(42),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_tool_to_operation_query_entities_with_filters() {
+        let op = tool_to_operation(
+            "query_entities",
+            &serde_json::json!({"with": ["Transform", "Velocity"], "without": ["Marker"]}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::Scene(SceneOp::QueryEntities { .. })
+        ));
+    }
+
+    #[test]
+    fn test_resolve_at_default() {
+        let action = ScheduleAction {
+            tool: "x".to_string(),
+            args: serde_json::Value::Null,
+            at: None,
+            at_frame: None,
+            label: None,
+            skip_if_error: None,
+        };
+        assert_eq!(resolve_at(&action), 0.0);
+    }
+
+    #[test]
+    fn test_resolve_at_with_value() {
+        let action = ScheduleAction {
+            tool: "x".to_string(),
+            args: serde_json::Value::Null,
+            at: Some(5.5),
+            at_frame: None,
+            label: None,
+            skip_if_error: None,
+        };
+        assert_eq!(resolve_at(&action), 5.5);
+    }
+
+    #[test]
+    fn test_resolve_at_frame() {
+        let action = ScheduleAction {
+            tool: "x".to_string(),
+            args: serde_json::Value::Null,
+            at: None,
+            at_frame: Some(10),
+            label: None,
+            skip_if_error: None,
+        };
+        assert_eq!(resolve_at_frame(&action), Some(10));
+    }
+
+    #[test]
+    fn test_resolve_at_frame_none() {
+        let action = ScheduleAction {
+            tool: "x".to_string(),
+            args: serde_json::Value::Null,
+            at: None,
+            at_frame: None,
+            label: None,
+            skip_if_error: None,
+        };
+        assert_eq!(resolve_at_frame(&action), None);
+    }
+
+    #[test]
+    fn test_finalize_schedule_sync() {
+        let (tx, rx) = oneshot::channel();
+        let schedule = ActiveSchedule {
+            schedule_id: "s-1".to_string(),
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            results: vec![ActionResult {
+                index: 0,
+                label: None,
+                tool: "pause_time".to_string(),
+                at: 0.0,
+                fired_at_game_time: 1.0,
+                status: "ok".to_string(),
+                result: Some(serde_json::json!({"paused": true})),
+                error: None,
+            }],
+            current_index: 1,
+            state: ScheduleState::Done,
+            t0_game_time: 0.0,
+            frame_counter: 1,
+            stop_on_error: false,
+            errored_labels: HashSet::new(),
+            sync_response_tx: Some(tx),
+            async_shared: None,
+            deferred_rx: None,
+        };
+        finalize_schedule(schedule);
+        let response = rx.blocking_recv().unwrap().unwrap();
+        assert_eq!(response["schedule_id"], "s-1");
+        assert_eq!(response["status"], "completed");
+        assert_eq!(response["total_actions"], 1);
+        assert_eq!(response["completed_actions"], 1);
+    }
+
+    #[test]
+    fn test_finalize_schedule_async() {
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-2", 1)));
+        let schedule = ActiveSchedule {
+            schedule_id: "s-2".to_string(),
+            actions: vec![ScheduleAction {
+                tool: "resume_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            results: vec![ActionResult {
+                index: 0,
+                label: None,
+                tool: "resume_time".to_string(),
+                at: 0.0,
+                fired_at_game_time: 2.0,
+                status: "ok".to_string(),
+                result: None,
+                error: None,
+            }],
+            current_index: 1,
+            state: ScheduleState::Done,
+            t0_game_time: 0.0,
+            frame_counter: 1,
+            stop_on_error: false,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: Some(shared.clone()),
+            deferred_rx: None,
+        };
+        finalize_schedule(schedule);
+        let guard = shared.lock().unwrap();
+        assert_eq!(guard.status, "completed");
+        assert_eq!(guard.completed_actions, 1);
+    }
+
+    #[test]
+    fn test_update_async_progress() {
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-3", 2)));
+        let schedule = ActiveSchedule {
+            schedule_id: "s-3".to_string(),
+            actions: vec![],
+            results: vec![
+                ActionResult {
+                    index: 0,
+                    label: None,
+                    tool: "a".to_string(),
+                    at: 0.0,
+                    fired_at_game_time: 0.0,
+                    status: "ok".to_string(),
+                    result: None,
+                    error: None,
+                },
+                ActionResult {
+                    index: 1,
+                    label: None,
+                    tool: "b".to_string(),
+                    at: 0.0,
+                    fired_at_game_time: 0.0,
+                    status: "ok".to_string(),
+                    result: None,
+                    error: None,
+                },
+            ],
+            current_index: 2,
+            state: ScheduleState::Done,
+            t0_game_time: 0.0,
+            frame_counter: 0,
+            stop_on_error: false,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: Some(shared.clone()),
+            deferred_rx: None,
+        };
+        update_async_progress(&schedule);
+        let guard = shared.lock().unwrap();
+        assert_eq!(guard.completed_actions, 2);
+        assert_eq!(guard.results.len(), 2);
+    }
+
+    #[test]
+    fn test_update_async_progress_no_shared() {
+        // Should not panic when async_shared is None (sync schedule)
+        let schedule = ActiveSchedule {
+            schedule_id: "s-4".to_string(),
+            actions: vec![],
+            results: vec![],
+            current_index: 0,
+            state: ScheduleState::Done,
+            t0_game_time: 0.0,
+            frame_counter: 0,
+            stop_on_error: false,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: None,
+            deferred_rx: None,
+        };
+        update_async_progress(&schedule); // No-op, should not panic
+    }
+
+    #[test]
+    fn test_schedule_request_deserialization_defaults() {
+        let json = r#"{"actions": [{"tool": "pause_time"}]}"#;
+        let req: ScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.mode, "sync");
+        assert_eq!(req.stop_on_error, false);
+        assert_eq!(req.actions.len(), 1);
+    }
+
+    #[test]
+    fn test_schedule_action_deserialization_defaults() {
+        let json = r#"{"tool": "pause_time"}"#;
+        let action: ScheduleAction = serde_json::from_str(json).unwrap();
+        assert_eq!(action.tool, "pause_time");
+        assert!(action.at.is_none());
+        assert!(action.at_frame.is_none());
+        assert!(action.label.is_none());
+        assert!(action.skip_if_error.is_none());
+        assert!(action.args.is_null());
+    }
+
+    #[test]
+    fn test_schedule_action_deserialization_full() {
+        let json = r#"{"tool": "set_component", "args": {"x": 1}, "at": 2.5, "label": "step1", "skip_if_error": "step0"}"#;
+        let action: ScheduleAction = serde_json::from_str(json).unwrap();
+        assert_eq!(action.tool, "set_component");
+        assert_eq!(action.at, Some(2.5));
+        assert_eq!(action.label.as_deref(), Some("step1"));
+        assert_eq!(action.skip_if_error.as_deref(), Some("step0"));
+    }
+
+    #[test]
+    fn test_shared_schedule_state_new() {
+        let state = SharedScheduleState::new("test-id", 5);
+        assert_eq!(state.schedule_id, "test-id");
+        assert_eq!(state.status, "running");
+        assert_eq!(state.total_actions, 5);
+        assert_eq!(state.completed_actions, 0);
+        assert!(state.results.is_empty());
+        assert!(!state.cancelled);
+    }
+
+    #[test]
+    fn test_active_schedule_new_sync() {
+        let (tx, _rx) = oneshot::channel();
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "sync".to_string(),
+            stop_on_error: true,
+        };
+        let schedule = ActiveSchedule::new_sync("s-test".to_string(), req, 10.0, tx);
+        assert_eq!(schedule.schedule_id, "s-test");
+        assert_eq!(schedule.t0_game_time, 10.0);
+        assert!(schedule.stop_on_error);
+        assert!(schedule.sync_response_tx.is_some());
+        assert!(schedule.async_shared.is_none());
+    }
+
+    #[test]
+    fn test_active_schedule_new_async() {
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-async", 1)));
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "resume_time".to_string(),
+                args: serde_json::Value::Null,
+                at: None,
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "async".to_string(),
+            stop_on_error: false,
+        };
+        let schedule = ActiveSchedule::new_async("s-async".to_string(), req, 0.0, shared);
+        assert_eq!(schedule.schedule_id, "s-async");
+        assert!(!schedule.stop_on_error);
+        assert!(schedule.sync_response_tx.is_none());
+        assert!(schedule.async_shared.is_some());
+    }
+
+    #[test]
+    fn test_validate_at_frame_non_monotonic() {
+        let req = ScheduleRequest {
+            actions: vec![
+                ScheduleAction {
+                    tool: "pause_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: Some(10),
+                    label: None,
+                    skip_if_error: None,
+                },
+                ScheduleAction {
+                    tool: "resume_time".to_string(),
+                    args: serde_json::Value::Null,
+                    at: None,
+                    at_frame: Some(5),
+                    label: None,
+                    skip_if_error: None,
+                },
+            ],
+            mode: "sync".to_string(),
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("monotonically"));
+    }
+
+    #[test]
+    fn test_validate_async_mode() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: "async".to_string(),
+            stop_on_error: false,
+        };
+        assert!(validate_schedule(&req).is_ok());
+    }
+
+    #[test]
+    fn propagate_transforms_updates_children() {
+        let mut world = World::new();
+
+        // Parent at x=100
+        let parent = world
+            .spawn((
+                Transform::from_xyz(100.0, 0.0, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        // Child at local x=40
+        let child = world
+            .spawn((
+                Transform::from_xyz(40.0, 0.0, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        // Establish hierarchy
+        world.entity_mut(parent).add_children(&[child]);
+
+        // Move parent to x=140
+        world.get_mut::<Transform>(parent).unwrap().translation.x = 140.0;
+
+        // Before propagation, child GlobalTransform is stale
+        let gt = world.get::<GlobalTransform>(child).unwrap();
+        assert_eq!(gt.translation().x, 0.0);
+
+        // Propagate
+        propagate_transforms(&mut world);
+
+        // Parent should be at x=140
+        let gt = world.get::<GlobalTransform>(parent).unwrap();
+        assert_eq!(gt.translation().x, 140.0);
+
+        // Child should be at x=140+40=180
+        let gt = world.get::<GlobalTransform>(child).unwrap();
+        assert_eq!(gt.translation().x, 180.0);
+    }
+}

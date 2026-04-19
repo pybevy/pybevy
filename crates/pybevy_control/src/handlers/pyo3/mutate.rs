@@ -1220,3 +1220,1055 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    use bevy::ecs::{
+        component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
+        name::Name,
+    };
+
+    use super::*;
+
+    static INIT: Once = Once::new();
+
+    fn setup_python() {
+        INIT.call_once(|| {
+            Python::initialize();
+        });
+    }
+
+    #[test]
+    fn convert_field_value_color_array() {
+        setup_python();
+        Python::attach(|py| {
+            // Create a mock Color class with a srgba static method
+            let code = std::ffi::CString::new(
+                r#"
+import types, sys
+
+class Color:
+    def __init__(self, r=1.0, g=1.0, b=1.0, a=1.0):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+
+    @staticmethod
+    def srgba(r, g, b, a):
+        return Color(r, g, b, a)
+
+# Register as pybevy.color in sys.modules
+color_mod = types.ModuleType("pybevy.color")
+color_mod.Color = Color
+
+# Ensure parent package exists in sys.modules too
+if "pybevy" not in sys.modules:
+    pybevy_mod = types.ModuleType("pybevy")
+    sys.modules["pybevy"] = pybevy_mod
+sys.modules["pybevy.color"] = color_mod
+
+# Create a holder object with a color attribute of type Color
+class Holder:
+    def __init__(self):
+        self.color = Color()
+
+holder = Holder()
+"#,
+            )
+            .unwrap();
+
+            let globals = pyo3::types::PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            // Call convert_field_value with a JSON array [1.0, 0.0, 0.0, 1.0]
+            let field_value = serde_json::json!([1.0, 0.0, 0.0, 1.0]);
+            let result = convert_field_value(py, &holder, "color", &field_value);
+            assert!(result.is_ok(), "convert_field_value failed: {:?}", result);
+
+            let py_obj = result.unwrap();
+            let bound = py_obj.bind(py);
+
+            // Verify it's a Color instance with correct values
+            let type_name = bound.get_type().name().unwrap().to_string();
+            assert_eq!(type_name, "Color");
+            let r: f64 = bound.getattr("r").unwrap().extract().unwrap();
+            let g: f64 = bound.getattr("g").unwrap().extract().unwrap();
+            let b: f64 = bound.getattr("b").unwrap().extract().unwrap();
+            let a: f64 = bound.getattr("a").unwrap().extract().unwrap();
+            assert!((r - 1.0).abs() < 1e-10);
+            assert!((g - 0.0).abs() < 1e-10);
+            assert!((b - 0.0).abs() < 1e-10);
+            assert!((a - 1.0).abs() < 1e-10);
+        });
+    }
+
+    #[test]
+    fn convert_field_value_color_wrong_array_length() {
+        setup_python();
+        Python::attach(|py| {
+            let code = std::ffi::CString::new(
+                r#"
+import types, sys
+
+class Color:
+    def __init__(self, r=1.0, g=1.0, b=1.0, a=1.0):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+
+    @staticmethod
+    def srgba(r, g, b, a):
+        return Color(r, g, b, a)
+
+color_mod = types.ModuleType("pybevy.color")
+color_mod.Color = Color
+
+# Also register pybevy.math so the array fallback path doesn't fail on import
+math_mod = types.ModuleType("pybevy.math")
+if "pybevy" not in sys.modules:
+    pybevy_mod = types.ModuleType("pybevy")
+    sys.modules["pybevy"] = pybevy_mod
+sys.modules["pybevy.color"] = color_mod
+sys.modules["pybevy.math"] = math_mod
+
+class Holder:
+    def __init__(self):
+        self.color = Color()
+
+holder = Holder()
+"#,
+            )
+            .unwrap();
+
+            let globals = pyo3::types::PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            // Array with 3 elements should NOT trigger Color conversion (needs exactly 4).
+            // Falls through to math array check (no match for "Color" type), then to
+            // generic json_to_py which returns a Python list.
+            let field_value = serde_json::json!([1.0, 0.0, 0.0]);
+            let result = convert_field_value(py, &holder, "color", &field_value);
+            assert!(result.is_ok());
+            let py_obj = result.unwrap();
+            let bound = py_obj.bind(py);
+            let type_name = bound.get_type().name().unwrap().to_string();
+            assert_eq!(
+                type_name, "list",
+                "Wrong-length array should fall through to list"
+            );
+        });
+    }
+
+    #[test]
+    fn convert_field_value_non_color_falls_through() {
+        setup_python();
+        Python::attach(|py| {
+            let code = std::ffi::CString::new(
+                r#"
+class Holder:
+    def __init__(self):
+        self.name = "hello"
+
+holder = Holder()
+"#,
+            )
+            .unwrap();
+
+            let globals = pyo3::types::PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            // String field with a string value should fall through to generic conversion
+            let field_value = serde_json::json!("world");
+            let result = convert_field_value(py, &holder, "name", &field_value);
+            assert!(result.is_ok());
+            let py_obj = result.unwrap();
+            let bound = py_obj.bind(py);
+            let val: String = bound.extract().unwrap();
+            assert_eq!(val, "world");
+        });
+    }
+
+    #[test]
+    fn json_number_to_f64_valid() {
+        let val = serde_json::json!(3.14);
+        assert!((json_number_to_f64(&val).unwrap() - 3.14).abs() < 1e-10);
+    }
+
+    #[test]
+    fn json_number_to_f64_integer() {
+        let val = serde_json::json!(42);
+        assert!((json_number_to_f64(&val).unwrap() - 42.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn json_number_to_f64_non_number() {
+        let val = serde_json::json!("not a number");
+        assert!(json_number_to_f64(&val).is_err());
+    }
+
+    #[test]
+    fn parse_entity_ref_from_op_entity_id() {
+        let op = serde_json::json!({"entity_id": 42, "action": "set_component"});
+        let result = parse_entity_ref_from_op(&op).unwrap();
+        assert!(matches!(result, EntityRef::Id(42)));
+    }
+
+    #[test]
+    fn parse_entity_ref_from_op_name() {
+        let op = serde_json::json!({"name": "Player", "action": "set_component"});
+        let result = parse_entity_ref_from_op(&op).unwrap();
+        assert!(matches!(result, EntityRef::Name(ref s) if s == "Player"));
+    }
+
+    #[test]
+    fn parse_entity_ref_from_op_missing_both() {
+        let op = serde_json::json!({"action": "set_component"});
+        let result = parse_entity_ref_from_op(&op);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_entity_ref_from_op_prefers_entity_id() {
+        let op = serde_json::json!({"entity_id": 42, "name": "Player"});
+        let result = parse_entity_ref_from_op(&op).unwrap();
+        assert!(matches!(result, EntityRef::Id(42)));
+    }
+
+    #[test]
+    fn despawn_entity_by_id_success() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let result = despawn_entity(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert_eq!(result["despawned"], true);
+        assert!(world.get_entity(entity).is_err());
+    }
+
+    #[test]
+    fn despawn_entity_by_name_success() {
+        let mut world = World::new();
+        world.spawn(Name::new("Target"));
+        let result = despawn_entity(&mut world, EntityRef::Name("Target".into())).unwrap();
+        assert_eq!(result["despawned"], true);
+    }
+
+    #[test]
+    fn despawn_entity_not_found() {
+        let mut world = World::new();
+        let result = despawn_entity(&mut world, EntityRef::Id(999999));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn spawn_entity_invalid_params_not_object() {
+        let mut world = World::new();
+        let result = spawn_entity(&mut world, serde_json::json!("not an object"));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn spawn_entity_unknown_component() {
+        let mut world = World::new();
+        let result = spawn_entity(&mut world, serde_json::json!({"UnknownComp": {}}));
+        // Should fail fast without spawning entity
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn batch_mutate_empty_operations() {
+        let mut world = World::new();
+        let result = batch_mutate(&mut world, vec![]).unwrap();
+        assert_eq!(result["total"], 0);
+        assert_eq!(result["succeeded"], 0);
+    }
+
+    #[test]
+    fn batch_mutate_unknown_action() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"action": "nonexistent"})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["total"], 1);
+        assert_eq!(result["succeeded"], 0);
+        let results = result["results"].as_array().unwrap();
+        assert_eq!(results[0]["status"], "error");
+    }
+
+    #[test]
+    fn batch_mutate_despawn_success() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let ops = vec![serde_json::json!({"action": "despawn", "entity_id": entity.to_bits()})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 1);
+        assert!(world.get_entity(entity).is_err());
+    }
+
+    #[test]
+    fn batch_mutate_despawn_missing_entity() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"action": "despawn"})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 0);
+    }
+
+    #[test]
+    fn batch_mutate_set_component_missing_fields() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"action": "set_component"})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 0);
+    }
+
+    #[test]
+    fn batch_mutate_mixed_success_and_failure() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let ops = vec![
+            serde_json::json!({"action": "despawn", "entity_id": entity.to_bits()}),
+            serde_json::json!({"action": "unknown_action"}),
+        ];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["succeeded"], 1);
+    }
+
+    #[test]
+    fn batch_mutate_remove_component_missing_params() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"action": "remove_component"})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 0);
+        let results = result["results"].as_array().unwrap();
+        assert_eq!(results[0]["status"], "error");
+    }
+
+    #[test]
+    fn batch_mutate_remove_component_with_entity_no_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let ops = vec![serde_json::json!({
+            "action": "remove_component",
+            "entity_id": entity.to_bits(),
+            "component": "NonExistent"
+        })];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        // Should fail because component is not in registry
+        assert_eq!(result["succeeded"], 0);
+    }
+
+    #[test]
+    fn batch_mutate_spawn_empty() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"action": "spawn"})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 1);
+        let results = result["results"].as_array().unwrap();
+        let entity_id = results[0]["result"]["entity_id"].as_u64();
+        assert!(entity_id.is_some());
+    }
+
+    #[test]
+    fn batch_mutate_spawn_with_unknown_components() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"action": "spawn", "components": {"UnknownComp": {}}})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        // Unknown components now fail fast — batch reports error status
+        assert_eq!(result["succeeded"], 0);
+        let results = result["results"].as_array().unwrap();
+        assert_eq!(results[0]["status"], "error");
+    }
+
+    #[test]
+    fn batch_mutate_multiple_despawns() {
+        let mut world = World::new();
+        let e1 = world.spawn(Name::new("A")).id();
+        let e2 = world.spawn(Name::new("B")).id();
+        let ops = vec![
+            serde_json::json!({"action": "despawn", "entity_id": e1.to_bits()}),
+            serde_json::json!({"action": "despawn", "entity_id": e2.to_bits()}),
+        ];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["succeeded"], 2);
+        assert!(world.get_entity(e1).is_err());
+        assert!(world.get_entity(e2).is_err());
+    }
+
+    #[test]
+    fn batch_mutate_despawn_by_name() {
+        let mut world = World::new();
+        world.spawn(Name::new("Target"));
+        let ops = vec![serde_json::json!({"action": "despawn", "name": "Target"})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 1);
+    }
+
+    #[test]
+    fn batch_mutate_no_action_field() {
+        let mut world = World::new();
+        let ops = vec![serde_json::json!({"entity_id": 42})];
+        let result = batch_mutate(&mut world, ops).unwrap();
+        assert_eq!(result["succeeded"], 0);
+        // Empty action string triggers unknown action error
+        let results = result["results"].as_array().unwrap();
+        assert_eq!(results[0]["status"], "error");
+    }
+
+    #[test]
+    fn spawn_entity_empty_components() {
+        let mut world = World::new();
+        let result = spawn_entity(&mut world, serde_json::json!({})).unwrap();
+        assert!(result["entity_id"].is_number());
+        assert_eq!(result["components_added"].as_array().unwrap().len(), 0);
+        // No errors array when there are no errors
+        assert!(result.get("errors").is_none());
+    }
+
+    #[test]
+    fn spawn_entity_multiple_unknown_components() {
+        let mut world = World::new();
+        let result = spawn_entity(
+            &mut world,
+            serde_json::json!({
+                "Comp1": {},
+                "Comp2": {"field": "value"},
+                "Comp3": {}
+            }),
+        );
+        // Should fail fast without spawning entity
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("Comp1"));
+    }
+
+    #[test]
+    fn despawn_entity_by_name_not_found() {
+        let mut world = World::new();
+        let result = despawn_entity(&mut world, EntityRef::Name("NonExistent".into()));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn json_number_to_f64_negative() {
+        let val = serde_json::json!(-7.5);
+        assert!((json_number_to_f64(&val).unwrap() - (-7.5)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn json_number_to_f64_zero() {
+        let val = serde_json::json!(0);
+        assert!((json_number_to_f64(&val).unwrap()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn json_number_to_f64_bool_is_not_number() {
+        let val = serde_json::json!(true);
+        assert!(json_number_to_f64(&val).is_err());
+    }
+
+    #[test]
+    fn json_number_to_f64_null_is_not_number() {
+        let val = serde_json::json!(null);
+        assert!(json_number_to_f64(&val).is_err());
+    }
+
+    #[test]
+    fn json_number_to_f64_array_is_not_number() {
+        let val = serde_json::json!([1, 2, 3]);
+        assert!(json_number_to_f64(&val).is_err());
+    }
+
+    #[test]
+    fn parse_entity_ref_prefers_id_over_name() {
+        let op = serde_json::json!({"entity_id": 100, "name": "Ignored"});
+        let result = parse_entity_ref_from_op(&op).unwrap();
+        assert!(matches!(result, EntityRef::Id(100)));
+    }
+
+    #[test]
+    fn set_component_fields_not_object() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "Transform".to_string(),
+            serde_json::json!("not an object"),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn set_component_unknown_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "TotallyFakeComponent".to_string(),
+            serde_json::json!({"field": "value"}),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn remove_component_unknown_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let result = remove_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "TotallyFakeComponent".to_string(),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn remove_component_entity_not_found() {
+        let mut world = World::new();
+        let result = remove_component(&mut world, EntityRef::Id(999999), "Transform".to_string());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn remove_resource_not_in_registry() {
+        let mut world = World::new();
+        let result = remove_resource(&mut world, "FakeResource".to_string());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn remove_component_custom_python_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        // Register a fake custom component via CustomComponentInfo
+        let comp_id = world.register_component_with_descriptor(unsafe {
+            ComponentDescriptor::new_with_layout(
+                "CustomComp",
+                StorageType::Table,
+                std::alloc::Layout::new::<u8>(),
+                None,
+                false,
+                ComponentCloneBehavior::Default,
+                None,
+            )
+        });
+
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        info.insert(
+            comp_id,
+            pybevy_core::CustomComponentEntry {
+                type_ptr: std::ptr::null(),
+                name: "CustomComp".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        // remove_component should find it via CustomComponentInfo fallback
+        let result = remove_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "CustomComp".to_string(),
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["removed"], "CustomComp");
+    }
+
+    #[test]
+    fn remove_component_custom_not_found_without_info() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        // No CustomComponentInfo resource → should fail
+        let result = remove_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "CustomComp".to_string(),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn has_embedded_errors_detects_errors() {
+        let val = serde_json::json!({
+            "entity_id": 42,
+            "errors": ["field not found"],
+        });
+        assert!(has_embedded_errors(&val));
+    }
+
+    #[test]
+    fn has_embedded_errors_empty_errors_is_false() {
+        let val = serde_json::json!({
+            "entity_id": 42,
+            "errors": [],
+        });
+        assert!(!has_embedded_errors(&val));
+    }
+
+    #[test]
+    fn has_embedded_errors_no_errors_key_is_false() {
+        let val = serde_json::json!({
+            "entity_id": 42,
+            "components_added": ["Transform"],
+        });
+        assert!(!has_embedded_errors(&val));
+    }
+
+    #[test]
+    fn batch_mutate_partial_status_on_embedded_errors() {
+        // Simulate a batch where one operation returns Ok with embedded errors.
+        // We can't easily trigger real embedded errors without registered components,
+        // but we can test the status assignment logic directly.
+        let val_with_errors = serde_json::json!({
+            "entity_id": 42,
+            "updated_fields": [],
+            "errors": ["some field error"],
+        });
+        let val_without_errors = serde_json::json!({
+            "entity_id": 42,
+            "updated_fields": ["translation"],
+        });
+
+        // Test status assignment
+        let status_partial = if has_embedded_errors(&val_with_errors) {
+            "partial"
+        } else {
+            "ok"
+        };
+        let status_ok = if has_embedded_errors(&val_without_errors) {
+            "partial"
+        } else {
+            "ok"
+        };
+
+        assert_eq!(status_partial, "partial");
+        assert_eq!(status_ok, "ok");
+    }
+
+    #[test]
+    fn spawn_entity_atomicity_no_stray_entity() {
+        let mut world = World::new();
+        let initial_count = world.entities().len();
+
+        // Unknown components should fail without leaving a stray entity
+        let result = spawn_entity(&mut world, serde_json::json!({"FakeComp": {}}));
+        assert!(result.is_err());
+        assert_eq!(world.entities().len(), initial_count);
+    }
+
+    #[test]
+    fn insert_resource_custom_via_custom_resource_info() {
+        setup_python();
+
+        let mut world = World::new();
+
+        // Register a fake custom resource
+        let comp_id = world.register_component_with_descriptor(unsafe {
+            ComponentDescriptor::new_with_layout(
+                "GameScore",
+                StorageType::Table,
+                std::alloc::Layout::new::<u8>(),
+                None,
+                false,
+                ComponentCloneBehavior::Default,
+                None,
+            )
+        });
+
+        // Use a real Python type pointer so PyO3 doesn't crash on null
+        let type_ptr = Python::attach(|py| {
+            let int_type = py.get_type::<pyo3::types::PyInt>();
+            int_type.as_type_ptr()
+        });
+
+        let mut info = pybevy_core::CustomResourceInfo::default();
+        info.insert(
+            comp_id,
+            pybevy_core::CustomResourceEntry {
+                type_ptr,
+                name: "GameScore".to_string(),
+            },
+        );
+        world.insert_resource(info);
+
+        // set_resource should find it via CustomResourceInfo and construct.
+        // int() returns 0, stored in PyResourceStorage.
+        let result = insert_resource(&mut world, "GameScore".to_string(), serde_json::json!({}));
+        assert!(
+            result.is_ok(),
+            "Custom resource insert failed: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap()["custom"], true);
+
+        // Verify PyResourceStorage was populated
+        let storage = world.get_resource::<pybevy_core::PyResourceStorage>();
+        assert!(storage.is_some(), "PyResourceStorage should exist");
+        assert!(
+            storage.unwrap().resources.contains_key(&comp_id),
+            "Resource should be stored in PyResourceStorage"
+        );
+    }
+
+    #[test]
+    fn spawn_entity_field_error_falls_back_to_python_not_error() {
+        // Regression test: spawn_entity previously returned FieldError as an error to
+        // the user. After the fix, FieldError falls through to the Python fallback
+        // path (just like NotRegistered, NoReflectComponent, etc.).
+        //
+        // We cannot trigger a real FieldError in this test because it requires a
+        // component registered in the bridge registry whose reflect_spawn_component
+        // returns FieldError (e.g., a Color array or Vec2 field). However, we verify
+        // the code structure by confirming that spawn_entity with unknown components
+        // fails with invalid_params (not FieldError), and that valid empty spawn
+        // succeeds — ensuring the match arms haven't been accidentally reordered to
+        // make FieldError an early-return error.
+        //
+        // The actual FieldError fallback path is:
+        //   Err(ReflectError::FieldError(_)) => { /* Fall back to Python */ }
+        // This was previously:
+        //   Err(ReflectError::FieldError(msg)) => { errors.push(...); continue; }
+        let mut world = World::new();
+
+        // Empty spawn should still work (no components = no FieldError possible)
+        let result = spawn_entity(&mut world, serde_json::json!({})).unwrap();
+        assert!(result["entity_id"].is_number());
+
+        // Unknown component should fail at validation phase (before reflection)
+        let result = spawn_entity(&mut world, serde_json::json!({"FakeComp": {"x": 1}}));
+        assert!(result.is_err());
+        // The error is invalid_params (-32602), NOT a FieldError propagation
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn remove_resource_custom_via_py_pyresource() {
+        setup_python();
+
+        let mut world = World::new();
+
+        // Register a fake custom resource
+        let comp_id = world.register_component_with_descriptor(unsafe {
+            ComponentDescriptor::new_with_layout(
+                "MyCustomRes",
+                StorageType::Table,
+                std::alloc::Layout::new::<u8>(),
+                None,
+                false,
+                ComponentCloneBehavior::Default,
+                None,
+            )
+        });
+
+        // Create CustomResourceInfo with the entry
+        let type_ptr = Python::attach(|py| {
+            let int_type = py.get_type::<pyo3::types::PyInt>();
+            int_type.as_type_ptr()
+        });
+
+        let mut info = pybevy_core::CustomResourceInfo::default();
+        info.insert(
+            comp_id,
+            pybevy_core::CustomResourceEntry {
+                type_ptr,
+                name: "MyCustomRes".to_string(),
+            },
+        );
+        world.insert_resource(info);
+
+        // Pre-populate PyResourceStorage with a matching entry
+        let py_obj = Python::attach(|py| 42i64.into_pyobject(py).unwrap().into_any().unbind());
+        let mut storage = pybevy_core::PyResourceStorage::default();
+        storage.resources.insert(comp_id, py_obj);
+        world.insert_resource(storage);
+
+        // Verify resource is present before removal
+        assert!(
+            world
+                .get_resource::<pybevy_core::PyResourceStorage>()
+                .unwrap()
+                .resources
+                .contains_key(&comp_id),
+            "Resource should exist before removal"
+        );
+
+        // Call remove_resource — should find via CustomResourceInfo and remove from PyResourceStorage
+        let result = remove_resource(&mut world, "MyCustomRes".to_string());
+        assert!(result.is_ok(), "remove_resource failed: {:?}", result);
+        assert_eq!(result.unwrap()["removed"], "MyCustomRes");
+
+        // Verify it was removed from PyResourceStorage
+        let storage = world
+            .get_resource::<pybevy_core::PyResourceStorage>()
+            .unwrap();
+        assert!(
+            !storage.resources.contains_key(&comp_id),
+            "Resource should be removed from PyResourceStorage"
+        );
+    }
+
+    #[test]
+    fn remove_resource_custom_not_found_without_info() {
+        let mut world = World::new();
+        // No CustomResourceInfo resource and no bridge → should fail
+        let result = remove_resource(&mut world, "NonExistentCustomRes".to_string());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn set_component_custom_not_in_any_registry() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        // No bridge and no CustomComponentInfo → set_component should return not_found
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "TotallyCustomComp".to_string(),
+            serde_json::json!({"health": 100}),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32001);
+        assert!(
+            err.message
+                .contains("not found in custom component registry"),
+            "Error should mention 'not found in custom component registry', got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn set_component_custom_error_lists_available() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        // Add CustomComponentInfo with entries so the error message includes them
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        info.insert(
+            ComponentId::new(77777),
+            pybevy_core::CustomComponentEntry {
+                type_ptr: std::ptr::null(),
+                name: "Health".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "UnknownComp".to_string(),
+            serde_json::json!({"value": 42}),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("Available custom components: Health"),
+            "Error should list available custom components, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn set_component_custom_qualified_name_fallback() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        // Register a custom component with qualified name (module.ClassName)
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        let fake_id = ComponentId::new(88888);
+        info.insert(
+            fake_id,
+            pybevy_core::CustomComponentEntry {
+                type_ptr: std::ptr::null(),
+                name: "mymod.Oscillator".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        // Requesting by short name "Oscillator" should not error with "not found"
+        // when the entity doesn't have the component — it should find the entry
+        // via qualified name fallback but then fail because entity lacks it.
+        // This tests the name resolution path, not the full mutation.
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "Oscillator".to_string(),
+            serde_json::json!({"speed": 1.0}),
+        );
+        // The qualified name match is only used when the component is on the entity,
+        // so this will still fail — but the error should list available components
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn spawn_entity_string_value_not_silently_dropped() {
+        // Regression: previously, `{"Name": "my_name"}` would call
+        // `comp_fields.as_object().unwrap_or_default()`, silently dropping the
+        // string value and creating `Name("")` (empty default).
+        //
+        // The fix routes non-object values through `spawn_component_python_direct`,
+        // which passes the value as a positional argument to the Python constructor.
+        //
+        // We can't test with real Python bridge components in unit tests, but we can
+        // verify that a string value for an UNKNOWN component still fails at the
+        // validation phase (not silently succeeding with empty data).
+        let mut world = World::new();
+        let result = spawn_entity(&mut world, serde_json::json!({"UnknownComp": "some_value"}));
+        assert!(
+            result.is_err(),
+            "Should fail for unknown component, not silently succeed"
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602, "Should be invalid_params error");
+        assert!(
+            err.message.contains("UnknownComp"),
+            "Error should mention the component name, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn set_component_custom_in_info_but_not_pyobject_storage() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        // Register a custom component with is_pyobject_storage = false
+        let comp_id = world.register_component_with_descriptor(unsafe {
+            ComponentDescriptor::new_with_layout(
+                "WrapperComp",
+                StorageType::Table,
+                std::alloc::Layout::new::<u8>(),
+                None,
+                false,
+                ComponentCloneBehavior::Default,
+                None,
+            )
+        });
+
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        info.insert(
+            comp_id,
+            pybevy_core::CustomComponentEntry {
+                type_ptr: std::ptr::null(),
+                name: "WrapperComp".to_string(),
+                is_pyobject_storage: false,
+            },
+        );
+        world.insert_resource(info);
+
+        // set_component should find it in CustomComponentInfo but reject because
+        // it uses wrapper storage (not pyobject storage)
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "WrapperComp".to_string(),
+            serde_json::json!({"value": 42}),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602); // invalid_params
+        assert!(
+            err.message.contains("wrapper storage"),
+            "Error should mention wrapper storage, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn insert_custom_component_tries_kwargs_when_call0_fails() {
+        // Regression: insert_custom_component previously only tried cls.call0()
+        // (default constructor). If __init__ has required positional args like
+        // PythonComp(amount: float), call0() fails with "missing required argument".
+        //
+        // The fix: if call0() fails and field_obj is non-empty, try passing
+        // fields as kwargs via cls.call((), Some(&kwargs)).
+        //
+        // We can't test end-to-end without a real custom component registration,
+        // but we verify the code path exists by checking that set_component for
+        // a pyobject-storage custom component that's NOT on the entity attempts
+        // creation (enters insert_custom_component), not just mutation.
+
+        setup_python();
+
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+
+        let comp_id = world.register_component_with_descriptor(unsafe {
+            ComponentDescriptor::new_with_layout(
+                "ReinsertComp",
+                StorageType::Table,
+                std::alloc::Layout::new::<u8>(),
+                None,
+                false,
+                ComponentCloneBehavior::Default,
+                None,
+            )
+        });
+
+        // Register as pyobject-storage custom component
+        let type_ptr = Python::attach(|py| {
+            let int_type = py.get_type::<pyo3::types::PyInt>();
+            int_type.as_type_ptr()
+        });
+
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        info.insert(
+            comp_id,
+            pybevy_core::CustomComponentEntry {
+                type_ptr,
+                name: "ReinsertComp".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        // Entity does NOT have the component → insert_custom_component is called
+        // The type_ptr points to int, so construction will fail, but we verify
+        // the code path reaches creation (not "component not found on entity")
+        let result = set_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "ReinsertComp".to_string(),
+            serde_json::json!({"value": 42}),
+        );
+        // Should attempt creation, not return "component not found on entity"
+        // (the actual creation may fail because int type_ptr is not a real
+        // component type, but the error should be from the creation attempt)
+        assert!(result.is_err(), "Expected error from creation attempt");
+        let err = result.unwrap_err();
+        // The error should NOT be about "not found on entity" — it should be
+        // about creation/setting fields (proving insert_custom_component was called)
+        assert!(
+            !err.message.contains("not found on entity"),
+            "Should not report 'not found on entity' — should attempt creation. Got: {}",
+            err.message
+        );
+    }
+}

@@ -608,3 +608,982 @@ pub fn check_all_overlaps(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
+
+    use super::*;
+
+    fn make_aabb(entity_bits: u64, min: [f32; 3], max: [f32; 3]) -> WorldAabb {
+        WorldAabb {
+            min: Vec3A::from_array(min),
+            max: Vec3A::from_array(max),
+            entity: Entity::from_bits(entity_bits),
+        }
+    }
+
+    #[test]
+    fn aabbs_overlap_overlapping() {
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+        assert!(aabbs_overlap(&a, &b));
+    }
+
+    #[test]
+    fn aabbs_overlap_separated() {
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = make_aabb(2, [5.0, 5.0, 5.0], [6.0, 6.0, 6.0]);
+        assert!(!aabbs_overlap(&a, &b));
+    }
+
+    #[test]
+    fn aabbs_overlap_touching_edges() {
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = make_aabb(2, [1.0, 0.0, 0.0], [2.0, 1.0, 1.0]);
+        assert!(aabbs_overlap(&a, &b));
+    }
+
+    #[test]
+    fn aabbs_overlap_partial_two_axes() {
+        // Overlap on X and Y but not Z
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+        let b = make_aabb(2, [1.0, 1.0, 3.0], [3.0, 3.0, 4.0]);
+        assert!(!aabbs_overlap(&a, &b));
+    }
+
+    #[test]
+    fn aabb_min_distance_overlapping_is_zero() {
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+        assert_eq!(aabb_min_distance(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn aabb_min_distance_gap_single_axis() {
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = make_aabb(2, [4.0, 0.0, 0.0], [5.0, 1.0, 1.0]);
+        // Gap is 3.0 on X axis only
+        assert!((aabb_min_distance(&a, &b) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn aabb_min_distance_gap_multiple_axes() {
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let b = make_aabb(2, [4.0, 5.0, 0.0], [5.0, 6.0, 1.0]);
+        // Gap: dx=3, dy=4, dz=0 → sqrt(9+16) = 5
+        assert!((aabb_min_distance(&a, &b) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn compute_penetration_x_dominant() {
+        // Overlap: X=0.5, Y=1.0, Z=1.0 → X is minimum
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.5, 1.0, 1.0], [3.5, 3.0, 3.0]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_eq!(axis, "X");
+        assert!((depth - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn compute_penetration_y_dominant() {
+        // Overlap: X=1.0, Y=0.3, Z=1.0 → Y is minimum
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.0, 1.7, 1.0], [3.0, 3.7, 3.0]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_eq!(axis, "Y");
+        assert!((depth - 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_penetration_z_dominant() {
+        // Overlap: X=1.0, Y=1.0, Z=0.2 → Z is minimum
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.0, 1.0, 1.8], [3.0, 3.0, 3.8]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_eq!(axis, "Z");
+        assert!((depth - 0.2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn describe_direction_pure_x() {
+        assert_eq!(describe_direction(Vec3::new(5.0, 0.0, 0.0)), "+X (right)");
+    }
+
+    #[test]
+    fn describe_direction_negative_y() {
+        assert_eq!(describe_direction(Vec3::new(0.0, -3.0, 0.0)), "-Y (below)");
+    }
+
+    #[test]
+    fn describe_direction_mixed() {
+        let result = describe_direction(Vec3::new(5.0, 5.0, 0.0));
+        assert!(result.contains("+X (right)"));
+        assert!(result.contains("+Y (above)"));
+    }
+
+    #[test]
+    fn describe_direction_zero_vector() {
+        assert_eq!(
+            describe_direction(Vec3::new(0.0, 0.0, 0.0)),
+            "same position"
+        );
+    }
+
+    #[test]
+    fn describe_direction_small_below_threshold() {
+        // dominant = 10.0, threshold = 1.5. x=0.5 is below threshold
+        let result = describe_direction(Vec3::new(0.5, 10.0, 0.0));
+        assert!(!result.contains("+X"));
+        assert!(result.contains("+Y (above)"));
+    }
+
+    #[test]
+    fn resolve_entity_by_id_found() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let entity_ref = EntityRef::Id(entity.to_bits());
+        let result = resolve_entity(&mut world, &entity_ref);
+        assert_eq!(result.unwrap(), entity);
+    }
+
+    #[test]
+    fn resolve_entity_by_id_not_found() {
+        let mut world = World::new();
+        let entity_ref = EntityRef::Id(999999);
+        let result = resolve_entity(&mut world, &entity_ref);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn resolve_entity_by_name_found() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        let entity_ref = EntityRef::Name("TestEntity".into());
+        let result = resolve_entity(&mut world, &entity_ref);
+        assert_eq!(result.unwrap(), entity);
+    }
+
+    #[test]
+    fn resolve_entity_by_name_not_found() {
+        let mut world = World::new();
+        let entity_ref = EntityRef::Name("NonExistent".into());
+        let result = resolve_entity(&mut world, &entity_ref);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn query_spatial_two_entities() {
+        let mut world = World::new();
+        let ea = world
+            .spawn((
+                Name::new("A"),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+        let eb = world
+            .spawn((
+                Name::new("B"),
+                GlobalTransform::from(Transform::from_xyz(3.0, 4.0, 0.0)),
+            ))
+            .id();
+
+        let result = super::query_spatial(
+            &mut world,
+            EntityRef::Id(ea.to_bits()),
+            EntityRef::Id(eb.to_bits()),
+        )
+        .unwrap();
+
+        let dist = result["center_distance"].as_f64().unwrap();
+        assert!((dist - 5.0).abs() < 1e-4); // 3-4-5 triangle
+
+        let dir = result["direction_a_to_b"].as_str().unwrap();
+        assert!(dir.contains("+X (right)"));
+        assert!(dir.contains("+Y (above)"));
+    }
+
+    #[test]
+    fn query_spatial_neighborhood_radius_filtering() {
+        let mut world = World::new();
+        let center = world
+            .spawn((
+                Name::new("Center"),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+        world.spawn((
+            Name::new("Near"),
+            GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
+        ));
+        world.spawn((
+            Name::new("Far"),
+            GlobalTransform::from(Transform::from_xyz(100.0, 0.0, 0.0)),
+        ));
+
+        let result =
+            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 5.0, None)
+                .unwrap();
+
+        assert_eq!(result["count"], 1);
+        let neighbors = result["neighbors"].as_array().unwrap();
+        assert_eq!(neighbors.len(), 1);
+        let name = neighbors[0]["entity"].as_str().unwrap();
+        assert!(name.contains("Near"));
+    }
+
+    #[test]
+    fn query_spatial_neighborhood_sort_order() {
+        let mut world = World::new();
+        let center = world
+            .spawn((
+                Name::new("Center"),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+        world.spawn((
+            Name::new("Mid"),
+            GlobalTransform::from(Transform::from_xyz(5.0, 0.0, 0.0)),
+        ));
+        world.spawn((
+            Name::new("Close"),
+            GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
+        ));
+
+        let result =
+            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 10.0, None)
+                .unwrap();
+
+        let neighbors = result["neighbors"].as_array().unwrap();
+        assert_eq!(neighbors.len(), 2);
+        // Closest first
+        let d0 = neighbors[0]["distance"].as_f64().unwrap();
+        let d1 = neighbors[1]["distance"].as_f64().unwrap();
+        assert!(d0 < d1);
+    }
+
+    #[test]
+    fn entity_label_with_name() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Cube")).id();
+        let label = super::entity_label(&world, entity);
+        assert!(label.contains("Cube"));
+        assert!(label.contains(&entity.to_bits().to_string()));
+    }
+
+    #[test]
+    fn entity_label_without_name() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let label = super::entity_label(&world, entity);
+        assert_eq!(label, entity.to_bits().to_string());
+    }
+
+    #[test]
+    fn compute_world_aabb_identity_transform() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        let result = compute_world_aabb(&world, entity).unwrap();
+        assert!((result.min.x - (-1.0)).abs() < 1e-5);
+        assert!((result.min.y - (-1.0)).abs() < 1e-5);
+        assert!((result.min.z - (-1.0)).abs() < 1e-5);
+        assert!((result.max.x - 1.0).abs() < 1e-5);
+        assert!((result.max.y - 1.0).abs() < 1e-5);
+        assert!((result.max.z - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_world_aabb_translated() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::from(Transform::from_xyz(5.0, 0.0, 0.0)),
+            ))
+            .id();
+
+        let result = compute_world_aabb(&world, entity).unwrap();
+        assert!((result.min.x - 4.0).abs() < 1e-5);
+        assert!((result.max.x - 6.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_world_aabb_no_aabb() {
+        let mut world = World::new();
+        let entity = world.spawn(GlobalTransform::default()).id();
+
+        let result = compute_world_aabb(&world, entity);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compute_world_aabb_no_transform() {
+        let mut world = World::new();
+        let entity = world
+            .spawn(Aabb::from_min_max(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+            ))
+            .id();
+
+        let result = compute_world_aabb(&world, entity);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn check_overlaps_no_overlaps() {
+        let mut world = World::new();
+        let ea = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0)),
+        ));
+
+        let result =
+            check_overlaps(&mut world, EntityRef::Id(ea.to_bits()), true, 0.1, None).unwrap();
+
+        assert_eq!(result["overlap_count"], 0);
+    }
+
+    #[test]
+    fn check_overlaps_with_overlap() {
+        let mut world = World::new();
+        let ea = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0)),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0)),
+            GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
+        ));
+
+        let result =
+            check_overlaps(&mut world, EntityRef::Id(ea.to_bits()), true, 0.1, None).unwrap();
+
+        assert!(result["overlap_count"].as_u64().unwrap() > 0);
+        let overlaps = result["overlaps"].as_array().unwrap();
+        assert!(!overlaps.is_empty());
+        assert!(overlaps[0]["penetration_depth"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn check_overlaps_entity_sibling_filtering_deep_hierarchy() {
+        let mut world = World::new();
+
+        // Reproduce the exact bug report structure:
+        // root_a → branch_a1 → overlap_a_mesh (Cuboid)
+        // root_a → branch_a2 → overlap_b_mesh (Cuboid, overlapping)
+        let root = world
+            .spawn((
+                Name::new("root_a"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let branch1 = world
+            .spawn((
+                Name::new("branch_a1"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let branch2 = world
+            .spawn((
+                Name::new("branch_a2"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let mesh_a = world
+            .spawn((
+                Name::new("overlap_a_mesh"),
+                Aabb::from_min_max(Vec3::new(-0.6, -0.6, -0.6), Vec3::new(0.6, 0.6, 0.6)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let mesh_b = world
+            .spawn((
+                Name::new("overlap_b_mesh"),
+                Aabb::from_min_max(Vec3::new(-0.45, -0.6, -0.6), Vec3::new(0.75, 0.6, 0.6)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        world.entity_mut(root).add_children(&[branch1, branch2]);
+        world.entity_mut(branch1).add_children(&[mesh_a]);
+        world.entity_mut(branch2).add_children(&[mesh_b]);
+
+        // include_siblings=true → should report the overlap
+        let result_with = check_overlaps(
+            &mut world,
+            EntityRef::Name("overlap_a_mesh".into()),
+            true,
+            0.1,
+            None,
+        )
+        .unwrap();
+        assert!(
+            result_with["overlap_count"].as_u64().unwrap() > 0,
+            "Expected overlap with include_siblings=true"
+        );
+
+        // include_siblings=false → should filter (same root ancestor)
+        let result_without = check_overlaps(
+            &mut world,
+            EntityRef::Name("overlap_a_mesh".into()),
+            false,
+            0.1,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            result_without["overlap_count"].as_u64().unwrap(),
+            0,
+            "Expected no overlap with include_siblings=false (same root ancestor)"
+        );
+    }
+
+    #[test]
+    fn check_overlaps_floating_entity() {
+        let mut world = World::new();
+        let floating = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+                GlobalTransform::from(Transform::from_xyz(0.0, 10.0, 0.0)),
+            ))
+            .id();
+
+        let result = check_overlaps(
+            &mut world,
+            EntityRef::Id(floating.to_bits()),
+            true,
+            0.1,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result["floating"], true);
+        assert_eq!(result["grounded"], false);
+    }
+
+    #[test]
+    fn check_overlaps_grounded_entity() {
+        let mut world = World::new();
+        // Ground: y=0..1
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-5.0, 0.0, -5.0), Vec3::new(5.0, 1.0, 5.0)),
+            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+        ));
+        // Entity sitting on top: y=1..2
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 1.0, 0.5)),
+                GlobalTransform::from(Transform::from_xyz(0.0, 1.0, 0.0)),
+            ))
+            .id();
+
+        let result =
+            check_overlaps(&mut world, EntityRef::Id(entity.to_bits()), true, 0.1, None).unwrap();
+
+        assert_eq!(result["grounded"], true);
+    }
+
+    #[test]
+    fn check_all_overlaps_empty_world() {
+        let mut world = World::new();
+
+        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+
+        assert_eq!(result["total_entities_with_aabb"], 0);
+        assert_eq!(result["overlap_count"], 0);
+    }
+
+    #[test]
+    fn check_all_overlaps_no_overlaps() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+        ));
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0)),
+        ));
+
+        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+
+        assert_eq!(result["overlap_count"], 0);
+    }
+
+    #[test]
+    fn check_all_overlaps_with_overlaps() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0)),
+            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+        ));
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0)),
+            GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
+        ));
+
+        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+
+        assert!(result["overlap_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn check_all_overlaps_floating_detection() {
+        let mut world = World::new();
+        // Entity high in the air with nothing below
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+            GlobalTransform::from(Transform::from_xyz(0.0, 50.0, 0.0)),
+        ));
+
+        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+
+        assert!(result["floating_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn check_all_overlaps_max_results() {
+        let mut world = World::new();
+        // Create many overlapping entities
+        for i in 0..5 {
+            world.spawn((
+                Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0)),
+                GlobalTransform::from(Transform::from_xyz(i as f32 * 0.5, 0.0, 0.0)),
+            ));
+        }
+
+        let result =
+            super::check_all_overlaps(&mut world, None, Some(1), 0.1, None, false).unwrap();
+
+        let overlaps = result["overlaps"].as_array().unwrap();
+        assert!(overlaps.len() <= 1);
+    }
+
+    #[test]
+    fn describe_direction_negative_z() {
+        let result = describe_direction(Vec3::new(0.0, 0.0, -5.0));
+        assert!(result.contains("-Z (behind)"));
+    }
+
+    #[test]
+    fn describe_direction_all_three_axes() {
+        let result = describe_direction(Vec3::new(5.0, 5.0, 5.0));
+        assert!(result.contains("+X (right)"));
+        assert!(result.contains("+Y (above)"));
+        assert!(result.contains("+Z (forward)"));
+    }
+
+    #[test]
+    fn query_spatial_neighborhood_max_results_truncation() {
+        let mut world = World::new();
+        let center = world
+            .spawn((
+                Name::new("Center"),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+        for i in 1..=5 {
+            world.spawn((
+                Name::new(format!("Neighbor{}", i)),
+                GlobalTransform::from(Transform::from_xyz(i as f32, 0.0, 0.0)),
+            ));
+        }
+
+        let result =
+            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 10.0, Some(2))
+                .unwrap();
+
+        assert_eq!(result["count"], 2);
+        assert_eq!(result["truncated"], true);
+    }
+
+    #[test]
+    fn query_spatial_missing_transform_errors() {
+        let mut world = World::new();
+        // Entity with GlobalTransform but no Transform (simulates removal)
+        let entity = world
+            .spawn((
+                Name::new("NoTransform"),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+
+        let result =
+            query_spatial_neighborhood(&mut world, EntityRef::Id(entity.to_bits()), 5.0, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("no Transform"),
+            "Error should mention missing Transform, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn query_spatial_neighborhood_no_neighbors() {
+        let mut world = World::new();
+        let center = world
+            .spawn((
+                Name::new("Lonely"),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
+
+        let result =
+            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 5.0, None)
+                .unwrap();
+
+        assert_eq!(result["count"], 0);
+    }
+
+    #[test]
+    fn compute_world_aabb_falls_back_to_children() {
+        let mut world = World::new();
+        // Parent without Aabb
+        let parent = world
+            .spawn((
+                Name::new("Parent"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        // Child with Aabb
+        let child = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.entity_mut(parent).add_children(&[child]);
+
+        let result = compute_world_aabb(&world, parent).unwrap();
+        assert!((result.min.x - (-1.0)).abs() < 1e-5);
+        assert!((result.max.x - 1.0).abs() < 1e-5);
+        assert_eq!(result.entity, parent);
+    }
+
+    #[test]
+    fn compute_world_aabb_merges_multiple_children() {
+        let mut world = World::new();
+        let parent = world
+            .spawn((
+                Name::new("Parent"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let child_a = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let child_b = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 3.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.entity_mut(parent).add_children(&[child_a, child_b]);
+
+        let result = compute_world_aabb(&world, parent).unwrap();
+        // Merged: min=(-1,0,0), max=(2,3,1)
+        assert!((result.min.x - (-1.0)).abs() < 1e-5);
+        assert!((result.max.x - 2.0).abs() < 1e-5);
+        assert!((result.max.y - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_world_aabb_no_aabb_no_children_errors() {
+        let mut world = World::new();
+        let entity = world.spawn(GlobalTransform::default()).id();
+
+        let result = compute_world_aabb(&world, entity);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("no descendants with Aabb")
+        );
+    }
+
+    #[test]
+    fn entity_label_generic_name_shows_parent() {
+        let mut world = World::new();
+        let parent = world
+            .spawn((
+                Name::new("tree_0"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let child = world.spawn(Name::new("geometry_0.PBRMaterial")).id();
+        world.entity_mut(parent).add_children(&[child]);
+
+        let label = entity_label(&world, child);
+        assert!(label.contains("geometry_0"));
+        assert!(label.contains("[parent: tree_0]"));
+    }
+
+    #[test]
+    fn entity_label_non_generic_name_unchanged() {
+        let mut world = World::new();
+        let parent = world
+            .spawn((
+                Name::new("scene_root"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let child = world.spawn(Name::new("my_custom_mesh")).id();
+        world.entity_mut(parent).add_children(&[child]);
+
+        let label = entity_label(&world, child);
+        assert!(label.contains("my_custom_mesh"));
+        assert!(!label.contains("[parent:"));
+    }
+
+    #[test]
+    fn entity_label_no_parent_unchanged() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("geometry_0")).id();
+
+        let label = entity_label(&world, entity);
+        assert!(label.contains("geometry_0"));
+        // No parent → no [parent: ...] suffix
+        assert!(!label.contains("[parent:"));
+    }
+
+    #[test]
+    fn check_overlaps_single_sunken() {
+        let mut world = World::new();
+        // Entity with center at origin, AABB goes from -1 to +1 on all axes
+        // So min_y = -1.0, which is below ground_y=0.0
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        let result = check_overlaps(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            true,
+            0.1,
+            Some(0.0),
+        )
+        .unwrap();
+
+        assert!(result["sunken"].is_object());
+        let depth = result["sunken"]["penetration_depth"].as_f64().unwrap();
+        assert!((depth - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn check_overlaps_no_ground_y_omits_sunken() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        let result =
+            check_overlaps(&mut world, EntityRef::Id(entity.to_bits()), true, 0.1, None).unwrap();
+
+        assert!(result.get("sunken").is_none());
+    }
+
+    #[test]
+    fn check_all_overlaps_sunken_detection() {
+        let mut world = World::new();
+        // Entity centered at origin: AABB min_y = -1.0
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::default(),
+        ));
+
+        let result =
+            super::check_all_overlaps(&mut world, None, None, 0.1, Some(0.0), false).unwrap();
+
+        assert_eq!(result["sunken_count"], 1);
+        let sunken = result["sunken_entities"].as_array().unwrap();
+        assert_eq!(sunken.len(), 1);
+    }
+
+    #[test]
+    fn check_all_overlaps_no_sunken_above_ground() {
+        let mut world = World::new();
+        // Entity fully above ground
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)),
+            GlobalTransform::default(),
+        ));
+
+        let result =
+            super::check_all_overlaps(&mut world, None, None, 0.1, Some(0.0), false).unwrap();
+
+        assert_eq!(result["sunken_count"], 0);
+    }
+
+    #[test]
+    fn check_all_overlaps_no_ground_y_omits_fields() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::default(),
+        ));
+
+        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+
+        assert!(result.get("sunken_count").is_none());
+        assert!(result.get("sunken_entities").is_none());
+    }
+
+    #[test]
+    fn check_all_overlaps_sibling_filtering_deep_hierarchy() {
+        let mut world = World::new();
+
+        // Simulate GLB model: Root → Bone1 → Mesh1, Root → Bone2 → Mesh2
+        let root = world
+            .spawn((
+                Name::new("model_root"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let bone1 = world
+            .spawn((
+                Name::new("bone1"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let bone2 = world
+            .spawn((
+                Name::new("bone2"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        // Two overlapping mesh children under different bones but same root
+        let mesh1 = world
+            .spawn((
+                Name::new("mesh1"),
+                Aabb::from_min_max(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let mesh2 = world
+            .spawn((
+                Name::new("mesh2"),
+                Aabb::from_min_max(Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 1.5, 0.5)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        world.entity_mut(root).add_children(&[bone1, bone2]);
+        world.entity_mut(bone1).add_children(&[mesh1]);
+        world.entity_mut(bone2).add_children(&[mesh2]);
+
+        // With include_siblings=true, overlaps should be reported
+        let result_with =
+            super::check_all_overlaps(&mut world, None, None, 0.1, None, true).unwrap();
+        assert!(
+            result_with["overlap_count"].as_u64().unwrap() > 0,
+            "Expected overlaps with include_siblings=true"
+        );
+
+        // With include_siblings=false, sibling overlaps should be filtered
+        let result_without =
+            super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        assert_eq!(
+            result_without["overlap_count"].as_u64().unwrap(),
+            0,
+            "Expected no overlaps with include_siblings=false (same root ancestor)"
+        );
+    }
+
+    #[test]
+    fn round6_basic() {
+        assert_eq!(super::round6(3.1415927), 3.141593);
+        assert_eq!(super::round6(0.0), 0.0);
+        assert_eq!(super::round6(-1.23456789), -1.234568);
+    }
+
+    #[test]
+    fn round6_f64_basic() {
+        assert_eq!(super::round6_f64(0.0024348448496311903), 0.002435);
+    }
+
+    #[test]
+    fn check_all_overlaps_sibling_filtering_different_roots() {
+        let mut world = World::new();
+
+        // Two independent root entities with overlapping children
+        let root_a = world
+            .spawn((
+                Name::new("root_a"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let root_b = world
+            .spawn((
+                Name::new("root_b"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let child_a = world
+            .spawn((
+                Name::new("child_a"),
+                Aabb::from_min_max(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let child_b = world
+            .spawn((
+                Name::new("child_b"),
+                Aabb::from_min_max(Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 1.5, 0.5)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        world.entity_mut(root_a).add_children(&[child_a]);
+        world.entity_mut(root_b).add_children(&[child_b]);
+
+        // Different roots → overlap should still be reported even with include_siblings=false
+        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        assert!(
+            result["overlap_count"].as_u64().unwrap() > 0,
+            "Overlaps between different root hierarchies should not be filtered"
+        );
+    }
+}

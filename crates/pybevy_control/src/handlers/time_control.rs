@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::{
     ecs::world::World,
-    prelude::{ChildOf, Entity, GlobalTransform, Transform, Without},
+    prelude::{ChildOf, Children, Entity, GlobalTransform, Transform, Without},
     time::{Time, Virtual},
 };
 
@@ -11,8 +11,6 @@ use crate::bridge::ControlError;
 /// Propagate transforms through the full hierarchy after time manipulation.
 /// Updates GlobalTransform for root entities first, then recursively for children.
 fn propagate_transforms(world: &mut World) {
-    use bevy::prelude::Children;
-
     // Update root entities (no ChildOf)
     let mut root_query = world.query_filtered::<(Entity, &Transform), Without<ChildOf>>();
     let roots: Vec<(Entity, GlobalTransform)> = root_query
@@ -129,4 +127,97 @@ pub fn seek_time(
         "relative_speed": time.relative_speed(),
         "note": "Time set. Animations/timers will update on next frame. GlobalTransform synced for spatial queries.",
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world_with_virtual_time() -> World {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        world
+    }
+
+    #[test]
+    fn test_pause_time() {
+        let mut world = world_with_virtual_time();
+        let result = pause_time(&mut world).unwrap();
+        assert_eq!(result["paused"], true);
+    }
+
+    #[test]
+    fn test_resume_time() {
+        let mut world = world_with_virtual_time();
+        // Pause first, then resume
+        pause_time(&mut world).unwrap();
+        let result = resume_time(&mut world).unwrap();
+        assert_eq!(result["paused"], false);
+    }
+
+    #[test]
+    fn test_set_time_scale() {
+        let mut world = world_with_virtual_time();
+        let result = set_time_scale(&mut world, 2.5).unwrap();
+        assert_eq!(result["relative_speed"], 2.5);
+    }
+
+    #[test]
+    fn test_get_time_status() {
+        let mut world = world_with_virtual_time();
+        let result = get_time_status(&mut world).unwrap();
+        assert_eq!(result["paused"], false);
+        assert!(result.get("relative_speed").is_some());
+        assert!(result.get("effective_speed").is_some());
+        assert!(result.get("elapsed_secs").is_some());
+    }
+
+    #[test]
+    fn test_seek_time_forward() {
+        let mut world = world_with_virtual_time();
+        let result = seek_time(&mut world, 5.0, false).unwrap();
+        let elapsed = result["elapsed_secs"].as_f64().unwrap();
+        assert!((elapsed - 5.0).abs() < 0.01);
+        assert_eq!(result["paused"], false);
+    }
+
+    #[test]
+    fn test_seek_time_backward() {
+        let mut world = world_with_virtual_time();
+        // Seek forward first
+        seek_time(&mut world, 10.0, false).unwrap();
+        // Then seek backward
+        let result = seek_time(&mut world, 3.0, false).unwrap();
+        let elapsed = result["elapsed_secs"].as_f64().unwrap();
+        assert!((elapsed - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_seek_time_negative_error() {
+        let mut world = world_with_virtual_time();
+        let result = seek_time(&mut world, -1.0, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn test_seek_time_with_pause() {
+        let mut world = world_with_virtual_time();
+        let result = seek_time(&mut world, 5.0, true).unwrap();
+        assert_eq!(result["paused"], true);
+    }
+
+    #[test]
+    fn test_seek_time_syncs_global_transform() {
+        let mut world = world_with_virtual_time();
+        // Need Transform + GlobalTransform for the sync
+        world.spawn((
+            Transform::from_xyz(5.0, 10.0, 15.0),
+            GlobalTransform::default(),
+        ));
+
+        // Seek should not panic and should sync transforms
+        let result = seek_time(&mut world, 2.0, false).unwrap();
+        assert!(result["note"].as_str().is_some());
+    }
 }
