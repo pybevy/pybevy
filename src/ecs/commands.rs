@@ -213,31 +213,24 @@ pub(crate) fn insert_components_to_entity_helper(
         }
     }
 
-    // Check which components already exist (for Replace)
-    let existing_components = if commands.is_world {
-        let world = unsafe { &*(commands.commands_ptr as *const World) };
-        component_types
-            .iter()
-            .filter(|comp_type| {
-                crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new() // For deferred commands, we'll check in the queued closure
-    };
-
-    // Insert the components
-    insert_components_to_entity(commands, py, entity_id, components)?;
-
-    // Trigger Insert lifecycle events (deferred if using Commands)
     if !component_types.is_empty() {
         if commands.is_world {
-            // Immediate execution - trigger now
+            // Immediate execution path
             let world_ptr = commands.commands_ptr as *mut World;
-            PyWorld::trigger_lifecycle_events_for_insert(world_ptr, entity_id, &component_types);
 
-            // Trigger Replace for components that already existed
+            // Check which components already exist (for Replace)
+            let existing_components = {
+                let world = unsafe { &*(commands.commands_ptr as *const World) };
+                component_types
+                    .iter()
+                    .filter(|comp_type| {
+                        crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+
+            // Fire Replace BEFORE the insert (so observers can read old value)
             if !existing_components.is_empty() {
                 PyWorld::trigger_lifecycle_events_for_replace(
                     world_ptr,
@@ -245,19 +238,50 @@ pub(crate) fn insert_components_to_entity_helper(
                     &existing_components,
                 );
             }
+
+            // Do the insert
+            insert_components_to_entity(commands, py, entity_id, components)?;
+
+            // Fire Insert AFTER the insert
+            PyWorld::trigger_lifecycle_events_for_insert(world_ptr, entity_id, &component_types);
         } else {
-            // Deferred execution - queue the Insert trigger
-            // Note: Replace is not supported for deferred Commands due to ordering constraints
-            // (we can't check which components exist before the insert operations are applied)
-            let component_types_clone = component_types.clone();
+            // Deferred execution path
+            // Queue Replace check+trigger BEFORE the inserts (at apply time)
+            let component_types_for_replace = component_types.clone();
+            commands.execute_or_queue(move |world| {
+                let existing: Vec<_> = component_types_for_replace
+                    .iter()
+                    .filter(|comp_type| {
+                        crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
+                    })
+                    .cloned()
+                    .collect();
+
+                if !existing.is_empty() {
+                    PyWorld::trigger_lifecycle_events_for_replace(
+                        world as *mut World,
+                        entity_id,
+                        &existing,
+                    );
+                }
+            })?;
+
+            // Queue the actual inserts
+            insert_components_to_entity(commands, py, entity_id, components)?;
+
+            // Queue Insert trigger AFTER inserts
+            let component_types_for_insert = component_types.clone();
             commands.execute_or_queue(move |world| {
                 PyWorld::trigger_lifecycle_events_for_insert(
                     world as *mut World,
                     entity_id,
-                    &component_types_clone,
+                    &component_types_for_insert,
                 );
             })?;
         }
+    } else {
+        // No component types to track - just insert
+        insert_components_to_entity(commands, py, entity_id, components)?;
     }
 
     Ok(())
