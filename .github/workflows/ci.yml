@@ -11,7 +11,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  RUST_COVERAGE_THRESHOLD: 0
+  RUST_COVERAGE_THRESHOLD: 30
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
