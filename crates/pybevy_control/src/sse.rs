@@ -29,3 +29,57 @@ impl SseEventBroadcaster {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_sends_event() {
+        let broadcaster = SseEventBroadcaster::new();
+        let mut rx = broadcaster.tx.subscribe();
+        broadcaster.log("test message", "info");
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("test message"));
+        assert!(msg.contains("info"));
+    }
+
+    #[test]
+    fn error_sends_event() {
+        let broadcaster = SseEventBroadcaster::new();
+        let mut rx = broadcaster.tx.subscribe();
+        broadcaster.error("oops", Some("traceback here"));
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("oops"));
+        assert!(msg.contains("traceback here"));
+    }
+
+    #[test]
+    fn error_without_traceback() {
+        let broadcaster = SseEventBroadcaster::new();
+        let mut rx = broadcaster.tx.subscribe();
+        broadcaster.error("oops", None);
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("oops"));
+    }
+
+    #[test]
+    fn reload_started_sends_event() {
+        let broadcaster = SseEventBroadcaster::new();
+        let mut rx = broadcaster.tx.subscribe();
+        broadcaster.reload_started("full", 5);
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("reload_started"));
+        assert!(msg.contains("full"));
+    }
+
+    #[test]
+    fn reload_completed_sends_event() {
+        let broadcaster = SseEventBroadcaster::new();
+        let mut rx = broadcaster.tx.subscribe();
+        broadcaster.reload_completed("partial", 7);
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("reload_completed"));
+        assert!(msg.contains("partial"));
+    }
+}

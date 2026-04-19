@@ -368,3 +368,390 @@ fn generate_error_hint(error: &str) -> Option<String> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pybevy_core::{LastSystemError, PendingReloadRequest, ReloadRequestMode, ReloadResult};
+
+    use super::*;
+    use crate::bridge::PendingReloadResponse;
+
+    #[test]
+    fn generate_error_hint_name_error() {
+        let hint = generate_error_hint("NameError: name 'foo' is not defined");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("NameError"));
+    }
+
+    #[test]
+    fn generate_error_hint_attribute_error() {
+        let hint = generate_error_hint("AttributeError: object has no attribute 'bar'");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("AttributeError"));
+    }
+
+    #[test]
+    fn generate_error_hint_type_error() {
+        let hint = generate_error_hint("TypeError: expected 2 arguments, got 3");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("TypeError"));
+    }
+
+    #[test]
+    fn generate_error_hint_import_error() {
+        let hint = generate_error_hint("ImportError: cannot import name 'Xyz'");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("ImportError"));
+    }
+
+    #[test]
+    fn generate_error_hint_module_not_found() {
+        let hint = generate_error_hint("ModuleNotFoundError: No module named 'nonexistent'");
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("ImportError"));
+    }
+
+    #[test]
+    fn generate_error_hint_no_match() {
+        let hint = generate_error_hint("something random");
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn generate_error_hint_empty_string() {
+        let hint = generate_error_hint("");
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn count_entities_empty() {
+        let world = World::new();
+        // usize is always >= 0; just verify the call succeeds on an empty world
+        let _count = count_entities(&world);
+    }
+
+    #[test]
+    fn count_entities_with_spawned() {
+        let mut world = World::new();
+        world.spawn_empty();
+        world.spawn_empty();
+        world.spawn_empty();
+        assert!(count_entities(&world) >= 3);
+    }
+
+    #[test]
+    fn get_reload_status_empty_world() {
+        let mut world = World::new();
+        let result = get_reload_status(&mut world).unwrap();
+        assert_eq!(result["pending_request"], false);
+    }
+
+    #[test]
+    fn get_reload_status_with_pending() {
+        let mut world = World::new();
+        world.insert_resource(PendingReloadRequest {
+            mode: Some(ReloadRequestMode::Full),
+        });
+        let result = get_reload_status(&mut world).unwrap();
+        assert_eq!(result["pending_request"], true);
+    }
+
+    #[test]
+    fn get_reload_status_with_escalation() {
+        let mut world = World::new();
+        world.insert_resource(ReloadResult {
+            escalated: true,
+            escalation_reason: Some("structural changes detected".to_string()),
+            actual_mode: Some(ReloadRequestMode::Full),
+            failed: false,
+            failure_reason: None,
+            running_previous_generation: false,
+            plugins_added: None,
+            plugins_removed: None,
+            systems_removed: None,
+        });
+        let result = get_reload_status(&mut world).unwrap();
+        assert_eq!(result["escalated"], true);
+        assert_eq!(result["escalation_reason"], "structural changes detected");
+        assert_eq!(result["actual_mode"], "full");
+    }
+
+    #[test]
+    fn get_reload_status_with_systems_removed() {
+        let mut world = World::new();
+        world.insert_resource(ReloadResult {
+            escalated: false,
+            escalation_reason: None,
+            actual_mode: Some(ReloadRequestMode::Full),
+            failed: false,
+            failure_reason: None,
+            running_previous_generation: false,
+            plugins_added: None,
+            plugins_removed: None,
+            systems_removed: Some(vec!["update_scoreboard".to_string()]),
+        });
+        let result = get_reload_status(&mut world).unwrap();
+        let removed = result["systems_removed"].as_array().unwrap();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0], "update_scoreboard");
+    }
+
+    #[test]
+    fn get_reload_status_systems_removed_absent_when_none() {
+        let mut world = World::new();
+        world.insert_resource(ReloadResult {
+            systems_removed: None,
+            ..ReloadResult::default()
+        });
+        let result = get_reload_status(&mut world).unwrap();
+        assert!(result.get("systems_removed").is_none());
+    }
+
+    #[test]
+    fn get_last_error_no_resource() {
+        let mut world = World::new();
+        let result = get_last_error(&mut world).unwrap();
+        assert!(result["error"].is_null());
+    }
+
+    #[test]
+    fn get_last_error_no_error() {
+        let mut world = World::new();
+        world.insert_resource(LastSystemError {
+            error: None,
+            traceback: None,
+            timestamp_secs: 0.0,
+        });
+        let result = get_last_error(&mut world).unwrap();
+        assert!(result["error"].is_null());
+    }
+
+    #[test]
+    fn get_last_error_with_error() {
+        let mut world = World::new();
+        world.insert_resource(LastSystemError {
+            error: Some("boom".to_string()),
+            traceback: Some("at line 1".to_string()),
+            timestamp_secs: 42.0,
+        });
+        let result = get_last_error(&mut world).unwrap();
+        assert_eq!(result["error"], "boom");
+        assert_eq!(result["traceback"], "at line 1");
+        assert_eq!(result["timestamp_secs"], 42.0);
+    }
+
+    #[test]
+    fn reload_and_capture_state_variants() {
+        // Test Debug
+        let state = ReloadAndCaptureState::WaitingForReload;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("WaitingForReload"));
+
+        // Test Clone and Copy
+        let cloned = state.clone();
+        let copied = state;
+        assert_eq!(cloned, copied);
+
+        // Test PartialEq: equal variants
+        assert_eq!(
+            ReloadAndCaptureState::WaitingForReload,
+            ReloadAndCaptureState::WaitingForReload
+        );
+
+        // Test PartialEq: different variants
+        assert_ne!(
+            ReloadAndCaptureState::WaitingForReload,
+            ReloadAndCaptureState::WaitingForScreenshot
+        );
+    }
+
+    fn world_with_reload_deps() -> World {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        world
+    }
+
+    #[test]
+    fn trigger_reload_full_mode() {
+        let mut world = world_with_reload_deps();
+        let result = trigger_reload(&mut world, "full".into(), false, None).unwrap();
+        assert_eq!(result["status"], "reload_requested");
+        assert_eq!(result["mode"], "full");
+        assert_eq!(result["paused"], false);
+        // PendingReloadRequest should be inserted
+        let req = world.get_resource::<PendingReloadRequest>().unwrap();
+        assert!(req.mode.is_some());
+    }
+
+    #[test]
+    fn trigger_reload_partial_mode_has_note() {
+        let mut world = world_with_reload_deps();
+        let result = trigger_reload(&mut world, "partial".into(), false, None).unwrap();
+        assert_eq!(result["mode"], "partial");
+        let note = result["note"].as_str().unwrap();
+        assert!(note.contains("auto-escalate"));
+        assert!(note.contains("components"));
+        assert!(note.contains("plugins"));
+        assert!(note.contains("escalation details"));
+    }
+
+    #[test]
+    fn trigger_reload_with_pause() {
+        let mut world = world_with_reload_deps();
+        let result = trigger_reload(&mut world, "full".into(), true, None).unwrap();
+        assert_eq!(result["paused"], true);
+        let time = world.resource::<Time<Virtual>>();
+        assert!(time.is_paused());
+    }
+
+    #[test]
+    fn trigger_reload_with_time_scale() {
+        let mut world = world_with_reload_deps();
+        let result = trigger_reload(&mut world, "full".into(), false, Some(0.5)).unwrap();
+        assert_eq!(result["relative_speed"], 0.5);
+        let time = world.resource::<Time<Virtual>>();
+        assert!((time.relative_speed() - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trigger_reload_with_pause_and_scale() {
+        let mut world = world_with_reload_deps();
+        let result = trigger_reload(&mut world, "full".into(), true, Some(2.0)).unwrap();
+        assert_eq!(result["paused"], true);
+        assert_eq!(result["relative_speed"], 2.0);
+    }
+
+    #[test]
+    fn trigger_reload_clears_stale_errors() {
+        let mut world = world_with_reload_deps();
+        world.insert_resource(pybevy_core::LastSystemError {
+            error: Some("old error".into()),
+            traceback: Some("old trace".into()),
+            timestamp_secs: 1.0,
+        });
+        trigger_reload(&mut world, "full".into(), false, None).unwrap();
+        let err = world
+            .get_resource::<pybevy_core::LastSystemError>()
+            .unwrap();
+        assert!(err.error.is_none());
+        assert!(err.traceback.is_none());
+    }
+
+    #[test]
+    fn trigger_reload_unknown_mode_defaults_to_full() {
+        let mut world = world_with_reload_deps();
+        let result = trigger_reload(&mut world, "unknown_mode".into(), false, None).unwrap();
+        assert_eq!(result["mode"], "unknown_mode");
+        // Internal mode should be Full (the default branch)
+        let req = world.get_resource::<PendingReloadRequest>().unwrap();
+        assert_eq!(req.mode, Some(ReloadRequestMode::Full));
+    }
+
+    #[test]
+    fn process_pending_reloads_no_resource() {
+        let mut world = World::new();
+        // Should not panic
+        super::process_pending_reloads(&mut world);
+    }
+
+    #[test]
+    fn process_pending_reloads_empty() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        world.insert_resource(PendingReloadResponses::default());
+        process_pending_reloads(&mut world);
+        // Should still have the resource
+        assert!(world.get_resource::<PendingReloadResponses>().is_some());
+    }
+
+    #[test]
+    fn process_pending_reloads_countdown() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        world.insert_resource(PendingReloadResponses {
+            pending: vec![PendingReloadResponse {
+                response_tx: tx,
+                frames_remaining: 3,
+                mode: "full".into(),
+                error_timestamp_before: 0.0,
+            }],
+        });
+        process_pending_reloads(&mut world);
+        let pending = world.get_resource::<PendingReloadResponses>().unwrap();
+        assert_eq!(pending.pending.len(), 1);
+        assert_eq!(pending.pending[0].frames_remaining, 2);
+    }
+
+    #[test]
+    fn process_pending_reloads_sends_response_when_ready() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        world.insert_resource(PendingReloadResponses {
+            pending: vec![PendingReloadResponse {
+                response_tx: tx,
+                frames_remaining: 0,
+                mode: "full".into(),
+                error_timestamp_before: 0.0,
+            }],
+        });
+        process_pending_reloads(&mut world);
+        // Response should have been sent
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result["status"], "reload_completed");
+        assert_eq!(result["mode"], "full");
+        // Pending should be empty now
+        let pending = world.get_resource::<PendingReloadResponses>().unwrap();
+        assert!(pending.pending.is_empty());
+    }
+
+    #[test]
+    fn process_pending_reloads_includes_error_if_new() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        // Insert an error that happened AFTER the reload was triggered
+        world.insert_resource(pybevy_core::LastSystemError {
+            error: Some("runtime crash".into()),
+            traceback: Some("line 42".into()),
+            timestamp_secs: 5.0,
+        });
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        world.insert_resource(PendingReloadResponses {
+            pending: vec![PendingReloadResponse {
+                response_tx: tx,
+                frames_remaining: 0,
+                mode: "full".into(),
+                error_timestamp_before: 1.0, // error at 5.0 > 1.0
+            }],
+        });
+        process_pending_reloads(&mut world);
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result["error"], "runtime crash");
+        assert!(result.get("traceback").is_some());
+    }
+
+    #[test]
+    fn process_pending_reloads_no_error_if_old() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        // Error happened BEFORE reload was triggered
+        world.insert_resource(pybevy_core::LastSystemError {
+            error: Some("old error".into()),
+            traceback: None,
+            timestamp_secs: 0.5,
+        });
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        world.insert_resource(PendingReloadResponses {
+            pending: vec![PendingReloadResponse {
+                response_tx: tx,
+                frames_remaining: 0,
+                mode: "full".into(),
+                error_timestamp_before: 1.0, // error at 0.5 < 1.0
+            }],
+        });
+        process_pending_reloads(&mut world);
+        let result = rx.try_recv().unwrap().unwrap();
+        assert!(result["error"].is_null());
+    }
+}

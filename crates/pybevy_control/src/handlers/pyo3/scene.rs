@@ -1273,3 +1273,758 @@ pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entit
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    use bevy::{
+        camera::primitives::Aabb,
+        ecs::{component::ComponentId, hierarchy::ChildOf, name::Name},
+        math::Vec3,
+        prelude::{GlobalTransform, Transform},
+    };
+
+    // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
+    extern crate pybevy_transform;
+
+    use super::*;
+
+    static INIT: Once = Once::new();
+
+    fn setup() {
+        INIT.call_once(|| {
+            Python::initialize();
+            pybevy_core::bridge_inventory::collect_all();
+        });
+    }
+
+    #[test]
+    fn get_component_entity_not_found() {
+        let mut world = World::new();
+        let result = get_component(&mut world, EntityRef::Id(999999), "Transform".into());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn get_component_not_present_on_entity() {
+        setup();
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        let result = get_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "Transform".into(),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32001);
+        assert!(err.message.contains("not found on entity"));
+    }
+
+    #[test]
+    fn get_component_bridge_by_name() {
+        setup();
+        let mut world = World::new();
+        let entity = world
+            .spawn((Name::new("Player"), Transform::from_xyz(1.0, 2.0, 3.0)))
+            .id();
+        let result = get_component(
+            &mut world,
+            EntityRef::Name("Player".into()),
+            "Transform".into(),
+        );
+        let val = result.unwrap();
+        assert_eq!(val["entity_id"], entity.to_bits());
+        assert_eq!(val["component"], "Transform");
+        let fields = val["fields"].as_object().expect("Expected fields object");
+        assert!(
+            fields.contains_key("translation"),
+            "Expected translation field, got: {fields:?}"
+        );
+    }
+
+    #[test]
+    fn get_component_bridge_by_id() {
+        setup();
+        let mut world = World::new();
+        let entity = world
+            .spawn((Name::new("Light"), Transform::from_xyz(5.0, 10.0, 0.0)))
+            .id();
+        let result = get_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "Transform".into(),
+        );
+        let val = result.unwrap();
+        assert_eq!(val["entity_id"], entity.to_bits());
+        assert_eq!(val["component"], "Transform");
+        let fields = val["fields"].as_object().expect("Expected fields object");
+        assert!(
+            fields.contains_key("translation"),
+            "Expected translation field, got: {fields:?}"
+        );
+    }
+
+    #[test]
+    fn get_component_wrong_component_name() {
+        setup();
+        let mut world = World::new();
+        let entity = world.spawn(Transform::default()).id();
+        let result = get_component(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "NonexistentComponent".into(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("NonexistentComponent"));
+    }
+
+    #[test]
+    fn resolve_entity_prefers_root_over_child() {
+        let mut world = World::new();
+        let root = world.spawn(Name::new("Lantern")).id();
+        let child = world.spawn((Name::new("Lantern"), ChildOf(root))).id();
+        let _ = child;
+
+        let result = resolve_entity(&mut world, &EntityRef::Name("Lantern".into()));
+        assert_eq!(result.unwrap(), root);
+    }
+
+    #[test]
+    fn resolve_entity_falls_back_to_child() {
+        let mut world = World::new();
+        let parent = world.spawn(Name::new("Parent")).id();
+        let child = world.spawn((Name::new("ChildOnly"), ChildOf(parent))).id();
+
+        let result = resolve_entity(&mut world, &EntityRef::Name("ChildOnly".into()));
+        assert_eq!(result.unwrap(), child);
+    }
+
+    #[test]
+    fn resolve_entity_root_preferred_regardless_of_spawn_order() {
+        let mut world = World::new();
+        let parent = world.spawn(Name::new("Parent")).id();
+        let child = world.spawn((Name::new("Lamp"), ChildOf(parent))).id();
+        let _ = child;
+        // Root entity spawned after child — should still be preferred
+        let root = world.spawn(Name::new("Lamp")).id();
+
+        let result = resolve_entity(&mut world, &EntityRef::Name("Lamp".into()));
+        assert_eq!(result.unwrap(), root);
+    }
+    #[test]
+    fn strip_numeric_suffix_underscore_digits() {
+        assert_eq!(strip_numeric_suffix("Cube_01"), "Cube");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_trailing_digits() {
+        assert_eq!(strip_numeric_suffix("Fish3"), "Fish");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_no_suffix() {
+        assert_eq!(strip_numeric_suffix("MyThing"), "MyThing");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_all_digits() {
+        assert_eq!(strip_numeric_suffix("123"), "123");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_dash_digits() {
+        assert_eq!(strip_numeric_suffix("Obj-42"), "Obj");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_space_digits() {
+        assert_eq!(strip_numeric_suffix("Thing 7"), "Thing");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_decimal_coordinate() {
+        assert_eq!(strip_numeric_suffix("pos_3.2"), "pos_3.2");
+    }
+
+    #[test]
+    fn strip_numeric_suffix_with_decimal_in_name() {
+        assert_eq!(strip_numeric_suffix("tile_1.5_offset"), "tile_1.5_offset");
+    }
+
+    #[test]
+    fn list_entities_empty_world() {
+        let mut world = World::new();
+        let result = list_entities(&mut world).unwrap();
+        assert_eq!(result["entity_count"], 0);
+        assert!(result["entities"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_entities_with_named_entity() {
+        let mut world = World::new();
+        world.spawn(Name::new("Player"));
+        let result = list_entities(&mut world).unwrap();
+        assert_eq!(result["entity_count"], 1);
+        let entities = result["entities"].as_array().unwrap();
+        assert_eq!(entities[0]["name"], "Player");
+    }
+
+    #[test]
+    fn list_entities_unnamed_entity_has_null_name() {
+        let mut world = World::new();
+        world.spawn_empty();
+        let result = list_entities(&mut world).unwrap();
+        assert_eq!(result["entity_count"], 1);
+        let entities = result["entities"].as_array().unwrap();
+        assert!(entities[0]["name"].is_null());
+    }
+
+    #[test]
+    fn list_systems_empty_world() {
+        let mut world = World::new();
+        let result = list_systems(&mut world).unwrap();
+        assert!(result["stages"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_resources_empty_registry() {
+        let mut world = World::new();
+        let result = list_resources(&mut world).unwrap();
+        // Result depends on what's registered globally, but should not error
+        assert!(result["resource_count"].is_number());
+    }
+
+    #[test]
+    fn list_resources_includes_custom_resources() {
+        let mut world = World::new();
+
+        let baseline = list_resources(&mut world).unwrap();
+        let baseline_count = baseline["resource_count"].as_u64().unwrap();
+
+        // Add a CustomResourceInfo with a fake entry
+        let mut info = pybevy_core::CustomResourceInfo::default();
+        info.insert(
+            ComponentId::new(99999),
+            pybevy_core::CustomResourceEntry {
+                type_ptr: std::ptr::null(),
+                name: "GameScore".to_string(),
+            },
+        );
+        world.insert_resource(info);
+
+        let result = list_resources(&mut world).unwrap();
+        let new_count = result["resource_count"].as_u64().unwrap();
+        assert_eq!(new_count, baseline_count + 1);
+
+        // Find the custom resource in results
+        let resources = result["resources"].as_array().unwrap();
+        let custom = resources.iter().find(|r| r["name"] == "GameScore");
+        assert!(
+            custom.is_some(),
+            "Custom resource GameScore not found in list"
+        );
+        assert_eq!(custom.unwrap()["custom"], true);
+    }
+
+    #[test]
+    fn list_resources_includes_field_values() {
+        // An empty world should still return a valid structure.
+        // Bridge resources that are present should have a "fields" key.
+        let mut world = World::new();
+        let result = list_resources(&mut world).unwrap();
+        assert!(result["resources"].is_array());
+
+        // Every present bridge resource should have a "fields" key
+        let resources = result["resources"].as_array().unwrap();
+        for res in resources {
+            if res["present"].as_bool() == Some(true) && res["custom"].is_null() {
+                assert!(
+                    res.get("fields").is_some(),
+                    "Present bridge resource '{}' should have 'fields' key",
+                    res["name"]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn get_component_schema_custom_component() {
+        let mut world = World::new();
+
+        // Without CustomComponentInfo, schema lookup fails
+        let result = get_component_schema(&mut world, "PlayerStats".into());
+        assert!(result.is_err());
+
+        // Add CustomComponentInfo with a fake entry (null type_ptr won't allow Python introspection,
+        // but we can verify the lookup path)
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        info.insert(
+            ComponentId::new(88888),
+            pybevy_core::CustomComponentEntry {
+                type_ptr: std::ptr::null(),
+                name: "PlayerStats".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        // Now the lookup should find it via CustomComponentInfo
+        // (Python introspection will fail with null type_ptr, but
+        // in a real app it would return fields)
+        // We test that the fallback path is reached and doesn't error
+        // before trying Python (it will error in Python::attach with null ptr)
+        // For a safe test, we just verify the lookup path exists
+        // by checking the result structure
+        let result = get_component_schema(&mut world, "StillNotThere".into());
+        assert!(result.is_err()); // Different name → still not found
+    }
+    #[test]
+    fn scene_summary_empty_world() {
+        let mut world = World::new();
+        let result = scene_summary(&mut world).unwrap();
+        assert_eq!(result["total_entities"], 0);
+        assert!(result["groups"].as_array().unwrap().is_empty());
+        assert!(
+            result["summary"]
+                .as_str()
+                .unwrap()
+                .starts_with("0 entities")
+        );
+    }
+
+    #[test]
+    fn scene_summary_groups_by_name_prefix() {
+        let mut world = World::new();
+        world.spawn(Name::new("Cube_01"));
+        world.spawn(Name::new("Cube_02"));
+        world.spawn(Name::new("Sphere"));
+        let result = scene_summary(&mut world).unwrap();
+        assert_eq!(result["total_entities"], 3);
+        let groups = result["groups"].as_array().unwrap();
+        // "Cube" group should have count 2
+        let cube_group = groups.iter().find(|g| g["label"] == "Cube").unwrap();
+        assert_eq!(cube_group["count"], 2);
+        let sphere_group = groups.iter().find(|g| g["label"] == "Sphere").unwrap();
+        assert_eq!(sphere_group["count"], 1);
+    }
+    #[test]
+    fn debug_registry_returns_valid_shape() {
+        let mut world = World::new();
+        let result = debug_registry(&mut world).unwrap();
+        assert!(result["component_bridge_count"].is_number());
+        assert!(result["resource_bridge_count"].is_number());
+        assert!(result["total_entities"].is_number());
+        assert!(result["entity_samples"].is_array());
+    }
+    #[test]
+    fn get_component_schema_search_prefix() {
+        let mut world = World::new();
+        let result = get_component_schema(&mut world, "__search:Transform".into()).unwrap();
+        assert_eq!(result["query"], "Transform");
+    }
+
+    #[test]
+    fn get_component_schema_typedef_prefix() {
+        let mut world = World::new();
+        let result = get_component_schema(&mut world, "__typedef:Mesh3d".into()).unwrap();
+        assert_eq!(result["type_name"], "Mesh3d");
+    }
+
+    #[test]
+    fn get_component_schema_not_found() {
+        let mut world = World::new();
+        let result = get_component_schema(&mut world, "NonexistentComponent".into());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+    #[test]
+    fn get_bounding_box_no_aabb() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("NoMesh")).id();
+        let result = get_bounding_box(&mut world, EntityRef::Id(entity.to_bits()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("no Aabb"));
+    }
+
+    #[test]
+    fn get_bounding_box_with_aabb_no_transform() {
+        let mut world = World::new();
+        let entity = world
+            .spawn(Aabb::from_min_max(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+            ))
+            .id();
+        let result = get_bounding_box(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert!(result["local"]["center"].is_array());
+        assert!(result["world"].is_null());
+    }
+
+    #[test]
+    fn get_bounding_box_with_aabb_and_transform() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::from_xyz(10.0, 0.0, 0.0),
+            ))
+            .id();
+        let result = get_bounding_box(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert!(result["local"]["center"].is_array());
+        // World bounds should be shifted by +10 on X
+        let world_center = result["world"]["center"].as_array().unwrap();
+        let x = world_center[0].as_f64().unwrap();
+        assert!(
+            (x - 10.0).abs() < 0.01,
+            "Expected world center X ~10.0, got {x}"
+        );
+    }
+    #[test]
+    fn resolve_entity_by_name_found() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Hero")).id();
+        let result = resolve_entity(&mut world, &EntityRef::Name("Hero".into())).unwrap();
+        assert_eq!(result, entity);
+    }
+
+    #[test]
+    fn resolve_entity_by_name_not_found() {
+        let mut world = World::new();
+        let result = resolve_entity(&mut world, &EntityRef::Name("Ghost".into()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_entity_by_id_not_found() {
+        let mut world = World::new();
+        let result = resolve_entity(&mut world, &EntityRef::Id(999999));
+        assert!(result.is_err());
+    }
+    #[test]
+    fn query_entities_empty_world() {
+        let mut world = World::new();
+        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        assert_eq!(result["count"], 0);
+    }
+
+    #[test]
+    fn query_entities_no_filters_returns_all() {
+        let mut world = World::new();
+        world.spawn(Name::new("A"));
+        world.spawn(Name::new("B"));
+        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        assert_eq!(result["count"], 2);
+    }
+    #[test]
+    fn get_entity_by_id() {
+        setup();
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        let result = get_entity(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert!(result["id"].is_number());
+        assert_eq!(result["name"], "TestEntity");
+        assert!(result["components"].is_object());
+    }
+
+    #[test]
+    fn get_entity_by_name() {
+        setup();
+        let mut world = World::new();
+        world.spawn(Name::new("FindMe"));
+        let result = get_entity(&mut world, EntityRef::Name("FindMe".into())).unwrap();
+        assert_eq!(result["name"], "FindMe");
+    }
+
+    #[test]
+    fn get_entity_not_found() {
+        let mut world = World::new();
+        let result = get_entity(&mut world, EntityRef::Id(999999));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+    #[test]
+    fn query_entities_empty_filters() {
+        let mut world = World::new();
+        world.spawn(Name::new("A"));
+        world.spawn(Name::new("B"));
+        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        // With no filters, should return entities that have at least some components
+        assert!(result["count"].as_u64().unwrap() >= 2);
+    }
+    #[test]
+    fn scene_summary_with_entities() {
+        let mut world = World::new();
+        world.spawn(Name::new("A"));
+        world.spawn(Name::new("B"));
+        world.spawn(Name::new("C"));
+        let result = scene_summary(&mut world).unwrap();
+        assert!(result["total_entities"].as_u64().unwrap() >= 3);
+    }
+    #[test]
+    fn list_entities_with_names() {
+        let mut world = World::new();
+        world.spawn(Name::new("Alpha"));
+        world.spawn(Name::new("Beta"));
+        let result = list_entities(&mut world).unwrap();
+        assert!(result["entity_count"].as_u64().unwrap() >= 2);
+        let entities = result["entities"].as_array().unwrap();
+        let names: Vec<&str> = entities.iter().filter_map(|e| e["name"].as_str()).collect();
+        assert!(names.contains(&"Alpha"));
+        assert!(names.contains(&"Beta"));
+    }
+    #[test]
+    fn get_bounding_box_with_aabb_checks_fields() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Name::new("Box"),
+                Aabb::from_min_max(Vec3::new(-1.0, -2.0, -3.0), Vec3::new(1.0, 2.0, 3.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let result = get_bounding_box(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert!(result["local"]["min"].is_array());
+        assert!(result["local"]["max"].is_array());
+        assert!(result["world"]["size"].is_array());
+    }
+
+    #[test]
+    fn get_bounding_box_resolves_children() {
+        let mut world = World::new();
+        let parent = world
+            .spawn((
+                Name::new("SceneRoot"),
+                GlobalTransform::default(),
+                Transform::default(),
+            ))
+            .id();
+        let child = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.entity_mut(parent).add_children(&[child]);
+        let result = get_bounding_box(&mut world, EntityRef::Name("SceneRoot".into())).unwrap();
+        assert!(result["resolved_from_children"].as_bool().unwrap());
+        assert!(result["local"].is_null());
+        assert!(result["world"]["size"].is_array());
+    }
+    #[test]
+    fn normalize_type_repr_strips_class_wrapper() {
+        assert_eq!(normalize_type_repr("<class 'float'>"), "float");
+        assert_eq!(normalize_type_repr("'Vec3'"), "Vec3");
+        assert_eq!(normalize_type_repr("int"), "int");
+        assert_eq!(
+            normalize_type_repr("<class 'builtins.NoneType'>"),
+            "builtins.NoneType"
+        );
+    }
+
+    #[test]
+    fn normalize_type_repr_edge_cases() {
+        assert_eq!(normalize_type_repr(""), "");
+        assert_eq!(normalize_type_repr("<class 'dict'>"), "dict");
+    }
+    #[test]
+    fn py_value_to_json_primitives() {
+        setup();
+        Python::attach(|py| {
+            // None
+            let none = py.None().into_bound(py);
+            assert_eq!(py_value_to_json(&none), serde_json::Value::Null);
+
+            // bool — into_pyobject returns Borrowed for bool, use .to_owned()
+            let b = true.into_pyobject(py).unwrap().to_owned().into_any();
+            assert_eq!(py_value_to_json(&b), serde_json::Value::Bool(true));
+
+            // int
+            let i = 42i64.into_pyobject(py).unwrap().into_any();
+            assert_eq!(py_value_to_json(&i), serde_json::json!(42));
+
+            // float
+            let f = 3.14f64.into_pyobject(py).unwrap().into_any();
+            let result = py_value_to_json(&f);
+            assert!(result.is_number());
+            assert!((result.as_f64().unwrap() - 3.14).abs() < 0.001);
+
+            // str
+            let s = "hello".into_pyobject(py).unwrap().into_any();
+            assert_eq!(
+                py_value_to_json(&s),
+                serde_json::Value::String("hello".into())
+            );
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_list() {
+        setup();
+        Python::attach(|py| {
+            let list = pyo3::types::PyList::new(py, [1i64, 2, 3]).unwrap();
+            let result = py_value_to_json(list.as_any());
+            assert!(result.is_array());
+            let arr = result.as_array().unwrap();
+            assert_eq!(arr.len(), 3);
+            assert_eq!(arr[0], serde_json::json!(1));
+            assert_eq!(arr[1], serde_json::json!(2));
+            assert_eq!(arr[2], serde_json::json!(3));
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_nested_pyo3_struct() {
+        setup();
+        // Test that a PyO3 component with getset_descriptor fields produces a dict,
+        // not an opaque repr string
+        Python::attach(|py| {
+            let validity_flag = pybevy_core::ValidityFlag::new_read();
+            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+
+            let mut world = World::new();
+            let entity = world.spawn(Transform::from_xyz(1.0, 2.0, 3.0)).id();
+
+            // Extract the Transform component and check its fields are proper JSON
+            for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+                if bridge.name() != "Transform" {
+                    continue;
+                }
+                let eref = world.get_entity(entity).unwrap();
+                if let Ok(Some(py_obj)) =
+                    bridge.extract_from_entity_ref(&eref, validity.clone(), py)
+                {
+                    let bound = py_obj.bind(py);
+                    let fields = extract_bridge_fields(py, bound);
+
+                    // translation should be a nested dict (Vec3 has x, y, z)
+                    assert!(
+                        fields.contains_key("translation"),
+                        "Expected 'translation' field, got: {fields:?}"
+                    );
+                    let translation = &fields["translation"];
+                    // Should be an object (nested struct), not a repr string like
+                    // "<builtins.Vec3 object at 0x...>"
+                    assert!(
+                        translation.is_object(),
+                        "Expected translation to be a nested object, got: {translation}"
+                    );
+                    let obj = translation.as_object().unwrap();
+                    assert!(obj.contains_key("x"), "Missing 'x' in translation: {obj:?}");
+                    assert!(obj.contains_key("y"), "Missing 'y' in translation: {obj:?}");
+                    assert!(obj.contains_key("z"), "Missing 'z' in translation: {obj:?}");
+
+                    // x, y, z should be numbers, not strings
+                    assert!(
+                        obj["x"].is_number(),
+                        "Expected x to be a number, got: {}",
+                        obj["x"]
+                    );
+                }
+            }
+            validity_flag.set_invalid();
+        });
+    }
+
+    #[test]
+    fn extract_bridge_fields_returns_numeric_values_not_repr_strings() {
+        setup();
+        // Regression: before Fix 1, all field values were repr() strings.
+        // After Fix 1, primitive values should be native JSON types.
+        Python::attach(|py| {
+            let validity_flag = pybevy_core::ValidityFlag::new_read();
+            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+
+            let mut world = World::new();
+            let entity = world.spawn(Transform::from_xyz(5.0, 10.0, 0.0)).id();
+
+            for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+                if bridge.name() != "Transform" {
+                    continue;
+                }
+                let eref = world.get_entity(entity).unwrap();
+                if let Ok(Some(py_obj)) =
+                    bridge.extract_from_entity_ref(&eref, validity.clone(), py)
+                {
+                    let bound = py_obj.bind(py);
+                    let fields = extract_bridge_fields(py, bound);
+
+                    // scale should be a nested Vec3 dict with numeric values
+                    let scale = &fields["scale"];
+                    assert!(
+                        scale.is_object(),
+                        "Expected scale to be a nested object, got: {scale}"
+                    );
+                    let scale_obj = scale.as_object().unwrap();
+                    // Default scale is (1, 1, 1)
+                    assert_eq!(
+                        scale_obj["x"].as_f64().unwrap(),
+                        1.0,
+                        "Scale x should be 1.0"
+                    );
+                }
+            }
+            validity_flag.set_invalid();
+        });
+    }
+    #[test]
+    fn has_writable_properties_detects_pyo3_setters() {
+        setup();
+        // Transform has writable getset_descriptor properties (translation, rotation, scale)
+        Python::attach(|py| {
+            for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+                if bridge.name() == "Transform" {
+                    let py_type = bridge.py_type(py);
+                    assert!(
+                        has_writable_properties(py, &py_type),
+                        "Transform should have writable properties"
+                    );
+                    return;
+                }
+            }
+            panic!("Transform bridge not found");
+        });
+    }
+
+    #[test]
+    fn has_writable_properties_returns_false_for_no_properties() {
+        setup();
+        // A plain Python class with no getset_descriptors should return false
+        Python::attach(|py| {
+            // Create a minimal Python class with no properties
+            let empty_class = py
+                .run(pyo3::ffi::c_str!("class _Empty: pass"), None, None)
+                .unwrap();
+            let _ = empty_class;
+            let cls = py.eval(pyo3::ffi::c_str!("_Empty"), None, None).unwrap();
+            let py_type = cls.cast::<pyo3::types::PyType>().unwrap();
+            assert!(
+                !has_writable_properties(py, py_type),
+                "Empty class should not have writable properties"
+            );
+        });
+    }
+
+    #[test]
+    fn editable_fallback_uses_python_properties() {
+        setup();
+        // Regression test for Fix 2: when Bevy reflection says a component is
+        // not editable (e.g. TupleStruct), we check Python properties as fallback.
+        // Verify the integration: get_component_schema without a type registry
+        // still reports fields via Python introspection.
+        let mut world = World::new();
+        // No AppTypeRegistry → reflection_info is None → no editable field from reflection
+        // The schema should still list fields from Python dir() introspection
+        let result = get_component_schema(&mut world, "Transform".into());
+        assert!(result.is_ok(), "Transform schema lookup should succeed");
+        let schema = result.unwrap();
+        // Fields should still be detected via Python getset_descriptor introspection
+        let fields = schema["fields"].as_object().unwrap();
+        assert!(
+            fields.contains_key("translation"),
+            "Should detect translation field via Python, got: {fields:?}"
+        );
+    }
+}

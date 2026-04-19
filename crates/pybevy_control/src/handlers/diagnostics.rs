@@ -144,3 +144,120 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
 
     Ok(serde_json::Value::Object(result))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_performance_empty_world() {
+        let mut world = World::new();
+        let result = get_performance(&mut world).unwrap();
+        assert_eq!(result["entity_count"], 0);
+        // No Time resource, so no fps/frame_time
+        assert!(result.get("fps").is_none());
+    }
+
+    #[test]
+    fn get_performance_with_entities() {
+        let mut world = World::new();
+        world.spawn_empty();
+        world.spawn_empty();
+        world.spawn_empty();
+        let result = get_performance(&mut world).unwrap();
+        // world.entities().len() may include internal ECS placeholders
+        assert!(result["entity_count"].as_u64().unwrap() >= 3);
+    }
+
+    #[test]
+    fn get_performance_with_populated_snapshot() {
+        let mut world = World::new();
+        let mut snap = pybevy_core::DebugSnapshot::default();
+        snap.populated = true;
+        snap.fps_average = 60.0;
+        snap.fps_current = 59.5;
+        snap.entity_count = 42;
+        snap.memory_mb = 128.0;
+        snap.uptime_secs = 10.0;
+        world.insert_resource(snap);
+        let result = get_performance(&mut world).unwrap();
+        assert_eq!(result["fps_average"], 60.0);
+        assert_eq!(result["entity_count"], 42);
+        assert_eq!(result["memory_mb"], 128.0);
+    }
+
+    #[test]
+    fn get_performance_unpopulated_snapshot_uses_fallback() {
+        let mut world = World::new();
+        let snap = pybevy_core::DebugSnapshot::default(); // populated is false by default
+        world.insert_resource(snap);
+        let result = get_performance(&mut world).unwrap();
+        // Should fall through to basic metrics (entity_count from world, not snapshot)
+        assert!(result["entity_count"].is_number());
+        assert!(result.get("fps_average").is_none());
+    }
+
+    #[test]
+    fn get_performance_with_time_resource() {
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        let result = get_performance(&mut world).unwrap();
+        assert!(result["entity_count"].is_number());
+        assert!(result.get("elapsed_secs").is_some());
+    }
+
+    #[test]
+    fn get_performance_rich_snapshot_all_fields() {
+        let mut world = World::new();
+        let mut snap = pybevy_core::DebugSnapshot::default();
+        snap.populated = true;
+        snap.fps_average = 60.0;
+        snap.fps_current = 59.0;
+        snap.uptime_secs = 100.0;
+        snap.entity_count = 50;
+        snap.memory_mb = 256.0;
+        snap.total_memory_mb = 512.0;
+        snap.cpu_percent = 25.0;
+        snap.cpu_core_count = 8;
+        snap.gil_enabled = true;
+        snap.reload_count = 3;
+        snap.last_reload_mode = Some("full".to_string());
+        snap.reload_failed = true;
+        snap.reload_failure_reason = Some("syntax error".to_string());
+        snap.asset_counts = vec![("Mesh".to_string(), 5), ("Material".to_string(), 3)];
+        snap.update_profiles = vec![("my_system".to_string(), 1.5)];
+        snap.startup_profiles = vec![("setup".to_string(), 10.0)];
+        snap.total_schedule_systems = 12;
+        snap.python_gc_objects = 5000;
+        snap.memory_growth_mb = 8.5;
+        snap.memory_peak_mb = 300.0;
+        snap.memory_warning = true;
+        snap.reload_memory_snapshots = vec![pybevy_core::ReloadMemorySnapshotInfo {
+            generation: 1,
+            rss_mb: 250.0,
+            delta_mb: 10.0,
+            gc_objects: 4000,
+            schedule_systems: 10,
+        }];
+        world.insert_resource(snap);
+
+        let result = get_performance(&mut world).unwrap();
+        assert_eq!(result["fps_average"], 60.0);
+        assert_eq!(result["entity_count"], 50);
+        assert_eq!(result["reload_count"], 3);
+        assert_eq!(result["last_reload_mode"], "full");
+        assert_eq!(result["reload_failed"], true);
+        assert_eq!(result["reload_failure_reason"], "syntax error");
+        assert!(result["assets"].is_object());
+        assert!(result["system_profiles"].is_array());
+        assert!(result["startup_profiles"].is_array());
+        assert_eq!(result["total_schedule_systems"], 12);
+        assert_eq!(result["python_gc_objects"], 5000);
+        assert!(result["memory_growth_mb"].is_string());
+        assert!(result["memory_peak_mb"].is_string());
+        assert_eq!(result["memory_warning"], true);
+        assert!(result["reload_memory_snapshots"].is_array());
+        assert_eq!(result["gil_enabled"], true);
+        assert_eq!(result["cpu_cores"], 8);
+    }
+}

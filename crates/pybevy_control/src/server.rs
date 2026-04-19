@@ -1299,3 +1299,1024 @@ pub fn start_server(host: String, port: u16, state: AppState) {
         });
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::{
+        bridge::{ControlError, ControlReceiver, create_channel},
+        handlers::schedule::SharedScheduleRegistry,
+    };
+
+    #[test]
+    fn parse_entity_ref_numeric_string() {
+        let result = parse_entity_ref("42");
+        assert!(matches!(result, EntityRef::Id(42)));
+    }
+
+    #[test]
+    fn parse_entity_ref_name_string() {
+        let result = parse_entity_ref("Player");
+        assert!(matches!(result, EntityRef::Name(ref s) if s == "Player"));
+    }
+
+    #[test]
+    fn parse_entity_ref_zero() {
+        let result = parse_entity_ref("0");
+        assert!(matches!(result, EntityRef::Id(0)));
+    }
+
+    #[test]
+    fn parse_entity_ref_large_number() {
+        let result = parse_entity_ref("18446744073709551615");
+        assert!(matches!(result, EntityRef::Id(u64::MAX)));
+    }
+
+    #[test]
+    fn parse_entity_ref_negative_is_name() {
+        // Negative numbers can't be u64, so they become names
+        let result = parse_entity_ref("-1");
+        assert!(matches!(result, EntityRef::Name(ref s) if s == "-1"));
+    }
+
+    #[test]
+    fn parse_entity_ref_empty_string_is_name() {
+        let result = parse_entity_ref("");
+        assert!(matches!(result, EntityRef::Name(ref s) if s.is_empty()));
+    }
+
+    #[test]
+    fn error_response_format() {
+        let (status, Json(body)) = error_response(StatusCode::NOT_FOUND, "not found");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "not found");
+    }
+
+    #[test]
+    fn error_response_internal() {
+        let (status, Json(body)) = error_response(StatusCode::INTERNAL_SERVER_ERROR, "crash");
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body["error"], "crash");
+    }
+
+    #[test]
+    fn default_delay_frames_value() {
+        assert_eq!(default_delay_frames(), 2);
+    }
+
+    #[test]
+    fn default_total_frames_value() {
+        assert_eq!(default_total_frames(), 120);
+    }
+
+    #[test]
+    fn default_capture_count_value() {
+        assert_eq!(default_capture_count(), 6);
+    }
+
+    #[test]
+    fn default_columns_value() {
+        assert_eq!(default_columns(), 3);
+    }
+
+    #[test]
+    fn default_reload_mode_value() {
+        assert_eq!(default_reload_mode(), "full");
+    }
+
+    #[test]
+    fn screenshot_body_deserialize_defaults() {
+        let json = r#"{"position": [1.0, 2.0, 3.0]}"#;
+        let body: ScreenshotBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.delay_frames, 2);
+        assert!(body.max_width.is_none());
+        assert_eq!(body.position, Some([1.0, 2.0, 3.0]));
+        assert!(body.look_at.is_none());
+        assert_eq!(body.hide_ui, false);
+    }
+
+    #[test]
+    fn screenshot_body_deserialize_all_fields() {
+        let json = r#"{"delay_frames": 5, "max_width": 800, "position": [0.0, 0.0, 0.0], "look_at": [1.0, 1.0, 1.0], "hide_ui": true}"#;
+        let body: ScreenshotBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.delay_frames, 5);
+        assert_eq!(body.max_width, Some(800));
+        assert_eq!(body.hide_ui, true);
+    }
+
+    #[test]
+    fn timeline_body_deserialize_defaults() {
+        let json = "{}";
+        let body: TimelineBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.total_frames, 120);
+        assert_eq!(body.capture_count, 6);
+        assert_eq!(body.columns, 3);
+        assert!(body.max_width.is_none());
+    }
+
+    #[test]
+    fn depth_body_deserialize_defaults() {
+        let json = "{}";
+        let body: DepthBody = serde_json::from_str(json).unwrap();
+        assert!(body.position.is_none());
+        assert!(body.look_at.is_none());
+        assert!(body.sample_points.is_none());
+        assert!(body.grid_density.is_none());
+        assert!(body.include_rgb.is_none());
+        assert!(body.delay_frames.is_none());
+        assert!(body.hide_ui.is_none());
+        assert!(body.max_width.is_none());
+    }
+
+    #[test]
+    fn turnaround_body_deserialize_defaults() {
+        let json = "{}";
+        let body: TurnaroundBody = serde_json::from_str(json).unwrap();
+        assert!(body.look_at.is_none());
+        assert!(body.distance.is_none());
+        assert!(body.elevation.is_none());
+        assert!(body.view_count.is_none());
+    }
+
+    #[test]
+    fn query_entities_body_deserialize_defaults() {
+        let json = "{}";
+        let body: QueryEntitiesBody = serde_json::from_str(json).unwrap();
+        assert!(body.with.is_empty());
+        assert!(body.without.is_empty());
+    }
+
+    #[test]
+    fn seek_time_body_deserialize_defaults() {
+        let json = r#"{"seconds": 5.0}"#;
+        let body: SeekTimeBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.seconds, 5.0);
+        assert_eq!(body.pause, false);
+    }
+
+    #[test]
+    fn check_overlaps_body_deserialize_defaults() {
+        let json = r#"{"entity": 42}"#;
+        let body: CheckOverlapsBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.include_siblings, false);
+        assert_eq!(body.max_float_gap, 0.0);
+    }
+
+    #[test]
+    fn check_all_overlaps_body_deserialize_defaults() {
+        let json = "{}";
+        let body: CheckAllOverlapsBody = serde_json::from_str(json).unwrap();
+        assert!(body.min_penetration.is_none());
+        assert!(body.max_results.is_none());
+        assert_eq!(body.max_float_gap, 0.0);
+    }
+
+    #[test]
+    fn server_config_clone() {
+        let config = ServerConfig {
+            screenshot_enabled: true,
+            manipulation_enabled: false,
+            execute_python_enabled: true,
+            api_discovery_enabled: false,
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.screenshot_enabled, true);
+        assert_eq!(cloned.manipulation_enabled, false);
+    }
+
+    #[test]
+    fn reload_body_deserialize_defaults() {
+        let json = "{}";
+        let body: ReloadBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.mode, "full");
+        assert_eq!(body.pause, false);
+        assert!(body.time_scale.is_none());
+    }
+
+    #[test]
+    fn spawn_body_deserialize() {
+        let json = r#"{"components": {"Transform": {"translation": [0, 1, 0]}}}"#;
+        let body: SpawnBody = serde_json::from_str(json).unwrap();
+        assert!(body.components.is_object());
+    }
+
+    #[test]
+    fn set_component_body_deserialize() {
+        let json = r#"{"fields": {"intensity": 100.0}}"#;
+        let body: SetComponentBody = serde_json::from_str(json).unwrap();
+        assert!(body.fields.is_object());
+    }
+
+    #[test]
+    fn execute_body_deserialize() {
+        let json = r#"{"code": "print('hi')"}"#;
+        let body: ExecuteBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.code, "print('hi')");
+    }
+
+    #[test]
+    fn batch_body_deserialize() {
+        let json = r#"{"operations": [{"type": "spawn", "components": {}}]}"#;
+        let body: BatchBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.operations.len(), 1);
+    }
+
+    #[test]
+    fn insert_resource_body_deserialize() {
+        let json = r#"{"value": {"difficulty": "hard"}}"#;
+        let body: InsertResourceBody = serde_json::from_str(json).unwrap();
+        assert!(body.value.is_object());
+    }
+
+    #[test]
+    fn mutate_asset_body_deserialize() {
+        let json = r#"{"entity": 42, "component": "MeshMaterial3d", "asset_type": "StandardMaterial", "fields": {"base_color": [1,0,0,1]}}"#;
+        let body: MutateAssetBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.component, "MeshMaterial3d");
+        assert_eq!(body.asset_type, "StandardMaterial");
+    }
+
+    #[test]
+    fn spatial_query_body_deserialize() {
+        let json = r#"{"entity_a": 1, "entity_b": 2}"#;
+        let body: SpatialQueryBody = serde_json::from_str(json).unwrap();
+        assert!(body.entity_a.is_number());
+    }
+
+    #[test]
+    fn neighborhood_body_deserialize() {
+        let json = r#"{"entity": "Player", "radius": 10.0}"#;
+        let body: NeighborhoodBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.radius, 10.0);
+        assert!(body.max_results.is_none());
+    }
+
+    #[test]
+    fn time_scale_body_deserialize() {
+        let json = r#"{"scale": 2.5}"#;
+        let body: TimeScaleBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.scale, 2.5);
+    }
+
+    #[test]
+    fn reload_and_capture_body_deserialize() {
+        let json = r#"{"position": [0, 5, 10]}"#;
+        let body: ReloadAndCaptureBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.mode, "full");
+        assert_eq!(body.pause, false);
+        assert!(body.position.is_some());
+    }
+
+    #[test]
+    fn search_query_deserialize() {
+        let json = r#"{"q": "Transform"}"#;
+        let q: SearchQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.q, "Transform");
+    }
+
+    fn test_state_enabled() -> (AppState, ControlReceiver) {
+        let (sender, receiver) = create_channel();
+        let state = AppState::new(
+            sender,
+            SseEventBroadcaster::new(),
+            Arc::new(ApiIndex::build(std::path::Path::new(""))),
+            ServerConfig {
+                screenshot_enabled: true,
+                manipulation_enabled: true,
+                execute_python_enabled: true,
+                api_discovery_enabled: true,
+            },
+            SharedLatestError::default(),
+            SharedScheduleRegistry::default(),
+        );
+        (state, receiver)
+    }
+
+    fn test_state_disabled() -> (AppState, ControlReceiver) {
+        let (sender, receiver) = create_channel();
+        let state = AppState::new(
+            sender,
+            SseEventBroadcaster::new(),
+            Arc::new(ApiIndex::build(std::path::Path::new(""))),
+            ServerConfig {
+                screenshot_enabled: false,
+                manipulation_enabled: false,
+                execute_python_enabled: false,
+                api_discovery_enabled: false,
+            },
+            SharedLatestError::default(),
+            SharedScheduleRegistry::default(),
+        );
+        (state, receiver)
+    }
+
+    fn json_post(uri: &str, body: &str) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    fn get_req(uri: &str) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    fn delete_req(uri: &str) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .method("DELETE")
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_endpoint() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app.oneshot(get_req("/health")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn list_entities_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"entities": []})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/entities")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_entity_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"entity": 42, "components": {}})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/entities/42")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_time_status_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"paused": false})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/time")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_performance_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"fps": 60})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/performance")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn query_entities_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"entities": []})));
+            }
+        });
+        let response = app
+            .oneshot(json_post(
+                "/api/v1/query",
+                r#"{"with": ["Transform"], "without": []}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn spawn_entity_created() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"entity": 99})));
+            }
+        });
+        let response = app
+            .oneshot(json_post(
+                "/api/v1/entities",
+                r#"{"components": {"Transform": {}}}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn scene_summary_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"groups": []})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/scene/summary")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_component_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(
+                    serde_json::json!({"component": "Transform", "fields": {}}),
+                ));
+            }
+        });
+        let response = app
+            .oneshot(get_req("/api/v1/entities/42/components/Transform"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn set_component_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"ok": true})));
+            }
+        });
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/entities/42/components/Transform")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        r#"{"fields": {"translation": [0,1,0]}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn despawn_entity_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"despawned": true})));
+            }
+        });
+        let response = app
+            .oneshot(delete_req("/api/v1/entities/42"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn remove_component_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"removed": true})));
+            }
+        });
+        let response = app
+            .oneshot(delete_req("/api/v1/entities/42/components/Marker"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn list_resources_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"resources": []})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/resources")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn list_systems_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"systems": []})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/systems")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_component_schema_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"schema": {}})));
+            }
+        });
+        let response = app
+            .oneshot(get_req("/api/v1/components/Transform/schema"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn pause_time_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"paused": true})));
+            }
+        });
+        let response = app
+            .oneshot(json_post("/api/v1/time/pause", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn resume_time_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"paused": false})));
+            }
+        });
+        let response = app
+            .oneshot(json_post("/api/v1/time/resume", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_last_error_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"error": null})));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/error")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn debug_registry_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Ok(serde_json::json!({"registry": {}})));
+            }
+        });
+        let response = app
+            .oneshot(get_req("/api/v1/debug/registry"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn guides_index_ok() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app.oneshot(get_req("/api/v1/guides")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn guides_get_not_found() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/guides/nonexistent"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn instructions_not_found_when_empty() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app.oneshot(get_req("/api/v1/instructions")).await.unwrap();
+        // Empty ApiIndex has no instructions
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn stubs_type_not_found() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/stubs/type/NonExistent"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn stubs_module_not_found() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/stubs/module/nonexistent"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // Permission gate tests (all disabled)
+
+    #[tokio::test]
+    async fn spawn_entity_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/entities", r#"{"components": {}}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn despawn_entity_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app.oneshot(delete_req("/api/v1/entities/1")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn set_component_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/entities/1/components/X")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(r#"{"fields": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn remove_component_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(delete_req("/api/v1/entities/1/components/X"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn insert_resource_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/resources/MyRes")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(r#"{"value": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn remove_resource_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(delete_req("/api/v1/resources/MyRes"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn batch_mutate_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/batch", r#"{"operations": []}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn capture_screenshot_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/screenshot", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn capture_gizmos_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/screenshot/gizmos", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn capture_timeline_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/screenshot/timeline", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn capture_turnaround_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/screenshot/turnaround", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn capture_depth_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/screenshot/depth", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn execute_python_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post("/api/v1/execute", r#"{"code": "print(1)"}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn stubs_index_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app.oneshot(get_req("/api/v1/stubs")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn stubs_search_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/stubs/search?q=Transform"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn stubs_module_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/stubs/module/transform"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn stubs_type_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/stubs/type/Transform"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn stubs_type_structured_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/stubs/type/Transform/structured"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // Error handling tests
+
+    #[tokio::test]
+    async fn channel_closed_returns_503() {
+        let (state, rx) = test_state_enabled();
+        drop(rx);
+        let app = build_router(state);
+        let response = app.oneshot(get_req("/api/v1/entities")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn control_error_not_found_returns_404() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Err(ControlError::not_found("missing")));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/entities")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn control_error_invalid_params_returns_400() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req
+                    .response_tx
+                    .send(Err(ControlError::invalid_params("bad")));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/entities")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn control_error_internal_returns_500() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Err(ControlError::internal("crash")));
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/entities")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn response_tx_dropped_returns_500() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                drop(req.response_tx); // Drop without sending
+            }
+        });
+        let response = app.oneshot(get_req("/api/v1/entities")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn schedule_get_not_found() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(get_req("/api/v1/schedule/nonexistent"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn schedule_cancel_not_found() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(delete_req("/api/v1/schedule/nonexistent"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn schedule_validate_empty_actions() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post(
+                "/api/v1/schedule",
+                r#"{"actions": [], "mode": "sync"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mutate_asset_forbidden() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post(
+                "/api/v1/assets/mutate",
+                r#"{"entity": 1, "component": "X", "asset_type": "Y", "fields": {}}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}

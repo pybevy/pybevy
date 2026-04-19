@@ -171,3 +171,255 @@ fn ray_aabb_intersection(ray: &Ray3d, aabb: &super::spatial::WorldAabb) -> Optio
         Some(tmin)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
+
+    use super::{super::spatial::WorldAabb, *};
+
+    fn make_aabb(min: [f32; 3], max: [f32; 3]) -> WorldAabb {
+        WorldAabb {
+            min: Vec3A::from_array(min),
+            max: Vec3A::from_array(max),
+            entity: Entity::from_bits(1),
+        }
+    }
+
+    #[test]
+    fn ray_aabb_hit_from_outside() {
+        let aabb = make_aabb([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+        let ray = Ray3d::new(Vec3::new(0.0, 2.0, 2.0), Dir3::X);
+        let t = ray_aabb_intersection(&ray, &aabb);
+        assert!(t.is_some());
+        let t = t.unwrap();
+        // Should hit at x=1.0, so t=1.0
+        assert!((t - 1.0).abs() < 1e-4, "t={t}");
+    }
+
+    #[test]
+    fn ray_aabb_miss_parallel() {
+        let aabb = make_aabb([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+        // Ray going in +X but above the box
+        let ray = Ray3d::new(Vec3::new(0.0, 5.0, 2.0), Dir3::X);
+        assert!(ray_aabb_intersection(&ray, &aabb).is_none());
+    }
+
+    #[test]
+    fn ray_aabb_inside_returns_tmax() {
+        let aabb = make_aabb([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        let ray = Ray3d::new(Vec3::new(5.0, 5.0, 5.0), Dir3::X);
+        let t = ray_aabb_intersection(&ray, &aabb);
+        assert!(t.is_some());
+        // Inside the box, tmin < 0, so it returns tmax
+        let t = t.unwrap();
+        // Should exit at x=10, so tmax = 5.0
+        assert!((t - 5.0).abs() < 1e-4, "t={t}");
+    }
+
+    #[test]
+    fn ray_aabb_behind_returns_none() {
+        let aabb = make_aabb([1.0, 1.0, 1.0], [3.0, 3.0, 3.0]);
+        // Ray starts past the box and goes further away
+        let ray = Ray3d::new(Vec3::new(5.0, 2.0, 2.0), Dir3::X);
+        assert!(ray_aabb_intersection(&ray, &aabb).is_none());
+    }
+
+    #[test]
+    fn ray_aabb_grazing_slightly_inside() {
+        let aabb = make_aabb([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        // Ray slightly inside the top face (Y=0.999), should definitely hit
+        let ray = Ray3d::new(Vec3::new(-1.0, 0.999, 0.5), Dir3::X);
+        let t = ray_aabb_intersection(&ray, &aabb);
+        assert!(t.is_some());
+    }
+
+    #[test]
+    fn compute_depth_samples_explicit_position() {
+        let mut world = World::new();
+        // Use a large cube so that off-center grid rays still hit
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-5.0, -5.0, -5.0), Vec3::new(5.0, 5.0, 5.0)),
+            GlobalTransform::default(),
+            Name::new("Cube"),
+        ));
+
+        let position = Some([0.0_f32, 0.0, 10.0]);
+        let look_at = Some([0.0_f32, 0.0, 0.0]);
+        let sample_points = None;
+        let grid_density = Some(3_u32);
+
+        let result = compute_depth_samples(
+            &mut world,
+            &position,
+            &look_at,
+            &sample_points,
+            &grid_density,
+        )
+        .unwrap();
+
+        assert_eq!(result["sample_count"], 9); // 3x3 grid
+        assert!(result["hit_count"].as_u64().unwrap() > 0); // rays should hit the large cube
+        let cam_pos = result["camera_position"].as_array().unwrap();
+        assert!((cam_pos[0].as_f64().unwrap() - 0.0).abs() < 1e-5);
+        assert!((cam_pos[1].as_f64().unwrap() - 0.0).abs() < 1e-5);
+        assert!((cam_pos[2].as_f64().unwrap() - 10.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_depth_samples_no_entities() {
+        let mut world = World::new();
+
+        let position = Some([0.0_f32, 0.0, 10.0]);
+        let look_at = Some([0.0_f32, 0.0, 0.0]);
+        let sample_points = None;
+        let grid_density = Some(2_u32);
+
+        let result = compute_depth_samples(
+            &mut world,
+            &position,
+            &look_at,
+            &sample_points,
+            &grid_density,
+        )
+        .unwrap();
+
+        assert_eq!(result["sample_count"], 4); // 2x2 grid
+        assert_eq!(result["hit_count"], 0);
+    }
+
+    #[test]
+    fn compute_depth_samples_custom_sample_points() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::default(),
+            Name::new("Cube"),
+        ));
+
+        let position = Some([0.0_f32, 0.0, 10.0]);
+        let look_at = Some([0.0_f32, 0.0, 0.0]);
+        let sample_points = Some(vec![[400_u32, 400]]);
+        let grid_density = None;
+
+        let result = compute_depth_samples(
+            &mut world,
+            &position,
+            &look_at,
+            &sample_points,
+            &grid_density,
+        )
+        .unwrap();
+
+        assert_eq!(result["sample_count"], 1);
+        // The center point (400,400) maps to (0,0) in normalized coords on an 800-pixel grid,
+        // which shoots straight forward and should hit the cube at origin.
+        assert!(result["hit_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn compute_depth_samples_no_camera_no_position_error() {
+        let mut world = World::new();
+
+        let position = None;
+        let look_at = None;
+        let sample_points = None;
+        let grid_density = None;
+
+        let result = compute_depth_samples(
+            &mut world,
+            &position,
+            &look_at,
+            &sample_points,
+            &grid_density,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compute_depth_samples_hit_returns_entity_info() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+            GlobalTransform::default(),
+            Name::new("TestCube"),
+        ));
+
+        let position = Some([0.0_f32, 0.0, 10.0]);
+        let look_at = Some([0.0_f32, 0.0, 0.0]);
+        let sample_points = None;
+        let grid_density = Some(1_u32);
+
+        let result = compute_depth_samples(
+            &mut world,
+            &position,
+            &look_at,
+            &sample_points,
+            &grid_density,
+        )
+        .unwrap();
+
+        let samples = result["samples"].as_array().unwrap();
+        // With grid_density=1 we get a single sample at the center
+        let sample = &samples[0];
+        if sample["hit"].as_bool().unwrap() {
+            assert_eq!(sample["entity_name"].as_str().unwrap(), "TestCube");
+            assert!(sample["distance"].as_f64().unwrap() > 0.0);
+            assert!(sample["world_position"].as_array().is_some());
+        }
+    }
+
+    #[test]
+    fn compute_depth_samples_miss_returns_null_distance() {
+        let mut world = World::new();
+        // Entity far off to the side
+        world.spawn((
+            Aabb::from_min_max(
+                Vec3::new(100.0, 100.0, 100.0),
+                Vec3::new(101.0, 101.0, 101.0),
+            ),
+            GlobalTransform::default(),
+            Name::new("FarAway"),
+        ));
+
+        let position = Some([0.0_f32, 0.0, 10.0]);
+        let look_at = Some([0.0_f32, 0.0, 0.0]);
+        let sample_points = None;
+        let grid_density = Some(1_u32);
+
+        let result = compute_depth_samples(
+            &mut world,
+            &position,
+            &look_at,
+            &sample_points,
+            &grid_density,
+        )
+        .unwrap();
+
+        let samples = result["samples"].as_array().unwrap();
+        let sample = &samples[0];
+        assert_eq!(sample["hit"].as_bool().unwrap(), false);
+        assert!(sample["distance"].is_null());
+    }
+
+    #[test]
+    fn ray_aabb_diagonal_hit() {
+        let aabb = make_aabb([2.0, 2.0, 2.0], [4.0, 4.0, 4.0]);
+        let dir_vec = Vec3::new(1.0, 1.0, 1.0).normalize();
+        let ray = Ray3d::new(Vec3::ZERO, Dir3::new(dir_vec).unwrap());
+        let t = ray_aabb_intersection(&ray, &aabb);
+        assert!(t.is_some());
+        assert!(t.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn ray_aabb_negative_direction() {
+        let aabb = make_aabb([-5.0, -1.0, -1.0], [-3.0, 1.0, 1.0]);
+        let ray = Ray3d::new(Vec3::ZERO, Dir3::NEG_X);
+        let t = ray_aabb_intersection(&ray, &aabb);
+        assert!(t.is_some());
+        // Should hit at x=-3.0, so t ≈ 3.0
+        assert!((t.unwrap() - 3.0).abs() < 1e-4, "t={}", t.unwrap());
+    }
+}

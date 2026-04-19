@@ -115,3 +115,64 @@ finally:
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    use super::*;
+
+    static INIT: Once = Once::new();
+    fn init_python() {
+        INIT.call_once(|| {
+            pyo3::Python::initialize();
+        });
+    }
+
+    #[test]
+    fn execute_simple_code() {
+        init_python();
+        let mut world = World::new();
+        let result = execute_python(&mut world, "x = 1 + 1".to_string()).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["stdout"], "");
+        assert!(result["error"].is_null());
+    }
+
+    #[test]
+    fn execute_with_print_captures_stdout() {
+        init_python();
+        let mut world = World::new();
+        let result = execute_python(&mut world, "print('hello world')".to_string()).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["stdout"], "hello world\n");
+    }
+
+    #[test]
+    fn execute_with_error_captures_traceback() {
+        init_python();
+        let mut world = World::new();
+        let result =
+            execute_python(&mut world, "raise ValueError('test error')".to_string()).unwrap();
+        assert_eq!(result["success"], false);
+        let error = result["error"].as_str().unwrap();
+        assert!(error.contains("ValueError"));
+        assert!(error.contains("test error"));
+    }
+
+    #[test]
+    fn execute_with_syntax_error() {
+        init_python();
+        let mut world = World::new();
+        let result = execute_python(&mut world, "def".to_string()).unwrap();
+        assert_eq!(result["success"], false);
+    }
+
+    #[test]
+    fn execute_empty_code() {
+        init_python();
+        let mut world = World::new();
+        let result = execute_python(&mut world, String::new()).unwrap();
+        assert_eq!(result["success"], true);
+    }
+}

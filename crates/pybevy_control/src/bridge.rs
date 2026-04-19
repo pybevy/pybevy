@@ -865,3 +865,241 @@ pub fn control_poll_system(world: &mut World) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    use bevy::{ecs::entity::Entity, prelude::Transform};
+    use pyo3::Python;
+
+    use super::*;
+    use crate::{protocol::SseEvent, runtime::ControlRuntime, runtime_pyo3::Pyo3ControlRuntime};
+
+    #[test]
+    fn entity_ref_deserialize_id() {
+        let json = "42";
+        let entity_ref: EntityRef = serde_json::from_str(json).unwrap();
+        assert!(matches!(entity_ref, EntityRef::Id(42)));
+    }
+
+    #[test]
+    fn entity_ref_deserialize_name() {
+        let json = r#""MyEntity""#;
+        let entity_ref: EntityRef = serde_json::from_str(json).unwrap();
+        assert!(matches!(entity_ref, EntityRef::Name(ref s) if s == "MyEntity"));
+    }
+
+    #[test]
+    fn control_error_not_found() {
+        let err = ControlError::not_found("missing");
+        assert_eq!(err.code, -32001);
+        assert_eq!(err.message, "missing");
+    }
+
+    #[test]
+    fn control_error_invalid_params() {
+        let err = ControlError::invalid_params("bad input");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.message, "bad input");
+    }
+
+    #[test]
+    fn control_error_internal() {
+        let err = ControlError::internal("crash");
+        assert_eq!(err.code, -32603);
+        assert_eq!(err.message, "crash");
+    }
+
+    #[test]
+    fn shared_latest_error_update_and_take() {
+        let shared = SharedLatestError::default();
+
+        // Initially empty
+        assert!(shared.take_if_new().is_none());
+
+        // Update with an error
+        shared.update("test error".into(), 1.0);
+
+        // First take returns the error
+        let snapshot = shared.take_if_new().unwrap();
+        assert_eq!(snapshot.message, "test error");
+        assert_eq!(snapshot.timestamp_secs, 1.0);
+
+        // Second take returns None (already consumed)
+        assert!(shared.take_if_new().is_none());
+    }
+
+    #[test]
+    fn shared_latest_error_update_overwrites() {
+        let shared = SharedLatestError::default();
+        shared.update("first".into(), 1.0);
+        shared.update("second".into(), 2.0);
+
+        let snapshot = shared.take_if_new().unwrap();
+        assert_eq!(snapshot.message, "second");
+        assert_eq!(snapshot.timestamp_secs, 2.0);
+    }
+
+    #[test]
+    fn create_channel_works() {
+        let (sender, mut receiver) = create_channel();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+
+        sender
+            .tx
+            .send(ControlRequest {
+                operation: ControlOperation::Scene(SceneOp::ListEntities),
+                response_tx: tx,
+            })
+            .unwrap();
+
+        let req = receiver.rx.try_recv().unwrap();
+        assert!(matches!(
+            req.operation,
+            ControlOperation::Scene(SceneOp::ListEntities)
+        ));
+    }
+
+    #[test]
+    fn sse_event_broadcaster_new() {
+        let broadcaster = SseEventBroadcaster::new();
+        // Should be able to subscribe
+        let _rx = broadcaster.tx.subscribe();
+    }
+
+    #[test]
+    fn sse_event_broadcaster_send_no_subscribers() {
+        let broadcaster = SseEventBroadcaster::new();
+        // Should not panic even with no subscribers
+        broadcaster.send(&SseEvent::ReloadStarted {
+            mode: "full".into(),
+            generation: 0,
+        });
+    }
+
+    #[test]
+    fn sse_event_broadcaster_send_with_subscriber() {
+        let broadcaster = SseEventBroadcaster::new();
+        let mut rx = broadcaster.tx.subscribe();
+        broadcaster.send(&SseEvent::ReloadStarted {
+            mode: "full".into(),
+            generation: 0,
+        });
+        let msg = rx.try_recv().unwrap();
+        assert!(msg.contains("reload_started"));
+    }
+
+    #[test]
+    fn control_error_debug_format() {
+        let err = ControlError::not_found("test");
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("-32001"));
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn entity_ref_debug_format() {
+        let id_ref = EntityRef::Id(42);
+        let name_ref = EntityRef::Name("Test".into());
+        assert!(format!("{:?}", id_ref).contains("42"));
+        assert!(format!("{:?}", name_ref).contains("Test"));
+    }
+
+    #[test]
+    fn shared_latest_error_default_is_empty() {
+        let shared = SharedLatestError::default();
+        assert!(shared.take_if_new().is_none());
+    }
+
+    #[test]
+    fn shared_latest_error_clone_shares_state() {
+        let shared = SharedLatestError::default();
+        let cloned = shared.clone();
+        shared.update("error".into(), 1.0);
+        // The clone should see the same update
+        let snapshot = cloned.take_if_new().unwrap();
+        assert_eq!(snapshot.message, "error");
+    }
+
+    #[test]
+    fn max_requests_per_frame_is_reasonable() {
+        assert!(MAX_REQUESTS_PER_FRAME > 0);
+        assert!(MAX_REQUESTS_PER_FRAME <= 1000);
+    }
+
+    /// Regression test: multiple get_component requests processed in a single
+    /// control_poll_system frame must not crash.
+    ///
+    /// Without the Python::attach() wrapper around the dispatch loop, rapid
+    /// GIL acquire/release cycling after py.detach() can corrupt GIL state
+    /// and cause a silent segfault (the original bug).
+    #[test]
+    fn parallel_get_component_does_not_crash() {
+        // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
+        extern crate pybevy_transform;
+
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            Python::initialize();
+            pybevy_core::bridge_inventory::collect_all();
+        });
+
+        Python::attach(|py| {
+            // Release the GIL to simulate the production environment where
+            // app.run() calls py.detach() before entering the Bevy main loop.
+            py.detach(|| {
+                let mut world = World::new();
+                let (sender, receiver) = create_channel();
+                world.insert_resource(receiver);
+
+                // Insert the runtime resource
+                world.insert_non_send_resource(
+                    Box::new(Pyo3ControlRuntime) as Box<dyn ControlRuntime>
+                );
+
+                // Spawn 6 entities with Transform
+                let entities: Vec<Entity> = (0..6)
+                    .map(|i| world.spawn(Transform::from_xyz(i as f32, 0.0, 0.0)).id())
+                    .collect();
+
+                // Queue 6 get_component requests (all in one batch, like parallel HTTP)
+                let mut response_rxs = Vec::new();
+                for entity in &entities {
+                    let (tx, rx) = oneshot::channel();
+                    sender
+                        .tx
+                        .send(ControlRequest {
+                            operation: ControlOperation::Scene(SceneOp::GetComponent {
+                                entity: EntityRef::Id(entity.to_bits()),
+                                component: "Transform".into(),
+                            }),
+                            response_tx: tx,
+                        })
+                        .unwrap();
+                    response_rxs.push(rx);
+                }
+
+                // Process all 6 in a single control_poll_system call
+                control_poll_system(&mut world);
+
+                // Verify all 6 responses arrived successfully
+                for (i, rx) in response_rxs.into_iter().enumerate() {
+                    let result = rx
+                        .blocking_recv()
+                        .unwrap_or_else(|_| panic!("Response {i} channel closed"));
+                    let value =
+                        result.unwrap_or_else(|e| panic!("Response {i} error: {}", e.message));
+                    assert_eq!(
+                        value["component"], "Transform",
+                        "Response {i}: expected Transform component"
+                    );
+                    assert!(
+                        value["fields"].is_object(),
+                        "Response {i}: expected fields object"
+                    );
+                }
+            });
+        });
+    }
+}

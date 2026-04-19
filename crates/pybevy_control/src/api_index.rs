@@ -632,3 +632,589 @@ impl PyApiIndex {
         self.inner.get_instructions().map(|s| s.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn parse_stub_definitions_classes() {
+        let content = "class Foo(Bar):\n    pass\nclass Baz:\n    pass\n";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["Foo", "Baz"]);
+        assert!(functions.is_empty());
+    }
+
+    #[test]
+    fn parse_stub_definitions_functions() {
+        let content = "def top_level(x: int) -> None: ...\n";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert!(classes.is_empty());
+        assert_eq!(functions, vec!["top_level"]);
+    }
+
+    #[test]
+    fn parse_stub_definitions_ignores_methods() {
+        let content = "class Foo:\n    def method(self) -> None: ...\n";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["Foo"]);
+        assert!(functions.is_empty()); // indented = method, not top-level
+    }
+
+    #[test]
+    fn parse_stub_definitions_mixed() {
+        let content = "\
+class Alpha(Base):
+    def method(self): ...
+
+def utility() -> int: ...
+
+class Beta:
+    x: int
+";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["Alpha", "Beta"]);
+        assert_eq!(functions, vec!["utility"]);
+    }
+
+    #[test]
+    fn extract_class_definition_found() {
+        let content = "\
+class Foo(Bar):
+    x: int
+    def method(self): ...
+
+class Baz:
+    pass
+";
+        let result = extract_class_definition(content, "Foo").unwrap();
+        assert!(result.starts_with("class Foo(Bar):"));
+        assert!(result.contains("def method"));
+        assert!(!result.contains("class Baz"));
+    }
+
+    #[test]
+    fn extract_class_definition_not_found() {
+        let content = "class Foo:\n    pass\n";
+        assert!(extract_class_definition(content, "NotHere").is_none());
+    }
+
+    #[test]
+    fn extract_class_definition_last_class() {
+        let content = "\
+class First:
+    pass
+
+class Last:
+    x: int
+    y: float
+";
+        let result = extract_class_definition(content, "Last").unwrap();
+        assert!(result.starts_with("class Last:"));
+        assert!(result.contains("y: float"));
+    }
+
+    #[test]
+    fn extract_constructor_display_with_params() {
+        let sig = "__init__(self, x: float, y: float) -> None";
+        assert_eq!(extract_constructor_display(sig), "(x: float, y: float)");
+    }
+
+    #[test]
+    fn extract_constructor_display_no_params() {
+        let sig = "__init__(self) -> None";
+        assert_eq!(extract_constructor_display(sig), "()");
+    }
+
+    #[test]
+    fn extract_constructor_display_self_only() {
+        let sig = "__init__(self) -> None";
+        assert_eq!(extract_constructor_display(sig), "()");
+    }
+
+    #[test]
+    fn extract_return_type_with_arrow() {
+        assert_eq!(extract_return_type("def foo(self) -> Vec3"), "Vec3");
+    }
+
+    #[test]
+    fn extract_return_type_no_arrow() {
+        assert_eq!(extract_return_type("def foo(self)"), "None");
+    }
+
+    #[test]
+    fn parse_guide_header_normal() {
+        let content = "# My Guide\n\nThis is the description.\n\nMore content.\n";
+        let (title, desc) = parse_guide_header(content);
+        assert_eq!(title, "My Guide");
+        assert_eq!(desc, "This is the description.");
+    }
+
+    #[test]
+    fn parse_guide_header_no_heading() {
+        let content = "Just some text.\n";
+        let (title, _desc) = parse_guide_header(content);
+        assert_eq!(title, "Untitled");
+    }
+
+    #[test]
+    fn parse_guide_header_empty_content() {
+        let (title, desc) = parse_guide_header("");
+        assert_eq!(title, "Untitled");
+        assert!(desc.is_empty());
+    }
+
+    #[test]
+    fn format_class_structured_properties() {
+        let raw = "\
+class MyType(Component):
+    @property
+    def x(self) -> float: ...
+    @x.setter
+    def x(self, value: float) -> None: ...
+    @property
+    def y(self) -> float: ...
+";
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 2);
+
+        // x has setter → readonly=false
+        assert_eq!(props[0]["name"], "x");
+        assert_eq!(props[0]["readonly"], false);
+
+        // y has no setter → readonly=true
+        assert_eq!(props[1]["name"], "y");
+        assert_eq!(props[1]["readonly"], true);
+    }
+
+    #[test]
+    fn format_class_structured_bare_annotations() {
+        let raw = "\
+class Sprite(Component):
+    image: Handle[Image]
+    \"\"\"Handle to the image asset.\"\"\"
+    color: Color
+    flip_x: bool
+    flip_y: bool
+    custom_size: tuple[float, float] | None
+    def __init__(self, image: Handle[Image]) -> None: ...
+    def as_asset_id(self) -> Handle[Image]: ...
+";
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 5, "Expected 5 bare annotation properties");
+
+        assert_eq!(props[0]["name"], "image");
+        assert_eq!(props[0]["type"], "Handle[Image]");
+        assert_eq!(props[0]["readonly"], false);
+
+        assert_eq!(props[1]["name"], "color");
+        assert_eq!(props[2]["name"], "flip_x");
+        assert_eq!(props[3]["name"], "flip_y");
+        assert_eq!(props[4]["name"], "custom_size");
+        assert_eq!(props[4]["type"], "tuple[float, float] | None");
+
+        // Constructor and methods should still be parsed
+        assert!(result["constructor"].is_string());
+        let methods = result["methods"].as_array().unwrap();
+        assert_eq!(methods.len(), 1);
+    }
+
+    #[test]
+    fn format_class_structured_skips_docstring_content() {
+        let raw = r#"class Sprite(Component):
+    """A sprite component.
+
+    Args:
+        image: Handle to the image asset
+        color: Color tint
+
+    Examples:
+        ```python
+        Sprite.from_image(handle)
+        ```
+
+    Notes:
+        Sprites are rendered by the SpritePlugin.
+    """
+
+    image: Handle[Image]
+    """Handle to the image asset."""
+    color: Color
+    def __init__(self, image: Handle[Image]) -> None: ...
+"#;
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        let names: Vec<&str> = props.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        // Only real attributes, not docstring content
+        assert_eq!(names, vec!["image", "color"]);
+        assert!(!names.contains(&"Args"));
+        assert!(!names.contains(&"Examples"));
+        assert!(!names.contains(&"Notes"));
+    }
+
+    #[test]
+    fn format_class_structured_skips_classvar() {
+        let raw = "\
+class Transform(Component):
+    translation: Vec3
+    rotation: Quat
+    scale: Vec3
+    IDENTITY: ClassVar[Transform]
+";
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 3, "ClassVar should be excluded");
+        let names: Vec<&str> = props.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"translation"));
+        assert!(names.contains(&"rotation"));
+        assert!(names.contains(&"scale"));
+        assert!(!names.contains(&"IDENTITY"));
+    }
+
+    #[test]
+    fn format_class_structured_bare_and_property_mix() {
+        let raw = "\
+class Mixed(Component):
+    bare_field: float
+    @property
+    def prop_field(self) -> int: ...
+    @prop_field.setter
+    def prop_field(self, value: int) -> None: ...
+";
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0]["name"], "bare_field");
+        assert_eq!(props[0]["readonly"], false);
+        assert_eq!(props[1]["name"], "prop_field");
+        assert_eq!(props[1]["readonly"], false);
+    }
+
+    #[test]
+    fn format_class_structured_constructor() {
+        let raw = "\
+class Vec3:
+    def __init__(self, x: float, y: float, z: float) -> None: ...
+    def normalize(self) -> Vec3: ...
+";
+        let result = format_class_structured(raw);
+        assert_eq!(
+            result["constructor"].as_str().unwrap(),
+            "(x: float, y: float, z: float)"
+        );
+        let methods = result["methods"].as_array().unwrap();
+        assert_eq!(methods.len(), 1);
+        assert!(methods[0].as_str().unwrap().contains("normalize"));
+    }
+
+    #[test]
+    fn format_class_structured_static_methods() {
+        let raw = "\
+class Color:
+    @staticmethod
+    def linear_rgb(r: float, g: float, b: float) -> Color: ...
+    def alpha(self) -> float: ...
+";
+        let result = format_class_structured(raw);
+        let statics = result["static_methods"].as_array().unwrap();
+        assert_eq!(statics.len(), 1);
+        assert!(statics[0].as_str().unwrap().contains("linear_rgb"));
+    }
+
+    #[test]
+    fn format_class_structured_property_with_docstring_body() {
+        // Pattern used by DistanceFog: @property with docstring body instead of "..."
+        let raw = r#"class DistanceFog(Component):
+    @property
+    def color(self) -> Color:
+        """Base color of the fog."""
+    @color.setter
+    def color(self, value: Color) -> None:
+        """Set the fog color."""
+    @property
+    def falloff(self) -> FogFalloff:
+        """The fog falloff mode."""
+"#;
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 2, "Expected 2 properties, got {:?}", props);
+
+        assert_eq!(props[0]["name"], "color");
+        assert_eq!(props[0]["type"], "Color");
+        assert_eq!(props[0]["readonly"], false); // has setter
+
+        assert_eq!(props[1]["name"], "falloff");
+        assert_eq!(props[1]["type"], "FogFalloff");
+        assert_eq!(props[1]["readonly"], true); // no setter
+    }
+
+    #[test]
+    fn format_class_structured_init_with_docstring_body() {
+        // Pattern used by Window: __init__ with docstring body, plus @property with docstrings
+        let raw = r#"class Window(Component):
+    def __init__(
+        self,
+        resolution: WindowResolution = WindowResolution(),
+        title: str = "App",
+    ) -> None:
+        """Create a new Window."""
+    @property
+    def resolution(self) -> WindowResolution:
+        """Get the window resolution."""
+    @resolution.setter
+    def resolution(self, value: WindowResolution) -> None:
+        """Set the window resolution."""
+    @property
+    def title(self) -> str:
+        """Get the window title."""
+"#;
+        let result = format_class_structured(raw);
+
+        // Constructor should be parsed
+        assert!(
+            result["constructor"].is_string(),
+            "Constructor missing: {:?}",
+            result["constructor"]
+        );
+        let ctor = result["constructor"].as_str().unwrap();
+        assert!(
+            ctor.contains("resolution"),
+            "Constructor should have resolution param: {ctor}"
+        );
+
+        // Properties should be parsed
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 2, "Expected 2 properties, got {:?}", props);
+        assert_eq!(props[0]["name"], "resolution");
+        assert_eq!(props[0]["readonly"], false);
+        assert_eq!(props[1]["name"], "title");
+        assert_eq!(props[1]["readonly"], true);
+    }
+
+    #[test]
+    fn format_class_structured_no_trailing_colon_in_type() {
+        // Bloom pattern: verify return type doesn't have trailing colon
+        let raw = "\
+class Bloom(Component):
+    @property
+    def intensity(self) -> float: ...
+    @intensity.setter
+    def intensity(self, value: float) -> None: ...
+";
+        let result = format_class_structured(raw);
+        let props = result["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0]["name"], "intensity");
+        assert_eq!(props[0]["type"], "float"); // NOT "float:"
+        assert_eq!(props[0]["readonly"], false);
+    }
+
+    #[test]
+    fn api_index_build_with_temp_dir() {
+        let dir = std::env::temp_dir().join("pybevy_test_api_index");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            dir.join("math.pyi"),
+            "class Vec3:\n    pass\n\ndef lerp(a: float, b: float) -> float: ...\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("ecs.pyi"),
+            "class Query:\n    pass\nclass Commands:\n    pass\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        assert_eq!(index.entries.len(), 2);
+
+        // Check contents were loaded
+        assert!(index.contents.contains_key("math"));
+        assert!(index.contents.contains_key("ecs"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_search_case_insensitive() {
+        let dir = std::env::temp_dir().join("pybevy_test_search");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            dir.join("test.pyi"),
+            "class Transform:\n    translation: Vec3\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        let results = index.search("transform");
+        assert!(!results.is_empty());
+        assert!(results[0].text.contains("Transform"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_search_truncation() {
+        let dir = std::env::temp_dir().join("pybevy_test_truncation");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // Create a file with many matching lines
+        let content: String = (0..200)
+            .map(|i| format!("class Item{i}:\n    pass\n"))
+            .collect();
+        fs::write(dir.join("many.pyi"), content).unwrap();
+
+        let index = ApiIndex::build(&dir);
+        let results = index.search("Item");
+        assert!(results.len() <= 100);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_get_type_definition() {
+        let dir = std::env::temp_dir().join("pybevy_test_typedef");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            dir.join("types.pyi"),
+            "class Alpha:\n    x: int\n\nclass Beta:\n    y: float\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        let def = index.get_type_definition("Alpha").unwrap();
+        assert!(def.contains("class Alpha:"));
+        assert!(def.contains("x: int"));
+        assert!(!def.contains("Beta"));
+
+        assert!(index.get_type_definition("NonExistent").is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_guides() {
+        let dir = std::env::temp_dir().join("pybevy_test_guides");
+        let _ = fs::remove_dir_all(&dir);
+        let guides_dir = dir.join("mcp/guides");
+        fs::create_dir_all(&guides_dir).unwrap();
+
+        fs::write(
+            guides_dir.join("camera.md"),
+            "# Camera Guide\n\nHow to set up cameras.\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        let guide_entries = index.get_guide_index();
+        assert_eq!(guide_entries.len(), 1);
+        assert_eq!(guide_entries[0].name, "camera");
+        assert_eq!(guide_entries[0].title, "Camera Guide");
+
+        let content = index.get_guide("camera").unwrap();
+        assert!(content.contains("# Camera Guide"));
+
+        assert!(index.get_guide("nonexistent").is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_py_fallback() {
+        let dir = std::env::temp_dir().join("pybevy_test_py_fallback");
+        let _ = fs::remove_dir_all(&dir);
+        let contrib_dir = dir.join("contrib");
+        fs::create_dir_all(&contrib_dir).unwrap();
+
+        // .pyi file (preferred)
+        fs::write(dir.join("math.pyi"), "class Vec3:\n    pass\n").unwrap();
+        // .py file that has no .pyi counterpart (should be indexed)
+        fs::write(
+            contrib_dir.join("orbit_camera.py"),
+            "class OrbitCamera(Component):\n    pass\n\nclass OrbitCameraPlugin(Plugin):\n    pass\n",
+        )
+        .unwrap();
+        // .py file that has a .pyi counterpart (should be skipped)
+        fs::write(dir.join("math.py"), "class Vec3Impl:\n    pass\n").unwrap();
+        // __init__.py should be skipped
+        fs::write(
+            contrib_dir.join("__init__.py"),
+            "from .orbit_camera import *\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+
+        // Should have math (from .pyi) and contrib.orbit_camera (from .py fallback)
+        assert!(
+            index.contents.contains_key("math"),
+            "math .pyi should be indexed"
+        );
+        assert!(
+            index.contents.contains_key("contrib.orbit_camera"),
+            "contrib.orbit_camera .py should be indexed as fallback"
+        );
+        // math.py should NOT override math.pyi
+        let math_content = index.contents.get("math").unwrap();
+        assert!(math_content.contains("Vec3"), "math should come from .pyi");
+        assert!(
+            !math_content.contains("Vec3Impl"),
+            "math.py should not override .pyi"
+        );
+
+        // Search should find contrib classes
+        let results = index.search("OrbitCamera");
+        assert!(
+            !results.is_empty(),
+            "search_api should find OrbitCamera from .py fallback"
+        );
+
+        // __init__.py should not be indexed
+        assert!(!index.contents.contains_key("contrib.__init__"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_instructions() {
+        let dir = std::env::temp_dir().join("pybevy_test_instructions");
+        let _ = fs::remove_dir_all(&dir);
+        let mcp_dir = dir.join("mcp");
+        fs::create_dir_all(&mcp_dir).unwrap();
+
+        fs::write(
+            mcp_dir.join("instructions.md"),
+            "# PyBevy MCP\n\nDefault instructions content.\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        let instructions = index.get_instructions().unwrap();
+        assert!(instructions.contains("PyBevy MCP"));
+        assert!(instructions.contains("Default instructions content"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_instructions_missing() {
+        let dir = std::env::temp_dir().join("pybevy_test_instructions_missing");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let index = ApiIndex::build(&dir);
+        assert!(index.get_instructions().is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

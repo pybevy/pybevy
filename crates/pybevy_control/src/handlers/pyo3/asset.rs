@@ -143,3 +143,121 @@ pub fn mutate_asset(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Once;
+
+    use bevy::ecs::{name::Name, world::World};
+    use pyo3::prelude::*;
+
+    use super::*;
+
+    static INIT: Once = Once::new();
+
+    fn setup_python() {
+        INIT.call_once(|| {
+            Python::initialize();
+        });
+    }
+
+    #[test]
+    fn mutate_asset_entity_not_found() {
+        let mut world = World::new();
+        let result = mutate_asset(
+            &mut world,
+            EntityRef::Id(999999),
+            "MeshMaterial3d".into(),
+            "StandardMaterial".into(),
+            serde_json::json!({"base_color": [1.0, 0.0, 0.0, 1.0]}),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn mutate_asset_entity_not_found_by_name() {
+        let mut world = World::new();
+        let result = mutate_asset(
+            &mut world,
+            EntityRef::Name("NonExistent".into()),
+            "MeshMaterial3d".into(),
+            "StandardMaterial".into(),
+            serde_json::json!({"base_color": [1.0, 0.0, 0.0, 1.0]}),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32001);
+    }
+
+    #[test]
+    fn mutate_asset_fields_not_object() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        let result = mutate_asset(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "MeshMaterial3d".into(),
+            "StandardMaterial".into(),
+            serde_json::json!("not an object"),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn mutate_asset_fields_array_rejected() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        let result = mutate_asset(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "MeshMaterial3d".into(),
+            "StandardMaterial".into(),
+            serde_json::json!([1, 2, 3]),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, -32602);
+    }
+
+    #[test]
+    fn mutate_asset_unknown_component_reports_error() {
+        setup_python();
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        let result = mutate_asset(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "NonExistentComponent".into(),
+            "StandardMaterial".into(),
+            serde_json::json!({"base_color": [1.0, 0.0, 0.0, 1.0]}),
+        );
+        // Returns Ok with errors array (not a hard error)
+        let result = result.unwrap();
+        assert!(result["errors"].is_array());
+        let errors = result["errors"].as_array().unwrap();
+        assert!(!errors.is_empty());
+        assert!(errors[0].as_str().unwrap().contains("not in registry"));
+    }
+
+    #[test]
+    fn mutate_asset_response_structure() {
+        setup_python();
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("TestEntity")).id();
+        // Use an unknown component to trigger the soft error path
+        let result = mutate_asset(
+            &mut world,
+            EntityRef::Id(entity.to_bits()),
+            "FakeComponent".into(),
+            "FakeMaterial".into(),
+            serde_json::json!({"roughness": 0.5}),
+        )
+        .unwrap();
+        // Verify response structure
+        assert!(result["entity_id"].is_number());
+        assert_eq!(result["component"], "FakeComponent");
+        assert_eq!(result["asset_type"], "FakeMaterial");
+        assert!(result["updated_fields"].is_array());
+        assert_eq!(result["updated_fields"].as_array().unwrap().len(), 0);
+    }
+}

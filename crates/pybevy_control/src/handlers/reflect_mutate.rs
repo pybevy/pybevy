@@ -615,3 +615,638 @@ fn convert_number(
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::{
+        app::App,
+        color::{Color, Srgba},
+        ecs::reflect::AppTypeRegistry,
+        math::{UVec2, Vec3},
+        prelude::*,
+    };
+
+    use super::*;
+
+    /// Helper to set up a minimal world with type registry and Transform registered.
+    fn setup_world_with_transform() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        // MinimalPlugins doesn't register Transform — we need to do it explicitly
+        // so the AppTypeRegistry knows about Transform, ReflectComponent, ReflectDefault
+        app.register_type::<Transform>();
+        app.update();
+
+        let entity = app
+            .world_mut()
+            .spawn(Transform::from_xyz(1.0, 2.0, 3.0))
+            .id();
+        (app, entity)
+    }
+
+    #[test]
+    fn reflect_set_translation_struct_format() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+
+        let mut fields = Map::new();
+        fields.insert(
+            "translation".into(),
+            serde_json::json!({"x": 10.0, "y": 20.0, "z": 30.0}),
+        );
+
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+
+        assert!(
+            result.is_ok(),
+            "reflect_set_component failed: {:?}",
+            result.as_ref().err().map(|e| match e {
+                ReflectError::FieldError(s) => s.as_str(),
+                _ => "other error",
+            })
+        );
+        let updated = result.unwrap();
+        assert_eq!(updated, vec!["translation"]);
+
+        let t = world.get::<Transform>(entity).unwrap();
+        assert_eq!(t.translation, Vec3::new(10.0, 20.0, 30.0));
+    }
+
+    #[test]
+    fn reflect_set_translation_array_format() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+
+        let mut fields = Map::new();
+        fields.insert("translation".into(), serde_json::json!([10.0, 20.0, 30.0]));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+
+        assert!(
+            result.is_ok(),
+            "reflect_set_component failed: {:?}",
+            result.as_ref().err().map(|e| match e {
+                ReflectError::FieldError(s) => s.as_str(),
+                _ => "other error",
+            })
+        );
+
+        let t = world.get::<Transform>(entity).unwrap();
+        assert_eq!(t.translation, Vec3::new(10.0, 20.0, 30.0));
+    }
+
+    #[test]
+    fn reflect_set_multiple_fields() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+
+        let mut fields = Map::new();
+        fields.insert("translation".into(), serde_json::json!([5.0, 10.0, 15.0]));
+        fields.insert("scale".into(), serde_json::json!([2.0, 2.0, 2.0]));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        assert!(result.is_ok());
+
+        let t = world.get::<Transform>(entity).unwrap();
+        assert_eq!(t.translation, Vec3::new(5.0, 10.0, 15.0));
+        assert_eq!(t.scale, Vec3::new(2.0, 2.0, 2.0));
+    }
+
+    #[test]
+    fn reflect_spawn_with_fields() {
+        let (mut app, _) = setup_world_with_transform();
+        let world = app.world_mut();
+        let entity = world.spawn_empty().id();
+
+        let mut fields = Map::new();
+        fields.insert("translation".into(), serde_json::json!([0.0, 5.0, 0.0]));
+
+        let result = reflect_spawn_component(world, entity, TypeId::of::<Transform>(), &fields);
+        assert!(result.is_ok(), "reflect_spawn_component failed");
+
+        let t = world.get::<Transform>(entity).unwrap();
+        assert_eq!(t.translation, Vec3::new(0.0, 5.0, 0.0));
+    }
+
+    #[test]
+    fn reflect_spawn_default_no_fields() {
+        let (mut app, _) = setup_world_with_transform();
+        let world = app.world_mut();
+        let entity = world.spawn_empty().id();
+
+        let fields = Map::new();
+        let result = reflect_spawn_component(world, entity, TypeId::of::<Transform>(), &fields);
+        assert!(result.is_ok());
+
+        let t = world.get::<Transform>(entity).unwrap();
+        assert_eq!(t.translation, Vec3::ZERO);
+    }
+
+    /// A private test-only type that is never registered with the type registry.
+    struct UnregisteredTestType;
+
+    #[test]
+    fn reflect_fallback_unregistered_type() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+
+        let bogus_type_id = TypeId::of::<UnregisteredTestType>();
+        let fields = Map::new();
+
+        let result = reflect_set_component(world, entity, bogus_type_id, &fields);
+        assert!(matches!(result, Err(ReflectError::NotRegistered)));
+    }
+
+    #[test]
+    fn reflect_set_nonexistent_field() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+
+        let mut fields = Map::new();
+        fields.insert("nonexistent".into(), serde_json::json!(42.0));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        assert!(matches!(result, Err(ReflectError::FieldError(_))));
+    }
+
+    #[test]
+    fn reflect_component_not_on_entity() {
+        let (mut app, _) = setup_world_with_transform();
+        let world = app.world_mut();
+        // Spawn empty entity without Transform
+        let entity = world.spawn_empty().id();
+
+        let mut fields = Map::new();
+        fields.insert("translation".into(), serde_json::json!([1.0, 2.0, 3.0]));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        assert!(matches!(result, Err(ReflectError::ComponentNotOnEntity)));
+    }
+
+    #[test]
+    fn reflect_set_integer_to_float_field() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+
+        // JSON integers should convert to f32 for Vec3 fields
+        let mut fields = Map::new();
+        fields.insert("translation".into(), serde_json::json!([1, 2, 3]));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        assert!(result.is_ok());
+
+        let t = world.get::<Transform>(entity).unwrap();
+        assert_eq!(t.translation, Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn convert_number_isize() {
+        let n = serde_json::Number::from(42i64);
+        let result = super::convert_number(&n, TypeId::of::<isize>());
+        assert!(result.is_ok());
+        let boxed = result.unwrap();
+        let val = boxed.try_downcast_ref::<isize>().unwrap();
+        assert_eq!(*val, 42isize);
+    }
+
+    #[test]
+    fn convert_number_isize_negative() {
+        let n = serde_json::Number::from(-5i64);
+        let result = super::convert_number(&n, TypeId::of::<isize>());
+        assert!(result.is_ok());
+        let boxed = result.unwrap();
+        let val = boxed.try_downcast_ref::<isize>().unwrap();
+        assert_eq!(*val, -5isize);
+    }
+
+    #[test]
+    fn convert_number_usize() {
+        let n = serde_json::Number::from(100u64);
+        let result = super::convert_number(&n, TypeId::of::<usize>());
+        assert!(result.is_ok());
+        let boxed = result.unwrap();
+        let val = boxed.try_downcast_ref::<usize>().unwrap();
+        assert_eq!(*val, 100usize);
+    }
+
+    /// A non-struct type that IS registered in the type registry.
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    enum TestEnumComponent {
+        #[default]
+        VariantA,
+        VariantB,
+    }
+
+    #[test]
+    fn reflect_set_non_struct_returns_not_a_struct() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(TestEnumComponent::VariantA).id();
+
+        let fields = Map::new();
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        assert!(matches!(result, Err(ReflectError::NotAStruct)));
+    }
+
+    #[test]
+    fn reflect_spawn_non_struct_no_fields_succeeds() {
+        // Enum with Default + ReflectComponent can spawn with empty fields
+        // (no struct check needed when there are no fields to apply)
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn_empty().id();
+
+        let fields = Map::new();
+        let result =
+            reflect_spawn_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn reflect_spawn_non_struct_with_fields_returns_not_a_struct() {
+        // Enum with fields should return NotAStruct (can't apply struct fields)
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn_empty().id();
+
+        let mut fields = Map::new();
+        fields.insert("variant".into(), serde_json::json!("VariantB"));
+
+        let result =
+            reflect_spawn_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        assert!(matches!(result, Err(ReflectError::NotAStruct)));
+    }
+
+    /// A component with an Option<Vec3> field for testing Option unwrapping.
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct OptionalFieldComponent {
+        value: Option<Vec3>,
+    }
+
+    #[test]
+    fn reflect_set_option_field_with_value() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<OptionalFieldComponent>();
+        app.register_type::<Option<Vec3>>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(OptionalFieldComponent { value: None }).id();
+
+        let mut fields = Map::new();
+        fields.insert("value".into(), serde_json::json!([1.0, 2.0, 3.0]));
+
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<OptionalFieldComponent>(),
+            &fields,
+        );
+
+        assert!(result.is_ok(), "Setting Option field failed: {:?}", result);
+
+        let comp = world.get::<OptionalFieldComponent>(entity).unwrap();
+        assert_eq!(comp.value, Some(Vec3::new(1.0, 2.0, 3.0)));
+    }
+
+    #[test]
+    fn reflect_set_option_field_to_null() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<OptionalFieldComponent>();
+        app.register_type::<Option<Vec3>>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(OptionalFieldComponent {
+                value: Some(Vec3::ONE),
+            })
+            .id();
+
+        let mut fields = Map::new();
+        fields.insert("value".into(), serde_json::json!(null));
+
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<OptionalFieldComponent>(),
+            &fields,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Setting Option to null failed: {:?}",
+            result
+        );
+
+        let comp = world.get::<OptionalFieldComponent>(entity).unwrap();
+        assert_eq!(comp.value, None);
+    }
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct VecFieldComponent {
+        weights: Vec<f32>,
+    }
+
+    #[test]
+    fn convert_number_error_includes_type_info() {
+        let n = serde_json::Number::from_f64(3.14).unwrap();
+        let result = super::convert_number(&n, TypeId::of::<i32>());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("i32"),
+            "Error should mention target type: {err}"
+        );
+        assert!(err.contains("3.14"), "Error should mention value: {err}");
+    }
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct TupleStructFieldComponent {
+        pos: UVec2,
+    }
+
+    #[test]
+    fn reflect_set_tuple_struct_field() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TupleStructFieldComponent>();
+        app.register_type::<UVec2>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TupleStructFieldComponent { pos: UVec2::ZERO })
+            .id();
+
+        let mut fields = Map::new();
+        fields.insert("pos".into(), serde_json::json!([700, 300]));
+
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TupleStructFieldComponent>(),
+            &fields,
+        );
+        assert!(
+            result.is_ok(),
+            "Setting TupleStruct field failed: {:?}",
+            result
+        );
+
+        let comp = world.get::<TupleStructFieldComponent>(entity).unwrap();
+        assert_eq!(comp.pos, UVec2::new(700, 300));
+    }
+
+    #[test]
+    fn reflect_set_vec_field() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<VecFieldComponent>();
+        app.register_type::<Vec<f32>>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(VecFieldComponent {
+                weights: vec![0.0; 4],
+            })
+            .id();
+
+        let mut fields = Map::new();
+        fields.insert("weights".into(), serde_json::json!([1.0, 0.5, 0.0, 0.25]));
+
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<VecFieldComponent>(), &fields);
+        assert!(result.is_ok(), "Setting Vec field failed: {:?}", result);
+
+        let comp = world.get::<VecFieldComponent>(entity).unwrap();
+        assert_eq!(comp.weights, vec![1.0, 0.5, 0.0, 0.25]);
+    }
+
+    /// A component with a Color field for testing enum mutation.
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct ColorComponent {
+        color: Color,
+    }
+
+    #[test]
+    fn reflect_set_enum_field_struct_variant() {
+        // Test: {"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}} → Color::Srgba
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<ColorComponent>();
+        app.register_type::<Color>();
+        app.register_type::<Srgba>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(ColorComponent::default()).id();
+
+        let mut fields = Map::new();
+        fields.insert(
+            "color".into(),
+            serde_json::json!({"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}),
+        );
+
+        let result = reflect_set_component(world, entity, TypeId::of::<ColorComponent>(), &fields);
+
+        assert!(
+            result.is_ok(),
+            "Setting Color enum field failed: {:?}",
+            result
+        );
+
+        let comp = world.get::<ColorComponent>(entity).unwrap();
+        match comp.color {
+            Color::Srgba(c) => {
+                assert!((c.red - 1.0).abs() < 0.001);
+                assert!((c.green - 0.5).abs() < 0.001);
+                assert!((c.blue - 0.0).abs() < 0.001);
+                assert!((c.alpha - 1.0).abs() < 0.001);
+            }
+            other => panic!("Expected Color::Srgba, got {:?}", other),
+        }
+    }
+
+    /// A component with a unit-enum field for testing string-to-unit-variant.
+    #[derive(Component, Reflect, Default, Debug, PartialEq)]
+    #[reflect(Component, Default)]
+    struct ModeComponent {
+        mode: TestMode,
+    }
+
+    #[derive(Reflect, Default, Debug, PartialEq, Clone)]
+    enum TestMode {
+        #[default]
+        Auto,
+        Manual,
+        Disabled,
+    }
+
+    #[test]
+    fn reflect_set_enum_field_string_unit_variant() {
+        // Test: "Manual" → TestMode::Manual
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<ModeComponent>();
+        app.register_type::<TestMode>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(ModeComponent::default()).id();
+        assert_eq!(
+            world.get::<ModeComponent>(entity).unwrap().mode,
+            TestMode::Auto
+        );
+
+        let mut fields = Map::new();
+        fields.insert("mode".into(), serde_json::json!("Manual"));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
+
+        assert!(
+            result.is_ok(),
+            "Setting enum unit variant via string failed: {:?}",
+            result
+        );
+
+        let comp = world.get::<ModeComponent>(entity).unwrap();
+        assert_eq!(comp.mode, TestMode::Manual);
+    }
+
+    #[test]
+    fn reflect_set_enum_field_object_unit_variant() {
+        // Test: {"Disabled": null} → TestMode::Disabled
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<ModeComponent>();
+        app.register_type::<TestMode>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(ModeComponent::default()).id();
+
+        let mut fields = Map::new();
+        fields.insert("mode".into(), serde_json::json!({"Disabled": null}));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
+
+        assert!(
+            result.is_ok(),
+            "Setting enum unit variant via object failed: {:?}",
+            result
+        );
+
+        let comp = world.get::<ModeComponent>(entity).unwrap();
+        assert_eq!(comp.mode, TestMode::Disabled);
+    }
+
+    #[test]
+    fn reflect_set_enum_field_invalid_variant() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<ModeComponent>();
+        app.register_type::<TestMode>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(ModeComponent::default()).id();
+
+        let mut fields = Map::new();
+        fields.insert("mode".into(), serde_json::json!("NonExistent"));
+
+        let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
+
+        // String "NonExistent" doesn't match any variant, falls through to String type
+        // which will fail at try_apply because TestMode != String
+        assert!(matches!(result, Err(ReflectError::FieldError(_))));
+    }
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct GlobalFieldComponent {
+        global: f32,
+        other: f32,
+    }
+
+    #[test]
+    fn resolve_field_name_exact_match() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<GlobalFieldComponent>();
+        app.update();
+
+        let registry_arc = app
+            .world_mut()
+            .get_resource::<AppTypeRegistry>()
+            .unwrap()
+            .clone();
+        let registry = registry_arc.read();
+        let reg = registry.get(TypeId::of::<GlobalFieldComponent>()).unwrap();
+        let struct_info = match reg.type_info() {
+            TypeInfo::Struct(info) => info,
+            _ => panic!("Expected struct type info"),
+        };
+
+        // Exact match
+        assert_eq!(
+            super::resolve_field_name("global", struct_info),
+            Some("global".to_string())
+        );
+        assert_eq!(
+            super::resolve_field_name("other", struct_info),
+            Some("other".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_field_name_trailing_underscore_alias() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<GlobalFieldComponent>();
+        app.update();
+
+        let registry_arc = app
+            .world_mut()
+            .get_resource::<AppTypeRegistry>()
+            .unwrap()
+            .clone();
+        let registry = registry_arc.read();
+        let reg = registry.get(TypeId::of::<GlobalFieldComponent>()).unwrap();
+        let struct_info = match reg.type_info() {
+            TypeInfo::Struct(info) => info,
+            _ => panic!("Expected struct type info"),
+        };
+
+        // Python reserved word alias: global_ → global
+        assert_eq!(
+            super::resolve_field_name("global_", struct_info),
+            Some("global".to_string())
+        );
+        // Non-existent field
+        assert_eq!(super::resolve_field_name("nonexistent", struct_info), None);
+        // Trailing underscore on non-existent field
+        assert_eq!(super::resolve_field_name("nonexistent_", struct_info), None);
+    }
+}

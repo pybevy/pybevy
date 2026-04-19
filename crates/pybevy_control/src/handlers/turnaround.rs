@@ -1,7 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Cursor};
 
-use bevy::{ecs::world::World, math::Vec3A, prelude::*};
-use image::{Rgb, RgbImage};
+use base64::Engine;
+use bevy::{
+    ecs::world::World, math::Vec3A, prelude::*, render::view::window::screenshot::Screenshot,
+};
+use image::{ImageFormat, Rgb, RgbImage};
 use tokio::sync::oneshot;
 
 use super::{
@@ -251,7 +254,6 @@ pub fn process_pending_turnarounds(world: &mut World) {
 
     if has_window {
         for idx in screenshots_to_spawn {
-            use bevy::render::view::window::screenshot::Screenshot;
             let entity = world.spawn(Screenshot::primary_window()).id();
             let capture_index = pending.active[idx].current_index;
 
@@ -322,11 +324,6 @@ pub fn handle_turnaround_capture(
 fn composite_turnaround(
     turnaround: &mut ActiveTurnaround,
 ) -> Result<serde_json::Value, ControlError> {
-    use std::io::Cursor;
-
-    use base64::Engine;
-    use image::ImageFormat;
-
     turnaround.captures.sort_by_key(|(idx, _)| *idx);
 
     let cols = turnaround.columns.max(1) as usize;
@@ -460,4 +457,297 @@ fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Rgb<u8> {
         ((g + m) * 255.0).round() as u8,
         ((b + m) * 255.0).round() as u8,
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::camera::primitives::Aabb;
+
+    use super::*;
+
+    #[test]
+    fn compute_viewpoints_default_6_views_with_top() {
+        let views = compute_viewpoints([0.0, 0.0, 0.0], 10.0, 25.0, 6, true);
+        // 6 orbital + 1 top = 7
+        assert_eq!(views.len(), 7);
+
+        // Last view should be "top"
+        assert_eq!(views[6].label, "top");
+    }
+
+    #[test]
+    fn compute_viewpoints_correct_distance() {
+        let look_at = [0.0, 0.0, 0.0];
+        let distance = 10.0;
+        let elevation = 25.0;
+        let views = compute_viewpoints(look_at, distance, elevation, 6, true);
+
+        let center = Vec3::from_array(look_at);
+        for view in &views[..6] {
+            // Each orbital viewpoint should be at the correct distance from look_at
+            let pos = Vec3::from_array(view.position);
+            let dist = (pos - center).length();
+            assert!(
+                (dist - distance).abs() < 0.01,
+                "View {} at distance {}, expected {}",
+                view.label,
+                dist,
+                distance
+            );
+        }
+    }
+
+    #[test]
+    fn compute_viewpoints_correct_elevation() {
+        let look_at = [0.0, 0.0, 0.0];
+        let distance = 10.0;
+        let elevation = 25.0;
+        let views = compute_viewpoints(look_at, distance, elevation, 4, false);
+
+        let elev_rad = elevation.to_radians();
+        let expected_y = distance * elev_rad.sin();
+
+        for view in &views {
+            assert!(
+                (view.position[1] - expected_y).abs() < 0.01,
+                "View {} Y={}, expected {}",
+                view.label,
+                view.position[1],
+                expected_y
+            );
+        }
+    }
+
+    #[test]
+    fn compute_viewpoints_without_top() {
+        let views = compute_viewpoints([0.0, 0.0, 0.0], 10.0, 25.0, 6, false);
+        assert_eq!(views.len(), 6);
+        // No "top" label
+        assert!(views.iter().all(|v| v.label != "top"));
+    }
+
+    #[test]
+    fn compute_viewpoints_labels() {
+        let views = compute_viewpoints([0.0, 0.0, 0.0], 10.0, 25.0, 6, true);
+        assert_eq!(views[0].label, "0°");
+        assert_eq!(views[1].label, "60°");
+        assert_eq!(views[2].label, "120°");
+        assert_eq!(views[3].label, "180°");
+        assert_eq!(views[4].label, "240°");
+        assert_eq!(views[5].label, "300°");
+        assert_eq!(views[6].label, "top");
+    }
+
+    #[test]
+    fn compute_viewpoints_single_view() {
+        let views = compute_viewpoints([1.0, 2.0, 3.0], 5.0, 30.0, 1, false);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].label, "0°");
+    }
+
+    #[test]
+    fn compute_viewpoints_top_position() {
+        let look_at = [1.0, 2.0, 3.0];
+        let distance = 10.0;
+        let views = compute_viewpoints(look_at, distance, 25.0, 3, true);
+        let top = &views[3];
+        assert_eq!(top.label, "top");
+        assert!((top.position[0] - look_at[0]).abs() < 0.01);
+        assert!((top.position[1] - (look_at[1] + distance)).abs() < 0.01);
+        // Z has small offset to avoid degenerate look_at
+        assert!((top.position[2] - (look_at[2] + 0.001)).abs() < 0.01);
+    }
+
+    #[test]
+    fn compute_scene_bounds_empty_world() {
+        let mut world = World::default();
+        assert!(compute_scene_bounds(&mut world).is_none());
+    }
+
+    #[test]
+    fn compute_scene_bounds_single_entity() {
+        let mut world = World::default();
+        let aabb = Aabb::from_min_max(Vec3::new(-1.0, -2.0, -3.0), Vec3::new(1.0, 2.0, 3.0));
+        world.spawn((aabb, GlobalTransform::default()));
+
+        let result = compute_scene_bounds(&mut world);
+        assert!(result.is_some());
+        let (min, max) = result.unwrap();
+        assert!((min.x - (-1.0)).abs() < 0.01);
+        assert!((min.y - (-2.0)).abs() < 0.01);
+        assert!((min.z - (-3.0)).abs() < 0.01);
+        assert!((max.x - 1.0).abs() < 0.01);
+        assert!((max.y - 2.0).abs() < 0.01);
+        assert!((max.z - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn compute_scene_bounds_multiple_entities() {
+        let mut world = World::default();
+
+        // Entity at origin with small AABB
+        let aabb1 = Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5));
+        world.spawn((aabb1, GlobalTransform::default()));
+
+        // Entity translated to x=10 with AABB [-1,1]
+        let aabb2 = Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        world.spawn((
+            aabb2,
+            GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0)),
+        ));
+
+        let result = compute_scene_bounds(&mut world);
+        assert!(result.is_some());
+        let (min, max) = result.unwrap();
+
+        // Scene should encompass both: min.x <= -0.5, max.x >= 11.0
+        assert!(min.x <= -0.5 + 0.01);
+        assert!(max.x >= 11.0 - 0.01);
+        // Y should span at least [-1, 1]
+        assert!(min.y <= -1.0 + 0.01);
+        assert!(max.y >= 1.0 - 0.01);
+    }
+
+    #[test]
+    fn compute_scene_bounds_translated_entity() {
+        let mut world = World::default();
+        // Unit AABB [-1,1] translated to (5,5,5) → world bounds [4,6]
+        let aabb = Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        world.spawn((
+            aabb,
+            GlobalTransform::from(Transform::from_xyz(5.0, 5.0, 5.0)),
+        ));
+
+        let result = compute_scene_bounds(&mut world);
+        assert!(result.is_some());
+        let (min, max) = result.unwrap();
+        assert!((min.x - 4.0).abs() < 0.01);
+        assert!((min.y - 4.0).abs() < 0.01);
+        assert!((min.z - 4.0).abs() < 0.01);
+        assert!((max.x - 6.0).abs() < 0.01);
+        assert!((max.y - 6.0).abs() < 0.01);
+        assert!((max.z - 6.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn hsv_to_rgb_red() {
+        assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), Rgb([255, 0, 0]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_yellow() {
+        assert_eq!(hsv_to_rgb(60.0, 1.0, 1.0), Rgb([255, 255, 0]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_cyan() {
+        assert_eq!(hsv_to_rgb(180.0, 1.0, 1.0), Rgb([0, 255, 255]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_black() {
+        assert_eq!(hsv_to_rgb(0.0, 0.0, 0.0), Rgb([0, 0, 0]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_gray() {
+        let result = hsv_to_rgb(0.0, 0.0, 0.5);
+        // 0.5 * 255 = 127.5, rounds to 128
+        assert!((result.0[0] as i32 - 128).abs() <= 1);
+        assert!((result.0[1] as i32 - 128).abs() <= 1);
+        assert!((result.0[2] as i32 - 128).abs() <= 1);
+    }
+
+    fn make_turnaround(
+        viewpoints: Vec<TurnaroundView>,
+        captures: Vec<(usize, RgbImage)>,
+        columns: u32,
+        max_width: Option<u32>,
+    ) -> ActiveTurnaround {
+        ActiveTurnaround {
+            response_tx: None,
+            viewpoints,
+            current_index: 0,
+            captures,
+            columns,
+            max_width,
+            frames_remaining: 0,
+            hide_ui: false,
+            ui_restore: None,
+            debug_cleanup: None,
+            look_at: [0.0, 0.0, 0.0],
+            pending_screenshot_entity: None,
+        }
+    }
+
+    #[test]
+    fn composite_turnaround_single_capture() {
+        let mut t = make_turnaround(
+            vec![TurnaroundView {
+                position: [0.0, 0.0, 10.0],
+                label: "0°".into(),
+            }],
+            vec![(0, RgbImage::from_pixel(4, 4, Rgb([100, 100, 100])))],
+            3,
+            None,
+        );
+        let result = composite_turnaround(&mut t);
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        assert!(val.get("image").is_some());
+        assert!(val.get("width").is_some());
+        assert!(val.get("height").is_some());
+        assert_eq!(val["view_count"], 1);
+    }
+
+    #[test]
+    fn composite_turnaround_empty_captures() {
+        let mut t = make_turnaround(
+            vec![TurnaroundView {
+                position: [0.0, 0.0, 10.0],
+                label: "0°".into(),
+            }],
+            vec![],
+            3,
+            None,
+        );
+        let result = composite_turnaround(&mut t);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn composite_turnaround_max_width_resize() {
+        let mut t = make_turnaround(
+            vec![TurnaroundView {
+                position: [0.0, 0.0, 10.0],
+                label: "0°".into(),
+            }],
+            vec![(0, RgbImage::from_pixel(100, 100, Rgb([50, 50, 50])))],
+            1,
+            Some(50),
+        );
+        let result = composite_turnaround(&mut t);
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        assert_eq!(val["width"], 50);
+    }
+
+    #[test]
+    fn composite_turnaround_grid_layout() {
+        let captures: Vec<(usize, RgbImage)> = (0..4)
+            .map(|i| (i, RgbImage::from_pixel(10, 10, Rgb([80, 80, 80]))))
+            .collect();
+        let viewpoints: Vec<TurnaroundView> = (0..4)
+            .map(|i| TurnaroundView {
+                position: [0.0, 0.0, 10.0],
+                label: format!("{i}"),
+            })
+            .collect();
+        let mut t = make_turnaround(viewpoints, captures, 2, None);
+        let result = composite_turnaround(&mut t);
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        // 2 columns * 10px = 20px width
+        assert_eq!(val["width"], 20);
+    }
 }
