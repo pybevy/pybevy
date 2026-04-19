@@ -704,9 +704,6 @@ impl PyQueryIter {
 
     /// Returns the next query result
     fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        // Clear previous entity's context
-        pybevy_ecs::shared::change_tracking::clear_entity_context();
-
         // Mark that iteration is in progress (for nested iteration detection)
         self.iterating = true;
 
@@ -725,15 +722,6 @@ impl PyQueryIter {
         let next_entity = unsafe { (*iter_ref).next() };
 
         if let Some(mut entity_access) = next_entity {
-            let entity = entity_access.id();
-
-            // Set entity context for lazy change tracking
-            let world_ptr = self
-                .world_ptr
-                .expect("Query used outside system execution")
-                .as_ptr();
-            pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_ptr);
-
             // Extract components using the shared helper
             self.extract_components_from_entity(&mut entity_access, py)?;
 
@@ -745,9 +733,8 @@ impl PyQueryIter {
                 Ok(tuple.into_any().unbind())
             }
         } else {
-            // Iterator exhausted - clear final entity context and iteration flag
+            // Iterator exhausted
             self.iterating = false;
-            pybevy_ecs::shared::change_tracking::clear_entity_context();
             Err(PyStopIteration::new_err(""))
         }
     }
@@ -813,13 +800,6 @@ impl PyQueryIter {
                 }
             }
         };
-
-        let entity = entity_access.id();
-        let world_raw = self
-            .world_ptr
-            .expect("Query used outside system execution")
-            .as_ptr();
-        pybevy_ecs::shared::change_tracking::set_entity_context(entity, world_raw);
 
         self.extract_components_from_entity(&mut entity_access, py)?;
 
