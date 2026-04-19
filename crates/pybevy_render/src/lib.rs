@@ -1,5 +1,4 @@
 pub mod alpha_mode;
-pub mod atmosphere_mode;
 pub mod color_grading;
 pub mod color_grading_component;
 pub mod face;
@@ -30,7 +29,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<plugin::PyRenderPlugin>()?;
     m.add_class::<power_preference::PyPowerPreference>()?;
     m.add_class::<alpha_mode::PyAlphaMode>()?;
-    m.add_class::<atmosphere_mode::PyAtmosphereMode>()?;
     m.add_class::<face::PyFace>()?;
     m.add_class::<unit_markers::PyHdr>()?;
     m.add_class::<unit_markers::PyNoAutomaticBatching>()?;

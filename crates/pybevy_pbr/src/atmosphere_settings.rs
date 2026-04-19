@@ -2,8 +2,9 @@ use bevy::pbr::AtmosphereSettings;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3};
-use pybevy_render::atmosphere_mode::PyAtmosphereMode;
 use pyo3::prelude::*;
+
+use crate::atmosphere_mode::PyAtmosphereMode;
 
 #[pycomponent(AtmosphereSettings, bridge, view_fields = [
     transmittance_lut_samples,
