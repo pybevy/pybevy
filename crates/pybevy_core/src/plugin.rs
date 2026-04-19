@@ -79,39 +79,10 @@ impl Default for PyPlugin {
 /// The main crate's `PyApp.add_plugins` looks up bridges by Python type
 /// and calls `build` with `&mut bevy::app::App`.
 ///
-/// # Example
-///
-/// ```rust,ignore
-/// pub struct AudioPluginBridge;
-///
-/// impl PluginBridge for AudioPluginBridge {
-///     fn py_type_ptr(&self) -> *const PyTypeObject {
-///         Python::attach(|py| PyAudioPlugin::type_object(py).as_type_ptr())
-///     }
-///
-///     fn build(&self, py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
-///         let plugin = py_plugin.extract::<PyRef<PyAudioPlugin>>()?;
-///         app.add_plugins(bevy::audio::AudioPlugin::default());
-///         Ok(())
-///     }
-///
-///     fn name(&self) -> &'static str { "AudioPlugin" }
-/// }
-/// ```
 /// Trait for Python plugin wrappers to implement their build logic.
 ///
 /// Implement this on your `#[pyclass]` struct, then use `#[pyplugin(BevyPlugin)]`
 /// to generate the bridge and inventory registration automatically.
-///
-/// ```rust
-/// impl PluginBuild for PyWindowPlugin {
-///     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
-///         let config: PyRef<'_, PyWindowPlugin> = py_plugin.extract()?;
-///         app.add_plugins(bevy::window::WindowPlugin::try_from(&*config)?);
-///         Ok(())
-///     }
-/// }
-/// ```
 pub trait PluginBuild {
     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()>;
 }

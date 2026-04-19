@@ -3,28 +3,9 @@
 //! This module provides the `ResourceBridge` trait that allows feature crates
 //! to register their Bevy resources without the core crate needing to import them.
 //!
-//! # Pattern
-//!
 //! 1. Feature crate implements `ResourceBridge` for each resource
 //! 2. Feature crate registers bridges at startup
 //! 3. Core uses bridges via runtime dispatch (no compile-time coupling)
-//!
-//! # Example
-//!
-//! ```ignore
-//! // In pybevy_audio/src/lib.rs
-//! pub struct GlobalVolumeBridge;
-//!
-//! impl ResourceBridge for GlobalVolumeBridge {
-//!     fn bevy_type_id(&self) -> TypeId {
-//!         TypeId::of::<GlobalVolume>()
-//!     }
-//!     // ... other methods
-//! }
-//!
-//! // Registration
-//! global_registry::register_resource_bridge(GlobalVolumeBridge);
-//! ```
 
 use std::any::TypeId;
 

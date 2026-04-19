@@ -43,3 +43,62 @@ impl PyEntity {
         format!("Entity({:?})", self.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bits_round_trip() {
+        let entity = Entity::from_bits(42);
+        let py_entity = PyEntity::from(entity);
+        let bits = py_entity.to_bits();
+        let restored = PyEntity::from_bits(bits);
+        assert_eq!(py_entity, restored);
+    }
+
+    #[test]
+    fn from_raw_valid() {
+        let py_entity = PyEntity::from_raw(7);
+        assert!(py_entity.is_some());
+        let bits = py_entity.unwrap().to_bits();
+        let restored = PyEntity::from_raw(7).unwrap().to_bits();
+        assert_eq!(bits, restored);
+    }
+
+    #[test]
+    fn into_bevy_entity() {
+        let py_entity = PyEntity::from_bits(99);
+        let bevy_entity: Entity = py_entity.into();
+        assert_eq!(bevy_entity.to_bits(), 99);
+    }
+
+    #[test]
+    fn from_bevy_entity() {
+        let bevy_entity = Entity::from_bits(123);
+        let py_entity: PyEntity = bevy_entity.into();
+        assert_eq!(py_entity.to_bits(), 123);
+    }
+
+    #[test]
+    fn equality_and_hash() {
+        let a = PyEntity::from_bits(10);
+        let b = PyEntity::from_bits(10);
+        let c = PyEntity::from_bits(20);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(a);
+        set.insert(b);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn repr_contains_entity() {
+        let e = PyEntity::from_bits(42);
+        let repr = e.__repr__();
+        assert!(repr.starts_with("Entity("));
+    }
+}

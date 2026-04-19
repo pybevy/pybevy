@@ -3,29 +3,9 @@
 //! This module provides the `ComponentBridge` trait that allows feature crates
 //! to register their Bevy components without the core crate needing to import them.
 //!
-//! # Pattern
-//!
 //! 1. Feature crate implements `ComponentBridge` for each component
 //! 2. Feature crate registers bridges via `global_registry` at init time
 //! 3. Core uses bridges via runtime dispatch (no compile-time coupling)
-//!
-//! # Example
-//!
-//! ```ignore
-//! // In pybevy_audio/src/lib.rs
-//! pub struct AudioPlayerBridge;
-//!
-//! impl ComponentBridge for AudioPlayerBridge {
-//!     fn bevy_type_id(&self) -> TypeId {
-//!         TypeId::of::<AudioPlayer<AudioSource>>()
-//!     }
-//!     // ... other methods
-//! }
-//!
-//! pub fn register_audio_bridges() {
-//!     global_registry::register_component_bridge(AudioPlayerBridge);
-//! }
-//! ```
 
 use std::any::TypeId;
 
@@ -190,24 +170,12 @@ pub trait ComponentBridge: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Get View API bridge for this component (optional)
+    /// Get View API bridge for this component (optional).
     ///
     /// Returns `Some(ViewBridge)` if this component supports the View API,
     /// which enables batch field access for performance-critical operations.
     ///
     /// Default implementation returns `None` (View API not supported).
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// fn view_bridge(&self) -> Option<ViewBridge> {
-    ///     Some(ViewBridge {
-    ///         field_offset: PyTransform::field_offset,
-    ///         field_names: PyTransform::field_names,
-    ///         component_id: |world| world.register_component::<Transform>(),
-    ///     })
-    /// }
-    /// ```
     fn view_bridge(&self) -> Option<ViewBridge> {
         None
     }

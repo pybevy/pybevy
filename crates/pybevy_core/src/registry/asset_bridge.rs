@@ -3,29 +3,9 @@
 //! This module provides the `AssetBridge` trait that allows feature crates
 //! to register their Bevy assets without the core crate needing to import them.
 //!
-//! # Pattern
-//!
 //! 1. Feature crate implements `AssetBridge` for each asset type
 //! 2. Feature crate registers bridges via `global_registry` at init time
 //! 3. Core uses bridges via runtime dispatch (no compile-time coupling)
-//!
-//! # Example
-//!
-//! ```ignore
-//! // In pybevy_audio/src/lib.rs
-//! pub struct AudioSourceBridge;
-//!
-//! impl AssetBridge for AudioSourceBridge {
-//!     fn bevy_type_id(&self) -> TypeId {
-//!         TypeId::of::<AudioSource>()
-//!     }
-//!     // ... other methods
-//! }
-//!
-//! pub fn register_audio_bridges() {
-//!     global_registry::register_asset_bridge(AudioSourceBridge);
-//! }
-//! ```
 
 use std::any::TypeId;
 

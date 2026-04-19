@@ -149,13 +149,6 @@ pub struct BatchFieldMeta {
 }
 
 /// Type-inference helper: compiler resolves T from the `&field` reference.
-///
-/// Usage in macro-generated code:
-/// ```ignore
-/// let default = PointLight::default();
-/// batch_field_meta_for(&default.intensity, "intensity")
-/// // T = f32 → columns = 1, dtype = "float32"
-/// ```
 pub fn batch_field_meta_for<T: BatchableField>(_field: &T, name: &'static str) -> BatchFieldMeta {
     BatchFieldMeta {
         name,
@@ -168,25 +161,197 @@ pub fn batch_field_meta_for<T: BatchableField>(_field: &T, name: &'static str) -
 ///
 /// Uses type inference to resolve T from a `&field` reference, then returns
 /// the `FieldType` for View API `FieldOffset` construction.
-///
-/// Usage in macro-generated code:
-/// ```ignore
-/// let default = PointLight::default();
-/// let field_type = field_type_of(&default.shadows_enabled);
-/// // T = bool → FieldType::Bool
-/// ```
 pub fn field_type_of<T: BatchableField>(_field: &T) -> FieldType {
     T::VIEW_FIELD_TYPE
 }
 
 /// Assignment helper: compiler resolves T from `&mut field`.
-///
-/// Usage in macro-generated insert functions:
-/// ```ignore
-/// set_field_from_numpy(&mut component.intensity, data, i);
-/// // T = f32 → component.intensity = data[i]
-/// ```
 #[inline(always)]
 pub fn set_field_from_numpy<T: BatchableField>(field: &mut T, data: &[f32], index: usize) {
     *field = T::from_numpy_f32_slice(data, index);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bool_from_numpy_true() {
+        let data = [1.0f32, 0.5, 0.01];
+        assert!(bool::from_numpy_f32_slice(&data, 0));
+        assert!(bool::from_numpy_f32_slice(&data, 1));
+        assert!(bool::from_numpy_f32_slice(&data, 2));
+    }
+
+    #[test]
+    fn bool_from_numpy_false() {
+        let data = [0.0f32, -1.0];
+        assert!(!bool::from_numpy_f32_slice(&data, 0));
+        assert!(!bool::from_numpy_f32_slice(&data, 1));
+    }
+
+    #[test]
+    fn bool_view_metadata() {
+        assert_eq!(bool::VIEW_FIELD_TYPE, FieldType::Bool);
+        assert_eq!(bool::NUMPY_COLUMNS, 1);
+    }
+
+    #[test]
+    fn color_from_numpy_srgba() {
+        let data = [0.1f32, 0.2, 0.3, 1.0, 0.5, 0.6, 0.7, 0.8];
+        let c0 = Color::from_numpy_f32_slice(&data, 0);
+        let c1 = Color::from_numpy_f32_slice(&data, 1);
+
+        match c0 {
+            Color::Srgba(srgba) => {
+                assert!((srgba.red - 0.1).abs() < 1e-6);
+                assert!((srgba.green - 0.2).abs() < 1e-6);
+                assert!((srgba.blue - 0.3).abs() < 1e-6);
+                assert!((srgba.alpha - 1.0).abs() < 1e-6);
+            }
+            _ => panic!("Expected Srgba variant"),
+        }
+
+        match c1 {
+            Color::Srgba(srgba) => {
+                assert!((srgba.red - 0.5).abs() < 1e-6);
+                assert!((srgba.green - 0.6).abs() < 1e-6);
+                assert!((srgba.blue - 0.7).abs() < 1e-6);
+                assert!((srgba.alpha - 0.8).abs() < 1e-6);
+            }
+            _ => panic!("Expected Srgba variant"),
+        }
+    }
+
+    #[test]
+    fn color_batch_metadata() {
+        assert_eq!(Color::NUMPY_COLUMNS, 4);
+        assert_eq!(Color::ELEMENT_COUNT, 4);
+        assert_eq!(Color::NUMPY_DTYPE, "float32");
+    }
+
+    #[test]
+    fn field_offset_view_meta_f32() {
+        let val: f32 = 1.0;
+        assert_eq!(field_type_of(&val), FieldType::F32);
+    }
+
+    #[test]
+    fn field_offset_view_meta_bool() {
+        let val: bool = true;
+        assert_eq!(field_type_of(&val), FieldType::Bool);
+    }
+
+    #[test]
+    fn u32_from_numpy() {
+        let data = [7.9f32, 0.0, 255.5];
+        assert_eq!(u32::from_numpy_f32_slice(&data, 0), 7);
+        assert_eq!(u32::from_numpy_f32_slice(&data, 1), 0);
+        assert_eq!(u32::from_numpy_f32_slice(&data, 2), 255);
+    }
+
+    #[test]
+    fn u32_metadata() {
+        assert_eq!(u32::ELEMENT_COUNT, 1);
+        assert_eq!(u32::NUMPY_COLUMNS, 1);
+        assert_eq!(u32::VIEW_FIELD_TYPE, FieldType::U32);
+    }
+
+    #[test]
+    fn vec2_from_numpy() {
+        let data = [1.0f32, 2.0, 3.0, 4.0];
+        let v0 = Vec2::from_numpy_f32_slice(&data, 0);
+        let v1 = Vec2::from_numpy_f32_slice(&data, 1);
+        assert_eq!(v0, Vec2::new(1.0, 2.0));
+        assert_eq!(v1, Vec2::new(3.0, 4.0));
+    }
+
+    #[test]
+    fn vec2_metadata() {
+        assert_eq!(Vec2::ELEMENT_COUNT, 2);
+        assert_eq!(Vec2::NUMPY_COLUMNS, 2);
+        assert_eq!(Vec2::VIEW_FIELD_TYPE, FieldType::Vec2);
+    }
+
+    #[test]
+    fn vec3_from_numpy() {
+        let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let v0 = Vec3::from_numpy_f32_slice(&data, 0);
+        let v1 = Vec3::from_numpy_f32_slice(&data, 1);
+        assert_eq!(v0, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(v1, Vec3::new(4.0, 5.0, 6.0));
+    }
+
+    #[test]
+    fn vec3_metadata() {
+        assert_eq!(Vec3::ELEMENT_COUNT, 3);
+        assert_eq!(Vec3::NUMPY_COLUMNS, 3);
+        assert_eq!(Vec3::VIEW_FIELD_TYPE, FieldType::Vec3);
+    }
+
+    #[test]
+    fn vec4_from_numpy() {
+        let data = [1.0f32, 2.0, 3.0, 4.0];
+        let v = Vec4::from_numpy_f32_slice(&data, 0);
+        assert_eq!(v, Vec4::new(1.0, 2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn vec4_metadata() {
+        assert_eq!(Vec4::ELEMENT_COUNT, 4);
+        assert_eq!(Vec4::NUMPY_COLUMNS, 4);
+    }
+
+    #[test]
+    fn quat_from_numpy() {
+        let data = [0.0f32, 0.0, 0.0, 1.0];
+        let q = Quat::from_numpy_f32_slice(&data, 0);
+        assert_eq!(q, Quat::from_xyzw(0.0, 0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn quat_metadata() {
+        assert_eq!(Quat::ELEMENT_COUNT, 4);
+        assert_eq!(Quat::NUMPY_COLUMNS, 4);
+    }
+
+    #[test]
+    fn f32_from_numpy() {
+        let data = [3.14f32, 2.71];
+        assert!((f32::from_numpy_f32_slice(&data, 0) - 3.14).abs() < 1e-6);
+        assert!((f32::from_numpy_f32_slice(&data, 1) - 2.71).abs() < 1e-6);
+    }
+
+    #[test]
+    fn set_field_helper() {
+        let mut val: f32 = 0.0;
+        let data = [42.0f32];
+        set_field_from_numpy(&mut val, &data, 0);
+        assert_eq!(val, 42.0);
+    }
+
+    #[test]
+    fn set_field_helper_vec3() {
+        let mut val = Vec3::ZERO;
+        let data = [1.0f32, 2.0, 3.0];
+        set_field_from_numpy(&mut val, &data, 0);
+        assert_eq!(val, Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn batch_field_meta_for_f32() {
+        let val: f32 = 0.0;
+        let meta = batch_field_meta_for(&val, "speed");
+        assert_eq!(meta.name, "speed");
+        assert_eq!(meta.numpy_columns, 1);
+        assert_eq!(meta.numpy_dtype, "float32");
+    }
+
+    #[test]
+    fn batch_field_meta_for_vec3() {
+        let val = Vec3::ZERO;
+        let meta = batch_field_meta_for(&val, "position");
+        assert_eq!(meta.name, "position");
+        assert_eq!(meta.numpy_columns, 3);
+    }
 }

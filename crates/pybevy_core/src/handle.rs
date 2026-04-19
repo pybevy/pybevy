@@ -525,3 +525,61 @@ impl PyHandle {
 pub fn extract_handle_from_any(obj: &Bound<'_, PyAny>) -> PyResult<PyHandle> {
     Ok(obj.extract::<PyHandle>()?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_synthetic_uuid() {
+        let uuid = Uuid::from_u128(SYNTHETIC_UUID_MARKER | 12345);
+        assert!(is_synthetic_index_uuid(&uuid));
+        assert_eq!(extract_index_from_synthetic_uuid(&uuid), 12345);
+    }
+
+    #[test]
+    fn test_non_synthetic_uuid() {
+        let uuid = Uuid::from_u128(12345);
+        assert!(!is_synthetic_index_uuid(&uuid));
+    }
+
+    #[test]
+    fn synthetic_uuid_zero_index() {
+        let uuid = Uuid::from_u128(SYNTHETIC_UUID_MARKER);
+        assert!(is_synthetic_index_uuid(&uuid));
+        assert_eq!(extract_index_from_synthetic_uuid(&uuid), 0);
+    }
+
+    #[test]
+    fn synthetic_uuid_max_index() {
+        let max_u64 = u64::MAX;
+        let uuid = Uuid::from_u128(SYNTHETIC_UUID_MARKER | max_u64 as u128);
+        assert!(is_synthetic_index_uuid(&uuid));
+        assert_eq!(extract_index_from_synthetic_uuid(&uuid), max_u64);
+    }
+
+    #[test]
+    fn nil_uuid_not_synthetic() {
+        let uuid = Uuid::nil();
+        assert!(!is_synthetic_index_uuid(&uuid));
+    }
+
+    #[test]
+    fn normalize_strips_synthetic_marker() {
+        let index: u64 = 42;
+        let synthetic = SYNTHETIC_UUID_MARKER | index as u128;
+        assert_eq!(normalize_handle_id(synthetic), 42);
+    }
+
+    #[test]
+    fn normalize_preserves_regular_uuid() {
+        let regular: u128 = 0x1234_5678_9ABC_DEF0;
+        assert_eq!(normalize_handle_id(regular), regular);
+    }
+
+    #[test]
+    fn normalize_idempotent_for_plain_index() {
+        let plain: u128 = 7;
+        assert_eq!(normalize_handle_id(plain), 7);
+    }
+}

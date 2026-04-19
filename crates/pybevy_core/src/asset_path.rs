@@ -92,3 +92,89 @@ impl<'a> From<AssetPath<'a>> for PyAssetPath {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_path_only() {
+        let ap = PyAssetPath::new("models/tree.glb".into(), None);
+        assert_eq!(ap.path(), "models/tree.glb");
+        assert_eq!(ap.label(), None);
+        assert_eq!(ap.source(), None);
+    }
+
+    #[test]
+    fn new_with_label() {
+        let ap = PyAssetPath::new("models/tree.glb".into(), Some("Scene0".into()));
+        assert_eq!(ap.path(), "models/tree.glb");
+        assert_eq!(ap.label(), Some("Scene0".into()));
+    }
+
+    #[test]
+    fn py_new_with_source() {
+        let ap = PyAssetPath::py_new(
+            "models/tree.glb".into(),
+            Some("Scene0".into()),
+            Some("embedded".into()),
+        );
+        assert_eq!(ap.path(), "models/tree.glb");
+        assert_eq!(ap.label(), Some("Scene0".into()));
+        assert_eq!(ap.source(), Some("embedded".into()));
+    }
+
+    #[test]
+    fn to_bevy_asset_path_simple() {
+        let ap = PyAssetPath::new("textures/wood.png".into(), None);
+        let bevy_path: AssetPath<'static> = (&ap).into();
+        assert_eq!(bevy_path.path().to_string_lossy(), "textures/wood.png");
+        assert_eq!(bevy_path.label(), None);
+    }
+
+    #[test]
+    fn to_bevy_asset_path_with_label() {
+        let ap = PyAssetPath::new("scene.glb".into(), Some("Mesh0".into()));
+        let bevy_path: AssetPath<'static> = (&ap).into();
+        assert_eq!(bevy_path.label(), Some("Mesh0"));
+    }
+
+    #[test]
+    fn round_trip_simple() {
+        let original = PyAssetPath::new("a/b.png".into(), None);
+        let bevy_path: AssetPath<'static> = (&original).into();
+        let restored: PyAssetPath = bevy_path.into();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn round_trip_with_label() {
+        let original = PyAssetPath::new("scene.glb".into(), Some("MyLabel".into()));
+        let bevy_path: AssetPath<'static> = (&original).into();
+        let restored: PyAssetPath = bevy_path.into();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn from_bevy_strips_default_source() {
+        let bevy_path = AssetPath::from_path(Path::new("test.png"));
+        let py_path: PyAssetPath = bevy_path.into();
+        assert_eq!(py_path.source(), None);
+    }
+
+    #[test]
+    fn equality() {
+        let a = PyAssetPath::new("a.png".into(), None);
+        let b = PyAssetPath::new("a.png".into(), None);
+        let c = PyAssetPath::new("b.png".into(), None);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn equality_label_matters() {
+        let a = PyAssetPath::new("a.glb".into(), Some("Scene0".into()));
+        let b = PyAssetPath::new("a.glb".into(), Some("Scene1".into()));
+        assert_ne!(a, b);
+    }
+}
