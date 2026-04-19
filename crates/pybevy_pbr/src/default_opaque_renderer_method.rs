@@ -1,8 +1,9 @@
 use bevy::pbr::{DefaultOpaqueRendererMethod, OpaqueRendererMethod};
 use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::pyresource;
-use crate::opaque_renderer_method::PyOpaqueRendererMethod;
 use pyo3::prelude::*;
+
+use crate::opaque_renderer_method::PyOpaqueRendererMethod;
 
 #[pyresource(DefaultOpaqueRendererMethod, bridge)]
 #[pyclass(name = "DefaultOpaqueRendererMethod", extends = PyResource)]

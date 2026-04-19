@@ -9,11 +9,12 @@ use pybevy_core::{
 use pybevy_macros::pyasset;
 use pybevy_math::affine2::PyAffine2;
 use pybevy_render::{alpha_mode::PyAlphaMode, face::PyFace};
-
-use crate::opaque_renderer_method::PyOpaqueRendererMethod;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-use crate::{parallax_mapping_method::PyParallaxMappingMethod, uv_channel::PyUvChannel};
+use crate::{
+    opaque_renderer_method::PyOpaqueRendererMethod,
+    parallax_mapping_method::PyParallaxMappingMethod, uv_channel::PyUvChannel,
+};
 
 fn extract_linear_rgba(value: &Bound<'_, PyAny>) -> PyResult<LinearRgba> {
     if let Ok(color) = value.extract::<PyColor>() {
