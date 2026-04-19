@@ -1995,8 +1995,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    // Permission gate tests (all disabled)
-
     #[tokio::test]
     async fn spawn_entity_forbidden() {
         let (state, _rx) = test_state_disabled();
@@ -2202,8 +2200,6 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
-
-    // Error handling tests
 
     #[tokio::test]
     async fn channel_closed_returns_503() {
