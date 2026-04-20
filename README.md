@@ -222,7 +222,7 @@ PyBevy versions target specific Bevy versions:
 | 0.2.x  | 0.18 |
 | 0.1.x  | 0.18 |
 
-PyBevy follows Bevy's API conventions as closely as possible and targets full coverage of Bevy's public API. Core modules like transforms, lighting, cameras, and input are fully covered; others are in progress. See [API Coverage](docs/coverage.md) for current per-module stats and [Limitations](docs/limitations.md) for known constraints.
+PyBevy follows Bevy's API conventions as closely as possible and targets full coverage of Bevy's public API. Core modules like transforms, lighting, cameras, and input are fully covered; others are in progress. See [Limitations](docs/limitations.md) for known constraints.
 
 ## Development Process
 
@@ -253,7 +253,6 @@ spanning 100K+ lines. Both publishing soon.
 
 - **[pybevy.com](https://pybevy.com)** — Project website
 - **[Examples](https://github.com/pybevy/pybevy/tree/main/examples)** — Runnable examples covering 2D, 3D, ECS, animation, and more
-- **[API Coverage](docs/coverage.md)** — Per-module Bevy API coverage stats
 - **[Limitations](docs/limitations.md)** — Known limitations
 
 ## Community & Contributing
