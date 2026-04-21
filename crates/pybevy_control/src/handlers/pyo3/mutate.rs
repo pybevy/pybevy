@@ -6,7 +6,7 @@ use pyo3::{prelude::*, types::PyModule};
 
 use super::scene::resolve_entity;
 use crate::{
-    bridge::{ControlError, EntityRef, ErrorCode},
+    bridge::{ControlError, EntityRef},
     handlers::reflect_mutate::{self, ReflectError},
 };
 

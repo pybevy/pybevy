@@ -6,7 +6,7 @@ use bevy::{
 };
 use pyo3::prelude::*;
 
-use crate::bridge::{ControlError, EntityRef, ErrorCode};
+use crate::bridge::{ControlError, EntityRef};
 
 /// Extract custom component names for an entity using the CustomComponentInfo registry.
 /// Returns a list of component names that are NOT covered by bridge components.

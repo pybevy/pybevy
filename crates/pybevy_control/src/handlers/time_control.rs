@@ -6,7 +6,7 @@ use bevy::{
     time::{Time, Virtual},
 };
 
-use crate::bridge::{ControlError, ErrorCode};
+use crate::bridge::ControlError;
 
 /// Propagate transforms through the full hierarchy after time manipulation.
 /// Updates GlobalTransform for root entities first, then recursively for children.

@@ -13,7 +13,7 @@ use bevy::ecs::world::World;
 
 use crate::{
     bridge::{
-        ControlError, ControlOperation, ErrorCode, MutateOp, OtherOp, ReloadOp, SceneOp, SpatialOp,
+        ControlError, ControlOperation, MutateOp, OtherOp, ReloadOp, SceneOp, SpatialOp,
         TimeOp, VisualOp,
     },
     runtime::ControlRuntime,

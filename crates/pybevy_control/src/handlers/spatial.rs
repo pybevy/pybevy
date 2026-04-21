@@ -5,7 +5,7 @@ use bevy::{
 };
 
 use super::pyo3::scene::resolve_entity;
-use crate::bridge::{ControlError, EntityRef, ErrorCode};
+use crate::bridge::{ControlError, EntityRef};
 
 /// Round an f32 to 6 decimal places for cleaner JSON output.
 pub fn round6(v: f32) -> f32 {

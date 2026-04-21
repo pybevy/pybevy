@@ -2,7 +2,7 @@ use bevy::ecs::world::World;
 use pyo3::prelude::*;
 
 use super::{mutate::convert_field_value, scene::resolve_entity};
-use crate::bridge::{ControlError, EntityRef, ErrorCode};
+use crate::bridge::{ControlError, EntityRef};
 
 /// Modify asset properties (material color, roughness, etc.) live without code reload.
 pub fn mutate_asset(
