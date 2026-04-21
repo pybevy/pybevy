@@ -81,7 +81,7 @@ async fn send_operation(
             let status = match e.code {
                 ErrorCode::NotFound => StatusCode::NOT_FOUND,
                 ErrorCode::InvalidParams => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::Internal | ErrorCode::NotSupported => StatusCode::INTERNAL_SERVER_ERROR,
             };
             Err(error_response(status, &e.message))
         }
