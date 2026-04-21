@@ -16,7 +16,7 @@ vertex_count = 10_000_000
 indices_count = vertex_count * 3
 
 
-def setup(meshes: Assets[Mesh], commands: Commands) -> None:
+def setup(meshes: ResMut[Assets[Mesh]], commands: Commands) -> None:
     mesh = (
         Mesh(PrimitiveTopology.TriangleList)
         .with_inserted_attribute(

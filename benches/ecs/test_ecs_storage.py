@@ -67,6 +67,7 @@ def _setup_query_wrapper_read(entity_count: int) -> App:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_read)
     app.initialize()
+    app.update()
     return app
 
 
@@ -91,6 +92,7 @@ def _setup_query_pyobject_read(entity_count: int) -> App:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_read)
     app.initialize()
+    app.update()
     return app
 
 
@@ -114,6 +116,7 @@ def _setup_query_wrapper_write(entity_count: int) -> App:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_write)
     app.initialize()
+    app.update()
     return app
 
 
@@ -129,7 +132,7 @@ def _setup_query_pyobject_write(entity_count: int) -> App:
                 Marker(),
             )
 
-    def query_write(query: Query[PyObjectPosition]) -> None:
+    def query_write(query: Query[Mut[PyObjectPosition]]) -> None:
         for pos in query:
             pos.x = pos.x * 2.0 + 1.0
             pos.y = pos.y * 1.5 + 0.5
@@ -140,6 +143,7 @@ def _setup_query_pyobject_write(entity_count: int) -> App:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_write)
     app.initialize()
+    app.update()
     return app
 
 
@@ -163,6 +167,7 @@ def _setup_view_wrapper_write(entity_count: int) -> App:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, view_write)
     app.initialize()
+    app.update()
     return app
 
 
