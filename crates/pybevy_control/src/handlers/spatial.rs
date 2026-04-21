@@ -5,7 +5,7 @@ use bevy::{
 };
 
 use super::pyo3::scene::resolve_entity;
-use crate::bridge::{ControlError, EntityRef};
+use crate::bridge::{ControlError, EntityRef, ErrorCode};
 
 /// Round an f32 to 6 decimal places for cleaner JSON output.
 pub fn round6(v: f32) -> f32 {
@@ -753,7 +753,7 @@ mod tests {
         let entity_ref = EntityRef::Id(999999);
         let result = resolve_entity(&mut world, &entity_ref);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]

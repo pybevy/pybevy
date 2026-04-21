@@ -6,7 +6,7 @@ use bevy::{
     time::{Time, Virtual},
 };
 
-use crate::bridge::ControlError;
+use crate::bridge::{ControlError, ErrorCode};
 
 /// Propagate transforms through the full hierarchy after time manipulation.
 /// Updates GlobalTransform for root entities first, then recursively for children.
@@ -197,7 +197,7 @@ mod tests {
         let mut world = world_with_virtual_time();
         let result = seek_time(&mut world, -1.0, false);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use pyo3::{prelude::*, types::PyModule};
 
 use super::scene::resolve_entity;
 use crate::{
-    bridge::{ControlError, EntityRef},
+    bridge::{ControlError, EntityRef, ErrorCode},
     handlers::reflect_mutate::{self, ReflectError},
 };
 
@@ -1466,7 +1466,7 @@ holder = Holder()
         let mut world = World::new();
         let result = despawn_entity(&mut world, EntityRef::Id(999999));
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1474,7 +1474,7 @@ holder = Holder()
         let mut world = World::new();
         let result = spawn_entity(&mut world, serde_json::json!("not an object"));
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]
@@ -1483,7 +1483,7 @@ holder = Holder()
         let result = spawn_entity(&mut world, serde_json::json!({"UnknownComp": {}}));
         // Should fail fast without spawning entity
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]
@@ -1650,7 +1650,7 @@ holder = Holder()
         // Should fail fast without spawning entity
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.code, -32602);
+        assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(err.message.contains("Comp1"));
     }
 
@@ -1659,7 +1659,7 @@ holder = Holder()
         let mut world = World::new();
         let result = despawn_entity(&mut world, EntityRef::Name("NonExistent".into()));
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1710,7 +1710,7 @@ holder = Holder()
             serde_json::json!("not an object"),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]
@@ -1724,7 +1724,7 @@ holder = Holder()
             serde_json::json!({"field": "value"}),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1737,7 +1737,7 @@ holder = Holder()
             "TotallyFakeComponent".to_string(),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1745,7 +1745,7 @@ holder = Holder()
         let mut world = World::new();
         let result = remove_component(&mut world, EntityRef::Id(999999), "Transform".to_string());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1753,7 +1753,7 @@ holder = Holder()
         let mut world = World::new();
         let result = remove_resource(&mut world, "FakeResource".to_string());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1807,7 +1807,7 @@ holder = Holder()
             "CustomComp".to_string(),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1961,7 +1961,7 @@ holder = Holder()
         let result = spawn_entity(&mut world, serde_json::json!({"FakeComp": {"x": 1}}));
         assert!(result.is_err());
         // The error is invalid_params (-32602), NOT a FieldError propagation
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]
@@ -2036,7 +2036,7 @@ holder = Holder()
         // No CustomResourceInfo resource and no bridge → should fail
         let result = remove_resource(&mut world, "NonExistentCustomRes".to_string());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -2053,7 +2053,7 @@ holder = Holder()
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.code, -32001);
+        assert_eq!(err.code, ErrorCode::NotFound);
         assert!(
             err.message
                 .contains("not found in custom component registry"),
@@ -2146,7 +2146,11 @@ holder = Holder()
             "Should fail for unknown component, not silently succeed"
         );
         let err = result.unwrap_err();
-        assert_eq!(err.code, -32602, "Should be invalid_params error");
+        assert_eq!(
+            err.code,
+            ErrorCode::InvalidParams,
+            "Should be invalid_params error"
+        );
         assert!(
             err.message.contains("UnknownComp"),
             "Error should mention the component name, got: {}",
@@ -2193,7 +2197,7 @@ holder = Holder()
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.code, -32602); // invalid_params
+        assert_eq!(err.code, ErrorCode::InvalidParams); // invalid_params
         assert!(
             err.message.contains("wrapper storage"),
             "Error should mention wrapper storage, got: {}",

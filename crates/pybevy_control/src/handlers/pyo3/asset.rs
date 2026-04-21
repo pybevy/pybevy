@@ -2,7 +2,7 @@ use bevy::ecs::world::World;
 use pyo3::prelude::*;
 
 use super::{mutate::convert_field_value, scene::resolve_entity};
-use crate::bridge::{ControlError, EntityRef};
+use crate::bridge::{ControlError, EntityRef, ErrorCode};
 
 /// Modify asset properties (material color, roughness, etc.) live without code reload.
 pub fn mutate_asset(
@@ -172,7 +172,7 @@ mod tests {
             serde_json::json!({"base_color": [1.0, 0.0, 0.0, 1.0]}),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -186,7 +186,7 @@ mod tests {
             serde_json::json!({"base_color": [1.0, 0.0, 0.0, 1.0]}),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -201,7 +201,7 @@ mod tests {
             serde_json::json!("not an object"),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]
@@ -216,7 +216,7 @@ mod tests {
             serde_json::json!([1, 2, 3]),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
     #[test]
