@@ -8,7 +8,6 @@ from pybevy.ecs import Commands, Entity, Mut, Query
 from pybevy.math import Quat, Vec3
 from pybevy.transform import Transform
 
-
 ENTITY_COUNTS = [1000, 10000]
 
 
