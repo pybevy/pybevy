@@ -302,27 +302,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_system_stage_eq() {
-        assert_eq!(SystemStage::Startup, SystemStage::Startup);
-        assert_eq!(SystemStage::UpdateOrLast, SystemStage::UpdateOrLast);
-        assert_ne!(SystemStage::Startup, SystemStage::UpdateOrLast);
-    }
-
-    #[test]
-    fn test_system_stage_debug() {
-        assert!(format!("{:?}", SystemStage::Startup).contains("Startup"));
-        assert!(format!("{:?}", SystemStage::UpdateOrLast).contains("UpdateOrLast"));
-    }
-
-    #[test]
-    fn test_system_stage_clone_copy() {
-        let stage = SystemStage::Startup;
-        let cloned = stage.clone();
-        let copied = stage;
-        assert_eq!(cloned, copied);
-    }
-
-    #[test]
     fn test_system_profiler_new() {
         let profiler = SystemProfiler::new(60);
         assert_eq!(profiler.get_top_n_update(10).len(), 0);

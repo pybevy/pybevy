@@ -96,30 +96,12 @@ pub fn startup_or_reload(
 mod tests {
     use std::sync::atomic::AtomicU32;
 
-    use bevy::ecs::schedule::IntoScheduleConfigs;
+    use bevy::ecs::{
+        schedule::{IntoScheduleConfigs, Schedule},
+        world::World,
+    };
 
     use super::*;
-
-    #[test]
-    fn test_reload_mode_eq() {
-        assert_eq!(ReloadMode::Full, ReloadMode::Full);
-        assert_eq!(ReloadMode::Partial, ReloadMode::Partial);
-        assert_ne!(ReloadMode::Full, ReloadMode::Partial);
-    }
-
-    #[test]
-    fn test_reload_mode_debug() {
-        assert_eq!(format!("{:?}", ReloadMode::Full), "Full");
-        assert_eq!(format!("{:?}", ReloadMode::Partial), "Partial");
-    }
-
-    #[test]
-    fn test_reload_mode_clone_copy() {
-        let mode = ReloadMode::Full;
-        let cloned = mode.clone();
-        let copied = mode;
-        assert_eq!(cloned, copied);
-    }
 
     #[test]
     fn test_hot_reload_generation_new() {
@@ -180,8 +162,6 @@ mod tests {
 
     #[test]
     fn test_generation_matches_allows_matching_generation() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         let counter = Arc::new(AtomicU32::new(0));
         world.insert_resource(HotReloadGeneration::new(counter));
@@ -199,8 +179,6 @@ mod tests {
 
     #[test]
     fn test_generation_matches_blocks_wrong_generation() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         let counter = Arc::new(AtomicU32::new(1));
         world.insert_resource(HotReloadGeneration::new(counter));
@@ -218,8 +196,6 @@ mod tests {
 
     #[test]
     fn test_generation_matches_allows_when_no_resource() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         // Do NOT insert HotReloadGeneration
         world.insert_resource(Marker(false));
@@ -236,8 +212,6 @@ mod tests {
 
     #[test]
     fn test_generation_matches_multiple_generations() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         let counter = Arc::new(AtomicU32::new(2));
         world.insert_resource(HotReloadGeneration::new(counter));
@@ -267,8 +241,6 @@ mod tests {
 
     #[test]
     fn test_startup_or_reload_allows_fresh_generation() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         let counter = Arc::new(AtomicU32::new(0));
         world.insert_resource(HotReloadGeneration::new(counter));
@@ -286,8 +258,6 @@ mod tests {
 
     #[test]
     fn test_startup_or_reload_blocks_after_startup_run() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         let counter = Arc::new(AtomicU32::new(0));
         let hr_gen = HotReloadGeneration::new(counter);
@@ -307,8 +277,6 @@ mod tests {
 
     #[test]
     fn test_startup_or_reload_blocks_wrong_generation() {
-        use bevy::ecs::{schedule::Schedule, world::World};
-
         let mut world = World::new();
         let counter = Arc::new(AtomicU32::new(1));
         world.insert_resource(HotReloadGeneration::new(counter));

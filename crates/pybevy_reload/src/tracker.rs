@@ -17,12 +17,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_plugin_tracker_default_empty() {
-        let tracker = PluginTracker::default();
-        assert!(tracker.known_plugins.is_empty());
-    }
-
-    #[test]
     fn test_plugin_tracker_insert_and_diff() {
         let mut tracker = PluginTracker::default();
         tracker.known_plugins.insert("DefaultPlugins".to_string());
