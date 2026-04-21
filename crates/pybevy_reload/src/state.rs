@@ -91,3 +91,204 @@ pub fn startup_or_reload(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU32;
+
+    use bevy::ecs::{
+        schedule::{IntoScheduleConfigs, Schedule},
+        world::World,
+    };
+
+    use super::*;
+
+    #[test]
+    fn test_hot_reload_generation_new() {
+        let counter = Arc::new(AtomicU32::new(5));
+        let hr_gen = HotReloadGeneration::new(counter.clone());
+        assert_eq!(hr_gen.current, 5);
+    }
+
+    #[test]
+    fn test_hot_reload_generation_update() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let mut hr_gen = HotReloadGeneration::new(counter.clone());
+        assert_eq!(hr_gen.current, 0);
+
+        counter.store(3, Ordering::SeqCst);
+        hr_gen.update();
+        assert_eq!(hr_gen.current, 3);
+    }
+
+    #[test]
+    fn test_hot_reload_generation_startup_tracking() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let hr_gen = HotReloadGeneration::new(counter);
+
+        assert!(!hr_gen.has_startup_run(0));
+        hr_gen.mark_startup_run();
+        assert!(hr_gen.has_startup_run(0));
+        assert!(!hr_gen.has_startup_run(1));
+    }
+
+    #[derive(Resource, Default)]
+    struct Marker(bool);
+
+    #[derive(Resource, Default)]
+    struct MarkerA(bool);
+
+    #[derive(Resource, Default)]
+    struct MarkerB(bool);
+
+    #[derive(Resource, Default)]
+    struct MarkerC(bool);
+
+    fn set_marker(mut m: bevy::ecs::system::ResMut<Marker>) {
+        m.0 = true;
+    }
+
+    fn set_marker_a(mut m: bevy::ecs::system::ResMut<MarkerA>) {
+        m.0 = true;
+    }
+
+    fn set_marker_b(mut m: bevy::ecs::system::ResMut<MarkerB>) {
+        m.0 = true;
+    }
+
+    fn set_marker_c(mut m: bevy::ecs::system::ResMut<MarkerC>) {
+        m.0 = true;
+    }
+
+    #[test]
+    fn test_generation_matches_allows_matching_generation() {
+        let mut world = World::new();
+        let counter = Arc::new(AtomicU32::new(0));
+        world.insert_resource(HotReloadGeneration::new(counter));
+        world.insert_resource(Marker(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker.run_if(generation_matches(0)));
+        schedule.run(&mut world);
+
+        assert!(
+            world.resource::<Marker>().0,
+            "System should run when generation matches"
+        );
+    }
+
+    #[test]
+    fn test_generation_matches_blocks_wrong_generation() {
+        let mut world = World::new();
+        let counter = Arc::new(AtomicU32::new(1));
+        world.insert_resource(HotReloadGeneration::new(counter));
+        world.insert_resource(Marker(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker.run_if(generation_matches(0)));
+        schedule.run(&mut world);
+
+        assert!(
+            !world.resource::<Marker>().0,
+            "System should NOT run when generation doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_generation_matches_allows_when_no_resource() {
+        let mut world = World::new();
+        // Do NOT insert HotReloadGeneration
+        world.insert_resource(Marker(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker.run_if(generation_matches(0)));
+        schedule.run(&mut world);
+
+        assert!(
+            world.resource::<Marker>().0,
+            "System should run when HotReloadGeneration resource is absent (None => true)"
+        );
+    }
+
+    #[test]
+    fn test_generation_matches_multiple_generations() {
+        let mut world = World::new();
+        let counter = Arc::new(AtomicU32::new(2));
+        world.insert_resource(HotReloadGeneration::new(counter));
+        world.insert_resource(MarkerA(false));
+        world.insert_resource(MarkerB(false));
+        world.insert_resource(MarkerC(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker_a.run_if(generation_matches(0)));
+        schedule.add_systems(set_marker_b.run_if(generation_matches(1)));
+        schedule.add_systems(set_marker_c.run_if(generation_matches(2)));
+        schedule.run(&mut world);
+
+        assert!(
+            !world.resource::<MarkerA>().0,
+            "Gen 0 system should not run at gen 2"
+        );
+        assert!(
+            !world.resource::<MarkerB>().0,
+            "Gen 1 system should not run at gen 2"
+        );
+        assert!(
+            world.resource::<MarkerC>().0,
+            "Gen 2 system should run at gen 2"
+        );
+    }
+
+    #[test]
+    fn test_startup_or_reload_allows_fresh_generation() {
+        let mut world = World::new();
+        let counter = Arc::new(AtomicU32::new(0));
+        world.insert_resource(HotReloadGeneration::new(counter));
+        world.insert_resource(Marker(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker.run_if(startup_or_reload(0)));
+        schedule.run(&mut world);
+
+        assert!(
+            world.resource::<Marker>().0,
+            "System should run for fresh generation (startup not yet marked)"
+        );
+    }
+
+    #[test]
+    fn test_startup_or_reload_blocks_after_startup_run() {
+        let mut world = World::new();
+        let counter = Arc::new(AtomicU32::new(0));
+        let hr_gen = HotReloadGeneration::new(counter);
+        hr_gen.mark_startup_run();
+        world.insert_resource(hr_gen);
+        world.insert_resource(Marker(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker.run_if(startup_or_reload(0)));
+        schedule.run(&mut world);
+
+        assert!(
+            !world.resource::<Marker>().0,
+            "System should NOT run after startup has already run for this generation"
+        );
+    }
+
+    #[test]
+    fn test_startup_or_reload_blocks_wrong_generation() {
+        let mut world = World::new();
+        let counter = Arc::new(AtomicU32::new(1));
+        world.insert_resource(HotReloadGeneration::new(counter));
+        world.insert_resource(Marker(false));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(set_marker.run_if(startup_or_reload(0)));
+        schedule.run(&mut world);
+
+        assert!(
+            !world.resource::<Marker>().0,
+            "System should NOT run when generation doesn't match (even if startup hasn't run)"
+        );
+    }
+}

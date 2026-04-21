@@ -158,6 +158,7 @@ jobs:
             -p pybevy_bytecodevm \
             -p pybevy_core \
             -p pybevy_ecs \
+            -p pybevy_reload \
             --summary-only 2>&1 | tee coverage-summary.txt
 
       - name: Check coverage threshold

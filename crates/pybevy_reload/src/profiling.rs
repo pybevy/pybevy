@@ -294,3 +294,212 @@ impl MemoryProfile {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn test_system_profiler_new() {
+        let profiler = SystemProfiler::new(60);
+        assert_eq!(profiler.get_top_n_update(10).len(), 0);
+        assert_eq!(profiler.get_top_n_startup(10).len(), 0);
+    }
+
+    #[test]
+    fn test_system_profiler_record_and_get_top() {
+        let profiler = SystemProfiler::new(60);
+
+        profiler.record_timing(
+            "fast_system",
+            Duration::from_micros(100),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+        profiler.record_timing(
+            "slow_system",
+            Duration::from_millis(5),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+
+        let top = profiler.get_top_n_update(10);
+        assert_eq!(top.len(), 2);
+        // Sorted descending by time
+        assert_eq!(top[0].0, "slow_system");
+        assert_eq!(top[1].0, "fast_system");
+    }
+
+    #[test]
+    fn test_system_profiler_startup_vs_update() {
+        let profiler = SystemProfiler::new(60);
+
+        profiler.record_timing(
+            "startup_sys",
+            Duration::from_millis(10),
+            SystemStage::Startup,
+            1.0,
+        );
+        profiler.record_timing(
+            "update_sys",
+            Duration::from_millis(5),
+            SystemStage::UpdateOrLast,
+            1.0,
+        );
+
+        assert_eq!(profiler.get_top_n_startup(10).len(), 1);
+        assert_eq!(profiler.get_top_n_update(10).len(), 1);
+        assert_eq!(profiler.get_top_n_startup(10)[0].0, "startup_sys");
+        assert_eq!(profiler.get_top_n_update(10)[0].0, "update_sys");
+    }
+
+    #[test]
+    fn test_system_profiler_rolling_average() {
+        let profiler = SystemProfiler::new(3);
+
+        profiler.record_timing(
+            "sys",
+            Duration::from_millis(10),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+        profiler.record_timing(
+            "sys",
+            Duration::from_millis(20),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+        profiler.record_timing(
+            "sys",
+            Duration::from_millis(30),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+
+        let top = profiler.get_top_n_update(1);
+        // Average of 10, 20, 30 = 20ms
+        assert_eq!(top[0].1, Duration::from_millis(20));
+
+        // Add another - should evict the first (10ms), average now (20+30+40)/3 = 30ms
+        profiler.record_timing(
+            "sys",
+            Duration::from_millis(40),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+        let top = profiler.get_top_n_update(1);
+        assert_eq!(top[0].1, Duration::from_millis(30));
+    }
+
+    #[test]
+    fn test_system_profiler_should_show_startup() {
+        let profiler = SystemProfiler::new(60);
+
+        // No startup systems recorded yet
+        assert!(!profiler.should_show_startup(0.0));
+
+        // Record a startup system at time 1.0 - visible until 6.0
+        profiler.record_timing(
+            "startup_sys",
+            Duration::from_millis(1),
+            SystemStage::Startup,
+            1.0,
+        );
+        assert!(profiler.should_show_startup(3.0));
+        assert!(profiler.should_show_startup(5.9));
+        assert!(!profiler.should_show_startup(6.1));
+    }
+
+    #[test]
+    fn test_system_profiler_clear() {
+        let profiler = SystemProfiler::new(60);
+        profiler.record_timing(
+            "sys",
+            Duration::from_millis(1),
+            SystemStage::UpdateOrLast,
+            0.0,
+        );
+        profiler.record_timing(
+            "startup",
+            Duration::from_millis(1),
+            SystemStage::Startup,
+            0.0,
+        );
+
+        profiler.clear();
+        assert_eq!(profiler.get_top_n_update(10).len(), 0);
+        assert_eq!(profiler.get_top_n_startup(10).len(), 0);
+        assert!(!profiler.should_show_startup(0.0));
+    }
+
+    #[test]
+    fn test_system_profiler_top_n_limit() {
+        let profiler = SystemProfiler::new(60);
+        for i in 0..10 {
+            profiler.record_timing(
+                &format!("sys_{}", i),
+                Duration::from_millis(i as u64),
+                SystemStage::UpdateOrLast,
+                0.0,
+            );
+        }
+        let top3 = profiler.get_top_n_update(3);
+        assert_eq!(top3.len(), 3);
+        // Should be the slowest 3
+        assert_eq!(top3[0].1, Duration::from_millis(9));
+    }
+
+    #[test]
+    fn test_memory_profile_baseline() {
+        let mut profile = MemoryProfile::default();
+        assert!(!profile.baseline_captured);
+        profile.capture_baseline(100.0);
+        assert!(profile.baseline_captured);
+        assert_eq!(profile.baseline_rss_mb, 100.0);
+        // Second call is a no-op
+        profile.capture_baseline(200.0);
+        assert_eq!(profile.baseline_rss_mb, 100.0);
+    }
+
+    #[test]
+    fn test_memory_profile_growth() {
+        let mut profile = MemoryProfile::default();
+        profile.capture_baseline(100.0);
+        assert_eq!(profile.growth_mb(150.0), 50.0);
+        assert!(!profile.is_warning(150.0));
+        // Exceed warning threshold (200MB default)
+        assert!(profile.is_warning(350.0));
+    }
+
+    #[test]
+    fn test_memory_profile_snapshots() {
+        let mut profile = MemoryProfile::default();
+        profile.capture_snapshot(1, 100.0, 5000, 20);
+        assert_eq!(profile.snapshots.len(), 1);
+        assert_eq!(profile.snapshots[0].delta_mb, 0.0);
+        assert_eq!(profile.peak_rss_mb, 100.0);
+
+        profile.capture_snapshot(2, 110.0, 5500, 25);
+        assert_eq!(profile.snapshots.len(), 2);
+        assert_eq!(profile.snapshots[1].delta_mb, 10.0);
+        assert_eq!(profile.peak_rss_mb, 110.0);
+
+        // Peak tracks correctly even if current RSS drops
+        profile.capture_snapshot(3, 105.0, 5200, 22);
+        assert_eq!(profile.peak_rss_mb, 110.0);
+        assert_eq!(profile.snapshots[2].delta_mb, -5.0);
+    }
+
+    #[test]
+    fn test_memory_profile_rolling_window() {
+        let mut profile = MemoryProfile::default();
+        for i in 0..25 {
+            profile.capture_snapshot(i, 100.0 + i as f64, 5000, 20);
+        }
+        assert_eq!(profile.snapshots.len(), MemoryProfile::MAX_SNAPSHOTS);
+        // First snapshot should be generation 5 (0-4 were evicted)
+        assert_eq!(profile.snapshots[0].generation, 5);
+    }
+}
