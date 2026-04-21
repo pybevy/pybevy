@@ -1304,7 +1304,7 @@ mod tests {
         let mut world = World::new();
         let result = get_component(&mut world, EntityRef::Id(999999), "Transform".into());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1319,7 +1319,7 @@ mod tests {
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.code, -32001);
+        assert_eq!(err.code, ErrorCode::NotFound);
         assert!(err.message.contains("not found on entity"));
     }
 
@@ -1638,7 +1638,7 @@ mod tests {
         let mut world = World::new();
         let result = get_component_schema(&mut world, "NonexistentComponent".into());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
     #[test]
     fn get_bounding_box_no_aabb() {
@@ -1743,7 +1743,7 @@ mod tests {
         let mut world = World::new();
         let result = get_entity(&mut world, EntityRef::Id(999999));
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
     #[test]
     fn query_entities_empty_filters() {

@@ -368,7 +368,7 @@ mod tests {
             &mut runtime(),
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -445,7 +445,7 @@ mod tests {
         );
         // Unknown components -> invalid_params error, no stray entity
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32602);
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
         assert_eq!(world.entities().len(), initial_count);
     }
 
@@ -562,7 +562,7 @@ mod tests {
         // Not in the bridge registry, so this returns not_found.
         // The test verifies the dispatch path doesn't panic with AppTypeRegistry present.
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]

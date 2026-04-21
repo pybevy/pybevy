@@ -18,8 +18,8 @@ use tower_http::cors::CorsLayer;
 use crate::{
     api_index::ApiIndex,
     bridge::{
-        ControlOperation, ControlRequest, ControlSender, EntityRef, MutateOp, OtherOp, ReloadOp,
-        SceneOp, SharedLatestError, SpatialOp, SseEventBroadcaster, TimeOp, VisualOp,
+        ControlOperation, ControlRequest, ControlSender, EntityRef, ErrorCode, MutateOp, OtherOp,
+        ReloadOp, SceneOp, SharedLatestError, SpatialOp, SseEventBroadcaster, TimeOp, VisualOp,
     },
 };
 
@@ -79,9 +79,9 @@ async fn send_operation(
         Ok(Ok(value)) => Ok(value),
         Ok(Err(e)) => {
             let status = match e.code {
-                -32001 => StatusCode::NOT_FOUND,
-                -32602 => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::NotFound => StatusCode::NOT_FOUND,
+                ErrorCode::InvalidParams => StatusCode::BAD_REQUEST,
+                ErrorCode::Internal | ErrorCode::NotSupported => StatusCode::INTERNAL_SERVER_ERROR,
             };
             Err(error_response(status, &e.message))
         }

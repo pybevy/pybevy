@@ -753,7 +753,7 @@ mod tests {
         let entity_ref = EntityRef::Id(999999);
         let result = resolve_entity(&mut world, &entity_ref);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, -32001);
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
