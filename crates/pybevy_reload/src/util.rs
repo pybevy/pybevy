@@ -52,3 +52,30 @@ pub fn count_schedule_systems(world: &World) -> usize {
     };
     schedules.iter().map(|(_, s)| s.systems_len()).sum()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn test_lock_or_recover_normal() {
+        let mutex = Mutex::new(42);
+        let guard = lock_or_recover(&mutex);
+        assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn test_lock_or_recover_poisoned() {
+        let mutex = Arc::new(Mutex::new(42));
+        let mutex2 = mutex.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = mutex2.lock().unwrap();
+            panic!("intentional panic to poison mutex");
+        })
+        .join();
+        let guard = lock_or_recover(&mutex);
+        assert_eq!(*guard, 42);
+    }
+}

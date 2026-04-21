@@ -12,7 +12,6 @@ pub mod util;
 #[derive(bevy::ecs::component::Component, Clone, Copy)]
 pub struct HotReloadable;
 
-// Re-exports for convenience
 pub use orchestrator::{HotReloadStateAccess, perform_reload};
 pub use overlay::{
     MemoryOverlayVisible, StartPaused, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
