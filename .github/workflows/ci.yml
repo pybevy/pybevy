@@ -117,6 +117,10 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-interaction
 
+      - name: Install JAX (segfaults on free-threaded Python)
+        if: "!contains(matrix.python-version, 't')"
+        run: poetry install --no-interaction --with jax
+
       - name: Poetry env
         run: poetry env use ${{ steps.setup-python.outputs.python-path }}
 
