@@ -280,7 +280,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                         });
                         let _ = rac.response_tx.send(Ok(response));
                     } else {
-                        // Success — queue screenshot via forwarder
+                        // Success — queue screenshot with extra reload data
                         let entity_count = count_entities(world);
 
                         let debug_camera = rac.position.map(|pos| DebugCameraRequest {
@@ -288,48 +288,18 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                             look_at: rac.look_at.unwrap_or([0.0, 0.0, 0.0]),
                         });
 
-                        // Create a forwarder channel that wraps the screenshot
-                        // result into the combined response
-                        let (forward_tx, forward_rx) =
-                            oneshot::channel::<Result<serde_json::Value, ControlError>>();
-                        let original_tx = rac.response_tx;
-                        let reload_resp = reload_response.clone();
-
-                        std::thread::spawn(move || {
-                            let screenshot_result = forward_rx.blocking_recv();
-                            let response = match screenshot_result {
-                                Ok(Ok(screenshot_json)) => Ok(serde_json::json!({
-                                    "reload": reload_resp,
-                                    "errors": null,
-                                    "screenshot": screenshot_json.get("image"),
-                                    "screenshot_width": screenshot_json.get("width"),
-                                    "screenshot_height": screenshot_json.get("height"),
-                                    "entity_count": entity_count,
-                                })),
-                                Ok(Err(e)) => Ok(serde_json::json!({
-                                    "reload": reload_resp,
-                                    "errors": null,
-                                    "screenshot_error": e.message,
-                                    "entity_count": entity_count,
-                                })),
-                                Err(_) => Ok(serde_json::json!({
-                                    "reload": reload_resp,
-                                    "errors": null,
-                                    "screenshot": null,
-                                    "entity_count": entity_count,
-                                })),
-                            };
-                            let _ = original_tx.send(response);
-                        });
-
-                        // Queue the screenshot with the forwarder's sender
                         let screenshot = crate::bridge::PendingScreenshot {
-                            response_tx: forward_tx,
+                            response_tx: rac.response_tx,
                             frames_remaining: rac.screenshot_delay_frames,
                             with_gizmos: false,
                             max_width: rac.max_width.or(Some(768)),
                             debug_camera,
                             hide_ui: rac.hide_ui,
+                            extra_response: Some(serde_json::json!({
+                                "reload": reload_response,
+                                "errors": null,
+                                "entity_count": entity_count,
+                            })),
                         };
 
                         let mut screenshots =
