@@ -142,6 +142,10 @@ saved[0, 0]  # undefined behavior if mesh is dropped/reallocated
 
 **Safe alternative:** Use `positions_copy()` / `normals_copy()` which return owned numpy arrays with no dangling-pointer risk.
 
+## Query Tuple Type Completion
+
+Type-checked `Mut[T]` unwrapping in tuple queries is supported for up to **4 components**. All 2^n Mut combinations are covered for 1–4 component tuples. Queries with 5+ components in a tuple fall back to the generic `*Qs` overload, which may not unwrap `Mut[T]` in all type checkers.
+
 ## Custom Message Type Limit
 
 PyBevy supports a maximum of **20 custom message types** per application. Messages require `Messages<T>` with a concrete Rust type at compile time, so PyBevy pre-generates 20 wrapper types (`CustomMessage1`..`CustomMessage20`).

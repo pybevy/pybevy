@@ -36,8 +36,6 @@ Pre-compiled wheels are available for the following platforms:
 | macOS    | ARM (Apple Silicon), x86_64 |
 | Windows  | x86_64                      |
 
-> **Browser sandbox** is in development — follow [#12](https://github.com/pybevy/pybevy/issues/12) for progress.
-
 ```bash
 pip install pybevy --upgrade
 ```
