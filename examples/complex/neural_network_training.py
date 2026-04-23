@@ -511,12 +511,12 @@ def update_detailed_connections_system(
     MIN_ALPHA = 0.001  # Make minimum alpha even lower
 
     def map_avg_to_alpha(
-        avg_act: float,
-        max_avg: float,
+        avg_act: float | np.floating | np.ndarray,  # type: ignore[type-arg]
+        max_avg: float | np.floating | np.ndarray,  # type: ignore[type-arg]
         min_alpha: float = MIN_ALPHA,
         max_alpha: float = MAX_ALPHA_DEST,
         power: float = HIGHER_POWER,
-    ) -> float:
+    ) -> float | np.ndarray:  # type: ignore[type-arg]
         norm_act = np.clip(avg_act / max(max_avg, 1e-6), 0.0, 1.0)
         scaled_act = norm_act**power
         alpha = min_alpha + scaled_act * (max_alpha - min_alpha)

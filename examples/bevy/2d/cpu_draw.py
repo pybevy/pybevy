@@ -87,8 +87,8 @@ def draw(
 ) -> None:
     """Every fixed update tick, draw one more pixel to make a spiral pattern."""
     # Generate a random color on first run
-    if i.value.value == 0:
-        draw_color.value.value = Color.linear_rgb(
+    if i.value == 0:
+        draw_color.value = Color.linear_rgb(
             float(np.random.random()),
             float(np.random.random()),
             float(np.random.random()),
@@ -105,30 +105,30 @@ def draw(
     rot_speed = 0.0123
     period = 0.12345
 
-    r = math.sin(i.value.value * period) * max_radius
-    angle = i.value.value * rot_speed
+    r = math.sin(i.value * period) * max_radius
+    angle = i.value * rot_speed
     xy = Vec2(math.cos(angle), math.sin(angle)) * r + center
     x, y = int(xy.x), int(xy.y)
 
     # Get the old color of that pixel
     old_color = image.get_color_at(x, y)
     if not old_color:
-        i.value.value += 1
+        i.value += 1
         return
 
     # Occasionally change drawing color (simplified from Bevy version)
-    if i.value.value % 1000 == 0:
-        draw_color.value.value = Color.linear_rgb(
+    if i.value % 1000 == 0:
+        draw_color.value = Color.linear_rgb(
             float(np.random.random()),
             float(np.random.random()),
             float(np.random.random()),
         )
 
     # Set the new color, but keep old alpha value from image
-    new_color = draw_color.value.value.with_alpha(old_color.alpha())
+    new_color = draw_color.value.with_alpha(old_color.alpha())
     image.set_color_at(x, y, new_color)
 
-    i.value.value += 1
+    i.value += 1
 
 
 @entrypoint
