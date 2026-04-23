@@ -614,6 +614,7 @@ mod tests {
     use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
 
     use super::*;
+    use crate::bridge::ErrorCode;
 
     fn make_aabb(entity_bits: u64, min: [f32; 3], max: [f32; 3]) -> WorldAabb {
         WorldAabb {

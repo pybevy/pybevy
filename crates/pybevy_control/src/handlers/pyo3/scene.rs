@@ -1289,6 +1289,7 @@ mod tests {
     extern crate pybevy_transform;
 
     use super::*;
+    use crate::bridge::ErrorCode;
 
     static INIT: Once = Once::new();
 

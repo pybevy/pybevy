@@ -159,6 +159,7 @@ jobs:
 
       - name: Run Rust coverage
         run: |
+          set -o pipefail
           cargo llvm-cov --locked \
             -p pybevy_control --features pybevy_control/bevy_winit,pybevy_control/wayland \
             -p pybevy_storage \
@@ -170,10 +171,14 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          # Extract total line coverage percentage
-          COVERAGE=$(grep '^TOTAL' coverage-summary.txt | awk '{print $10}' | tr -d '%')
+          echo "--- coverage-summary.txt TOTAL line ---"
+          grep '^TOTAL' coverage-summary.txt || true
+          COVERAGE=$(grep '^TOTAL' coverage-summary.txt | grep -oP '[\d.]+%' | tail -1 | tr -d '%')
+          if [ -z "$COVERAGE" ]; then
+            echo "::error::Could not parse coverage from coverage-summary.txt"
+            exit 1
+          fi
           echo "Total line coverage: ${COVERAGE}%"
-          # Fail if coverage drops below 60%
           if [ "$(echo "$COVERAGE < $RUST_COVERAGE_THRESHOLD" | bc)" -eq 1 ]; then
             echo "::error::Rust coverage ${COVERAGE}% is below ${RUST_COVERAGE_THRESHOLD}% threshold"
             exit 1
