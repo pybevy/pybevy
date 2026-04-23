@@ -34,6 +34,8 @@ class OpaqueRendererMethod:
     DEFERRED: ClassVar[OpaqueRendererMethod]
     AUTO: ClassVar[OpaqueRendererMethod]
 
+    def __int__(self) -> int: ...
+
 class ParallaxMappingMethod:
     OCCLUSION: ClassVar[ParallaxMappingMethod]
 
