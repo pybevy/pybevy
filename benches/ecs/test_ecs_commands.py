@@ -25,7 +25,8 @@ def _bench_batch_spawn(entity_count: int) -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, setup_batch)
-    app.run()
+    app.initialize()
+    app.update()
 
 
 def _bench_normal_spawn(entity_count: int) -> None:
@@ -40,7 +41,8 @@ def _bench_normal_spawn(entity_count: int) -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, setup_normal)
-    app.run()
+    app.initialize()
+    app.update()
 
 
 def _bench_batch_scaling(entity_count: int) -> None:
@@ -56,7 +58,8 @@ def _bench_batch_scaling(entity_count: int) -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, setup)
-    app.run()
+    app.initialize()
+    app.update()
 
 
 def test_spawn_100_batch(benchmark: BenchmarkFixture) -> None:
@@ -135,7 +138,8 @@ def test_batch_spawn_with_full_transform_data(benchmark: BenchmarkFixture) -> No
         app = App()
         app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
         app.add_systems(Startup, setup)
-        app.run()
+        app.initialize()
+        app.update()
 
     benchmark(bench)
 
@@ -153,6 +157,7 @@ def test_batch_spawn_positions_only(benchmark: BenchmarkFixture) -> None:
         app = App()
         app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
         app.add_systems(Startup, setup)
-        app.run()
+        app.initialize()
+        app.update()
 
     benchmark(bench)

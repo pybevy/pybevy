@@ -8,9 +8,12 @@ from pybevy.ecs import Commands, Entity, Mut, Query
 from pybevy.math import Quat, Vec3
 from pybevy.transform import Transform
 
+ENTITY_COUNTS = [1000, 10000]
 
-def _bench_query_minimal_iteration(entity_count: int) -> None:
-    """Helper to benchmark minimal query iteration overhead."""
+
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_iteration_minimal(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark minimal query iteration overhead."""
 
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
@@ -27,9 +30,12 @@ def _bench_query_minimal_iteration(entity_count: int) -> None:
     app.initialize()
     app.update()
 
+    benchmark(app.update)
 
-def _bench_query_count(entity_count: int) -> int:
-    """Helper to benchmark query iteration with counting."""
+
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_iteration_count(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark query iteration with counting."""
 
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
@@ -49,11 +55,13 @@ def _bench_query_count(entity_count: int) -> int:
     app.initialize()
     app.update()
 
-    return count[0]
+    benchmark(app.update)
+    assert count[0] == entity_count
 
 
-def _bench_query_read_translation(entity_count: int) -> None:
-    """Helper to benchmark reading translation."""
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_translation_read(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark reading translation from transforms."""
 
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
@@ -73,15 +81,18 @@ def _bench_query_read_translation(entity_count: int) -> None:
     app.initialize()
     app.update()
 
+    benchmark(app.update)
 
-def _bench_query_write_translation(entity_count: int) -> None:
-    """Helper to benchmark writing translation."""
+
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_translation_write(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark writing translation to transforms."""
 
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
-    def write_translations(query: Query[Transform]) -> None:
+    def write_translations(query: Query[Mut[Transform]]) -> None:
         for i, transform in enumerate(query):
             transform.translation = Vec3(float(i), 1.0, 2.0)
 
@@ -92,15 +103,21 @@ def _bench_query_write_translation(entity_count: int) -> None:
     app.initialize()
     app.update()
 
+    benchmark(app.update)
 
-def _bench_query_rotate(entity_count: int, axis: str) -> None:
-    """Helper to benchmark rotation operations."""
+
+@pytest.mark.parametrize("entity_count", [1000, 10000])
+@pytest.mark.parametrize("axis", ["x", "y", "z", "local_x", "quat"])
+def test_rotate(
+    benchmark: BenchmarkFixture, entity_count: int, axis: str
+) -> None:
+    """Benchmark rotation operations."""
 
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
-    def rotate_transforms(query: Query[Transform]) -> None:
+    def rotate_transforms(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             if axis == "x":
                 transform.rotate_x(0.01)
@@ -120,9 +137,12 @@ def _bench_query_rotate(entity_count: int, axis: str) -> None:
     app.initialize()
     app.update()
 
+    benchmark(app.update)
 
-def _bench_query_mutate_transform(entity_count: int) -> int:
-    """Helper to benchmark Transform mutation via query."""
+
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_mutate_transform(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark Transform mutation via Mut[Transform]."""
     addition = Vec3(0.1, 0.2, 0.3)
 
     def setup(commands: Commands) -> None:
@@ -144,51 +164,8 @@ def _bench_query_mutate_transform(entity_count: int) -> int:
     app.initialize()
     app.update()
 
-    return count[0]
-
-
-ENTITY_COUNTS = [1000, 10000]
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_iteration_minimal(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark minimal query iteration overhead."""
-    benchmark(_bench_query_minimal_iteration, entity_count)
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_iteration_count(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark query iteration with counting."""
-    count = benchmark(_bench_query_count, entity_count)
-    assert count == entity_count
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_translation_read(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark reading translation from transforms."""
-    benchmark(_bench_query_read_translation, entity_count)
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_translation_write(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark writing translation to transforms."""
-    benchmark(_bench_query_write_translation, entity_count)
-
-
-@pytest.mark.parametrize("entity_count", [1000, 10000])
-@pytest.mark.parametrize("axis", ["x", "y", "z", "local_x", "quat"])
-def test_rotate(
-    benchmark: BenchmarkFixture, entity_count: int, axis: str
-) -> None:
-    """Benchmark rotation operations."""
-    benchmark(_bench_query_rotate, entity_count, axis)
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_mutate_transform(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark Transform mutation via Mut[Transform]."""
-    count = benchmark(_bench_query_mutate_transform, entity_count)
-    assert count == entity_count
+    benchmark(app.update)
+    assert count[0] == entity_count
 
 
 def test_look_at_10000(benchmark: BenchmarkFixture) -> None:
@@ -202,7 +179,7 @@ def test_look_at_10000(benchmark: BenchmarkFixture) -> None:
     target = Vec3(1.0, 0.0, 0.0)
     up = Vec3.Y
 
-    def look_at_transforms(query: Query[Transform]) -> None:
+    def look_at_transforms(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             transform.look_at(target, up)
 
@@ -282,7 +259,7 @@ def test_mixed_operations_10000(benchmark: BenchmarkFixture) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
-    def mixed_operations(query: Query[Transform]) -> None:
+    def mixed_operations(query: Query[Mut[Transform]]) -> None:
         for i, transform in enumerate(query):
             pos = transform.translation
 

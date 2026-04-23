@@ -46,25 +46,12 @@ def _spawn_entities(commands: Commands, count: int) -> None:
         commands.spawn(Transform.from_xyz(x, 0.0, 0.0), Marker())
 
 
-def _bench_view_simple(entity_count: int) -> None:
-    """Helper to benchmark View simple operation."""
-
-    def spawn(commands: Commands) -> None:
-        _spawn_entities(commands, entity_count)
-
-    def bench_view(view: View[Mut[Transform], With[Marker]]) -> None:
-        transform = view.column_mut(Transform)
-        transform.translation.x = transform.translation.x * 2.0 + 5.0
-
-    app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
-    app.add_systems(Startup, spawn)
-    app.add_systems(Update, bench_view)
-    app.run()
+ENTITY_COUNTS = [100, 1000, 10000]
 
 
-def _bench_query_simple(entity_count: int) -> None:
-    """Helper to benchmark Query simple operation."""
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_simple_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark Query simple operation (x = x * 2 + 5)."""
 
     def spawn(commands: Commands) -> None:
         _spawn_entities(commands, entity_count)
@@ -77,32 +64,36 @@ def _bench_query_simple(entity_count: int) -> None:
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_query)
-    app.run()
+    app.initialize()
+    app.update()
+
+    benchmark(app.update)
 
 
-def _bench_view_multi_field(entity_count: int) -> None:
-    """Helper to benchmark View multi-field operation."""
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_simple_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark View simple operation (x = x * 2 + 5)."""
 
     def spawn(commands: Commands) -> None:
-        for i in range(entity_count):
-            x = float(i % 100)
-            commands.spawn(Transform.from_xyz(x, x * 0.5, x * 0.3), Marker())
+        _spawn_entities(commands, entity_count)
 
     def bench_view(view: View[Mut[Transform], With[Marker]]) -> None:
         transform = view.column_mut(Transform)
-        transform.translation.x = transform.translation.x * 0.99
-        transform.translation.y = transform.translation.y * 0.99
-        transform.translation.z = transform.translation.z * 0.99
+        transform.translation.x = transform.translation.x * 2.0 + 5.0
 
     app = App()
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_view)
-    app.run()
+    app.initialize()
+    app.update()
+
+    benchmark(app.update)
 
 
-def _bench_query_multi_field(entity_count: int) -> None:
-    """Helper to benchmark Query multi-field operation."""
+@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
+def test_multi_field_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
+    """Benchmark Query multi-field operation (x, y, z *= 0.99)."""
 
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
@@ -119,34 +110,35 @@ def _bench_query_multi_field(entity_count: int) -> None:
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_query)
-    app.run()
+    app.initialize()
+    app.update()
 
-
-ENTITY_COUNTS = [100, 1000, 10000]
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_simple_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark Query simple operation (x = x * 2 + 5)."""
-    benchmark(_bench_query_simple, entity_count)
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_simple_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark View simple operation (x = x * 2 + 5)."""
-    benchmark(_bench_view_simple, entity_count)
-
-
-@pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
-def test_multi_field_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
-    """Benchmark Query multi-field operation (x, y, z *= 0.99)."""
-    benchmark(_bench_query_multi_field, entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_multi_field_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark View multi-field operation (x, y, z *= 0.99)."""
-    benchmark(_bench_view_multi_field, entity_count)
+
+    def spawn(commands: Commands) -> None:
+        for i in range(entity_count):
+            x = float(i % 100)
+            commands.spawn(Transform.from_xyz(x, x * 0.5, x * 0.3), Marker())
+
+    def bench_view(view: View[Mut[Transform], With[Marker]]) -> None:
+        transform = view.column_mut(Transform)
+        transform.translation.x = transform.translation.x * 0.99
+        transform.translation.y = transform.translation.y * 0.99
+        transform.translation.z = transform.translation.z * 0.99
+
+    app = App()
+    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_systems(Startup, spawn)
+    app.add_systems(Update, bench_view)
+    app.initialize()
+    app.update()
+
+    benchmark(app.update)
 
 
 @pytest.mark.skipif(not NUMBA_AVAILABLE, reason="Numba not installed")
@@ -190,7 +182,8 @@ def test_jit_api_available() -> None:
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, spawn)
     app.add_systems(Update, try_jit)
-    app.run()
+    app.initialize()
+    app.update()
 
     # Either it worked or we got the expected error
     assert jit_called[0] or (
@@ -221,7 +214,8 @@ def test_view_correctness() -> None:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, calc_view)
     app.add_systems(Last, verify)
-    app.run()
+    app.initialize()
+    app.update()
 
     assert len(results) == entity_count
     for i, value in enumerate(results):

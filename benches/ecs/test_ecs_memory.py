@@ -176,21 +176,22 @@ COMPARISONS: list[tuple[str, str, str, str]] = [
 ]
 
 
+import pytest
+
+_RUST_BINARY_PATH = PROJECT_ROOT / "target" / "release" / "examples" / RUST_BINARY
+
+
+@pytest.mark.skipif(
+    not _RUST_BINARY_PATH.exists(),
+    reason=f"Rust binary not found at {_RUST_BINARY_PATH}. "
+    "Build it: cargo build --example memory_baseline --release --features linux-display",
+)
 class TestMemoryComparison:
     """PyBevy vs Rust Bevy memory comparison. Run with -s to see output."""
 
-    def _check_rust_binary(self) -> None:
-        binary = PROJECT_ROOT / "target" / "release" / "examples" / RUST_BINARY
-        if not binary.exists():
-            raise FileNotFoundError(
-                f"Rust binary not found at {binary}\n"
-                "Build it first:\n"
-                "  cargo build --example memory_baseline --release --features linux-display"
-            )
-
     def test_transform_comparison(self) -> None:
         """Transform: PyBevy vs pure Rust Bevy."""
-        self._check_rust_binary()
+
         rust = _measure_rust("transform", ENTITY_COUNT)
         py = _measure_pybevy("transform", ENTITY_COUNT)
         overhead = py["bpe"] - rust["bpe"]
@@ -200,7 +201,7 @@ class TestMemoryComparison:
 
     def test_velocity_wrapper_comparison(self) -> None:
         """Vec3-like component: wrapper storage vs Rust."""
-        self._check_rust_binary()
+
         rust = _measure_rust("velocity_small", ENTITY_COUNT)
         py = _measure_pybevy("velocity_small", ENTITY_COUNT)
         overhead = py["bpe"] - rust["bpe"]
@@ -210,7 +211,7 @@ class TestMemoryComparison:
 
     def test_velocity_pyobject_comparison(self) -> None:
         """Vec3-like component: PyObject storage vs Rust."""
-        self._check_rust_binary()
+
         rust = _measure_rust("velocity_small", ENTITY_COUNT)
         py = _measure_pybevy("velocity_small_pyobject", ENTITY_COUNT)
         overhead = py["bpe"] - rust["bpe"]
@@ -220,7 +221,7 @@ class TestMemoryComparison:
 
     def test_velocity_string_comparison(self) -> None:
         """Vec3+String: PyObject storage vs Rust."""
-        self._check_rust_binary()
+
         rust = _measure_rust("velocity_string", ENTITY_COUNT)
         py = _measure_pybevy("velocity_string", ENTITY_COUNT)
         overhead = py["bpe"] - rust["bpe"]
@@ -230,7 +231,7 @@ class TestMemoryComparison:
 
     def test_summary_table(self) -> None:
         """Print full comparison table: PyBevy vs pure Rust Bevy."""
-        self._check_rust_binary()
+
         n = ENTITY_COUNT
 
         print(f"\n{'='*90}")

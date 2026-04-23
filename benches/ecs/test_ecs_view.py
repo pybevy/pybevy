@@ -76,7 +76,8 @@ def _warmup_numba() -> None:
 
     app.add_systems(Startup, setup)
     app.add_systems(Update, warmup)
-    app.run()
+    app.initialize()
+    app.update()
     _numba_warmed_up = True
 
 
@@ -99,6 +100,7 @@ def _setup_view_numba_sum(entity_count: int) -> App:
     app.add_systems(Startup, setup)
     app.add_systems(Update, measure_view)
     app.initialize()
+    app.update()
     return app
 
 
@@ -119,6 +121,7 @@ def _setup_query_sum(entity_count: int) -> App:
     app.add_systems(Startup, setup)
     app.add_systems(Update, measure_query)
     app.initialize()
+    app.update()
     return app
 
 
@@ -143,6 +146,7 @@ def _setup_view_batch_ops(entity_count: int) -> App:
     app.add_systems(Startup, setup)
     app.add_systems(Update, batch_ops)
     app.initialize()
+    app.update()
     return app
 
 
@@ -167,6 +171,7 @@ def _setup_query_batch_ops(entity_count: int) -> App:
     app.add_systems(Startup, setup)
     app.add_systems(Update, iter_ops)
     app.initialize()
+    app.update()
     return app
 
 
@@ -189,6 +194,7 @@ def _setup_view_complex_ops(entity_count: int) -> App:
     app.add_systems(Startup, setup)
     app.add_systems(Update, complex_ops)
     app.initialize()
+    app.update()
     return app
 
 
@@ -214,6 +220,7 @@ def _setup_query_complex_ops(entity_count: int) -> App:
     app.add_systems(Startup, setup)
     app.add_systems(Update, complex_ops)
     app.initialize()
+    app.update()
     return app
 
 
