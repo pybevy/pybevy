@@ -152,6 +152,7 @@ mod tests {
     use pyo3::prelude::*;
 
     use super::*;
+    use crate::bridge::ErrorCode;
 
     static INIT: Once = Once::new();
 

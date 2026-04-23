@@ -132,6 +132,7 @@ pub fn seek_time(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bridge::ErrorCode;
 
     fn world_with_virtual_time() -> World {
         let mut world = World::new();

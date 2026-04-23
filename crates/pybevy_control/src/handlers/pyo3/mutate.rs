@@ -1231,6 +1231,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::bridge::ErrorCode;
 
     static INIT: Once = Once::new();
 
