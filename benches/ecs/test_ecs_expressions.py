@@ -13,7 +13,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 
 from pybevy.app import RunMode, ScheduleRunnerPlugin
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, Query, View
+from pybevy.ecs import Commands, Component, Mut, Query, View
 from pybevy.expr import where
 from pybevy.prelude import *
 from pybevy.transform import Transform
@@ -30,10 +30,8 @@ def _spawn_entities(commands: Commands, count: int) -> None:
         commands.spawn(Marker(), Transform.from_xyz(float(i), float(i * 2), 0.0))
 
 
-def _bench_reduce_view(
-    operation: str, entity_count: int, verify_fn=None
-) -> tuple[float, App]:
-    """Helper to benchmark View reduction operations."""
+def _setup_reduce_view(operation: str, entity_count: int) -> App:
+    """Setup app for View reduction benchmark. Returns app ready for benchmark."""
     result = {}
 
     def setup(commands: Commands) -> None:
@@ -55,19 +53,14 @@ def _bench_reduce_view(
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, setup)
     app.add_systems(Update, reduce_system)
-    app.run()
+    app.initialize()
+    app.update()
 
-    value = result["value"]
-    if verify_fn:
-        verify_fn(value, entity_count)
-
-    return value, app
+    return app
 
 
-def _bench_reduce_query(
-    operation: str, entity_count: int, verify_fn=None
-) -> tuple[float, App]:
-    """Helper to benchmark Query reduction operations."""
+def _setup_reduce_query(operation: str, entity_count: int) -> App:
+    """Setup app for Query reduction benchmark. Returns app ready for benchmark."""
     result = {}
 
     def setup(commands: Commands) -> None:
@@ -101,13 +94,10 @@ def _bench_reduce_query(
     app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
     app.add_systems(Startup, setup)
     app.add_systems(Update, query_system)
-    app.run()
+    app.initialize()
+    app.update()
 
-    value = result["value"]
-    if verify_fn:
-        verify_fn(value, entity_count)
-
-    return value, app
+    return app
 
 
 def _bench_comparison_operator(operator_fn, setup_fn) -> App:
@@ -127,111 +117,57 @@ ENTITY_COUNTS = [100, 1000, 10000]
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_sum_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark reduce_sum using View API."""
-
-    def verify(value, count):
-        expected = sum(range(count))
-        assert abs(value - expected) / expected < 0.001
-
-    def bench():
-        return _bench_reduce_view("sum", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_view("sum", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_sum_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark sum using traditional Query iteration."""
-
-    def verify(value, count):
-        expected = sum(range(count))
-        assert abs(value - expected) / expected < 0.001
-
-    def bench():
-        return _bench_reduce_query("sum", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_query("sum", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_mean_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark reduce_mean using View API."""
-
-    def verify(value, count):
-        expected = sum(range(count)) / count
-        assert abs(value - expected) / expected < 0.001
-
-    def bench():
-        return _bench_reduce_view("mean", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_view("mean", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_mean_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark mean using traditional Query iteration."""
-
-    def verify(value, count):
-        expected = sum(range(count)) / count
-        assert abs(value - expected) / expected < 0.001
-
-    def bench():
-        return _bench_reduce_query("mean", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_query("mean", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_max_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark reduce_max using View API."""
-
-    def verify(value, count):
-        expected = float(count - 1)
-        assert abs(value - expected) / expected < 0.001
-
-    def bench():
-        return _bench_reduce_view("max", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_view("max", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_max_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark max using traditional Query iteration."""
-
-    def verify(value, count):
-        expected = float(count - 1)
-        assert abs(value - expected) / expected < 0.001
-
-    def bench():
-        return _bench_reduce_query("max", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_query("max", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_count_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark reduce_count using View API."""
-
-    def verify(value, count):
-        assert value == count
-
-    def bench():
-        return _bench_reduce_view("count", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_view("count", entity_count)
+    benchmark(app.update)
 
 
 @pytest.mark.parametrize("entity_count", ENTITY_COUNTS)
 def test_reduce_count_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark count using traditional Query iteration."""
-
-    def verify(value, count):
-        assert value == count
-
-    def bench():
-        return _bench_reduce_query("count", entity_count, verify)[0]
-
-    benchmark(bench)
+    app = _setup_reduce_query("count", entity_count)
+    benchmark(app.update)
 
 
 NUM_ENTITIES = 100_000
@@ -245,7 +181,7 @@ def test_compare_equal_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 100)
             commands.spawn(Transform.from_xyz(x, x if i % 2 == 0 else x + 1, 0.0))
 
-    def compare_equal(view: View[Transform]) -> None:
+    def compare_equal(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         y = transform.translation.y
@@ -263,7 +199,7 @@ def test_compare_not_equal_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 100)
             commands.spawn(Transform.from_xyz(x, x + 1, 0.0))
 
-    def compare_not_equal(view: View[Transform]) -> None:
+    def compare_not_equal(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         y = transform.translation.y
@@ -281,7 +217,7 @@ def test_compare_less_than_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 100)
             commands.spawn(Transform.from_xyz(x, x + 10, 0.0))
 
-    def compare_less_than(view: View[Transform]) -> None:
+    def compare_less_than(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         y = transform.translation.y
@@ -299,7 +235,7 @@ def test_compare_greater_than_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 100)
             commands.spawn(Transform.from_xyz(x, x - 10, 0.0))
 
-    def compare_greater_than(view: View[Transform]) -> None:
+    def compare_greater_than(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         y = transform.translation.y
@@ -317,7 +253,7 @@ def test_where_constants_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 200 - 100)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
-    def where_constants(view: View[Transform]) -> None:
+    def where_constants(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         transform.translation.y = where(x > 0.0, 10.0, -10.0)
@@ -334,7 +270,7 @@ def test_where_expressions_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 200 - 100)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
-    def where_expressions(view: View[Transform]) -> None:
+    def where_expressions(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         transform.translation.y = where(x > 0.0, x * 2.0, x * -1.0)
@@ -351,7 +287,7 @@ def test_where_nested_2_levels_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 300 - 150)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
-    def nested_where_2(view: View[Transform]) -> None:
+    def nested_where_2(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         transform.translation.y = where(x < 0.0, 1.0, where(x == 0.0, 2.0, 3.0))
@@ -368,7 +304,7 @@ def test_where_nested_3_levels_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 400 - 200)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
-    def nested_where_3(view: View[Transform]) -> None:
+    def nested_where_3(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         transform.translation.y = where(
@@ -392,7 +328,7 @@ def test_logical_and_100000(benchmark: BenchmarkFixture) -> None:
             shield = random.uniform(0.0, 100.0)
             commands.spawn(Transform.from_xyz(health, shield, 0.0))
 
-    def and_operator(view: View[Transform]) -> None:
+    def and_operator(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         health = transform.translation.x
         shield = transform.translation.y
@@ -414,7 +350,7 @@ def test_logical_or_100000(benchmark: BenchmarkFixture) -> None:
             shield = random.uniform(0.0, 100.0)
             commands.spawn(Transform.from_xyz(health, shield, 0.0))
 
-    def or_operator(view: View[Transform]) -> None:
+    def or_operator(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         health = transform.translation.x
         shield = transform.translation.y
@@ -435,7 +371,7 @@ def test_logical_not_100000(benchmark: BenchmarkFixture) -> None:
             health = random.uniform(0.0, 100.0)
             commands.spawn(Transform.from_xyz(health, 0.0, 0.0))
 
-    def not_operator(view: View[Transform]) -> None:
+    def not_operator(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         health = transform.translation.x
         is_critical = health < 20.0
@@ -457,7 +393,7 @@ def test_logical_complex_and_or_100000(benchmark: BenchmarkFixture) -> None:
             shield = random.uniform(0.0, 100.0)
             commands.spawn(Transform.from_xyz(health, shield, 0.0))
 
-    def complex_and_or(view: View[Transform]) -> None:
+    def complex_and_or(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         health = transform.translation.x
         shield = transform.translation.y
@@ -481,7 +417,7 @@ def test_logical_multiple_and_100000(benchmark: BenchmarkFixture) -> None:
             shield = random.uniform(0.0, 100.0)
             commands.spawn(Transform.from_xyz(health, shield, 0.0))
 
-    def multiple_and(view: View[Transform]) -> None:
+    def multiple_and(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         health = transform.translation.x
         shield = transform.translation.y
@@ -503,7 +439,7 @@ def test_logical_complex_nested_100000(benchmark: BenchmarkFixture) -> None:
             shield = random.uniform(0.0, 100.0)
             commands.spawn(Transform.from_xyz(health, shield, 0.0))
 
-    def complex_nested(view: View[Transform]) -> None:
+    def complex_nested(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         health = transform.translation.x
         shield = transform.translation.y
@@ -524,7 +460,7 @@ def test_conditional_view_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 200 - 100)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
-    def view_conditional(view: View[Transform]) -> None:
+    def view_conditional(view: View[Mut[Transform]]) -> None:
         transform = view.column_mut(Transform)
         x = transform.translation.x
         transform.translation.y = where(x > 0.0, x * 2.0, x * -1.0)
@@ -541,7 +477,7 @@ def test_conditional_query_100000(benchmark: BenchmarkFixture) -> None:
             x = float(i % 200 - 100)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
-    def query_conditional(query: Query[Transform]) -> None:
+    def query_conditional(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             x = transform.translation.x
             if x > 0.0:

@@ -14,7 +14,7 @@ image_height = 2160
 pixel_count = image_width * image_height * 4
 
 
-def setup(images: Assets[Image], commands: Commands) -> None:
+def setup(images: ResMut[Assets[Image]], commands: Commands) -> None:
     data = np.random.randint(0, 255, size=pixel_count, dtype=np.uint8)
     image = Image(Extent3d(image_width, image_height, 1), data)
     commands.spawn(Sprite(images.add(image)))
