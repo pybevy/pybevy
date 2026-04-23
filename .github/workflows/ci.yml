@@ -77,7 +77,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        python-version: ["3.13", "3.14t"]
+        python-version: ["3.12", "3.13", "3.14", "3.14t"]
     runs-on: ubuntu-latest
 
     steps:
