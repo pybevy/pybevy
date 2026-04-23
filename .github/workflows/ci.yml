@@ -77,7 +77,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        python-version: ["3.13", "3.14", "3.14t"]
+        python-version: ["3.13", "3.14t"]
     runs-on: ubuntu-latest
 
     steps:
@@ -108,7 +108,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
         with:
-          prefix-key: pybevy
+          prefix-key: pybevy-py${{ matrix.python-version }}
           cache-on-failure: true
 
       - name: Setup sccache
