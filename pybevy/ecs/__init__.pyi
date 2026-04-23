@@ -1799,7 +1799,46 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(
         self: Query[tuple[T1, T2, T3, Mut[T4]], *Qs],
     ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
-
+    @overload
+    def __iter__(
+        self: Query[tuple[Mut[T1], Mut[T2], T3, T4], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Mut[T1], T2, Mut[T3], T4], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Mut[T1], T2, T3, Mut[T4]], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[T1, Mut[T2], Mut[T3], T4], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[T1, Mut[T2], T3, Mut[T4]], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[T1, T2, Mut[T3], Mut[T4]], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Mut[T1], Mut[T2], Mut[T3], T4], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Mut[T1], Mut[T2], T3, Mut[T4]], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Mut[T1], T2, Mut[T3], Mut[T4]], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[T1, Mut[T2], Mut[T3], Mut[T4]], *Qs],
+    ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
     @overload
     def __iter__(
         self: Query[tuple[Mut[T1], Mut[T2], Mut[T3], Mut[T4]], *Qs],

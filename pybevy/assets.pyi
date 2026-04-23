@@ -118,30 +118,8 @@ class Assets(Resource, Generic[A]):
     @overload
     def add(self: Assets[ColorMaterial], asset: Color) -> Handle[ColorMaterial]: ...
     def contains(self, id: Handle[A]) -> bool: ...
-    def get(self, id: Handle[A]) -> A | None:
-        """Get immutable reference to asset (from Res[Assets[T]]).
-
-        Returns borrowed reference to asset in storage, or None if not found.
-        Reference is valid only during current system execution.
-
-        Raises:
-            RuntimeError: If called on ResMut[Assets[T]] (use get_mut instead)
-        """
-    def get_mut(self, id: Handle[A]) -> A | None:
-        """Get mutable reference to asset (from ResMut[Assets[T]]).
-
-        Returns borrowed mutable reference to asset in storage, or None if not found.
-        Reference is valid only during current system execution.
-
-        Example:
-            def system(materials: ResMut[Assets[StandardMaterial]]):
-                mat = materials.get_mut(handle)
-                if mat:
-                    mat.base_color = Color.srgb(1.0, 0.0, 0.0)
-
-        Raises:
-            RuntimeError: If called on Res[Assets[T]] (use get instead)
-        """
+    def get(self, id: Handle[A]) -> A | None: ...
+    def get_mut(self, id: Handle[A]) -> A | None: ...
     def is_empty(self) -> bool: ...
     def __iter__(self) -> Iterator[tuple[Handle[A], A]]: ...
     def len(self) -> int: ...
