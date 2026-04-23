@@ -116,75 +116,37 @@ class Event:
     """
 
 
-class Res(Generic[ResourceType]):
-    """Read-only access to a Bevy resource.
+type Res[T: Resource] = T
+"""Read-only access to a Bevy resource.
 
-    Res[T] provides immutable access to a resource, allowing multiple systems
-    to read the same resource in parallel without conflicts.
+Res[T] provides immutable access to a resource, allowing multiple systems
+to read the same resource in parallel without conflicts.
 
-    Example:
-        ```python
-        def system(time: Res[Time]):
-            # Can read time properties
-            elapsed = time.elapsed_secs()
-            # Cannot modify - will raise TypeError
-            # time.set_elapsed(1.0)  # Error!
-        ```
+Example:
+    ```python
+    def system(time: Res[Time]):
+        elapsed = time.elapsed_secs()
+    ```
 
-    See Also:
-        - ResMut[T]: For mutable resource access
-        - Time, ButtonInput: Common resource types
-    """
+See Also:
+    - ResMut[T]: For mutable resource access
+"""
 
-    @property
-    def resource_type(self) -> type[ResourceType]:
-        """The type of the resource being accessed."""
+type ResMut[T: Resource] = T
+"""Mutable access to a Bevy resource.
 
-    def __getattr__(self, name: str) -> Any:
-        """Access resource attributes and methods (read-only).
+ResMut[T] provides exclusive mutable access to a resource. Only one system
+can have ResMut access to a resource at a time, preventing data races.
 
-        All attribute access is forwarded to the underlying resource.
-        For example, if the resource has a .get() method, you can call it directly.
-        """
+Example:
+    ```python
+    def system(state: ResMut[GameState]):
+        state.score += 10
+    ```
 
-class ResMut(Generic[ResourceType]):
-    """Mutable access to a Bevy resource.
-
-    ResMut[T] provides exclusive mutable access to a resource. Only one system
-    can have ResMut access to a resource at a time, preventing data races.
-
-    Example:
-        ```python
-        @dataclass
-        class GameState(Resource):
-            score: int = 0
-
-        def system(state: ResMut[GameState]):
-            # Can read and modify
-            state.score += 10
-        ```
-
-    See Also:
-        - Res[T]: For read-only resource access
-        - Mut[T]: For mutable component access in queries
-    """
-
-    @property
-    def resource_type(self) -> type[ResourceType]:
-        """The type of the resource being accessed."""
-
-    def __getattr__(self, name: str) -> Any:
-        """Access resource attributes and methods.
-
-        All attribute access is forwarded to the underlying resource.
-        For example, if the resource has a .get() method, you can call it directly.
-        """
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Modify resource attributes.
-
-        All attribute modifications are forwarded to the underlying resource.
-        """
+See Also:
+    - Res[T]: For read-only resource access
+"""
 
 E = TypeVar("E")
 OnTypes = TypeVarTuple("OnTypes")
@@ -438,17 +400,17 @@ def run_if(system: SystemFn, condition: Callable[..., bool]) -> ConditionalSyste
 
 class Commands:
     @overload
-    def spawn(self, components: tuple[Component, ...]) -> EntityCommands: ...
-    @overload
     def spawn(self, *components: Component) -> EntityCommands: ...
     @overload
-    def spawn_batch(self, iterable: Iterable[tuple[Component, ...]], /) -> None:
-        """Spawn entities from an iterable of component tuples (legacy path)."""
+    def spawn(self, components: tuple[Component, ...]) -> EntityCommands: ...
     @overload
     def spawn_batch(
         self, *components: Component | Batchable, count: int | None = None
     ) -> list[Entity]:
         """Spawn entities from batch/uniform components (numpy fast path)."""
+    @overload
+    def spawn_batch(self, iterable: Iterable[tuple[Component, ...]], /) -> None:
+        """Spawn entities from an iterable of component tuples (legacy path)."""
     def spawn_empty(self) -> EntityCommands: ...
     def entity(self, entity: Entity) -> EntityCommands: ...
     def get_entity(self, entity: Entity) -> EntityCommands | None: ...
@@ -1699,47 +1661,33 @@ class Query(Generic[QueryParam_T, *Qs]):
     Matches Bevy Rust: Query<&mut T, (With<A>, Without<B>)>
     """
 
-    # === Single component overloads ===
-    # Without filters (for Pylance compatibility)
     @overload
     def __iter__(self: Query[Mut[T]]) -> Iterator[T]: ...
     @overload
     def __iter__(self: Query[T]) -> Iterator[T]: ...
-
-    # === Optional component overloads ===
-    # Optional[T] / T | None — returns None for entities missing the component
-    @overload
-    def __iter__(self: Query[T | None]) -> Iterator[T | None]: ...  # type: ignore[overload-overlap]
-    @overload
-    def __iter__(self: Query[T | None, *Qs]) -> Iterator[T | None]: ...
-
-    # With filters - concrete With type (for Pylance)
     @overload
     def __iter__(self: Query[Mut[T], With]) -> Iterator[T]: ...
     @overload
     def __iter__(self: Query[T, With]) -> Iterator[T]: ...
-
-    # With filters - generic (for mypy compatibility)
     @overload
     def __iter__(self: Query[Mut[T], *Qs]) -> Iterator[T]: ...
     @overload
     def __iter__(self: Query[T, *Qs]) -> Iterator[T]: ...
-
-    # With tuple-wrapped filters (Bevy style) - may help Pylance
     @overload
     def __iter__(self: Query[Mut[T], tuple[*Qs]]) -> Iterator[T]: ...
     @overload
     def __iter__(self: Query[T, tuple[*Qs]]) -> Iterator[T]: ...
 
-    # === Tuple overloads - 1 component ===
-    # Without filters
+    @overload
+    def __iter__(self: Query[T | None]) -> Iterator[T | None]: ...  # type: ignore[overload-overlap]
+    @overload
+    def __iter__(self: Query[T | None, *Qs]) -> Iterator[T | None]: ...
+
     @overload
     def __iter__(self: Query[tuple[T]]) -> Iterator[tuple[T]]: ...
     @overload
     def __iter__(self: Query[tuple[Mut[T]]]) -> Iterator[tuple[T]]: ...
 
-    # === Tuple overloads - 2 components ===
-    # Without filters
     @overload
     def __iter__(self: Query[tuple[T1, T2]]) -> Iterator[tuple[T1, T2]]: ...
     @overload
@@ -1748,8 +1696,6 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(self: Query[tuple[T1, Mut[T2]]]) -> Iterator[tuple[T1, T2]]: ...
     @overload
     def __iter__(self: Query[tuple[Mut[T1], Mut[T2]]]) -> Iterator[tuple[T1, T2]]: ...
-
-    # With explicit With filter - without TypeVarTuple (for Pylance compatibility)
     @overload
     def __iter__(self: Query[tuple[T1, T2], With]) -> Iterator[tuple[T1, T2]]: ...
     @overload
@@ -1760,8 +1706,6 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(
         self: Query[tuple[Mut[T1], Mut[T2]], With],
     ) -> Iterator[tuple[T1, T2]]: ...
-
-    # With explicit With filter - with TypeVarTuple (for mypy)
     @overload
     def __iter__(self: Query[tuple[T1, T2], With[*Qs]]) -> Iterator[tuple[T1, T2]]: ...
     @overload
@@ -1776,8 +1720,6 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(
         self: Query[tuple[Mut[T1], Mut[T2]], With[*Qs]],
     ) -> Iterator[tuple[T1, T2]]: ...
-
-    # With filters (generic - for mypy)
     @overload
     def __iter__(self: Query[tuple[T1, T2], *Qs]) -> Iterator[tuple[T1, T2]]: ...
     @overload
@@ -1788,8 +1730,6 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(
         self: Query[tuple[Mut[T1], Mut[T2]], *Qs],
     ) -> Iterator[tuple[T1, T2]]: ...
-
-    # With tuple-wrapped filters (Bevy style) - 2 components
     @overload
     def __iter__(self: Query[tuple[T1, T2], tuple[*Qs]]) -> Iterator[tuple[T1, T2]]: ...
     @overload
@@ -1805,7 +1745,6 @@ class Query(Generic[QueryParam_T, *Qs]):
         self: Query[tuple[Mut[T1], Mut[T2]], tuple[*Qs]],
     ) -> Iterator[tuple[T1, T2]]: ...
 
-    # === Tuple overloads - 3 components ===
     @overload
     def __iter__(
         self: Query[tuple[T1, T2, T3], *Qs],
@@ -1839,7 +1778,7 @@ class Query(Generic[QueryParam_T, *Qs]):
         self: Query[tuple[Mut[T1], Mut[T2], Mut[T3]], *Qs],
     ) -> Iterator[tuple[T1, T2, T3]]: ...
 
-    # === Tuple overloads - 4 components ===
+
     @overload
     def __iter__(
         self: Query[tuple[T1, T2, T3, T4], *Qs],
@@ -1860,13 +1799,13 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(
         self: Query[tuple[T1, T2, T3, Mut[T4]], *Qs],
     ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
-    # Add more combinations as needed...
+
     @overload
     def __iter__(
         self: Query[tuple[Mut[T1], Mut[T2], Mut[T3], Mut[T4]], *Qs],
     ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
 
-    # === get() overloads ===
+
     @overload
     def get(self: Query[Mut[T], *Qs], entity: Entity) -> T | None: ...
     @overload
@@ -1882,13 +1821,13 @@ class Query(Generic[QueryParam_T, *Qs]):
         self: Query[tuple[Mut[T1], T2], *Qs], entity: Entity
     ) -> tuple[T1, T2] | None: ...
 
-    # === get_mut() overloads ===
+
     @overload
     def get_mut(self: Query[Mut[T], *Qs], entity: Entity) -> T | None: ...
     @overload
     def get_mut(self: Query[T, *Qs], entity: Entity) -> T | None: ...
 
-    # === single() overloads ===
+
     @overload
     def single(self: Query[Mut[T], *Qs]) -> T: ...
     @overload
@@ -1914,7 +1853,6 @@ class Query(Generic[QueryParam_T, *Qs]):
                 print("No players found")
         """
 
-    # === iter_many() overloads ===
     @overload
     def iter_many(self: Query[Mut[T], *Qs], entities: Iterable[Entity]) -> list[T]:
         """Iterate over query results for a specific list of entities.
@@ -2024,16 +1962,18 @@ class Single(Generic[QueryParam_T, *Qs]):
 
 V = TypeVar("V")  # , bound=Callable)
 
-class Local(Generic[V]):
-    @property
-    def value_type(self) -> type[V]:
-        """The type of the local value."""
+type Local[T] = T
+"""Per-system local state, persisted across system invocations.
 
-    value: V
+Local[T] provides per-system state that is initialized to T() on first run
+and persisted between system calls. Each system gets its own independent copy.
 
-    def __init__(self, value: V) -> None: ...
-    def __getattr__(self, name: str) -> Any: ...  # Generic attribute access
-    def __setattr__(self, name: str, value: Any) -> None: ...  # Generic attribute setting
+Example:
+    ```python
+    def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
+        counter.frame_count += 1
+    ```
+"""
 
 class RelatedSpawnerCommands:
     """Commands for spawning child entities within with_children().

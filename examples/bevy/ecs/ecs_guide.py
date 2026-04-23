@@ -91,7 +91,6 @@ class PlayerInfo:
 
 
 # RESOURCES: "Global" state accessible by systems. These are also just normal Python data types!
-#
 
 
 @resource
@@ -143,7 +142,6 @@ class PlayerData(Resource):
 
 # SYSTEMS: Logic that runs on entities, components, and resources. These generally run once each
 # time the app updates.
-#
 
 
 def print_message_system() -> None:
@@ -303,8 +301,8 @@ def print_at_end_round(counter: Local[Counter]) -> None:
     In this system's Local (counter), T is Counter.
     Therefore, on the first turn, counter has a value of 0.
     """
-    counter.value.value += 1
-    print(f"In schedule 'Last' for the {counter.value.value}th time")
+    counter.value += 1
+    print(f"In schedule 'Last' for the {counter.value}th time")
     # Print an empty line between rounds
     print()
 

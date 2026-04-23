@@ -57,6 +57,7 @@ pillow = "^12.2.0"
 types-pillow = "^10.2.0"
 jax = {extras = ["cpu"], version = "^0.9.1"}
 pytest-cov = "^7.1.0"
+pyright = "^1.1.408"
 
 [tool.poetry.group.eval]
 optional = true

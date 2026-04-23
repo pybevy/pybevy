@@ -29,10 +29,17 @@ else:
     )
 
 
+class _PreviousState:
+    """Wrapper for tracking previous state value in Local."""
+
+    def __init__(self) -> None:
+        self.value: object = None
+
+
 def despawn_on_state_change(
     commands: Commands,
     current_state: Res[State],
-    previous_state: Local[list],  # Stores [previous_state_value] or empty list initially
+    previous_state: Local[_PreviousState],
     despawn_on_exit: "Query[tuple[Entity, DespawnOnExit]]",
     despawn_on_enter: "Query[tuple[Entity, DespawnOnEnter]]",
 ) -> None:
@@ -46,20 +53,15 @@ def despawn_on_state_change(
         from pybevy.ecs.state_despawn import despawn_on_state_change
         app.add_systems(Update, despawn_on_state_change)
     """
-    # Get the current state enum value
-    # Note: Res[State].get() forwards to State.get() which returns the enum value
     current = current_state.get()
 
     # First run - just store the current state
-    if len(previous_state.value) == 0:
-        previous_state.value.append(current)
+    if previous_state.value is None:
+        previous_state.value = current
         return
 
-    prev = previous_state.value[0]
+    prev = previous_state.value
 
-    # Check if state changed using equality comparison
-    # Note: We use == instead of 'is' because enum values may be different object
-    # instances even when they represent the same enum member (due to PyO3 reference handling)
     if prev == current:
         return
 
@@ -77,4 +79,4 @@ def despawn_on_state_change(
             commands.entity(entity).despawn()
 
     # Update previous state
-    previous_state.value[0] = current
+    previous_state.value = current

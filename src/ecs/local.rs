@@ -9,7 +9,6 @@ pub struct PyLocal {
     #[pyo3(get, name = "value_type")]
     pub(crate) ty: Py<PyType>,
 
-    #[pyo3(get)]
     pub(crate) value: Py<PyAny>,
 }
 
@@ -48,8 +47,7 @@ impl PyLocal {
         }
     }
 
-    #[setter]
-    pub fn set_value(&mut self, py: Python, value: Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn set(&mut self, py: Python, value: Bound<'_, PyAny>) -> PyResult<()> {
         if !value.get_type().is(self.ty.bind(py)) {
             return Err(PyTypeError::new_err(format!(
                 "Expected type {}, but got {}",
