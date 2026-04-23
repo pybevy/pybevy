@@ -43,6 +43,8 @@ pub struct ScreenshotResponder {
     pub ui_restore: Option<Vec<(Entity, Visibility)>>,
     /// If gizmos were toggled for this screenshot, the original enabled state to restore.
     pub gizmo_restore: Option<bool>,
+    /// Extra JSON fields to merge into the screenshot response.
+    pub extra_response: Option<serde_json::Value>,
 }
 
 /// Resource mapping screenshot Entity → responder info.
@@ -64,6 +66,7 @@ struct StagedDebugScreenshot {
     max_width: Option<u32>,
     debug_cleanup: DebugCameraCleanup,
     ui_restore: Option<Vec<(Entity, Visibility)>>,
+    extra_response: Option<serde_json::Value>,
 }
 
 /// Resource tracking active timelines (multi-frame capture sequences).
@@ -173,6 +176,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                 max_width: screenshot.max_width,
                 debug_cleanup: cleanup,
                 ui_restore,
+                extra_response: screenshot.extra_response,
             });
         } else {
             // Normal path: spawn Screenshot entity immediately
@@ -201,11 +205,13 @@ pub fn process_pending_screenshots(world: &mut World) {
                         debug_cleanup: None,
                         ui_restore,
                         gizmo_restore,
+                        extra_response: screenshot.extra_response,
                     },
                 );
             } else {
                 // Headless fallback: read from HeadlessFrameProvider
                 let result = capture_headless_frame(world, screenshot.max_width);
+                let result = merge_extra_response(result, screenshot.extra_response);
                 let _ = screenshot.response_tx.send(result);
             }
         }
@@ -246,11 +252,13 @@ pub fn process_pending_screenshots(world: &mut World) {
                             debug_cleanup: Some(s.debug_cleanup),
                             ui_restore: s.ui_restore,
                             gizmo_restore,
+                            extra_response: s.extra_response,
                         },
                     );
                 } else {
                     // Headless fallback
                     let result = capture_headless_frame(world, s.max_width);
+                    let result = merge_extra_response(result, s.extra_response);
                     let _ = s.response_tx.send(result);
                 }
             }
@@ -612,6 +620,7 @@ pub fn screenshot_captured_observer(
 
     let img = trigger.image.clone();
     let result = encode_screenshot(img, responder.max_width);
+    let result = merge_extra_response(result, responder.extra_response);
     let _ = responder.response_tx.send(result);
 
     // Restore hidden UI nodes
@@ -763,6 +772,34 @@ fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Rgb<u8> {
 }
 
 /// Encode a Bevy Image as a base64 PNG string, optionally resizing.
+/// If `extra` is `Some`, merges its fields into the screenshot result alongside
+/// screenshot/screenshot_width/screenshot_height. On screenshot error, the extra
+/// fields are still returned with a null screenshot.
+fn merge_extra_response(
+    result: Result<serde_json::Value, ControlError>,
+    extra: Option<serde_json::Value>,
+) -> Result<serde_json::Value, ControlError> {
+    let Some(extra) = extra else {
+        return result;
+    };
+    let mut merged = match result {
+        Ok(sj) => serde_json::json!({
+            "screenshot": sj.get("image"),
+            "screenshot_width": sj.get("width"),
+            "screenshot_height": sj.get("height"),
+        }),
+        Err(_) => serde_json::json!({
+            "screenshot": null,
+        }),
+    };
+    if let (Some(base), serde_json::Value::Object(extra_map)) = (merged.as_object_mut(), extra) {
+        for (k, v) in extra_map {
+            base.insert(k, v);
+        }
+    }
+    Ok(merged)
+}
+
 fn encode_screenshot(
     img: bevy::image::Image,
     max_width: Option<u32>,
@@ -1192,6 +1229,7 @@ mod tests {
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
+                extra_response: None,
             }],
         });
         (world, rx)
@@ -1267,6 +1305,7 @@ mod tests {
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
+                extra_response: None,
             }],
         });
 
@@ -1301,6 +1340,7 @@ mod tests {
                     look_at: [0.0, 0.0, 0.0],
                 }),
                 hide_ui: false,
+                extra_response: None,
             }],
         });
 
@@ -1342,6 +1382,7 @@ mod tests {
                 max_width: None,
                 debug_cleanup: cleanup,
                 ui_restore: None,
+                extra_response: None,
             }],
         });
         // Need PendingScreenshots resource for the function to proceed
@@ -1639,6 +1680,36 @@ mod tests {
         let result = encode_screenshot(img, None).unwrap();
         assert_eq!(result["width"], 1);
         assert_eq!(result["height"], 1);
+    }
+
+    #[test]
+    fn merge_extra_response_none_passes_through() {
+        let result = Ok(serde_json::json!({"image": "abc", "width": 10, "height": 20}));
+        let merged = merge_extra_response(result, None).unwrap();
+        assert_eq!(merged["image"], "abc");
+        assert_eq!(merged["width"], 10);
+    }
+
+    #[test]
+    fn merge_extra_response_ok_merges_fields() {
+        let result = Ok(serde_json::json!({"image": "abc", "width": 10, "height": 20}));
+        let extra = Some(serde_json::json!({"depth_samples": {"hit_count": 3}, "custom": true}));
+        let merged = merge_extra_response(result, extra).unwrap();
+        assert_eq!(merged["screenshot"], "abc");
+        assert_eq!(merged["screenshot_width"], 10);
+        assert_eq!(merged["screenshot_height"], 20);
+        assert_eq!(merged["depth_samples"]["hit_count"], 3);
+        assert_eq!(merged["custom"], true);
+    }
+
+    #[test]
+    fn merge_extra_response_err_returns_extra_with_null_screenshot() {
+        let result = Err(ControlError::not_found("fail"));
+        let extra = Some(serde_json::json!({"reload": "ok", "entity_count": 42}));
+        let merged = merge_extra_response(result, extra).unwrap();
+        assert!(merged["screenshot"].is_null());
+        assert_eq!(merged["reload"], "ok");
+        assert_eq!(merged["entity_count"], 42);
     }
 
     #[test]

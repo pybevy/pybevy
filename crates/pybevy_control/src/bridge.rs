@@ -314,6 +314,10 @@ pub struct PendingScreenshot {
     pub max_width: Option<u32>,
     pub debug_camera: Option<DebugCameraRequest>,
     pub hide_ui: bool,
+    /// Extra JSON fields to merge into the screenshot response.
+    /// Used by `capture_depth` and `reload_and_capture` to avoid spawning
+    /// a thread for the merge.
+    pub extra_response: Option<serde_json::Value>,
 }
 
 /// Bevy resource for pending reload responses (deferred until reload completes)
@@ -433,6 +437,7 @@ fn handle_deferred_screenshot(request: ControlRequest, deferred: &mut Vec<Pendin
                 max_width,
                 debug_camera,
                 hide_ui,
+                extra_response: None,
             });
         }
         ControlOperation::Visual(VisualOp::CaptureWithGizmos {
@@ -453,6 +458,7 @@ fn handle_deferred_screenshot(request: ControlRequest, deferred: &mut Vec<Pendin
                 max_width,
                 debug_camera,
                 hide_ui,
+                extra_response: None,
             });
         }
         _ => unreachable!(),
@@ -673,35 +679,22 @@ fn handle_deferred_depth(
     });
 
     if want_rgb {
-        let (forward_tx, forward_rx) =
-            tokio::sync::oneshot::channel::<Result<serde_json::Value, ControlError>>();
-        let original_tx = request.response_tx;
-
-        std::thread::spawn(move || {
-            let screenshot_result = forward_rx.blocking_recv();
-            let response = match (screenshot_result, depth_result) {
-                (Ok(Ok(sj)), Ok(depth)) => Ok(serde_json::json!({
-                    "screenshot": sj.get("image"),
-                    "screenshot_width": sj.get("width"),
-                    "screenshot_height": sj.get("height"),
-                    "depth_samples": depth,
-                })),
-                (_, Ok(depth)) => Ok(serde_json::json!({
-                    "screenshot": null,
-                    "depth_samples": depth,
-                })),
-                (_, Err(e)) => Err(e),
-            };
-            let _ = original_tx.send(response);
-        });
+        let depth = match depth_result {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = request.response_tx.send(Err(e));
+                return;
+            }
+        };
 
         deferred.push(PendingScreenshot {
-            response_tx: forward_tx,
+            response_tx: request.response_tx,
             frames_remaining: df,
             with_gizmos: false,
             max_width: mw,
             debug_camera: dc,
             hide_ui: hu,
+            extra_response: Some(serde_json::json!({ "depth_samples": depth })),
         });
     } else {
         let result = depth_result.map(|depth| {

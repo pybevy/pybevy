@@ -1198,6 +1198,7 @@ fn setup_deferred_action(
                 max_width,
                 debug_camera,
                 hide_ui,
+                extra_response: None,
             });
             Ok(forward_rx)
         }
@@ -1463,35 +1464,23 @@ fn setup_deferred_action(
             });
 
             if want_rgb {
-                let (screenshot_tx, screenshot_rx) =
-                    oneshot::channel::<Result<serde_json::Value, ControlError>>();
-
-                std::thread::spawn(move || {
-                    let screenshot_result = screenshot_rx.blocking_recv();
-                    let response = match (screenshot_result, depth_result) {
-                        (Ok(Ok(sj)), Ok(depth)) => Ok(serde_json::json!({
-                            "screenshot": sj.get("image"),
-                            "screenshot_width": sj.get("width"),
-                            "screenshot_height": sj.get("height"),
-                            "depth_samples": depth,
-                        })),
-                        (_, Ok(depth)) => Ok(serde_json::json!({
-                            "screenshot": null,
-                            "depth_samples": depth,
-                        })),
-                        (_, Err(e)) => Err(e),
-                    };
-                    let _ = forward_tx.send(response);
-                });
+                let depth = match depth_result {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = forward_tx.send(Err(e));
+                        return Err(format!("Depth computation failed"));
+                    }
+                };
 
                 let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
                 pending.pending.push(PendingScreenshot {
-                    response_tx: screenshot_tx,
+                    response_tx: forward_tx,
                     frames_remaining: df,
                     with_gizmos: false,
                     max_width: mw,
                     debug_camera: dc,
                     hide_ui: hu,
+                    extra_response: Some(serde_json::json!({ "depth_samples": depth })),
                 });
             } else {
                 let result = depth_result.map(|depth| {
