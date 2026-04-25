@@ -1096,3 +1096,157 @@ impl PyQueryIter {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::{
+        change_detection::{ComponentTicks, Tick},
+        component::ComponentId,
+    };
+
+    use super::*;
+
+    /// Helper: build ComponentTicks with explicit added/changed ticks.
+    fn ticks(added: u32, changed: u32) -> ComponentTicks {
+        ComponentTicks {
+            added: Tick::new(added),
+            changed: Tick::new(changed),
+        }
+    }
+
+    #[test]
+    fn no_filters_always_passes() {
+        assert!(passes_tick_filters(
+            |_| None,
+            &[],
+            &[],
+            Tick::new(0),
+            Tick::new(1)
+        ));
+    }
+
+    #[test]
+    fn changed_filter_passes_when_changed_after_last_run() {
+        let id = ComponentId::new(0);
+        // changed tick 5 > last_run 3 - should pass
+        assert!(passes_tick_filters(
+            |_| Some(ticks(1, 5)),
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn changed_filter_fails_when_not_changed_since_last_run() {
+        let id = ComponentId::new(0);
+        // changed tick 2 <= last_run 3 - should fail
+        assert!(!passes_tick_filters(
+            |_| Some(ticks(1, 2)),
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn added_filter_passes_when_added_after_last_run() {
+        let id = ComponentId::new(0);
+        // added tick 5 > last_run 3 - should pass
+        assert!(passes_tick_filters(
+            |_| Some(ticks(5, 5)),
+            &[],
+            &[id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn added_filter_fails_when_not_added_since_last_run() {
+        let id = ComponentId::new(0);
+        // added tick 1 <= last_run 3 - should fail
+        assert!(!passes_tick_filters(
+            |_| Some(ticks(1, 5)),
+            &[],
+            &[id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn multiple_changed_all_pass() {
+        let ids = [ComponentId::new(0), ComponentId::new(1)];
+        // Both changed after last_run
+        let data = [ticks(1, 5), ticks(1, 4)];
+        assert!(passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &ids,
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn multiple_changed_one_stale_fails() {
+        let ids = [ComponentId::new(0), ComponentId::new(1)];
+        // id 0 changed at 5 (passes), id 1 changed at 2 (stale - fails)
+        let data = [ticks(1, 5), ticks(1, 2)];
+        assert!(!passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &ids,
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn missing_ticks_passes_filter() {
+        // Component not present in entity (None) - filter is skipped for that component
+        let id = ComponentId::new(0);
+        assert!(passes_tick_filters(
+            |_| None,
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn both_added_and_changed_must_pass() {
+        let changed_id = ComponentId::new(0);
+        let added_id = ComponentId::new(1);
+        // changed: tick 5 > last_run 3 - passes
+        // added: tick 5 > last_run 3 - passes
+        let data = [ticks(1, 5), ticks(5, 5)];
+        assert!(passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &[changed_id],
+            &[added_id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn changed_passes_but_added_fails() {
+        let changed_id = ComponentId::new(0);
+        let added_id = ComponentId::new(1);
+        // changed: tick 5 > last_run 3 - passes
+        // added: tick 1 <= last_run 3 - fails
+        let data = [ticks(1, 5), ticks(1, 5)];
+        assert!(!passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &[changed_id],
+            &[added_id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+}
