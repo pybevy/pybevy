@@ -5,7 +5,7 @@
 //! works unchanged for both query types.
 
 use bevy::ecs::{
-    change_detection::MutUntyped,
+    change_detection::{ComponentTicks, MutUntyped},
     component::ComponentId,
     entity::Entity,
     ptr::Ptr,
@@ -40,6 +40,15 @@ impl<'w, 's> FilteredEntityAccess<'w, 's> {
         match self {
             Self::Ref(r) => r.get_by_id(component_id),
             Self::Mut(m) => m.get_by_id(component_id),
+        }
+    }
+
+    /// Read-only access to component change ticks by ID. Available on both variants.
+    #[inline(always)]
+    pub fn get_change_ticks_by_id(&self, component_id: ComponentId) -> Option<ComponentTicks> {
+        match self {
+            Self::Ref(r) => r.get_change_ticks_by_id(component_id),
+            Self::Mut(m) => m.get_change_ticks_by_id(component_id),
         }
     }
 

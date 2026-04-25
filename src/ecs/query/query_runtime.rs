@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::HashMap, ptr::NonNull, sync::Arc};
 
 use bevy::{
     ecs::{
+        change_detection::{ComponentTicks, Tick},
         component::ComponentId,
         query::{QueryIter, QueryState},
         world::{FilteredEntityMut, FilteredEntityRef},
@@ -286,6 +287,15 @@ pub struct PyQueryIter {
             ),
         >,
     >,
+
+    /// ComponentIds for Changed[T] tick filters - entities must pass per-entity tick check.
+    changed_filter_ids: Vec<ComponentId>,
+    /// ComponentIds for Added[T] tick filters - entities must pass per-entity tick check.
+    added_filter_ids: Vec<ComponentId>,
+    /// System's last_run tick (from DynamicSystem::get_last_run()).
+    last_run: Tick,
+    /// Current world change tick (captured during new()).
+    this_run: Tick,
 }
 
 // SAFETY: PyQueryIter is only used during system execution on a single thread.
@@ -303,6 +313,7 @@ impl PyQueryIter {
         world: &mut World,
         custom_component_ids: Arc<HashMap<*const PyTypeObject, ComponentId>>,
         validity: ValidityFlag,
+        last_run: Tick,
     ) -> Self {
         // First, collect and register all component IDs (tracking optional and mutable status)
         let mut component_ids = Vec::new();
@@ -372,6 +383,11 @@ impl PyQueryIter {
                 }
             }
         }
+
+        // Retain filter IDs for per-entity tick checking (they get moved into QueryBuildSpec)
+        let tick_changed_ids = changed_filter_ids.clone();
+        let tick_added_ids = added_filter_ids.clone();
+        let this_run = world.change_tick();
 
         // Build the QueryState once
         let spec = QueryBuildSpec {
@@ -475,6 +491,10 @@ impl PyQueryIter {
             extract_fns,
             iterating: false,
             layout_cache: RefCell::new(HashMap::new()),
+            changed_filter_ids: tick_changed_ids,
+            added_filter_ids: tick_added_ids,
+            last_run,
+            this_run,
         }
     }
 
@@ -677,7 +697,63 @@ impl PyQueryIter {
 
         Ok(())
     }
+
+    /// Returns true if the entity passes all Added/Changed tick filters.
+    /// Fast path: returns true immediately when no tick filters exist.
+    #[inline]
+    fn entity_passes_tick_filters(&self, entity: &FilteredEntityAccess) -> bool {
+        passes_tick_filters(
+            |id| entity.get_change_ticks_by_id(id),
+            &self.changed_filter_ids,
+            &self.added_filter_ids,
+            self.last_run,
+            self.this_run,
+        )
+    }
+
+    /// Returns true if there are any tick filters (Added/Changed) on this query.
+    #[inline]
+    fn has_tick_filters(&self) -> bool {
+        !self.changed_filter_ids.is_empty() || !self.added_filter_ids.is_empty()
+    }
 }
+
+/// Check whether an entity passes Added/Changed tick filters.
+///
+/// Generic over the entity type via a closure that provides `get_change_ticks_by_id`.
+/// Used by both `FilteredEntityAccess` (for __next__/get/single/iter_many) and
+/// raw `FilteredEntityRef`/`FilteredEntityMut` (for __len__/is_empty via iter_manual).
+#[inline]
+fn passes_tick_filters(
+    get_ticks: impl Fn(ComponentId) -> Option<ComponentTicks>,
+    changed_ids: &[ComponentId],
+    added_ids: &[ComponentId],
+    last_run: Tick,
+    this_run: Tick,
+) -> bool {
+    if changed_ids.is_empty() && added_ids.is_empty() {
+        return true;
+    }
+
+    for &id in changed_ids {
+        if let Some(ticks) = get_ticks(id) {
+            if !ticks.is_changed(last_run, this_run) {
+                return false;
+            }
+        }
+    }
+
+    for &id in added_ids {
+        if let Some(ticks) = get_ticks(id) {
+            if !ticks.is_added(last_run, this_run) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 #[pymethods]
 impl PyQueryIter {
     /// Makes this object iterable.
@@ -715,13 +791,25 @@ impl PyQueryIter {
             self.query_iter = Some(unsafe { erased_create_iter(read_only, qs_ptr, world_ptr) });
         }
 
-        // Advance iterator — get raw pointer to avoid borrow conflict with self
+        // Advance iterator — get raw pointer to avoid borrow conflict with self.
+        // Loop to skip entities that don't pass Added/Changed tick filters.
         let iter_ref = self.query_iter.as_mut().unwrap() as *mut ErasedQueryIter;
         // SAFETY: iter_ref is valid; we don't access self.query_iter again until
         // entity_access is dropped (after extract_components_from_entity).
-        let next_entity = unsafe { (*iter_ref).next() };
+        let entity_access = loop {
+            let next = unsafe { (*iter_ref).next() };
+            match next {
+                Some(access) => {
+                    if self.entity_passes_tick_filters(&access) {
+                        break Some(access);
+                    }
+                    // Entity doesn't pass tick filters, skip to next
+                }
+                None => break None,
+            }
+        };
 
-        if let Some(mut entity_access) = next_entity {
+        if let Some(mut entity_access) = entity_access {
             // Extract components using the shared helper
             self.extract_components_from_entity(&mut entity_access, py)?;
 
@@ -749,7 +837,45 @@ impl PyQueryIter {
             Some(ptr) => unsafe { ptr.as_ref() },
             None => return 0,
         };
-        self.query_state.count(world)
+
+        if !self.has_tick_filters() {
+            return self.query_state.count(world);
+        }
+
+        // Count with tick filtering using iter_manual (&World - safe with &self)
+        let (read_only, qs_ptr) = self.query_state.parts();
+        let changed = &self.changed_filter_ids;
+        let added = &self.added_filter_ids;
+        let (lr, tr) = (self.last_run, self.this_run);
+        unsafe {
+            if read_only {
+                let qs = &*(qs_ptr as *const QueryState<FilteredEntityRef>);
+                qs.iter_manual(world)
+                    .filter(|e| {
+                        passes_tick_filters(
+                            |id| e.get_change_ticks_by_id(id),
+                            changed,
+                            added,
+                            lr,
+                            tr,
+                        )
+                    })
+                    .count()
+            } else {
+                let qs = &*(qs_ptr as *const QueryState<FilteredEntityMut>);
+                qs.iter_manual(world)
+                    .filter(|e| {
+                        passes_tick_filters(
+                            |id| e.get_change_ticks_by_id(id),
+                            changed,
+                            added,
+                            lr,
+                            tr,
+                        )
+                    })
+                    .count()
+            }
+        }
     }
 
     /// Get exactly one entity from the query.
@@ -759,14 +885,36 @@ impl PyQueryIter {
         let (read_only, qs_ptr) = self.query_state.parts();
 
         // Validate exactly one entity exists and get it for extraction.
+        // Loop through entities to find those passing tick filters.
         // SAFETY: world_ptr and qs_ptr are valid during system execution.
         // We use raw pointer casts to avoid holding borrows across extraction.
         let mut entity_access: FilteredEntityAccess = unsafe {
             if read_only {
                 let qs = &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>);
                 let mut iter = qs.iter(world_ptr.as_ref());
-                let first = iter.next();
-                let has_second = iter.next().is_some();
+                // Find first entity passing tick filters
+                let first = loop {
+                    match iter.next() {
+                        Some(e) => {
+                            let access = FilteredEntityAccess::Ref(e);
+                            if self.entity_passes_tick_filters(&access) {
+                                break Some(access);
+                            }
+                        }
+                        None => break None,
+                    }
+                };
+                // Check for second passing entity
+                let has_second = loop {
+                    match iter.next() {
+                        Some(e) => {
+                            if self.entity_passes_tick_filters(&FilteredEntityAccess::Ref(e)) {
+                                break true;
+                            }
+                        }
+                        None => break false,
+                    }
+                };
                 match (first, has_second) {
                     (None, _) => {
                         return Err(PyRuntimeError::new_err(
@@ -778,13 +926,34 @@ impl PyQueryIter {
                             "Query returned multiple entities. Expected exactly one.",
                         ));
                     }
-                    (Some(e), false) => FilteredEntityAccess::Ref(e),
+                    (Some(e), false) => e,
                 }
             } else {
                 let qs = &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>);
                 let mut iter = qs.iter_mut(world_ptr.as_mut());
-                let first = iter.next();
-                let has_second = iter.next().is_some();
+                // Find first entity passing tick filters
+                let first = loop {
+                    match iter.next() {
+                        Some(e) => {
+                            let access = FilteredEntityAccess::Mut(e);
+                            if self.entity_passes_tick_filters(&access) {
+                                break Some(access);
+                            }
+                        }
+                        None => break None,
+                    }
+                };
+                // Check for second passing entity
+                let has_second = loop {
+                    match iter.next() {
+                        Some(e) => {
+                            if self.entity_passes_tick_filters(&FilteredEntityAccess::Mut(e)) {
+                                break true;
+                            }
+                        }
+                        None => break false,
+                    }
+                };
                 match (first, has_second) {
                     (None, _) => {
                         return Err(PyRuntimeError::new_err(
@@ -796,7 +965,7 @@ impl PyQueryIter {
                             "Query returned multiple entities. Expected exactly one.",
                         ));
                     }
-                    (Some(e), false) => FilteredEntityAccess::Mut(e),
+                    (Some(e), false) => e,
                 }
             }
         };
@@ -822,12 +991,32 @@ impl PyQueryIter {
                 .as_ref()
         };
 
-        let last_tick = world.last_change_tick();
-        let current_tick = world.read_change_tick();
+        if !self.has_tick_filters() {
+            let last_tick = world.last_change_tick();
+            let current_tick = world.read_change_tick();
+            return Ok(self
+                .query_state
+                .is_empty_check(world, last_tick, current_tick));
+        }
 
-        Ok(self
-            .query_state
-            .is_empty_check(world, last_tick, current_tick))
+        // Check with tick filtering using iter_manual (&World - safe with &self)
+        let (read_only, qs_ptr) = self.query_state.parts();
+        let changed = &self.changed_filter_ids;
+        let added = &self.added_filter_ids;
+        let (lr, tr) = (self.last_run, self.this_run);
+        unsafe {
+            Ok(if read_only {
+                let qs = &*(qs_ptr as *const QueryState<FilteredEntityRef>);
+                !qs.iter_manual(world).any(|e| {
+                    passes_tick_filters(|id| e.get_change_ticks_by_id(id), changed, added, lr, tr)
+                })
+            } else {
+                let qs = &*(qs_ptr as *const QueryState<FilteredEntityMut>);
+                !qs.iter_manual(world).any(|e| {
+                    passes_tick_filters(|id| e.get_change_ticks_by_id(id), changed, added, lr, tr)
+                })
+            })
+        }
     }
 
     /// Get components for a specific entity by ID.
@@ -841,6 +1030,11 @@ impl PyQueryIter {
 
         match result {
             Some(mut entity_access) => {
+                // Check tick filters before extracting
+                if !self.entity_passes_tick_filters(&entity_access) {
+                    return Ok(None);
+                }
+
                 self.extract_components_from_entity(&mut entity_access, py)?;
 
                 if self.param.single {
@@ -883,6 +1077,10 @@ impl PyQueryIter {
             if let Some(mut access) =
                 unsafe { erased_get_entity(read_only, qs_ptr, world_ptr, entity_id.0) }
             {
+                // Check tick filters before extracting
+                if !self.entity_passes_tick_filters(&access) {
+                    continue;
+                }
                 self.extract_components_from_entity(&mut access, py)?;
                 let result = if self.param.single {
                     self.values_buffer[0].clone_ref(py)
@@ -896,5 +1094,159 @@ impl PyQueryIter {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::{
+        change_detection::{ComponentTicks, Tick},
+        component::ComponentId,
+    };
+
+    use super::*;
+
+    /// Helper: build ComponentTicks with explicit added/changed ticks.
+    fn ticks(added: u32, changed: u32) -> ComponentTicks {
+        ComponentTicks {
+            added: Tick::new(added),
+            changed: Tick::new(changed),
+        }
+    }
+
+    #[test]
+    fn no_filters_always_passes() {
+        assert!(passes_tick_filters(
+            |_| None,
+            &[],
+            &[],
+            Tick::new(0),
+            Tick::new(1)
+        ));
+    }
+
+    #[test]
+    fn changed_filter_passes_when_changed_after_last_run() {
+        let id = ComponentId::new(0);
+        // changed tick 5 > last_run 3 - should pass
+        assert!(passes_tick_filters(
+            |_| Some(ticks(1, 5)),
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn changed_filter_fails_when_not_changed_since_last_run() {
+        let id = ComponentId::new(0);
+        // changed tick 2 <= last_run 3 - should fail
+        assert!(!passes_tick_filters(
+            |_| Some(ticks(1, 2)),
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn added_filter_passes_when_added_after_last_run() {
+        let id = ComponentId::new(0);
+        // added tick 5 > last_run 3 - should pass
+        assert!(passes_tick_filters(
+            |_| Some(ticks(5, 5)),
+            &[],
+            &[id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn added_filter_fails_when_not_added_since_last_run() {
+        let id = ComponentId::new(0);
+        // added tick 1 <= last_run 3 - should fail
+        assert!(!passes_tick_filters(
+            |_| Some(ticks(1, 5)),
+            &[],
+            &[id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn multiple_changed_all_pass() {
+        let ids = [ComponentId::new(0), ComponentId::new(1)];
+        // Both changed after last_run
+        let data = [ticks(1, 5), ticks(1, 4)];
+        assert!(passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &ids,
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn multiple_changed_one_stale_fails() {
+        let ids = [ComponentId::new(0), ComponentId::new(1)];
+        // id 0 changed at 5 (passes), id 1 changed at 2 (stale - fails)
+        let data = [ticks(1, 5), ticks(1, 2)];
+        assert!(!passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &ids,
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn missing_ticks_passes_filter() {
+        // Component not present in entity (None) - filter is skipped for that component
+        let id = ComponentId::new(0);
+        assert!(passes_tick_filters(
+            |_| None,
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn both_added_and_changed_must_pass() {
+        let changed_id = ComponentId::new(0);
+        let added_id = ComponentId::new(1);
+        // changed: tick 5 > last_run 3 - passes
+        // added: tick 5 > last_run 3 - passes
+        let data = [ticks(1, 5), ticks(5, 5)];
+        assert!(passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &[changed_id],
+            &[added_id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn changed_passes_but_added_fails() {
+        let changed_id = ComponentId::new(0);
+        let added_id = ComponentId::new(1);
+        // changed: tick 5 > last_run 3 - passes
+        // added: tick 1 <= last_run 3 - fails
+        let data = [ticks(1, 5), ticks(1, 5)];
+        assert!(!passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &[changed_id],
+            &[added_id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
     }
 }
