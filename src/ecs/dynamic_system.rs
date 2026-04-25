@@ -607,6 +607,7 @@ impl System for DynamicSystem {
                                     world_mut,
                                     Arc::new(self.custom_component_ids.clone()),
                                     validity.clone(),
+                                    self.get_last_run(),
                                 )
                             };
 
@@ -621,6 +622,7 @@ impl System for DynamicSystem {
                                     world_mut,
                                     Arc::new(self.custom_component_ids.clone()),
                                     validity.clone(),
+                                    self.get_last_run(),
                                 )
                             };
 
@@ -1393,6 +1395,7 @@ pub(crate) fn execute_system_func(
                             world,
                             custom_component_ids.clone(),
                             validity.clone(),
+                            Tick::new(0), // No prior run for observers
                         )
                     };
                     let obj = Py::new(py, single_query).expect("Failed to create PySingleQuery");
@@ -1404,6 +1407,7 @@ pub(crate) fn execute_system_func(
                             world,
                             custom_component_ids.clone(),
                             validity.clone(),
+                            Tick::new(0), // No prior run for observers
                         )
                     };
                     let obj = Py::new(py, query_runtime).expect("Failed to create PyQueryIter");

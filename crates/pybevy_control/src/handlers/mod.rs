@@ -207,8 +207,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::bridge::ErrorCode;
-    use crate::{bridge::EntityRef, runtime_pyo3::Pyo3ControlRuntime};
+    use crate::{
+        bridge::{EntityRef, ErrorCode},
+        runtime_pyo3::Pyo3ControlRuntime,
+    };
 
     fn runtime() -> Pyo3ControlRuntime {
         Pyo3ControlRuntime

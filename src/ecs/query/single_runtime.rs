@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use bevy::ecs::component::ComponentId;
+use bevy::ecs::{change_detection::Tick, component::ComponentId};
 use pyo3::{exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*};
 
 use crate::ecs::{
@@ -32,9 +32,11 @@ impl PySingleQuery {
         world: &mut bevy::prelude::World,
         custom_component_ids: Arc<HashMap<*const PyTypeObject, ComponentId>>,
         validity: ValidityFlag,
+        last_run: Tick,
     ) -> Self {
         // SAFETY: Caller guarantees world pointer is valid during system execution
-        let query_iter = unsafe { PyQueryIter::new(param, world, custom_component_ids, validity) };
+        let query_iter =
+            unsafe { PyQueryIter::new(param, world, custom_component_ids, validity, last_run) };
 
         Python::attach(|py| {
             let query_iter_py = Py::new(py, query_iter).expect("Failed to create PyQueryIter");
