@@ -1,13 +1,13 @@
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use bevy::{
     app::Startup,
-    ecs::{entity::Entity, query::With, schedule::Schedules, world::World},
+    ecs::{entity::Entity, schedule::Schedules, world::World},
     time::{Real, Time},
 };
 
 use crate::{
-    HotReloadable,
+    BaseEntitySet,
     cleanup::{NativeResourceSnapshot, clear_world_state},
     profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
     runtime::{ReloadError, ReloadRuntime},
@@ -108,6 +108,16 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     if !world.contains_resource::<NativeResourceSnapshot>() {
         let initial = runtime.snapshot_native_resources(world);
         world.insert_resource(NativeResourceSnapshot { initial });
+    }
+
+    // NOTE: BaseEntitySet is captured in add_hot_reload_system() (bindings.rs),
+    // before any user Startup systems run. If it's missing here (e.g., in unit
+    // tests that bypass the full init path), fall back to an empty set so that
+    // all entities are eligible for despawn.
+    if !world.contains_resource::<BaseEntitySet>() {
+        world.insert_resource(BaseEntitySet {
+            entities: HashSet::new(),
+        });
     }
 
     if mode == ReloadMode::Full {
@@ -244,11 +254,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         .map(|e| (e.timestamp_secs, e.error.is_some()))
         .unwrap_or((0.0, false));
 
-    // Snapshot entities before Startup so we can clean up on failure
-    // (both panic and Python exception paths need this).
+    // Snapshot ALL entities before Startup so we can clean up on failure.
+    // Uses all entities (not just HotReloadable) to also catch Bevy
+    // side-effect entities spawned during a failed Startup.
     let pre_startup_entities: std::collections::HashSet<Entity> = if mode == ReloadMode::Full {
-        let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
-        query.iter(world).collect()
+        world.query::<Entity>().iter(world).collect()
     } else {
         std::collections::HashSet::new()
     };
@@ -280,8 +290,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 );
 
                 {
-                    let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
-                    let post_entities: Vec<Entity> = query.iter(world).collect();
+                    let post_entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
                     let mut cleaned = 0;
                     for entity in post_entities {
                         if !pre_startup_entities.contains(&entity)
@@ -362,8 +371,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         // the panic path) so we don't leave orphaned render targets,
         // cameras, or other partially-created scene objects.
         {
-            let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
-            let post_entities: Vec<Entity> = query.iter(world).collect();
+            let post_entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
             let mut cleaned = 0;
             for entity in post_entities {
                 if !pre_startup_entities.contains(&entity) && world.get_entity(entity).is_ok() {
@@ -479,7 +487,11 @@ pub trait HotReloadStateAccess {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, cell::Cell, collections::HashSet, sync::Arc};
+    use std::{
+        any::TypeId,
+        collections::HashSet,
+        sync::{Arc, atomic::Ordering},
+    };
 
     use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};
 
@@ -488,6 +500,79 @@ mod tests {
         profiling::{MemoryProfile, SystemProfiler},
         runtime::{ReloadError, ReloadRuntime},
     };
+
+    /// Minimal mock runtime that succeeds immediately with no systems.
+    struct MockRuntime;
+
+    impl ReloadRuntime for MockRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+            None
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            _world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
 
     /// Mock runtime that injects a Startup system which writes to
     /// `LastSystemError` - simulating a Python exception (not a panic)
@@ -586,33 +671,33 @@ mod tests {
     }
 
     struct MockState {
-        generation: Cell<u32>,
+        generation: Arc<std::sync::atomic::AtomicU32>,
     }
 
     impl MockState {
-        fn new() -> Self {
+        fn new(counter: Arc<std::sync::atomic::AtomicU32>) -> Self {
             Self {
-                generation: Cell::new(0),
+                generation: counter,
             }
         }
     }
 
     impl HotReloadStateAccess for MockState {
         fn current_generation(&self) -> u32 {
-            self.generation.get()
+            self.generation.load(Ordering::SeqCst)
         }
         fn increment_generation(&self) {
-            self.generation.set(self.generation.get() + 1);
+            self.generation.fetch_add(1, Ordering::SeqCst);
         }
         fn set_generation(&self, g: u32) {
-            self.generation.set(g);
+            self.generation.store(g, Ordering::SeqCst);
         }
     }
 
-    fn setup_world() -> World {
+    fn setup_world() -> (World, Arc<std::sync::atomic::AtomicU32>) {
         let mut world = World::new();
         let gen_counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        world.insert_resource(HotReloadGeneration::new(gen_counter));
+        world.insert_resource(HotReloadGeneration::new(gen_counter.clone()));
         world.insert_resource(MemoryProfile::default());
         world.insert_resource(SystemProfiler::new(60));
         world.insert_resource(PluginTracker::default());
@@ -621,7 +706,7 @@ mod tests {
         schedules.insert(Schedule::new(Startup));
         world.insert_resource(schedules);
 
-        world
+        (world, gen_counter)
     }
 
     /// A Python exception (not a panic) in a Startup system must trigger
@@ -629,8 +714,8 @@ mod tests {
     /// generation don't keep running.
     #[test]
     fn startup_exception_rolls_back_generation() {
-        let mut world = setup_world();
-        let state = MockState::new();
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
         assert_eq!(state.current_generation(), 0);
 
         let result = perform_reload(
@@ -664,6 +749,39 @@ mod tests {
         assert!(
             reload_result.running_previous_generation,
             "should be running previous generation"
+        );
+    }
+
+    /// After a failed reload, the next successful reload must run Startup.
+    #[test]
+    fn reload_after_failure_runs_startup() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+
+        // Step 1: successful reload (gen 0 -> 1)
+        let result = perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state);
+        assert!(result.is_ok(), "first reload should succeed");
+        assert_eq!(state.current_generation(), 1);
+
+        // Step 2: failing reload (gen 1 -> 2, rolled back to 1)
+        let result = perform_reload(
+            &mut world,
+            &mut StartupErrorRuntime,
+            ReloadMode::Full,
+            &state,
+        );
+        assert!(result.is_err(), "second reload should fail");
+        assert_eq!(state.current_generation(), 1);
+
+        // Step 3: successful reload (gen 1 -> 2 again) - must run Startup
+        let result = perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state);
+        assert!(result.is_ok(), "third reload should succeed");
+        assert_eq!(state.current_generation(), 2);
+
+        let gen_res = world.resource::<HotReloadGeneration>();
+        assert!(
+            gen_res.has_startup_run(2),
+            "Startup should have run for generation 2"
         );
     }
 }
