@@ -396,9 +396,15 @@ pub fn add_hot_reload_system(
     // Capture base entity set NOW — before any user Startup systems run.
     // Every entity that exists at this point is Bevy-internal (plugin init).
     // On Full reload, everything NOT in this set gets despawned.
-    if !app.world().contains_resource::<pybevy_reload::BaseEntitySet>() {
-        let entities: std::collections::HashSet<bevy::ecs::entity::Entity> =
-            app.world_mut().query::<bevy::ecs::entity::Entity>().iter(app.world()).collect();
+    if !app
+        .world()
+        .contains_resource::<pybevy_reload::BaseEntitySet>()
+    {
+        let entities: std::collections::HashSet<bevy::ecs::entity::Entity> = app
+            .world_mut()
+            .query::<bevy::ecs::entity::Entity>()
+            .iter(app.world())
+            .collect();
         if verbose {
             eprintln!(
                 "   → Captured BaseEntitySet with {} entities",

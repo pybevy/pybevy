@@ -290,8 +290,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 );
 
                 {
-                    let post_entities: Vec<Entity> =
-                        world.query::<Entity>().iter(world).collect();
+                    let post_entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
                     let mut cleaned = 0;
                     for entity in post_entities {
                         if !pre_startup_entities.contains(&entity)
@@ -372,8 +371,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         // the panic path) so we don't leave orphaned render targets,
         // cameras, or other partially-created scene objects.
         {
-            let post_entities: Vec<Entity> =
-                world.query::<Entity>().iter(world).collect();
+            let post_entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
             let mut cleaned = 0;
             for entity in post_entities {
                 if !pre_startup_entities.contains(&entity) && world.get_entity(entity).is_ok() {
@@ -492,10 +490,7 @@ mod tests {
     use std::{
         any::TypeId,
         collections::HashSet,
-        sync::{
-            Arc,
-            atomic::Ordering,
-        },
+        sync::{Arc, atomic::Ordering},
     };
 
     use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};

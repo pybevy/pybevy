@@ -47,7 +47,11 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
     );
 
     if verbose {
-        eprintln!("   → Despawning {} entities ({} base preserved)", to_despawn.len(), base.len());
+        eprintln!(
+            "   → Despawning {} entities ({} base preserved)",
+            to_despawn.len(),
+            base.len()
+        );
     }
 
     for entity in to_despawn {
