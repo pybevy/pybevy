@@ -1,9 +1,22 @@
+use std::{any::TypeId, collections::HashSet};
+
 use bevy::{
     ecs::{entity::Entity, query::With, world::World},
+    prelude::Resource,
     time::{Time, Virtual},
 };
 
 use crate::{HotReloadable, runtime::ReloadRuntime};
+
+/// Snapshot of which bridged native resources existed before any user code ran.
+///
+/// Captured once (before the first reload) and persists across reloads.
+/// Used to distinguish Bevy-plugin resources (reset to default) from
+/// user-inserted resources (remove entirely) during Full reload.
+#[derive(Resource, Default)]
+pub struct NativeResourceSnapshot {
+    pub initial: HashSet<TypeId>,
+}
 
 /// Clear all user-spawned entities, programmatic assets, and custom resources.
 /// Used by both the Full reload path and escalation from Partial to Full.
@@ -34,6 +47,12 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         eprintln!("   → Clearing custom resources");
     }
     runtime.clear_custom_resources(world, verbose);
+
+    // Reset/remove native bridged resources based on initial snapshot
+    if let Some(snapshot) = world.get_resource::<NativeResourceSnapshot>() {
+        let initial = snapshot.initial.clone();
+        runtime.clear_native_resources(world, &initial, verbose);
+    }
 
     // Reset game time so elapsed_secs() starts from zero after full reload.
     if world.get_resource::<Time<Virtual>>().is_some() {
@@ -110,6 +129,16 @@ mod tests {
         fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
         fn prune_messages(&mut self, _world: &mut World, _keep_after: u32) {}
         fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
         fn detect_system_delta(
             &mut self,
             _world: &mut World,
@@ -334,5 +363,200 @@ mod tests {
 
         // NOT cleaned up - no bridge registered for this type
         assert_eq!(live_count::<UnregisteredAsset>(&world), 1);
+    }
+
+    /// Resource that simulates a Bevy-plugin default (present at snapshot time).
+    #[derive(Resource, Default, Debug, PartialEq)]
+    struct PluginRes(u32);
+
+    /// Resource that simulates a user-only insertion (not present at snapshot time).
+    #[derive(Resource, Default, Debug, PartialEq)]
+    struct UserOnlyRes(u32);
+
+    /// Runtime that implements native resource reset for test resources.
+    struct NativeResetRuntime;
+
+    impl ReloadRuntime for NativeResetRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+            None
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> std::collections::HashSet<String> {
+            std::collections::HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            _world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _keep_after: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, world: &World) -> HashSet<TypeId> {
+            let mut initial = HashSet::new();
+            if world.contains_resource::<PluginRes>() {
+                initial.insert(TypeId::of::<PluginRes>());
+            }
+            if world.contains_resource::<UserOnlyRes>() {
+                initial.insert(TypeId::of::<UserOnlyRes>());
+            }
+            initial
+        }
+        fn clear_native_resources(
+            &self,
+            world: &mut World,
+            initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+            // PluginRes
+            if initial.contains(&TypeId::of::<PluginRes>()) {
+                world.insert_resource(PluginRes::default());
+            } else if world.contains_resource::<PluginRes>() {
+                world.remove_resource::<PluginRes>();
+            }
+            // UserOnlyRes
+            if initial.contains(&TypeId::of::<UserOnlyRes>()) {
+                world.insert_resource(UserOnlyRes::default());
+            } else if world.contains_resource::<UserOnlyRes>() {
+                world.remove_resource::<UserOnlyRes>();
+            }
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: std::collections::HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    #[test]
+    fn native_resource_reset_to_default_on_full_reload() {
+        let mut world = World::new();
+
+        // PluginRes is present at snapshot time (simulates Bevy-plugin default)
+        world.insert_resource(PluginRes(42));
+
+        // Take snapshot
+        let runtime = NativeResetRuntime;
+        let initial = runtime.snapshot_native_resources(&world);
+        world.insert_resource(NativeResourceSnapshot { initial });
+
+        // User code modifies PluginRes and adds UserOnlyRes
+        world.insert_resource(PluginRes(999));
+        world.insert_resource(UserOnlyRes(123));
+
+        // Full reload cleanup
+        let mut runtime = NativeResetRuntime;
+        clear_world_state(&mut world, &mut runtime, false);
+
+        // PluginRes should be reset to default (0), not 999
+        assert_eq!(
+            world.resource::<PluginRes>().0,
+            0,
+            "Initial resource should be reset to T::default()"
+        );
+
+        // UserOnlyRes should be removed entirely
+        assert!(
+            !world.contains_resource::<UserOnlyRes>(),
+            "User-only resource should be removed on reload"
+        );
+    }
+
+    #[test]
+    fn native_resource_removed_by_user_is_reinserted_on_reload() {
+        let mut world = World::new();
+
+        // PluginRes present at snapshot time
+        world.insert_resource(PluginRes(42));
+
+        let runtime = NativeResetRuntime;
+        let initial = runtime.snapshot_native_resources(&world);
+        world.insert_resource(NativeResourceSnapshot { initial });
+
+        // User code removes the Bevy-plugin resource
+        world.remove_resource::<PluginRes>();
+        assert!(!world.contains_resource::<PluginRes>());
+
+        // Full reload cleanup should re-insert the default
+        let mut runtime = NativeResetRuntime;
+        clear_world_state(&mut world, &mut runtime, false);
+
+        assert!(
+            world.contains_resource::<PluginRes>(),
+            "Removed initial resource should be re-inserted with default"
+        );
+        assert_eq!(world.resource::<PluginRes>().0, 0);
+    }
+
+    #[test]
+    fn snapshot_only_contains_resources_present_at_capture_time() {
+        let mut world = World::new();
+
+        // Only PluginRes exists at snapshot time
+        world.insert_resource(PluginRes(1));
+
+        let runtime = NativeResetRuntime;
+        let initial = runtime.snapshot_native_resources(&world);
+
+        assert!(initial.contains(&TypeId::of::<PluginRes>()));
+        assert!(
+            !initial.contains(&TypeId::of::<UserOnlyRes>()),
+            "Resources not present at snapshot time should not be in initial set"
+        );
+    }
+
+    #[test]
+    fn no_native_reset_without_snapshot() {
+        let mut world = World::new();
+
+        // Insert resources but don't create a snapshot
+        world.insert_resource(PluginRes(42));
+        world.insert_resource(UserOnlyRes(99));
+
+        // clear_world_state without snapshot should not touch native resources
+        let mut runtime = NativeResetRuntime;
+        clear_world_state(&mut world, &mut runtime, false);
+
+        // Both resources should be untouched (no snapshot = empty initial set)
+        assert_eq!(world.resource::<PluginRes>().0, 42);
+        assert_eq!(world.resource::<UserOnlyRes>().0, 99);
     }
 }

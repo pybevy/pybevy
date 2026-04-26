@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 use crate::font_atlas::{PyFontAtlas, PyFontAtlasKey};
 
-#[pyresource(FontAtlasSet, no_clone, bridge, no_mut, no_insert)]
+#[pyresource(FontAtlasSet, no_clone, bridge, no_mut, no_insert, no_default)]
 #[pyclass(name = "FontAtlasSet", extends = pybevy_core::PyResource)]
 pub struct PyFontAtlasSet {
     pub(crate) storage: ResourceStorage<FontAtlasSet>,

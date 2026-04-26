@@ -8,7 +8,7 @@ use bevy::{
 
 use crate::{
     HotReloadable,
-    cleanup::clear_world_state,
+    cleanup::{NativeResourceSnapshot, clear_world_state},
     profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
     runtime::{ReloadError, ReloadRuntime},
     state::{HotReloadGeneration, ReloadMode},
@@ -101,6 +101,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     if let Some(profiler) = world.get_resource::<SystemProfiler>() {
         profiler.clear();
+    }
+
+    // Capture initial native resource state before first reload clears anything.
+    // This records which bridged resources are Bevy-plugin defaults vs user-inserted.
+    if !world.contains_resource::<NativeResourceSnapshot>() {
+        let initial = runtime.snapshot_native_resources(world);
+        world.insert_resource(NativeResourceSnapshot { initial });
     }
 
     if mode == ReloadMode::Full {
@@ -228,21 +235,29 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     let system_handles = runtime.register_systems(world, defs, new_generation)?;
 
     // Run Startup with rollback on panic
-    let pre_startup_error_ts = world
+    // Snapshot pre-Startup error state: both the timestamp and whether an
+    // error was already present.  We need both because on the first reload
+    // Time hasn't ticked yet, so timestamp is 0.0 for both pre and post,
+    // making a pure timestamp comparison fail.
+    let (pre_startup_error_ts, pre_startup_had_error) = world
         .get_resource::<pybevy_core::LastSystemError>()
-        .map(|e| e.timestamp_secs)
-        .unwrap_or(0.0);
+        .map(|e| (e.timestamp_secs, e.error.is_some()))
+        .unwrap_or((0.0, false));
+
+    // Snapshot entities before Startup so we can clean up on failure
+    // (both panic and Python exception paths need this).
+    let pre_startup_entities: std::collections::HashSet<Entity> = if mode == ReloadMode::Full {
+        let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
+        query.iter(world).collect()
+    } else {
+        std::collections::HashSet::new()
+    };
 
     if mode == ReloadMode::Full {
         if world.resource::<Schedules>().contains(Startup) {
             if is_verbose() {
                 eprintln!("   → Running Startup schedule");
             }
-
-            let pre_startup_entities: std::collections::HashSet<Entity> = {
-                let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
-                query.iter(world).collect()
-            };
 
             let startup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 world.run_schedule(Startup);
@@ -290,9 +305,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                     gen_res.current = old_generation;
                 }
                 {
+                    // Remove new_generation (not old_generation) since
+                    // mark_startup_run() inserted new_generation into the set.
+                    // If we leave it, the next reload that reuses this
+                    // generation number will skip Startup entirely.
                     let gen_res = world.resource::<HotReloadGeneration>();
                     if let Ok(mut set) = gen_res.startup_run_for_generations.lock() {
-                        set.remove(&old_generation);
+                        set.remove(&new_generation);
                     }
                 }
 
@@ -319,7 +338,72 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     let startup_had_error = world
         .get_resource::<pybevy_core::LastSystemError>()
-        .is_some_and(|e| e.error.is_some() && e.timestamp_secs > pre_startup_error_ts);
+        .is_some_and(|e| {
+            e.error.is_some() && (e.timestamp_secs > pre_startup_error_ts || !pre_startup_had_error)
+        });
+
+    // If a Startup system raised a Python exception (not a panic), apply
+    // the same generation rollback so Update systems from the broken
+    // generation don't keep running.  Without this, the new-generation
+    // Update systems execute every frame even though their Startup failed
+    // to set up the entities/resources they depend on.
+    if startup_had_error && mode == ReloadMode::Full {
+        let error_msg = world
+            .get_resource::<pybevy_core::LastSystemError>()
+            .and_then(|e| e.error.clone())
+            .unwrap_or_else(|| "Startup system error".to_string());
+
+        eprintln!(
+            "⚠️ [Hot Reload] Startup system error - rolling back to generation {}",
+            old_generation
+        );
+
+        // Clean up entities created during the failed Startup (same as
+        // the panic path) so we don't leave orphaned render targets,
+        // cameras, or other partially-created scene objects.
+        {
+            let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
+            let post_entities: Vec<Entity> = query.iter(world).collect();
+            let mut cleaned = 0;
+            for entity in post_entities {
+                if !pre_startup_entities.contains(&entity) && world.get_entity(entity).is_ok() {
+                    world.despawn(entity);
+                    cleaned += 1;
+                }
+            }
+            if is_verbose() && cleaned > 0 {
+                eprintln!(
+                    "   → Cleaned up {} entities created during failed Startup",
+                    cleaned
+                );
+            }
+        }
+
+        hot_reload_state.set_generation(old_generation);
+        {
+            let mut gen_res = world.resource_mut::<HotReloadGeneration>();
+            gen_res.current = old_generation;
+        }
+        {
+            // Remove new_generation (not old_generation) - see panic path comment.
+            let gen_res = world.resource::<HotReloadGeneration>();
+            if let Ok(mut set) = gen_res.startup_run_for_generations.lock() {
+                set.remove(&new_generation);
+            }
+        }
+
+        let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
+        result.failed = true;
+        result.failure_reason = Some(error_msg.clone());
+        result.running_previous_generation = true;
+
+        runtime.clear_param_cache();
+
+        return Err(ReloadError {
+            message: error_msg,
+            is_load_failure: false,
+        });
+    }
 
     if !startup_had_error
         && let Some(mut last_error) = world.get_resource_mut::<pybevy_core::LastSystemError>()
@@ -391,4 +475,195 @@ pub trait HotReloadStateAccess {
     fn current_generation(&self) -> u32;
     fn increment_generation(&self);
     fn set_generation(&self, generation: u32);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{any::TypeId, cell::Cell, collections::HashSet, sync::Arc};
+
+    use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};
+
+    use super::*;
+    use crate::{
+        profiling::{MemoryProfile, SystemProfiler},
+        runtime::{ReloadError, ReloadRuntime},
+    };
+
+    /// Mock runtime that injects a Startup system which writes to
+    /// `LastSystemError` - simulating a Python exception (not a panic)
+    /// during Startup.
+    struct StartupErrorRuntime;
+
+    /// Bevy system that simulates a Python exception by writing to
+    /// `LastSystemError` (same as DynamicSystem::run_inner on exception).
+    /// Uses `unwrap_or(0.0)` to match real WASM behavior where Time
+    /// returns 0.0 on the first reload (before any time update).
+    fn crashing_startup_system(world: &mut World) {
+        let current_time = world
+            .get_resource::<bevy::time::Time>()
+            .map(|t| t.elapsed_secs_f64())
+            .unwrap_or(0.0);
+        let mut last_error =
+            world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
+        last_error.error = Some("NameError: name 'foo' is not defined".to_string());
+        last_error.traceback = Some("File \"main.py\", line 5\n  NameError".to_string());
+        last_error.timestamp_secs = current_time;
+    }
+
+    impl ReloadRuntime for StartupErrorRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+            None
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            let mut schedules = world.resource_mut::<Schedules>();
+            if let Some(startup) = schedules.get_mut(Startup) {
+                startup.add_systems(crashing_startup_system);
+            }
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    struct MockState {
+        generation: Cell<u32>,
+    }
+
+    impl MockState {
+        fn new() -> Self {
+            Self {
+                generation: Cell::new(0),
+            }
+        }
+    }
+
+    impl HotReloadStateAccess for MockState {
+        fn current_generation(&self) -> u32 {
+            self.generation.get()
+        }
+        fn increment_generation(&self) {
+            self.generation.set(self.generation.get() + 1);
+        }
+        fn set_generation(&self, g: u32) {
+            self.generation.set(g);
+        }
+    }
+
+    fn setup_world() -> World {
+        let mut world = World::new();
+        let gen_counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        world.insert_resource(HotReloadGeneration::new(gen_counter));
+        world.insert_resource(MemoryProfile::default());
+        world.insert_resource(SystemProfiler::new(60));
+        world.insert_resource(PluginTracker::default());
+
+        let mut schedules = Schedules::default();
+        schedules.insert(Schedule::new(Startup));
+        world.insert_resource(schedules);
+
+        world
+    }
+
+    /// A Python exception (not a panic) in a Startup system must trigger
+    /// generation rollback so that Update systems from the broken
+    /// generation don't keep running.
+    #[test]
+    fn startup_exception_rolls_back_generation() {
+        let mut world = setup_world();
+        let state = MockState::new();
+        assert_eq!(state.current_generation(), 0);
+
+        let result = perform_reload(
+            &mut world,
+            &mut StartupErrorRuntime,
+            ReloadMode::Full,
+            &state,
+        );
+
+        assert!(result.is_err(), "reload should fail when Startup has error");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("NameError"),
+            "error should contain the Python exception, got: {}",
+            err.message
+        );
+
+        assert_eq!(
+            state.current_generation(),
+            0,
+            "generation should be rolled back to 0 after Startup error"
+        );
+        assert_eq!(
+            world.resource::<HotReloadGeneration>().current,
+            0,
+            "HotReloadGeneration.current should be rolled back"
+        );
+
+        let reload_result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(reload_result.failed, "ReloadResult.failed should be true");
+        assert!(
+            reload_result.running_previous_generation,
+            "should be running previous generation"
+        );
+    }
 }

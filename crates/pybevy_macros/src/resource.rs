@@ -127,7 +127,7 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// #[pyresource(FontAtlasSet, bridge, no_mut, no_insert)]
 /// ```
 ///
-/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`.
+/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`, `no_default`.
 pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ResourceStorageArgs {
         bevy_type: Type,
@@ -138,6 +138,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_mut: bool,
         no_remove: bool,
         default_insert: bool,
+        no_default: bool,
     }
 
     impl Parse for ResourceStorageArgs {
@@ -150,6 +151,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_mut = false;
             let mut no_remove = false;
             let mut default_insert = false;
+            let mut no_default = false;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -167,11 +169,12 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "no_mut" => no_mut = true,
                         "no_remove" => no_remove = true,
                         "default_insert" => default_insert = true,
+                        "no_default" => no_default = true,
                         other => {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert",
+                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert, no_default",
                                     other
                                 ),
                             ));
@@ -189,6 +192,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                 no_mut,
                 no_remove,
                 default_insert,
+                no_default,
             })
         }
     }
@@ -208,6 +212,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.no_mut,
             args.no_remove,
             args.default_insert,
+            args.no_default,
         )
     } else {
         quote! {}
@@ -297,6 +302,7 @@ pub(crate) fn generate_resource_bridge_tokens(
     no_mut: bool,
     no_remove: bool,
     default_insert: bool,
+    no_default: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -410,6 +416,22 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    // Generate reset_to_default method based on no_default flag
+    let reset_to_default_impl = if no_default {
+        quote! {
+            fn reset_to_default(&self, _world: &mut bevy::ecs::world::World) -> bool {
+                false
+            }
+        }
+    } else {
+        quote! {
+            fn reset_to_default(&self, world: &mut bevy::ecs::world::World) -> bool {
+                world.insert_resource(<#bevy_type>::default());
+                true
+            }
+        }
+    };
+
     let expanded = quote! {
         /// Bridge for #resource_name resource
         pub struct #bridge_name;
@@ -467,6 +489,8 @@ pub(crate) fn generate_resource_bridge_tokens(
             fn resource_id(&self, world: &bevy::ecs::world::World) -> Option<bevy::ecs::component::ComponentId> {
                 world.components().resource_id::<#bevy_type>()
             }
+
+            #reset_to_default_impl
         }
     };
 

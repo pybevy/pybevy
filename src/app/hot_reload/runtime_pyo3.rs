@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    any::TypeId,
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
 use bevy::{
     app::{
@@ -431,6 +435,34 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
 
     fn clear_custom_resources(&mut self, world: &mut World, verbose: bool) {
         cleanup::clear_custom_resources(world, verbose);
+    }
+
+    fn snapshot_native_resources(&self, world: &World) -> HashSet<TypeId> {
+        let mut initial = HashSet::new();
+        for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
+            if bridge.contains_in_world(world) {
+                initial.insert(bridge.bevy_type_id());
+            }
+        }
+        initial
+    }
+
+    fn clear_native_resources(&self, world: &mut World, initial: &HashSet<TypeId>, verbose: bool) {
+        for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
+            let type_id = bridge.bevy_type_id();
+            if initial.contains(&type_id) {
+                // Bevy-plugin resource: reset to default
+                if !bridge.reset_to_default(world) && verbose {
+                    eprintln!("   → Cannot reset {} (no Default)", bridge.name());
+                }
+            } else if bridge.contains_in_world(world) {
+                // User-only resource: remove entirely
+                bridge.remove(world);
+                if verbose {
+                    eprintln!("   → Removed user resource {}", bridge.name());
+                }
+            }
+        }
     }
 
     fn detect_system_delta(
