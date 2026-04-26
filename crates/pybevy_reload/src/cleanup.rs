@@ -1,12 +1,13 @@
 use std::{any::TypeId, collections::HashSet};
 
 use bevy::{
-    ecs::{entity::Entity, query::With, world::World},
+    ecs::{entity::Entity, world::World},
+    log::info as log_info,
     prelude::Resource,
     time::{Time, Virtual},
 };
 
-use crate::{HotReloadable, runtime::ReloadRuntime};
+use crate::{BaseEntitySet, runtime::ReloadRuntime};
 
 /// Snapshot of which bridged native resources existed before any user code ran.
 ///
@@ -20,20 +21,46 @@ pub struct NativeResourceSnapshot {
 
 /// Clear all user-spawned entities, programmatic assets, and custom resources.
 /// Used by both the Full reload path and escalation from Partial to Full.
+///
+/// Uses the `BaseEntitySet` to determine which entities are Bevy-internal
+/// (plugin-init) and should be preserved. Everything else is despawned,
+/// including Bevy side-effect entities (e.g., `PointerId`) that don't carry
+/// the `HotReloadable` marker.
 pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, verbose: bool) {
-    // Despawn all entities marked with HotReloadable
-    let mut query = world.query_filtered::<Entity, With<HotReloadable>>();
-    let all_hotreloadable: Vec<Entity> = query.iter(world).collect();
+    // Despawn all entities not in the base set (plugin-init entities).
+    let base = world
+        .get_resource::<BaseEntitySet>()
+        .map(|b| b.entities.clone())
+        .unwrap_or_default();
+    let to_despawn: Vec<Entity> = world
+        .query::<Entity>()
+        .iter(world)
+        .filter(|e| !base.contains(e))
+        .collect();
+
+    let live_before = base.len() + to_despawn.len();
+    log_info!(
+        "[hot-reload] clear_world_state: {} base / {} live entities, despawning {}...",
+        base.len(),
+        live_before,
+        to_despawn.len()
+    );
 
     if verbose {
-        eprintln!("   → Despawning {} user entities", all_hotreloadable.len());
+        eprintln!("   → Despawning {} entities ({} base preserved)", to_despawn.len(), base.len());
     }
 
-    for entity in all_hotreloadable {
+    for entity in to_despawn {
         if world.get_entity(entity).is_ok() {
             world.despawn(entity);
         }
     }
+
+    let live_after = world.query::<Entity>().iter(world).count();
+    log_info!(
+        "[hot-reload] clear_world_state: {} live entities remaining",
+        live_after
+    );
 
     // Clear programmatic assets (preserve file-loaded)
     if verbose {
@@ -76,6 +103,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::HotReloadable;
 
     /// Minimal ReloadRuntime for tests - all methods are no-ops.
     struct NoopRuntime;
@@ -237,10 +265,18 @@ mod tests {
         assert_eq!(live_count::<StandardMaterial>(&world), 0);
     }
 
+    /// Helper: insert a BaseEntitySet containing the given entities.
+    fn insert_base_set(world: &mut World, entities: Vec<Entity>) {
+        world.insert_resource(crate::BaseEntitySet {
+            entities: entities.into_iter().collect(),
+        });
+    }
+
     #[test]
     fn entity_despawn_drops_asset_handles() {
         let mut world = World::new();
         world.init_resource::<Assets<Mesh>>();
+        insert_base_set(&mut world, vec![]); // no base entities
 
         let handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
 
@@ -257,11 +293,13 @@ mod tests {
     }
 
     #[test]
-    fn despawns_hotreloadable_entities() {
+    fn despawns_entities_not_in_base_set() {
         let mut world = World::new();
-        // Bevy internal entity (no HotReloadable) - should survive
+        // Bevy internal entity (in base set) - should survive
         let internal = world.spawn(Marker("internal")).id();
-        // User entities with HotReloadable - should be despawned
+        insert_base_set(&mut world, vec![internal]);
+
+        // User entities (not in base set) - should be despawned
         let user1 = world.spawn((HotReloadable, Marker("user1"))).id();
         let user2 = world.spawn((HotReloadable, Marker("user2"))).id();
 
@@ -272,15 +310,40 @@ mod tests {
         assert_eq!(live_entity_count(&mut world), 1);
         assert!(
             world.get_entity(internal).is_ok(),
-            "internal entity should survive"
+            "base entity should survive"
         );
         assert!(
             world.get_entity(user1).is_err(),
-            "user entity should be despawned"
+            "non-base entity should be despawned"
         );
         assert!(
             world.get_entity(user2).is_err(),
-            "user entity should be despawned"
+            "non-base entity should be despawned"
+        );
+    }
+
+    #[test]
+    fn despawns_side_effect_entities_without_hotreloadable() {
+        let mut world = World::new();
+        // Base entity (plugin-init)
+        let internal = world.spawn(Marker("internal")).id();
+        insert_base_set(&mut world, vec![internal]);
+
+        // User entity with HotReloadable
+        let user = world.spawn((HotReloadable, Marker("user_camera"))).id();
+        // Bevy side-effect entity WITHOUT HotReloadable (e.g., PointerId)
+        let side_effect = world.spawn(Marker("pointer_id")).id();
+
+        assert_eq!(live_entity_count(&mut world), 3);
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        assert_eq!(live_entity_count(&mut world), 1);
+        assert!(world.get_entity(internal).is_ok(), "base entity survives");
+        assert!(world.get_entity(user).is_err(), "user entity despawned");
+        assert!(
+            world.get_entity(side_effect).is_err(),
+            "side-effect entity without HotReloadable must also be despawned"
         );
     }
 
@@ -288,9 +351,10 @@ mod tests {
     fn recursive_despawn_removes_children() {
         let mut world = World::new();
         // Internal entity - should survive
-        world.spawn(Marker("internal"));
+        let internal = world.spawn(Marker("internal")).id();
+        insert_base_set(&mut world, vec![internal]);
 
-        // Parent with HotReloadable, children without
+        // Parent (not in base set), children without HotReloadable
         let parent = world
             .spawn((HotReloadable, Marker("parent")))
             .with_children(|cb| {
@@ -309,7 +373,7 @@ mod tests {
         assert_eq!(
             live_entity_count(&mut world),
             1,
-            "only internal entity should survive - parent + all descendants must be recursively despawned"
+            "only base entity should survive - parent + all descendants must be recursively despawned"
         );
         assert!(world.get_entity(parent).is_err());
     }
@@ -318,6 +382,7 @@ mod tests {
     fn multiple_parents_with_children() {
         let mut world = World::new();
         let internal = world.spawn(Marker("internal")).id();
+        insert_base_set(&mut world, vec![internal]);
 
         // Simulate a scene like chair-race: multiple parents each with children
         for _i in 0..4 {
@@ -338,7 +403,7 @@ mod tests {
         assert_eq!(
             live_entity_count(&mut world),
             1,
-            "only internal entity should survive"
+            "only base entity should survive"
         );
         assert!(world.get_entity(internal).is_ok());
     }

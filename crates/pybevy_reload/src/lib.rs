@@ -12,6 +12,21 @@ pub mod util;
 #[derive(bevy::ecs::component::Component, Clone, Copy)]
 pub struct HotReloadable;
 
+use std::collections::HashSet;
+
+use bevy::ecs::{entity::Entity, resource::Resource};
+
+/// Entities that existed before any user code ran (plugin-init entities).
+///
+/// Captured once (before the first Full reload) and persists across reloads.
+/// On Full reload, every entity NOT in this set is despawned — this catches
+/// both user-spawned entities and Bevy-internal side-effect entities (e.g.,
+/// `bevy_picking::PointerId` spawned per camera) that would otherwise leak.
+#[derive(Resource)]
+pub struct BaseEntitySet {
+    pub entities: HashSet<Entity>,
+}
+
 pub use orchestrator::{HotReloadStateAccess, perform_reload};
 pub use overlay::{
     MemoryOverlayVisible, StartPaused, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
