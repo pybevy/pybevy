@@ -109,4 +109,11 @@ pub trait ResourceBridge: Send + Sync + 'static {
     ///
     /// Returns None if the resource hasn't been registered yet.
     fn resource_id(&self, world: &World) -> Option<ComponentId>;
+
+    /// Reset resource to its default value (T::default()).
+    ///
+    /// Returns `true` if the resource was reset, `false` if the type has no Default impl
+    /// (declared with `no_default` flag). Used during hot reload to restore Bevy-plugin
+    /// resources to their initial state.
+    fn reset_to_default(&self, world: &mut World) -> bool;
 }

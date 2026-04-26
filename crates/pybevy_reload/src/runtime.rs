@@ -1,3 +1,5 @@
+use std::{any::TypeId, collections::HashSet};
+
 use bevy::ecs::world::World;
 
 /// Error type for reload operations.
@@ -88,6 +90,14 @@ pub trait ReloadRuntime {
 
     /// Clear custom runtime resources from the world (Full reload only).
     fn clear_custom_resources(&mut self, world: &mut World, verbose: bool);
+
+    /// Collect TypeIds of bridged native resources currently in the world.
+    /// Called once before first user code to capture the Bevy-plugin baseline.
+    fn snapshot_native_resources(&self, world: &World) -> HashSet<TypeId>;
+
+    /// Reset/remove bridged native resources based on the initial snapshot.
+    /// Initial resources get `reset_to_default()`, user-only resources get `remove()`.
+    fn clear_native_resources(&self, world: &mut World, initial: &HashSet<TypeId>, verbose: bool);
 
     /// Detect removed/renamed systems by comparing new system names against the known set.
     /// Returns names of systems that were removed.
