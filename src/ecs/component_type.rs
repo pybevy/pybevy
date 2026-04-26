@@ -399,28 +399,45 @@ pub(crate) fn register_custom_component(
             .copied();
 
         if let Some(existing_id) = existing_id {
-            // Verify storage type compatibility: if the user changed field types across
-            // reload (e.g., from wrapper to pyobject), we can't safely alias.
+            // Verify storage type compatibility: if the user changed field layout
+            // across reload (e.g., unit component -> dataclass with floats, or
+            // different wrapper sizes), we can't safely alias - the ECS column
+            // was sized for the old layout.
+            let new_storage_type = Python::attach(|py| {
+                let py_type = unsafe {
+                    pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
+                };
+                match py_type.cast::<pyo3::types::PyType>() {
+                    Ok(cls) => ComponentStorageType::from_python_class(cls)
+                        .unwrap_or(ComponentStorageType::PyObject),
+                    Err(_) => ComponentStorageType::PyObject,
+                }
+            });
+
             let existing_is_pyobject = world
                 .resource::<pybevy_core::CustomComponentInfo>()
                 .get(existing_id)
                 .map(|e| e.is_pyobject_storage);
 
-            let new_is_pyobject = Python::attach(|py| {
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
-                };
-                match py_type.cast::<pyo3::types::PyType>() {
-                    Ok(cls) => {
-                        let st = ComponentStorageType::from_python_class(cls)
-                            .unwrap_or(ComponentStorageType::PyObject);
-                        matches!(st, ComponentStorageType::PyObject)
-                    }
-                    Err(_) => true,
+            let storage_compatible = match (&new_storage_type, existing_is_pyobject) {
+                // Both PyObject - compatible
+                (ComponentStorageType::PyObject, Some(true)) => true,
+                // Both Wrapper - must also match size (checked below via descriptor)
+                (ComponentStorageType::Wrapper(_), Some(false)) => {
+                    // Compare wrapper size: the existing component's descriptor
+                    // layout is fixed at registration. A different WrapperSize
+                    // means different column size → corruption if reused.
+                    // For simplicity, always re-register wrapper components on
+                    // name collision. The old ComponentId is orphaned but harmless
+                    // since entities using it were despawned during clear_world_state.
+                    // TODO: compare actual WrapperSize for finer-grained reuse.
+                    false
                 }
-            });
+                // Mismatch (PyObject vs Wrapper) - incompatible
+                _ => false,
+            };
 
-            if existing_is_pyobject == Some(new_is_pyobject) {
+            if storage_compatible {
                 // Compatible: add pointer alias and update CustomComponentInfo
                 world
                     .resource_mut::<ComponentRegistry>()
