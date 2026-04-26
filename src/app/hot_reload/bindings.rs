@@ -392,6 +392,21 @@ pub fn add_hot_reload_system(
 
     // Spawn the overlay UI entity immediately (plugins are already initialized at this point)
     spawn_hot_reload_overlay_system(app.world_mut());
+
+    // Capture base entity set NOW — before any user Startup systems run.
+    // Every entity that exists at this point is Bevy-internal (plugin init).
+    // On Full reload, everything NOT in this set gets despawned.
+    if !app.world().contains_resource::<pybevy_reload::BaseEntitySet>() {
+        let entities: std::collections::HashSet<bevy::ecs::entity::Entity> =
+            app.world_mut().query::<bevy::ecs::entity::Entity>().iter(app.world()).collect();
+        if verbose {
+            eprintln!(
+                "   → Captured BaseEntitySet with {} entities",
+                entities.len()
+            );
+        }
+        app.insert_resource(pybevy_reload::BaseEntitySet { entities });
+    }
 }
 
 /// PyO3 plugin for enabling hot reload functionality

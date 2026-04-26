@@ -110,15 +110,14 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         world.insert_resource(NativeResourceSnapshot { initial });
     }
 
-    // Capture base entity set before first reload clears anything.
-    // All entities present at this point are Bevy-internal (plugin init).
-    // On subsequent reloads, everything NOT in this set gets despawned —
-    // this catches both user entities and Bevy side-effect entities
-    // (e.g., PointerId from bevy_picking) that would otherwise leak.
+    // NOTE: BaseEntitySet is captured in add_hot_reload_system() (bindings.rs),
+    // before any user Startup systems run. If it's missing here (e.g., in unit
+    // tests that bypass the full init path), fall back to an empty set so that
+    // all entities are eligible for despawn.
     if !world.contains_resource::<BaseEntitySet>() {
-        let entities: HashSet<Entity> =
-            world.query::<Entity>().iter(world).collect();
-        world.insert_resource(BaseEntitySet { entities });
+        world.insert_resource(BaseEntitySet {
+            entities: HashSet::new(),
+        });
     }
 
     if mode == ReloadMode::Full {
