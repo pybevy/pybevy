@@ -372,17 +372,20 @@ impl Compiler {
 
 /// Read a field value from a raw pointer based on its type, returning f64.
 ///
+/// Uses `read_unaligned` for types wider than 4 bytes because ECS column
+/// storage may not guarantee 8-byte alignment on 32-bit platforms.
+///
 /// # Safety
-/// The pointer must be valid, aligned for the given field type, and not concurrently mutated.
+/// The pointer must be valid and not concurrently mutated.
 #[inline(always)]
 pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
     match field_type {
-        FieldType::F32 => unsafe { *(ptr as *const f32) as f64 },
-        FieldType::F64 => unsafe { *(ptr as *const f64) },
-        FieldType::I32 => unsafe { *(ptr as *const i32) as f64 },
-        FieldType::I64 => unsafe { *(ptr as *const i64) as f64 },
-        FieldType::U32 => unsafe { *(ptr as *const u32) as f64 },
-        FieldType::U64 => unsafe { *(ptr as *const u64) as f64 },
+        FieldType::F32 => unsafe { (ptr as *const f32).read_unaligned() as f64 },
+        FieldType::F64 => unsafe { (ptr as *const f64).read_unaligned() },
+        FieldType::I32 => unsafe { (ptr as *const i32).read_unaligned() as f64 },
+        FieldType::I64 => unsafe { (ptr as *const i64).read_unaligned() as f64 },
+        FieldType::U32 => unsafe { (ptr as *const u32).read_unaligned() as f64 },
+        FieldType::U64 => unsafe { (ptr as *const u64).read_unaligned() as f64 },
         FieldType::Bool => unsafe { if *(ptr as *const bool) { 1.0 } else { 0.0 } },
         // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
         // before execution, so these should never appear in read_field_value
@@ -394,28 +397,30 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
 
 /// Write an f64 value to a raw pointer, converting to the target field type.
 ///
+/// Uses `write_unaligned` for types wider than 4 bytes (see [`read_field_value`]).
+///
 /// # Safety
-/// The pointer must be valid, aligned for the given field type, and not concurrently read.
+/// The pointer must be valid and not concurrently read.
 #[inline(always)]
 pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType) {
     match field_type {
         FieldType::F32 => unsafe {
-            *(ptr as *mut f32) = value as f32;
+            (ptr as *mut f32).write_unaligned(value as f32);
         },
         FieldType::F64 => unsafe {
-            *(ptr as *mut f64) = value;
+            (ptr as *mut f64).write_unaligned(value);
         },
         FieldType::I32 => unsafe {
-            *(ptr as *mut i32) = value as i32;
+            (ptr as *mut i32).write_unaligned(value as i32);
         },
         FieldType::I64 => unsafe {
-            *(ptr as *mut i64) = value as i64;
+            (ptr as *mut i64).write_unaligned(value as i64);
         },
         FieldType::U32 => unsafe {
-            *(ptr as *mut u32) = value as u32;
+            (ptr as *mut u32).write_unaligned(value as u32);
         },
         FieldType::U64 => unsafe {
-            *(ptr as *mut u64) = value as u64;
+            (ptr as *mut u64).write_unaligned(value as u64);
         },
         FieldType::Bool => unsafe {
             *(ptr as *mut bool) = value >= 0.5;
@@ -990,26 +995,9 @@ impl VM {
                     } else if field_id.field_type == FieldType::F64 {
                         // Fast path: field += const for f64
                         let offset = field_id.offset;
-                        let chunks = count / 4;
-                        let remainder = count % 4;
-
-                        for chunk in 0..chunks {
-                            let base = chunk * 4;
-                            let p0 = base_ptr.add(base * component_stride + offset) as *mut f64;
-                            let p1 =
-                                base_ptr.add((base + 1) * component_stride + offset) as *mut f64;
-                            let p2 =
-                                base_ptr.add((base + 2) * component_stride + offset) as *mut f64;
-                            let p3 =
-                                base_ptr.add((base + 3) * component_stride + offset) as *mut f64;
-                            *p0 += constant;
-                            *p1 += constant;
-                            *p2 += constant;
-                            *p3 += constant;
-                        }
-                        for i in (chunks * 4)..(chunks * 4 + remainder) {
-                            let ptr = base_ptr.add(i * component_stride + offset) as *mut f64;
-                            *ptr += constant;
+                        for i in 0..count {
+                            let p = base_ptr.add(i * component_stride + offset) as *mut f64;
+                            p.write_unaligned(p.read_unaligned() + constant);
                         }
                         return true;
                     }
@@ -1039,9 +1027,9 @@ impl VM {
                     } else if field_id.field_type == FieldType::F64 {
                         // Fast path: field *= const for f64
                         for i in 0..count {
-                            let ptr =
+                            let p =
                                 base_ptr.add(i * component_stride + field_id.offset) as *mut f64;
-                            *ptr *= constant;
+                            p.write_unaligned(p.read_unaligned() * constant);
                         }
                         return true;
                     }
@@ -1066,8 +1054,8 @@ impl VM {
                 } else if field_id.field_type == FieldType::F64 {
                     // Fast path: field = const for f64
                     for i in 0..count {
-                        let ptr = base_ptr.add(i * component_stride + field_id.offset) as *mut f64;
-                        *ptr = constant;
+                        let p = base_ptr.add(i * component_stride + field_id.offset) as *mut f64;
+                        p.write_unaligned(constant);
                     }
                     return true;
                 }
@@ -2165,5 +2153,80 @@ mod tests {
         assert_eq!(result, 21.0);
         // Original value should be unchanged (reduce doesn't store)
         assert_eq!(field_value, 7.0);
+    }
+
+    /// Regression test: read/write f64 fields at 4-byte-aligned (but not
+    /// 8-byte-aligned) addresses must not panic.
+    #[test]
+    fn test_unaligned_f64_field_access() {
+        // Allocate a buffer with deliberate 4-byte misalignment for f64.
+        // Layout: [4-byte padding] [f64 value] [f64 value]
+        let mut buf = vec![0u8; 32];
+        // Find a 4-byte-aligned-but-not-8-byte-aligned address within buf
+        let base = buf.as_mut_ptr() as usize;
+        let offset = if base % 8 == 0 { 4 } else { 0 };
+        let misaligned_ptr = unsafe { buf.as_mut_ptr().add(offset) };
+        assert_eq!(
+            misaligned_ptr as usize % 8,
+            4,
+            "test setup: pointer should be 4-byte aligned but NOT 8-byte aligned"
+        );
+
+        // Write a known f64 value at the misaligned address
+        unsafe {
+            write_field_value(misaligned_ptr, 123.456, FieldType::F64);
+        }
+
+        // Read it back — must not panic
+        let read_back = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::F64) };
+        assert_eq!(read_back, 123.456);
+
+        // Now test via the VM: compile `field = field + 1.0`
+        let mut compiler = Compiler::new();
+        let field_id = FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        };
+        let field_idx = compiler.add_field(field_id);
+        let const_1 = compiler.add_constant(1.0);
+
+        compiler.emit(Op::PushField(field_idx));
+        compiler.emit(Op::PushConst(const_1));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field_idx));
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+
+        unsafe {
+            vm.execute(&bytecode, &[misaligned_ptr], 0);
+        }
+
+        let result = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::F64) };
+        assert_eq!(result, 124.456);
+    }
+
+    #[test]
+    fn test_unaligned_i64_u64_field_access() {
+        let mut buf = vec![0u8; 32];
+        let base = buf.as_mut_ptr() as usize;
+        let offset = if base % 8 == 0 { 4 } else { 0 };
+        let misaligned_ptr = unsafe { buf.as_mut_ptr().add(offset) };
+        assert_eq!(misaligned_ptr as usize % 8, 4);
+
+        // i64
+        unsafe {
+            write_field_value(misaligned_ptr, 42.0, FieldType::I64);
+        }
+        let v = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::I64) };
+        assert_eq!(v, 42.0);
+
+        // u64
+        unsafe {
+            write_field_value(misaligned_ptr, 99.0, FieldType::U64);
+        }
+        let v = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::U64) };
+        assert_eq!(v, 99.0);
     }
 }
