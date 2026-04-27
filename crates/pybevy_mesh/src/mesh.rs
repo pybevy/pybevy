@@ -57,44 +57,44 @@ macro_rules! mesh_with_mut {
 #[pymethods]
 impl PyMesh {
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_POSITION(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_POSITION")]
+    pub fn attribute_position(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_POSITION))
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_NORMAL(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_NORMAL")]
+    pub fn attribute_normal(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_NORMAL))
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_UV_0(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_UV_0")]
+    pub fn attribute_uv_0(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_UV_0))
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_UV_1(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_UV_1")]
+    pub fn attribute_uv_1(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_UV_1))
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_TANGENT(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_TANGENT")]
+    pub fn attribute_tangent(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_TANGENT))
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_COLOR(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_COLOR")]
+    pub fn attribute_color(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_COLOR))
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_JOINT_WEIGHT(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_JOINT_WEIGHT")]
+    pub fn attribute_joint_weight(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(
             py,
             PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_JOINT_WEIGHT),
@@ -102,8 +102,8 @@ impl PyMesh {
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ATTRIBUTE_JOINT_INDEX(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
+    #[pyo3(name = "ATTRIBUTE_JOINT_INDEX")]
+    pub fn attribute_joint_index(py: Python<'_>) -> PyResult<Py<PyMeshVertexAttribute>> {
         Py::new(py, PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_JOINT_INDEX))
     }
 

@@ -1,4 +1,4 @@
-use bevy::ui::BorderRadius;
+use bevy::ui::{BorderRadius, Val};
 use pyo3::prelude::*;
 
 use crate::val::PyVal;
@@ -30,16 +30,16 @@ impl From<&PyBorderRadius> for BorderRadius {
 #[pymethods]
 impl PyBorderRadius {
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn ZERO() -> Self {
+    #[pyo3(name = "ZERO")]
+    pub fn zero() -> Self {
         Self {
             inner: BorderRadius::ZERO,
         }
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn MAX() -> Self {
+    #[pyo3(name = "MAX")]
+    pub fn max() -> Self {
         Self {
             inner: BorderRadius::MAX,
         }
@@ -54,7 +54,7 @@ impl PyBorderRadius {
         bottom_left: Option<PyVal>,
         bottom_right: Option<PyVal>,
     ) -> Self {
-        let base: bevy::ui::Val = radius.into();
+        let base: Val = radius.into();
         Self {
             inner: BorderRadius {
                 top_left: top_left.map(Into::into).unwrap_or(base),

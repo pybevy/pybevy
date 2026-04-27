@@ -1,3 +1,7 @@
+use bevy::ecs::{
+    entity::Entity,
+    world::{EntityRef, World},
+};
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 
 use super::{
@@ -396,11 +400,7 @@ pub struct BundleFilter {
 impl BundleFilter {
     /// Check if an entity matches this bundle filter.
     /// Returns true if the entity has at least one of the components (OR logic).
-    pub(crate) fn matches(
-        &self,
-        world: &bevy::ecs::world::World,
-        entity: bevy::ecs::entity::Entity,
-    ) -> bool {
+    pub(crate) fn matches(&self, world: &World, entity: Entity) -> bool {
         // Get entity reference
         let entity_ref = match world.get_entity(entity) {
             Ok(e) => e,
@@ -415,11 +415,7 @@ impl BundleFilter {
 }
 
 /// Helper function to check if an entity has a specific component type
-fn entity_has_component(
-    world: &bevy::ecs::world::World,
-    entity: &bevy::ecs::world::EntityRef,
-    comp_type: &PyComponentType,
-) -> bool {
+fn entity_has_component(world: &World, entity: &EntityRef, comp_type: &PyComponentType) -> bool {
     match comp_type {
         PyComponentType::Custom(type_ptr) => {
             // For custom components, look up the ComponentId from the registry
@@ -440,8 +436,8 @@ fn entity_has_component(
 /// Public helper to check if an entity has a specific component type.
 /// This is used by commands.rs to check for component existence before insertion.
 pub(crate) fn entity_has_component_type(
-    world: &bevy::ecs::world::World,
-    entity: bevy::ecs::entity::Entity,
+    world: &World,
+    entity: Entity,
     comp_type: &PyComponentType,
 ) -> bool {
     match world.get_entity(entity) {

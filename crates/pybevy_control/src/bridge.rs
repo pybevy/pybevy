@@ -1051,7 +1051,7 @@ mod tests {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
             Python::initialize();
-            pybevy_core::bridge_inventory::collect_all();
+            collect_all();
         });
 
         Python::attach(|py| {

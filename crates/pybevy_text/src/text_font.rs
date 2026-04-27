@@ -1,4 +1,7 @@
-use bevy::text::{Font, FontSmoothing, FontWeight, TextFont};
+use bevy::{
+    asset::Handle,
+    text::{Font, FontSmoothing, FontWeight, TextFont},
+};
 use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any, pycomponent::ComponentStorage};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -49,7 +52,7 @@ impl PyTextFont {
         weight: PyFontWeight,
         font_features: PyFontFeatures,
     ) -> PyResult<(Self, PyComponent)> {
-        let font_handle: bevy::asset::Handle<Font> = match font {
+        let font_handle: Handle<Font> = match font {
             Some(handle_obj) => {
                 let handle = extract_handle_from_any(handle_obj)?;
                 (&handle).try_into()?

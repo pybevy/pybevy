@@ -1,4 +1,5 @@
 use bevy::{
+    asset::Handle,
     image::{Image, TextureAtlasLayout, TextureAtlasSources},
     platform::collections::HashMap,
 };
@@ -25,13 +26,13 @@ impl PyTextureAtlasSources {
     }
 
     pub fn texture_index(&self, texture: PyHandle) -> PyResult<Option<usize>> {
-        let handle: bevy::asset::Handle<Image> = texture.try_into()?;
+        let handle: Handle<Image> = texture.try_into()?;
         Ok(self.inner.texture_index(&handle))
     }
 
     pub fn handle(&self, layout: PyHandle, texture: PyHandle) -> PyResult<Option<PyTextureAtlas>> {
-        let layout_handle: bevy::asset::Handle<TextureAtlasLayout> = layout.try_into()?;
-        let texture_handle: bevy::asset::Handle<Image> = texture.try_into()?;
+        let layout_handle: Handle<TextureAtlasLayout> = layout.try_into()?;
+        let texture_handle: Handle<Image> = texture.try_into()?;
         Ok(self
             .inner
             .handle(layout_handle, &texture_handle)

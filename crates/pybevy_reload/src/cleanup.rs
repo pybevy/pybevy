@@ -6,6 +6,7 @@ use bevy::{
     prelude::Resource,
     time::{Time, Virtual},
 };
+use pybevy_core::asset_cleanup::clear_all_programmatic_assets;
 
 use crate::{BaseEntitySet, runtime::ReloadRuntime};
 
@@ -71,7 +72,7 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         eprintln!("   → Clearing programmatic assets (preserving file-loaded)");
     }
 
-    pybevy_core::asset_cleanup::clear_all_programmatic_assets(world, verbose);
+    clear_all_programmatic_assets(world, verbose);
 
     // Clear custom runtime resources (preserves built-in and HotReloadControl)
     if verbose {

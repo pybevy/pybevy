@@ -1,3 +1,5 @@
+use std::ptr;
+
 use bevy::{
     ecs::resource::Resource,
     light::{AmbientLight, GlobalAmbientLight},
@@ -30,7 +32,7 @@ impl PartialEq for PyGlobalAmbientLight {
             (
                 ResourceStorageInner::Borrowed { ptr: a, .. },
                 ResourceStorageInner::Borrowed { ptr: b, .. },
-            ) => std::ptr::eq(
+            ) => ptr::eq(
                 *a as *const GlobalAmbientLight,
                 *b as *const GlobalAmbientLight,
             ),

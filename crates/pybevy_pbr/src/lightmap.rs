@@ -1,4 +1,4 @@
-use bevy::pbr::Lightmap;
+use bevy::{math::Rect, pbr::Lightmap};
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
@@ -25,7 +25,7 @@ impl PyLightmap {
             image: handle.try_into()?,
             uv_rect: uv_rect
                 .map(Into::into)
-                .unwrap_or(bevy::math::Rect::new(0.0, 0.0, 1.0, 1.0)),
+                .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0)),
             bicubic_sampling,
         }))
     }

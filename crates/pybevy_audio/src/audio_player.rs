@@ -1,4 +1,7 @@
-use bevy::audio::{AudioPlayer, AudioSource};
+use bevy::{
+    asset::Handle,
+    audio::{AudioPlayer, AudioSource},
+};
 use pybevy_core::{ComponentStorage, PyComponent, handle::PyHandle};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -14,7 +17,7 @@ pub struct PyAudioPlayer {
 impl PyAudioPlayer {
     #[new]
     pub fn new(handle: PyHandle) -> PyResult<(Self, PyComponent)> {
-        let bevy_handle = bevy::asset::Handle::<AudioSource>::try_from(&handle)?;
+        let bevy_handle = Handle::<AudioSource>::try_from(&handle)?;
         let component = AudioPlayer(bevy_handle);
         Ok(Self::from_owned(component))
     }

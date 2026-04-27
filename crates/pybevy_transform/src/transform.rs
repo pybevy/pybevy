@@ -1,4 +1,7 @@
-use bevy::{math::Dir3, transform::components::Transform};
+use bevy::{
+    math::{Dir3, Mat4},
+    transform::components::Transform,
+};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
@@ -62,7 +65,7 @@ impl PyTransform {
 
     #[staticmethod]
     pub fn from_matrix(py: Python, world_from_local: &PyMat4) -> PyResult<Py<Self>> {
-        let bevy_mat: bevy::math::Mat4 = world_from_local.into();
+        let bevy_mat: Mat4 = world_from_local.into();
         let transform = Transform::from_matrix(bevy_mat);
         Py::new(py, (transform.into(), PyComponent))
     }
@@ -74,8 +77,8 @@ impl PyTransform {
     }
 
     #[staticmethod]
-    #[allow(non_snake_case)]
-    pub fn IDENTITY(py: Python) -> PyResult<Py<Self>> {
+    #[pyo3(name = "IDENTITY")]
+    pub fn identity(py: Python) -> PyResult<Py<Self>> {
         Py::new(py, (Transform::IDENTITY.into(), PyComponent))
     }
 

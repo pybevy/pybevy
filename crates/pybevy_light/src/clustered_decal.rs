@@ -1,10 +1,8 @@
-use bevy::light::ClusteredDecal;
+use bevy::{asset::Handle, image::Image, light::ClusteredDecal};
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
-fn convert_optional_handle(
-    handle: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<bevy::asset::Handle<bevy::image::Image>>> {
+fn convert_optional_handle(handle: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Handle<Image>>> {
     match handle {
         Some(h) => {
             let py_handle = extract_handle_from_any(h)?;

@@ -1,6 +1,8 @@
 use bevy::{
+    app::{App, Last},
+    asset::Handle,
     image::Image,
-    pbr::{MeshMaterial3d, StandardMaterial},
+    pbr::{MaterialPlugin, MeshMaterial3d, StandardMaterial},
 };
 use pybevy_core::{
     AssetInputConverter, AssetStorage, NativeAsset, PluginBuild, PyAsset, PyComponent, PyHandle,
@@ -10,6 +12,7 @@ use pybevy_macros::{pyasset, pyhandle, pyplugin};
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
     prelude::*,
+    types::PyList,
 };
 
 use crate::{
@@ -50,7 +53,7 @@ impl PyShaderMaterial {
         data: Option<Vec<f32>>,
         shader_defs: u32,
         shader_def_names: Option<Vec<String>>,
-        textures: Option<Py<pyo3::types::PyList>>,
+        textures: Option<Py<PyList>>,
         bindings_wgsl: Option<String>,
     ) -> PyResult<(Self, PyAsset)> {
         let mut py_mat = base.extract::<PyRefMut<'_, PyStandardMaterial>>()?;
@@ -73,8 +76,7 @@ impl PyShaderMaterial {
         }
 
         // Extract texture handles from Python list [handle_or_None, ...]
-        let mut tex_handles: [Option<bevy::asset::Handle<Image>>; MAX_TEXTURE_SLOTS] =
-            Default::default();
+        let mut tex_handles: [Option<Handle<Image>>; MAX_TEXTURE_SLOTS] = Default::default();
 
         if let Some(tex_list) = textures {
             let list = tex_list.bind(py);
@@ -87,7 +89,7 @@ impl PyShaderMaterial {
                 }
                 if !item.is_none() {
                     let py_handle = extract_handle_from_any(&item)?;
-                    let typed: bevy::asset::Handle<Image> = (&py_handle).try_into()?;
+                    let typed: Handle<Image> = (&py_handle).try_into()?;
                     tex_handles[i] = Some(typed);
                 }
             }
@@ -122,7 +124,7 @@ impl PyShaderMaterial {
 
     fn set_texture(&mut self, slot: usize, handle: &Bound<'_, PyAny>) -> PyResult<()> {
         let py_handle = extract_handle_from_any(handle)?;
-        let typed: bevy::asset::Handle<Image> = (&py_handle).try_into()?;
+        let typed: Handle<Image> = (&py_handle).try_into()?;
         let mat = self.as_mut()?;
         match slot {
             0 => mat.extension.texture_0 = Some(typed),
@@ -215,7 +217,7 @@ impl PyShaderMaterial {
     }
 }
 
-#[pyplugin(bevy::pbr::MaterialPlugin::<ShaderMaterial>)]
+#[pyplugin(MaterialPlugin::<ShaderMaterial>)]
 #[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
@@ -230,10 +232,10 @@ impl PyShaderMaterialPlugin {
 }
 
 impl PluginBuild for PyShaderMaterialPlugin {
-    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut bevy::app::App) -> PyResult<()> {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         crate::shader_material::clear_shader_registries();
-        app.add_plugins(bevy::pbr::MaterialPlugin::<ShaderMaterial>::default());
-        app.add_systems(bevy::app::Last, crate::shader_material::sync_shader_handles);
+        app.add_plugins(MaterialPlugin::<ShaderMaterial>::default());
+        app.add_systems(Last, crate::shader_material::sync_shader_handles);
         Ok(())
     }
 }

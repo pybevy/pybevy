@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{ffi::CString, sync::OnceLock};
 
 use bevy::ecs::world::World;
 use pybevy_core::{ValidityFlag, ValidityGuard};
@@ -81,7 +81,7 @@ finally:
             escaped_code = code.replace('\'', "\\'")
         );
 
-        let c_code = std::ffi::CString::new(capture_code)
+        let c_code = CString::new(capture_code)
             .map_err(|e| ControlError::invalid_params(format!("Invalid code: {e}")))?;
 
         match py.run(&c_code, Some(&globals), None) {

@@ -19,6 +19,7 @@
 //! The RwLock allows concurrent reads (common case) with exclusive writes (registration).
 
 use std::{
+    any::TypeId,
     collections::HashMap,
     sync::{Arc, OnceLock, RwLock},
 };
@@ -192,7 +193,7 @@ struct GlobalAssetBridgeRegistry {
     /// PyTypeObject* → Bridge
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn AssetBridge>>,
     /// TypeId → Bridge (for lookups from Bevy types)
-    by_type_id: HashMap<std::any::TypeId, Arc<dyn AssetBridge>>,
+    by_type_id: HashMap<TypeId, Arc<dyn AssetBridge>>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -261,7 +262,7 @@ pub fn asset_bridge_count() -> usize {
 ///
 /// Returns the bridge if found, None otherwise.
 /// Used by From<Handle<A>> for PyHandle to get the Python type info.
-pub fn get_asset_bridge_by_type_id(type_id: std::any::TypeId) -> Option<Arc<dyn AssetBridge>> {
+pub fn get_asset_bridge_by_type_id(type_id: TypeId) -> Option<Arc<dyn AssetBridge>> {
     let registry = get_global_asset_registry();
     let guard = registry
         .read()
@@ -294,7 +295,7 @@ static GLOBAL_TYPE_ID_REGISTRY: OnceLock<RwLock<TypeIdRegistry>> = OnceLock::new
 #[derive(Default)]
 struct TypeIdRegistry {
     /// PyTypeObject* → TypeId
-    by_py_type: HashMap<*const PyTypeObject, std::any::TypeId>,
+    by_py_type: HashMap<*const PyTypeObject, TypeId>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -314,7 +315,7 @@ fn get_type_id_registry() -> &'static RwLock<TypeIdRegistry> {
 pub fn register_type_id<P: pyo3::PyTypeInfo, B: 'static>() {
     pyo3::Python::attach(|py| {
         let ptr = P::type_object(py).as_type_ptr();
-        let type_id = std::any::TypeId::of::<B>();
+        let type_id = TypeId::of::<B>();
         let registry = get_type_id_registry();
         let mut guard = registry.write().expect("TypeId registry lock poisoned");
         guard.by_py_type.insert(ptr, type_id);
@@ -325,7 +326,7 @@ pub fn register_type_id<P: pyo3::PyTypeInfo, B: 'static>() {
 ///
 /// First checks the component bridge registry, then falls back to the TypeId registry.
 /// Returns None if the type is not registered.
-pub fn get_type_id_by_py_type(ptr: *const PyTypeObject) -> Option<std::any::TypeId> {
+pub fn get_type_id_by_py_type(ptr: *const PyTypeObject) -> Option<TypeId> {
     // First check bridge registry (feature crate components)
     if let Some(bridge) = get_bridge_by_py_type(ptr) {
         return Some(bridge.bevy_type_id());
@@ -347,7 +348,7 @@ struct GlobalMessageBridgeRegistry {
     /// PyTypeObject* → Bridge
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn MessageBridge>>,
     /// TypeId → Bridge (for lookups from Bevy types)
-    by_type_id: HashMap<std::any::TypeId, Arc<dyn MessageBridge>>,
+    by_type_id: HashMap<TypeId, Arc<dyn MessageBridge>>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -416,7 +417,7 @@ pub fn message_bridge_count() -> usize {
 ///
 /// Returns the bridge if found, None otherwise.
 /// Used for iterating messages by type.
-pub fn get_message_bridge_by_type_id(type_id: std::any::TypeId) -> Option<Arc<dyn MessageBridge>> {
+pub fn get_message_bridge_by_type_id(type_id: TypeId) -> Option<Arc<dyn MessageBridge>> {
     let registry = get_global_message_registry();
     let guard = registry
         .read()
@@ -614,11 +615,11 @@ mod tests {
     #[test]
     fn test_empty_registry() {
         // Registry should be accessible
-        assert!(get_bridge_by_py_type(std::ptr::null()).is_none());
+        assert!(get_bridge_by_py_type(ptr::null()).is_none());
     }
 
     #[test]
     fn test_null_pointer_not_found() {
-        assert!(!contains_py_type(std::ptr::null()));
+        assert!(!contains_py_type(ptr::null()));
     }
 }
