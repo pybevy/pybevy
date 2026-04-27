@@ -1221,12 +1221,14 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{alloc::Layout, ffi::CString, ptr, sync::Once};
 
     use bevy::ecs::{
         component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
         name::Name,
     };
+    use pybevy_core::{CustomComponentEntry, CustomResourceEntry};
+    use pyo3::types::PyInt;
 
     use super::*;
     use crate::bridge::ErrorCode;

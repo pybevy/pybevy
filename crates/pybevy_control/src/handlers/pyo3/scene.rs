@@ -1284,7 +1284,7 @@ pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entit
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{ptr, sync::Once};
 
     use bevy::{
         camera::primitives::Aabb,
@@ -1292,6 +1292,7 @@ mod tests {
         math::Vec3,
         prelude::{GlobalTransform, Transform},
     };
+    use pyo3::types::PyList;
 
     // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
     extern crate pybevy_transform;

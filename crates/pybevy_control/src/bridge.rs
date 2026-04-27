@@ -880,6 +880,7 @@ mod tests {
     use std::sync::Once;
 
     use bevy::{ecs::entity::Entity, prelude::Transform};
+    use pybevy_core::bridge_inventory::collect_all;
     use pyo3::Python;
 
     use super::*;

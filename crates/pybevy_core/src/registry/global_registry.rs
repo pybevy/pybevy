@@ -607,6 +607,8 @@ pub fn run_system_once(
 
 #[cfg(test)]
 mod tests {
+    use std::ptr;
+
     use super::*;
 
     // Note: Can't easily test registration without a real ComponentBridge impl

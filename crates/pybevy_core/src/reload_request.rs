@@ -188,6 +188,8 @@ unsafe impl Sync for PyResourceStorage {}
 
 #[cfg(test)]
 mod tests {
+    use std::ptr;
+
     use super::*;
 
     fn make_component_id(index: usize) -> ComponentId {
