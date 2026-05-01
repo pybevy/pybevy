@@ -7,14 +7,20 @@ pub mod state;
 pub mod tracker;
 pub mod util;
 
-/// Marker component added to entities spawned by user code
-/// Entities WITHOUT this marker are preserved during hot reload (Bevy internals)
-#[derive(bevy::ecs::component::Component, Clone, Copy)]
-pub struct HotReloadable;
-
 use std::collections::HashSet;
 
-use bevy::ecs::{entity::Entity, resource::Resource};
+use bevy::ecs::{component::Component, entity::Entity, resource::Resource};
+
+/// Marker for entities that must survive hot-reload cleanup.
+///
+/// Unlike `BaseEntitySet` (which captures plugin-init entities automatically),
+/// `Retained` is explicitly added by systems that own long-lived entities
+/// (editor camera, debug overlays, etc.).
+///
+/// Entities with `Retained` are skipped by `clear_world_state()` even if
+/// they are not in the `BaseEntitySet`.
+#[derive(Component, Clone, Copy)]
+pub struct Retained;
 
 /// Entities that existed before any user code ran (plugin-init entities).
 ///

@@ -2,7 +2,6 @@ use bevy::ecs::{
     entity::Entity, hierarchy::ChildOf, ptr::OwningPtr, system::Commands, world::World,
 };
 use pybevy_core::registry::global_registry;
-use pybevy_reload::HotReloadable;
 use pyo3::{
     exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
@@ -748,8 +747,8 @@ impl PyCommands {
         self.check_valid()?;
 
         let entity = self.execute_returning(
-            |world| world.spawn(HotReloadable).id(),
-            |commands| commands.spawn(HotReloadable).id(),
+            |world| world.spawn_empty().id(),
+            |commands| commands.spawn_empty().id(),
         )?;
 
         Ok(PyEntityCommands::with_commands(entity, self))
@@ -759,10 +758,9 @@ impl PyCommands {
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
 
-        // First spawn empty entity with HotReloadable marker
         let entity_id = self.execute_returning(
-            |world| world.spawn(HotReloadable).id(),
-            |commands| commands.spawn(HotReloadable).id(),
+            |world| world.spawn_empty().id(),
+            |commands| commands.spawn_empty().id(),
         )?;
 
         // Handle two cases:
@@ -852,10 +850,9 @@ impl PyCommands {
         loop {
             match iter.call_method0("__next__") {
                 Ok(bundle) => {
-                    // Spawn an empty entity with HotReloadable marker
                     let entity_id = self.execute_returning(
-                        |world| world.spawn(HotReloadable).id(),
-                        |commands| commands.spawn(HotReloadable).id(),
+                        |world| world.spawn_empty().id(),
+                        |commands| commands.spawn_empty().id(),
                     )?;
 
                     // Extract components from the bundle tuple

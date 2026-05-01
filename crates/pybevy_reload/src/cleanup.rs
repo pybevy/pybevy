@@ -3,11 +3,11 @@ use std::{any::TypeId, collections::HashSet};
 use bevy::{
     ecs::{entity::Entity, world::World},
     log::info as log_info,
-    prelude::Resource,
+    prelude::{Resource, With},
     time::{Time, Virtual},
 };
 
-use crate::{BaseEntitySet, runtime::ReloadRuntime};
+use crate::{BaseEntitySet, Retained, runtime::ReloadRuntime};
 
 /// Snapshot of which bridged native resources existed before any user code ran.
 ///
@@ -24,24 +24,31 @@ pub struct NativeResourceSnapshot {
 ///
 /// Uses the `BaseEntitySet` to determine which entities are Bevy-internal
 /// (plugin-init) and should be preserved. Everything else is despawned,
-/// including Bevy side-effect entities (e.g., `PointerId`) that don't carry
-/// the `HotReloadable` marker.
+/// including Bevy side-effect entities (e.g., `PointerId`).
 pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, verbose: bool) {
-    // Despawn all entities not in the base set (plugin-init entities).
+    // Despawn all entities not in the base set and not explicitly retained.
     let base = world
         .get_resource::<BaseEntitySet>()
         .map(|b| b.entities.clone())
         .unwrap_or_default();
+
+    // Collect retained entities (editor camera, debug overlays, etc.)
+    let retained: HashSet<Entity> = world
+        .query_filtered::<Entity, With<Retained>>()
+        .iter(world)
+        .collect();
+
     let to_despawn: Vec<Entity> = world
         .query::<Entity>()
         .iter(world)
-        .filter(|e| !base.contains(e))
+        .filter(|e| !base.contains(e) && !retained.contains(e))
         .collect();
 
-    let live_before = base.len() + to_despawn.len();
+    let live_before = base.len() + retained.len() + to_despawn.len();
     log_info!(
-        "[hot-reload] clear_world_state: {} base / {} live entities, despawning {}...",
+        "[hot-reload] clear_world_state: {} base / {} retained / {} live entities, despawning {}...",
         base.len(),
+        retained.len(),
         live_before,
         to_despawn.len()
     );
@@ -107,7 +114,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::HotReloadable;
 
     /// Minimal ReloadRuntime for tests - all methods are no-ops.
     struct NoopRuntime;
@@ -284,8 +290,7 @@ mod tests {
 
         let handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
 
-        // Spawn an entity holding HotReloadable, plus attach the handle as Mesh3d
-        world.spawn((HotReloadable, Mesh3d(handle)));
+        world.spawn(Mesh3d(handle));
 
         assert_eq!(live_count::<Mesh>(&world), 1);
 
@@ -310,8 +315,8 @@ mod tests {
         insert_base_set(&mut world, vec![internal]);
 
         // User entities (not in base set) - should be despawned
-        let user1 = world.spawn((HotReloadable, Marker("user1"))).id();
-        let user2 = world.spawn((HotReloadable, Marker("user2"))).id();
+        let user1 = world.spawn(Marker("user1")).id();
+        let user2 = world.spawn(Marker("user2")).id();
 
         assert_eq!(live_entity_count(&mut world), 3);
 
@@ -333,15 +338,44 @@ mod tests {
     }
 
     #[test]
-    fn despawns_side_effect_entities_without_hotreloadable() {
+    fn retained_entities_survive_reload() {
+        let mut world = World::new();
+        let internal = world.spawn(Marker("internal")).id();
+        insert_base_set(&mut world, vec![internal]);
+
+        // User entity (should be despawned)
+        let user = world.spawn(Marker("user")).id();
+        // Retained entity (should survive even though not in base set)
+        let editor_cam = world.spawn((crate::Retained, Marker("editor_camera"))).id();
+
+        assert_eq!(live_entity_count(&mut world), 3);
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        assert_eq!(live_entity_count(&mut world), 2);
+        assert!(
+            world.get_entity(internal).is_ok(),
+            "base entity should survive"
+        );
+        assert!(
+            world.get_entity(user).is_err(),
+            "user entity should be despawned"
+        );
+        assert!(
+            world.get_entity(editor_cam).is_ok(),
+            "retained entity should survive reload"
+        );
+    }
+
+    #[test]
+    fn despawns_all_non_base_entities() {
         let mut world = World::new();
         // Base entity (plugin-init)
         let internal = world.spawn(Marker("internal")).id();
         insert_base_set(&mut world, vec![internal]);
 
-        // User entity with HotReloadable
-        let user = world.spawn((HotReloadable, Marker("user_camera"))).id();
-        // Bevy side-effect entity WITHOUT HotReloadable (e.g., PointerId)
+        let user = world.spawn(Marker("user_camera")).id();
+        // Bevy side-effect entity (e.g., PointerId)
         let side_effect = world.spawn(Marker("pointer_id")).id();
 
         assert_eq!(live_entity_count(&mut world), 3);
@@ -353,7 +387,7 @@ mod tests {
         assert!(world.get_entity(user).is_err(), "user entity despawned");
         assert!(
             world.get_entity(side_effect).is_err(),
-            "side-effect entity without HotReloadable must also be despawned"
+            "side-effect entity must also be despawned"
         );
     }
 
@@ -364,9 +398,8 @@ mod tests {
         let internal = world.spawn(Marker("internal")).id();
         insert_base_set(&mut world, vec![internal]);
 
-        // Parent (not in base set), children without HotReloadable
         let parent = world
-            .spawn((HotReloadable, Marker("parent")))
+            .spawn(Marker("parent"))
             .with_children(|cb| {
                 cb.spawn(Marker("child1"));
                 cb.spawn(Marker("child2")).with_children(|cb2| {
@@ -396,13 +429,11 @@ mod tests {
 
         // Simulate a scene like chair-race: multiple parents each with children
         for _i in 0..4 {
-            world
-                .spawn((HotReloadable, Marker("chair")))
-                .with_children(|cb| {
-                    for _ in 0..10 {
-                        cb.spawn(Marker("part"));
-                    }
-                });
+            world.spawn(Marker("chair")).with_children(|cb| {
+                for _ in 0..10 {
+                    cb.spawn(Marker("part"));
+                }
+            });
         }
 
         // 1 internal + 4 parents + 40 children = 45
@@ -662,7 +693,7 @@ mod tests {
 
         // Simulate user code: create a user asset + entity (not in base set)
         let user_handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
-        world.spawn((HotReloadable, Marker("user"), Mesh3d(user_handle)));
+        world.spawn((Marker("user"), Mesh3d(user_handle)));
 
         assert_eq!(live_count::<Mesh>(&world), 2);
 

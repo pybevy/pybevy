@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use bevy::ecs::{entity::Entity, ptr::OwningPtr, world::World};
 use pybevy_core::{BatchComponent, registry::global_registry};
-use pybevy_reload::HotReloadable;
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     ffi::PyTypeObject,
@@ -104,10 +103,10 @@ impl SpawnBatchCommand {
                 }
             }
 
-            // Phase 1: Spawn all entities with HotReloadable marker only.
+            // Phase 1: Spawn all entities.
             let mut entities = Vec::with_capacity(spawn_count);
             for _ in 0..spawn_count {
-                entities.push(world.spawn(HotReloadable).id());
+                entities.push(world.spawn_empty().id());
             }
 
             // Phase 2: Bulk-insert batch components.
