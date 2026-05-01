@@ -13,13 +13,12 @@
 use std::sync::{Arc, Mutex};
 
 use bevy::ecs::{entity::Entity, schedule::ScheduleLabel, world::World};
+use pybevy_core::CustomComponentInfo;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::PyType,
 };
-
-use pybevy_core::CustomComponentInfo;
 
 use crate::ecs::{component::PyComponent, resource::PyResource};
 

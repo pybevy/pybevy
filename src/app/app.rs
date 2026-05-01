@@ -410,7 +410,6 @@ impl PyApp {
 
         Ok(())
     }
-
 }
 
 #[pymethods]
