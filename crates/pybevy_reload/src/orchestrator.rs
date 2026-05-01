@@ -255,8 +255,8 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         .unwrap_or((0.0, false));
 
     // Snapshot ALL entities before Startup so we can clean up on failure.
-    // Uses all entities (not just HotReloadable) to also catch Bevy
-    // side-effect entities spawned during a failed Startup.
+    // Snapshot all entities so we can clean up on failure
+    // (catches Bevy side-effect entities spawned during a failed Startup).
     let pre_startup_entities: std::collections::HashSet<Entity> = if mode == ReloadMode::Full {
         world.query::<Entity>().iter(world).collect()
     } else {

@@ -39,6 +39,7 @@ pub mod plugin;
 pub mod registry;
 pub mod reload_request;
 pub mod resource;
+pub mod source_location;
 
 // Storage layer — re-exported from pybevy_storage
 pub use pybevy_storage::{

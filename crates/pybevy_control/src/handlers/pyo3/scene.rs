@@ -12,7 +12,10 @@ use bevy::{
     },
     reflect::TypeInfo,
 };
-use pybevy_core::registry::global_registry::{all_component_bridges, all_resource_bridges};
+use pybevy_core::{
+    registry::global_registry::{all_component_bridges, all_resource_bridges},
+    source_location::SourceLocation,
+};
 use pyo3::{
     ffi,
     prelude::*,
@@ -282,12 +285,28 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
 
         let label = crate::handlers::spatial::entity_label(world, *entity);
 
+        // Include source location if tracked
+        let source_location = world
+            .get_entity(*entity)
+            .ok()
+            .and_then(|eref| eref.get::<SourceLocation>())
+            .map(|loc| {
+                serde_json::json!({
+                    "file": loc.file,
+                    "line": loc.line,
+                    "function": loc.function,
+                })
+            });
+
         let mut entry = serde_json::json!({
             "id": entity_id,
             "name": entity_name,
             "label": label,
             "components": component_names,
         });
+        if let Some(loc) = source_location {
+            entry["source_location"] = loc;
+        }
 
         // Report any remaining unknown components
         if let Ok(entity_ref) = world.get_entity(*entity) {
@@ -458,6 +477,16 @@ pub fn get_entity(
         "label": label,
         "components": components,
     });
+    // Include source location if tracked
+    if let Ok(eref) = world.get_entity(entity)
+        && let Some(loc) = eref.get::<SourceLocation>()
+    {
+        result["source_location"] = serde_json::json!({
+            "file": loc.file,
+            "line": loc.line,
+            "function": loc.function,
+        });
+    }
     if !custom_components.is_empty() {
         result["custom_components"] =
             serde_json::json!(custom_components.keys().collect::<Vec<_>>());

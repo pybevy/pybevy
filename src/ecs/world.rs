@@ -43,7 +43,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::registry::global_registry;
-use pybevy_reload::{HotReloadGeneration, HotReloadable, SystemStage};
+use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
@@ -331,7 +331,7 @@ impl PyWorld {
     pub fn spawn_empty(&self, _py: Python<'_>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
         let world = self.world_mut()?;
-        let entity = world.spawn(HotReloadable).id();
+        let entity = world.spawn_empty().id();
         Ok(PyEntityCommands::with_world(entity, self))
     }
 
@@ -341,8 +341,7 @@ impl PyWorld {
 
         let world = self.world_mut()?;
 
-        // First spawn empty entity with HotReloadable marker
-        let entity_id = world.spawn(HotReloadable).id();
+        let entity_id = world.spawn_empty().id();
 
         // Create a temporary PyCommands wrapper around this world to reuse component insertion logic
         let world_ptr = self.world_ptr();
@@ -609,7 +608,7 @@ impl PyWorld {
             match iter.call_method0("__next__") {
                 Ok(bundle) => {
                     let world = self.world_mut()?;
-                    let entity_id = world.spawn(HotReloadable).id();
+                    let entity_id = world.spawn_empty().id();
 
                     // Convert bundle to a tuple of components
                     let components = if bundle.is_instance_of::<pyo3::types::PyTuple>() {

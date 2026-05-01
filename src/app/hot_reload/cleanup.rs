@@ -67,7 +67,7 @@ pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
 /// the system reloading logic. Used by `App.clear_scene()` to reset state.
 ///
 /// Clears:
-/// - All entities (no HotReloadable marker check - clears everything)
+/// - All entities (clears everything not in base set)
 /// - Custom Python resources from PyResourceStorage
 ///
 /// Preserves:
