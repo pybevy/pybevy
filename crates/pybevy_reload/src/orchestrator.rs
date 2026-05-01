@@ -752,6 +752,137 @@ mod tests {
         );
     }
 
+    /// Entities spawned during a failed Startup must be cleaned up so we
+    /// don't leave orphaned cameras/render targets that cause GPU errors.
+    #[test]
+    fn startup_exception_cleans_up_spawned_entities() {
+        /// System that spawns entities AND then errors -- simulates a Startup
+        /// that partially creates a scene before hitting a Python exception.
+        fn spawning_crash_system(world: &mut World) {
+            world.spawn(Name::new("orphan_camera"));
+            world.spawn(Name::new("orphan_light"));
+
+            let current_time = world
+                .get_resource::<bevy::time::Time>()
+                .map(|t| t.elapsed_secs_f64())
+                .unwrap_or(0.0);
+            let mut last_error =
+                world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
+            last_error.error = Some("RuntimeError: setup failed".to_string());
+            last_error.traceback = Some("File \"scene.py\", line 10".to_string());
+            last_error.timestamp_secs = current_time;
+        }
+
+        struct SpawningErrorRuntime;
+
+        impl ReloadRuntime for SpawningErrorRuntime {
+            type Defs = ();
+            type SystemHandle = ();
+            fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+                Ok(())
+            }
+            fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+                None
+            }
+            fn plugin_names(&self, _defs: &()) -> Vec<String> {
+                vec![]
+            }
+            fn system_names(&self, _defs: &()) -> HashSet<String> {
+                HashSet::new()
+            }
+            fn register_systems(
+                &mut self,
+                world: &mut World,
+                _defs: (),
+                _gen: u32,
+            ) -> Result<Vec<()>, ReloadError> {
+                let mut schedules = world.resource_mut::<Schedules>();
+                if let Some(startup) = schedules.get_mut(Startup) {
+                    startup.add_systems(spawning_crash_system);
+                }
+                Ok(vec![])
+            }
+            fn register_resources(
+                &mut self,
+                _world: &mut World,
+                _defs: &(),
+            ) -> Result<(), ReloadError> {
+                Ok(())
+            }
+            fn register_messages(
+                &mut self,
+                _world: &mut World,
+                _defs: &(),
+                _gen: u32,
+            ) -> Result<(), ReloadError> {
+                Ok(())
+            }
+            fn register_observers(
+                &mut self,
+                _world: &mut World,
+                _defs: &(),
+            ) -> Result<(), ReloadError> {
+                Ok(())
+            }
+            fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+            fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+            fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+            fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+                HashSet::new()
+            }
+            fn clear_native_resources(
+                &self,
+                _world: &mut World,
+                _initial: &HashSet<TypeId>,
+                _verbose: bool,
+            ) {
+            }
+            fn detect_system_delta(
+                &mut self,
+                _world: &mut World,
+                _new: HashSet<String>,
+            ) -> Vec<String> {
+                vec![]
+            }
+            fn clear_param_cache(&mut self) {}
+            fn trigger_gc(&mut self) {}
+            fn print_error(&self, _error: &ReloadError) {}
+        }
+
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+
+        let pre_entity_count = world.query::<Entity>().iter(&world).count();
+
+        let result = perform_reload(
+            &mut world,
+            &mut SpawningErrorRuntime,
+            ReloadMode::Full,
+            &state,
+        );
+
+        assert!(result.is_err(), "reload should fail");
+
+        let post_entity_count = world.query::<Entity>().iter(&world).count();
+        assert_eq!(
+            post_entity_count, pre_entity_count,
+            "entities spawned during failed Startup should be cleaned up \
+             (had {} before, {} after)",
+            pre_entity_count, post_entity_count
+        );
+
+        // Verify the orphan entities are actually gone
+        let names: Vec<String> = world
+            .query::<&Name>()
+            .iter(&world)
+            .map(|n| n.as_str().to_string())
+            .collect();
+        assert!(
+            !names.contains(&"orphan_camera".to_string()),
+            "orphan_camera should have been despawned"
+        );
+    }
+
     /// After a failed reload, the next successful reload must run Startup.
     #[test]
     fn reload_after_failure_runs_startup() {

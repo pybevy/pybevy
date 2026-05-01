@@ -83,3 +83,62 @@ impl<'w, 's> From<FilteredEntityMut<'w, 's>> for FilteredEntityAccess<'w, 's> {
         Self::Mut(m)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::{component::Component, query::QueryBuilder, world::World};
+
+    use super::*;
+
+    #[derive(Component)]
+    struct Health(f32);
+
+    #[test]
+    fn ref_variant_get_by_id_returns_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Health(100.0)).id();
+        let comp_id = world.components().component_id::<Health>().unwrap();
+
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        builder.ref_id(comp_id);
+        let mut qs = builder.build();
+        let entity_ref = qs.iter(&world).next().unwrap();
+        let access = FilteredEntityAccess::Ref(entity_ref);
+
+        assert_eq!(access.id(), entity);
+        assert!(access.get_by_id(comp_id).is_some());
+    }
+
+    #[test]
+    fn mut_variant_get_by_id_returns_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Health(100.0)).id();
+        let comp_id = world.components().component_id::<Health>().unwrap();
+
+        let mut builder = QueryBuilder::<FilteredEntityMut>::new(&mut world);
+        builder.mut_id(comp_id);
+        let mut qs = builder.build();
+        let entity_mut = qs.iter_mut(&mut world).next().unwrap();
+        let mut access = FilteredEntityAccess::Mut(entity_mut);
+
+        assert_eq!(access.id(), entity);
+        assert!(access.get_by_id(comp_id).is_some());
+        assert!(access.get_mut_by_id(comp_id).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "get_mut_by_id called on FilteredEntityRef")]
+    fn ref_variant_get_mut_panics() {
+        let mut world = World::new();
+        world.spawn(Health(50.0));
+        let comp_id = world.components().component_id::<Health>().unwrap();
+
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        builder.ref_id(comp_id);
+        let mut qs = builder.build();
+        let entity_ref = qs.iter(&world).next().unwrap();
+        let mut access = FilteredEntityAccess::Ref(entity_ref);
+
+        let _ = access.get_mut_by_id(comp_id);
+    }
+}

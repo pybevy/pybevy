@@ -96,7 +96,12 @@ impl AssetSourceLocations {
 
 #[cfg(test)]
 mod tests {
+    use bevy::{asset::Assets, prelude::*, reflect::TypePath};
+
     use super::*;
+
+    #[derive(Asset, TypePath)]
+    struct TestAsset;
 
     #[test]
     fn config_default_is_disabled() {
@@ -125,5 +130,66 @@ mod tests {
         };
         assert!(config.should_track_entities());
         assert!(!config.should_track_assets());
+    }
+
+    #[test]
+    fn source_location_as_component() {
+        let mut world = World::new();
+        let entity = world
+            .spawn(SourceLocation::new("main.py".into(), 42, "setup".into()))
+            .id();
+
+        let loc = world.get::<SourceLocation>(entity).unwrap();
+        assert_eq!(loc.file, "main.py");
+        assert_eq!(loc.line, 42);
+        assert_eq!(loc.function, "setup");
+    }
+
+    #[test]
+    fn asset_source_locations_insert_and_get() {
+        let mut world = World::new();
+        world.init_resource::<Assets<TestAsset>>();
+
+        let handle = world.resource_mut::<Assets<TestAsset>>().add(TestAsset);
+
+        let mut locations = AssetSourceLocations::default();
+        locations.insert(
+            &handle,
+            SourceLocation::new("scene.py".into(), 10, "create_mesh".into()),
+        );
+
+        let loc = locations.get(&handle).unwrap();
+        assert_eq!(loc.file, "scene.py");
+        assert_eq!(loc.line, 10);
+        assert_eq!(loc.function, "create_mesh");
+    }
+
+    #[test]
+    fn asset_source_locations_get_by_untyped() {
+        let mut world = World::new();
+        world.init_resource::<Assets<TestAsset>>();
+
+        let handle = world.resource_mut::<Assets<TestAsset>>().add(TestAsset);
+
+        let mut locations = AssetSourceLocations::default();
+        locations.insert(
+            &handle,
+            SourceLocation::new("assets.py".into(), 5, "load".into()),
+        );
+
+        let untyped_id = handle.id().untyped();
+        let loc = locations.get_by_untyped(untyped_id).unwrap();
+        assert_eq!(loc.file, "assets.py");
+    }
+
+    #[test]
+    fn asset_source_locations_missing_returns_none() {
+        let mut world = World::new();
+        world.init_resource::<Assets<TestAsset>>();
+
+        let handle = world.resource_mut::<Assets<TestAsset>>().add(TestAsset);
+
+        let locations = AssetSourceLocations::default();
+        assert!(locations.get(&handle).is_none());
     }
 }
