@@ -6,7 +6,6 @@ use bevy::{
     prelude::Resource,
     time::{Time, Virtual},
 };
-use pybevy_core::asset_cleanup::clear_all_programmatic_assets;
 
 use crate::{BaseEntitySet, runtime::ReloadRuntime};
 
@@ -67,12 +66,12 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         live_after
     );
 
-    // Clear programmatic assets (preserve file-loaded)
-    if verbose {
-        eprintln!("   → Clearing programmatic assets (preserving file-loaded)");
-    }
-
-    clear_all_programmatic_assets(world, verbose);
+    // Don't explicitly clear programmatic assets. Entity despawn already drops
+    // all Handle<T> components, and Bevy's `track_assets` system GC's orphaned
+    // assets on the next frame. Explicitly removing assets here would destroy
+    // Bevy-internal programmatic assets (e.g. TextureAtlasLayout) whose handles
+    // are still held by preserved base entities, causing dangling-handle panics
+    // in render systems like bevy_ui_render.
 
     // Clear custom runtime resources (preserves built-in and HotReloadControl)
     if verbose {
@@ -102,7 +101,7 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
 mod tests {
     use bevy::{
         asset::{Asset, AssetServer, Assets, RenderAssetUsages},
-        mesh::{Mesh, PrimitiveTopology},
+        mesh::{Mesh, Mesh3d, PrimitiveTopology},
         pbr::StandardMaterial,
         reflect::TypePath,
     };
@@ -286,15 +285,21 @@ mod tests {
         let handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
 
         // Spawn an entity holding HotReloadable, plus attach the handle as Mesh3d
-        world.spawn((HotReloadable, bevy::mesh::Mesh3d(handle)));
+        world.spawn((HotReloadable, Mesh3d(handle)));
 
         assert_eq!(live_count::<Mesh>(&world), 1);
 
-        // Despawn entities, then clear assets
+        // Despawn entities. Their Handle<Mesh> components are dropped.
+        // The asset still exists in Assets<Mesh> (Bevy's track_assets GC
+        // processes orphaned assets on the next frame, not synchronously),
+        // but the entity no longer holds a reference to it.
         clear_world_state(&mut world, &mut NoopRuntime, false);
-        clear_assets::<Mesh>(&mut world);
 
-        assert_eq!(live_count::<Mesh>(&world), 0);
+        assert_eq!(
+            live_count::<Mesh>(&world),
+            1,
+            "orphaned asset remains until Bevy's track_assets GC runs"
+        );
     }
 
     #[test]
@@ -628,5 +633,59 @@ mod tests {
         // Both resources should be untouched (no snapshot = empty initial set)
         assert_eq!(world.resource::<PluginRes>().0, 42);
         assert_eq!(world.resource::<UserOnlyRes>().0, 99);
+    }
+
+    /// Regression test for Camera2d hot-reload crash.
+    ///
+    /// When a Bevy-internal (base) entity holds a Handle<T> to a programmatic
+    /// asset, reload must not remove that asset. Otherwise the base entity has
+    /// a dangling handle and render systems panic:
+    ///
+    ///   bevy_ui_render/src/lib.rs:976: called `Option::unwrap()` on a `None` value
+    ///
+    /// The crash pattern: bevy_ui_render holds a Handle<TextureAtlasLayout> on a
+    /// preserved entity; the old cleanup code deleted the TextureAtlasLayout
+    /// because it had no file path (it's `not_loadable`). Uses Mesh as a
+    /// stand-in since the cleanup logic is identical for all asset types.
+    #[test]
+    fn base_entity_asset_handle_valid_after_reload() {
+        let mut world = World::new();
+        world.init_resource::<Assets<Mesh>>();
+
+        // Simulate Bevy plugin init: create a programmatic asset and a base entity
+        // that holds a handle to it (like bevy_ui_render's internal TextureAtlasLayout).
+        let handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
+        let base_entity = world
+            .spawn((Marker("bevy_internal"), Mesh3d(handle.clone())))
+            .id();
+        insert_base_set(&mut world, vec![base_entity]);
+
+        // Simulate user code: create a user asset + entity (not in base set)
+        let user_handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
+        world.spawn((HotReloadable, Marker("user"), Mesh3d(user_handle)));
+
+        assert_eq!(live_count::<Mesh>(&world), 2);
+
+        // Full reload: despawn user entities (drops their asset handles).
+        // clear_world_state no longer explicitly removes assets. Bevy's
+        // track_assets GC will clean up orphaned assets on the next frame.
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        // Base entity must survive (it's in the BaseEntitySet)
+        assert!(
+            world.get_entity(base_entity).is_ok(),
+            "base entity must survive reload"
+        );
+
+        // Both assets still exist in Assets<Mesh>: the base entity's asset has
+        // a live handle, and the user's orphaned asset hasn't been GC'd yet
+        // (Bevy's track_assets runs on the next frame, not synchronously).
+        // The important thing is the base entity's handle is NOT dangling.
+        let mesh3d = world.get::<Mesh3d>(base_entity).unwrap();
+        let assets = world.resource::<Assets<Mesh>>();
+        assert!(
+            assets.get(&mesh3d.0).is_some(),
+            "base entity's asset handle must remain valid after reload"
+        );
     }
 }
