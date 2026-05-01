@@ -12,7 +12,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use bevy::ecs::schedule::ScheduleLabel;
+use bevy::ecs::{entity::Entity, schedule::ScheduleLabel, world::World};
+use pybevy_core::CustomComponentInfo;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -638,7 +639,7 @@ result = _make_in_state_condition(target_state)
 /// Returns true if a transition occurred, false otherwise.
 fn apply_transition_for_state(
     py: Python,
-    world: &mut bevy::ecs::world::World,
+    world: &mut World,
     state_type_name: &str,
 ) -> PyResult<bool> {
     use bevy::ecs::schedule::Schedules;
@@ -753,6 +754,9 @@ fn apply_transition_for_state(
         world.try_run_schedule(exit_label).ok();
     }
 
+    // Despawn entities with DespawnOnExit matching the old state
+    despawn_matching_entities(py, world, "DespawnOnExit", &current_state);
+
     // Update State<T> resource
     {
         let state = state_py.bind(py).borrow();
@@ -775,7 +779,55 @@ fn apply_transition_for_state(
         world.try_run_schedule(enter_label).ok();
     }
 
+    // Despawn entities with DespawnOnEnter matching the new state
+    despawn_matching_entities(py, world, "DespawnOnEnter", &pending_transition);
+
     Ok(true)
+}
+
+/// Despawn entities whose `component_name` component has a `state_value()`
+/// matching `target_state`. Used during state transitions for DespawnOnExit
+/// and DespawnOnEnter.
+fn despawn_matching_entities(
+    py: Python,
+    world: &mut World,
+    component_name: &str,
+    target_state: &Py<PyAny>,
+) {
+    let comp_id = match world.get_resource::<CustomComponentInfo>() {
+        Some(ci) => ci
+            .iter()
+            .find(|(_, entry)| entry.name == component_name && entry.is_pyobject_storage)
+            .map(|(id, _)| id),
+        None => return,
+    };
+
+    let Some(comp_id) = comp_id else {
+        return;
+    };
+
+    let entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
+
+    for entity in entities {
+        let Ok(entity_ref) = world.get_entity(entity) else {
+            continue;
+        };
+        let Ok(ptr) = entity_ref.get_by_id(comp_id) else {
+            continue;
+        };
+        // SAFETY: is_pyobject_storage verified in lookup above, so raw data is Py<PyAny>
+        let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
+        let sv = py_obj
+            .bind(py)
+            .call_method0("state_value")
+            .expect("DespawnOnExit/DespawnOnEnter component missing state_value() method");
+        let matches = sv
+            .eq(target_state.bind(py))
+            .expect("state_value() comparison failed");
+        if matches {
+            world.despawn(entity);
+        }
+    }
 }
 
 /// System that checks all registered state types and applies pending transitions.
