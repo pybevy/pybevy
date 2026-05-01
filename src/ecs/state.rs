@@ -729,6 +729,7 @@ fn apply_transition_for_state(
         if has_enter_schedule {
             world.try_run_schedule(enter_label).ok();
         }
+        despawn_matching_entities(py, world, "DespawnOnEnter", &current_state);
         return Ok(true);
     }
 
