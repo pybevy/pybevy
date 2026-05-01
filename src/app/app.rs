@@ -411,164 +411,6 @@ impl PyApp {
         Ok(())
     }
 
-    /// Ensure the despawn-on-state-change system is registered (called from init_state/insert_state).
-    /// Registers a PostUpdate system that despawns entities with DespawnOnExit/DespawnOnEnter
-    /// components when their associated state changes.
-    fn ensure_despawn_system_registered(&self) -> PyResult<()> {
-        static REGISTERED_APPS: Mutex<Option<HashSet<usize>>> = Mutex::new(None);
-
-        {
-            let mut registered = REGISTERED_APPS.lock().unwrap();
-            if registered.is_none() {
-                *registered = Some(HashSet::new());
-            }
-            if registered.as_ref().unwrap().contains(&self.app_id) {
-                return Ok(());
-            }
-            registered.as_mut().unwrap().insert(self.app_id);
-        }
-
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
-
-            // Track previous state values keyed by resource ComponentId
-            let previous_states: Arc<Mutex<HashMap<ComponentId, Py<PyAny>>>> =
-                Arc::new(Mutex::new(HashMap::new()));
-
-            let system_fn = move |world: &mut World| {
-                Python::attach(|py| {
-                    if let Err(e) = despawn_on_state_change_impl(py, world, &previous_states) {
-                        eprintln!("DespawnOnExit system error: {}", e);
-                    }
-                });
-            };
-
-            if !app.world().resource::<Schedules>().contains(PostUpdate) {
-                app.init_schedule(PostUpdate);
-            }
-            app.add_systems(PostUpdate, system_fn);
-
-            Ok::<(), PyErr>(())
-        })?;
-
-        Ok(())
-    }
-}
-
-/// Rust implementation of despawn-on-state-change.
-/// Runs in PostUpdate after state transitions (PreUpdate) and user systems (Update).
-fn despawn_on_state_change_impl(
-    py: Python,
-    world: &mut World,
-    previous_states: &Arc<Mutex<HashMap<ComponentId, Py<PyAny>>>>,
-) -> PyResult<()> {
-    // Collect current state values and detect changes
-    let mut changes: Vec<(Py<PyAny>, Py<PyAny>)> = Vec::new(); // (old_state, new_state)
-
-    {
-        let pyresource = match world.get_resource::<PyResourceStorage>() {
-            Some(rs) => rs,
-            None => return Ok(()),
-        };
-
-        let mut prev = previous_states.lock().unwrap();
-
-        for (&comp_id, resource_py) in pyresource.resources.iter() {
-            let resource = resource_py.bind(py);
-            if let Ok(state) = resource.cast::<PyState>() {
-                let current_value = state.borrow().current_value(py);
-                match prev.get(&comp_id) {
-                    None => {
-                        // First run — store initial state, no despawn
-                        prev.insert(comp_id, current_value);
-                    }
-                    Some(prev_value) => {
-                        let is_equal = prev_value.bind(py).eq(current_value.bind(py))?;
-                        if !is_equal {
-                            let old_state = prev_value.clone_ref(py);
-                            prev.insert(comp_id, current_value.clone_ref(py));
-                            changes.push((old_state, current_value));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if changes.is_empty() {
-        return Ok(());
-    }
-
-    // Find ComponentIds for DespawnOnExit and DespawnOnEnter from CustomComponentInfo
-    let custom_info = match world.get_resource::<CustomComponentInfo>() {
-        Some(ci) => ci,
-        None => return Ok(()),
-    };
-
-    let despawn_exit_id = custom_info
-        .iter()
-        .find(|(_, entry)| entry.name == "DespawnOnExit")
-        .map(|(id, _)| id);
-    let despawn_enter_id = custom_info
-        .iter()
-        .find(|(_, entry)| entry.name == "DespawnOnEnter")
-        .map(|(id, _)| id);
-
-    if despawn_exit_id.is_none() && despawn_enter_id.is_none() {
-        return Ok(());
-    }
-
-    // Collect entities to despawn (can't despawn while iterating)
-    let mut entities_to_despawn: Vec<Entity> = Vec::new();
-
-    {
-        let mut query_state = world.query::<Entity>();
-        let entity_list: Vec<Entity> = query_state.iter(world).collect();
-
-        for entity in &entity_list {
-            let entity_ref = match world.get_entity(*entity) {
-                Ok(er) => er,
-                Err(_) => continue,
-            };
-
-            for (old_state, new_state) in &changes {
-                // DespawnOnExit: despawn when exiting old_state
-                if let Some(exit_id) = despawn_exit_id
-                    && let Ok(ptr) = entity_ref.get_by_id(exit_id)
-                {
-                    // SAFETY: PyObject storage — raw data is Py<PyAny>
-                    let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
-                    if let Ok(sv) = py_obj.bind(py).call_method0("state_value")
-                        && sv.eq(old_state.bind(py)).unwrap_or(false)
-                    {
-                        entities_to_despawn.push(*entity);
-                    }
-                }
-
-                // DespawnOnEnter: despawn when entering new_state
-                if let Some(enter_id) = despawn_enter_id
-                    && let Ok(ptr) = entity_ref.get_by_id(enter_id)
-                {
-                    let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
-                    if let Ok(sv) = py_obj.bind(py).call_method0("state_value")
-                        && sv.eq(new_state.bind(py)).unwrap_or(false)
-                    {
-                        entities_to_despawn.push(*entity);
-                    }
-                }
-            }
-        }
-    }
-
-    // Despawn collected entities
-    for entity in entities_to_despawn {
-        if world.get_entity(entity).is_ok() {
-            world.despawn(entity);
-        }
-    }
-
-    Ok(())
 }
 
 #[pymethods]
@@ -1386,8 +1228,6 @@ impl PyApp {
 
         // Register automatic state transition system
         pyself.ensure_state_transition_system_registered()?;
-        // Register automatic despawn-on-state-change system
-        pyself.ensure_despawn_system_registered()?;
 
         Ok(pyself.into())
     }
@@ -1437,8 +1277,6 @@ impl PyApp {
 
         // Register automatic state transition system
         pyself.ensure_state_transition_system_registered()?;
-        // Register automatic despawn-on-state-change system
-        pyself.ensure_despawn_system_registered()?;
 
         Ok(pyself.into())
     }
