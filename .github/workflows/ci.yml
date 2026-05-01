@@ -150,9 +150,14 @@ jobs:
           toolchain: stable
           components: llvm-tools-preview
 
+      - name: Get rustc version
+        id: rustc-version
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+
       - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
         with:
-          prefix-key: pybevy-coverage
+          prefix-key: pybevy-coverage-${{ steps.rustc-version.outputs.version }}
+          workspaces: ". -> target/llvm-cov-target"
 
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov@0.8.4 --locked || true
