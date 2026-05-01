@@ -12,7 +12,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[pycomponent(Transform, bridge, view_fields = [translation, rotation, scale])]
 #[pyclass(name = "Transform", extends = pybevy_core::PyComponent, eq)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyTransform {
     pub(crate) storage: ComponentStorage<Transform>,
 }

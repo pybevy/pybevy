@@ -10,7 +10,7 @@ use pyo3::{exceptions::PyIndexError, prelude::*};
 use crate::{ComponentStorage, PyComponent, PyEntity};
 
 #[pyclass(name = "ChildOf", extends = PyComponent, frozen)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyChildOf {
     pub(crate) storage: ComponentStorage<ChildOf>,
 }

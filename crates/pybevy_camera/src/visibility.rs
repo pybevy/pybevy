@@ -7,7 +7,7 @@ use crate::visibility_batch::PyVisibilityBatch;
 
 #[pycomponent(Visibility, bridge)]
 #[pyclass(name = "Visibility", extends = PyComponent, eq)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyVisibility {
     pub(crate) storage: ComponentStorage<Visibility>,
 }

@@ -12,7 +12,6 @@ use super::{
 
 #[pycomponent(AnimationTransitions, bridge)]
 #[pyclass(name = "AnimationTransitions", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAnimationTransitions {
     pub(crate) storage: ComponentStorage<AnimationTransitions>,
 }
@@ -37,7 +36,7 @@ impl PyAnimationTransitions {
         self.as_mut()?.play(bevy_player, new_animation.0, duration);
 
         Ok(PyActiveAnimation {
-            storage: player.storage.clone(),
+            storage: player.storage.share_borrow(),
             node_index: new_animation.0,
         })
     }

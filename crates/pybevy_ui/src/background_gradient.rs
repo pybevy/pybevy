@@ -7,7 +7,7 @@ use crate::gradient::PyGradient;
 
 #[pycomponent(BackgroundGradient, bridge)]
 #[pyclass(name = "BackgroundGradient", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyBackgroundGradient {
     pub(crate) storage: ComponentStorage<BackgroundGradient>,
 }

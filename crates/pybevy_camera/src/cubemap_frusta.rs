@@ -7,7 +7,6 @@ use crate::frustum::PyFrustum;
 
 #[pycomponent(CubemapFrusta, bridge)]
 #[pyclass(name = "CubemapFrusta", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyCubemapFrusta {
     pub(crate) storage: ComponentStorage<CubemapFrusta>,
 }

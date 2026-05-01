@@ -8,7 +8,7 @@ use crate::{shadow_style::PyShadowStyle, val::PyVal};
 
 #[pycomponent(BoxShadow, bridge)]
 #[pyclass(name = "BoxShadow", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyBoxShadow {
     pub(crate) storage: ComponentStorage<BoxShadow>,
 }

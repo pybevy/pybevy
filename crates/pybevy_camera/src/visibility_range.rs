@@ -8,7 +8,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(VisibilityRange, bridge, view_fields = [use_aabb])]
 #[pyclass(name = "VisibilityRange", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyVisibilityRange {
     pub(crate) storage: ComponentStorage<VisibilityRange>,
 }

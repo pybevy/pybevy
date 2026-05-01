@@ -7,7 +7,7 @@ use crate::ssao_quality_level::PyScreenSpaceAmbientOcclusionQualityLevel;
 
 #[pycomponent(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness])]
 #[pyclass(name = "ScreenSpaceAmbientOcclusion", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyScreenSpaceAmbientOcclusion {
     pub(crate) storage: ComponentStorage<ScreenSpaceAmbientOcclusion>,
 }

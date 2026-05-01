@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(UiTargetCamera, bridge)]
 #[pyclass(name = "UiTargetCamera", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyUiTargetCamera {
     pub(crate) storage: ComponentStorage<UiTargetCamera>,
 }

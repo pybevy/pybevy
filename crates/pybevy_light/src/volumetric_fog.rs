@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(VolumetricFog, bridge, view_fields = [ambient_intensity, step_count, jitter], batch_only_fields = [ambient_color])]
 #[pyclass(name = "VolumetricFog", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyVolumetricFog {
     pub(crate) storage: ComponentStorage<VolumetricFog>,
 }

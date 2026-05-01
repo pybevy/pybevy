@@ -11,7 +11,6 @@ use crate::{half_space::PyHalfSpace, sphere::PySphere};
 
 #[pycomponent(Frustum, bridge)]
 #[pyclass(name = "Frustum", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyFrustum {
     pub(crate) storage: ComponentStorage<Frustum>,
 }

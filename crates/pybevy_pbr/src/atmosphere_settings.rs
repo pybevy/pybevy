@@ -17,7 +17,6 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     sky_max_samples
 ])]
 #[pyclass(name = "AtmosphereSettings", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAtmosphereSettings {
     pub(crate) storage: ComponentStorage<AtmosphereSettings>,
 }

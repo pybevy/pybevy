@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(InheritedVisibility, bridge)]
 #[pyclass(name = "InheritedVisibility", extends = PyComponent, frozen)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyInheritedVisibility {
     pub(crate) storage: ComponentStorage<InheritedVisibility>,
 }

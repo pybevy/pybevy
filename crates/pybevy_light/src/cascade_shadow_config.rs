@@ -5,7 +5,7 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 #[pycomponent(CascadeShadowConfig, bridge, view_fields = [overlap_proportion, minimum_distance])]
 #[pyclass(name = "CascadeShadowConfig", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyCascadeShadowConfig {
     pub(crate) storage: ComponentStorage<CascadeShadowConfig>,
 }

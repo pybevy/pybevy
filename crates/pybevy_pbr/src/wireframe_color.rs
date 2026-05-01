@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(WireframeColor, bridge, batch_only_fields = [color])]
 #[pyclass(name = "WireframeColor", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyWireframeColor {
     pub(crate) storage: ComponentStorage<WireframeColor>,
 }

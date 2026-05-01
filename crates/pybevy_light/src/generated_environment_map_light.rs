@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(GeneratedEnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
 #[pyclass(name = "GeneratedEnvironmentMapLight", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyGeneratedEnvironmentMapLight {
     pub(crate) storage: ComponentStorage<GeneratedEnvironmentMapLight>,
 }

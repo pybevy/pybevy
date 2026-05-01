@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(Name, bridge)]
 #[pyclass(name = "Name", extends = PyComponent, eq)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyName {
     pub(crate) storage: ComponentStorage<Name>,
 }

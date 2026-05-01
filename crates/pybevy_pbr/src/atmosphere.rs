@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(Atmosphere, bridge, view_only_fields = [bottom_radius: f32, top_radius: f32])]
 #[pyclass(name = "Atmosphere", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAtmosphere {
     pub(crate) storage: ComponentStorage<Atmosphere>,
 }

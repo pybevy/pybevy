@@ -11,7 +11,6 @@ use crate::half_space::PyHalfSpace;
 
 #[pycomponent(Aabb, bridge)]
 #[pyclass(name = "Aabb", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAabb {
     pub(crate) storage: ComponentStorage<Aabb>,
 }

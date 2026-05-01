@@ -15,8 +15,6 @@ use bevy::{
         Update,
     },
     ecs::{
-        component::ComponentId,
-        entity::Entity,
         message::MessageWriter,
         resource::Resource,
         schedule::{Chain, ExecutorKind, IntoScheduleConfigs, ScheduleConfigs, Schedules},
@@ -25,10 +23,7 @@ use bevy::{
     },
     log::LogPlugin,
 };
-use pybevy_core::{
-    CustomComponentInfo, PyMessage, PyPlugin as PyPluginBase, PyResourceStorage,
-    plugin::plugin_registry,
-};
+use pybevy_core::{PyMessage, PyPlugin as PyPluginBase, plugin::plugin_registry};
 use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     IntoPyObjectExt,

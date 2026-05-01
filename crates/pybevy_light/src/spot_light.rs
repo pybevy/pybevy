@@ -17,7 +17,7 @@ use pyo3::prelude::*;
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
 #[pyclass(name = "SpotLight", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PySpotLight {
     pub(crate) storage: ComponentStorage<SpotLight>,
 }

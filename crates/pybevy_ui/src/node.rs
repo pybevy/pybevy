@@ -13,7 +13,7 @@ use crate::{
 
 #[pycomponent(Node, bridge)]
 #[pyclass(name = "Node", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyNode {
     pub(crate) storage: ComponentStorage<Node>,
 }

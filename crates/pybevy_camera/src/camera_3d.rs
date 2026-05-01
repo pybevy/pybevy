@@ -15,7 +15,6 @@ const DEFAULT_SCREEN_SPACE_TRANSMISSION_STEPS: usize = 1;
 
 #[pycomponent(Camera3d, bridge)]
 #[pyclass(name = "Camera3d", extends = PyComponent, eq)]
-#[derive(Clone)]
 pub struct PyCamera3d {
     pub(crate) storage: ComponentStorage<Camera3d>,
 }

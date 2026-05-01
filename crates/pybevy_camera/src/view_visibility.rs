@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(ViewVisibility, bridge)]
 #[pyclass(name = "ViewVisibility", extends = PyComponent, frozen)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyViewVisibility {
     pub(crate) storage: ComponentStorage<ViewVisibility>,
 }

@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(TemporalJitter, bridge)]
 #[pyclass(name = "TemporalJitter", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyTemporalJitter {
     pub(crate) storage: ComponentStorage<TemporalJitter>,
 }

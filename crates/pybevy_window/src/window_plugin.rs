@@ -19,14 +19,18 @@ impl PyWindowPlugin {
     pub fn new(
         primary_window: Option<PyRef<'_, PyWindow>>,
         exit_condition: Option<PyExitCondition>,
-    ) -> (Self, PyPlugin) {
-        (
+    ) -> PyResult<(Self, PyPlugin)> {
+        let window = match primary_window {
+            Some(w) => Some(w.storage.as_ref()?.clone().into()),
+            None => None,
+        };
+        Ok((
             PyWindowPlugin {
-                primary_window: primary_window.map(|w| (*w).clone()),
+                primary_window: window,
                 exit_condition,
             },
             PyPlugin,
-        )
+        ))
     }
 }
 
@@ -43,7 +47,7 @@ impl TryFrom<&PyWindowPlugin> for WindowPlugin {
 
     fn try_from(py_plugin: &PyWindowPlugin) -> PyResult<Self> {
         let primary_window = if let Some(ref py_window) = py_plugin.primary_window {
-            Some(py_window.clone().try_into()?)
+            Some(py_window.as_ref()?.clone())
         } else {
             None
         };

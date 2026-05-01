@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(Lightmap, bridge, view_fields = [bicubic_sampling])]
 #[pyclass(name = "Lightmap", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyLightmap {
     pub(crate) storage: ComponentStorage<Lightmap>,
 }

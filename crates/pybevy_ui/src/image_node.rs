@@ -9,7 +9,7 @@ use crate::node_image_mode::PyNodeImageMode;
 
 #[pycomponent(ImageNode, bridge)]
 #[pyclass(name = "ImageNode", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyImageNode {
     pub(crate) storage: ComponentStorage<ImageNode>,
 }

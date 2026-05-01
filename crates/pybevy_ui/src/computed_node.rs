@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(ComputedNode, no_clone, bridge)]
 #[pyclass(name = "ComputedNode", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyComputedNode {
     pub(crate) storage: ComponentStorage<ComputedNode>,
 }

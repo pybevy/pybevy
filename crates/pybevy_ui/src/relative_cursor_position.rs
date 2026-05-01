@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(RelativeCursorPosition, bridge)]
 #[pyclass(name = "RelativeCursorPosition", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyRelativeCursorPosition {
     pub(crate) storage: ComponentStorage<RelativeCursorPosition>,
 }

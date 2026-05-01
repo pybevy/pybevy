@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(IrradianceVolume, bridge, view_fields = [intensity, affects_lightmapped_meshes])]
 #[pyclass(name = "IrradianceVolume", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyIrradianceVolume {
     pub(crate) storage: ComponentStorage<IrradianceVolume>,
 }

@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(RenderLayers, bridge)]
 #[pyclass(name = "RenderLayers", extends = PyComponent, eq)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyRenderLayers {
     pub(crate) storage: ComponentStorage<RenderLayers>,
 }

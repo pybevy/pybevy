@@ -14,7 +14,6 @@ fn convert_optional_handle(handle: Option<&Bound<'_, PyAny>>) -> PyResult<Option
 
 #[pycomponent(ClusteredDecal, bridge, view_fields = [tag])]
 #[pyclass(name = "ClusteredDecal", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyClusteredDecal {
     pub(crate) storage: ComponentStorage<ClusteredDecal>,
 }

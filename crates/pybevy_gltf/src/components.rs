@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(GltfExtras, bridge)]
 #[pyclass(name = "GltfExtras", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGltfExtras {
     pub(crate) storage: ComponentStorage<GltfExtras>,
 }
@@ -41,7 +41,7 @@ impl PyGltfExtras {
 
 #[pycomponent(GltfMeshName, bridge)]
 #[pyclass(name = "GltfMeshName", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGltfMeshName {
     pub(crate) storage: ComponentStorage<GltfMeshName>,
 }
@@ -73,7 +73,7 @@ impl PyGltfMeshName {
 
 #[pycomponent(GltfMaterialName, bridge)]
 #[pyclass(name = "GltfMaterialName", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGltfMaterialName {
     pub(crate) storage: ComponentStorage<GltfMaterialName>,
 }
@@ -105,7 +105,7 @@ impl PyGltfMaterialName {
 
 #[pycomponent(GltfSceneExtras, bridge)]
 #[pyclass(name = "GltfSceneExtras", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGltfSceneExtras {
     pub(crate) storage: ComponentStorage<GltfSceneExtras>,
 }
@@ -139,7 +139,7 @@ impl PyGltfSceneExtras {
 
 #[pycomponent(GltfMeshExtras, bridge)]
 #[pyclass(name = "GltfMeshExtras", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGltfMeshExtras {
     pub(crate) storage: ComponentStorage<GltfMeshExtras>,
 }
@@ -173,7 +173,7 @@ impl PyGltfMeshExtras {
 
 #[pycomponent(GltfMaterialExtras, bridge)]
 #[pyclass(name = "GltfMaterialExtras", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGltfMaterialExtras {
     pub(crate) storage: ComponentStorage<GltfMaterialExtras>,
 }

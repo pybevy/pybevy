@@ -16,7 +16,7 @@ pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
 #[pycomponent(Window, bridge, view_fields = [decorations, resizable, transparent])]
 #[pyclass(name = "Window", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyWindow {
     pub(crate) storage: ComponentStorage<Window>,
 }

@@ -10,7 +10,7 @@ use crate::transform::PyTransform;
 
 #[pycomponent(GlobalTransform, bridge, no_insert)]
 #[pyclass(name = "GlobalTransform", extends = pybevy_core::PyComponent, eq)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyGlobalTransform {
     pub(crate) storage: ComponentStorage<GlobalTransform>,
 }
@@ -113,7 +113,7 @@ impl PyGlobalTransform {
         py: Python<'_>,
         transform: &PyTransform,
     ) -> PyResult<Py<PyGlobalTransform>> {
-        let bevy_transform: Transform = transform.clone().try_into()?;
+        let bevy_transform: Transform = transform.as_ref()?.clone();
         let result = self.as_ref()?.mul_transform(bevy_transform);
         Py::new(py, PyGlobalTransform::from_owned(result))
     }

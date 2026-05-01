@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(AtmosphereEnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
 #[pyclass(name = "AtmosphereEnvironmentMapLight", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAtmosphereEnvironmentMapLight {
     pub(crate) storage: ComponentStorage<AtmosphereEnvironmentMapLight>,
 }

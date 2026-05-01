@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(MeshTag, bridge, view_fields = [0 as value])]
 #[pyclass(name = "MeshTag", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyMeshTag {
     pub(crate) storage: ComponentStorage<MeshTag>,
 }

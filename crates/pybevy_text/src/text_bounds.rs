@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(TextBounds, bridge)]
 #[pyclass(name = "TextBounds", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyTextBounds {
     pub(crate) storage: ComponentStorage<TextBounds>,
 }

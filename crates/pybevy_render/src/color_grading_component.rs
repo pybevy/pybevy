@@ -7,7 +7,6 @@ use crate::color_grading::{PyColorGradingGlobal, PyColorGradingSection};
 
 #[pycomponent(ColorGrading, bridge)]
 #[pyclass(name = "ColorGrading", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyColorGrading {
     pub(crate) storage: ComponentStorage<ColorGrading>,
 }

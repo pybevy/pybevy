@@ -5,7 +5,6 @@ use pyo3::{prelude::*, types::PyType};
 
 #[pycomponent(VisibilityClass, bridge)]
 #[pyclass(name = "VisibilityClass", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyVisibilityClass {
     pub(crate) storage: ComponentStorage<VisibilityClass>,
 }

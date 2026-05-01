@@ -8,7 +8,6 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pycomponent(MorphWeights, bridge)]
 #[pyclass(name = "MorphWeights", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyMorphWeights {
     pub(crate) storage: ComponentStorage<MorphWeights>,
 }

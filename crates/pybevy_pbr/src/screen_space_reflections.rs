@@ -12,7 +12,6 @@ use pyo3::prelude::*;
     use_secant
 ])]
 #[pyclass(name = "ScreenSpaceReflections", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyScreenSpaceReflections {
     pub(crate) storage: ComponentStorage<ScreenSpaceReflections>,
 }

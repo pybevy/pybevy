@@ -81,7 +81,7 @@ impl PyUnderline {
 // StrikethroughColor - Color wrapper component
 #[pycomponent(StrikethroughColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "StrikethroughColor", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyStrikethroughColor {
     pub(crate) storage: ComponentStorage<StrikethroughColor>,
 }
@@ -109,7 +109,7 @@ impl PyStrikethroughColor {
 // UnderlineColor - Color wrapper component
 #[pycomponent(UnderlineColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "UnderlineColor", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyUnderlineColor {
     pub(crate) storage: ComponentStorage<UnderlineColor>,
 }

@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(VisibleMeshEntities, bridge)]
 #[pyclass(name = "VisibleMeshEntities", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyVisibleMeshEntities {
     pub(crate) storage: ComponentStorage<VisibleMeshEntities>,
 }
