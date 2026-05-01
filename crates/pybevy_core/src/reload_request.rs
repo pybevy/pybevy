@@ -188,6 +188,8 @@ unsafe impl Sync for PyResourceStorage {}
 
 #[cfg(test)]
 mod tests {
+    use std::ptr;
+
     use super::*;
 
     fn make_component_id(index: usize) -> ComponentId {
@@ -196,7 +198,7 @@ mod tests {
 
     fn make_entry(name: &str) -> CustomComponentEntry {
         CustomComponentEntry {
-            type_ptr: std::ptr::null(),
+            type_ptr: ptr::null(),
             name: name.to_string(),
             is_pyobject_storage: false,
         }
@@ -204,7 +206,7 @@ mod tests {
 
     fn make_resource_entry(name: &str) -> CustomResourceEntry {
         CustomResourceEntry {
-            type_ptr: std::ptr::null(),
+            type_ptr: ptr::null(),
             name: name.to_string(),
         }
     }

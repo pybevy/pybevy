@@ -48,31 +48,31 @@ pub use pybevy_storage::{
 
 pybevy_storage::impl_py_list!(PyF32List, "F32List", f32);
 
+use std::any::TypeId;
+
 use bevy::ecs::{
     component::ComponentId,
     entity::Entity,
     hierarchy::{ChildOf, Children},
-    world::World,
+    world::{EntityRef, EntityWorldMut, World},
 };
-use pyo3::prelude::*;
+use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 // Manual implementation of ChildOfBridge because #[pycomponent(..., bridge)]
 // uses pybevy_core:: paths which don't work inside pybevy_core itself.
 pub struct ChildOfBridge;
 
 impl ComponentBridge for ChildOfBridge {
-    fn bevy_type_id(&self) -> std::any::TypeId {
-        std::any::TypeId::of::<ChildOf>()
+    fn bevy_type_id(&self) -> TypeId {
+        TypeId::of::<ChildOf>()
     }
 
-    fn py_type_ptr(&self) -> *const pyo3::ffi::PyTypeObject {
-        Python::attach(|py| {
-            <hierarchy::PyChildOf as pyo3::PyTypeInfo>::type_object(py).as_type_ptr()
-        })
+    fn py_type_ptr(&self) -> *const PyTypeObject {
+        Python::attach(|py| <hierarchy::PyChildOf as PyTypeInfo>::type_object(py).as_type_ptr())
     }
 
-    fn py_type<'py>(&self, py: Python<'py>) -> pyo3::Bound<'py, pyo3::types::PyType> {
-        <hierarchy::PyChildOf as pyo3::PyTypeInfo>::type_object(py)
+    fn py_type<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
+        <hierarchy::PyChildOf as PyTypeInfo>::type_object(py)
     }
 
     fn name(&self) -> &'static str {
@@ -95,7 +95,7 @@ impl ComponentBridge for ChildOfBridge {
         // and return an owned copy rather than a borrowed reference.
         let ptr = entity
             .get_by_id(component_id)
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("ChildOf not found"))?;
+            .ok_or_else(|| PyRuntimeError::new_err("ChildOf not found"))?;
 
         let component = unsafe { ptr.deref::<ChildOf>() };
         let py_component = hierarchy::PyChildOf::try_from(component)?;
@@ -103,13 +103,8 @@ impl ComponentBridge for ChildOfBridge {
         Ok(obj.into_any())
     }
 
-    fn insert(
-        &self,
-        world: &mut World,
-        entity: Entity,
-        component: &pyo3::Bound<PyAny>,
-    ) -> PyResult<()> {
-        let py_component = component.extract::<pyo3::PyRef<hierarchy::PyChildOf>>()?;
+    fn insert(&self, world: &mut World, entity: Entity, component: &Bound<PyAny>) -> PyResult<()> {
+        let py_component = component.extract::<PyRef<hierarchy::PyChildOf>>()?;
         let native: ChildOf = py_component.storage.as_ref()?.clone();
 
         world.entity_mut(entity).insert(native);
@@ -118,10 +113,10 @@ impl ComponentBridge for ChildOfBridge {
 
     fn insert_into_entity(
         &self,
-        entity: &mut bevy::ecs::world::EntityWorldMut,
-        component: &pyo3::Bound<PyAny>,
+        entity: &mut EntityWorldMut,
+        component: &Bound<PyAny>,
     ) -> PyResult<()> {
-        let py_component = component.extract::<pyo3::PyRef<hierarchy::PyChildOf>>()?;
+        let py_component = component.extract::<PyRef<hierarchy::PyChildOf>>()?;
         let native: ChildOf = py_component.storage.as_ref()?.clone();
 
         entity.insert(native);
@@ -140,9 +135,9 @@ impl ComponentBridge for ChildOfBridge {
             // and return an owned copy rather than a borrowed reference.
             let ptr = entity
                 .get_by_id(component_id)
-                .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("ChildOf not found"))?;
+                .ok_or_else(|| PyRuntimeError::new_err("ChildOf not found"))?;
 
-            let component = unsafe { ptr.deref::<bevy::ecs::hierarchy::ChildOf>() };
+            let component = unsafe { ptr.deref::<ChildOf>() };
             let py_component = crate::hierarchy::PyChildOf::try_from(component)?;
             let obj = Py::new(py, (py_component, crate::component::PyComponent))?;
             Ok(obj.into_any())
@@ -150,13 +145,13 @@ impl ComponentBridge for ChildOfBridge {
         extract_impl
     }
 
-    fn entity_contains(&self, entity: &bevy::ecs::world::EntityRef) -> bool {
+    fn entity_contains(&self, entity: &EntityRef) -> bool {
         entity.contains::<ChildOf>()
     }
 
     fn extract_from_entity_ref(
         &self,
-        entity: &bevy::ecs::world::EntityRef,
+        entity: &EntityRef,
         validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
@@ -173,7 +168,7 @@ impl ComponentBridge for ChildOfBridge {
 
     fn extract_from_entity_mut(
         &self,
-        entity: &mut bevy::ecs::world::EntityWorldMut,
+        entity: &mut EntityWorldMut,
         _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
@@ -192,18 +187,16 @@ impl ComponentBridge for ChildOfBridge {
 pub struct ChildrenBridge;
 
 impl ComponentBridge for ChildrenBridge {
-    fn bevy_type_id(&self) -> std::any::TypeId {
-        std::any::TypeId::of::<Children>()
+    fn bevy_type_id(&self) -> TypeId {
+        TypeId::of::<Children>()
     }
 
-    fn py_type_ptr(&self) -> *const pyo3::ffi::PyTypeObject {
-        Python::attach(|py| {
-            <hierarchy::PyChildren as pyo3::PyTypeInfo>::type_object(py).as_type_ptr()
-        })
+    fn py_type_ptr(&self) -> *const PyTypeObject {
+        Python::attach(|py| <hierarchy::PyChildren as PyTypeInfo>::type_object(py).as_type_ptr())
     }
 
-    fn py_type<'py>(&self, py: Python<'py>) -> pyo3::Bound<'py, pyo3::types::PyType> {
-        <hierarchy::PyChildren as pyo3::PyTypeInfo>::type_object(py)
+    fn py_type<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
+        <hierarchy::PyChildren as PyTypeInfo>::type_object(py)
     }
 
     fn name(&self) -> &'static str {
@@ -225,7 +218,7 @@ impl ComponentBridge for ChildrenBridge {
         // Children is read-only, use get_by_id and return an owned copy
         let ptr = entity
             .get_by_id(component_id)
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Children not found"))?;
+            .ok_or_else(|| PyRuntimeError::new_err("Children not found"))?;
 
         let component = unsafe { ptr.deref::<Children>() };
         let py_component = hierarchy::PyChildren::try_from(component)?;
@@ -237,7 +230,7 @@ impl ComponentBridge for ChildrenBridge {
         &self,
         _world: &mut World,
         _entity: Entity,
-        _component: &pyo3::Bound<PyAny>,
+        _component: &Bound<PyAny>,
     ) -> PyResult<()> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "Children cannot be spawned from Python - it is auto-managed by Bevy",
@@ -246,8 +239,8 @@ impl ComponentBridge for ChildrenBridge {
 
     fn insert_into_entity(
         &self,
-        _entity: &mut bevy::ecs::world::EntityWorldMut,
-        _component: &pyo3::Bound<PyAny>,
+        _entity: &mut EntityWorldMut,
+        _component: &Bound<PyAny>,
     ) -> PyResult<()> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "Children cannot be spawned from Python - it is auto-managed by Bevy",
@@ -264,9 +257,9 @@ impl ComponentBridge for ChildrenBridge {
         ) -> PyResult<Py<PyAny>> {
             let ptr = entity
                 .get_by_id(component_id)
-                .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Children not found"))?;
+                .ok_or_else(|| PyRuntimeError::new_err("Children not found"))?;
 
-            let component = unsafe { ptr.deref::<bevy::ecs::hierarchy::Children>() };
+            let component = unsafe { ptr.deref::<Children>() };
             let py_component = crate::hierarchy::PyChildren::try_from(component)?;
             let obj = Py::new(py, (py_component, crate::component::PyComponent))?;
             Ok(obj.into_any())
@@ -274,13 +267,13 @@ impl ComponentBridge for ChildrenBridge {
         extract_impl
     }
 
-    fn entity_contains(&self, entity: &bevy::ecs::world::EntityRef) -> bool {
+    fn entity_contains(&self, entity: &EntityRef) -> bool {
         entity.contains::<Children>()
     }
 
     fn extract_from_entity_ref(
         &self,
-        entity: &bevy::ecs::world::EntityRef,
+        entity: &EntityRef,
         _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
@@ -295,7 +288,7 @@ impl ComponentBridge for ChildrenBridge {
 
     fn extract_from_entity_mut(
         &self,
-        entity: &mut bevy::ecs::world::EntityWorldMut,
+        entity: &mut EntityWorldMut,
         _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {

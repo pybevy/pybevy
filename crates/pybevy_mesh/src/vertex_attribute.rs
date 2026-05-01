@@ -1,3 +1,5 @@
+use std::ptr;
+
 use bevy::mesh::{MeshVertexAttribute, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
@@ -81,7 +83,7 @@ impl PyVertexAttributeValues {
                         // - [f32; 2] and [f32] have same alignment
                         let out: Vec<[f32; 2]> = unsafe {
                             let mut out = Vec::with_capacity(n);
-                            std::ptr::copy_nonoverlapping(
+                            ptr::copy_nonoverlapping(
                                 flat.as_ptr(),
                                 out.as_mut_ptr() as *mut f32,
                                 n * 2,
@@ -101,7 +103,7 @@ impl PyVertexAttributeValues {
                         // - [f32; 3] and [f32] have same alignment
                         let out: Vec<[f32; 3]> = unsafe {
                             let mut out = Vec::with_capacity(n);
-                            std::ptr::copy_nonoverlapping(
+                            ptr::copy_nonoverlapping(
                                 flat.as_ptr(),
                                 out.as_mut_ptr() as *mut f32,
                                 n * 3,
@@ -121,7 +123,7 @@ impl PyVertexAttributeValues {
                         // - [f32; 4] and [f32] have same alignment
                         let out: Vec<[f32; 4]> = unsafe {
                             let mut out = Vec::with_capacity(n);
-                            std::ptr::copy_nonoverlapping(
+                            ptr::copy_nonoverlapping(
                                 flat.as_ptr(),
                                 out.as_mut_ptr() as *mut f32,
                                 n * 4,

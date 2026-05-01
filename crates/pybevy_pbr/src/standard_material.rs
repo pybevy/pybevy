@@ -1,5 +1,7 @@
 use bevy::{
+    asset::Handle,
     color::{Color, LinearRgba},
+    image::Image,
     pbr::StandardMaterial,
 };
 use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
@@ -26,9 +28,7 @@ fn extract_linear_rgba(value: &Bound<'_, PyAny>) -> PyResult<LinearRgba> {
     }
 }
 
-fn convert_optional_handle(
-    handle: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<bevy::asset::Handle<bevy::image::Image>>> {
+fn convert_optional_handle(handle: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Handle<Image>>> {
     match handle {
         Some(h) => {
             let extracted = extract_handle_from_any(h)?;

@@ -18,7 +18,7 @@ use std::any::TypeId;
 
 use bevy::asset::{Asset, AssetId, Handle, UntypedAssetId, UntypedHandle};
 use pyo3::{
-    IntoPyObjectExt, exceptions::PyValueError, ffi::PyTypeObject, prelude::*, types::PyType,
+    IntoPyObjectExt, exceptions::PyValueError, ffi, ffi::PyTypeObject, prelude::*, types::PyType,
 };
 use uuid::Uuid;
 
@@ -314,7 +314,7 @@ impl PyHandle {
             } else {
                 // Return the stored type pointer directly
                 unsafe {
-                    Bound::from_borrowed_ptr(py, self.type_ptr as *mut pyo3::ffi::PyObject)
+                    Bound::from_borrowed_ptr(py, self.type_ptr as *mut ffi::PyObject)
                         .cast_into_unchecked::<PyType>()
                         .unbind()
                 }

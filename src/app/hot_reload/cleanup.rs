@@ -1,4 +1,7 @@
-use bevy::ecs::{entity::Entity, world::World};
+use bevy::ecs::{
+    entity::Entity,
+    world::{EntityRef, World},
+};
 use pybevy_reload::is_verbose;
 use pyo3::prelude::*;
 
@@ -74,7 +77,7 @@ pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
 pub fn clear_entities_and_resources(world: &mut World) {
     // Despawn ALL entities (complete clean slate)
     let all_entities: Vec<Entity> = world
-        .query::<bevy::ecs::world::EntityRef>()
+        .query::<EntityRef>()
         .iter(world)
         .map(|e| e.id())
         .collect();

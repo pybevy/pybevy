@@ -29,6 +29,8 @@
 //! - **`BorrowedReadOnly`**: Created from `Res[Assets[T]].get()`, stores `*const T`
 //! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, stores `*mut T`
 
+use std::ptr;
+
 use bevy::asset::{Asset, UntypedHandle};
 
 use crate::{ValidityFlagWithMode, storage_error::StorageError};
@@ -252,7 +254,7 @@ impl<T: Asset> AssetStorage<T> {
     fn as_ptr(&self) -> *const T {
         match &self.inner {
             AssetStorageInner::Owned(Some(asset)) => &**asset as *const T,
-            AssetStorageInner::Owned(None) => std::ptr::null(),
+            AssetStorageInner::Owned(None) => ptr::null(),
             AssetStorageInner::BorrowedReadOnly { ptr, .. } => *ptr,
             AssetStorageInner::BorrowedMut { ptr, .. } => *ptr as *const T,
         }
@@ -267,10 +269,10 @@ impl<T: Asset> AssetStorage<T> {
     fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
             AssetStorageInner::Owned(Some(asset)) => &mut **asset as *mut T,
-            AssetStorageInner::Owned(None) => std::ptr::null_mut(),
+            AssetStorageInner::Owned(None) => ptr::null_mut(),
             // Read-only borrowed cannot be mutated - return null
             // check_write() will catch this before we get here
-            AssetStorageInner::BorrowedReadOnly { .. } => std::ptr::null_mut(),
+            AssetStorageInner::BorrowedReadOnly { .. } => ptr::null_mut(),
             AssetStorageInner::BorrowedMut { ptr, .. } => *ptr,
         }
     }

@@ -1,10 +1,23 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{
-    ecs::{entity::Entity, hierarchy::ChildOf, name::Name, reflect::AppTypeRegistry, world::World},
+    ecs::{
+        component::ComponentId,
+        entity::Entity,
+        hierarchy::ChildOf,
+        name::Name,
+        reflect::{AppTypeRegistry, ReflectComponent},
+        schedule::Schedules,
+        world::{EntityRef as BevyEntityRef, World},
+    },
     reflect::TypeInfo,
 };
-use pyo3::prelude::*;
+use pybevy_core::registry::global_registry::{all_component_bridges, all_resource_bridges};
+use pyo3::{
+    ffi,
+    prelude::*,
+    types::{PyDict, PyType},
+};
 
 use crate::bridge::{ControlError, EntityRef};
 
@@ -32,8 +45,8 @@ fn get_custom_component_names(world: &World, entity: Entity) -> Vec<String> {
 /// Returns a JSON map of field_name → field_repr.
 fn extract_custom_component_fields(
     py: Python<'_>,
-    entity_ref: &bevy::ecs::world::EntityRef,
-    component_id: bevy::ecs::component::ComponentId,
+    entity_ref: &BevyEntityRef,
+    component_id: ComponentId,
     is_pyobject_storage: bool,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     if !is_pyobject_storage {
@@ -52,7 +65,7 @@ fn extract_custom_component_fields(
     let ptr = entity_ref.get_by_id(component_id).ok()?;
 
     // For PyObject storage, the raw data is a Py<PyAny>
-    let py_obj: &pyo3::Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const pyo3::Py<PyAny>) };
+    let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
     let bound = py_obj.bind(py);
 
     let mut map = serde_json::Map::new();
@@ -87,7 +100,7 @@ fn extract_custom_component_fields(
     // Fallback: try __dict__
     if let Ok(dict) = bound.getattr("__dict__") {
         #[allow(clippy::collapsible_if)]
-        if let Ok(py_dict) = dict.cast::<pyo3::types::PyDict>() {
+        if let Ok(py_dict) = dict.cast::<PyDict>() {
             for (key, value) in py_dict.iter() {
                 if let Ok(k) = key.extract::<String>() {
                     if !k.starts_with('_') {
@@ -193,7 +206,7 @@ fn extract_bridge_fields_inner(
 /// Check if a Python type has any writable getset_descriptor properties (non-underscore).
 /// This detects types like Text2d that have settable PyO3 properties even when
 /// Bevy's reflection says they are not editable (e.g. TupleStruct types).
-fn has_writable_properties(py: Python<'_>, py_type: &Bound<'_, pyo3::types::PyType>) -> bool {
+fn has_writable_properties(py: Python<'_>, py_type: &Bound<'_, PyType>) -> bool {
     let Ok(dir_list) = py_type.dir() else {
         return false;
     };
@@ -239,7 +252,7 @@ fn extract_bridge_fields(
 /// List all entities with their component types and Names
 pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlError> {
     let mut entities = Vec::new();
-    let bridges = pybevy_core::registry::global_registry::all_component_bridges();
+    let bridges = all_component_bridges();
 
     let mut query_state = world.query::<Entity>();
     let entity_list: Vec<Entity> = query_state.iter(world).collect();
@@ -300,8 +313,8 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
 
 /// Debug tool: get registry state and entity diagnostics
 pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlError> {
-    let bridges = pybevy_core::registry::global_registry::all_component_bridges();
-    let resource_bridges = pybevy_core::registry::global_registry::all_resource_bridges();
+    let bridges = all_component_bridges();
+    let resource_bridges = all_resource_bridges();
 
     let bridge_names: Vec<String> = bridges.iter().map(|b| b.name().to_string()).collect();
 
@@ -367,7 +380,7 @@ pub fn get_entity(
         let validity_flag = pybevy_core::ValidityFlag::new_read();
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
-        for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+        for bridge in all_component_bridges() {
             if let Ok(entity_ref) = world.get_entity(entity)
                 && bridge.entity_contains(&entity_ref)
             {
@@ -470,7 +483,7 @@ pub fn get_component(
         let validity_flag = pybevy_core::ValidityFlag::new_read();
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
-        for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+        for bridge in all_component_bridges() {
             if bridge.name() != component {
                 continue;
             }
@@ -545,7 +558,7 @@ pub fn query_entities(
     with_filters: Vec<String>,
     without_filters: Vec<String>,
 ) -> Result<serde_json::Value, ControlError> {
-    let bridges = pybevy_core::registry::global_registry::all_component_bridges();
+    let bridges = all_component_bridges();
 
     let mut query_state = world.query::<Entity>();
     let all_entities: Vec<Entity> = query_state.iter(world).collect();
@@ -681,7 +694,7 @@ fn extract_custom_resource_fields(
     // Fallback: try __dict__
     if let Ok(dict) = bound.getattr("__dict__") {
         #[allow(clippy::collapsible_if)]
-        if let Ok(py_dict) = dict.cast::<pyo3::types::PyDict>() {
+        if let Ok(py_dict) = dict.cast::<PyDict>() {
             for (key, value) in py_dict.iter() {
                 if let Ok(k) = key.extract::<String>() {
                     if !k.starts_with('_') {
@@ -704,7 +717,7 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
     let mut resources = Vec::new();
 
     // Built-in resources (from bridge registry)
-    for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
+    for bridge in all_resource_bridges() {
         let name = bridge.name().to_string();
         let present = bridge.contains_in_world(world);
 
@@ -737,13 +750,13 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
     }
 
     // Custom Python resources (from CustomResourceInfo)
-    let bridge_names: std::collections::HashSet<String> = resources
+    let bridge_names: HashSet<String> = resources
         .iter()
         .filter_map(|r| r["name"].as_str().map(String::from))
         .collect();
 
     // Collect custom resource entries before accessing PyResourceStorage
-    let custom_entries: Vec<(bevy::ecs::component::ComponentId, String)> = world
+    let custom_entries: Vec<(ComponentId, String)> = world
         .get_resource::<pybevy_core::CustomResourceInfo>()
         .map(|custom_info| {
             custom_info
@@ -790,7 +803,7 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
 pub fn list_systems(world: &mut World) -> Result<serde_json::Value, ControlError> {
     let mut stages = serde_json::Map::new();
 
-    if let Some(schedules) = world.get_resource::<bevy::ecs::schedule::Schedules>() {
+    if let Some(schedules) = world.get_resource::<Schedules>() {
         for (label, schedule) in schedules.iter() {
             let system_count = schedule.systems_len();
             stages.insert(
@@ -823,7 +836,7 @@ pub fn get_component_schema(
     }
 
     // Find the component bridge by name
-    for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+    for bridge in all_component_bridges() {
         if bridge.name() == name {
             // Try to get Bevy reflection type info for richer schema
             let reflection_info = world.get_resource::<AppTypeRegistry>().and_then(|reg| {
@@ -831,9 +844,7 @@ pub fn get_component_schema(
                 let type_id = bridge.bevy_type_id();
                 type_registry.get(type_id).map(|registration| {
                     let type_info = registration.type_info();
-                    let has_reflect_component = registration
-                        .data::<bevy::ecs::reflect::ReflectComponent>()
-                        .is_some();
+                    let has_reflect_component = registration.data::<ReflectComponent>().is_some();
                     let is_struct = matches!(type_info, TypeInfo::Struct(_));
                     // NOTE: This misses components that have settable Python properties
                     // (e.g. Text2d). A more complete check would inspect for @property
@@ -901,12 +912,9 @@ pub fn get_component_schema(
             if entry.name == name {
                 let schema = Python::attach(|py| {
                     let py_type = unsafe {
-                        pyo3::Bound::from_borrowed_ptr(
-                            py,
-                            entry.type_ptr as *mut pyo3::ffi::PyObject,
-                        )
+                        Bound::from_borrowed_ptr(py, entry.type_ptr as *mut ffi::PyObject)
                     };
-                    let fields = if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
+                    let fields = if let Ok(cls) = py_type.cast::<PyType>() {
                         get_class_fields(py, cls)
                     } else {
                         serde_json::json!({})
@@ -964,12 +972,12 @@ fn normalize_type_repr(s: &str) -> String {
 }
 
 /// Extract field information from a Python class
-fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, pyo3::types::PyType>) -> serde_json::Value {
+fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::Value {
     let mut fields = serde_json::Map::new();
 
     // Try __annotations__
     if let Ok(annotations) = py_type.getattr("__annotations__")
-        && let Ok(dict) = annotations.cast::<pyo3::types::PyDict>()
+        && let Ok(dict) = annotations.cast::<PyDict>()
     {
         for (key, value) in dict.iter() {
             if let Ok(k) = key.extract::<String>() {
@@ -1133,7 +1141,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         "AudioPlayer",
     ];
 
-    let bridges = pybevy_core::registry::global_registry::all_component_bridges();
+    let bridges = all_component_bridges();
 
     let mut query_state = world.query::<Entity>();
     let entity_list: Vec<Entity> = query_state.iter(world).collect();
@@ -1276,7 +1284,7 @@ pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entit
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{ptr, sync::Once};
 
     use bevy::{
         camera::primitives::Aabb,
@@ -1284,6 +1292,7 @@ mod tests {
         math::Vec3,
         prelude::{GlobalTransform, Transform},
     };
+    use pyo3::types::PyList;
 
     // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
     extern crate pybevy_transform;
@@ -1510,7 +1519,7 @@ mod tests {
         info.insert(
             ComponentId::new(99999),
             pybevy_core::CustomResourceEntry {
-                type_ptr: std::ptr::null(),
+                type_ptr: ptr::null(),
                 name: "GameScore".to_string(),
             },
         );
@@ -1565,7 +1574,7 @@ mod tests {
         info.insert(
             ComponentId::new(88888),
             pybevy_core::CustomComponentEntry {
-                type_ptr: std::ptr::null(),
+                type_ptr: ptr::null(),
                 name: "PlayerStats".to_string(),
                 is_pyobject_storage: true,
             },
@@ -1865,7 +1874,7 @@ mod tests {
     fn py_value_to_json_list() {
         setup();
         Python::attach(|py| {
-            let list = pyo3::types::PyList::new(py, [1i64, 2, 3]).unwrap();
+            let list = PyList::new(py, [1i64, 2, 3]).unwrap();
             let result = py_value_to_json(list.as_any());
             assert!(result.is_array());
             let arr = result.as_array().unwrap();
@@ -1889,7 +1898,7 @@ mod tests {
             let entity = world.spawn(Transform::from_xyz(1.0, 2.0, 3.0)).id();
 
             // Extract the Transform component and check its fields are proper JSON
-            for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+            for bridge in all_component_bridges() {
                 if bridge.name() != "Transform" {
                     continue;
                 }
@@ -1941,7 +1950,7 @@ mod tests {
             let mut world = World::new();
             let entity = world.spawn(Transform::from_xyz(5.0, 10.0, 0.0)).id();
 
-            for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+            for bridge in all_component_bridges() {
                 if bridge.name() != "Transform" {
                     continue;
                 }
@@ -1975,7 +1984,7 @@ mod tests {
         setup();
         // Transform has writable getset_descriptor properties (translation, rotation, scale)
         Python::attach(|py| {
-            for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+            for bridge in all_component_bridges() {
                 if bridge.name() == "Transform" {
                     let py_type = bridge.py_type(py);
                     assert!(
@@ -1996,11 +2005,11 @@ mod tests {
         Python::attach(|py| {
             // Create a minimal Python class with no properties
             let empty_class = py
-                .run(pyo3::ffi::c_str!("class _Empty: pass"), None, None)
+                .run(ffi::c_str!("class _Empty: pass"), None, None)
                 .unwrap();
             let _ = empty_class;
-            let cls = py.eval(pyo3::ffi::c_str!("_Empty"), None, None).unwrap();
-            let py_type = cls.cast::<pyo3::types::PyType>().unwrap();
+            let cls = py.eval(ffi::c_str!("_Empty"), None, None).unwrap();
+            let py_type = cls.cast::<PyType>().unwrap();
             assert!(
                 !has_writable_properties(py, py_type),
                 "Empty class should not have writable properties"

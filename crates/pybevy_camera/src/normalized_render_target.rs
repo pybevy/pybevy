@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 
 use bevy::{
+    asset::Handle,
     camera::{ImageRenderTarget, ManualTextureViewHandle, NormalizedRenderTarget},
     ecs::entity::ContainsEntity,
     image::Image,
@@ -17,7 +18,7 @@ impl PyNormalizedRenderTarget {
     #[staticmethod]
     #[pyo3(signature = (handle, scale_factor = 1.0))]
     pub fn image(handle: &PyHandle, scale_factor: f32) -> PyResult<Self> {
-        let image_handle = bevy::asset::Handle::<Image>::try_from(handle)?;
+        let image_handle = Handle::<Image>::try_from(handle)?;
         Ok(PyNormalizedRenderTarget(NormalizedRenderTarget::Image(
             ImageRenderTarget {
                 handle: image_handle,

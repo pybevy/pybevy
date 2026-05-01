@@ -1,8 +1,12 @@
-use std::sync::Arc;
+use std::{mem, ptr, sync::Arc};
 
 use bevy::ecs::world::World;
-use pybevy_core::ComponentBridge;
-use pyo3::{prelude::*, types::PyModule};
+use pybevy_core::{ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyResourceStorage};
+use pyo3::{
+    ffi::PyObject,
+    prelude::*,
+    types::{PyDict, PyList, PyModule, PyType},
+};
 
 use super::scene::resolve_entity;
 use crate::{
@@ -168,7 +172,7 @@ fn spawn_component_python(
             }
             Err(_) if !fields.is_empty() => {
                 // Default constructor failed — try passing fields as kwargs
-                let kwargs = pyo3::types::PyDict::new(py);
+                let kwargs = PyDict::new(py);
                 for (field_name, field_value) in fields {
                     match json_to_py(py, field_value) {
                         Ok(py_value) => {
@@ -399,7 +403,7 @@ fn set_custom_component(
 ) -> Result<serde_json::Value, ControlError> {
     // Find the custom component's ComponentId — try exact name match first
     let custom_info = world
-        .get_resource::<pybevy_core::CustomComponentInfo>()
+        .get_resource::<CustomComponentInfo>()
         .and_then(|info| {
             info.iter()
                 .find(|(_, entry)| entry.name == component)
@@ -409,7 +413,7 @@ fn set_custom_component(
     // Fallback: check for qualified name variants (e.g. "module.Oscillator" vs "Oscillator")
     // and scan the entity's archetype for matching custom components
     let custom_info = custom_info.or_else(|| {
-        let info = world.get_resource::<pybevy_core::CustomComponentInfo>()?;
+        let info = world.get_resource::<CustomComponentInfo>()?;
         let entity_ref = world.get_entity(entity).ok()?;
 
         // Check if any registered custom component matches by short name
@@ -465,7 +469,7 @@ fn set_custom_component(
     let Some((comp_id, is_pyobject_storage)) = custom_info else {
         // Build a helpful error with available custom components
         let available = world
-            .get_resource::<pybevy_core::CustomComponentInfo>()
+            .get_resource::<CustomComponentInfo>()
             .map(|info| {
                 info.iter()
                     .map(|(_, entry)| entry.name.clone())
@@ -565,14 +569,13 @@ fn insert_custom_component(
 ) -> Result<serde_json::Value, ControlError> {
     // Get the type pointer from CustomComponentInfo
     let type_ptr = world
-        .get_resource::<pybevy_core::CustomComponentInfo>()
+        .get_resource::<CustomComponentInfo>()
         .and_then(|info| info.get(comp_id).map(|entry| entry.type_ptr))
         .ok_or_else(|| ControlError::internal("Custom component info lost".to_string()))?;
 
     Python::attach(|py| {
-        let py_type =
-            unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-        let Ok(cls) = py_type.cast::<pyo3::types::PyType>() else {
+        let py_type = unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut PyObject) };
+        let Ok(cls) = py_type.cast::<PyType>() else {
             return Err(ControlError::internal(
                 "Custom component type pointer is invalid".to_string(),
             ));
@@ -602,7 +605,7 @@ fn insert_custom_component(
             }
             Err(_) if !field_obj.is_empty() => {
                 // Default constructor failed — try passing fields as kwargs
-                let kwargs = pyo3::types::PyDict::new(py);
+                let kwargs = PyDict::new(py);
                 let mut updated = Vec::new();
                 for (field_name, field_value) in field_obj {
                     match json_to_py(py, field_value) {
@@ -641,11 +644,11 @@ fn insert_custom_component(
         // SAFETY: comp_id is a registered custom component with PyObject storage.
         // The component layout matches Py<PyAny> which was registered during app setup.
         unsafe {
-            let ptr = std::ptr::addr_of!(py_obj) as *const u8;
+            let ptr = ptr::addr_of!(py_obj) as *const u8;
             let data = core::ptr::NonNull::new_unchecked(ptr as *mut u8);
             entity_mut.insert_by_id(comp_id, bevy::ptr::OwningPtr::new(data));
         }
-        std::mem::forget(py_obj); // Ownership transferred to ECS
+        mem::forget(py_obj); // Ownership transferred to ECS
 
         Ok(serde_json::json!({
             "entity_id": entity_id,
@@ -684,7 +687,7 @@ pub fn remove_component(
 
     // Fallback: check custom Python components via CustomComponentInfo
     let custom_comp_id = world
-        .get_resource::<pybevy_core::CustomComponentInfo>()
+        .get_resource::<CustomComponentInfo>()
         .and_then(|info| {
             info.iter()
                 .find(|(_, entry)| entry.name == component)
@@ -815,18 +818,16 @@ pub fn insert_resource(
     }
 
     // Fallback: check custom Python resources via CustomResourceInfo
-    let custom_entry = world
-        .get_resource::<pybevy_core::CustomResourceInfo>()
-        .and_then(|info| {
-            info.iter()
-                .find(|(_, entry)| entry.name == resource_type)
-                .map(|(id, entry)| (id, entry.type_ptr))
-        });
+    let custom_entry = world.get_resource::<CustomResourceInfo>().and_then(|info| {
+        info.iter()
+            .find(|(_, entry)| entry.name == resource_type)
+            .map(|(id, entry)| (id, entry.type_ptr))
+    });
 
     if let Some((comp_id, type_ptr)) = custom_entry {
         Python::attach(|py| {
             // Patch semantics: if custom resource already exists, mutate in-place
-            if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>()
+            if let Some(storage) = world.get_resource::<PyResourceStorage>()
                 && let Some(existing) = storage.resources.get(&comp_id)
             {
                 let bound = existing.bind(py);
@@ -855,9 +856,8 @@ pub fn insert_resource(
             }
 
             // Resource doesn't exist yet: create default and apply fields
-            let py_type =
-                unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-            let Ok(cls) = py_type.cast::<pyo3::types::PyType>() else {
+            let py_type = unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut PyObject) };
+            let Ok(cls) = py_type.cast::<PyType>() else {
                 return Err(ControlError::internal(
                     "Custom resource type pointer is invalid".to_string(),
                 ));
@@ -887,11 +887,11 @@ pub fn insert_resource(
             }
 
             // Store in PyResourceStorage
-            if !world.contains_resource::<pybevy_core::PyResourceStorage>() {
-                world.insert_resource(pybevy_core::PyResourceStorage::default());
+            if !world.contains_resource::<PyResourceStorage>() {
+                world.insert_resource(PyResourceStorage::default());
             }
             world
-                .resource_mut::<pybevy_core::PyResourceStorage>()
+                .resource_mut::<PyResourceStorage>()
                 .resources
                 .insert(comp_id, instance.unbind());
 
@@ -922,16 +922,14 @@ pub fn remove_resource(
     }
 
     // Fallback: check custom Python resources via CustomResourceInfo
-    let custom_comp_id = world
-        .get_resource::<pybevy_core::CustomResourceInfo>()
-        .and_then(|info| {
-            info.iter()
-                .find(|(_, entry)| entry.name == resource_type)
-                .map(|(id, _)| id)
-        });
+    let custom_comp_id = world.get_resource::<CustomResourceInfo>().and_then(|info| {
+        info.iter()
+            .find(|(_, entry)| entry.name == resource_type)
+            .map(|(id, _)| id)
+    });
 
     if let Some(comp_id) = custom_comp_id {
-        if let Some(storage) = world.get_resource_mut::<pybevy_core::PyResourceStorage>() {
+        if let Some(storage) = world.get_resource_mut::<PyResourceStorage>() {
             storage.into_inner().resources.remove(&comp_id);
         }
         return Ok(serde_json::json!({
@@ -1203,7 +1201,7 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
             .into_any()
             .unbind()),
         serde_json::Value::Array(arr) => {
-            let list = pyo3::types::PyList::empty(py);
+            let list = PyList::empty(py);
             for item in arr {
                 let py_item = json_to_py(py, item)?;
                 list.append(py_item).map_err(|e| e.to_string())?;
@@ -1211,7 +1209,7 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
             Ok(list.into_any().unbind())
         }
         serde_json::Value::Object(obj) => {
-            let dict = pyo3::types::PyDict::new(py);
+            let dict = PyDict::new(py);
             for (k, v) in obj {
                 let py_value = json_to_py(py, v)?;
                 dict.set_item(k, py_value).map_err(|e| e.to_string())?;
@@ -1223,12 +1221,14 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{alloc::Layout, ffi::CString, ptr, sync::Once};
 
     use bevy::ecs::{
         component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
         name::Name,
     };
+    use pybevy_core::{CustomComponentEntry, CustomResourceEntry};
+    use pyo3::types::PyInt;
 
     use super::*;
     use crate::bridge::ErrorCode;
@@ -1246,7 +1246,7 @@ mod tests {
         setup_python();
         Python::attach(|py| {
             // Create a mock Color class with a srgba static method
-            let code = std::ffi::CString::new(
+            let code = CString::new(
                 r#"
 import types, sys
 
@@ -1281,7 +1281,7 @@ holder = Holder()
             )
             .unwrap();
 
-            let globals = pyo3::types::PyDict::new(py);
+            let globals = PyDict::new(py);
             py.run(&code, Some(&globals), None).unwrap();
 
             let holder = globals.get_item("holder").unwrap().unwrap();
@@ -1312,7 +1312,7 @@ holder = Holder()
     fn convert_field_value_color_wrong_array_length() {
         setup_python();
         Python::attach(|py| {
-            let code = std::ffi::CString::new(
+            let code = CString::new(
                 r#"
 import types, sys
 
@@ -1347,7 +1347,7 @@ holder = Holder()
             )
             .unwrap();
 
-            let globals = pyo3::types::PyDict::new(py);
+            let globals = PyDict::new(py);
             py.run(&code, Some(&globals), None).unwrap();
 
             let holder = globals.get_item("holder").unwrap().unwrap();
@@ -1372,7 +1372,7 @@ holder = Holder()
     fn convert_field_value_non_color_falls_through() {
         setup_python();
         Python::attach(|py| {
-            let code = std::ffi::CString::new(
+            let code = CString::new(
                 r#"
 class Holder:
     def __init__(self):
@@ -1383,7 +1383,7 @@ holder = Holder()
             )
             .unwrap();
 
-            let globals = pyo3::types::PyDict::new(py);
+            let globals = PyDict::new(py);
             py.run(&code, Some(&globals), None).unwrap();
 
             let holder = globals.get_item("holder").unwrap().unwrap();
@@ -1767,7 +1767,7 @@ holder = Holder()
             ComponentDescriptor::new_with_layout(
                 "CustomComp",
                 StorageType::Table,
-                std::alloc::Layout::new::<u8>(),
+                Layout::new::<u8>(),
                 None,
                 false,
                 ComponentCloneBehavior::Default,
@@ -1775,11 +1775,11 @@ holder = Holder()
             )
         });
 
-        let mut info = pybevy_core::CustomComponentInfo::default();
+        let mut info = CustomComponentInfo::default();
         info.insert(
             comp_id,
-            pybevy_core::CustomComponentEntry {
-                type_ptr: std::ptr::null(),
+            CustomComponentEntry {
+                type_ptr: ptr::null(),
                 name: "CustomComp".to_string(),
                 is_pyobject_storage: true,
             },
@@ -1891,7 +1891,7 @@ holder = Holder()
             ComponentDescriptor::new_with_layout(
                 "GameScore",
                 StorageType::Table,
-                std::alloc::Layout::new::<u8>(),
+                Layout::new::<u8>(),
                 None,
                 false,
                 ComponentCloneBehavior::Default,
@@ -1901,14 +1901,14 @@ holder = Holder()
 
         // Use a real Python type pointer so PyO3 doesn't crash on null
         let type_ptr = Python::attach(|py| {
-            let int_type = py.get_type::<pyo3::types::PyInt>();
+            let int_type = py.get_type::<PyInt>();
             int_type.as_type_ptr()
         });
 
-        let mut info = pybevy_core::CustomResourceInfo::default();
+        let mut info = CustomResourceInfo::default();
         info.insert(
             comp_id,
-            pybevy_core::CustomResourceEntry {
+            CustomResourceEntry {
                 type_ptr,
                 name: "GameScore".to_string(),
             },
@@ -1926,7 +1926,7 @@ holder = Holder()
         assert_eq!(result.unwrap()["custom"], true);
 
         // Verify PyResourceStorage was populated
-        let storage = world.get_resource::<pybevy_core::PyResourceStorage>();
+        let storage = world.get_resource::<PyResourceStorage>();
         assert!(storage.is_some(), "PyResourceStorage should exist");
         assert!(
             storage.unwrap().resources.contains_key(&comp_id),
@@ -1976,7 +1976,7 @@ holder = Holder()
             ComponentDescriptor::new_with_layout(
                 "MyCustomRes",
                 StorageType::Table,
-                std::alloc::Layout::new::<u8>(),
+                Layout::new::<u8>(),
                 None,
                 false,
                 ComponentCloneBehavior::Default,
@@ -1986,14 +1986,14 @@ holder = Holder()
 
         // Create CustomResourceInfo with the entry
         let type_ptr = Python::attach(|py| {
-            let int_type = py.get_type::<pyo3::types::PyInt>();
+            let int_type = py.get_type::<PyInt>();
             int_type.as_type_ptr()
         });
 
-        let mut info = pybevy_core::CustomResourceInfo::default();
+        let mut info = CustomResourceInfo::default();
         info.insert(
             comp_id,
-            pybevy_core::CustomResourceEntry {
+            CustomResourceEntry {
                 type_ptr,
                 name: "MyCustomRes".to_string(),
             },
@@ -2002,14 +2002,14 @@ holder = Holder()
 
         // Pre-populate PyResourceStorage with a matching entry
         let py_obj = Python::attach(|py| 42i64.into_pyobject(py).unwrap().into_any().unbind());
-        let mut storage = pybevy_core::PyResourceStorage::default();
+        let mut storage = PyResourceStorage::default();
         storage.resources.insert(comp_id, py_obj);
         world.insert_resource(storage);
 
         // Verify resource is present before removal
         assert!(
             world
-                .get_resource::<pybevy_core::PyResourceStorage>()
+                .get_resource::<PyResourceStorage>()
                 .unwrap()
                 .resources
                 .contains_key(&comp_id),
@@ -2022,9 +2022,7 @@ holder = Holder()
         assert_eq!(result.unwrap()["removed"], "MyCustomRes");
 
         // Verify it was removed from PyResourceStorage
-        let storage = world
-            .get_resource::<pybevy_core::PyResourceStorage>()
-            .unwrap();
+        let storage = world.get_resource::<PyResourceStorage>().unwrap();
         assert!(
             !storage.resources.contains_key(&comp_id),
             "Resource should be removed from PyResourceStorage"
@@ -2069,11 +2067,11 @@ holder = Holder()
         let entity = world.spawn(Name::new("Target")).id();
 
         // Add CustomComponentInfo with entries so the error message includes them
-        let mut info = pybevy_core::CustomComponentInfo::default();
+        let mut info = CustomComponentInfo::default();
         info.insert(
             ComponentId::new(77777),
-            pybevy_core::CustomComponentEntry {
-                type_ptr: std::ptr::null(),
+            CustomComponentEntry {
+                type_ptr: ptr::null(),
                 name: "Health".to_string(),
                 is_pyobject_storage: true,
             },
@@ -2101,12 +2099,12 @@ holder = Holder()
         let entity = world.spawn(Name::new("Target")).id();
 
         // Register a custom component with qualified name (module.ClassName)
-        let mut info = pybevy_core::CustomComponentInfo::default();
+        let mut info = CustomComponentInfo::default();
         let fake_id = ComponentId::new(88888);
         info.insert(
             fake_id,
-            pybevy_core::CustomComponentEntry {
-                type_ptr: std::ptr::null(),
+            CustomComponentEntry {
+                type_ptr: ptr::null(),
                 name: "mymod.Oscillator".to_string(),
                 is_pyobject_storage: true,
             },
@@ -2169,7 +2167,7 @@ holder = Holder()
             ComponentDescriptor::new_with_layout(
                 "WrapperComp",
                 StorageType::Table,
-                std::alloc::Layout::new::<u8>(),
+                Layout::new::<u8>(),
                 None,
                 false,
                 ComponentCloneBehavior::Default,
@@ -2177,11 +2175,11 @@ holder = Holder()
             )
         });
 
-        let mut info = pybevy_core::CustomComponentInfo::default();
+        let mut info = CustomComponentInfo::default();
         info.insert(
             comp_id,
-            pybevy_core::CustomComponentEntry {
-                type_ptr: std::ptr::null(),
+            CustomComponentEntry {
+                type_ptr: ptr::null(),
                 name: "WrapperComp".to_string(),
                 is_pyobject_storage: false,
             },
@@ -2229,7 +2227,7 @@ holder = Holder()
             ComponentDescriptor::new_with_layout(
                 "ReinsertComp",
                 StorageType::Table,
-                std::alloc::Layout::new::<u8>(),
+                Layout::new::<u8>(),
                 None,
                 false,
                 ComponentCloneBehavior::Default,
@@ -2239,14 +2237,14 @@ holder = Holder()
 
         // Register as pyobject-storage custom component
         let type_ptr = Python::attach(|py| {
-            let int_type = py.get_type::<pyo3::types::PyInt>();
+            let int_type = py.get_type::<PyInt>();
             int_type.as_type_ptr()
         });
 
-        let mut info = pybevy_core::CustomComponentInfo::default();
+        let mut info = CustomComponentInfo::default();
         info.insert(
             comp_id,
-            pybevy_core::CustomComponentEntry {
+            CustomComponentEntry {
                 type_ptr,
                 name: "ReinsertComp".to_string(),
                 is_pyobject_storage: true,

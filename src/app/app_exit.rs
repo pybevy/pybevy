@@ -39,8 +39,8 @@ impl PyAppExit {
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    pub fn SUCCESS() -> PyResult<Py<Self>> {
+    #[pyo3(name = "SUCCESS")]
+    pub fn success() -> PyResult<Py<Self>> {
         Python::attach(|py| Py::new(py, (Self(AppExit::Success), PyMessage)))
     }
 

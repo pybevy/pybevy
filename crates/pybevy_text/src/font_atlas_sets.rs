@@ -1,5 +1,5 @@
 use bevy::{
-    asset::AssetId,
+    asset::{AssetId, Handle},
     text::{Font, FontAtlasSet},
 };
 use pybevy_core::{ResourceStorage, extract_handle_from_any};
@@ -21,7 +21,7 @@ impl PyFontAtlasSet {
         id: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<(PyFontAtlasKey, Vec<PyFontAtlas>)>> {
         let handle = extract_handle_from_any(id)?;
-        let bevy_handle: bevy::asset::Handle<Font> = (&handle).try_into()?;
+        let bevy_handle: Handle<Font> = (&handle).try_into()?;
         let asset_id: AssetId<Font> = bevy_handle.id();
         let set = self.as_ref()?;
         let results: Vec<(PyFontAtlasKey, Vec<PyFontAtlas>)> = set
