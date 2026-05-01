@@ -1,16 +1,18 @@
 use std::sync::{Arc, Mutex};
 
 use bevy::{ecs::world::World, prelude::Resource};
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::handlers::{
     self,
     reload::{PendingReloadAndCapture, PendingReloadAndCaptures, ReloadAndCaptureState},
     schedule::{
-        ActiveSchedule, ActiveSchedules, SharedScheduleRegistryResource, SharedScheduleState,
+        ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
+        SharedScheduleRegistryResource, SharedScheduleState,
     },
-    screenshot::{ActiveTimeline, PendingTimelines, setup_debug_camera},
+    screenshot::{ActiveTimeline, PendingTimelines, compute_schedule, setup_debug_camera},
     turnaround::{ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints},
 };
 
@@ -23,208 +25,426 @@ const MAX_REQUESTS_PER_FRAME: usize = 32;
 pub struct InternalOverlayUi;
 
 /// Entity can be addressed by numeric ID or Name string
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum EntityRef {
     Id(u64),
     Name(String),
 }
 
-/// Scene inspection operations (read-only)
-#[derive(Debug)]
-pub enum SceneOp {
+/// Reload mode: full (default) re-executes all scene code, partial only reloads changed systems.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReloadMode {
+    /// Re-execute all scene code
+    #[default]
+    Full,
+    /// Only reload changed systems
+    Partial,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct QueryEntitiesParams {
+    /// Component names entities must have
+    #[serde(default)]
+    pub with: Vec<String>,
+    /// Component names entities must not have
+    #[serde(default)]
+    pub without: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetComponentParams {
+    /// Entity ID or Name
+    pub entity: EntityRef,
+    /// Component name (e.g. 'Transform', 'PointLight')
+    pub component: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetComponentParams {
+    /// Entity ID or Name
+    pub entity: EntityRef,
+    /// Component name
+    pub component: String,
+    /// Fields to update
+    pub fields: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RemoveComponentParams {
+    /// Entity ID or Name
+    pub entity: EntityRef,
+    /// Component to remove
+    pub component: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetResourceParams {
+    /// Resource type name
+    pub resource_type: String,
+    /// Resource value as JSON
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SeekTimeParams {
+    /// Target elapsed time in seconds
+    pub seconds: f64,
+    /// Pause after seeking (default true)
+    #[serde(default = "default_true")]
+    pub pause: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureScreenshotParams {
+    /// Frames to wait before capture (default 2)
+    #[serde(default = "default_2")]
+    pub delay_frames: u32,
+    /// Max image width in pixels (default 768). Use 1280 for detail.
+    pub max_width: Option<u32>,
+    /// Camera position [x, y, z]. If set, spawns a temporary debug camera instead of using the scene camera.
+    pub position: Option<[f32; 3]>,
+    /// Point the camera looks at [x, y, z]. Defaults to [0, 0, 0] if position is set.
+    pub look_at: Option<[f32; 3]>,
+    /// Hide authored UI Node entities during capture (default true). Internal overlays (hot reload status) are always hidden regardless.
+    #[serde(default = "default_true")]
+    pub hide_ui: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureTimelineParams {
+    /// Frame span to capture over (~1s at 60fps)
+    #[serde(default = "default_60")]
+    pub total_frames: u32,
+    /// Number of captures (max 20)
+    #[serde(default = "default_6")]
+    pub capture_count: u32,
+    /// Max composite width in pixels
+    pub max_width: Option<u32>,
+    /// Grid columns
+    #[serde(default = "default_3")]
+    pub columns: u32,
+    /// Debug camera position [x, y, z]
+    pub position: Option<[f32; 3]>,
+    /// Point the camera looks at [x, y, z]. Defaults to [0, 0, 0] if position is set.
+    pub look_at: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureTurnaroundParams {
+    /// Center point to orbit around. Auto-detected from scene bounds if omitted.
+    pub look_at: Option<[f32; 3]>,
+    /// Camera distance from center. Auto-fitted to scene bounds if omitted.
+    pub distance: Option<f32>,
+    /// Camera elevation in degrees (default 25)
+    #[schemars(extend("default" = 25))]
+    pub elevation: Option<f32>,
+    /// Number of orbit positions (default 6)
+    #[schemars(extend("default" = 6))]
+    pub view_count: Option<u32>,
+    /// Include top-down view (default true)
+    #[schemars(extend("default" = true))]
+    pub include_top: Option<bool>,
+    /// Grid columns in contact sheet (default 3)
+    #[schemars(extend("default" = 3))]
+    pub columns: Option<u32>,
+    /// Max composite width (default 1200)
+    #[schemars(extend("default" = 1200))]
+    pub max_width: Option<u32>,
+    /// Hide UI during capture (default true)
+    #[schemars(extend("default" = true))]
+    pub hide_ui: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureDepthParams {
+    /// Camera position [x, y, z]
+    pub position: Option<[f32; 3]>,
+    /// Camera look-at [x, y, z]
+    pub look_at: Option<[f32; 3]>,
+    /// Screen-space sample points [[x, y], ...]. Auto-generates grid if omitted.
+    pub sample_points: Option<Vec<[u32; 2]>>,
+    /// Auto-generate NxN sample grid (default 8 if no sample_points)
+    #[schemars(extend("default" = 8))]
+    pub grid_density: Option<u32>,
+    /// Include RGB screenshot (default true)
+    #[schemars(extend("default" = true))]
+    pub include_rgb: Option<bool>,
+    /// Frames to wait before capture (default 2)
+    #[schemars(extend("default" = 2))]
+    pub delay_frames: Option<u32>,
+    /// Hide UI during capture (default true)
+    #[schemars(extend("default" = true))]
+    pub hide_ui: Option<bool>,
+    /// Max screenshot width (default 768)
+    #[schemars(extend("default" = 768))]
+    pub max_width: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReloadParams {
+    /// Reload mode
+    #[serde(default)]
+    pub mode: ReloadMode,
+    /// Pause time immediately (before reload runs). Scene starts frozen so you can capture at t=0.
+    #[serde(default)]
+    pub pause: bool,
+    /// Set time scale atomically with reload (e.g. 0.1 for slow-motion). Applied before any frames run.
+    pub time_scale: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReloadAndCaptureParams {
+    /// Reload mode (default full)
+    #[serde(default)]
+    pub mode: ReloadMode,
+    /// Pause time before reload
+    #[serde(default)]
+    pub pause: bool,
+    /// Set time scale atomically with reload
+    pub time_scale: Option<f32>,
+    /// Frames to wait after reload before capture (default 30)
+    #[schemars(extend("default" = 30))]
+    pub delay_frames: Option<u32>,
+    /// Max screenshot width (default 768)
+    pub max_width: Option<u32>,
+    /// Debug camera position [x, y, z]
+    pub position: Option<[f32; 3]>,
+    /// Camera look-at point [x, y, z]
+    pub look_at: Option<[f32; 3]>,
+    /// Hide UI during capture (default true)
+    #[schemars(extend("default" = true))]
+    pub hide_ui: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct QuerySpatialParams {
+    /// First entity (ID or Name)
+    pub entity_a: EntityRef,
+    /// Second entity (ID or Name)
+    pub entity_b: EntityRef,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct QuerySpatialNeighborhoodParams {
+    /// Center entity
+    pub entity: EntityRef,
+    /// Search radius
+    pub radius: f32,
+    /// Max neighbors to return (default 50)
+    #[schemars(extend("default" = 50))]
+    pub max_results: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckOverlapsParams {
+    /// Entity to check
+    pub entity: EntityRef,
+    /// Include siblings under same parent (default false, since parented parts overlap by design)
+    #[serde(default)]
+    pub include_siblings: bool,
+    /// Max gap (units) between entity bottom and surface below to still count as grounded (default 0.1). Increase for scenes with small placement gaps.
+    #[schemars(extend("default" = 0.1))]
+    #[serde(default)]
+    pub max_float_gap: f32,
+    /// Ground plane Y coordinate for sunk-detection. When provided, entities whose world AABB min_y is below this value are flagged as sunken. Useful for detecting GLB models placed at origin that are half-buried below the ground plane.
+    pub ground_y: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckAllOverlapsParams {
+    /// Minimum overlap depth to report (default 0.001)
+    #[schemars(extend("default" = 0.001))]
+    pub min_penetration: Option<f32>,
+    /// Max overlapping pairs to return (default 100)
+    #[schemars(extend("default" = 100))]
+    pub max_results: Option<usize>,
+    /// Max gap to still count as grounded (default 0.1)
+    #[schemars(extend("default" = 0.1))]
+    #[serde(default)]
+    pub max_float_gap: f32,
+    /// Ground plane Y for sunk-detection
+    pub ground_y: Option<f32>,
+    /// Include siblings under same parent (default false)
+    #[serde(default)]
+    pub include_siblings: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetAssetParams {
+    /// Entity ID or Name
+    pub entity: EntityRef,
+    /// Handle component: MeshMaterial3d, Mesh3d, MeshMaterial2d, AudioPlayer
+    pub component: String,
+    /// Asset type: StandardMaterial, Mesh, ColorMaterial, AudioSource
+    pub asset_type: String,
+    /// Fields to update on the asset
+    pub fields: serde_json::Value,
+}
+
+/// All control operations that require World access.
+///
+/// To deserialize from an MCP tool call: inject the tool name as `"tool"` into
+/// the args object, then call `serde_json::from_value::<ControlOperation>(args)`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "tool", rename_all = "snake_case")]
+pub enum ControlOperation {
+    /// List all entities in the scene.
+    #[schemars(extend("x-hidden" = true))]
     ListEntities,
+    /// Get details for a single entity.
+    #[schemars(extend("x-hidden" = true))]
     GetEntity {
+        /// Entity ID or Name
         entity: EntityRef,
     },
+    /// List all resources in the world.
+    #[schemars(extend("x-hidden" = true))]
     ListResources,
+    /// List all registered systems.
+    #[schemars(extend("x-hidden" = true))]
     ListSystems,
-    QueryEntities {
-        with: Vec<String>,
-        without: Vec<String>,
-    },
+    /// Get component field names, types, defaults, and a JSON spawn example.
     GetComponentSchema {
+        /// Component name (e.g. 'Transform')
         name: String,
     },
-    GetComponent {
-        entity: EntityRef,
-        component: String,
-    },
-    SceneSummary,
+    /// Get live field values for a specific component on an entity.
+    GetComponent(GetComponentParams),
+    /// Query entities by With/Without component filters. Also supports Name lookup.
+    QueryEntities(QueryEntitiesParams),
+    /// Get a grouped entity inventory: counts by type (e.g. '30 Bubble, 6 Fish, 1 Camera3d'). Faster than query_entities for understanding scene composition.
+    GetSceneSummary,
+    /// Get the axis-aligned bounding box (AABB) of an entity, both local and world-space. Requires entity to have a mesh.
     GetBoundingBox {
+        /// Entity ID or Name
         entity: EntityRef,
     },
-    DebugRegistry,
-}
+    /// Show bridge registry state, entity count, and component detection status.
+    GetRegistry,
 
-/// Mutation operations (spawn, despawn, set, remove)
-#[derive(Debug)]
-pub enum MutateOp {
+    /// Capture a screenshot. Default 768px wide. UI elements are hidden by default. Use position/look_at to capture from an arbitrary viewpoint without affecting the scene camera.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    CaptureScreenshot(CaptureScreenshotParams),
+    /// Capture a screenshot with entity ID/Name gizmo labels overlaid.
+    #[schemars(extend("x-hidden" = true))]
+    CaptureWithGizmos(CaptureScreenshotParams),
+    /// Capture multiple frames over time into a contact sheet. Shows animation/motion in one image.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    CaptureTimeline(CaptureTimelineParams),
+    /// Capture multiple viewpoints orbiting around a target, composited into one contact sheet. Auto-fits distance to scene bounds if not specified.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    CaptureTurnaround(CaptureTurnaroundParams),
+    /// Capture RGB screenshot + ray-AABB depth samples. Casts rays from camera through sample points (or auto-grid) against entity bounding boxes. Returns structured depth data with hit entity, distance, and world position.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    CaptureDepth(CaptureDepthParams),
+
+    /// Hot-reload the scene (full or partial). Waits for reload to complete before responding - response includes any errors or warnings.
+    Reload(ReloadParams),
+    /// Primary iteration tool. Reload and capture in one round-trip. Hot-reloads the scene, waits for completion, checks for errors, then captures a screenshot.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    ReloadAndCapture(ReloadAndCaptureParams),
+    /// Get current reload generation, mode, and enabled state.
+    GetReloadStatus,
+    /// Get the last Python system error traceback.
+    GetLastError,
+
+    /// Spawn a new entity with components specified as JSON.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
     SpawnEntity {
+        /// Component name -> field values (e.g. {"Transform": {"translation": [0, 5, 0]}})
         components: serde_json::Value,
     },
+    /// Remove an entity by ID or Name.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
     DespawnEntity {
+        /// Entity ID or Name
         entity: EntityRef,
     },
-    SetComponent {
-        entity: EntityRef,
-        component: String,
-        fields: serde_json::Value,
-    },
-    RemoveComponent {
-        entity: EntityRef,
-        component: String,
-    },
-    InsertResource {
-        resource_type: String,
-        value: serde_json::Value,
-    },
+    /// Update specific fields on a component without replacing it.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
+    SetComponent(SetComponentParams),
+    /// Remove a component from an entity.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
+    RemoveComponent(RemoveComponentParams),
+    /// Insert or update a resource on a running scene (in scene code, use commands.insert_resource() instead).
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
+    SetResource(SetResourceParams),
+    /// Remove a resource from the world.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
     RemoveResource {
+        /// Resource type name
         resource_type: String,
     },
-    BatchMutate {
+    /// Execute multiple mutation operations in a single round-trip. Each operation runs independently - failures don't abort the batch. Actions: set_component, spawn, despawn, remove_component.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
+    Batch {
+        /// Array of operations to execute. Each item: {"action": "set_component|spawn|despawn|remove_component", "entity": id_or_name, ...}
         operations: Vec<serde_json::Value>,
     },
-}
+    /// Update asset properties (material color, mesh settings) live without code reload.
+    #[schemars(extend("x-feature-gate" = "manipulation"))]
+    SetAsset(SetAssetParams),
 
-/// Time control operations
-#[derive(Debug)]
-pub enum TimeOp {
+    /// Pause game time. Scene freezes but rendering continues. Useful for inspecting a specific moment.
     PauseTime,
+    /// Resume game time after pause.
     ResumeTime,
-    SetTimeScale { scale: f32 },
+    /// Set game speed multiplier (0.1 = slow-mo, 2.0 = 2x speed). Does not affect pause state.
+    SetTimeScale {
+        /// Speed multiplier (default 1.0)
+        scale: f32,
+    },
+    /// Get current time state: paused, speed, elapsed seconds.
     GetTimeStatus,
-    SeekTime { seconds: f64, pause: bool },
-}
+    /// Jump virtual time to a specific moment. Seeking backwards resets virtual time (preserves speed). Pauses by default so you can capture at that exact time.
+    SeekTime(SeekTimeParams),
 
-/// Visual capture operations (deferred response)
-#[derive(Debug)]
-pub enum VisualOp {
-    CaptureScreenshot {
-        delay_frames: u32,
-        max_width: Option<u32>,
-        position: Option<[f32; 3]>,
-        look_at: Option<[f32; 3]>,
-        hide_ui: bool,
-    },
-    CaptureWithGizmos {
-        delay_frames: u32,
-        max_width: Option<u32>,
-        position: Option<[f32; 3]>,
-        look_at: Option<[f32; 3]>,
-        hide_ui: bool,
-    },
-    CaptureTimeline {
-        total_frames: u32,
-        capture_count: u32,
-        max_width: Option<u32>,
-        columns: u32,
-        position: Option<[f32; 3]>,
-        look_at: Option<[f32; 3]>,
-    },
-    CaptureTurnaround {
-        look_at: Option<[f32; 3]>,
-        distance: Option<f32>,
-        elevation: Option<f32>,
-        view_count: Option<u32>,
-        include_top: Option<bool>,
-        columns: Option<u32>,
-        max_width: Option<u32>,
-        hide_ui: Option<bool>,
-    },
-    CaptureDepth {
-        position: Option<[f32; 3]>,
-        look_at: Option<[f32; 3]>,
-        sample_points: Option<Vec<[u32; 2]>>,
-        grid_density: Option<u32>,
-        include_rgb: Option<bool>,
-        delay_frames: Option<u32>,
-        hide_ui: Option<bool>,
-        max_width: Option<u32>,
-    },
-}
+    /// Spatial query between two entities: distance, direction, AABB overlap. For finding all entities within a radius, use query_spatial_neighborhood instead.
+    QuerySpatial(QuerySpatialParams),
+    /// Find all entities within radius of a center entity.
+    QuerySpatialNeighborhood(QuerySpatialNeighborhoodParams),
+    /// Detect AABB overlaps for a single entity against all others.
+    CheckOverlaps(CheckOverlapsParams),
+    /// Detect all AABB overlaps scene-wide.
+    CheckAllOverlaps(CheckAllOverlapsParams),
 
-/// Reload operations (deferred response)
-#[derive(Debug)]
-pub enum ReloadOp {
-    TriggerReload {
-        mode: String,
-        pause: bool,
-        time_scale: Option<f32>,
-    },
-    ReloadAndCapture {
-        mode: String,
-        pause: bool,
-        time_scale: Option<f32>,
-        delay_frames: Option<u32>,
-        max_width: Option<u32>,
-        position: Option<[f32; 3]>,
-        look_at: Option<[f32; 3]>,
-        hide_ui: Option<bool>,
-    },
-    GetReloadStatus,
-    GetLastError,
-}
-
-/// Spatial query operations
-#[derive(Debug)]
-pub enum SpatialOp {
-    QuerySpatial {
-        entity_a: EntityRef,
-        entity_b: EntityRef,
-    },
-    QuerySpatialNeighborhood {
-        entity: EntityRef,
-        radius: f32,
-        max_results: Option<usize>,
-    },
-    CheckOverlaps {
-        entity: EntityRef,
-        include_siblings: bool,
-        max_float_gap: f32,
-        ground_y: Option<f32>,
-    },
-    CheckAllOverlaps {
-        min_penetration: Option<f32>,
-        max_results: Option<usize>,
-        max_float_gap: f32,
-        ground_y: Option<f32>,
-        include_siblings: bool,
-    },
-}
-
-/// Other operations (execute, performance, assets, configs, schedule)
-#[derive(Debug)]
-pub enum OtherOp {
-    ExecutePython {
+    /// Run arbitrary Python code with World context. Returns stdout/stderr capture and change summary.
+    #[schemars(extend("x-feature-gate" = "execute_python"))]
+    RunCode {
+        /// Python code to execute
         code: String,
     },
+    /// Get full diagnostics: FPS, CPU/GPU/RAM/VRAM usage, entity/asset counts, system profiling times.
     GetPerformance,
-    MutateAsset {
-        entity: EntityRef,
-        component: String,
-        asset_type: String,
-        fields: serde_json::Value,
-    },
+    /// Submit batched, timed tool calls that execute inside the engine frame loop with frame-precise timing. Same-'at' actions fire in the same frame (atomic). Supports: time control, mutations, queries, screenshots. NOT supported: get_logs, search_api, run_scene (bridge-local tools).
+    ScheduleActions(ScheduleRequest),
+    /// Get internal config value.
+    #[schemars(extend("x-hidden" = true))]
     GetConfig {
+        /// Config key
         key: String,
     },
+    /// List all config values.
+    #[schemars(extend("x-hidden" = true))]
     ListConfigs,
-    SubmitSchedule {
-        request: crate::handlers::schedule::ScheduleRequest,
-    },
 }
 
-/// All control operations that require World access
-#[derive(Debug)]
-pub enum ControlOperation {
-    Scene(SceneOp),
-    Mutate(MutateOp),
-    Time(TimeOp),
-    Visual(VisualOp),
-    Reload(ReloadOp),
-    Spatial(SpatialOp),
-    Other(OtherOp),
+fn default_2() -> u32 {
+    2
+}
+fn default_3() -> u32 {
+    3
+}
+fn default_6() -> u32 {
+    6
+}
+fn default_60() -> u32 {
+    60
+}
+fn default_true() -> bool {
+    true
 }
 
 /// Error codes for control operations (JSON-RPC style)
@@ -242,7 +462,6 @@ impl ErrorCode {
         self as i32
     }
 }
-
 /// Error type for control operations
 #[derive(Debug)]
 pub struct ControlError {
@@ -329,7 +548,7 @@ pub struct PendingReloadResponses {
 pub struct PendingReloadResponse {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     pub frames_remaining: u32,
-    pub mode: String,
+    pub mode: ReloadMode,
     pub error_timestamp_before: f64,
 }
 
@@ -416,77 +635,39 @@ pub fn create_channel() -> (ControlSender, ControlReceiver) {
     (ControlSender { tx }, ControlReceiver { rx })
 }
 
-/// Handle deferred CaptureScreenshot or CaptureWithGizmos requests.
-fn handle_deferred_screenshot(request: ControlRequest, deferred: &mut Vec<PendingScreenshot>) {
-    match request.operation {
-        ControlOperation::Visual(VisualOp::CaptureScreenshot {
-            delay_frames,
-            max_width,
-            position,
-            look_at,
-            hide_ui,
-        }) => {
-            let debug_camera = position.map(|pos| DebugCameraRequest {
-                position: pos,
-                look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
-            });
-            deferred.push(PendingScreenshot {
-                response_tx: request.response_tx,
-                frames_remaining: delay_frames,
-                with_gizmos: false,
-                max_width,
-                debug_camera,
-                hide_ui,
-                extra_response: None,
-            });
-        }
-        ControlOperation::Visual(VisualOp::CaptureWithGizmos {
-            delay_frames,
-            max_width,
-            position,
-            look_at,
-            hide_ui,
-        }) => {
-            let debug_camera = position.map(|pos| DebugCameraRequest {
-                position: pos,
-                look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
-            });
-            deferred.push(PendingScreenshot {
-                response_tx: request.response_tx,
-                frames_remaining: delay_frames,
-                with_gizmos: true,
-                max_width,
-                debug_camera,
-                hide_ui,
-                extra_response: None,
-            });
-        }
-        _ => unreachable!(),
-    }
+pub fn push_pending_screenshot(
+    params: CaptureScreenshotParams,
+    with_gizmos: bool,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    deferred: &mut Vec<PendingScreenshot>,
+) {
+    let debug_camera = params.position.map(|pos| DebugCameraRequest {
+        position: pos,
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    deferred.push(PendingScreenshot {
+        response_tx,
+        frames_remaining: params.delay_frames,
+        with_gizmos,
+        max_width: params.max_width,
+        debug_camera,
+        hide_ui: params.hide_ui,
+        extra_response: None,
+    });
 }
 
-/// Handle deferred CaptureTimeline requests.
-fn handle_deferred_timeline(request: ControlRequest, world: &mut World) {
-    let ControlOperation::Visual(VisualOp::CaptureTimeline {
-        total_frames,
-        capture_count,
-        max_width,
-        columns,
-        position,
-        look_at,
-    }) = request.operation
-    else {
-        unreachable!()
-    };
+pub fn push_pending_timeline(
+    params: CaptureTimelineParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    let mut schedule = compute_schedule(params.total_frames, params.capture_count);
 
-    let mut schedule = crate::handlers::screenshot::compute_schedule(total_frames, capture_count);
-
-    let debug_cleanup = position.map(|pos| {
+    let debug_cleanup = params.position.map(|pos| {
         let debug_req = DebugCameraRequest {
             position: pos,
-            look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
+            look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
         };
-        // Add extra frames for debug camera to render
         if let Some(first) = schedule.front_mut() {
             *first += 2;
         }
@@ -499,67 +680,55 @@ fn handle_deferred_timeline(request: ControlRequest, world: &mut World) {
     pending.active.insert(
         id,
         ActiveTimeline {
-            response_tx: Some(request.response_tx),
-            max_width,
-            columns,
+            response_tx: Some(response_tx),
+            max_width: params.max_width,
+            columns: params.columns,
             debug_cleanup,
             schedule,
-            total_captures: capture_count,
+            total_captures: params.capture_count,
             next_capture_index: 0,
             collected: Vec::new(),
         },
     );
 }
 
-/// Handle deferred TriggerReload requests.
-fn handle_deferred_reload(request: ControlRequest, world: &mut World) {
-    let ControlOperation::Reload(ReloadOp::TriggerReload {
-        mode,
-        pause,
-        time_scale,
-    }) = request.operation
-    else {
-        unreachable!()
-    };
+pub fn push_pending_reload(
+    params: ReloadParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    let _ = handlers::reload::trigger_reload(
+        world,
+        params.mode.clone(),
+        params.pause,
+        params.time_scale,
+    );
 
-    // Execute the reload synchronously, then defer the response
-    let mode_str = mode;
-    let _ = handlers::reload::trigger_reload(world, mode_str.clone(), pause, time_scale);
-
-    // Record current error timestamp to detect new errors after reload
     let error_ts = world
         .get_resource::<pybevy_core::LastSystemError>()
         .map(|e| e.timestamp_secs)
         .unwrap_or(0.0);
 
-    let mut pending_reloads = world.get_resource_or_insert_with(PendingReloadResponses::default);
-    pending_reloads.pending.push(PendingReloadResponse {
-        response_tx: request.response_tx,
+    let mut pending = world.get_resource_or_insert_with(PendingReloadResponses::default);
+    pending.pending.push(PendingReloadResponse {
+        response_tx,
         frames_remaining: 5,
-        mode: mode_str,
+        mode: params.mode,
         error_timestamp_before: error_ts,
     });
 }
 
-/// Handle deferred ReloadAndCapture requests.
-fn handle_deferred_reload_and_capture(request: ControlRequest, world: &mut World) {
-    let ControlOperation::Reload(ReloadOp::ReloadAndCapture {
-        mode,
-        pause,
-        time_scale,
-        delay_frames,
-        max_width,
-        position,
-        look_at,
-        hide_ui,
-    }) = request.operation
-    else {
-        unreachable!()
-    };
-
-    // Trigger the reload
-    let mode_str = mode;
-    let _ = handlers::reload::trigger_reload(world, mode_str.clone(), pause, time_scale);
+pub fn push_pending_reload_and_capture(
+    params: ReloadAndCaptureParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    let _ = handlers::reload::trigger_reload(
+        world,
+        params.mode.clone(),
+        params.pause,
+        params.time_scale,
+    );
 
     let error_ts = world
         .get_resource::<pybevy_core::LastSystemError>()
@@ -568,47 +737,34 @@ fn handle_deferred_reload_and_capture(request: ControlRequest, world: &mut World
 
     let mut pending = world.get_resource_or_insert_with(PendingReloadAndCaptures::default);
     pending.pending.push(PendingReloadAndCapture {
-        response_tx: request.response_tx,
-        mode: mode_str,
+        response_tx,
+        mode: params.mode,
         error_timestamp_before: error_ts,
         reload_frames_remaining: 5,
-        screenshot_delay_frames: delay_frames.unwrap_or(30),
-        max_width,
-        position,
-        look_at,
-        hide_ui: hide_ui.unwrap_or(true),
+        screenshot_delay_frames: params.delay_frames.unwrap_or(30),
+        max_width: params.max_width,
+        position: params.position,
+        look_at: params.look_at,
+        hide_ui: params.hide_ui.unwrap_or(true),
         state: ReloadAndCaptureState::WaitingForReload,
         reload_response: None,
     });
 }
 
-/// Handle deferred CaptureTurnaround requests.
-fn handle_deferred_turnaround(request: ControlRequest, world: &mut World) {
-    let ControlOperation::Visual(VisualOp::CaptureTurnaround {
-        look_at,
-        distance,
-        elevation,
-        view_count,
-        include_top,
-        columns,
-        max_width,
-        hide_ui,
-    }) = request.operation
-    else {
-        unreachable!()
-    };
+pub fn push_pending_turnaround(
+    params: CaptureTurnaroundParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    let vc = params.view_count.unwrap_or(6);
+    let elev = params.elevation.unwrap_or(25.0);
+    let top = params.include_top.unwrap_or(true);
 
-    let vc = view_count.unwrap_or(6);
-    let elev = elevation.unwrap_or(25.0);
-    let top = include_top.unwrap_or(true);
-
-    // Auto-fit distance and look_at from scene bounds
-    let (auto_look_at, auto_distance) = if distance.is_none() || look_at.is_none() {
+    let (auto_look_at, auto_distance) = if params.distance.is_none() || params.look_at.is_none() {
         if let Some((scene_min, scene_max)) = compute_scene_bounds(world) {
             let center = (scene_min + scene_max) * 0.5;
             let extent = scene_max - scene_min;
             let diagonal = (extent.x * extent.x + extent.y * extent.y + extent.z * extent.z).sqrt();
-            // Distance so diagonal subtends ~60° FOV
             let dist = diagonal / (30.0_f32.to_radians().tan() * 2.0);
             ([center.x, center.y, center.z], dist.max(2.0))
         } else {
@@ -618,21 +774,20 @@ fn handle_deferred_turnaround(request: ControlRequest, world: &mut World) {
         ([0.0, 0.0, 0.0], 10.0)
     };
 
-    let final_look_at = look_at.unwrap_or(auto_look_at);
-    let final_distance = distance.unwrap_or(auto_distance);
-
+    let final_look_at = params.look_at.unwrap_or(auto_look_at);
+    let final_distance = params.distance.unwrap_or(auto_distance);
     let viewpoints = compute_viewpoints(final_look_at, final_distance, elev, vc, top);
 
     let mut pending = world.get_resource_or_insert_with(PendingTurnarounds::default);
     pending.active.push(ActiveTurnaround {
-        response_tx: Some(request.response_tx),
+        response_tx: Some(response_tx),
         viewpoints,
         current_index: 0,
         captures: Vec::new(),
-        columns: columns.unwrap_or(3),
-        max_width: Some(max_width.unwrap_or(1200)),
+        columns: params.columns.unwrap_or(3),
+        max_width: Some(params.max_width.unwrap_or(1200)),
         frames_remaining: 0,
-        hide_ui: hide_ui.unwrap_or(true),
+        hide_ui: params.hide_ui.unwrap_or(true),
         ui_restore: None,
         debug_cleanup: None,
         look_at: final_look_at,
@@ -640,55 +795,40 @@ fn handle_deferred_turnaround(request: ControlRequest, world: &mut World) {
     });
 }
 
-/// Handle deferred CaptureDepth requests.
-fn handle_deferred_depth(
-    request: ControlRequest,
+pub fn push_pending_depth(
+    params: CaptureDepthParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     deferred: &mut Vec<PendingScreenshot>,
     world: &mut World,
 ) {
-    let ControlOperation::Visual(VisualOp::CaptureDepth {
-        position,
-        look_at,
-        sample_points,
-        grid_density,
-        include_rgb,
-        delay_frames,
-        hide_ui,
-        max_width,
-    }) = request.operation
-    else {
-        unreachable!()
-    };
-
-    // Compute depth samples synchronously
     let depth_result = crate::handlers::depth::compute_depth_samples(
         world,
-        &position,
-        &look_at,
-        &sample_points,
-        &grid_density,
+        &params.position,
+        &params.look_at,
+        &params.sample_points,
+        &params.grid_density,
     );
 
-    let want_rgb = include_rgb.unwrap_or(true);
-    let df = delay_frames.unwrap_or(2);
-    let mw = Some(max_width.unwrap_or(768));
-    let hu = hide_ui.unwrap_or(true);
-    let dc = position.as_ref().map(|pos| DebugCameraRequest {
+    let want_rgb = params.include_rgb.unwrap_or(true);
+    let df = params.delay_frames.unwrap_or(2);
+    let mw = Some(params.max_width.unwrap_or(768));
+    let hu = params.hide_ui.unwrap_or(true);
+    let dc = params.position.as_ref().map(|pos| DebugCameraRequest {
         position: *pos,
-        look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
     });
 
     if want_rgb {
         let depth = match depth_result {
             Ok(d) => d,
             Err(e) => {
-                let _ = request.response_tx.send(Err(e));
+                let _ = response_tx.send(Err(e));
                 return;
             }
         };
 
         deferred.push(PendingScreenshot {
-            response_tx: request.response_tx,
+            response_tx,
             frames_remaining: df,
             with_gizmos: false,
             max_width: mw,
@@ -703,17 +843,16 @@ fn handle_deferred_depth(
                 "depth_samples": depth,
             })
         });
-        let _ = request.response_tx.send(result);
+        let _ = response_tx.send(result);
     }
 }
 
-/// Handle SubmitSchedule requests (no GIL needed).
-fn handle_submit_schedule(request: ControlRequest, world: &mut World) {
-    let sched_req = match request.operation {
-        ControlOperation::Other(OtherOp::SubmitSchedule { request: r }) => r,
-        _ => unreachable!(),
-    };
-
+/// Handle ScheduleActions requests (no GIL needed).
+fn handle_submit_schedule(
+    sched_req: ScheduleRequest,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
     let mut active = world.get_resource_or_insert_with(ActiveSchedules::default);
     let schedule_id = format!("schedule-{}", active.next_id);
     active.next_id += 1;
@@ -723,7 +862,7 @@ fn handle_submit_schedule(request: ControlRequest, world: &mut World) {
         .map(|t| t.elapsed_secs_f64())
         .unwrap_or(0.0);
 
-    if sched_req.mode == "async" {
+    if sched_req.mode == ScheduleMode::Async {
         let shared = std::sync::Arc::new(std::sync::Mutex::new(SharedScheduleState::new(
             &schedule_id,
             sched_req.actions.len(),
@@ -733,7 +872,7 @@ fn handle_submit_schedule(request: ControlRequest, world: &mut World) {
             registry_res.0.insert(schedule_id.clone(), shared.clone());
         }
 
-        let _ = request.response_tx.send(Ok(serde_json::json!({
+        let _ = response_tx.send(Ok(serde_json::json!({
             "schedule_id": schedule_id,
             "status": "running",
         })));
@@ -751,7 +890,7 @@ fn handle_submit_schedule(request: ControlRequest, world: &mut World) {
             schedule_id,
             sched_req,
             t0,
-            request.response_tx,
+            response_tx,
         ));
     }
 }
@@ -782,40 +921,56 @@ pub fn control_poll_system(world: &mut World) {
             Ok(request) => {
                 processed += 1;
 
-                // Handle SubmitSchedule (no GIL needed — just stores in World resource)
-                if matches!(
-                    &request.operation,
-                    ControlOperation::Other(OtherOp::SubmitSchedule { .. })
-                ) {
-                    handle_submit_schedule(request, world);
+                // Handle ScheduleActions (no GIL needed - just stores in World resource)
+                if let ControlOperation::ScheduleActions(sched) = request.operation {
+                    handle_submit_schedule(sched, request.response_tx, world);
                     continue;
                 }
 
                 // Classify: deferred ops go directly to their queues,
                 // sync ops are collected for batched GIL processing
-                match &request.operation {
-                    ControlOperation::Visual(VisualOp::CaptureScreenshot { .. })
-                    | ControlOperation::Visual(VisualOp::CaptureWithGizmos { .. }) => {
-                        handle_deferred_screenshot(request, &mut deferred_screenshots);
+                match request.operation {
+                    ControlOperation::CaptureScreenshot(p) => {
+                        push_pending_screenshot(
+                            p,
+                            false,
+                            request.response_tx,
+                            &mut deferred_screenshots,
+                        );
                     }
-                    ControlOperation::Visual(VisualOp::CaptureTimeline { .. }) => {
-                        handle_deferred_timeline(request, world);
+                    ControlOperation::CaptureWithGizmos(p) => {
+                        push_pending_screenshot(
+                            p,
+                            true,
+                            request.response_tx,
+                            &mut deferred_screenshots,
+                        );
                     }
-                    ControlOperation::Reload(ReloadOp::TriggerReload { .. }) => {
-                        handle_deferred_reload(request, world);
+                    ControlOperation::CaptureTimeline(p) => {
+                        push_pending_timeline(p, request.response_tx, world);
                     }
-                    ControlOperation::Reload(ReloadOp::ReloadAndCapture { .. }) => {
-                        handle_deferred_reload_and_capture(request, world);
+                    ControlOperation::Reload(p) => {
+                        push_pending_reload(p, request.response_tx, world);
                     }
-                    ControlOperation::Visual(VisualOp::CaptureTurnaround { .. }) => {
-                        handle_deferred_turnaround(request, world);
+                    ControlOperation::ReloadAndCapture(p) => {
+                        push_pending_reload_and_capture(p, request.response_tx, world);
                     }
-                    ControlOperation::Visual(VisualOp::CaptureDepth { .. }) => {
-                        handle_deferred_depth(request, &mut deferred_screenshots, world);
+                    ControlOperation::CaptureTurnaround(p) => {
+                        push_pending_turnaround(p, request.response_tx, world);
                     }
-                    // Sync operation — collect for batched GIL processing
-                    _ => {
-                        sync_requests.push(request);
+                    ControlOperation::CaptureDepth(p) => {
+                        push_pending_depth(
+                            p,
+                            request.response_tx,
+                            &mut deferred_screenshots,
+                            world,
+                        );
+                    }
+                    other => {
+                        sync_requests.push(ControlRequest {
+                            operation: other,
+                            response_tx: request.response_tx,
+                        });
                     }
                 }
             }
@@ -959,16 +1114,13 @@ mod tests {
         sender
             .tx
             .send(ControlRequest {
-                operation: ControlOperation::Scene(SceneOp::ListEntities),
+                operation: ControlOperation::ListEntities,
                 response_tx: tx,
             })
             .unwrap();
 
         let req = receiver.rx.try_recv().unwrap();
-        assert!(matches!(
-            req.operation,
-            ControlOperation::Scene(SceneOp::ListEntities)
-        ));
+        assert!(matches!(req.operation, ControlOperation::ListEntities));
     }
 
     #[test]
@@ -1080,7 +1232,7 @@ mod tests {
                     sender
                         .tx
                         .send(ControlRequest {
-                            operation: ControlOperation::Scene(SceneOp::GetComponent {
+                            operation: ControlOperation::GetComponent(GetComponentParams {
                                 entity: EntityRef::Id(entity.to_bits()),
                                 component: "Transform".into(),
                             }),
@@ -1111,5 +1263,25 @@ mod tests {
                 }
             });
         });
+    }
+
+    #[test]
+    fn control_operation_schema_generates() {
+        let schema = schemars::schema_for!(ControlOperation);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+        // Basic sanity: schema should contain tool names as snake_case
+        assert!(json.contains("query_entities"), "missing query_entities");
+        assert!(
+            json.contains("capture_screenshot"),
+            "missing capture_screenshot"
+        );
+        assert!(json.contains("pause_time"), "missing pause_time");
+        assert!(json.contains("spawn_entity"), "missing spawn_entity");
+        assert!(
+            json.contains("schedule_actions"),
+            "missing schedule_actions"
+        );
+        // Should contain descriptions from doc comments
+        assert!(json.contains("description"), "no descriptions in schema");
     }
 }

@@ -3,7 +3,10 @@ use pyo3::Python;
 use serde_json::Value;
 
 use crate::{
-    bridge::{ControlError, ControlRequest, EntityRef},
+    bridge::{
+        ControlError, ControlRequest, EntityRef, GetComponentParams, QueryEntitiesParams,
+        RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
+    },
     handlers,
     runtime::ControlRuntime,
 };
@@ -60,10 +63,9 @@ impl ControlRuntime for Pyo3ControlRuntime {
     fn query_entities(
         &mut self,
         world: &mut World,
-        with: Vec<String>,
-        without: Vec<String>,
+        params: QueryEntitiesParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::query_entities(world, with, without)
+        handlers::pyo3::scene::query_entities(world, params.with, params.without)
     }
 
     fn get_component_schema(
@@ -77,10 +79,9 @@ impl ControlRuntime for Pyo3ControlRuntime {
     fn get_component(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
+        params: GetComponentParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::get_component(world, entity, component)
+        handlers::pyo3::scene::get_component(world, params.entity, params.component)
     }
 
     fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError> {
@@ -110,29 +111,25 @@ impl ControlRuntime for Pyo3ControlRuntime {
     fn set_component(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
-        fields: Value,
+        params: SetComponentParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::set_component(world, entity, component, fields)
+        handlers::pyo3::mutate::set_component(world, params.entity, params.component, params.fields)
     }
 
     fn remove_component(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
+        params: RemoveComponentParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::remove_component(world, entity, component)
+        handlers::pyo3::mutate::remove_component(world, params.entity, params.component)
     }
 
     fn insert_resource(
         &mut self,
         world: &mut World,
-        resource_type: String,
-        value: Value,
+        params: SetResourceParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::insert_resource(world, resource_type, value)
+        handlers::pyo3::mutate::insert_resource(world, params.resource_type, params.value)
     }
 
     fn remove_resource(
@@ -154,11 +151,14 @@ impl ControlRuntime for Pyo3ControlRuntime {
     fn mutate_asset(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
-        asset_type: String,
-        fields: Value,
+        params: SetAssetParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::asset::mutate_asset(world, entity, component, asset_type, fields)
+        handlers::pyo3::asset::mutate_asset(
+            world,
+            params.entity,
+            params.component,
+            params.asset_type,
+            params.fields,
+        )
     }
 }

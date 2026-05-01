@@ -1,7 +1,10 @@
 use bevy::ecs::world::World;
 use serde_json::Value;
 
-use crate::bridge::{ControlError, ControlRequest, EntityRef};
+use crate::bridge::{
+    ControlError, ControlRequest, EntityRef, GetComponentParams, QueryEntitiesParams,
+    RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
+};
 
 /// Trait for runtime-specific operations in the control server.
 ///
@@ -24,8 +27,7 @@ pub trait ControlRuntime: 'static {
     fn query_entities(
         &mut self,
         world: &mut World,
-        with: Vec<String>,
-        without: Vec<String>,
+        params: QueryEntitiesParams,
     ) -> Result<Value, ControlError>;
 
     fn get_component_schema(
@@ -37,8 +39,7 @@ pub trait ControlRuntime: 'static {
     fn get_component(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
+        params: GetComponentParams,
     ) -> Result<Value, ControlError>;
 
     fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError>;
@@ -57,23 +58,19 @@ pub trait ControlRuntime: 'static {
     fn set_component(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
-        fields: Value,
+        params: SetComponentParams,
     ) -> Result<Value, ControlError>;
 
     fn remove_component(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
+        params: RemoveComponentParams,
     ) -> Result<Value, ControlError>;
 
     fn insert_resource(
         &mut self,
         world: &mut World,
-        resource_type: String,
-        value: Value,
+        params: SetResourceParams,
     ) -> Result<Value, ControlError>;
 
     fn remove_resource(
@@ -91,9 +88,6 @@ pub trait ControlRuntime: 'static {
     fn mutate_asset(
         &mut self,
         world: &mut World,
-        entity: EntityRef,
-        component: String,
-        asset_type: String,
-        fields: Value,
+        params: SetAssetParams,
     ) -> Result<Value, ControlError>;
 }

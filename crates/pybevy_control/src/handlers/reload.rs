@@ -6,7 +6,9 @@ use bevy::{
 use pybevy_core::{PendingReloadRequest, ReloadRequestMode, ReloadResult};
 use tokio::sync::oneshot;
 
-use crate::bridge::{ControlError, DebugCameraRequest, PendingReloadResponses, PendingScreenshots};
+use crate::bridge::{
+    ControlError, DebugCameraRequest, PendingReloadResponses, PendingScreenshots, ReloadMode,
+};
 
 /// State machine for reload-and-capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +20,7 @@ pub enum ReloadAndCaptureState {
 /// A pending reload-and-capture request.
 pub struct PendingReloadAndCapture {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
-    pub mode: String,
+    pub mode: ReloadMode,
     pub error_timestamp_before: f64,
     pub reload_frames_remaining: u32,
     pub screenshot_delay_frames: u32,
@@ -39,13 +41,13 @@ pub struct PendingReloadAndCaptures {
 /// Trigger a hot reload (full or partial), optionally setting time control atomically
 pub fn trigger_reload(
     world: &mut World,
-    mode: String,
+    mode: ReloadMode,
     pause: bool,
     time_scale: Option<f32>,
 ) -> Result<serde_json::Value, ControlError> {
-    let reload_mode = match mode.as_str() {
-        "partial" => ReloadRequestMode::Partial,
-        _ => ReloadRequestMode::Full,
+    let reload_mode = match mode {
+        ReloadMode::Partial => ReloadRequestMode::Partial,
+        ReloadMode::Full => ReloadRequestMode::Full,
     };
 
     // Apply time control BEFORE queuing reload — no frames run at wrong speed
@@ -544,7 +546,7 @@ mod tests {
     #[test]
     fn trigger_reload_full_mode() {
         let mut world = world_with_reload_deps();
-        let result = trigger_reload(&mut world, "full".into(), false, None).unwrap();
+        let result = trigger_reload(&mut world, ReloadMode::Full, false, None).unwrap();
         assert_eq!(result["status"], "reload_requested");
         assert_eq!(result["mode"], "full");
         assert_eq!(result["paused"], false);
@@ -556,7 +558,7 @@ mod tests {
     #[test]
     fn trigger_reload_partial_mode_has_note() {
         let mut world = world_with_reload_deps();
-        let result = trigger_reload(&mut world, "partial".into(), false, None).unwrap();
+        let result = trigger_reload(&mut world, ReloadMode::Partial, false, None).unwrap();
         assert_eq!(result["mode"], "partial");
         let note = result["note"].as_str().unwrap();
         assert!(note.contains("auto-escalate"));
@@ -568,7 +570,7 @@ mod tests {
     #[test]
     fn trigger_reload_with_pause() {
         let mut world = world_with_reload_deps();
-        let result = trigger_reload(&mut world, "full".into(), true, None).unwrap();
+        let result = trigger_reload(&mut world, ReloadMode::Full, true, None).unwrap();
         assert_eq!(result["paused"], true);
         let time = world.resource::<Time<Virtual>>();
         assert!(time.is_paused());
@@ -577,7 +579,7 @@ mod tests {
     #[test]
     fn trigger_reload_with_time_scale() {
         let mut world = world_with_reload_deps();
-        let result = trigger_reload(&mut world, "full".into(), false, Some(0.5)).unwrap();
+        let result = trigger_reload(&mut world, ReloadMode::Full, false, Some(0.5)).unwrap();
         assert_eq!(result["relative_speed"], 0.5);
         let time = world.resource::<Time<Virtual>>();
         assert!((time.relative_speed() - 0.5).abs() < 1e-6);
@@ -586,7 +588,7 @@ mod tests {
     #[test]
     fn trigger_reload_with_pause_and_scale() {
         let mut world = world_with_reload_deps();
-        let result = trigger_reload(&mut world, "full".into(), true, Some(2.0)).unwrap();
+        let result = trigger_reload(&mut world, ReloadMode::Full, true, Some(2.0)).unwrap();
         assert_eq!(result["paused"], true);
         assert_eq!(result["relative_speed"], 2.0);
     }
@@ -599,7 +601,7 @@ mod tests {
             traceback: Some("old trace".into()),
             timestamp_secs: 1.0,
         });
-        trigger_reload(&mut world, "full".into(), false, None).unwrap();
+        trigger_reload(&mut world, ReloadMode::Full, false, None).unwrap();
         let err = world
             .get_resource::<pybevy_core::LastSystemError>()
             .unwrap();
@@ -608,13 +610,10 @@ mod tests {
     }
 
     #[test]
-    fn trigger_reload_unknown_mode_defaults_to_full() {
-        let mut world = world_with_reload_deps();
-        let result = trigger_reload(&mut world, "unknown_mode".into(), false, None).unwrap();
-        assert_eq!(result["mode"], "unknown_mode");
-        // Internal mode should be Full (the default branch)
-        let req = world.get_resource::<PendingReloadRequest>().unwrap();
-        assert_eq!(req.mode, Some(ReloadRequestMode::Full));
+    fn reload_mode_deserialize_rejects_unknown() {
+        let result: Result<ReloadMode, _> =
+            serde_json::from_value(serde_json::json!("unknown_mode"));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -643,7 +642,7 @@ mod tests {
             pending: vec![PendingReloadResponse {
                 response_tx: tx,
                 frames_remaining: 3,
-                mode: "full".into(),
+                mode: ReloadMode::Full,
                 error_timestamp_before: 0.0,
             }],
         });
@@ -662,7 +661,7 @@ mod tests {
             pending: vec![PendingReloadResponse {
                 response_tx: tx,
                 frames_remaining: 0,
-                mode: "full".into(),
+                mode: ReloadMode::Full,
                 error_timestamp_before: 0.0,
             }],
         });
@@ -691,7 +690,7 @@ mod tests {
             pending: vec![PendingReloadResponse {
                 response_tx: tx,
                 frames_remaining: 0,
-                mode: "full".into(),
+                mode: ReloadMode::Full,
                 error_timestamp_before: 1.0, // error at 5.0 > 1.0
             }],
         });
@@ -716,7 +715,7 @@ mod tests {
             pending: vec![PendingReloadResponse {
                 response_tx: tx,
                 frames_remaining: 0,
-                mode: "full".into(),
+                mode: ReloadMode::Full,
                 error_timestamp_before: 1.0, // error at 0.5 < 1.0
             }],
         });

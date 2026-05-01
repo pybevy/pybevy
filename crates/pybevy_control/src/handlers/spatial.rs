@@ -5,7 +5,10 @@ use bevy::{
 };
 
 use super::pyo3::scene::resolve_entity;
-use crate::bridge::{ControlError, EntityRef};
+use crate::bridge::{
+    CheckAllOverlapsParams, CheckOverlapsParams, ControlError, QuerySpatialNeighborhoodParams,
+    QuerySpatialParams,
+};
 
 /// Round an f32 to 6 decimal places for cleaner JSON output.
 pub fn round6(v: f32) -> f32 {
@@ -254,9 +257,9 @@ pub fn entity_label(world: &World, entity: Entity) -> String {
 /// Pairwise spatial query: distance, direction, AABB overlap between two entities.
 pub fn query_spatial(
     world: &mut World,
-    entity_a: EntityRef,
-    entity_b: EntityRef,
+    params: QuerySpatialParams,
 ) -> Result<serde_json::Value, ControlError> {
+    let QuerySpatialParams { entity_a, entity_b } = params;
     let ea = resolve_entity(world, &entity_a)?;
     let eb = resolve_entity(world, &entity_b)?;
 
@@ -316,10 +319,13 @@ pub fn query_spatial(
 /// Neighborhood query: find entities within radius of a center entity.
 pub fn query_spatial_neighborhood(
     world: &mut World,
-    entity_ref: EntityRef,
-    radius: f32,
-    max_results: Option<usize>,
+    params: QuerySpatialNeighborhoodParams,
 ) -> Result<serde_json::Value, ControlError> {
+    let QuerySpatialNeighborhoodParams {
+        entity: entity_ref,
+        radius,
+        max_results,
+    } = params;
     let center_entity = resolve_entity(world, &entity_ref)?;
 
     // Verify the entity actually has a Transform (not just a stale GlobalTransform)
@@ -381,11 +387,14 @@ pub fn query_spatial_neighborhood(
 /// Check overlaps for a single entity against all others.
 pub fn check_overlaps(
     world: &mut World,
-    entity_ref: EntityRef,
-    include_siblings: bool,
-    max_float_gap: f32,
-    ground_y: Option<f32>,
+    params: CheckOverlapsParams,
 ) -> Result<serde_json::Value, ControlError> {
+    let CheckOverlapsParams {
+        entity: entity_ref,
+        include_siblings,
+        max_float_gap,
+        ground_y,
+    } = params;
     let target = resolve_entity(world, &entity_ref)?;
     let target_aabb = compute_world_aabb(world, target)?;
 
@@ -491,12 +500,15 @@ pub fn check_overlaps(
 /// Scene-wide overlap detection using sweep-and-prune on Y axis.
 pub fn check_all_overlaps(
     world: &mut World,
-    min_penetration: Option<f32>,
-    max_results: Option<usize>,
-    max_float_gap: f32,
-    ground_y: Option<f32>,
-    include_siblings: bool,
+    params: CheckAllOverlapsParams,
 ) -> Result<serde_json::Value, ControlError> {
+    let CheckAllOverlapsParams {
+        min_penetration,
+        max_results,
+        max_float_gap,
+        ground_y,
+        include_siblings,
+    } = params;
     let min_pen = min_penetration.unwrap_or(0.001);
     let max_res = max_results.unwrap_or(100);
 
@@ -614,7 +626,7 @@ mod tests {
     use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::bridge::{EntityRef, ErrorCode};
 
     fn make_aabb(entity_bits: u64, min: [f32; 3], max: [f32; 3]) -> WorldAabb {
         WorldAabb {
@@ -792,8 +804,10 @@ mod tests {
 
         let result = super::query_spatial(
             &mut world,
-            EntityRef::Id(ea.to_bits()),
-            EntityRef::Id(eb.to_bits()),
+            QuerySpatialParams {
+                entity_a: EntityRef::Id(ea.to_bits()),
+                entity_b: EntityRef::Id(eb.to_bits()),
+            },
         )
         .unwrap();
 
@@ -824,9 +838,15 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(100.0, 0.0, 0.0)),
         ));
 
-        let result =
-            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 5.0, None)
-                .unwrap();
+        let result = query_spatial_neighborhood(
+            &mut world,
+            QuerySpatialNeighborhoodParams {
+                entity: EntityRef::Id(center.to_bits()),
+                radius: 5.0,
+                max_results: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["count"], 1);
         let neighbors = result["neighbors"].as_array().unwrap();
@@ -854,9 +874,15 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
         ));
 
-        let result =
-            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 10.0, None)
-                .unwrap();
+        let result = query_spatial_neighborhood(
+            &mut world,
+            QuerySpatialNeighborhoodParams {
+                entity: EntityRef::Id(center.to_bits()),
+                radius: 10.0,
+                max_results: None,
+            },
+        )
+        .unwrap();
 
         let neighbors = result["neighbors"].as_array().unwrap();
         assert_eq!(neighbors.len(), 2);
@@ -954,8 +980,16 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0)),
         ));
 
-        let result =
-            check_overlaps(&mut world, EntityRef::Id(ea.to_bits()), true, 0.1, None).unwrap();
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(ea.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["overlap_count"], 0);
     }
@@ -974,8 +1008,16 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
         ));
 
-        let result =
-            check_overlaps(&mut world, EntityRef::Id(ea.to_bits()), true, 0.1, None).unwrap();
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(ea.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
+        )
+        .unwrap();
 
         assert!(result["overlap_count"].as_u64().unwrap() > 0);
         let overlaps = result["overlaps"].as_array().unwrap();
@@ -1030,13 +1072,15 @@ mod tests {
         world.entity_mut(branch1).add_children(&[mesh_a]);
         world.entity_mut(branch2).add_children(&[mesh_b]);
 
-        // include_siblings=true → should report the overlap
+        // include_siblings=true -> should report the overlap
         let result_with = check_overlaps(
             &mut world,
-            EntityRef::Name("overlap_a_mesh".into()),
-            true,
-            0.1,
-            None,
+            CheckOverlapsParams {
+                entity: EntityRef::Name("overlap_a_mesh".into()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
         )
         .unwrap();
         assert!(
@@ -1044,13 +1088,15 @@ mod tests {
             "Expected overlap with include_siblings=true"
         );
 
-        // include_siblings=false → should filter (same root ancestor)
+        // include_siblings=false -> should filter (same root ancestor)
         let result_without = check_overlaps(
             &mut world,
-            EntityRef::Name("overlap_a_mesh".into()),
-            false,
-            0.1,
-            None,
+            CheckOverlapsParams {
+                entity: EntityRef::Name("overlap_a_mesh".into()),
+                include_siblings: false,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1072,10 +1118,12 @@ mod tests {
 
         let result = check_overlaps(
             &mut world,
-            EntityRef::Id(floating.to_bits()),
-            true,
-            0.1,
-            None,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(floating.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
         )
         .unwrap();
 
@@ -1099,8 +1147,16 @@ mod tests {
             ))
             .id();
 
-        let result =
-            check_overlaps(&mut world, EntityRef::Id(entity.to_bits()), true, 0.1, None).unwrap();
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(entity.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["grounded"], true);
     }
@@ -1109,7 +1165,17 @@ mod tests {
     fn check_all_overlaps_empty_world() {
         let mut world = World::new();
 
-        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["total_entities_with_aabb"], 0);
         assert_eq!(result["overlap_count"], 0);
@@ -1127,7 +1193,17 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0)),
         ));
 
-        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["overlap_count"], 0);
     }
@@ -1144,7 +1220,17 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)),
         ));
 
-        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert!(result["overlap_count"].as_u64().unwrap() > 0);
     }
@@ -1158,7 +1244,17 @@ mod tests {
             GlobalTransform::from(Transform::from_xyz(0.0, 50.0, 0.0)),
         ));
 
-        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert!(result["floating_count"].as_u64().unwrap() > 0);
     }
@@ -1174,8 +1270,17 @@ mod tests {
             ));
         }
 
-        let result =
-            super::check_all_overlaps(&mut world, None, Some(1), 0.1, None, false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: Some(1),
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         let overlaps = result["overlaps"].as_array().unwrap();
         assert!(overlaps.len() <= 1);
@@ -1212,9 +1317,15 @@ mod tests {
             ));
         }
 
-        let result =
-            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 10.0, Some(2))
-                .unwrap();
+        let result = query_spatial_neighborhood(
+            &mut world,
+            QuerySpatialNeighborhoodParams {
+                entity: EntityRef::Id(center.to_bits()),
+                radius: 10.0,
+                max_results: Some(2),
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["count"], 2);
         assert_eq!(result["truncated"], true);
@@ -1231,8 +1342,14 @@ mod tests {
             ))
             .id();
 
-        let result =
-            query_spatial_neighborhood(&mut world, EntityRef::Id(entity.to_bits()), 5.0, None);
+        let result = query_spatial_neighborhood(
+            &mut world,
+            QuerySpatialNeighborhoodParams {
+                entity: EntityRef::Id(entity.to_bits()),
+                radius: 5.0,
+                max_results: None,
+            },
+        );
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1253,9 +1370,15 @@ mod tests {
             ))
             .id();
 
-        let result =
-            query_spatial_neighborhood(&mut world, EntityRef::Id(center.to_bits()), 5.0, None)
-                .unwrap();
+        let result = query_spatial_neighborhood(
+            &mut world,
+            QuerySpatialNeighborhoodParams {
+                entity: EntityRef::Id(center.to_bits()),
+                radius: 5.0,
+                max_results: None,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["count"], 0);
     }
@@ -1393,10 +1516,12 @@ mod tests {
 
         let result = check_overlaps(
             &mut world,
-            EntityRef::Id(entity.to_bits()),
-            true,
-            0.1,
-            Some(0.0),
+            CheckOverlapsParams {
+                entity: EntityRef::Id(entity.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: Some(0.0),
+            },
         )
         .unwrap();
 
@@ -1415,8 +1540,16 @@ mod tests {
             ))
             .id();
 
-        let result =
-            check_overlaps(&mut world, EntityRef::Id(entity.to_bits()), true, 0.1, None).unwrap();
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(entity.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
+        )
+        .unwrap();
 
         assert!(result.get("sunken").is_none());
     }
@@ -1430,8 +1563,17 @@ mod tests {
             GlobalTransform::default(),
         ));
 
-        let result =
-            super::check_all_overlaps(&mut world, None, None, 0.1, Some(0.0), false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: Some(0.0),
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["sunken_count"], 1);
         let sunken = result["sunken_entities"].as_array().unwrap();
@@ -1447,8 +1589,17 @@ mod tests {
             GlobalTransform::default(),
         ));
 
-        let result =
-            super::check_all_overlaps(&mut world, None, None, 0.1, Some(0.0), false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: Some(0.0),
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert_eq!(result["sunken_count"], 0);
     }
@@ -1461,7 +1612,17 @@ mod tests {
             GlobalTransform::default(),
         ));
 
-        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
 
         assert!(result.get("sunken_count").is_none());
         assert!(result.get("sunken_entities").is_none());
@@ -1514,16 +1675,34 @@ mod tests {
         world.entity_mut(bone2).add_children(&[mesh2]);
 
         // With include_siblings=true, overlaps should be reported
-        let result_with =
-            super::check_all_overlaps(&mut world, None, None, 0.1, None, true).unwrap();
+        let result_with = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: true,
+            },
+        )
+        .unwrap();
         assert!(
             result_with["overlap_count"].as_u64().unwrap() > 0,
             "Expected overlaps with include_siblings=true"
         );
 
         // With include_siblings=false, sibling overlaps should be filtered
-        let result_without =
-            super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        let result_without = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
         assert_eq!(
             result_without["overlap_count"].as_u64().unwrap(),
             0,
@@ -1580,8 +1759,18 @@ mod tests {
         world.entity_mut(root_a).add_children(&[child_a]);
         world.entity_mut(root_b).add_children(&[child_b]);
 
-        // Different roots → overlap should still be reported even with include_siblings=false
-        let result = super::check_all_overlaps(&mut world, None, None, 0.1, None, false).unwrap();
+        // Different roots - overlap should still be reported even with include_siblings=false
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
         assert!(
             result["overlap_count"].as_u64().unwrap() > 0,
             "Overlaps between different root hierarchies should not be filtered"
