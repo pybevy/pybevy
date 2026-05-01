@@ -106,6 +106,8 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bevy::{
         asset::{Asset, AssetServer, Assets, RenderAssetUsages},
         mesh::{Mesh, Mesh3d, PrimitiveTopology},
@@ -664,6 +666,28 @@ mod tests {
         // Both resources should be untouched (no snapshot = empty initial set)
         assert_eq!(world.resource::<PluginRes>().0, 42);
         assert_eq!(world.resource::<UserOnlyRes>().0, 99);
+    }
+
+    #[test]
+    fn clear_world_state_resets_virtual_time() {
+        let mut world = World::new();
+
+        // Insert Time<Virtual> and advance it
+        world.insert_resource(Time::<Virtual>::default());
+        let mut time_virt = world.resource_mut::<Time<Virtual>>();
+        time_virt.advance_by(Duration::from_secs(5));
+        drop(time_virt);
+
+        let elapsed_before = world.resource::<Time<Virtual>>().elapsed_secs();
+        assert!(elapsed_before >= 5.0, "time should have advanced");
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        let elapsed_after = world.resource::<Time<Virtual>>().elapsed_secs();
+        assert_eq!(
+            elapsed_after, 0.0,
+            "virtual time should be reset to zero after clear_world_state"
+        );
     }
 
     /// Regression test for Camera2d hot-reload crash.

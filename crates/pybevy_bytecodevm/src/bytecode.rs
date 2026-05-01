@@ -2229,4 +2229,104 @@ mod tests {
         let v = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::U64) };
         assert_eq!(v, 99.0);
     }
+
+    /// Eq uses exact comparison, not epsilon. Nearly-equal values must
+    /// compare as not-equal (regression: old batch modes used epsilon).
+    #[test]
+    fn test_eq_exact_not_epsilon() {
+        let mut compiler = Compiler::new();
+        let a = compiler.add_constant(1.0);
+        let b = compiler.add_constant(1.0 + f64::EPSILON);
+
+        compiler.emit(Op::PushConst(a));
+        compiler.emit(Op::PushConst(b));
+        compiler.emit(Op::Eq);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+
+        assert_eq!(vm.stack[0].as_bool(), false, "1.0 != 1.0+EPSILON (exact)");
+    }
+
+    #[test]
+    fn test_ne_operator() {
+        let mut compiler = Compiler::new();
+        let a = compiler.add_constant(3.0);
+        let b = compiler.add_constant(4.0);
+
+        compiler.emit(Op::PushConst(a));
+        compiler.emit(Op::PushConst(b));
+        compiler.emit(Op::Ne);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+
+        assert_eq!(vm.stack[0].as_bool(), true, "3.0 != 4.0");
+
+        // Same values should be not Ne
+        let mut compiler = Compiler::new();
+        let a = compiler.add_constant(5.0);
+        let b = compiler.add_constant(5.0);
+
+        compiler.emit(Op::PushConst(a));
+        compiler.emit(Op::PushConst(b));
+        compiler.emit(Op::Ne);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+
+        assert_eq!(vm.stack[0].as_bool(), false, "5.0 == 5.0 so Ne is false");
+    }
+
+    /// Sign returns 0.0 for NaN (not NaN like f64::signum would).
+    #[test]
+    fn test_sign_nan_returns_zero() {
+        let mut compiler = Compiler::new();
+        let nan = compiler.add_constant(f64::NAN);
+
+        compiler.emit(Op::PushConst(nan));
+        compiler.emit(Op::Sign);
+
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+
+        assert_eq!(vm.stack[0].as_float(), 0.0, "sign(NaN) should be 0.0");
+    }
+
+    #[test]
+    fn test_sign_positive_negative_zero() {
+        // Positive
+        let mut compiler = Compiler::new();
+        let c = compiler.add_constant(42.0);
+        compiler.emit(Op::PushConst(c));
+        compiler.emit(Op::Sign);
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_float(), 1.0);
+
+        // Negative
+        let mut compiler = Compiler::new();
+        let c = compiler.add_constant(-7.5);
+        compiler.emit(Op::PushConst(c));
+        compiler.emit(Op::Sign);
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_float(), -1.0);
+
+        // Zero
+        let mut compiler = Compiler::new();
+        let c = compiler.add_constant(0.0);
+        compiler.emit(Op::PushConst(c));
+        compiler.emit(Op::Sign);
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        assert_eq!(vm.stack[0].as_float(), 0.0);
+    }
 }
