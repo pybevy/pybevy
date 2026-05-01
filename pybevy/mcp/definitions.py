@@ -14,7 +14,7 @@ type JsonDict = dict[str, Any]
 def _rust_tools() -> list[JsonDict]:
     """Load engine tool definitions from the Rust pybevy_control crate."""
     try:
-        from pybevy._pybevy import mcp as rust_mcp  # noqa: PLC0415
+        from pybevy._pybevy import mcp as rust_mcp  # type: ignore[import-not-found]  # noqa: PLC0415
 
         return rust_mcp.rust_tool_definitions()  # type: ignore[no-any-return]
     except Exception:
