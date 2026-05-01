@@ -13,8 +13,8 @@ Importing this module activates JAX support:
 from types import SimpleNamespace
 
 try:
-    import jax  # type: ignore[import-untyped]
-    import jax.numpy as jnp  # type: ignore[import-untyped]
+    import jax  # type: ignore[import-untyped,import-not-found]
+    import jax.numpy as jnp  # type: ignore[import-untyped,import-not-found]
 except ImportError as err:
     raise ImportError(
         "JAX is required for ViewColumn JAX interop.\n"
@@ -26,7 +26,7 @@ import numpy as np
 from . import ViewColumn
 from .view_accessors import QuatViewColumn, Vec3ViewColumn
 
-JaxArray = jax.Array
+type JaxArray = jax.Array
 
 _DTYPE_MAP: dict[str, np.dtype[np.generic]] = {
     "f4": np.dtype(np.float32),
