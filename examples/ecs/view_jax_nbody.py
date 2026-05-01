@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 try:
-    import jax  # type: ignore[import-untyped]
-    import jax.numpy as jnp  # type: ignore[import-untyped]
+    import jax  # type: ignore[import-untyped,import-not-found]
+    import jax.numpy as jnp  # type: ignore[import-untyped,import-not-found]
 except ImportError:
     print("ERROR: JAX is required for this example. Install with: pip install jax jaxlib")
     print("For GPU support: pip install jax[cuda12]")

@@ -123,6 +123,8 @@ impl PyTouches {
     }
 }
 
+/// Owned snapshot of touch data. Can't wrap Bevy's `Touch` directly because its fields are private
+/// with no public constructor.
 #[pyclass(name = "Touch")]
 #[derive(Debug, Clone)]
 pub struct PyTouch {

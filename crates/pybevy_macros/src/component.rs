@@ -434,11 +434,13 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             #[pyo3::pymethods]
             impl #py_type {
                 pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
-                    Py::new(py, (Self { storage: self.storage.clone() }, pybevy_core::PyComponent))
+                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
+                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
                 }
 
                 pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-                    Py::new(py, (Self { storage: self.storage.clone() }, pybevy_core::PyComponent))
+                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
+                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
                 }
             }
 
