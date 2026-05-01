@@ -6,7 +6,7 @@ use bevy::{
     time::{Time, Virtual},
 };
 
-use crate::bridge::ControlError;
+use crate::bridge::{ControlError, SeekTimeParams};
 
 /// Propagate transforms through the full hierarchy after time manipulation.
 /// Updates GlobalTransform for root entities first, then recursively for children.
@@ -90,9 +90,9 @@ pub fn get_time_status(world: &mut World) -> Result<serde_json::Value, ControlEr
 
 pub fn seek_time(
     world: &mut World,
-    seconds: f64,
-    pause: bool,
+    params: SeekTimeParams,
 ) -> Result<serde_json::Value, ControlError> {
+    let SeekTimeParams { seconds, pause } = params;
     if seconds < 0.0 {
         return Err(ControlError::invalid_params("seconds must be >= 0"));
     }
@@ -176,7 +176,14 @@ mod tests {
     #[test]
     fn test_seek_time_forward() {
         let mut world = world_with_virtual_time();
-        let result = seek_time(&mut world, 5.0, false).unwrap();
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 5.0,
+                pause: false,
+            },
+        )
+        .unwrap();
         let elapsed = result["elapsed_secs"].as_f64().unwrap();
         assert!((elapsed - 5.0).abs() < 0.01);
         assert_eq!(result["paused"], false);
@@ -186,9 +193,23 @@ mod tests {
     fn test_seek_time_backward() {
         let mut world = world_with_virtual_time();
         // Seek forward first
-        seek_time(&mut world, 10.0, false).unwrap();
+        seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 10.0,
+                pause: false,
+            },
+        )
+        .unwrap();
         // Then seek backward
-        let result = seek_time(&mut world, 3.0, false).unwrap();
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 3.0,
+                pause: false,
+            },
+        )
+        .unwrap();
         let elapsed = result["elapsed_secs"].as_f64().unwrap();
         assert!((elapsed - 3.0).abs() < 0.01);
     }
@@ -196,7 +217,13 @@ mod tests {
     #[test]
     fn test_seek_time_negative_error() {
         let mut world = world_with_virtual_time();
-        let result = seek_time(&mut world, -1.0, false);
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: -1.0,
+                pause: false,
+            },
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
@@ -204,7 +231,14 @@ mod tests {
     #[test]
     fn test_seek_time_with_pause() {
         let mut world = world_with_virtual_time();
-        let result = seek_time(&mut world, 5.0, true).unwrap();
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 5.0,
+                pause: true,
+            },
+        )
+        .unwrap();
         assert_eq!(result["paused"], true);
     }
 
@@ -218,7 +252,14 @@ mod tests {
         ));
 
         // Seek should not panic and should sync transforms
-        let result = seek_time(&mut world, 2.0, false).unwrap();
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 2.0,
+                pause: false,
+            },
+        )
+        .unwrap();
         assert!(result["note"].as_str().is_some());
     }
 }

@@ -15,6 +15,8 @@ import threading
 import time
 from typing import Any
 
+import httpx
+
 from . import ApiIndex
 from .definitions import (
     builtin_prompts,
@@ -490,7 +492,6 @@ class McpBridge:
         self, req_id: JsonId, tool_name: str, arguments: JsonDict, timeout: float = 30.0
     ) -> JsonDict:
         """Forward a tool call to the engine's REST API."""
-        import httpx  # noqa: PLC0415
 
         coerced = self._coerce_arguments(tool_name, arguments)
 
@@ -559,13 +560,14 @@ class McpBridge:
         for key, value in coerced.items():
             if key not in props or not isinstance(value, str):
                 continue
-            expected = props[key].get("type", "")
+            raw_type = props[key].get("type", "")
+            types = set(raw_type) if isinstance(raw_type, list) else {raw_type}
             try:
-                if expected == "integer":
+                if "integer" in types:
                     coerced[key] = int(value)
-                elif expected == "number":
+                elif "number" in types:
                     coerced[key] = float(value)
-                elif expected == "boolean":
+                elif "boolean" in types:
                     coerced[key] = value.lower() in ("true", "1", "yes")
             except (ValueError, TypeError):
                 pass
@@ -650,10 +652,9 @@ class McpBridge:
 
     def _call_rest_api(self, tool_name: str, arguments: JsonDict, timeout: float = 30.0) -> JsonDict:
         """Map tool name + arguments to REST API call."""
-        import httpx  # noqa: PLC0415
 
         base = self._base_url
-        entity_ref = str(arguments.get("entity_id", arguments.get("name", "")))
+        entity_ref = str(arguments.get("entity", ""))
 
         if tool_name == "get_component":
             component = arguments.get("component", "")
@@ -686,7 +687,7 @@ class McpBridge:
             url = f"{base}/api/v1/resources/{rt}"
             resp = httpx.delete(url, timeout=timeout)
         elif tool_name == "set_asset":
-            entity = arguments.get("entity_id", arguments.get("name"))
+            entity = arguments.get("entity")
             body = {
                 "entity": entity,
                 "component": arguments.get("component", ""),
@@ -702,20 +703,20 @@ class McpBridge:
         elif tool_name == "query_spatial":
             if "radius" in arguments:
                 # Neighborhood mode
-                entity = arguments.get("entity_id", arguments.get("name"))
+                entity = arguments.get("entity")
                 body = {"entity": entity, "radius": arguments["radius"]}
                 if "max_results" in arguments:
                     body["max_results"] = arguments["max_results"]
                 url = f"{base}/api/v1/spatial/neighborhood"
             else:
                 # Pairwise mode
-                entity_a = arguments.get("entity_id_a", arguments.get("name_a"))
-                entity_b = arguments.get("entity_id_b", arguments.get("name_b"))
+                entity_a = arguments.get("entity_a")
+                entity_b = arguments.get("entity_b")
                 body = {"entity_a": entity_a, "entity_b": entity_b}
                 url = f"{base}/api/v1/spatial/query"
             resp = httpx.post(url, json=body, timeout=timeout)
         elif tool_name == "check_overlaps":
-            entity = arguments.get("entity_id", arguments.get("name"))
+            entity = arguments.get("entity")
             if entity is not None:
                 # Single-entity mode
                 body = {"entity": entity}
@@ -757,7 +758,6 @@ class McpBridge:
 
     def _forward_scene_resource(self, req_id: JsonId, uri: str) -> JsonDict:
         """Forward scene:// resource reads via HTTP."""
-        import httpx  # noqa: PLC0415
 
         resource_map: dict[str, str] = {
             "scene://entities": "/api/v1/entities",
@@ -939,7 +939,6 @@ class McpBridge:
         return self._success(req_id, {"content": [{"type": "text", "text": output}]})
 
     def _try_hub_create_session(self, scene_path: str) -> JsonDict | None:
-        import httpx  # noqa: PLC0415
 
         try:
             resp = httpx.post(
@@ -959,7 +958,6 @@ class McpBridge:
         if self._hub_session_id is None:
             return
 
-        import httpx  # noqa: PLC0415
 
         try:
             httpx.delete(
@@ -973,8 +971,6 @@ class McpBridge:
 
     def _health_check(self) -> bool:
         try:
-            import httpx  # noqa: PLC0415
-
             resp = httpx.get(f"{self._base_url}/health", timeout=2.0)
             return resp.status_code == 200
         except Exception:

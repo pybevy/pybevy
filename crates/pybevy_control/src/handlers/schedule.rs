@@ -12,46 +12,55 @@ use bevy::{
     prelude::{GlobalTransform, Resource, Transform, Without},
     time::{Time, Virtual},
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::{
     bridge::{
-        ControlError, ControlOperation, DebugCameraRequest, EntityRef, MutateOp, OtherOp,
-        PendingReloadResponses, PendingScreenshot, PendingScreenshots, ReloadOp, SceneOp,
-        SpatialOp, TimeOp, VisualOp,
+        ControlError, ControlOperation, PendingScreenshots, push_pending_depth,
+        push_pending_reload, push_pending_reload_and_capture, push_pending_screenshot,
+        push_pending_timeline, push_pending_turnaround,
     },
-    handlers::{
-        self,
-        reload::{PendingReloadAndCapture, PendingReloadAndCaptures, ReloadAndCaptureState},
-        screenshot::{ActiveTimeline, PendingTimelines, setup_debug_camera},
-        turnaround::{
-            ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints,
-        },
-    },
+    handlers,
 };
 
-#[derive(Debug, Deserialize)]
+/// sync (default): block until all actions complete. async: return schedule_id immediately.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleMode {
+    /// Block until all actions complete
+    #[default]
+    Sync,
+    /// Return schedule_id immediately
+    Async,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScheduleRequest {
+    /// Ordered list of tool calls to execute
     pub actions: Vec<ScheduleAction>,
-    #[serde(default = "default_mode")]
-    pub mode: String,
+    #[serde(default)]
+    pub mode: ScheduleMode,
+    /// Abort remaining actions on first error (default false)
     #[serde(default)]
     pub stop_on_error: bool,
 }
 
-fn default_mode() -> String {
-    "sync".to_string()
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ScheduleAction {
+    /// Tool name to call
     pub tool: String,
+    /// Tool arguments (default {})
     #[serde(default)]
     pub args: serde_json::Value,
+    /// Time offset in seconds from schedule start (default 0). Must be monotonically non-decreasing.
     pub at: Option<f64>,
+    /// Frame offset from schedule start (alternative to 'at'). Cannot mix with 'at'.
     pub at_frame: Option<u64>,
+    /// Label for this action (used by skip_if_error)
     pub label: Option<String>,
+    /// Skip this action if the action with the given label errored
     pub skip_if_error: Option<String>,
 }
 
@@ -240,13 +249,6 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
     if request.actions.len() > 256 {
         return Err("actions must have at most 256 entries".to_string());
     }
-    if request.mode != "sync" && request.mode != "async" {
-        return Err(format!(
-            "mode must be 'sync' or 'async', got '{}'",
-            request.mode
-        ));
-    }
-
     let mut last_at: Option<f64> = None;
     let mut last_frame: Option<u64> = None;
     let mut uses_at = false;
@@ -313,357 +315,34 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
     Ok(())
 }
 pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<ControlOperation, String> {
-    let obj = args.as_object();
-    let get_str = |key: &str| -> String {
-        obj.and_then(|o| o.get(key))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
+    let mut obj = if args.is_null() {
+        serde_json::json!({})
+    } else {
+        args.clone()
     };
-    let get_f64 =
-        |key: &str| -> Option<f64> { obj.and_then(|o| o.get(key)).and_then(|v| v.as_f64()) };
-    let get_f32 = |key: &str| -> Option<f32> { get_f64(key).map(|v| v as f32) };
-    let get_u32 = |key: &str| -> Option<u32> {
-        obj.and_then(|o| o.get(key))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32)
-    };
-    let get_bool = |key: &str, default: bool| -> bool {
-        obj.and_then(|o| o.get(key))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default)
-    };
-    let get_entity_ref = || -> EntityRef {
-        if let Some(id) = obj
-            .and_then(|o| o.get("entity_id"))
-            .and_then(|v| v.as_u64())
-        {
-            EntityRef::Id(id)
-        } else {
-            EntityRef::Name(get_str("name"))
+    let map = obj
+        .as_object_mut()
+        .ok_or_else(|| "args must be an object".to_string())?;
+
+    // Route combined tools to their hidden sub-variants
+    let effective_tool = match tool {
+        "capture_screenshot" if map.get("gizmos").and_then(|v| v.as_bool()).unwrap_or(false) => {
+            map.remove("gizmos");
+            "capture_with_gizmos"
         }
-    };
-    let get_vec3 = |key: &str| -> Option<[f32; 3]> {
-        obj.and_then(|o| o.get(key)).and_then(|v| {
-            let arr = v.as_array()?;
-            if arr.len() != 3 {
-                return None;
-            }
-            Some([
-                arr[0].as_f64()? as f32,
-                arr[1].as_f64()? as f32,
-                arr[2].as_f64()? as f32,
-            ])
-        })
+        "query_spatial" if map.contains_key("radius") => "query_spatial_neighborhood",
+        "check_overlaps" if !map.contains_key("entity") => "check_all_overlaps",
+        other => other,
     };
 
-    match tool {
-        // Time control
-        "pause_time" => Ok(ControlOperation::Time(TimeOp::PauseTime)),
-        "resume_time" => Ok(ControlOperation::Time(TimeOp::ResumeTime)),
-        "set_time_scale" => {
-            let scale = get_f32("scale").unwrap_or(1.0);
-            Ok(ControlOperation::Time(TimeOp::SetTimeScale { scale }))
-        }
-        "get_time_status" => Ok(ControlOperation::Time(TimeOp::GetTimeStatus)),
-        "seek_time" => {
-            let seconds =
-                get_f64("seconds").ok_or_else(|| "seek_time requires 'seconds'".to_string())?;
-            let pause = get_bool("pause", true);
-            Ok(ControlOperation::Time(TimeOp::SeekTime { seconds, pause }))
-        }
+    map.insert(
+        "tool".to_string(),
+        serde_json::Value::String(effective_tool.to_string()),
+    );
 
-        // Scene queries
-        "query_entities" => {
-            let with = obj
-                .and_then(|o| o.get("with"))
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let without = obj
-                .and_then(|o| o.get("without"))
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok(ControlOperation::Scene(SceneOp::QueryEntities {
-                with,
-                without,
-            }))
-        }
-        "get_component" => {
-            let component = get_str("component");
-            if component.is_empty() {
-                return Err("get_component requires 'component'".to_string());
-            }
-            Ok(ControlOperation::Scene(SceneOp::GetComponent {
-                entity: get_entity_ref(),
-                component,
-            }))
-        }
-        "get_component_schema" => {
-            let name = get_str("name");
-            if name.is_empty() {
-                return Err("get_component_schema requires 'name'".to_string());
-            }
-            Ok(ControlOperation::Scene(SceneOp::GetComponentSchema {
-                name,
-            }))
-        }
-        "get_scene_summary" => Ok(ControlOperation::Scene(SceneOp::SceneSummary)),
-        "get_performance" => Ok(ControlOperation::Other(OtherOp::GetPerformance)),
-        "get_registry" => Ok(ControlOperation::Scene(SceneOp::DebugRegistry)),
-        "get_reload_status" => Ok(ControlOperation::Reload(ReloadOp::GetReloadStatus)),
-        "get_last_error" => Ok(ControlOperation::Reload(ReloadOp::GetLastError)),
-        "get_bounding_box" => Ok(ControlOperation::Scene(SceneOp::GetBoundingBox {
-            entity: get_entity_ref(),
-        })),
-
-        // Mutations
-        "spawn_entity" => {
-            let components = obj
-                .and_then(|o| o.get("components"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::Mutate(MutateOp::SpawnEntity {
-                components,
-            }))
-        }
-        "despawn_entity" => Ok(ControlOperation::Mutate(MutateOp::DespawnEntity {
-            entity: get_entity_ref(),
-        })),
-        "set_component" => {
-            let component = get_str("component");
-            let fields = obj
-                .and_then(|o| o.get("fields"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::Mutate(MutateOp::SetComponent {
-                entity: get_entity_ref(),
-                component,
-                fields,
-            }))
-        }
-        "remove_component" => {
-            let component = get_str("component");
-            Ok(ControlOperation::Mutate(MutateOp::RemoveComponent {
-                entity: get_entity_ref(),
-                component,
-            }))
-        }
-        "set_resource" => {
-            let resource_type = get_str("resource_type");
-            let value = obj
-                .and_then(|o| o.get("value"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::Mutate(MutateOp::InsertResource {
-                resource_type,
-                value,
-            }))
-        }
-        "remove_resource" => {
-            let resource_type = get_str("resource_type");
-            Ok(ControlOperation::Mutate(MutateOp::RemoveResource {
-                resource_type,
-            }))
-        }
-        "run_code" => {
-            let code = get_str("code");
-            Ok(ControlOperation::Other(OtherOp::ExecutePython { code }))
-        }
-        "batch" => {
-            let operations = obj
-                .and_then(|o| o.get("operations"))
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            Ok(ControlOperation::Mutate(MutateOp::BatchMutate {
-                operations,
-            }))
-        }
-
-        // Asset mutation
-        "set_asset" => {
-            let component = get_str("component");
-            let asset_type = get_str("asset_type");
-            let fields = obj
-                .and_then(|o| o.get("fields"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Ok(ControlOperation::Other(OtherOp::MutateAsset {
-                entity: get_entity_ref(),
-                component,
-                asset_type,
-                fields,
-            }))
-        }
-
-        // Spatial queries
-        "query_spatial" => {
-            if obj.is_some_and(|o| o.contains_key("radius")) {
-                let radius = get_f32("radius").unwrap_or(10.0);
-                let max_results = obj
-                    .and_then(|o| o.get("max_results"))
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-                Ok(ControlOperation::Spatial(
-                    SpatialOp::QuerySpatialNeighborhood {
-                        entity: get_entity_ref(),
-                        radius,
-                        max_results,
-                    },
-                ))
-            } else {
-                let entity_a = if let Some(id) = obj
-                    .and_then(|o| o.get("entity_id_a"))
-                    .and_then(|v| v.as_u64())
-                {
-                    EntityRef::Id(id)
-                } else {
-                    EntityRef::Name(get_str("name_a"))
-                };
-                let entity_b = if let Some(id) = obj
-                    .and_then(|o| o.get("entity_id_b"))
-                    .and_then(|v| v.as_u64())
-                {
-                    EntityRef::Id(id)
-                } else {
-                    EntityRef::Name(get_str("name_b"))
-                };
-                Ok(ControlOperation::Spatial(SpatialOp::QuerySpatial {
-                    entity_a,
-                    entity_b,
-                }))
-            }
-        }
-        "check_overlaps" => {
-            let has_entity =
-                obj.is_some_and(|o| o.contains_key("entity_id") || o.contains_key("name"));
-            let max_float_gap = get_f32("max_float_gap").unwrap_or(0.1);
-            let ground_y = get_f32("ground_y");
-            if has_entity {
-                let include_siblings = get_bool("include_siblings", false);
-                Ok(ControlOperation::Spatial(SpatialOp::CheckOverlaps {
-                    entity: get_entity_ref(),
-                    include_siblings,
-                    max_float_gap,
-                    ground_y,
-                }))
-            } else {
-                let min_penetration = get_f32("min_penetration");
-                let max_results = obj
-                    .and_then(|o| o.get("max_results"))
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-                let include_siblings = get_bool("include_siblings", false);
-                Ok(ControlOperation::Spatial(SpatialOp::CheckAllOverlaps {
-                    min_penetration,
-                    max_results,
-                    max_float_gap,
-                    ground_y,
-                    include_siblings,
-                }))
-            }
-        }
-
-        // Deferred tools (screenshots, reload, etc.)
-        "capture_screenshot" => {
-            let delay_frames = get_u32("delay_frames").unwrap_or(2);
-            let max_width = get_u32("max_width");
-            let position = get_vec3("position");
-            let look_at = get_vec3("look_at");
-            let hide_ui = get_bool("hide_ui", true);
-            if get_bool("gizmos", false) {
-                Ok(ControlOperation::Visual(VisualOp::CaptureWithGizmos {
-                    delay_frames,
-                    max_width,
-                    position,
-                    look_at,
-                    hide_ui,
-                }))
-            } else {
-                Ok(ControlOperation::Visual(VisualOp::CaptureScreenshot {
-                    delay_frames,
-                    max_width,
-                    position,
-                    look_at,
-                    hide_ui,
-                }))
-            }
-        }
-        "capture_timeline" => Ok(ControlOperation::Visual(VisualOp::CaptureTimeline {
-            total_frames: get_u32("total_frames").unwrap_or(60),
-            capture_count: get_u32("capture_count").unwrap_or(6),
-            max_width: get_u32("max_width"),
-            columns: get_u32("columns").unwrap_or(3),
-            position: get_vec3("position"),
-            look_at: get_vec3("look_at"),
-        })),
-        "reload" => Ok(ControlOperation::Reload(ReloadOp::TriggerReload {
-            mode: get_str("mode"),
-            pause: get_bool("pause", false),
-            time_scale: get_f32("time_scale"),
-        })),
-        "reload_and_capture" => Ok(ControlOperation::Reload(ReloadOp::ReloadAndCapture {
-            mode: {
-                let m = get_str("mode");
-                if m.is_empty() { "full".to_string() } else { m }
-            },
-            pause: get_bool("pause", false),
-            time_scale: get_f32("time_scale"),
-            delay_frames: get_u32("delay_frames"),
-            max_width: get_u32("max_width"),
-            position: get_vec3("position"),
-            look_at: get_vec3("look_at"),
-            hide_ui: Some(get_bool("hide_ui", true)),
-        })),
-        "capture_turnaround" => Ok(ControlOperation::Visual(VisualOp::CaptureTurnaround {
-            look_at: get_vec3("look_at"),
-            distance: get_f32("distance"),
-            elevation: get_f32("elevation"),
-            view_count: get_u32("view_count"),
-            include_top: obj
-                .and_then(|o| o.get("include_top"))
-                .and_then(|v| v.as_bool()),
-            columns: get_u32("columns"),
-            max_width: get_u32("max_width"),
-            hide_ui: obj.and_then(|o| o.get("hide_ui")).and_then(|v| v.as_bool()),
-        })),
-        "capture_depth" => Ok(ControlOperation::Visual(VisualOp::CaptureDepth {
-            position: get_vec3("position"),
-            look_at: get_vec3("look_at"),
-            sample_points: obj.and_then(|o| o.get("sample_points")).and_then(|v| {
-                v.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|pt| {
-                            let a = pt.as_array()?;
-                            if a.len() != 2 {
-                                return None;
-                            }
-                            Some([a[0].as_u64()? as u32, a[1].as_u64()? as u32])
-                        })
-                        .collect()
-                })
-            }),
-            grid_density: get_u32("grid_density"),
-            include_rgb: obj
-                .and_then(|o| o.get("include_rgb"))
-                .and_then(|v| v.as_bool()),
-            delay_frames: get_u32("delay_frames"),
-            hide_ui: obj.and_then(|o| o.get("hide_ui")).and_then(|v| v.as_bool()),
-            max_width: get_u32("max_width"),
-        })),
-
-        _ => Err(format!("unknown tool: '{}'", tool)),
-    }
+    let call: ControlOperation =
+        serde_json::from_value(obj).map_err(|e| format!("invalid tool call '{tool}': {e}"))?;
+    Ok(call)
 }
 fn resolve_at(action: &ScheduleAction) -> f64 {
     action.at.unwrap_or(0.0)
@@ -1148,354 +827,31 @@ fn setup_deferred_action(
     tool: &str,
     args: &serde_json::Value,
 ) -> Result<oneshot::Receiver<Result<serde_json::Value, ControlError>>, String> {
-    let (forward_tx, forward_rx) = oneshot::channel();
+    let op = tool_to_operation(tool, args)?;
+    let (tx, rx) = oneshot::channel();
+    let mut screenshots = Vec::new();
 
-    match tool {
-        "capture_screenshot" => {
-            let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
-            let (delay_frames, max_width, position, look_at, hide_ui, with_gizmos) = match &op {
-                ControlOperation::Visual(VisualOp::CaptureScreenshot {
-                    delay_frames,
-                    max_width,
-                    position,
-                    look_at,
-                    hide_ui,
-                }) => (
-                    *delay_frames,
-                    *max_width,
-                    *position,
-                    *look_at,
-                    *hide_ui,
-                    false,
-                ),
-                ControlOperation::Visual(VisualOp::CaptureWithGizmos {
-                    delay_frames,
-                    max_width,
-                    position,
-                    look_at,
-                    hide_ui,
-                }) => (
-                    *delay_frames,
-                    *max_width,
-                    *position,
-                    *look_at,
-                    *hide_ui,
-                    true,
-                ),
-                _ => unreachable!(),
-            };
-
-            let debug_camera = position.map(|pos| DebugCameraRequest {
-                position: pos,
-                look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
-            });
-
-            let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
-            pending.pending.push(PendingScreenshot {
-                response_tx: forward_tx,
-                frames_remaining: delay_frames,
-                with_gizmos,
-                max_width,
-                debug_camera,
-                hide_ui,
-                extra_response: None,
-            });
-            Ok(forward_rx)
+    match op {
+        ControlOperation::CaptureScreenshot(p) => {
+            push_pending_screenshot(p, false, tx, &mut screenshots)
         }
-
-        "reload" => {
-            let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
-            let (mode, pause, time_scale) = match &op {
-                ControlOperation::Reload(ReloadOp::TriggerReload {
-                    mode,
-                    pause,
-                    time_scale,
-                }) => (mode.clone(), *pause, *time_scale),
-                _ => unreachable!(),
-            };
-
-            let _ = handlers::reload::trigger_reload(world, mode.clone(), pause, time_scale);
-
-            let error_ts = world
-                .get_resource::<pybevy_core::LastSystemError>()
-                .map(|e| e.timestamp_secs)
-                .unwrap_or(0.0);
-
-            let mut pending = world.get_resource_or_insert_with(PendingReloadResponses::default);
-            pending.pending.push(crate::bridge::PendingReloadResponse {
-                response_tx: forward_tx,
-                frames_remaining: 5,
-                mode,
-                error_timestamp_before: error_ts,
-            });
-            Ok(forward_rx)
+        ControlOperation::CaptureWithGizmos(p) => {
+            push_pending_screenshot(p, true, tx, &mut screenshots)
         }
-
-        "reload_and_capture" => {
-            let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
-            let (mode, pause, time_scale, delay_frames, max_width, position, look_at, hide_ui) =
-                match &op {
-                    ControlOperation::Reload(ReloadOp::ReloadAndCapture {
-                        mode,
-                        pause,
-                        time_scale,
-                        delay_frames,
-                        max_width,
-                        position,
-                        look_at,
-                        hide_ui,
-                    }) => (
-                        mode.clone(),
-                        *pause,
-                        *time_scale,
-                        *delay_frames,
-                        *max_width,
-                        *position,
-                        *look_at,
-                        *hide_ui,
-                    ),
-                    _ => unreachable!(),
-                };
-
-            let _ = handlers::reload::trigger_reload(world, mode.clone(), pause, time_scale);
-
-            let error_ts = world
-                .get_resource::<pybevy_core::LastSystemError>()
-                .map(|e| e.timestamp_secs)
-                .unwrap_or(0.0);
-
-            let mut pending = world.get_resource_or_insert_with(PendingReloadAndCaptures::default);
-            pending.pending.push(PendingReloadAndCapture {
-                response_tx: forward_tx,
-                mode,
-                error_timestamp_before: error_ts,
-                reload_frames_remaining: 5,
-                screenshot_delay_frames: delay_frames.unwrap_or(30),
-                max_width,
-                position,
-                look_at,
-                hide_ui: hide_ui.unwrap_or(true),
-                state: ReloadAndCaptureState::WaitingForReload,
-                reload_response: None,
-            });
-            Ok(forward_rx)
-        }
-
-        "capture_timeline" => {
-            let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
-            let (total_frames, capture_count, max_width, columns, position, look_at) = match &op {
-                ControlOperation::Visual(VisualOp::CaptureTimeline {
-                    total_frames,
-                    capture_count,
-                    max_width,
-                    columns,
-                    position,
-                    look_at,
-                }) => (
-                    *total_frames,
-                    *capture_count,
-                    *max_width,
-                    *columns,
-                    *position,
-                    *look_at,
-                ),
-                _ => unreachable!(),
-            };
-
-            let mut schedule_frames =
-                crate::handlers::screenshot::compute_schedule(total_frames, capture_count);
-
-            let debug_cleanup = position.map(|pos| {
-                let debug_req = DebugCameraRequest {
-                    position: pos,
-                    look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
-                };
-                if let Some(first) = schedule_frames.front_mut() {
-                    *first += 2;
-                }
-                setup_debug_camera(world, &debug_req)
-            });
-
-            let mut pending = world.get_resource_or_insert_with(PendingTimelines::default);
-            let id = pending.next_id;
-            pending.next_id += 1;
-            pending.active.insert(
-                id,
-                ActiveTimeline {
-                    response_tx: Some(forward_tx),
-                    max_width,
-                    columns,
-                    debug_cleanup,
-                    schedule: schedule_frames,
-                    total_captures: capture_count,
-                    next_capture_index: 0,
-                    collected: Vec::new(),
-                },
-            );
-            Ok(forward_rx)
-        }
-
-        "capture_turnaround" => {
-            let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
-            let (
-                look_at_opt,
-                distance,
-                elevation,
-                view_count,
-                include_top,
-                columns,
-                max_width,
-                hide_ui,
-            ) = match &op {
-                ControlOperation::Visual(VisualOp::CaptureTurnaround {
-                    look_at,
-                    distance,
-                    elevation,
-                    view_count,
-                    include_top,
-                    columns,
-                    max_width,
-                    hide_ui,
-                }) => (
-                    *look_at,
-                    *distance,
-                    *elevation,
-                    *view_count,
-                    *include_top,
-                    *columns,
-                    *max_width,
-                    *hide_ui,
-                ),
-                _ => unreachable!(),
-            };
-
-            let vc = view_count.unwrap_or(6);
-            let elev = elevation.unwrap_or(25.0);
-            let top = include_top.unwrap_or(true);
-
-            let (auto_look_at, auto_distance) = if distance.is_none() || look_at_opt.is_none() {
-                if let Some((scene_min, scene_max)) = compute_scene_bounds(world) {
-                    let center = (scene_min + scene_max) * 0.5;
-                    let extent = scene_max - scene_min;
-                    let diagonal =
-                        (extent.x * extent.x + extent.y * extent.y + extent.z * extent.z).sqrt();
-                    let dist = diagonal / (30.0_f32.to_radians().tan() * 2.0);
-                    ([center.x, center.y, center.z], dist.max(2.0))
-                } else {
-                    ([0.0, 0.0, 0.0], 10.0)
-                }
-            } else {
-                ([0.0, 0.0, 0.0], 10.0)
-            };
-
-            let final_look_at = look_at_opt.unwrap_or(auto_look_at);
-            let final_distance = distance.unwrap_or(auto_distance);
-
-            let viewpoints = compute_viewpoints(final_look_at, final_distance, elev, vc, top);
-
-            let mut pending = world.get_resource_or_insert_with(PendingTurnarounds::default);
-            pending.active.push(ActiveTurnaround {
-                response_tx: Some(forward_tx),
-                viewpoints,
-                current_index: 0,
-                captures: Vec::new(),
-                columns: columns.unwrap_or(3),
-                max_width: Some(max_width.unwrap_or(1200)),
-                frames_remaining: 0,
-                hide_ui: hide_ui.unwrap_or(true),
-                ui_restore: None,
-                debug_cleanup: None,
-                look_at: final_look_at,
-                pending_screenshot_entity: None,
-            });
-            Ok(forward_rx)
-        }
-
-        "capture_depth" => {
-            let op = tool_to_operation(tool, args).map_err(|e| e.to_string())?;
-            let (
-                position,
-                look_at,
-                sample_points,
-                grid_density,
-                include_rgb,
-                delay_frames,
-                hide_ui,
-                max_width,
-            ) = match &op {
-                ControlOperation::Visual(VisualOp::CaptureDepth {
-                    position,
-                    look_at,
-                    sample_points,
-                    grid_density,
-                    include_rgb,
-                    delay_frames,
-                    hide_ui,
-                    max_width,
-                }) => (
-                    *position,
-                    *look_at,
-                    sample_points.clone(),
-                    *grid_density,
-                    *include_rgb,
-                    *delay_frames,
-                    *hide_ui,
-                    *max_width,
-                ),
-                _ => unreachable!(),
-            };
-
-            // Compute depth samples synchronously
-            let depth_result = crate::handlers::depth::compute_depth_samples(
-                world,
-                &position,
-                &look_at,
-                &sample_points,
-                &grid_density,
-            );
-
-            let want_rgb = include_rgb.unwrap_or(true);
-            let df = delay_frames.unwrap_or(2);
-            let mw = Some(max_width.unwrap_or(768));
-            let hu = hide_ui.unwrap_or(true);
-            let dc = position.as_ref().map(|pos| DebugCameraRequest {
-                position: *pos,
-                look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
-            });
-
-            if want_rgb {
-                let depth = match depth_result {
-                    Ok(d) => d,
-                    Err(e) => {
-                        let _ = forward_tx.send(Err(e));
-                        return Err(format!("Depth computation failed"));
-                    }
-                };
-
-                let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
-                pending.pending.push(PendingScreenshot {
-                    response_tx: forward_tx,
-                    frames_remaining: df,
-                    with_gizmos: false,
-                    max_width: mw,
-                    debug_camera: dc,
-                    hide_ui: hu,
-                    extra_response: Some(serde_json::json!({ "depth_samples": depth })),
-                });
-            } else {
-                let result = depth_result.map(|depth| {
-                    serde_json::json!({
-                        "screenshot": null,
-                        "depth_samples": depth,
-                    })
-                });
-                let _ = forward_tx.send(result);
-            }
-            Ok(forward_rx)
-        }
-
-        _ => Err(format!("Cannot defer tool '{}'", tool)),
+        ControlOperation::CaptureTimeline(p) => push_pending_timeline(p, tx, world),
+        ControlOperation::Reload(p) => push_pending_reload(p, tx, world),
+        ControlOperation::ReloadAndCapture(p) => push_pending_reload_and_capture(p, tx, world),
+        ControlOperation::CaptureTurnaround(p) => push_pending_turnaround(p, tx, world),
+        ControlOperation::CaptureDepth(p) => push_pending_depth(p, tx, &mut screenshots, world),
+        _ => return Err(format!("tool '{tool}' is not deferrable")),
     }
+
+    if !screenshots.is_empty() {
+        let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
+        pending.pending.extend(screenshots);
+    }
+
+    Ok(rx)
 }
 fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
     for idx in from_index..schedule.actions.len() {
@@ -1557,13 +913,19 @@ mod tests {
     use bevy::math::Vec3;
 
     use super::*;
-    use crate::handlers::pyo3::mutate::has_embedded_errors;
+    use crate::{
+        bridge::{
+            CaptureScreenshotParams, EntityRef, GetComponentParams, ReloadMode, ReloadParams,
+            SeekTimeParams, SetComponentParams,
+        },
+        handlers::pyo3::mutate::has_embedded_errors,
+    };
 
     #[test]
     fn test_validate_empty_actions() {
         let req = ScheduleRequest {
             actions: vec![],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_err());
@@ -1583,7 +945,7 @@ mod tests {
             .collect();
         let req = ScheduleRequest {
             actions,
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_err());
@@ -1600,7 +962,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -1628,7 +990,7 @@ mod tests {
                     skip_if_error: None,
                 },
             ],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -1656,7 +1018,7 @@ mod tests {
                     skip_if_error: None,
                 },
             ],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -1674,7 +1036,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -1692,7 +1054,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -1710,7 +1072,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -1718,21 +1080,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_invalid_mode() {
-        let req = ScheduleRequest {
-            actions: vec![ScheduleAction {
-                tool: "pause_time".to_string(),
-                args: serde_json::Value::Null,
-                at: Some(0.0),
-                at_frame: None,
-                label: None,
-                skip_if_error: None,
-            }],
-            mode: "invalid".to_string(),
-            stop_on_error: false,
-        };
-        let err = validate_schedule(&req).unwrap_err();
-        assert!(err.contains("mode"));
+    fn test_deserialize_invalid_mode() {
+        let json = r#"{"actions": [{"tool": "pause_time"}], "mode": "invalid"}"#;
+        let result: Result<ScheduleRequest, _> = serde_json::from_str(json);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1756,7 +1107,7 @@ mod tests {
                     skip_if_error: None,
                 },
             ],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_ok());
@@ -1783,7 +1134,7 @@ mod tests {
                     skip_if_error: None,
                 },
             ],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_ok());
@@ -1810,7 +1161,7 @@ mod tests {
                     skip_if_error: None,
                 },
             ],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_ok());
@@ -1819,20 +1170,20 @@ mod tests {
     #[test]
     fn test_tool_to_operation_pause() {
         let op = tool_to_operation("pause_time", &serde_json::Value::Null).unwrap();
-        assert!(matches!(op, ControlOperation::Time(TimeOp::PauseTime)));
+        assert!(matches!(op, ControlOperation::PauseTime));
     }
 
     #[test]
     fn test_tool_to_operation_resume() {
         let op = tool_to_operation("resume_time", &serde_json::Value::Null).unwrap();
-        assert!(matches!(op, ControlOperation::Time(TimeOp::ResumeTime)));
+        assert!(matches!(op, ControlOperation::ResumeTime));
     }
 
     #[test]
     fn test_tool_to_operation_seek() {
         let op = tool_to_operation("seek_time", &serde_json::json!({"seconds": 5.0})).unwrap();
         assert!(
-            matches!(op, ControlOperation::Time(TimeOp::SeekTime { seconds, pause }) if (seconds - 5.0).abs() < 0.001 && pause)
+            matches!(op, ControlOperation::SeekTime(SeekTimeParams { seconds, pause }) if (seconds - 5.0).abs() < 0.001 && pause)
         );
     }
 
@@ -1840,7 +1191,7 @@ mod tests {
     fn test_tool_to_operation_set_time_scale() {
         let op = tool_to_operation("set_time_scale", &serde_json::json!({"scale": 2.0})).unwrap();
         assert!(
-            matches!(op, ControlOperation::Time(TimeOp::SetTimeScale { scale }) if (scale - 2.0).abs() < 0.001)
+            matches!(op, ControlOperation::SetTimeScale { scale } if (scale - 2.0).abs() < 0.001)
         );
     }
 
@@ -1848,11 +1199,11 @@ mod tests {
     fn test_tool_to_operation_set_component() {
         let op = tool_to_operation(
             "set_component",
-            &serde_json::json!({"name": "MyEntity", "component": "Transform", "fields": {"translation": [0, 1, 0]}}),
+            &serde_json::json!({"entity": "MyEntity", "component": "Transform", "fields": {"translation": [0, 1, 0]}}),
         )
         .unwrap();
         assert!(
-            matches!(op, ControlOperation::Mutate(MutateOp::SetComponent { entity: EntityRef::Name(n), component, .. }) if n == "MyEntity" && component == "Transform")
+            matches!(op, ControlOperation::SetComponent(SetComponentParams { entity: EntityRef::Name(n), component, .. }) if n == "MyEntity" && component == "Transform")
         );
     }
 
@@ -1862,7 +1213,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             op,
-            ControlOperation::Visual(VisualOp::CaptureScreenshot {
+            ControlOperation::CaptureScreenshot(CaptureScreenshotParams {
                 max_width: Some(768),
                 ..
             })
@@ -1944,44 +1295,32 @@ mod tests {
     fn test_tool_to_operation_query_spatial_pairwise() {
         let op = tool_to_operation(
             "query_spatial",
-            &serde_json::json!({"name_a": "A", "name_b": "B"}),
+            &serde_json::json!({"entity_a": "A", "entity_b": "B"}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Spatial(SpatialOp::QuerySpatial { .. })
-        ));
+        assert!(matches!(op, ControlOperation::QuerySpatial(..)));
     }
 
     #[test]
     fn test_tool_to_operation_query_spatial_neighborhood() {
         let op = tool_to_operation(
             "query_spatial",
-            &serde_json::json!({"name": "A", "radius": 5.0}),
+            &serde_json::json!({"entity": "A", "radius": 5.0}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Spatial(SpatialOp::QuerySpatialNeighborhood { .. })
-        ));
+        assert!(matches!(op, ControlOperation::QuerySpatialNeighborhood(..)));
     }
 
     #[test]
     fn test_tool_to_operation_check_overlaps_single() {
-        let op = tool_to_operation("check_overlaps", &serde_json::json!({"name": "A"})).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Spatial(SpatialOp::CheckOverlaps { .. })
-        ));
+        let op = tool_to_operation("check_overlaps", &serde_json::json!({"entity": "A"})).unwrap();
+        assert!(matches!(op, ControlOperation::CheckOverlaps(..)));
     }
 
     #[test]
     fn test_tool_to_operation_check_overlaps_all() {
         let op = tool_to_operation("check_overlaps", &serde_json::json!({})).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Spatial(SpatialOp::CheckAllOverlaps { .. })
-        ));
+        assert!(matches!(op, ControlOperation::CheckAllOverlaps(..)));
     }
 
     #[test]
@@ -2205,59 +1544,44 @@ mod tests {
     #[test]
     fn test_tool_to_operation_get_time_status() {
         let op = tool_to_operation("get_time_status", &serde_json::Value::Null).unwrap();
-        assert!(matches!(op, ControlOperation::Time(TimeOp::GetTimeStatus)));
+        assert!(matches!(op, ControlOperation::GetTimeStatus));
     }
 
     #[test]
     fn test_tool_to_operation_get_performance() {
         let op = tool_to_operation("get_performance", &serde_json::Value::Null).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Other(OtherOp::GetPerformance)
-        ));
+        assert!(matches!(op, ControlOperation::GetPerformance));
     }
 
     #[test]
     fn test_tool_to_operation_get_scene_summary() {
         let op = tool_to_operation("get_scene_summary", &serde_json::Value::Null).unwrap();
-        assert!(matches!(op, ControlOperation::Scene(SceneOp::SceneSummary)));
+        assert!(matches!(op, ControlOperation::GetSceneSummary));
     }
 
     #[test]
     fn test_tool_to_operation_get_registry() {
         let op = tool_to_operation("get_registry", &serde_json::Value::Null).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Scene(SceneOp::DebugRegistry)
-        ));
+        assert!(matches!(op, ControlOperation::GetRegistry));
     }
 
     #[test]
     fn test_tool_to_operation_get_reload_status() {
         let op = tool_to_operation("get_reload_status", &serde_json::Value::Null).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Reload(ReloadOp::GetReloadStatus)
-        ));
+        assert!(matches!(op, ControlOperation::GetReloadStatus));
     }
 
     #[test]
     fn test_tool_to_operation_get_last_error() {
         let op = tool_to_operation("get_last_error", &serde_json::Value::Null).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Reload(ReloadOp::GetLastError)
-        ));
+        assert!(matches!(op, ControlOperation::GetLastError));
     }
 
     #[test]
     fn test_tool_to_operation_get_bounding_box() {
         let op =
-            tool_to_operation("get_bounding_box", &serde_json::json!({"name": "Box"})).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Scene(SceneOp::GetBoundingBox { .. })
-        ));
+            tool_to_operation("get_bounding_box", &serde_json::json!({"entity": "Box"})).unwrap();
+        assert!(matches!(op, ControlOperation::GetBoundingBox { .. }));
     }
 
     #[test]
@@ -2267,33 +1591,24 @@ mod tests {
             &serde_json::json!({"components": {"Transform": {}}}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Mutate(MutateOp::SpawnEntity { .. })
-        ));
+        assert!(matches!(op, ControlOperation::SpawnEntity { .. }));
     }
 
     #[test]
     fn test_tool_to_operation_despawn_entity() {
-        let op =
-            tool_to_operation("despawn_entity", &serde_json::json!({"name": "MyEntity"})).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Mutate(MutateOp::DespawnEntity { .. })
-        ));
+        let op = tool_to_operation("despawn_entity", &serde_json::json!({"entity": "MyEntity"}))
+            .unwrap();
+        assert!(matches!(op, ControlOperation::DespawnEntity { .. }));
     }
 
     #[test]
     fn test_tool_to_operation_remove_component() {
         let op = tool_to_operation(
             "remove_component",
-            &serde_json::json!({"name": "E", "component": "Marker"}),
+            &serde_json::json!({"entity": "E", "component": "Marker"}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Mutate(MutateOp::RemoveComponent { .. })
-        ));
+        assert!(matches!(op, ControlOperation::RemoveComponent(..)));
     }
 
     #[test]
@@ -2303,10 +1618,7 @@ mod tests {
             &serde_json::json!({"resource_type": "GameSettings", "value": {}}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Mutate(MutateOp::InsertResource { .. })
-        ));
+        assert!(matches!(op, ControlOperation::SetResource(..)));
     }
 
     #[test]
@@ -2316,19 +1628,13 @@ mod tests {
             &serde_json::json!({"resource_type": "GameSettings"}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Mutate(MutateOp::RemoveResource { .. })
-        ));
+        assert!(matches!(op, ControlOperation::RemoveResource { .. }));
     }
 
     #[test]
     fn test_tool_to_operation_run_code() {
         let op = tool_to_operation("run_code", &serde_json::json!({"code": "print(1)"})).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Other(OtherOp::ExecutePython { .. })
-        ));
+        assert!(matches!(op, ControlOperation::RunCode { .. }));
     }
 
     #[test]
@@ -2338,22 +1644,16 @@ mod tests {
             &serde_json::json!({"operations": [{"type": "spawn"}]}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Mutate(MutateOp::BatchMutate { .. })
-        ));
+        assert!(matches!(op, ControlOperation::Batch { .. }));
     }
 
     #[test]
     fn test_tool_to_operation_set_asset() {
         let op = tool_to_operation(
             "set_asset",
-            &serde_json::json!({"name": "E", "component": "MeshMaterial3d", "asset_type": "StandardMaterial", "fields": {}}),
+            &serde_json::json!({"entity": "E", "component": "MeshMaterial3d", "asset_type": "StandardMaterial", "fields": {}}),
         ).unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Other(OtherOp::MutateAsset { .. })
-        ));
+        assert!(matches!(op, ControlOperation::SetAsset(..)));
     }
 
     #[test]
@@ -2363,10 +1663,7 @@ mod tests {
             &serde_json::json!({"total_frames": 120, "capture_count": 6}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Visual(VisualOp::CaptureTimeline { .. })
-        ));
+        assert!(matches!(op, ControlOperation::CaptureTimeline(..)));
     }
 
     #[test]
@@ -2376,10 +1673,7 @@ mod tests {
             &serde_json::json!({"view_count": 8, "distance": 15.0}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Visual(VisualOp::CaptureTurnaround { .. })
-        ));
+        assert!(matches!(op, ControlOperation::CaptureTurnaround(..)));
     }
 
     #[test]
@@ -2389,18 +1683,19 @@ mod tests {
             &serde_json::json!({"grid_density": 4, "include_rgb": false}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Visual(VisualOp::CaptureDepth { .. })
-        ));
+        assert!(matches!(op, ControlOperation::CaptureDepth(..)));
     }
 
     #[test]
     fn test_tool_to_operation_reload() {
         let op = tool_to_operation("reload", &serde_json::json!({"mode": "partial"})).unwrap();
-        assert!(
-            matches!(op, ControlOperation::Reload(ReloadOp::TriggerReload { mode, .. }) if mode == "partial")
-        );
+        assert!(matches!(
+            op,
+            ControlOperation::Reload(ReloadParams {
+                mode: ReloadMode::Partial,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2410,10 +1705,7 @@ mod tests {
             &serde_json::json!({"mode": "full", "delay_frames": 10}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Reload(ReloadOp::ReloadAndCapture { .. })
-        ));
+        assert!(matches!(op, ControlOperation::ReloadAndCapture(..)));
     }
 
     #[test]
@@ -2423,10 +1715,7 @@ mod tests {
             &serde_json::json!({"name": "Transform"}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Scene(SceneOp::GetComponentSchema { .. })
-        ));
+        assert!(matches!(op, ControlOperation::GetComponentSchema { .. }));
     }
 
     #[test]
@@ -2437,7 +1726,7 @@ mod tests {
 
     #[test]
     fn test_tool_to_operation_get_component_missing_component() {
-        let result = tool_to_operation("get_component", &serde_json::json!({"name": "E"}));
+        let result = tool_to_operation("get_component", &serde_json::json!({"entity": "E"}));
         assert!(result.is_err());
     }
 
@@ -2454,22 +1743,19 @@ mod tests {
             &serde_json::json!({"gizmos": true, "max_width": 1024}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Visual(VisualOp::CaptureWithGizmos { .. })
-        ));
+        assert!(matches!(op, ControlOperation::CaptureWithGizmos(..)));
     }
 
     #[test]
     fn test_tool_to_operation_entity_ref_by_id() {
         let op = tool_to_operation(
             "get_component",
-            &serde_json::json!({"entity_id": 42, "component": "Transform"}),
+            &serde_json::json!({"entity": 42, "component": "Transform"}),
         )
         .unwrap();
         assert!(matches!(
             op,
-            ControlOperation::Scene(SceneOp::GetComponent {
+            ControlOperation::GetComponent(GetComponentParams {
                 entity: EntityRef::Id(42),
                 ..
             })
@@ -2483,10 +1769,7 @@ mod tests {
             &serde_json::json!({"with": ["Transform", "Velocity"], "without": ["Marker"]}),
         )
         .unwrap();
-        assert!(matches!(
-            op,
-            ControlOperation::Scene(SceneOp::QueryEntities { .. })
-        ));
+        assert!(matches!(op, ControlOperation::QueryEntities(..)));
     }
 
     #[test]
@@ -2689,7 +1972,7 @@ mod tests {
     fn test_schedule_request_deserialization_defaults() {
         let json = r#"{"actions": [{"tool": "pause_time"}]}"#;
         let req: ScheduleRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.mode, "sync");
+        assert_eq!(req.mode, ScheduleMode::Sync);
         assert_eq!(req.stop_on_error, false);
         assert_eq!(req.actions.len(), 1);
     }
@@ -2739,7 +2022,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: true,
         };
         let schedule = ActiveSchedule::new_sync("s-test".to_string(), req, 10.0, tx);
@@ -2762,7 +2045,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "async".to_string(),
+            mode: ScheduleMode::Async,
             stop_on_error: false,
         };
         let schedule = ActiveSchedule::new_async("s-async".to_string(), req, 0.0, shared);
@@ -2793,7 +2076,7 @@ mod tests {
                     skip_if_error: None,
                 },
             ],
-            mode: "sync".to_string(),
+            mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         let err = validate_schedule(&req).unwrap_err();
@@ -2811,7 +2094,7 @@ mod tests {
                 label: None,
                 skip_if_error: None,
             }],
-            mode: "async".to_string(),
+            mode: ScheduleMode::Async,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_ok());
