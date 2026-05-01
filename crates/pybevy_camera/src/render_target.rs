@@ -14,7 +14,6 @@ use super::normalized_render_target::PyNormalizedRenderTarget;
 
 #[pycomponent(RenderTarget, bridge)]
 #[pyclass(name = "RenderTarget", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyRenderTarget {
     pub(crate) storage: ComponentStorage<RenderTarget>,
 }

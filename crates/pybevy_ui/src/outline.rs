@@ -8,7 +8,7 @@ use crate::val::PyVal;
 
 #[pycomponent(Outline, bridge)]
 #[pyclass(name = "Outline", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyOutline {
     pub(crate) storage: ComponentStorage<Outline>,
 }

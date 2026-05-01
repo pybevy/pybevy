@@ -12,7 +12,7 @@ use crate::{
 
 #[pycomponent(TextFont, bridge, view_fields = [font_size])]
 #[pyclass(name = "TextFont", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyTextFont {
     pub(crate) storage: ComponentStorage<TextFont>,
 }

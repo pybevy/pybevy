@@ -102,8 +102,8 @@ impl PySpatialAudioSink {
         Ok(())
     }
 
-    pub fn set_listener_position(&self, position: PyTransform, gap: f32) -> PyResult<()> {
-        let bevy_transform: Transform = position.try_into()?;
+    pub fn set_listener_position(&self, position: &PyTransform, gap: f32) -> PyResult<()> {
+        let bevy_transform: Transform = position.as_ref()?.clone();
         self.as_ref()?.set_listener_position(bevy_transform, gap);
         Ok(())
     }

@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(ScrollPosition, bridge, view_fields = [0.x as x, 0.y as y])]
 #[pyclass(name = "ScrollPosition", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyScrollPosition {
     pub(crate) storage: ComponentStorage<ScrollPosition>,
 }

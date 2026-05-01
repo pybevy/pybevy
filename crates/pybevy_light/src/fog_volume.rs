@@ -13,7 +13,6 @@ use pyo3::prelude::*;
     light_intensity
 ], batch_only_fields = [fog_color, light_tint])]
 #[pyclass(name = "FogVolume", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyFogVolume {
     pub(crate) storage: ComponentStorage<FogVolume>,
 }

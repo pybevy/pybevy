@@ -12,7 +12,7 @@ use pyo3::prelude::*;
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
 #[pyclass(name = "DirectionalLight", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyDirectionalLight {
     pub(crate) storage: ComponentStorage<DirectionalLight>,
 }

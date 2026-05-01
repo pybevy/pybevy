@@ -40,25 +40,6 @@ pub enum ComponentStorageInner<T: Component> {
 unsafe impl<T: Component + Send> Send for ComponentStorage<T> {}
 unsafe impl<T: Component + Sync> Sync for ComponentStorage<T> {}
 
-impl<T: Component + Clone> Clone for ComponentStorage<T> {
-    fn clone(&self) -> Self {
-        match &self.inner {
-            ComponentStorageInner::Owned { data, validity: _ } => Self {
-                inner: ComponentStorageInner::Owned {
-                    data: Box::new((**data).clone()),
-                    validity: ValidityFlag::new_write(),
-                },
-            },
-            ComponentStorageInner::Borrowed { ptr, validity } => Self {
-                inner: ComponentStorageInner::Borrowed {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                },
-            },
-        }
-    }
-}
-
 impl<T: Component> Drop for ComponentStorage<T> {
     fn drop(&mut self) {
         if let ComponentStorageInner::Owned { validity, .. } = &self.inner {
@@ -148,6 +129,34 @@ impl<T: Component> ComponentStorage<T> {
         match &self.inner {
             ComponentStorageInner::Owned { .. } => Ok(()),
             ComponentStorageInner::Borrowed { validity, .. } => validity.check_write(),
+        }
+    }
+
+    /// Create a second handle to the same component data.
+    ///
+    /// For borrowed storage, shares the same pointer and validity flag.
+    /// For owned storage, creates a new borrowed pointer into the owned data.
+    ///
+    /// Used when a sub-object (e.g., ActiveAnimation) needs to access
+    /// the same component through its own storage handle.
+    pub fn share_borrow(&self) -> Self {
+        match &self.inner {
+            ComponentStorageInner::Borrowed { ptr, validity } => Self {
+                inner: ComponentStorageInner::Borrowed {
+                    ptr: *ptr,
+                    validity: validity.clone(),
+                },
+            },
+            ComponentStorageInner::Owned { data, validity } => {
+                let ptr = &**data as *const T as *mut T;
+                Self {
+                    inner: ComponentStorageInner::Borrowed {
+                        ptr,
+                        validity: validity
+                            .with_access_mode(crate::validity_guard::AccessMode::Write),
+                    },
+                }
+            }
         }
     }
 

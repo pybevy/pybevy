@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(Text2d, bridge)]
 #[pyclass(name = "Text2d", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyText2d {
     pub(crate) storage: ComponentStorage<Text2d>,
 }

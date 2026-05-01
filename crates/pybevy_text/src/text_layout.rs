@@ -7,7 +7,7 @@ use crate::{justify::PyJustify, line_break::PyLineBreak};
 
 #[pycomponent(TextLayout, bridge)]
 #[pyclass(name = "TextLayout", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyTextLayout {
     pub(crate) storage: ComponentStorage<TextLayout>,
 }

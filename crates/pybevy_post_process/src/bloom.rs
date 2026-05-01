@@ -17,7 +17,6 @@ use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloom
     max_mip_dimension
 ])]
 #[pyclass(name = "Bloom", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyBloom {
     pub(crate) storage: ComponentStorage<Bloom>,
 }

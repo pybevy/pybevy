@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(BackgroundColor, bridge)]
 #[pyclass(name = "BackgroundColor", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyBackgroundColor {
     pub(crate) storage: ComponentStorage<BackgroundColor>,
 }

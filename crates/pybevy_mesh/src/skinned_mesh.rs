@@ -5,7 +5,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pycomponent(SkinnedMesh, bridge)]
 #[pyclass(name = "SkinnedMesh", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PySkinnedMesh {
     pub(crate) storage: ComponentStorage<SkinnedMesh>,
 }

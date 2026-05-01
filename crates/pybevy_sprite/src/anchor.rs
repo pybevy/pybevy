@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(Anchor, bridge)]
 #[pyclass(name = "Anchor", extends = PyComponent, eq)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyAnchor {
     pub(crate) storage: ComponentStorage<Anchor>,
 }

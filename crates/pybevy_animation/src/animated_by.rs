@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(AnimatedBy, bridge)]
 #[pyclass(name = "AnimatedBy", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyAnimatedBy {
     pub(crate) storage: ComponentStorage<AnimatedBy>,
 }

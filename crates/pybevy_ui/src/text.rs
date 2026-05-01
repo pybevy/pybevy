@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(Text, bridge)]
 #[pyclass(name = "Text", extends = PyComponent)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyText {
     pub(crate) storage: ComponentStorage<Text>,
 }

@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(TextShadow, bridge)]
 #[pyclass(name = "TextShadow", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyTextShadow {
     pub(crate) storage: ComponentStorage<TextShadow>,
 }

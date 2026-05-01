@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(NoWireframe, bridge)]
 #[pyclass(name = "NoWireframe", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyNoWireframe {
     pub(crate) storage: ComponentStorage<NoWireframe>,
 }

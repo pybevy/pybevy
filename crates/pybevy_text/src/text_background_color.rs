@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(TextBackgroundColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "TextBackgroundColor", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyTextBackgroundColor {
     pub(crate) storage: ComponentStorage<TextBackgroundColor>,
 }

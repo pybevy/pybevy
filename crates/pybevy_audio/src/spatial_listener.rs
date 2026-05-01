@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(SpatialListener, bridge)]
 #[pyclass(name = "SpatialListener", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PySpatialListener {
     pub(crate) storage: ComponentStorage<SpatialListener>,
 }

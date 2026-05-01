@@ -14,7 +14,7 @@ use crate::sprite_image_mode::PySpriteImageMode;
 
 #[pycomponent(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
 #[pyclass(name = "Sprite", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PySprite {
     pub(crate) storage: ComponentStorage<Sprite>,
 }

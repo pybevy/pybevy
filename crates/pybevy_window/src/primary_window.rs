@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(PrimaryWindow, bridge)]
 #[pyclass(name = "PrimaryWindow", extends = PyComponent, frozen, eq)]
-#[derive(Clone, PartialEq)]
+#[derive(PartialEq)]
 pub struct PyPrimaryWindow {
     pub(crate) storage: ComponentStorage<PrimaryWindow>,
 }

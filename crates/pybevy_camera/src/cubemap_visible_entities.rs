@@ -7,7 +7,6 @@ use crate::visible_mesh_entities::PyVisibleMeshEntities;
 
 #[pycomponent(CubemapVisibleEntities, bridge)]
 #[pyclass(name = "CubemapVisibleEntities", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyCubemapVisibleEntities {
     pub(crate) storage: ComponentStorage<CubemapVisibleEntities>,
 }

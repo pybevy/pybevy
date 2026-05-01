@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(SunDisk, bridge, view_fields = [angular_size, intensity])]
 #[pyclass(name = "SunDisk", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PySunDisk {
     pub(crate) storage: ComponentStorage<SunDisk>,
 }

@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(Text2dShadow, bridge)]
 #[pyclass(name = "Text2dShadow", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyText2dShadow {
     pub(crate) storage: ComponentStorage<Text2dShadow>,
 }

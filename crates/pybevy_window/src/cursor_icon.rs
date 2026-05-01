@@ -7,7 +7,6 @@ use crate::cursor::PySystemCursorIcon;
 
 #[pycomponent(CursorIcon, bridge)]
 #[pyclass(name = "CursorIcon", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyCursorIcon {
     pub(crate) storage: ComponentStorage<CursorIcon>,
 }

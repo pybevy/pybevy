@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(DirectionalLightTexture, bridge, view_only_fields = [tiled: bool])]
 #[pyclass(name = "DirectionalLightTexture", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyDirectionalLightTexture {
     pub(crate) storage: ComponentStorage<DirectionalLightTexture>,
 }
@@ -47,7 +46,6 @@ impl PyDirectionalLightTexture {
 
 #[pycomponent(SpotLightTexture, bridge)]
 #[pyclass(name = "SpotLightTexture", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PySpotLightTexture {
     pub(crate) storage: ComponentStorage<SpotLightTexture>,
 }
@@ -76,7 +74,6 @@ impl PySpotLightTexture {
 
 #[pycomponent(PointLightTexture, bridge)]
 #[pyclass(name = "PointLightTexture", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyPointLightTexture {
     pub(crate) storage: ComponentStorage<PointLightTexture>,
 }

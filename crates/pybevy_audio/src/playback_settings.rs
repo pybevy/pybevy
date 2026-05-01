@@ -9,7 +9,6 @@ use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume
 
 #[pycomponent(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
 #[pyclass(name = "PlaybackSettings", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyPlaybackSettings {
     pub(crate) storage: ComponentStorage<PlaybackSettings>,
 }

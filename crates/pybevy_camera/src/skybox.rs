@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(Skybox, bridge, view_fields = [brightness])]
 #[pyclass(name = "Skybox", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PySkybox {
     pub(crate) storage: ComponentStorage<Skybox>,
 }

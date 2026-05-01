@@ -8,7 +8,6 @@ use super::role::PyRole;
 
 #[pycomponent(AccessibilityNode, bridge)]
 #[pyclass(name = "AccessibilityNode", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAccessibilityNode {
     pub(crate) storage: ComponentStorage<AccessibilityNode>,
 }

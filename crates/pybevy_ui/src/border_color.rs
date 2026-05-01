@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 #[pycomponent(BorderColor, bridge)]
 #[pyclass(name = "BorderColor", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyBorderColor {
     pub(crate) storage: ComponentStorage<BorderColor>,
 }

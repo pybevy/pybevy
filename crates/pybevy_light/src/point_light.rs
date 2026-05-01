@@ -15,7 +15,7 @@ use pyo3::prelude::*;
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
 #[pyclass(name = "PointLight", extends = PyComponent)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyPointLight {
     pub(crate) storage: ComponentStorage<PointLight>,
 }

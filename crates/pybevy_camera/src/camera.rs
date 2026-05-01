@@ -14,7 +14,6 @@ use super::{
 
 #[pycomponent(Camera, bridge, view_fields = [is_active])]
 #[pyclass(name = "Camera", extends = PyComponent, eq)]
-#[derive(Clone)]
 pub struct PyCamera {
     pub(crate) storage: ComponentStorage<Camera>,
 }

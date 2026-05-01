@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(PrimaryMonitor, bridge)]
 #[pyclass(name = "PrimaryMonitor", extends = PyComponent, frozen)]
-#[derive(Clone)]
 pub struct PyPrimaryMonitor {
     pub(crate) storage: ComponentStorage<PrimaryMonitor>,
 }

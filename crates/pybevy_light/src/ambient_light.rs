@@ -101,7 +101,7 @@ impl PyGlobalAmbientLight {
 
 #[pycomponent(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color])]
 #[pyclass(name = "AmbientLight", extends = PyComponent, eq)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyAmbientLight {
     pub(crate) storage: ComponentStorage<AmbientLight>,
 }

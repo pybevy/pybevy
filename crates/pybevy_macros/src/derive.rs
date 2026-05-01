@@ -120,7 +120,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #[#pyo3_path::pyclass(name = #py_name_str, extends = #core_path::PyComponent)]
-        #[derive(Debug, Clone)]
+        #[derive(Debug)]
         pub struct #py_type {
             storage: #core_path::ComponentStorage<#bevy_type>,
         }

@@ -207,7 +207,6 @@ impl PyActiveAnimation {
 
 #[pycomponent(AnimationPlayer, bridge)]
 #[pyclass(name = "AnimationPlayer", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAnimationPlayer {
     pub(crate) storage: ComponentStorage<AnimationPlayer>,
 }
@@ -228,7 +227,7 @@ impl PyAnimationPlayer {
         Py::new(
             py,
             PyActiveAnimation {
-                storage: self.storage.clone(),
+                storage: self.storage.share_borrow(),
                 node_index: animation.0,
             },
         )
@@ -243,7 +242,7 @@ impl PyAnimationPlayer {
         Py::new(
             py,
             PyActiveAnimation {
-                storage: self.storage.clone(),
+                storage: self.storage.share_borrow(),
                 node_index: animation.0,
             },
         )
@@ -310,7 +309,7 @@ impl PyAnimationPlayer {
         let py_anim = Py::new(
             py,
             PyActiveAnimation {
-                storage: self.storage.clone(),
+                storage: self.storage.share_borrow(),
                 node_index: animation.0,
             },
         )?;

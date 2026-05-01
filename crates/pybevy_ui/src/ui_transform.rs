@@ -8,7 +8,7 @@ use crate::val2::PyVal2;
 
 #[pycomponent(UiTransform, bridge)]
 #[pyclass(name = "UiTransform", extends = PyComponent, eq)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PyUiTransform {
     pub(crate) storage: ComponentStorage<UiTransform>,
 }

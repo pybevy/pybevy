@@ -7,7 +7,6 @@ use crate::cursor::PyCursorGrabMode;
 
 #[pycomponent(CursorOptions, bridge)]
 #[pyclass(name = "CursorOptions", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyCursorOptions {
     pub(crate) storage: ComponentStorage<CursorOptions>,
 }

@@ -8,7 +8,6 @@ use pyo3::prelude::*;
 
 #[pycomponent(AudioPlayer<AudioSource>, bridge)]
 #[pyclass(name = "AudioPlayer", extends = PyComponent)]
-#[derive(Clone)]
 pub struct PyAudioPlayer {
     pub(crate) storage: ComponentStorage<AudioPlayer<AudioSource>>,
 }
