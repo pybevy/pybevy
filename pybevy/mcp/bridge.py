@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -759,16 +760,30 @@ class McpBridge:
     def _forward_scene_resource(self, req_id: JsonId, uri: str) -> JsonDict:
         """Forward scene:// resource reads via HTTP."""
 
+        # Static URIs map directly to a REST path.
         resource_map: dict[str, str] = {
             "scene://entities": "/api/v1/entities",
             "scene://resources": "/api/v1/resources",
             "scene://systems": "/api/v1/systems",
             "scene://debug": "/api/v1/performance",
+            "scene://components": "/api/v1/debug/registry",
         }
 
         path = resource_map.get(uri)
-        if not path:
-            return self._error(req_id, -32602, f"Unknown scene resource: {uri}")
+        if path is None:
+            # Templated URI: scene://entity/{name_or_id}
+            entity_prefix = "scene://entity/"
+            if uri.startswith(entity_prefix):
+                ref = uri[len(entity_prefix):]
+                if not ref:
+                    return self._error(
+                        req_id, -32602, "scene://entity/ requires an entity name or numeric ID"
+                    )
+                # entity ref is passed verbatim to /api/v1/entities/{entity}, which
+                # accepts both numeric IDs and names.
+                path = f"/api/v1/entities/{quote(ref, safe='')}"
+            else:
+                return self._error(req_id, -32602, f"Unknown scene resource: {uri}")
 
         try:
             resp = httpx.get(f"{self._base_url}{path}", timeout=10.0)
@@ -889,9 +904,11 @@ class McpBridge:
         )
 
     def _handle_search_api(self, req_id: JsonId, arguments: JsonDict) -> JsonDict:
-        query = str(arguments.get("query", ""))
-        if not query:
+        if "query" not in arguments:
             return self._error(req_id, -32602, "Missing 'query' parameter")
+        query = str(arguments["query"])
+        if not query:
+            return self._error(req_id, -32602, "Empty 'query': must be at least 1 character")
         if not self._api_index:
             return self._error(req_id, -32603, "ApiIndex not available")
 

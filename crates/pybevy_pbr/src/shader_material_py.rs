@@ -278,6 +278,7 @@ impl PyMeshMaterial3dShader {
         Ok((Self(handle), PyComponent))
     }
 
+    #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {
         Ok(self.0.clone())
     }

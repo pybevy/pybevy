@@ -52,7 +52,7 @@ def create_app() -> App:
 def test_mesh_system_get_primitive_topology(benchmark: BenchmarkFixture) -> None:
     def update_system(assets: Assets[Mesh], query: Query[Mesh3d]) -> None:
         for mesh_3d in query:
-            mesh = assets.get(mesh_3d.handle())
+            mesh = assets.get(mesh_3d.handle)
             assert mesh is not None
             assert mesh.primitive_topology() == PrimitiveTopology.TriangleList
 
@@ -65,7 +65,7 @@ def test_mesh_system_get_primitive_topology(benchmark: BenchmarkFixture) -> None
 def test_mesh_system_get_ref_vertices(benchmark: BenchmarkFixture) -> None:
     def update_system(assets: Assets[Mesh], query: Query[Mesh3d]) -> None:
         for mesh_3d in query:
-            mesh = assets.get(mesh_3d.handle())
+            mesh = assets.get(mesh_3d.handle)
             assert mesh is not None
 
             with mesh.attribute(Mesh.ATTRIBUTE_POSITION) as v:
@@ -82,7 +82,7 @@ def test_mesh_system_get_mut_vertices(benchmark: BenchmarkFixture) -> None:
         mesh_3d = query.single()
         assert mesh_3d is not None
 
-        mesh = assets.get_mut(mesh_3d.handle())
+        mesh = assets.get_mut(mesh_3d.handle)
         assert mesh is not None
 
         with mesh.attribute_mut(Mesh.ATTRIBUTE_POSITION) as v:

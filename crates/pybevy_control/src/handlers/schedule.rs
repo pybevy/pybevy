@@ -19,8 +19,7 @@ use tokio::sync::oneshot;
 use crate::{
     bridge::{
         ControlError, ControlOperation, PendingScreenshots, push_pending_depth,
-        push_pending_reload, push_pending_reload_and_capture, push_pending_screenshot,
-        push_pending_timeline, push_pending_turnaround,
+        push_pending_screenshot, push_pending_timeline, push_pending_turnaround,
     },
     handlers,
 };
@@ -170,6 +169,13 @@ const NON_SCHEDULABLE_TOOLS: &[&str] = &[
     "get_logs",
     "search_api",
     "get_type_definition",
+    // reload tools cannot run inside a schedule: the schedule blocks waiting
+    // for the deferred response (ScheduleState::WaitingForDeferred), but the
+    // reload itself needs the app loop to drop and re-enter, which can't
+    // happen while process_active_schedules is mid-flight. Result: 120 s
+    // engine timeout. Reject at validation instead.
+    "reload",
+    "reload_and_capture",
 ];
 
 fn is_non_schedulable(tool: &str) -> bool {
@@ -183,8 +189,6 @@ fn is_deferred_tool(name: &str) -> bool {
             | "capture_timeline"
             | "capture_turnaround"
             | "capture_depth"
-            | "reload"
-            | "reload_and_capture"
     )
 }
 
@@ -839,8 +843,6 @@ fn setup_deferred_action(
             push_pending_screenshot(p, true, tx, &mut screenshots)
         }
         ControlOperation::CaptureTimeline(p) => push_pending_timeline(p, tx, world),
-        ControlOperation::Reload(p) => push_pending_reload(p, tx, world),
-        ControlOperation::ReloadAndCapture(p) => push_pending_reload_and_capture(p, tx, world),
         ControlOperation::CaptureTurnaround(p) => push_pending_turnaround(p, tx, world),
         ControlOperation::CaptureDepth(p) => push_pending_depth(p, tx, &mut screenshots, world),
         _ => return Err(format!("tool '{tool}' is not deferrable")),
@@ -1229,11 +1231,13 @@ mod tests {
     #[test]
     fn test_is_deferred_tool() {
         assert!(is_deferred_tool("capture_screenshot"));
-        assert!(is_deferred_tool("reload"));
-        assert!(is_deferred_tool("reload_and_capture"));
         assert!(is_deferred_tool("capture_timeline"));
         assert!(is_deferred_tool("capture_turnaround"));
         assert!(is_deferred_tool("capture_depth"));
+        // reload variants are NOT deferrable inside a schedule: see
+        // NON_SCHEDULABLE_TOOLS for the deadlock rationale.
+        assert!(!is_deferred_tool("reload"));
+        assert!(!is_deferred_tool("reload_and_capture"));
         assert!(!is_deferred_tool("pause_time"));
         assert!(!is_deferred_tool("set_component"));
     }
@@ -1244,8 +1248,46 @@ mod tests {
         assert!(is_non_schedulable("run_scene"));
         assert!(is_non_schedulable("get_started"));
         assert!(is_non_schedulable("get_logs"));
+        assert!(is_non_schedulable("reload"));
+        assert!(is_non_schedulable("reload_and_capture"));
         assert!(!is_non_schedulable("pause_time"));
         assert!(!is_non_schedulable("capture_screenshot"));
+    }
+
+    #[test]
+    fn test_validate_rejects_reload() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "reload".to_string(),
+                args: serde_json::json!({"mode": "full"}),
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: ScheduleMode::Sync,
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("not schedulable"));
+    }
+
+    #[test]
+    fn test_validate_rejects_reload_and_capture() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "reload_and_capture".to_string(),
+                args: serde_json::json!({"mode": "full"}),
+                at: Some(0.0),
+                at_frame: None,
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: ScheduleMode::Sync,
+            stop_on_error: false,
+        };
+        let err = validate_schedule(&req).unwrap_err();
+        assert!(err.contains("not schedulable"));
     }
 
     #[test]

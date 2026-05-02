@@ -55,7 +55,7 @@ def bridge_local_tools() -> list[JsonDict]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search query (grep-like pattern)"},
+                    "query": {"type": "string", "description": "Case-insensitive substring match"},
                 },
                 "required": ["query"],
             },
@@ -134,6 +134,20 @@ def builtin_resources() -> list[JsonDict]:
             "uri": "scene://debug",
             "name": "Debug Info",
             "description": "FPS, CPU, GPU, RAM, VRAM, entity/asset counts, system profiling",
+            "mimeType": "application/json",
+            "feature_gate": None,
+        },
+        {
+            "uri": "scene://components",
+            "name": "Component Registry",
+            "description": "Registered component bridges and resource bridges; sample of named entities with detected component types.",
+            "mimeType": "application/json",
+            "feature_gate": None,
+        },
+        {
+            "uri": "scene://entity/{name_or_id}",
+            "name": "Entity Detail (templated)",
+            "description": "Inspect a single entity by Name or numeric ID. Example: scene://entity/MainCamera or scene://entity/4294967296.",
             "mimeType": "application/json",
             "feature_gate": None,
         },

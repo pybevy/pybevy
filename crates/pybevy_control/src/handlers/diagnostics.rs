@@ -1,10 +1,30 @@
-use bevy::{ecs::world::World, time::Time};
+use bevy::{
+    ecs::{entity::Entity, world::World},
+    time::Time,
+};
 
 use crate::bridge::ControlError;
+
+/// Live count of all ECS entities in the world.
+///
+/// Matches the count produced by `list_entities` and `scene_summary` so that
+/// `get_performance.entity_count`, `scene://entities.entity_count`, and
+/// `get_scene_summary.total_entities` agree on a single canonical value.
+///
+/// Computed live each call (cheap: a single archetype walk). The previous
+/// snapshot-based implementation could be up to 1 second stale because the
+/// overlay system updates it on a 1 Hz tick.
+fn live_entity_count(world: &mut World) -> u64 {
+    let mut q = world.query::<Entity>();
+    q.iter(world).count() as u64
+}
 
 /// Get performance metrics from the debug overlay snapshot.
 /// Falls back to basic Time-based metrics if DebugSnapshot is not populated.
 pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlError> {
+    // entity_count is always live (cheap and consistent with other endpoints).
+    let entity_count = live_entity_count(world);
+
     // Try rich snapshot first (populated by hot reload overlay system)
     if let Some(snap) = world.get_resource::<pybevy_core::DebugSnapshot>()
         && snap.populated
@@ -16,8 +36,8 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         result.insert("fps_current".into(), serde_json::json!(snap.fps_current));
         result.insert("uptime_secs".into(), serde_json::json!(snap.uptime_secs));
 
-        // Scene — includes all ECS entities (framework + user-authored)
-        result.insert("entity_count".into(), serde_json::json!(snap.entity_count));
+        // Scene: live count, matches list_entities / scene_summary.
+        result.insert("entity_count".into(), serde_json::json!(entity_count));
         result.insert("entity_count_scope".into(), serde_json::json!("all"));
         if !snap.asset_counts.is_empty() {
             let assets: serde_json::Map<_, _> = snap
@@ -121,9 +141,8 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         return Ok(serde_json::Value::Object(result));
     }
 
-    // Fallback: basic metrics from Time resource
+    // Fallback: basic metrics from Time resource (entity_count already live from above)
     let mut result = serde_json::Map::new();
-    let entity_count = world.entities().len() as u64;
     result.insert("entity_count".into(), serde_json::json!(entity_count));
     result.insert("entity_count_scope".into(), serde_json::json!("all"));
 
@@ -170,20 +189,48 @@ mod tests {
     }
 
     #[test]
-    fn get_performance_with_populated_snapshot() {
+    fn get_performance_with_populated_snapshot_reads_snapshot_for_metrics_but_live_for_entity_count() {
+        // Snapshot is read for FPS / RAM (genuinely expensive to compute live),
+        // but entity_count must come from a live query so it's never stale.
+        // The 1 Hz overlay snapshot otherwise caches entity_count and masks
+        // entities spawned between ticks.
         let mut world = World::new();
         let mut snap = pybevy_core::DebugSnapshot::default();
         snap.populated = true;
         snap.fps_average = 60.0;
         snap.fps_current = 59.5;
-        snap.entity_count = 42;
+        snap.entity_count = 42; // stale snapshot value; should be ignored
         snap.memory_mb = 128.0;
         snap.uptime_secs = 10.0;
         world.insert_resource(snap);
+
+        // World has 0 live entities. Even with a snapshot saying 42,
+        // get_performance must report the live count.
         let result = get_performance(&mut world).unwrap();
         assert_eq!(result["fps_average"], 60.0);
-        assert_eq!(result["entity_count"], 42);
         assert_eq!(result["memory_mb"], 128.0);
+        assert_eq!(
+            result["entity_count"], 0,
+            "entity_count must be live, not from the cached snapshot"
+        );
+    }
+
+    #[test]
+    fn get_performance_entity_count_reflects_live_spawns_with_snapshot() {
+        // Spawning entities should be reflected in get_performance.entity_count
+        // even when the overlay snapshot hasn't ticked since spawn.
+        let mut world = World::new();
+        let mut snap = pybevy_core::DebugSnapshot::default();
+        snap.populated = true;
+        snap.entity_count = 0; // pre-spawn snapshot
+        world.insert_resource(snap);
+
+        for _ in 0..7 {
+            world.spawn_empty();
+        }
+
+        let result = get_performance(&mut world).unwrap();
+        assert_eq!(result["entity_count"], 7);
     }
 
     #[test]
@@ -243,7 +290,9 @@ mod tests {
 
         let result = get_performance(&mut world).unwrap();
         assert_eq!(result["fps_average"], 60.0);
-        assert_eq!(result["entity_count"], 50);
+        // entity_count is live, not from the snapshot. World has no entities
+        // here, so the response is 0 even with snap.entity_count=50.
+        assert_eq!(result["entity_count"], 0);
         assert_eq!(result["reload_count"], 3);
         assert_eq!(result["last_reload_mode"], "full");
         assert_eq!(result["reload_failed"], true);

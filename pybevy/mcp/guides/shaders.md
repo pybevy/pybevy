@@ -256,7 +256,7 @@ def animate_materials(
 ) -> None:
     t = time.elapsed_seconds()
     for mesh_mat in query:
-        mat = materials.get_mut(mesh_mat.handle())
+        mat = materials.get_mut(mesh_mat.handle)
         if mat is not None:
             mat.intensity = 1.0 + math.sin(t * 2.0) * 0.5
 ```

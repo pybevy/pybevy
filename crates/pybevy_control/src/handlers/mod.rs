@@ -351,7 +351,7 @@ mod tests {
             ControlOperation::Batch {
                 operations: vec![serde_json::json!({
                     "action": "despawn",
-                    "entity_id": entity.to_bits()
+                    "entity": entity.to_bits()
                 })],
             },
             &mut runtime(),
