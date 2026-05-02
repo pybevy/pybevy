@@ -76,9 +76,7 @@ pub fn set_time_scale(world: &mut World, scale: f32) -> Result<serde_json::Value
     // non-finite values. Reject before reaching that invariant so a single
     // tool call doesn't kill the engine subprocess.
     if !scale.is_finite() || scale <= 0.0 {
-        return Err(ControlError::invalid_params(
-            "scale must be > 0 and finite",
-        ));
+        return Err(ControlError::invalid_params("scale must be > 0 and finite"));
     }
     let mut time = world.resource_mut::<Time<Virtual>>();
     time.set_relative_speed(scale);

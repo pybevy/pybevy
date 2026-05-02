@@ -189,7 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn get_performance_with_populated_snapshot_reads_snapshot_for_metrics_but_live_for_entity_count() {
+    fn get_performance_with_populated_snapshot_reads_snapshot_for_metrics_but_live_for_entity_count()
+     {
         // Snapshot is read for FPS / RAM (genuinely expensive to compute live),
         // but entity_count must come from a live query so it's never stale.
         // The 1 Hz overlay snapshot otherwise caches entity_count and masks

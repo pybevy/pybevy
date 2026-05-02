@@ -1002,11 +1002,9 @@ pub fn batch_mutate(
                     (Err(msg), _, _) => {
                         Err(ControlError::invalid_params(format!("op[{i}]: {msg}")))
                     }
-                    (Ok(_), None, _) | (Ok(_), _, None) => {
-                        Err(ControlError::invalid_params(format!(
-                            "op[{i}]: set_component requires entity, component, fields"
-                        )))
-                    }
+                    (Ok(_), None, _) | (Ok(_), _, None) => Err(ControlError::invalid_params(
+                        format!("op[{i}]: set_component requires entity, component, fields"),
+                    )),
                 }
             }
             "spawn" => {
@@ -1032,9 +1030,7 @@ pub fn batch_mutate(
 
                 match (entity_ref, component) {
                     (Ok(entity), Some(comp)) => remove_component(world, entity, comp),
-                    (Err(msg), _) => {
-                        Err(ControlError::invalid_params(format!("op[{i}]: {msg}")))
-                    }
+                    (Err(msg), _) => Err(ControlError::invalid_params(format!("op[{i}]: {msg}"))),
                     (Ok(_), None) => Err(ControlError::invalid_params(format!(
                         "op[{i}]: remove_component requires entity and component"
                     ))),

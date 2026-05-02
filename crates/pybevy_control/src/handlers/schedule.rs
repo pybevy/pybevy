@@ -185,10 +185,7 @@ fn is_non_schedulable(tool: &str) -> bool {
 fn is_deferred_tool(name: &str) -> bool {
     matches!(
         name,
-        "capture_screenshot"
-            | "capture_timeline"
-            | "capture_turnaround"
-            | "capture_depth"
+        "capture_screenshot" | "capture_timeline" | "capture_turnaround" | "capture_depth"
     )
 }
 
