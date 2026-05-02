@@ -659,6 +659,35 @@ fn insert_custom_component(
     })
 }
 
+/// Components whose removal silently breaks rendering, hierarchy, or spatial queries.
+const STRUCTURAL_COMPONENTS: &[&str] = &[
+    "Transform",
+    "GlobalTransform",
+    "Visibility",
+    "InheritedVisibility",
+    "ViewVisibility",
+    "Mesh3d",
+    "Mesh2d",
+    "MeshMaterial3d",
+    "MeshMaterial2d",
+    "Camera3d",
+    "Camera2d",
+    "Camera",
+    "Sprite",
+    "Node",
+];
+
+fn structural_warning(component: &str) -> Option<String> {
+    if STRUCTURAL_COMPONENTS.contains(&component) {
+        Some(format!(
+            "removing '{component}' from a live entity will likely break rendering, \
+             hierarchy, or spatial queries. Re-insert via set_component if undone in error."
+        ))
+    } else {
+        None
+    }
+}
+
 /// Remove a component from an entity
 pub fn remove_component(
     world: &mut World,
@@ -667,16 +696,25 @@ pub fn remove_component(
 ) -> Result<serde_json::Value, ControlError> {
     let entity = resolve_entity(world, &entity_ref)?;
     let entity_id = entity.to_bits();
+    let warning = structural_warning(&component);
+
+    let build_response = |removed: &str, warning: &Option<String>| -> serde_json::Value {
+        let mut out = serde_json::json!({
+            "entity_id": entity_id,
+            "removed": removed,
+        });
+        if let Some(w) = warning {
+            out["warning"] = serde_json::json!(w);
+        }
+        out
+    };
 
     for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
         if bridge.name() == component.as_str() {
             let component_id = bridge.register(world);
             if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
                 entity_mut.remove_by_id(component_id);
-                return Ok(serde_json::json!({
-                    "entity_id": entity_id,
-                    "removed": component,
-                }));
+                return Ok(build_response(&component, &warning));
             } else {
                 return Err(ControlError::not_found(format!(
                     "Entity {entity_id} not found"
@@ -697,10 +735,7 @@ pub fn remove_component(
     if let Some(comp_id) = custom_comp_id {
         if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
             entity_mut.remove_by_id(comp_id);
-            return Ok(serde_json::json!({
-                "entity_id": entity_id,
-                "removed": component,
-            }));
+            return Ok(build_response(&component, &warning));
         } else {
             return Err(ControlError::not_found(format!(
                 "Entity {entity_id} not found"
@@ -964,9 +999,12 @@ pub fn batch_mutate(
 
                 match (entity_ref, component, fields) {
                     (Ok(entity), Some(comp), Some(f)) => set_component(world, entity, comp, f),
-                    _ => Err(ControlError::invalid_params(format!(
-                        "op[{i}]: set_component requires entity_id/name, component, fields"
-                    ))),
+                    (Err(msg), _, _) => {
+                        Err(ControlError::invalid_params(format!("op[{i}]: {msg}")))
+                    }
+                    (Ok(_), None, _) | (Ok(_), _, None) => Err(ControlError::invalid_params(
+                        format!("op[{i}]: set_component requires entity, component, fields"),
+                    )),
                 }
             }
             "spawn" => {
@@ -992,8 +1030,9 @@ pub fn batch_mutate(
 
                 match (entity_ref, component) {
                     (Ok(entity), Some(comp)) => remove_component(world, entity, comp),
-                    _ => Err(ControlError::invalid_params(format!(
-                        "op[{i}]: remove_component requires entity_id/name and component"
+                    (Err(msg), _) => Err(ControlError::invalid_params(format!("op[{i}]: {msg}"))),
+                    (Ok(_), None) => Err(ControlError::invalid_params(format!(
+                        "op[{i}]: remove_component requires entity and component"
                     ))),
                 }
             }
@@ -1032,15 +1071,21 @@ pub fn batch_mutate(
     }))
 }
 
-/// Parse entity ref from a batch operation JSON object
+/// Parse entity ref from a batch operation JSON object.
+///
+/// The batch tool documents per-op shape as `{"action": "...", "entity": id_or_name, ...}`.
+/// `entity` is polymorphic: int → `EntityRef::Id`, string → `EntityRef::Name`.
 fn parse_entity_ref_from_op(op: &serde_json::Value) -> Result<EntityRef, String> {
-    if let Some(id) = op.get("entity_id").and_then(|v| v.as_u64()) {
+    let Some(entity) = op.get("entity") else {
+        return Err("Missing 'entity' (int or string)".into());
+    };
+    if let Some(id) = entity.as_u64() {
         return Ok(EntityRef::Id(id));
     }
-    if let Some(name) = op.get("name").and_then(|v| v.as_str()) {
+    if let Some(name) = entity.as_str() {
         return Ok(EntityRef::Name(name.to_string()));
     }
-    Err("Missing 'entity_id' or 'name'".into())
+    Err("'entity' must be an integer ID or a string name".into())
 }
 
 /// Convert a JSON field value to the appropriate Python type by inspecting the current field type.
@@ -1223,9 +1268,12 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
 mod tests {
     use std::{alloc::Layout, ffi::CString, ptr, sync::Once};
 
-    use bevy::ecs::{
-        component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
-        name::Name,
+    use bevy::{
+        ecs::{
+            component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
+            name::Name,
+        },
+        prelude::{ChildOf, Children},
     };
     use pybevy_core::{CustomComponentEntry, CustomResourceEntry};
     use pyo3::types::PyInt;
@@ -1418,31 +1466,33 @@ holder = Holder()
     }
 
     #[test]
-    fn parse_entity_ref_from_op_entity_id() {
-        let op = serde_json::json!({"entity_id": 42, "action": "set_component"});
+    fn parse_entity_ref_from_op_entity_int() {
+        let op = serde_json::json!({"entity": 42, "action": "set_component"});
         let result = parse_entity_ref_from_op(&op).unwrap();
         assert!(matches!(result, EntityRef::Id(42)));
     }
 
     #[test]
-    fn parse_entity_ref_from_op_name() {
-        let op = serde_json::json!({"name": "Player", "action": "set_component"});
+    fn parse_entity_ref_from_op_entity_string() {
+        let op = serde_json::json!({"entity": "Player", "action": "set_component"});
         let result = parse_entity_ref_from_op(&op).unwrap();
         assert!(matches!(result, EntityRef::Name(ref s) if s == "Player"));
     }
 
     #[test]
-    fn parse_entity_ref_from_op_missing_both() {
+    fn parse_entity_ref_from_op_missing_entity() {
         let op = serde_json::json!({"action": "set_component"});
         let result = parse_entity_ref_from_op(&op);
         assert!(result.is_err());
+        assert!(result.unwrap_err().contains("entity"));
     }
 
     #[test]
-    fn parse_entity_ref_from_op_prefers_entity_id() {
-        let op = serde_json::json!({"entity_id": 42, "name": "Player"});
-        let result = parse_entity_ref_from_op(&op).unwrap();
-        assert!(matches!(result, EntityRef::Id(42)));
+    fn parse_entity_ref_from_op_entity_invalid_type() {
+        let op = serde_json::json!({"entity": [1, 2, 3]});
+        let result = parse_entity_ref_from_op(&op);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("entity"));
     }
 
     #[test]
@@ -1468,6 +1518,54 @@ holder = Holder()
         let result = despawn_entity(&mut world, EntityRef::Id(999999));
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn world_despawn_vs_entity_mut_despawn_baseline() {
+        // Pin the Bevy 0.18 contract our despawn_entity handler relies on:
+        // both `World::despawn` AND `EntityWorldMut::despawn` walk the
+        // `Children` relationship recursively. If a future Bevy release
+        // changes World::despawn back to non-recursive, despawn_entity
+        // would need to switch to entity_mut(e).despawn() to preserve the
+        // user-visible recursive behavior.
+        let mut world = World::new();
+        let parent_a = world.spawn(Name::new("ParentA")).id();
+        let child_a = world.spawn((Name::new("ChildA"), ChildOf(parent_a))).id();
+
+        let _ = world.despawn(parent_a);
+
+        assert!(world.get_entity(parent_a).is_err());
+        assert!(
+            world.get_entity(child_a).is_err(),
+            "World::despawn(parent) is recursive in Bevy 0.18: child should also be despawned"
+        );
+
+        let parent_b = world.spawn(Name::new("ParentB")).id();
+        let child_b = world.spawn((Name::new("ChildB"), ChildOf(parent_b))).id();
+        assert!(world.get::<Children>(parent_b).is_some());
+
+        world.entity_mut(parent_b).despawn();
+
+        assert!(world.get_entity(parent_b).is_err());
+        assert!(world.get_entity(child_b).is_err());
+    }
+
+    #[test]
+    fn despawn_entity_recursive_removes_children() {
+        let mut world = World::new();
+        let parent = world.spawn(Name::new("Parent")).id();
+        let child1 = world.spawn((Name::new("Child1"), ChildOf(parent))).id();
+        let child2 = world.spawn((Name::new("Child2"), ChildOf(parent))).id();
+        let grandchild = world.spawn((Name::new("Grandchild"), ChildOf(child1))).id();
+
+        let result = despawn_entity(&mut world, EntityRef::Id(parent.to_bits())).unwrap();
+        assert_eq!(result["despawned"], true);
+
+        // Parent and all descendants gone; no orphans with stale ChildOf.
+        assert!(world.get_entity(parent).is_err());
+        assert!(world.get_entity(child1).is_err());
+        assert!(world.get_entity(child2).is_err());
+        assert!(world.get_entity(grandchild).is_err());
     }
 
     #[test]
@@ -1510,7 +1608,7 @@ holder = Holder()
     fn batch_mutate_despawn_success() {
         let mut world = World::new();
         let entity = world.spawn(Name::new("Target")).id();
-        let ops = vec![serde_json::json!({"action": "despawn", "entity_id": entity.to_bits()})];
+        let ops = vec![serde_json::json!({"action": "despawn", "entity": entity.to_bits()})];
         let result = batch_mutate(&mut world, ops).unwrap();
         assert_eq!(result["succeeded"], 1);
         assert!(world.get_entity(entity).is_err());
@@ -1537,7 +1635,7 @@ holder = Holder()
         let mut world = World::new();
         let entity = world.spawn(Name::new("Target")).id();
         let ops = vec![
-            serde_json::json!({"action": "despawn", "entity_id": entity.to_bits()}),
+            serde_json::json!({"action": "despawn", "entity": entity.to_bits()}),
             serde_json::json!({"action": "unknown_action"}),
         ];
         let result = batch_mutate(&mut world, ops).unwrap();
@@ -1561,7 +1659,7 @@ holder = Holder()
         let entity = world.spawn(Name::new("Target")).id();
         let ops = vec![serde_json::json!({
             "action": "remove_component",
-            "entity_id": entity.to_bits(),
+            "entity": entity.to_bits(),
             "component": "NonExistent"
         })];
         let result = batch_mutate(&mut world, ops).unwrap();
@@ -1597,8 +1695,8 @@ holder = Holder()
         let e1 = world.spawn(Name::new("A")).id();
         let e2 = world.spawn(Name::new("B")).id();
         let ops = vec![
-            serde_json::json!({"action": "despawn", "entity_id": e1.to_bits()}),
-            serde_json::json!({"action": "despawn", "entity_id": e2.to_bits()}),
+            serde_json::json!({"action": "despawn", "entity": e1.to_bits()}),
+            serde_json::json!({"action": "despawn", "entity": e2.to_bits()}),
         ];
         let result = batch_mutate(&mut world, ops).unwrap();
         assert_eq!(result["total"], 2);
@@ -1611,7 +1709,7 @@ holder = Holder()
     fn batch_mutate_despawn_by_name() {
         let mut world = World::new();
         world.spawn(Name::new("Target"));
-        let ops = vec![serde_json::json!({"action": "despawn", "name": "Target"})];
+        let ops = vec![serde_json::json!({"action": "despawn", "entity": "Target"})];
         let result = batch_mutate(&mut world, ops).unwrap();
         assert_eq!(result["succeeded"], 1);
     }
@@ -1619,7 +1717,7 @@ holder = Holder()
     #[test]
     fn batch_mutate_no_action_field() {
         let mut world = World::new();
-        let ops = vec![serde_json::json!({"entity_id": 42})];
+        let ops = vec![serde_json::json!({"entity": 42})];
         let result = batch_mutate(&mut world, ops).unwrap();
         assert_eq!(result["succeeded"], 0);
         // Empty action string triggers unknown action error
@@ -1694,13 +1792,6 @@ holder = Holder()
     }
 
     #[test]
-    fn parse_entity_ref_prefers_id_over_name() {
-        let op = serde_json::json!({"entity_id": 100, "name": "Ignored"});
-        let result = parse_entity_ref_from_op(&op).unwrap();
-        assert!(matches!(result, EntityRef::Id(100)));
-    }
-
-    #[test]
     fn set_component_fields_not_object() {
         let mut world = World::new();
         let entity = world.spawn(Name::new("Target")).id();
@@ -1747,6 +1838,26 @@ holder = Holder()
         let result = remove_component(&mut world, EntityRef::Id(999999), "Transform".to_string());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn structural_warning_lists_known_breakers() {
+        let warn = structural_warning("Transform").expect("Transform is structural");
+        assert!(warn.contains("Transform"));
+        assert!(warn.contains("set_component"));
+        assert!(structural_warning("GlobalTransform").is_some());
+        assert!(structural_warning("Visibility").is_some());
+        assert!(structural_warning("Mesh3d").is_some());
+        assert!(structural_warning("Camera3d").is_some());
+    }
+
+    #[test]
+    fn structural_warning_skips_user_components() {
+        // Custom user components and non-structural builtins must not warn,
+        // otherwise every remove_component call would carry noise.
+        assert!(structural_warning("Bouncy").is_none());
+        assert!(structural_warning("PointLight").is_none());
+        assert!(structural_warning("Name").is_none());
     }
 
     #[test]

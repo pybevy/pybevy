@@ -61,6 +61,9 @@ pub fn pause_time(world: &mut World) -> Result<serde_json::Value, ControlError> 
 pub fn resume_time(world: &mut World) -> Result<serde_json::Value, ControlError> {
     let mut time = world.resource_mut::<Time<Virtual>>();
     time.unpause();
+    if time.relative_speed() == 0.0 {
+        time.set_relative_speed(1.0);
+    }
     let speed = time.relative_speed();
     Ok(serde_json::json!({
         "paused": false,
@@ -69,6 +72,12 @@ pub fn resume_time(world: &mut World) -> Result<serde_json::Value, ControlError>
 }
 
 pub fn set_time_scale(world: &mut World, scale: f32) -> Result<serde_json::Value, ControlError> {
+    // Bevy's Time<Virtual>::set_relative_speed panics on values <= 0.0 and on
+    // non-finite values. Reject before reaching that invariant so a single
+    // tool call doesn't kill the engine subprocess.
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(ControlError::invalid_params("scale must be > 0 and finite"));
+    }
     let mut time = world.resource_mut::<Time<Virtual>>();
     time.set_relative_speed(scale);
     let paused = time.is_paused();
@@ -157,10 +166,72 @@ mod tests {
     }
 
     #[test]
+    fn test_resume_time_snaps_zero_speed_to_one() {
+        // If a user system (or external code) sets relative_speed to 0,
+        // resume_time must restore playback speed. Otherwise the scene
+        // stays frozen with `paused: false` (silent freeze).
+        let mut world = world_with_virtual_time();
+        {
+            let mut time = world.resource_mut::<Time<Virtual>>();
+            time.pause();
+            time.set_relative_speed(0.0);
+        }
+        let result = resume_time(&mut world).unwrap();
+        assert_eq!(result["paused"], false);
+        assert_eq!(result["relative_speed"], 1.0);
+    }
+
+    #[test]
+    fn test_resume_time_preserves_nonzero_speed() {
+        // The snap-to-1.0 behavior must only fire on exact 0; a deliberate
+        // slow-mo speed (e.g. 0.25) survives a pause+resume cycle.
+        let mut world = world_with_virtual_time();
+        {
+            let mut time = world.resource_mut::<Time<Virtual>>();
+            time.set_relative_speed(0.25);
+            time.pause();
+        }
+        let result = resume_time(&mut world).unwrap();
+        assert_eq!(result["paused"], false);
+        assert_eq!(result["relative_speed"], 0.25);
+    }
+
+    #[test]
     fn test_set_time_scale() {
         let mut world = world_with_virtual_time();
         let result = set_time_scale(&mut world, 2.5).unwrap();
         assert_eq!(result["relative_speed"], 2.5);
+    }
+
+    #[test]
+    fn test_set_time_scale_rejects_negative() {
+        let mut world = world_with_virtual_time();
+        let err = set_time_scale(&mut world, -1.0).unwrap_err();
+        assert!(err.message.contains("must be > 0"));
+        // World still alive (no panic).
+        let speed = world.resource::<Time<Virtual>>().relative_speed();
+        assert!(speed > 0.0);
+    }
+
+    #[test]
+    fn test_set_time_scale_rejects_zero() {
+        let mut world = world_with_virtual_time();
+        let err = set_time_scale(&mut world, 0.0).unwrap_err();
+        assert!(err.message.contains("must be > 0"));
+    }
+
+    #[test]
+    fn test_set_time_scale_rejects_nan() {
+        let mut world = world_with_virtual_time();
+        let err = set_time_scale(&mut world, f32::NAN).unwrap_err();
+        assert!(err.message.contains("finite"));
+    }
+
+    #[test]
+    fn test_set_time_scale_rejects_infinity() {
+        let mut world = world_with_virtual_time();
+        let err = set_time_scale(&mut world, f32::INFINITY).unwrap_err();
+        assert!(err.message.contains("finite"));
     }
 
     #[test]

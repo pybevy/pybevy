@@ -54,7 +54,7 @@ reload {"mode": "full", "pause": true, "time_scale": 0.1}
 spawn_entity {"components": {
     "Transform": {"translation": [0, 5, 0], "scale": [2, 2, 2]},
     "PointLight": {"intensity": 1000, "color": [1, 0.8, 0.6, 1]},
-    "Name": {"name": "warm_light"}
+    "Name": "warm_light"
 }}
 ```
 
@@ -229,9 +229,9 @@ get_schedule_result {"schedule_id": "schedule-0"}
 
 ### What Can Be Scheduled
 
-All engine-side tools work: `pause_time`, `resume_time`, `seek_time`, `set_time_scale`, `capture_screenshot`, `capture_turnaround`, `capture_depth`, `capture_timeline`, `reload`, `reload_and_capture`, `set_component`, `remove_component`, `spawn_entity`, `despawn_entity`, `query_entities`, `get_scene_summary`, `query_spatial`, `check_overlaps`, `get_bounding_box`, `get_component`, `set_resource`, `remove_resource`, `run_code`, `batch`, `set_asset`, `get_performance`, `get_time_status`.
+All engine-side tools work: `pause_time`, `resume_time`, `seek_time`, `set_time_scale`, `capture_screenshot`, `capture_turnaround`, `capture_depth`, `capture_timeline`, `set_component`, `remove_component`, `spawn_entity`, `despawn_entity`, `query_entities`, `get_scene_summary`, `query_spatial`, `check_overlaps`, `get_bounding_box`, `get_component`, `set_resource`, `remove_resource`, `run_code`, `batch`, `set_asset`, `get_performance`, `get_time_status`.
 
-**Not schedulable** (bridge-local): `get_logs`, `search_api`, `get_type_definition`, `run_scene`, `get_started`.
+**Not schedulable**: `get_logs`, `search_api`, `get_type_definition`, `run_scene`, `get_started` (bridge-local), and `reload`, `reload_and_capture` (the schedule blocks the same frame loop the reload needs to drop and re-enter).
 
 ## Iterative Editing
 
@@ -353,6 +353,12 @@ To access custom scene types inside `run_code`, import the scene module by filen
 run_code {"code": "import scene_layers; print(dir(scene_layers))"}
 ```
 The scene's module is importable by its filename stem, not via `__main__`.
+
+`entity_id` from `query_entities` (and other MCP responses) is a raw `u64`. To use it inside `run_code`, convert with `Entity.from_bits` first:
+```
+run_code {"code": "e = Entity.from_bits(123456); print(world.entity(e))"}
+```
+`world.entity(int)` is intentionally rejected to mirror Bevy's typed API: raw bits encode generation+index, and silent acceptance risks aliasing recycled entities.
 
 **Note:** `run_code` with `world.run_system_once()` queries against the live world state. Prior MCP mutations (spawn, set_component) are automatically flushed before the system runs, so queries should see all entities.
 

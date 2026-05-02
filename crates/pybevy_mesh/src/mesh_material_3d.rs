@@ -59,6 +59,7 @@ impl PyMeshMaterial3d {
         Ok(cls.clone().into_any().unbind())
     }
 
+    #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {
         Ok(self.0.clone())
     }

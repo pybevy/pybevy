@@ -92,16 +92,32 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         runtime.clear_native_resources(world, &initial, verbose);
     }
 
-    // Reset game time so elapsed_secs() starts from zero after full reload.
-    if world.get_resource::<Time<Virtual>>().is_some() {
-        world.insert_resource(Time::<Virtual>::default());
+    // Reset Time<Virtual> across full reload, but preserve the user-visible
+    // knobs (pause, relative_speed). elapsed_secs counts simulation progress
+    // and a fresh reload should restart playback from t=0; pause and speed
+    // are external intentions the agent set explicitly (`pause_time`,
+    // `set_time_scale`, `reload(pause=true, time_scale=...)`) and shouldn't
+    // silently flip back on reload.
+    if let Some(virtual_time) = world.get_resource::<Time<Virtual>>() {
+        let was_paused = virtual_time.is_paused();
+        let speed = virtual_time.relative_speed();
+
+        let mut fresh = Time::<Virtual>::default();
+        fresh.set_relative_speed(speed);
+        if was_paused {
+            fresh.pause();
+        }
+        world.insert_resource(fresh);
+
         if verbose {
-            eprintln!("   → Reset virtual time to zero");
+            eprintln!(
+                "   → Reset virtual time to zero (preserved speed={} paused={})",
+                speed, was_paused
+            );
         }
     }
-    if world.get_resource::<Time>().is_some() {
-        world.insert_resource(Time::<()>::default());
-    }
+    // Default Time wraps the real wall clock; preserving it isn't meaningful
+    // but rebuilding it throws off accumulated render frame deltas. Leave it.
 }
 
 #[cfg(test)]
@@ -669,10 +685,9 @@ mod tests {
     }
 
     #[test]
-    fn clear_world_state_resets_virtual_time() {
+    fn clear_world_state_resets_virtual_time_elapsed() {
         let mut world = World::new();
 
-        // Insert Time<Virtual> and advance it
         world.insert_resource(Time::<Virtual>::default());
         let mut time_virt = world.resource_mut::<Time<Virtual>>();
         time_virt.advance_by(Duration::from_secs(5));
@@ -686,7 +701,44 @@ mod tests {
         let elapsed_after = world.resource::<Time<Virtual>>().elapsed_secs();
         assert_eq!(
             elapsed_after, 0.0,
-            "virtual time should be reset to zero after clear_world_state"
+            "virtual elapsed time should reset to zero on full reload (matches \"fresh play\" mental model)"
+        );
+    }
+
+    #[test]
+    fn clear_world_state_preserves_virtual_time_pause() {
+        let mut world = World::new();
+
+        world.insert_resource(Time::<Virtual>::default());
+        let mut time_virt = world.resource_mut::<Time<Virtual>>();
+        time_virt.pause();
+        drop(time_virt);
+        assert!(world.resource::<Time<Virtual>>().is_paused());
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        assert!(
+            world.resource::<Time<Virtual>>().is_paused(),
+            "pause state should survive clear_world_state"
+        );
+    }
+
+    #[test]
+    fn clear_world_state_preserves_virtual_time_relative_speed() {
+        let mut world = World::new();
+
+        world.insert_resource(Time::<Virtual>::default());
+        let mut time_virt = world.resource_mut::<Time<Virtual>>();
+        time_virt.set_relative_speed(0.25);
+        drop(time_virt);
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        let speed = world.resource::<Time<Virtual>>().relative_speed();
+        assert!(
+            (speed - 0.25).abs() < 1e-6,
+            "relative_speed should survive clear_world_state (got {})",
+            speed
         );
     }
 

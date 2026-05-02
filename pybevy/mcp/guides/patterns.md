@@ -123,7 +123,7 @@ PyBevy wraps Bevy components as Python classes:
 - **Camera3d**, **Camera2d** -- cameras
 - **Mesh3d**, **MeshMaterial3d** -- mesh and material handles
 - **Name** -- human-readable entity name
-- **Visibility** -- `Inherited`, `Visible`, or `Hidden`
+- **Visibility** -- `INHERITED`, `VISIBLE`, or `HIDDEN`
 
 #### Custom Components
 

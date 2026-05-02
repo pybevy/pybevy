@@ -160,12 +160,13 @@ When systems are renamed or removed across reloads, the reload system detects th
 
 ## Time Continuity
 
-`time.elapsed_secs()` is **NOT reset** by hot-reload — it continues from the app start time. Scenes that compute positions from elapsed time (e.g., `position = time.elapsed_secs() * speed`) will accumulate large offsets across reloads.
+Full reload resets `time.elapsed_secs()` to 0 (matches the "fresh play" mental model). Pause state and `relative_speed` are preserved: if you `pause_time` or `set_time_scale(0.1)` and then `reload`, the post-reload world is still paused and still at 0.1x. The same applies to `reload(pause=true, time_scale=...)`, which now actually take effect across the reset.
 
-**Workarounds:**
-- Use modular/wrapping position logic so entities stay near the camera
-- Use delta-time accumulation in a Resource instead of absolute elapsed time
-- Use `run_scene` for a full restart (resets time to 0)
+**Workarounds for elapsed_secs reset:**
+- Persist accumulated time in a Resource (it survives reload, unlike `Time<Virtual>`)
+- Use delta-time accumulation rather than absolute elapsed time
+
+Partial reload (when it doesn't escalate) preserves all of these.
 
 ## Troubleshooting
 

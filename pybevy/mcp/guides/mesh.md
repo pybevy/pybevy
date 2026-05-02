@@ -174,7 +174,7 @@ def analyze_mesh(
     query: Query[Mesh3d],
 ) -> None:
     for mesh3d in query:
-        mesh = meshes.get(mesh3d.handle())
+        mesh = meshes.get(mesh3d.handle)
         if mesh:
             with mesh.positions() as positions:
                 center = positions.mean(axis=0)
@@ -190,7 +190,7 @@ def deform_mesh(
     query: Query[Mesh3d],
 ) -> None:
     for mesh3d in query:
-        mesh = meshes.get_mut(mesh3d.handle())
+        mesh = meshes.get_mut(mesh3d.handle)
         if mesh:
             t = time.elapsed_secs()
             with mesh.positions_mut() as positions:

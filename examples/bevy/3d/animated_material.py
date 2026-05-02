@@ -55,7 +55,7 @@ def animate_materials(
     """Animate material colors by rotating hue over time."""
     for material_handle in material_handles:
         # Get mutable access to the material
-        material = materials.get_mut(material_handle.handle())
+        material = materials.get_mut(material_handle.handle)
         if material:
             # Simple hue rotation using time - all cubes cycle together
             t = time.elapsed_secs()

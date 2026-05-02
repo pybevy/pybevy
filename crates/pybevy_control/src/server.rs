@@ -798,8 +798,12 @@ async fn set_time_scale(
 #[derive(Deserialize)]
 struct SeekTimeBody {
     seconds: f64,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pause: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 async fn seek_time(
@@ -1398,11 +1402,28 @@ mod tests {
     }
 
     #[test]
-    fn seek_time_body_deserialize_defaults() {
+    fn seek_time_body_pause_defaults_to_true() {
+        // Schema documents `pause: default true`. A missing `pause` field must
+        // deserialize to true so the REST endpoint matches the documented contract
+        // (and matches SeekTimeParams::pause in bridge.rs).
         let json = r#"{"seconds": 5.0}"#;
         let body: SeekTimeBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.seconds, 5.0);
+        assert_eq!(body.pause, true);
+    }
+
+    #[test]
+    fn seek_time_body_pause_explicit_false_honored() {
+        let json = r#"{"seconds": 5.0, "pause": false}"#;
+        let body: SeekTimeBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.pause, false);
+    }
+
+    #[test]
+    fn seek_time_body_pause_explicit_true_honored() {
+        let json = r#"{"seconds": 5.0, "pause": true}"#;
+        let body: SeekTimeBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.pause, true);
     }
 
     #[test]

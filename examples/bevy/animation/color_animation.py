@@ -74,7 +74,7 @@ def animate_colors(
     """
     for material_component, animated in query:
         # Get mutable access to the material asset
-        material = materials.get_mut(material_component.handle())
+        material = materials.get_mut(material_component.handle)
         if material is None:
             continue
 

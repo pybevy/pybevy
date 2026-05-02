@@ -289,6 +289,31 @@ impl PyOn {
         } else {
             // On[E] - event type only, no bundle filter
             let event_type = if let Ok(event_type_obj) = key.cast_exact::<PyType>() {
+                // Lifecycle markers (Add, Insert, Remove, Replace, Despawn) require
+                // a component filter. The bare On[Add] / On[Despawn] form would
+                // otherwise fall through to from_py_type and produce a confusing
+                // "Expected Event subclass, got Despawn" error. Catch them with
+                // an actionable message instead.
+                let lifecycle_marker = if event_type_obj.is(PyAdd::type_object(py)) {
+                    Some("Add")
+                } else if event_type_obj.is(PyInsert::type_object(py)) {
+                    Some("Insert")
+                } else if event_type_obj.is(PyRemove::type_object(py)) {
+                    Some("Remove")
+                } else if event_type_obj.is(PyReplace::type_object(py)) {
+                    Some("Replace")
+                } else if event_type_obj.is(PyDespawn::type_object(py)) {
+                    Some("Despawn")
+                } else {
+                    None
+                };
+                if let Some(marker_name) = lifecycle_marker {
+                    return Err(PyTypeError::new_err(format!(
+                        "On[{marker_name}] requires a component filter: \
+                         use On[{marker_name}, ComponentType] to observe \
+                         {marker_name} events for a specific component."
+                    )));
+                }
                 EventType::from_py_type(py, event_type_obj)?
             } else {
                 return Err(PyTypeError::new_err(format!(

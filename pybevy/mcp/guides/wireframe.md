@@ -1,11 +1,13 @@
 # Wireframe Rendering
 
-Debug wireframe overlays on 3D meshes. No extra plugins needed — built into DefaultPlugins.
-
-## Imports
+Debug wireframe overlays on 3D meshes. Requires explicit `WireframePlugin` registration:
 
 ```python
-from pybevy.pbr import Wireframe, WireframeColor, NoWireframe, WireframeConfig
+from pybevy.pbr import Wireframe, WireframeColor, NoWireframe, WireframeConfig, WireframePlugin
+
+@entrypoint
+def main(app: App) -> App:
+    return app.add_plugins(DefaultPlugins).add_plugins(WireframePlugin())
 ```
 
 ## Per-Object Wireframe
