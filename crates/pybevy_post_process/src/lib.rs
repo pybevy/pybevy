@@ -9,8 +9,7 @@ use pyo3::prelude::*;
 pub mod prelude {
     pub use crate::{
         bloom::PyBloom, bloom_composite_mode::PyBloomCompositeMode,
-        bloom_prefilter::PyBloomPrefilter, lens_distortion::PyLensDistortion,
-        vignette::PyVignette,
+        bloom_prefilter::PyBloomPrefilter, lens_distortion::PyLensDistortion, vignette::PyVignette,
     };
 }
 
