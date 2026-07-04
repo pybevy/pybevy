@@ -16,7 +16,7 @@ pub struct PyMorphWeights {
 impl PyMorphWeights {
     #[new]
     #[pyo3(signature = (weights, first_mesh = None))]
-    pub fn new(weights: Vec<f32>, first_mesh: Option<PyHandle>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(weights: Vec<f32>, first_mesh: Option<PyHandle>) -> PyResult<PyClassInitializer<Self>> {
         let handle = match first_mesh {
             Some(h) => Some(Handle::<Mesh>::try_from(&h)?),
             None => None,
@@ -24,7 +24,7 @@ impl PyMorphWeights {
         let morph = MorphWeights::new(weights, handle).map_err(|e| {
             PyValueError::new_err(format!("Failed to create MorphWeights: {:?}", e))
         })?;
-        Ok(Self::from_owned(morph))
+        Ok(Self::from_owned(morph).into())
     }
 
     #[getter]

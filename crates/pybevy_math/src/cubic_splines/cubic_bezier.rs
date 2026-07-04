@@ -7,7 +7,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use super::cubic_curve::PyCubicCurve2d;
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "CubicBezier2d", frozen)]
+#[pyclass(name = "CubicBezier2d", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCubicBezier2d {
     bezier: CubicBezier<Vec2>,

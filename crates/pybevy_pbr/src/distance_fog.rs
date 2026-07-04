@@ -27,13 +27,13 @@ impl PyDistanceFog {
         falloff: PyFogFalloff,
         directional_light_color: PyColor,
         directional_light_exponent: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(DistanceFog {
             color: color.0,
             falloff: falloff.into(),
             directional_light_color: directional_light_color.0,
             directional_light_exponent,
-        })
+        }).into()
     }
 
     #[getter]

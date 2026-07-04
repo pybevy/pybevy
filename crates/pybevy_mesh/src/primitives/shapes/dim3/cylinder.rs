@@ -10,7 +10,7 @@ use crate::{
     primitives::{PyCylinderMeshBuilder, shapes::dim2::circle::PyCircle},
 };
 
-#[pyclass(name = "Cylinder", extends = PyMeshable, eq)]
+#[pyclass(name = "Cylinder", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCylinder(pub(crate) Cylinder);
 
@@ -18,8 +18,8 @@ pub struct PyCylinder(pub(crate) Cylinder);
 impl PyCylinder {
     #[new]
     #[pyo3(signature = (radius=0.5, height=1.0))]
-    pub fn new(radius: f32, height: f32) -> (Self, PyMeshable) {
-        (Self(Cylinder::new(radius, height)), PyMeshable)
+    pub fn new(radius: f32, height: f32) -> PyClassInitializer<Self> {
+        (Self(Cylinder::new(radius, height)), PyMeshable).into()
     }
 
     #[getter]

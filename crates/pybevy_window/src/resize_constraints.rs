@@ -1,7 +1,7 @@
 use bevy::window::WindowResizeConstraints;
 use pyo3::prelude::*;
 
-#[pyclass(name = "WindowResizeConstraints", eq)]
+#[pyclass(name = "WindowResizeConstraints", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyWindowResizeConstraints(pub WindowResizeConstraints);
 

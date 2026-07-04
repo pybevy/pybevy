@@ -2,7 +2,7 @@ use bevy::{camera::primitives::Sphere, math::Vec3A};
 use pybevy_math::vec3a::PyVec3A;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Sphere")]
+#[pyclass(name = "Sphere", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PySphere {
     pub(crate) inner: Sphere,

@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
 #[pyhandle(AnimationGraphHandle)]
-#[pyclass(name = "AnimationGraphHandle", extends = PyComponent, eq, frozen)]
+#[pyclass(name = "AnimationGraphHandle", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAnimationGraphHandle(pub(crate) PyHandle);
 
@@ -33,8 +33,8 @@ impl From<&AnimationGraphHandle> for PyAnimationGraphHandle {
 #[pymethods]
 impl PyAnimationGraphHandle {
     #[new]
-    pub fn new(handle: PyHandle) -> PyResult<(Self, PyComponent)> {
-        Ok((Self(handle), PyComponent))
+    pub fn new(handle: PyHandle) -> PyResult<PyClassInitializer<Self>> {
+        Ok((Self(handle), PyComponent).into())
     }
 
     pub fn handle(&self) -> PyResult<PyHandle> {

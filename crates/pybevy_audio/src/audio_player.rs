@@ -15,10 +15,10 @@ pub struct PyAudioPlayer {
 #[pymethods]
 impl PyAudioPlayer {
     #[new]
-    pub fn new(handle: PyHandle) -> PyResult<(Self, PyComponent)> {
+    pub fn new(handle: PyHandle) -> PyResult<PyClassInitializer<Self>> {
         let bevy_handle = Handle::<AudioSource>::try_from(&handle)?;
         let component = AudioPlayer(bevy_handle);
-        Ok(Self::from_owned(component))
+        Ok(Self::from_owned(component).into())
     }
 
     fn __repr__(&self) -> String {

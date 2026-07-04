@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(InputPlugin)]
-#[pyclass(name = "InputPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "InputPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyInputPlugin;
 
 #[pymethods]
 impl PyInputPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyInputPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyInputPlugin, PyPlugin).into()
     }
 }
 

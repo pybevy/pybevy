@@ -18,13 +18,13 @@ pub struct PyAccumulatedMouseMotion {
 #[pymethods]
 impl PyAccumulatedMouseMotion {
     #[new]
-    fn new() -> (Self, PyResource) {
+    fn new() -> PyClassInitializer<Self> {
         (
             Self {
                 storage: ResourceStorage::owned(AccumulatedMouseMotion { delta: Vec2::ZERO }),
             },
             PyResource,
-        )
+        ).into()
     }
 
     #[getter]
@@ -43,7 +43,7 @@ impl PyAccumulatedMouseMotion {
     }
 }
 
-#[pyclass(name = "AccumulatedMouseScroll", extends = PyResource, eq)]
+#[pyclass(name = "AccumulatedMouseScroll", extends = PyResource, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAccumulatedMouseScroll {
     pub delta: PyVec2,
@@ -66,14 +66,14 @@ impl PyAccumulatedMouseScroll {
 impl PyAccumulatedMouseScroll {
     #[new]
     #[pyo3(signature = (unit = PyMouseScrollUnit::Line))]
-    fn new(unit: PyMouseScrollUnit) -> (Self, PyResource) {
+    fn new(unit: PyMouseScrollUnit) -> PyClassInitializer<Self> {
         (
             PyAccumulatedMouseScroll {
                 delta: Vec2::ZERO.into(),
                 unit,
             },
             PyResource,
-        )
+        ).into()
     }
 
     #[getter]

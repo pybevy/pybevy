@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
-#[pyclass(name = "GamepadInput", eq, frozen)]
+#[pyclass(name = "GamepadInput", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyGamepadInput {
     Axis(PyGamepadAxis),

@@ -1,7 +1,7 @@
 use numpy::PyReadonlyArray1;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
 
-#[pyclass(name = "Indices", eq)]
+#[pyclass(name = "Indices", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyIndices {
     U16(Vec<u16>),

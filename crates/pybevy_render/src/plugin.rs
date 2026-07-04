@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::power_preference::PyPowerPreference;
 
 #[pyplugin(bevy::render::RenderPlugin)]
-#[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyRenderPlugin {
     pub power_preference: Option<PyPowerPreference>,
@@ -20,14 +20,14 @@ impl PyRenderPlugin {
     pub fn new(
         power_preference: Option<PyPowerPreference>,
         synchronous_pipeline_compilation: Option<bool>,
-    ) -> (Self, PyPlugin) {
+    ) -> PyClassInitializer<Self> {
         (
             PyRenderPlugin {
                 power_preference,
                 synchronous_pipeline_compilation,
             },
             PyPlugin,
-        )
+        ).into()
     }
 
     pub fn __repr__(&self) -> String {

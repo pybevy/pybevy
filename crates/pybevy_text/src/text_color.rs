@@ -21,8 +21,8 @@ impl PyTextColor {
 impl PyTextColor {
     #[new]
     #[pyo3(signature = (color = Self::default_color()))]
-    pub fn new(color: PyColor) -> (Self, PyComponent) {
-        Self::from_owned(TextColor(color.into()))
+    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
+        Self::from_owned(TextColor(color.into())).into()
     }
 
     #[getter]

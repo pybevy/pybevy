@@ -22,7 +22,7 @@ use crate::{
     vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues},
 };
 #[pyasset(Mesh, bridge, input_converter)]
-#[pyclass(name = "Mesh", extends = PyAsset)]
+#[pyclass(name = "Mesh", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyMesh {
     pub(crate) storage: AssetStorage<Mesh>,
@@ -108,11 +108,11 @@ impl PyMesh {
     }
 
     #[new]
-    pub fn new(primitive_topology: PyPrimitiveTopology) -> (Self, PyAsset) {
+    pub fn new(primitive_topology: PyPrimitiveTopology) -> PyClassInitializer<Self> {
         Self::from_owned(Mesh::new(
             primitive_topology.into(),
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        ))
+        )).into()
     }
 
     pub fn primitive_topology(&self) -> PyResult<PyPrimitiveTopology> {

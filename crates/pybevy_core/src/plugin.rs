@@ -42,7 +42,7 @@ use pyo3::{
 ///     def build(self, app):
 ///         app.add_systems(Startup, my_system)
 /// ```
-#[pyclass(name = "Plugin", subclass, frozen)]
+#[pyclass(name = "Plugin", subclass, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyPlugin;
 

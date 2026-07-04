@@ -1,7 +1,7 @@
 use bevy::material::AlphaMode;
 use pyo3::prelude::*;
 
-#[pyclass(name = "AlphaMode", frozen, eq)]
+#[pyclass(name = "AlphaMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyAlphaMode {
     Opaque(),

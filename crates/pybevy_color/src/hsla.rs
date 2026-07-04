@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Hsla", eq)]
+#[pyclass(name = "Hsla", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHsla {
     storage: ValueStorage<Hsla>,

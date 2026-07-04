@@ -40,7 +40,7 @@ impl PyEnvironmentMapLight {
         intensity: f32,
         rotation: PyQuat,
         affects_lightmapped_mesh_diffuse: bool,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let diffuse = match diffuse_map {
             Some(h) => extract_handle_from_any(h)?.try_into()?,
             None => Handle::default(),
@@ -55,7 +55,7 @@ impl PyEnvironmentMapLight {
             intensity,
             rotation: rotation.into(),
             affects_lightmapped_mesh_diffuse,
-        }))
+        }).into())
     }
 
     #[getter]

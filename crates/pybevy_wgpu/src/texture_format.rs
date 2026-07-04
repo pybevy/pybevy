@@ -1,7 +1,7 @@
 use bevy::render::render_resource::TextureFormat;
 use pyo3::prelude::*;
 
-#[pyclass(name = "TextureFormat", eq)]
+#[pyclass(name = "TextureFormat", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTextureFormat {
     R8Unorm,

@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[pyhandle(Mesh3d)]
-#[pyclass(name = "Mesh3d", extends = PyComponent, eq, frozen)]
+#[pyclass(name = "Mesh3d", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMesh3d(pub(crate) PyHandle);
 
@@ -25,7 +25,7 @@ impl From<&Mesh3d> for PyMesh3d {
 #[pymethods]
 impl PyMesh3d {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(handle)?;
 
         // Validate asset type
@@ -38,7 +38,7 @@ impl PyMesh3d {
             )));
         }
 
-        Ok((Self(handle), PyComponent))
+        Ok((Self(handle), PyComponent).into())
     }
     #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {

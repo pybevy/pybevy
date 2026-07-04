@@ -15,8 +15,8 @@ pub struct PyCursorIcon {
 impl PyCursorIcon {
     #[new]
     #[pyo3(signature = (system_icon = PySystemCursorIcon::Default))]
-    pub fn new(system_icon: PySystemCursorIcon) -> (Self, PyComponent) {
-        Self::from_owned(CursorIcon::System(system_icon.into()))
+    pub fn new(system_icon: PySystemCursorIcon) -> PyClassInitializer<Self> {
+        Self::from_owned(CursorIcon::System(system_icon.into())).into()
     }
 
     #[staticmethod]

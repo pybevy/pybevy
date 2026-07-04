@@ -4,15 +4,15 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Interaction, bridge)]
-#[pyclass(name = "Interaction", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Interaction", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyInteraction(pub(crate) Interaction);
 
 #[pymethods]
 impl PyInteraction {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(Interaction::None)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(Interaction::None).into()
     }
 
     #[getter]

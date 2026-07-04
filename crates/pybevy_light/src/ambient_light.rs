@@ -12,7 +12,7 @@ use pybevy_macros::{pycomponent, pyresource};
 use pyo3::prelude::*;
 
 #[pyresource(GlobalAmbientLight, bridge)]
-#[pyclass(name = "GlobalAmbientLight", extends = PyResource, eq)]
+#[pyclass(name = "GlobalAmbientLight", extends = PyResource, eq, from_py_object)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {
     pub storage: ResourceStorage<GlobalAmbientLight>,
@@ -53,7 +53,7 @@ impl PyGlobalAmbientLight {
         color: PyColor,
         brightness: f32,
         affects_lightmapped_meshes: bool,
-    ) -> (Self, PyResource) {
+    ) -> PyClassInitializer<Self> {
         (
             GlobalAmbientLight {
                 color: color.into(),
@@ -62,7 +62,7 @@ impl PyGlobalAmbientLight {
             }
             .into(),
             PyResource,
-        )
+        ).into()
     }
 
     #[getter]
@@ -131,12 +131,12 @@ impl PyAmbientLight {
         color: PyColor,
         brightness: f32,
         affects_lightmapped_meshes: bool,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(AmbientLight {
             color: color.into(),
             brightness,
             affects_lightmapped_meshes,
-        })
+        }).into()
     }
 
     #[getter]

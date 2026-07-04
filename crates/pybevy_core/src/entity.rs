@@ -5,7 +5,7 @@
 use bevy::ecs::entity::Entity;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Entity", eq, hash, frozen)]
+#[pyclass(name = "Entity", eq, hash, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyEntity(pub Entity);
 

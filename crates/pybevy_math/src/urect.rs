@@ -3,7 +3,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::uvec2::PyUVec2;
 
-#[pyclass(name = "URect")]
+#[pyclass(name = "URect", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyURect {
     pub min: UVec2,

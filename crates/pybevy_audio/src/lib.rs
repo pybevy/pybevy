@@ -27,15 +27,15 @@ pub mod prelude {
 }
 
 #[pyplugin(AudioPlugin)]
-#[pyclass(name = "AudioPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "AudioPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAudioPlugin;
 
 #[pymethods]
 impl PyAudioPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyAudioPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyAudioPlugin, PyPlugin).into()
     }
 }
 

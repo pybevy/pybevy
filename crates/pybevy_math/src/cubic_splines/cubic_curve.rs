@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "CubicCurve2d", frozen)]
+#[pyclass(name = "CubicCurve2d", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCubicCurve2d {
     curve: CubicCurve<Vec2>,

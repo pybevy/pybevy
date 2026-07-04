@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(ImagePlugin)]
-#[pyclass(name = "ImagePlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "ImagePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyImagePlugin;
 
 #[pymethods]
 impl PyImagePlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyImagePlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyImagePlugin, PyPlugin).into()
     }
 }
 

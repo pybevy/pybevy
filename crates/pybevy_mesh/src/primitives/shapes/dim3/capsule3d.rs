@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCapsule3dMeshBuilder,
 };
 
-#[pyclass(name = "Capsule3d", extends = PyMeshable, eq)]
+#[pyclass(name = "Capsule3d", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCapsule3d(pub(crate) Capsule3d);
 
@@ -28,8 +28,8 @@ impl From<Capsule3d> for PyCapsule3d {
 #[pymethods]
 impl PyCapsule3d {
     #[new]
-    pub fn new(radius: f32, length: f32) -> (Self, PyMeshable) {
-        (Self(Capsule3d::new(radius, length)), PyMeshable)
+    pub fn new(radius: f32, length: f32) -> PyClassInitializer<Self> {
+        (Self(Capsule3d::new(radius, length)), PyMeshable).into()
     }
 
     #[getter]

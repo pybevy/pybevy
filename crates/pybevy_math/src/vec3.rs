@@ -8,7 +8,7 @@ use pyo3::{
 
 use super::{vec2::PyVec2, vec4::PyVec4};
 
-#[pyclass(name = "Vec3")]
+#[pyclass(name = "Vec3", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVec3 {
     pub(crate) storage: ValueStorage<Vec3>,

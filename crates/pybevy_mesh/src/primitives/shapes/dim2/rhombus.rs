@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRhombusMeshBuilder};
 
-#[pyclass(name = "Rhombus", extends = PyMeshable, eq)]
+#[pyclass(name = "Rhombus", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRhombus(pub(crate) Rhombus);
 
@@ -31,19 +31,19 @@ impl PyRhombus {
         horizontal_diagonal: f32,
         vertical_diagonal: f32,
         half_diagonals: Option<PyVec2>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let Some(hd) = half_diagonals {
             return (
                 Self(Rhombus {
                     half_diagonals: hd.into(),
                 }),
                 PyMeshable,
-            );
+            ).into();
         }
         (
             Self(Rhombus::new(horizontal_diagonal, vertical_diagonal)),
             PyMeshable,
-        )
+        ).into()
     }
 
     #[staticmethod]

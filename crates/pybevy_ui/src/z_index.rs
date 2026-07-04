@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(ZIndex, bridge)]
-#[pyclass(name = "ZIndex", extends = PyComponent, eq)]
+#[pyclass(name = "ZIndex", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyZIndex(pub(crate) ZIndex);
 
@@ -12,8 +12,8 @@ pub struct PyZIndex(pub(crate) ZIndex);
 impl PyZIndex {
     #[new]
     #[pyo3(signature = (value = 0))]
-    pub fn new(value: i32) -> (Self, PyComponent) {
-        Self::from_owned(ZIndex(value))
+    pub fn new(value: i32) -> PyClassInitializer<Self> {
+        Self::from_owned(ZIndex(value)).into()
     }
 
     #[getter]
@@ -33,7 +33,7 @@ impl PyZIndex {
 }
 
 #[pywrap(GlobalZIndex, bridge)]
-#[pyclass(name = "GlobalZIndex", extends = PyComponent, eq)]
+#[pyclass(name = "GlobalZIndex", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGlobalZIndex(pub(crate) GlobalZIndex);
 
@@ -41,8 +41,8 @@ pub struct PyGlobalZIndex(pub(crate) GlobalZIndex);
 impl PyGlobalZIndex {
     #[new]
     #[pyo3(signature = (value = 0))]
-    pub fn new(value: i32) -> (Self, PyComponent) {
-        Self::from_owned(GlobalZIndex(value))
+    pub fn new(value: i32) -> PyClassInitializer<Self> {
+        Self::from_owned(GlobalZIndex(value)).into()
     }
 
     #[getter]

@@ -1,7 +1,7 @@
 use bevy::text::FontSize;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[pyclass(name = "FontSize", frozen, eq)]
+#[pyclass(name = "FontSize", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyFontSize {
     Px { value: f32 },

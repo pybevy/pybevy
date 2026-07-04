@@ -1,7 +1,7 @@
 use bevy::text::FontFeatureTag;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[pyclass(name = "FontFeatureTag", frozen, eq, hash)]
+#[pyclass(name = "FontFeatureTag", frozen, eq, hash, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyFontFeatureTag(pub(crate) FontFeatureTag);
 

@@ -40,7 +40,7 @@ enum HandleKind {
     WeakUuid(Uuid),
 }
 
-#[pyclass(name = "Handle", subclass, frozen)]
+#[pyclass(name = "Handle", subclass, frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyHandle {
     kind: HandleKind,

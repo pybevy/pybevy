@@ -40,13 +40,13 @@ impl PyCamera3d {
     pub fn new(
         depth_load_op: PyCamera3dDepthLoadOp,
         depth_texture_usages: PyCamera3dDepthTextureUsage,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         let camera = Camera3d {
             depth_load_op: depth_load_op.into(),
             depth_texture_usages: TextureUsages::from_bits_truncate(depth_texture_usages.0).into(),
         };
 
-        Self::from_owned(camera)
+        Self::from_owned(camera).into()
     }
 
     #[getter]

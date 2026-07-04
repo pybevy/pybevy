@@ -44,7 +44,7 @@ impl PyCamera {
         clear_color: Option<PyClearColorConfig>,
         viewport: Option<&PyViewport>,
         sub_camera_view: Option<PySubCameraView>,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let mut camera = Camera {
             is_active,
             order,
@@ -59,7 +59,7 @@ impl PyCamera {
         if let Some(scv) = sub_camera_view {
             camera.sub_camera_view = Some(scv.into());
         }
-        Ok(Self::from_owned(camera))
+        Ok(Self::from_owned(camera).into())
     }
 
     #[getter]

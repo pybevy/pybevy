@@ -12,7 +12,7 @@ use pyo3::{
 ///
 /// This is a marker class that provides the Python type hierarchy.
 /// All component types (Transform, PointLight, etc.) extend this class.
-#[pyclass(name = "Component", subclass, frozen)]
+#[pyclass(name = "Component", subclass, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyComponent;
 

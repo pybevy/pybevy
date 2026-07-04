@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::winit_settings::PyWinitSettings;
 
 #[pyplugin(bevy::winit::WinitPlugin)]
-#[pyclass(name = "WinitPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "WinitPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyWinitPlugin {
     pub settings: Option<PyWinitSettings>,
@@ -16,8 +16,8 @@ pub struct PyWinitPlugin {
 impl PyWinitPlugin {
     #[new]
     #[pyo3(signature = (settings = None))]
-    pub fn new(settings: Option<PyWinitSettings>) -> (Self, PyPlugin) {
-        (PyWinitPlugin { settings }, PyPlugin)
+    pub fn new(settings: Option<PyWinitSettings>) -> PyClassInitializer<Self> {
+        (PyWinitPlugin { settings }, PyPlugin).into()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

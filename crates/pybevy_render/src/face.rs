@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use wgpu_types::Face;
 
 #[pyenum(Face)]
-#[pyclass(name = "Face", eq)]
+#[pyclass(name = "Face", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyFace {
     Front,

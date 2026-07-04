@@ -1,7 +1,7 @@
 use accesskit::Role;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Role", eq, frozen)]
+#[pyclass(name = "Role", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyRole {
     Button,

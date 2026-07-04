@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use super::bounding_sphere::PyBoundingSphere;
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "Isometry3d", eq)]
+#[pyclass(name = "Isometry3d", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyIsometry3d {
     rotation: bevy::math::Quat,
@@ -125,7 +125,7 @@ impl PyIsometry3d {
     }
 }
 
-#[pyclass(name = "Aabb3d")]
+#[pyclass(name = "Aabb3d", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAabb3d {
     storage: ValueStorage<Aabb3d>,

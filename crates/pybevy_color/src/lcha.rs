@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Lcha", eq)]
+#[pyclass(name = "Lcha", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLcha {
     storage: ValueStorage<Lcha>,

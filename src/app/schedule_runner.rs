@@ -6,13 +6,13 @@ use pyo3::prelude::*;
 
 use crate::prelude::PyApp;
 
-#[pyclass(name = "ScheduleRunnerPlugin", extends = PyPlugin)]
+#[pyclass(name = "ScheduleRunnerPlugin", extends = PyPlugin, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduleRunnerPlugin {
     run_mode: PyRunMode,
 }
 
-#[pyclass(name = "RunMode", frozen, eq)]
+#[pyclass(name = "RunMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyRunMode {
     Loop { wait: Option<u64> },
@@ -40,8 +40,8 @@ impl PyScheduleRunnerPlugin {
 impl PyScheduleRunnerPlugin {
     #[new]
     #[pyo3(signature = (run_mode = PyRunMode::Loop { wait: None }))]
-    pub fn new(run_mode: PyRunMode) -> (Self, PyPlugin) {
-        (PyScheduleRunnerPlugin { run_mode }, PyPlugin)
+    pub fn new(run_mode: PyRunMode) -> PyClassInitializer<Self> {
+        (PyScheduleRunnerPlugin { run_mode }, PyPlugin).into()
     }
 
     #[staticmethod]

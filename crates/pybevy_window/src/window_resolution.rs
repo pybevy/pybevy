@@ -5,7 +5,7 @@ use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::{PyRefMut, prelude::*};
 
 #[pyfield]
-#[pyclass(name = "WindowResolution")]
+#[pyclass(name = "WindowResolution", from_py_object)]
 #[derive(Debug)]
 pub struct PyWindowResolution {
     storage: FieldStorage<WindowResolution>,

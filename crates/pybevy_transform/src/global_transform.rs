@@ -27,8 +27,8 @@ impl PartialEq for PyGlobalTransform {
 #[pymethods]
 impl PyGlobalTransform {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (GlobalTransform::default().into(), PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (GlobalTransform::default().into(), PyComponent).into()
     }
 
     #[staticmethod]

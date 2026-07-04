@@ -18,7 +18,7 @@ impl PyLightmap {
         image: &Bound<'_, PyAny>,
         uv_rect: Option<PyRect>,
         bicubic_sampling: bool,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(Lightmap {
             image: handle.try_into()?,
@@ -26,7 +26,7 @@ impl PyLightmap {
                 .map(Into::into)
                 .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0)),
             bicubic_sampling,
-        }))
+        }).into())
     }
 
     #[getter]

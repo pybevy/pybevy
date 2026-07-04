@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "Vec3A")]
+#[pyclass(name = "Vec3A", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVec3A {
     storage: ValueStorage<Vec3A>,

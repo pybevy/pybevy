@@ -12,7 +12,7 @@ use crate::ecs::{dynamic_condition::DynamicCondition, dynamic_system::DynamicSys
 
 /// Wrapper for a system with a run condition
 /// Similar to Bevy's IntoSystemConfigs::run_if()
-#[pyclass(name = "ConditionalSystem")]
+#[pyclass(name = "ConditionalSystem", from_py_object)]
 pub struct PyConditionalSystem {
     /// The system function to run
     pub system: Py<PyAny>,

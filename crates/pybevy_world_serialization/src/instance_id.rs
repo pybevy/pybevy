@@ -1,7 +1,7 @@
 use bevy::world_serialization::InstanceId;
 use pyo3::prelude::*;
 
-#[pyclass(name = "InstanceId", eq, frozen)]
+#[pyclass(name = "InstanceId", eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyInstanceId(pub(crate) InstanceId);
 

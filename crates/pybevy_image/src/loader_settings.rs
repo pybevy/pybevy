@@ -10,7 +10,7 @@ use crate::{
     image_format_setting::PyImageFormatSetting, sampler_descriptor::PyImageSamplerDescriptor,
 };
 
-#[pyclass(name = "ImageSampler", eq)]
+#[pyclass(name = "ImageSampler", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyImageSampler {
     Default(),
@@ -134,7 +134,7 @@ impl From<&PyImageSampler> for ImageSampler {
     }
 }
 
-#[pyclass(name = "ImageLoaderSettings")]
+#[pyclass(name = "ImageLoaderSettings", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyImageLoaderSettings {
     inner: ImageLoaderSettings,

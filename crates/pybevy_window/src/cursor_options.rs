@@ -14,8 +14,8 @@ pub struct PyCursorOptions {
 #[pymethods]
 impl PyCursorOptions {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(CursorOptions::default())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(CursorOptions::default()).into()
     }
 
     #[getter]

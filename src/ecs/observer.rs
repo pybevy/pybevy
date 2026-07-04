@@ -30,7 +30,7 @@ use super::{
 ///     entity: Entity
 ///     radius: float
 /// ```
-#[pyclass(name = "Event", subclass)]
+#[pyclass(name = "Event", subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEvent;
 
@@ -48,19 +48,19 @@ impl PyEvent {
 
 /// Marker class for component addition lifecycle events.
 /// Use with On[Add, ComponentType] to observe when components are added.
-#[pyclass(name = "Add")]
+#[pyclass(name = "Add", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAdd;
 
 /// Marker class for component insertion lifecycle events.
 /// Use with On[Insert, ComponentType] to observe when components are inserted.
-#[pyclass(name = "Insert")]
+#[pyclass(name = "Insert", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyInsert;
 
 /// Marker class for component removal lifecycle events.
 /// Use with On[Remove, ComponentType] to observe when components are removed.
-#[pyclass(name = "Remove")]
+#[pyclass(name = "Remove", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRemove;
 
@@ -68,13 +68,13 @@ pub struct PyRemove;
 /// Use with On[Discard, ComponentType] to observe when a component value is
 /// discarded because a new value is inserted over it. Fires before the value
 /// is replaced, so observers can still read the original component data.
-#[pyclass(name = "Discard")]
+#[pyclass(name = "Discard", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDiscard;
 
 /// Marker class for entity despawn lifecycle events.
 /// Use with On[Despawn, ComponentType] to observe when entities with the component are despawned.
-#[pyclass(name = "Despawn")]
+#[pyclass(name = "Despawn", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDespawn;
 
@@ -477,7 +477,7 @@ pub(crate) fn entity_has_component_type(
 ///
 /// This is returned by On.__class_getitem__ when using On[EventType] or On[EventType, BundleType]
 /// syntax in Python type annotations.
-#[pyclass(name = "OnTypeParam", frozen)]
+#[pyclass(name = "OnTypeParam", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyOnTypeParam {
     pub(crate) event_type: EventType,

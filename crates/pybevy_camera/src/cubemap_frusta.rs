@@ -14,13 +14,13 @@ pub struct PyCubemapFrusta {
 #[pymethods]
 impl PyCubemapFrusta {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             PyCubemapFrusta {
                 storage: ComponentStorage::owned(CubemapFrusta::default()),
             },
             PyComponent,
-        )
+        ).into()
     }
 
     pub fn frusta(&self, py: Python<'_>) -> PyResult<Vec<Py<PyFrustum>>> {

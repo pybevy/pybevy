@@ -13,8 +13,8 @@ pub struct PyPrimaryWindow {
 #[pymethods]
 impl PyPrimaryWindow {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(PrimaryWindow)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(PrimaryWindow).into()
     }
 
     pub fn __repr__(&self) -> &str {

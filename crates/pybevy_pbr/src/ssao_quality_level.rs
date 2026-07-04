@@ -1,7 +1,7 @@
 use bevy::pbr::ScreenSpaceAmbientOcclusionQualityLevel;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ScreenSpaceAmbientOcclusionQualityLevel", frozen, eq)]
+#[pyclass(name = "ScreenSpaceAmbientOcclusionQualityLevel", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyScreenSpaceAmbientOcclusionQualityLevel {
     Low(),

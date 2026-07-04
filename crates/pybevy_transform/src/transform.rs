@@ -30,14 +30,14 @@ impl PartialEq for PyTransform {
 impl PyTransform {
     #[new]
     #[pyo3(signature = (translation = PyVec3::ZERO, rotation = PyQuat::IDENTITY, scale = PyVec3::ONE))]
-    pub fn new(translation: PyVec3, rotation: PyQuat, scale: PyVec3) -> (Self, PyComponent) {
+    pub fn new(translation: PyVec3, rotation: PyQuat, scale: PyVec3) -> PyClassInitializer<Self> {
         let transform = Transform {
             translation: translation.into(),
             rotation: rotation.into(),
             scale: scale.into(),
         };
 
-        (transform.into(), PyComponent)
+        (transform.into(), PyComponent).into()
     }
 
     #[staticmethod]

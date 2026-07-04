@@ -4,7 +4,7 @@ use bevy::mesh::{MeshVertexAttribute, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
 
-#[pyclass(name = "MeshVertexAttribute", frozen, eq)]
+#[pyclass(name = "MeshVertexAttribute", frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshVertexAttribute(pub MeshVertexAttribute);
 
@@ -39,7 +39,7 @@ impl PyMeshVertexAttribute {
     }
 }
 
-#[pyclass(name = "VertexAttributeValues", eq)]
+#[pyclass(name = "VertexAttributeValues", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyVertexAttributeValues(pub VertexAttributeValues);
 

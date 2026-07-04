@@ -46,7 +46,7 @@ pub enum MessageClass {
     Writer,
 }
 
-#[pyclass(frozen)]
+#[pyclass(frozen, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageTypeParam {
     pub(crate) ty: MessageClass,

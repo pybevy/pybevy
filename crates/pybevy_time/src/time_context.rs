@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-#[pyclass(name = "Fixed", frozen)]
+#[pyclass(name = "Fixed", frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PyFixed;
 
@@ -16,7 +16,7 @@ impl PyFixed {
     }
 }
 
-#[pyclass(name = "Real", frozen)]
+#[pyclass(name = "Real", frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PyReal;
 
@@ -32,7 +32,7 @@ impl PyReal {
     }
 }
 
-#[pyclass(name = "Virtual", frozen)]
+#[pyclass(name = "Virtual", frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PyVirtual;
 

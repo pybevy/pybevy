@@ -19,8 +19,8 @@ pub struct PyAnimationTransitions {
 #[pymethods]
 impl PyAnimationTransitions {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(AnimationTransitions::new())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(AnimationTransitions::new()).into()
     }
 
     pub fn play(

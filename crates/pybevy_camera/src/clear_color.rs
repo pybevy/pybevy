@@ -5,7 +5,7 @@ use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 #[pyresource(ClearColor, bridge)]
-#[pyclass(name = "ClearColor", extends = PyResource, eq)]
+#[pyclass(name = "ClearColor", extends = PyResource, eq, from_py_object)]
 #[derive(Debug)]
 pub struct PyClearColor {
     pub storage: ResourceStorage<ClearColor>,
@@ -30,8 +30,8 @@ impl PartialEq for PyClearColor {
 impl PyClearColor {
     #[new]
     #[pyo3(signature = (color = ClearColor::default().0.into()))]
-    pub fn new(color: PyColor) -> (Self, PyResource) {
-        Self::from_owned(ClearColor(color.into()))
+    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
+        Self::from_owned(ClearColor(color.into())).into()
     }
 
     #[getter]

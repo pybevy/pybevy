@@ -26,8 +26,8 @@ impl PyTextBounds {
 
     #[new]
     #[pyo3(signature = (width = None, height = None))]
-    pub fn new(width: Option<f32>, height: Option<f32>) -> (Self, PyComponent) {
-        Self::from_owned(TextBounds { width, height })
+    pub fn new(width: Option<f32>, height: Option<f32>) -> PyClassInitializer<Self> {
+        Self::from_owned(TextBounds { width, height }).into()
     }
 
     #[getter]

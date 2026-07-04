@@ -4,15 +4,15 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(LineHeight, bridge, copy)]
-#[pyclass(name = "LineHeight", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "LineHeight", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyLineHeight(pub(crate) LineHeight);
 
 #[pymethods]
 impl PyLineHeight {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(LineHeight::default())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(LineHeight::default()).into()
     }
 
     #[staticmethod]

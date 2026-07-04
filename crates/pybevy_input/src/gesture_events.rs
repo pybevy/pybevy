@@ -8,7 +8,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pymessage(PinchGesture)]
-#[pyclass(name = "PinchGesture", extends = PyMessage, eq)]
+#[pyclass(name = "PinchGesture", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPinchGesture(pub f32);
 
@@ -27,8 +27,8 @@ impl From<&PinchGesture> for PyPinchGesture {
 #[pymethods]
 impl PyPinchGesture {
     #[new]
-    fn new(value: f32) -> (Self, PyMessage) {
-        (PyPinchGesture(value), PyMessage)
+    fn new(value: f32) -> PyClassInitializer<Self> {
+        (PyPinchGesture(value), PyMessage).into()
     }
 
     #[getter]
@@ -42,7 +42,7 @@ impl PyPinchGesture {
 }
 
 #[pymessage(RotationGesture)]
-#[pyclass(name = "RotationGesture", extends = PyMessage, eq)]
+#[pyclass(name = "RotationGesture", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRotationGesture(pub f32);
 
@@ -61,8 +61,8 @@ impl From<&RotationGesture> for PyRotationGesture {
 #[pymethods]
 impl PyRotationGesture {
     #[new]
-    fn new(value: f32) -> (Self, PyMessage) {
-        (PyRotationGesture(value), PyMessage)
+    fn new(value: f32) -> PyClassInitializer<Self> {
+        (PyRotationGesture(value), PyMessage).into()
     }
 
     #[getter]
@@ -76,7 +76,7 @@ impl PyRotationGesture {
 }
 
 #[pymessage(DoubleTapGesture)]
-#[pyclass(name = "DoubleTapGesture", extends = PyMessage, eq)]
+#[pyclass(name = "DoubleTapGesture", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDoubleTapGesture;
 
@@ -95,8 +95,8 @@ impl From<&DoubleTapGesture> for PyDoubleTapGesture {
 #[pymethods]
 impl PyDoubleTapGesture {
     #[new]
-    fn new() -> (Self, PyMessage) {
-        (PyDoubleTapGesture, PyMessage)
+    fn new() -> PyClassInitializer<Self> {
+        (PyDoubleTapGesture, PyMessage).into()
     }
 
     fn __repr__(&self) -> String {
@@ -105,7 +105,7 @@ impl PyDoubleTapGesture {
 }
 
 #[pymessage(PanGesture)]
-#[pyclass(name = "PanGesture", extends = PyMessage, eq)]
+#[pyclass(name = "PanGesture", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPanGesture(pub f32, pub f32);
 
@@ -124,8 +124,8 @@ impl From<&PanGesture> for PyPanGesture {
 #[pymethods]
 impl PyPanGesture {
     #[new]
-    fn new(x: f32, y: f32) -> (Self, PyMessage) {
-        (PyPanGesture(x, y), PyMessage)
+    fn new(x: f32, y: f32) -> PyClassInitializer<Self> {
+        (PyPanGesture(x, y), PyMessage).into()
     }
 
     #[getter]

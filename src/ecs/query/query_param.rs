@@ -9,7 +9,7 @@ use crate::ecs::{component_type::PyComponentType, filter::QueryFilter};
 ///
 /// `Query[Transform, With[Velocity]]` would create a `PyQueryParam` with
 /// `component_types` containing `Transform` and `filters` containing `With[Velocity]
-#[pyclass(name = "QueryParam", frozen)]
+#[pyclass(name = "QueryParam", frozen, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyQueryParam {
     /// The component types in the query parameter.

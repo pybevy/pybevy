@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[pyasset(ShaderMaterial, bridge, not_loadable, input_converter)]
-#[pyclass(name = "ShaderMaterial", extends = PyAsset)]
+#[pyclass(name = "ShaderMaterial", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
     pub storage: AssetStorage<ShaderMaterial>,
@@ -55,7 +55,7 @@ impl PyShaderMaterial {
         shader_def_names: Option<Vec<String>>,
         textures: Option<Py<PyList>>,
         bindings_wgsl: Option<String>,
-    ) -> PyResult<(Self, PyAsset)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let mut py_mat = base.extract::<PyRefMut<'_, PyStandardMaterial>>()?;
         let std_mat: StandardMaterial = py_mat.take()?;
 
@@ -110,7 +110,7 @@ impl PyShaderMaterial {
                 bindings_wgsl,
             },
         };
-        Ok(Self::from_owned(material))
+        Ok(Self::from_owned(material).into())
     }
 
     fn get_shader_defs(&self) -> PyResult<u32> {
@@ -218,7 +218,7 @@ impl PyShaderMaterial {
 }
 
 #[pyplugin(MaterialPlugin::<ShaderMaterial>)]
-#[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
 
@@ -226,8 +226,8 @@ pub struct PyShaderMaterialPlugin;
 impl PyShaderMaterialPlugin {
     #[new]
     #[pyo3(signature = ())]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyShaderMaterialPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyShaderMaterialPlugin, PyPlugin).into()
     }
 }
 
@@ -241,7 +241,7 @@ impl PluginBuild for PyShaderMaterialPlugin {
 }
 
 #[pyhandle(MeshMaterial3d::<ShaderMaterial>, "MeshMaterial3dShader")]
-#[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, frozen)]
+#[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial3dShader(pub(crate) PyHandle);
 
@@ -262,7 +262,7 @@ impl From<&MeshMaterial3d<ShaderMaterial>> for PyMeshMaterial3dShader {
 #[pymethods]
 impl PyMeshMaterial3dShader {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(handle)?;
 
         // Validate asset type
@@ -275,7 +275,7 @@ impl PyMeshMaterial3dShader {
             )));
         }
 
-        Ok((Self(handle), PyComponent))
+        Ok((Self(handle), PyComponent).into())
     }
 
     #[getter]

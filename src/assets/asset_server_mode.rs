@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(AssetServerMode)]
-#[pyclass(name = "AssetServerMode", eq, frozen)]
+#[pyclass(name = "AssetServerMode", eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyAssetServerMode {
     Unprocessed,

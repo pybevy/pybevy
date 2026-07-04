@@ -34,14 +34,14 @@ impl PyClusteredDecal {
         metallic_roughness_texture: Option<&Bound<'_, PyAny>>,
         emissive_texture: Option<&Bound<'_, PyAny>>,
         tag: u32,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(ClusteredDecal {
             base_color_texture: convert_optional_handle(base_color_texture)?,
             normal_map_texture: convert_optional_handle(normal_map_texture)?,
             metallic_roughness_texture: convert_optional_handle(metallic_roughness_texture)?,
             emissive_texture: convert_optional_handle(emissive_texture)?,
             tag,
-        }))
+        }).into())
     }
 
     #[getter]

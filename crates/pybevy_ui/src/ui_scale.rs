@@ -14,13 +14,13 @@ pub struct PyUiScale {
 impl PyUiScale {
     #[new]
     #[pyo3(signature = (scale = 1.0))]
-    pub fn new(scale: f32) -> (Self, PyResource) {
+    pub fn new(scale: f32) -> PyClassInitializer<Self> {
         (
             Self {
                 storage: ResourceStorage::owned(UiScale(scale)),
             },
             PyResource,
-        )
+        ).into()
     }
 
     #[getter]

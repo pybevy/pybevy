@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircularSectorMeshBuilder,
 };
 
-#[pyclass(name = "CircularSector", extends = PyMeshable, eq, frozen)]
+#[pyclass(name = "CircularSector", extends = PyMeshable, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCircularSector(pub(crate) CircularSector);
 
@@ -29,11 +29,11 @@ impl From<CircularSector> for PyCircularSector {
 impl PyCircularSector {
     #[new]
     #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * std::f32::consts::FRAC_PI_3, *, arc = None))]
-    pub fn new(radius: f32, half_angle: f32, arc: Option<PyArc2d>) -> (Self, PyMeshable) {
+    pub fn new(radius: f32, half_angle: f32, arc: Option<PyArc2d>) -> PyClassInitializer<Self> {
         if let Some(a) = arc {
-            return (Self(CircularSector { arc: a.into() }), PyMeshable);
+            return (Self(CircularSector { arc: a.into() }), PyMeshable).into();
         }
-        (Self(CircularSector::new(radius, half_angle)), PyMeshable)
+        (Self(CircularSector::new(radius, half_angle)), PyMeshable).into()
     }
 
     #[staticmethod]

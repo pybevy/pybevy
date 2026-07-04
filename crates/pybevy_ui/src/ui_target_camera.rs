@@ -13,8 +13,8 @@ pub struct PyUiTargetCamera {
 #[pymethods]
 impl PyUiTargetCamera {
     #[new]
-    pub fn new(entity: PyEntity) -> (Self, PyComponent) {
-        Self::from_owned(UiTargetCamera(entity.into()))
+    pub fn new(entity: PyEntity) -> pyo3::PyClassInitializer<Self> {
+        Self::from_owned(UiTargetCamera(entity.into())).into()
     }
 
     #[getter]

@@ -47,15 +47,15 @@ pub(crate) fn configured_asset_plugin() -> AssetPlugin {
     }
 }
 
-#[pyclass(name = "AssetPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "AssetPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAssetPlugin;
 
 #[pymethods]
 impl PyAssetPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyAssetPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyAssetPlugin, PyPlugin).into()
     }
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {

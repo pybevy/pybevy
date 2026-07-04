@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::alpha_mode_2d::PyAlphaMode2d;
 
 #[pyasset(ColorMaterial, bridge)]
-#[pyclass(name = "ColorMaterial", extends = PyAsset)]
+#[pyclass(name = "ColorMaterial", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyColorMaterial {
     pub(crate) storage: AssetStorage<ColorMaterial>,
@@ -25,7 +25,7 @@ impl PyColorMaterial {
         color: PyColor,
         texture: Option<&Bound<'_, PyAny>>,
         alpha_mode: PyAlphaMode2d,
-    ) -> PyResult<(Self, PyAsset)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let texture_handle = match texture {
             Some(handle_obj) => {
                 let handle = extract_handle_from_any(handle_obj)?;
@@ -39,7 +39,7 @@ impl PyColorMaterial {
             texture: texture_handle,
             alpha_mode: alpha_mode.into(),
             uv_transform: Affine2::IDENTITY,
-        }))
+        }).into())
     }
 
     #[getter]

@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use super::aabb2d::PyAabb2d;
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "BoundingCircle")]
+#[pyclass(name = "BoundingCircle", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingCircle {
     storage: ValueStorage<BoundingCircle>,

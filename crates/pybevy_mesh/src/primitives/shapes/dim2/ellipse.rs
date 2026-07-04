@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyEllipseMeshBuilder};
 
-#[pyclass(name = "Ellipse", extends = PyMeshable, eq)]
+#[pyclass(name = "Ellipse", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyEllipse(pub(crate) Ellipse);
 
@@ -30,9 +30,9 @@ impl From<Ellipse> for PyEllipse {
 impl PyEllipse {
     #[new]
     #[pyo3(signature = (half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
-    pub fn new(half_size: PyVec2) -> (Self, PyMeshable) {
+    pub fn new(half_size: PyVec2) -> PyClassInitializer<Self> {
         let half_size: Vec2 = half_size.into();
-        (Self(Ellipse::new(half_size.x, half_size.y)), PyMeshable)
+        (Self(Ellipse::new(half_size.x, half_size.y)), PyMeshable).into()
     }
 
     #[getter]

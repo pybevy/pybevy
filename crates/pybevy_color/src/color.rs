@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use super::{common::fmt_f32, hsla::PyHsla, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Color", extends = PyMaterializable, eq)]
+#[pyclass(name = "Color", extends = PyMaterializable, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyColor(pub Color);
 
@@ -38,8 +38,8 @@ impl PyColor {
 #[pymethods]
 impl PyColor {
     #[new]
-    pub fn new() -> (Self, PyMaterializable) {
-        (PyColor(Color::WHITE), PyMaterializable)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyColor(Color::WHITE), PyMaterializable).into()
     }
 
     pub fn __repr__(&self) -> String {

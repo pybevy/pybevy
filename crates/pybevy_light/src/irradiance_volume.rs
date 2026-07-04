@@ -17,7 +17,7 @@ impl PyIrradianceVolume {
         voxels: Option<&Bound<'_, PyAny>>,
         intensity: f32,
         affects_lightmapped_meshes: bool,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let handle = match voxels {
             Some(h) => Handle::<Image>::try_from(extract_handle_from_any(h)?)?,
             None => Handle::default(),
@@ -26,7 +26,7 @@ impl PyIrradianceVolume {
             voxels: handle,
             intensity,
             affects_lightmapped_meshes,
-        }))
+        }).into())
     }
 
     #[getter]

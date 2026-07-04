@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(WindowResized)]
-#[pyclass(name = "WindowResized", extends = PyMessage, eq)]
+#[pyclass(name = "WindowResized", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowResized {
     pub width: f32,
@@ -25,7 +25,7 @@ impl From<&WindowResized> for PyWindowResized {
 #[pymethods]
 impl PyWindowResized {
     #[new]
-    fn new(width: f32, height: f32, window: PyEntity) -> (Self, PyMessage) {
+    fn new(width: f32, height: f32, window: PyEntity) -> PyClassInitializer<Self> {
         (
             PyWindowResized {
                 width,
@@ -33,7 +33,7 @@ impl PyWindowResized {
                 window,
             },
             PyMessage,
-        )
+        ).into()
     }
 
     #[getter]

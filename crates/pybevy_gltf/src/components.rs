@@ -16,8 +16,8 @@ pub struct PyGltfExtras {
 impl PyGltfExtras {
     #[new]
     #[pyo3(signature = (value = String::new()))]
-    pub fn new(value: String) -> (Self, PyComponent) {
-        (GltfExtras { value }.into(), PyComponent)
+    pub fn new(value: String) -> PyClassInitializer<Self> {
+        (GltfExtras { value }.into(), PyComponent).into()
     }
 
     #[getter]
@@ -50,8 +50,8 @@ pub struct PyGltfMeshName {
 impl PyGltfMeshName {
     #[new]
     #[pyo3(signature = (name = String::new()))]
-    pub fn new(name: String) -> (Self, PyComponent) {
-        (GltfMeshName(name).into(), PyComponent)
+    pub fn new(name: String) -> PyClassInitializer<Self> {
+        (GltfMeshName(name).into(), PyComponent).into()
     }
 
     #[getter]
@@ -82,8 +82,8 @@ pub struct PyGltfMaterialName {
 impl PyGltfMaterialName {
     #[new]
     #[pyo3(signature = (name = String::new()))]
-    pub fn new(name: String) -> (Self, PyComponent) {
-        (GltfMaterialName(name).into(), PyComponent)
+    pub fn new(name: String) -> PyClassInitializer<Self> {
+        (GltfMaterialName(name).into(), PyComponent).into()
     }
 
     #[getter]
@@ -114,8 +114,8 @@ pub struct PyGltfSceneExtras {
 impl PyGltfSceneExtras {
     #[new]
     #[pyo3(signature = (value = String::new()))]
-    pub fn new(value: String) -> (Self, PyComponent) {
-        (GltfSceneExtras { value }.into(), PyComponent)
+    pub fn new(value: String) -> PyClassInitializer<Self> {
+        (GltfSceneExtras { value }.into(), PyComponent).into()
     }
 
     #[getter]
@@ -148,8 +148,8 @@ pub struct PyGltfMeshExtras {
 impl PyGltfMeshExtras {
     #[new]
     #[pyo3(signature = (value = String::new()))]
-    pub fn new(value: String) -> (Self, PyComponent) {
-        (GltfMeshExtras { value }.into(), PyComponent)
+    pub fn new(value: String) -> PyClassInitializer<Self> {
+        (GltfMeshExtras { value }.into(), PyComponent).into()
     }
 
     #[getter]
@@ -182,8 +182,8 @@ pub struct PyGltfMaterialExtras {
 impl PyGltfMaterialExtras {
     #[new]
     #[pyo3(signature = (value = String::new()))]
-    pub fn new(value: String) -> (Self, PyComponent) {
-        (GltfMaterialExtras { value }.into(), PyComponent)
+    pub fn new(value: String) -> PyClassInitializer<Self> {
+        (GltfMaterialExtras { value }.into(), PyComponent).into()
     }
 
     #[getter]

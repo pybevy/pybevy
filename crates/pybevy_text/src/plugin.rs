@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(TextPlugin)]
-#[pyclass(name = "TextPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "TextPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTextPlugin;
 
 #[pymethods]
 impl PyTextPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyTextPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyTextPlugin, PyPlugin).into()
     }
 }
 

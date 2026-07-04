@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Rot2", eq)]
+#[pyclass(name = "Rot2", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRot2(pub(crate) Rot2);
 

@@ -1,7 +1,7 @@
 use bevy::input::gamepad::GamepadRumbleIntensity;
 use pyo3::prelude::*;
 
-#[pyclass(name = "GamepadRumbleIntensity", eq, frozen)]
+#[pyclass(name = "GamepadRumbleIntensity", eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyGamepadRumbleIntensity {
     pub strong_motor: f32,

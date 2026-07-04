@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ImageFormat)]
-#[pyclass(name = "ImageFormat", eq, hash, frozen)]
+#[pyclass(name = "ImageFormat", eq, hash, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyImageFormat {
     Bmp,

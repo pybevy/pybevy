@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[pymessage(GamepadButtonChanged)]
-#[pyclass(name = "GamepadButtonChanged", extends = PyMessage)]
+#[pyclass(name = "GamepadButtonChanged", extends = PyMessage, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadButtonChanged {
     pub button: PyGamepadButton,
@@ -43,8 +43,8 @@ impl From<&GamepadButtonChanged> for PyGamepadButtonChanged {
 #[pymethods]
 impl PyGamepadButtonChanged {
     #[new]
-    fn new(button: PyGamepadButton, value: f32) -> (Self, PyMessage) {
-        (PyGamepadButtonChanged { button, value }, PyMessage)
+    fn new(button: PyGamepadButton, value: f32) -> PyClassInitializer<Self> {
+        (PyGamepadButtonChanged { button, value }, PyMessage).into()
     }
 
     #[getter]
@@ -66,7 +66,7 @@ impl PyGamepadButtonChanged {
 }
 
 #[pymessage(GamepadAxisChanged)]
-#[pyclass(name = "GamepadAxisChanged", extends = PyMessage)]
+#[pyclass(name = "GamepadAxisChanged", extends = PyMessage, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadAxisChanged {
     pub axis: PyGamepadAxis,
@@ -97,8 +97,8 @@ impl From<&GamepadAxisChanged> for PyGamepadAxisChanged {
 #[pymethods]
 impl PyGamepadAxisChanged {
     #[new]
-    fn new(axis: PyGamepadAxis, value: f32) -> (Self, PyMessage) {
-        (PyGamepadAxisChanged { axis, value }, PyMessage)
+    fn new(axis: PyGamepadAxis, value: f32) -> PyClassInitializer<Self> {
+        (PyGamepadAxisChanged { axis, value }, PyMessage).into()
     }
 
     #[getter]
@@ -120,7 +120,7 @@ impl PyGamepadAxisChanged {
 }
 
 #[pymessage(GamepadConnectionEvent)]
-#[pyclass(name = "GamepadConnection", extends = PyMessage, eq)]
+#[pyclass(name = "GamepadConnection", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadConnection {
     pub connected: bool,
@@ -181,7 +181,7 @@ impl PyGamepadConnection {
         name: Option<String>,
         vendor_id: Option<u16>,
         product_id: Option<u16>,
-    ) -> (Self, PyMessage) {
+    ) -> PyClassInitializer<Self> {
         (
             PyGamepadConnection {
                 connected,
@@ -190,7 +190,7 @@ impl PyGamepadConnection {
                 product_id,
             },
             PyMessage,
-        )
+        ).into()
     }
 
     #[getter]
@@ -238,7 +238,7 @@ impl PyGamepadConnection {
 }
 
 #[pymessage(GamepadButtonStateChangedEvent)]
-#[pyclass(name = "GamepadButtonStateChanged", extends = PyMessage, eq)]
+#[pyclass(name = "GamepadButtonStateChanged", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonStateChanged {
     pub button: PyGamepadButton,
@@ -269,8 +269,8 @@ impl From<&GamepadButtonStateChangedEvent> for PyGamepadButtonStateChanged {
 #[pymethods]
 impl PyGamepadButtonStateChanged {
     #[new]
-    fn new(button: PyGamepadButton, state: PyButtonState) -> (Self, PyMessage) {
-        (PyGamepadButtonStateChanged { button, state }, PyMessage)
+    fn new(button: PyGamepadButton, state: PyButtonState) -> PyClassInitializer<Self> {
+        (PyGamepadButtonStateChanged { button, state }, PyMessage).into()
     }
 
     #[getter]

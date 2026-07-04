@@ -15,8 +15,8 @@ pub struct PyAnchor {
 impl PyAnchor {
     #[new]
     #[pyo3(signature = (value = PyVec2::ZERO))]
-    pub fn new(value: PyVec2) -> (Self, PyComponent) {
-        Self::from_owned(Anchor(value.into()))
+    pub fn new(value: PyVec2) -> PyClassInitializer<Self> {
+        Self::from_owned(Anchor(value.into())).into()
     }
 
     #[staticmethod]

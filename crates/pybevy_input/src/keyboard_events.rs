@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(KeyboardFocusLost)]
-#[pyclass(name = "KeyboardFocusLost", extends = PyMessage, eq)]
+#[pyclass(name = "KeyboardFocusLost", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyKeyboardFocusLost;
 
@@ -23,8 +23,8 @@ impl From<&KeyboardFocusLost> for PyKeyboardFocusLost {
 #[pymethods]
 impl PyKeyboardFocusLost {
     #[new]
-    fn new() -> (Self, PyMessage) {
-        (PyKeyboardFocusLost, PyMessage)
+    fn new() -> PyClassInitializer<Self> {
+        (PyKeyboardFocusLost, PyMessage).into()
     }
 
     fn __repr__(&self) -> String {

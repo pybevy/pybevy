@@ -2,7 +2,7 @@ use bevy::math::IVec2;
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-#[pyclass(name = "IVec2")]
+#[pyclass(name = "IVec2", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyIVec2 {
     storage: ValueStorage<IVec2>,

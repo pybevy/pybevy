@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{button_state::PyButtonState, key_code::PyKeyCode};
 
-#[pyclass(name = "KeyboardInput", extends = PyMessage, eq)]
+#[pyclass(name = "KeyboardInput", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyKeyboardInput {
     pub key_code: PyKeyCode,
@@ -35,7 +35,7 @@ impl PyKeyboardInput {
         logical_key: Option<String>,
         text: Option<String>,
         window: Option<PyEntity>,
-    ) -> (Self, PyMessage) {
+    ) -> PyClassInitializer<Self> {
         (
             PyKeyboardInput {
                 key_code,
@@ -50,7 +50,7 @@ impl PyKeyboardInput {
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
-        )
+        ).into()
     }
 
     #[getter]

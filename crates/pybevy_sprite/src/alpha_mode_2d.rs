@@ -1,7 +1,7 @@
 use bevy::sprite_render::AlphaMode2d;
 use pyo3::prelude::*;
 
-#[pyclass(name = "AlphaMode2d")]
+#[pyclass(name = "AlphaMode2d", from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyAlphaMode2d(AlphaMode2d);
 

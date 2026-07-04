@@ -1,7 +1,7 @@
 use bevy::light::atmosphere::Falloff;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Falloff", frozen)]
+#[pyclass(name = "Falloff", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyFalloff(pub(crate) Falloff);
 

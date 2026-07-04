@@ -3,7 +3,7 @@ use std::path::Path;
 use bevy::asset::AssetPath;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[pyclass(name = "AssetPath", eq, frozen)]
+#[pyclass(name = "AssetPath", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAssetPath {
     path: String,

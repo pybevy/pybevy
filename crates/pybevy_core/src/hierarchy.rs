@@ -69,8 +69,8 @@ impl PyChildOf {
 #[pymethods]
 impl PyChildOf {
     #[new]
-    pub fn new(parent: PyEntity) -> (Self, PyComponent) {
-        Self::from_owned(ChildOf(parent.0))
+    pub fn new(parent: PyEntity) -> PyClassInitializer<Self> {
+        Self::from_owned(ChildOf(parent.0)).into()
     }
 
     pub fn parent(&self) -> PyResult<PyEntity> {
@@ -86,7 +86,7 @@ impl PyChildOf {
 ///
 /// Maintained by Bevy when ChildOf relationships change.
 /// Not modifiable directly — add/remove ChildOf on children instead.
-#[pyclass(name = "Children", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Children", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyChildren {
     entities: Vec<PyEntity>,

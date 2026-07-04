@@ -10,7 +10,7 @@ use crate::{
     primitives::{PyConeMeshBuilder, shapes::dim2::circle::PyCircle},
 };
 
-#[pyclass(name = "Cone", extends = PyMeshable, eq)]
+#[pyclass(name = "Cone", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCone(pub(crate) Cone);
 
@@ -18,8 +18,8 @@ pub struct PyCone(pub(crate) Cone);
 impl PyCone {
     #[new]
     #[pyo3(signature = (radius=0.5, height=1.0))]
-    pub fn new(radius: f32, height: f32) -> (Self, PyMeshable) {
-        (Self(Cone::new(radius, height)), PyMeshable)
+    pub fn new(radius: f32, height: f32) -> PyClassInitializer<Self> {
+        (Self(Cone::new(radius, height)), PyMeshable).into()
     }
 
     #[getter]

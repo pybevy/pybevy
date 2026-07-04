@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::vec4::PyVec4;
 
-#[pyclass(name = "HalfSpace")]
+#[pyclass(name = "HalfSpace", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyHalfSpace {
     pub(crate) inner: HalfSpace,

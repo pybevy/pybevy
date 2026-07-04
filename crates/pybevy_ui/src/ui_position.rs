@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[pyclass(name = "UiPosition", eq)]
+#[pyclass(name = "UiPosition", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyUiPosition {
     pub(crate) inner: UiPosition,

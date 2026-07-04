@@ -4,7 +4,7 @@ use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 #[pyresource(PointLightShadowMap, bridge)]
-#[pyclass(name = "PointLightShadowMap", extends = PyResource)]
+#[pyclass(name = "PointLightShadowMap", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyPointLightShadowMap {
     pub storage: ResourceStorage<PointLightShadowMap>,
@@ -14,11 +14,11 @@ pub struct PyPointLightShadowMap {
 impl PyPointLightShadowMap {
     #[new]
     #[pyo3(signature = (size = 1024))]
-    pub fn new(size: usize) -> (Self, PyResource) {
+    pub fn new(size: usize) -> PyClassInitializer<Self> {
         (
             PyPointLightShadowMap::from(PointLightShadowMap { size }),
             PyResource,
-        )
+        ).into()
     }
 
     #[getter]
@@ -38,7 +38,7 @@ impl PyPointLightShadowMap {
 }
 
 #[pyresource(DirectionalLightShadowMap, bridge)]
-#[pyclass(name = "DirectionalLightShadowMap", extends = PyResource)]
+#[pyclass(name = "DirectionalLightShadowMap", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyDirectionalLightShadowMap {
     pub storage: ResourceStorage<DirectionalLightShadowMap>,
@@ -48,11 +48,11 @@ pub struct PyDirectionalLightShadowMap {
 impl PyDirectionalLightShadowMap {
     #[new]
     #[pyo3(signature = (size = 2048))]
-    pub fn new(size: usize) -> (Self, PyResource) {
+    pub fn new(size: usize) -> PyClassInitializer<Self> {
         (
             PyDirectionalLightShadowMap::from(DirectionalLightShadowMap { size }),
             PyResource,
-        )
+        ).into()
     }
 
     #[getter]

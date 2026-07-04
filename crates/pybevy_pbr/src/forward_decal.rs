@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(ForwardDecal, unit, bridge)]
-#[pyclass(name = "ForwardDecal", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "ForwardDecal", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyForwardDecal;
 
@@ -30,8 +30,8 @@ impl TryFrom<&ForwardDecal> for PyForwardDecal {
 #[pymethods]
 impl PyForwardDecal {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyForwardDecal, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyForwardDecal, PyComponent).into()
     }
 
     fn __repr__(&self) -> &'static str {

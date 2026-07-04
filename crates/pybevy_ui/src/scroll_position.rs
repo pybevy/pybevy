@@ -15,8 +15,8 @@ pub struct PyScrollPosition {
 impl PyScrollPosition {
     #[new]
     #[pyo3(signature = (x = 0.0, y = 0.0))]
-    pub fn new(x: f32, y: f32) -> (Self, PyComponent) {
-        Self::from_owned(ScrollPosition(bevy::math::Vec2::new(x, y)))
+    pub fn new(x: f32, y: f32) -> PyClassInitializer<Self> {
+        Self::from_owned(ScrollPosition(bevy::math::Vec2::new(x, y))).into()
     }
 
     #[getter]

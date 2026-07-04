@@ -7,7 +7,7 @@ use crate::{
     radial_gradient::PyRadialGradient,
 };
 
-#[pyclass(name = "Gradient", eq)]
+#[pyclass(name = "Gradient", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGradient {
     pub inner: Gradient,

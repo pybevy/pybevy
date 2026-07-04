@@ -13,7 +13,7 @@ pub enum FileDragAndDropData {
 }
 
 #[pymessage(FileDragAndDrop)]
-#[pyclass(name = "FileDragAndDrop", extends = PyMessage, eq)]
+#[pyclass(name = "FileDragAndDrop", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyFileDragAndDrop {
     data: FileDragAndDropData,

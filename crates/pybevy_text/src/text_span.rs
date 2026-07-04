@@ -14,8 +14,8 @@ pub struct PyTextSpan {
 impl PyTextSpan {
     #[new]
     #[pyo3(signature = (text = String::new()))]
-    pub fn new(text: String) -> (Self, PyComponent) {
-        (TextSpan::new(text).into(), PyComponent)
+    pub fn new(text: String) -> PyClassInitializer<Self> {
+        (TextSpan::new(text).into(), PyComponent).into()
     }
 
     #[getter]

@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
 
 #[pyhandle(MeshMaterial3d::<StandardMaterial>, "MeshMaterial3d")]
-#[pyclass(name = "MeshMaterial3d", extends = PyComponent, eq, frozen)]
+#[pyclass(name = "MeshMaterial3d", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial3d(pub(crate) PyHandle);
 
@@ -25,7 +25,7 @@ impl From<&MeshMaterial3d<StandardMaterial>> for PyMeshMaterial3d {
 #[pymethods]
 impl PyMeshMaterial3d {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(handle)?;
 
         // Validate asset type
@@ -38,7 +38,7 @@ impl PyMeshMaterial3d {
             )));
         }
 
-        Ok((Self(handle), PyComponent))
+        Ok((Self(handle), PyComponent).into())
     }
 
     /// Support `MeshMaterial3d[HologramMaterial]` subscript notation.

@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[pymessage(MouseButtonInput)]
-#[pyclass(name = "MouseButtonInput", extends = PyMessage, eq)]
+#[pyclass(name = "MouseButtonInput", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseButtonInput {
     pub button: PyMouseButton,
@@ -52,7 +52,7 @@ impl PyMouseButtonInput {
         button: PyMouseButton,
         state: PyButtonState,
         window: Option<PyEntity>,
-    ) -> (Self, PyMessage) {
+    ) -> PyClassInitializer<Self> {
         (
             PyMouseButtonInput {
                 button,
@@ -60,7 +60,7 @@ impl PyMouseButtonInput {
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
-        )
+        ).into()
     }
 
     #[getter]
@@ -87,7 +87,7 @@ impl PyMouseButtonInput {
 }
 
 #[pymessage(MouseMotion)]
-#[pyclass(name = "MouseMotion", extends = PyMessage, eq)]
+#[pyclass(name = "MouseMotion", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseMotion {
     pub delta: PyVec2,
@@ -115,8 +115,8 @@ impl From<&MouseMotion> for PyMouseMotion {
 #[pymethods]
 impl PyMouseMotion {
     #[new]
-    fn new(delta: PyVec2) -> (Self, PyMessage) {
-        (PyMouseMotion { delta }, PyMessage)
+    fn new(delta: PyVec2) -> PyClassInitializer<Self> {
+        (PyMouseMotion { delta }, PyMessage).into()
     }
 
     #[getter]
@@ -131,7 +131,7 @@ impl PyMouseMotion {
 }
 
 #[pymessage(MouseWheel)]
-#[pyclass(name = "MouseWheel", extends = PyMessage, eq)]
+#[pyclass(name = "MouseWheel", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseWheel {
     pub x: f32,
@@ -169,7 +169,7 @@ impl From<&MouseWheel> for PyMouseWheel {
 impl PyMouseWheel {
     #[new]
     #[pyo3(signature = (x, y, unit = PyMouseScrollUnit::Line, window=None))]
-    fn new(x: f32, y: f32, unit: PyMouseScrollUnit, window: Option<PyEntity>) -> (Self, PyMessage) {
+    fn new(x: f32, y: f32, unit: PyMouseScrollUnit, window: Option<PyEntity>) -> PyClassInitializer<Self> {
         (
             PyMouseWheel {
                 x,
@@ -178,7 +178,7 @@ impl PyMouseWheel {
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
-        )
+        ).into()
     }
 
     #[getter]

@@ -64,6 +64,10 @@ so upstream renames, module moves, and default changes flow through to Python.
 - `ScatteringMedium.terms` is now writable (mirrors the public field; e.g. appending a haze term to the earth defaults)
 - New example `examples/bevy/large_scenes/bevy_city.py`: port of Bevy 0.19's procedurally generated city stress test (auto-downloads the CC0 Kenney kits on first run)
 
+### Bug fixes
+
+- `Quat(x, y, z, w)` now raises a TypeError pointing at `Quat.from_xyzw`/`from_axis_angle`/`from_euler`/`Quat.IDENTITY` (was PyO3's bare "cannot create instances")
+
 ## 0.2.1
 
 ### Bug fixes

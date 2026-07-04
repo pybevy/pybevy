@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::monitor_selection::PyMonitorSelection;
 
-#[pyclass(name = "WindowPosition", eq)]
+#[pyclass(name = "WindowPosition", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowPosition(pub(crate) WindowPosition);
 

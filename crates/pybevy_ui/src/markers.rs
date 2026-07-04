@@ -7,7 +7,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Label, unit, bridge)]
-#[pyclass(name = "Label", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Label", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyLabel;
 
@@ -34,8 +34,8 @@ impl TryFrom<&Label> for PyLabel {
 #[pymethods]
 impl PyLabel {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyLabel, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyLabel, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -48,7 +48,7 @@ impl PyLabel {
 }
 
 #[pycomponent(Checked, unit, bridge)]
-#[pyclass(name = "Checked", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Checked", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyChecked;
 
@@ -75,8 +75,8 @@ impl TryFrom<&Checked> for PyChecked {
 #[pymethods]
 impl PyChecked {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyChecked, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyChecked, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -89,7 +89,7 @@ impl PyChecked {
 }
 
 #[pycomponent(Pressed, unit, bridge)]
-#[pyclass(name = "Pressed", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Pressed", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyPressed;
 
@@ -116,8 +116,8 @@ impl TryFrom<&Pressed> for PyPressed {
 #[pymethods]
 impl PyPressed {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyPressed, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyPressed, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -130,7 +130,7 @@ impl PyPressed {
 }
 
 #[pycomponent(InteractionDisabled, unit, bridge)]
-#[pyclass(name = "InteractionDisabled", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "InteractionDisabled", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyInteractionDisabled;
 
@@ -157,8 +157,8 @@ impl TryFrom<&InteractionDisabled> for PyInteractionDisabled {
 #[pymethods]
 impl PyInteractionDisabled {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyInteractionDisabled, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyInteractionDisabled, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -171,7 +171,7 @@ impl PyInteractionDisabled {
 }
 
 #[pycomponent(IsDefaultUiCamera, unit, bridge)]
-#[pyclass(name = "IsDefaultUiCamera", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "IsDefaultUiCamera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyIsDefaultUiCamera;
 
@@ -198,8 +198,8 @@ impl TryFrom<&IsDefaultUiCamera> for PyIsDefaultUiCamera {
 #[pymethods]
 impl PyIsDefaultUiCamera {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyIsDefaultUiCamera, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyIsDefaultUiCamera, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -208,7 +208,7 @@ impl PyIsDefaultUiCamera {
 }
 
 #[pycomponent(Button, unit, bridge)]
-#[pyclass(name = "Button", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Button", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyButton;
 
@@ -235,8 +235,8 @@ impl TryFrom<&Button> for PyButton {
 #[pymethods]
 impl PyButton {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyButton, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyButton, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {

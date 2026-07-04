@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTriangle3dMeshBuilder,
 };
 
-#[pyclass(name = "Triangle3d", extends = PyMeshable, eq)]
+#[pyclass(name = "Triangle3d", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyTriangle3d(pub(crate) Triangle3d);
 
@@ -40,13 +40,13 @@ impl PyTriangle3d {
         b: PyVec3,
         c: PyVec3,
         vertices: Option<[PyVec3; 3]>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let Some(v) = vertices {
             let verts = [(&v[0]).into(), (&v[1]).into(), (&v[2]).into()];
-            return (Self(Triangle3d { vertices: verts }), PyMeshable);
+            return (Self(Triangle3d { vertices: verts }), PyMeshable).into();
         }
         let verts = [a.into(), b.into(), c.into()];
-        (Self(Triangle3d { vertices: verts }), PyMeshable)
+        (Self(Triangle3d { vertices: verts }), PyMeshable).into()
     }
 
     #[getter]

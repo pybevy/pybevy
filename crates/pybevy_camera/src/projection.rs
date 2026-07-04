@@ -9,7 +9,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};
 
-#[pyclass(name = "PerspectiveProjection")]
+#[pyclass(name = "PerspectiveProjection", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPerspectiveProjection {
     pub(crate) inner: PerspectiveProjection,
@@ -130,7 +130,7 @@ impl PyPerspectiveProjection {
     }
 }
 
-#[pyclass(name = "OrthographicProjection")]
+#[pyclass(name = "OrthographicProjection", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyOrthographicProjection {
     pub(crate) inner: OrthographicProjection,
@@ -302,8 +302,8 @@ pub struct PyProjection {
 #[pymethods]
 impl PyProjection {
     #[new]
-    pub fn new() -> PyResult<(Self, PyComponent)> {
-        Ok(Self::from_owned(Projection::default()))
+    pub fn new() -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(Projection::default()).into())
     }
 
     #[staticmethod]

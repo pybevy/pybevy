@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(TimePlugin)]
-#[pyclass(name = "TimePlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "TimePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTimePlugin;
 
 #[pymethods]
 impl PyTimePlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyTimePlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyTimePlugin, PyPlugin).into()
     }
 }
 

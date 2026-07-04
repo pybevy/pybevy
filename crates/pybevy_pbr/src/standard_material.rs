@@ -38,7 +38,7 @@ fn convert_optional_handle(handle: Option<&Bound<'_, PyAny>>) -> PyResult<Option
 }
 
 #[pyasset(StandardMaterial, bridge, input_converter)]
-#[pyclass(name = "StandardMaterial", extends = PyAsset)]
+#[pyclass(name = "StandardMaterial", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyStandardMaterial {
     pub(crate) storage: AssetStorage<StandardMaterial>,
@@ -147,7 +147,7 @@ impl PyStandardMaterial {
         uv_transform: PyAffine2,
         clearcoat: f32,
         clearcoat_perceptual_roughness: f32,
-    ) -> PyResult<(Self, PyAsset)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let emissive_linear = match emissive {
             Some(ref emissive_val) => extract_linear_rgba(emissive_val)?,
             None => LinearRgba::from(Color::BLACK),
@@ -199,7 +199,7 @@ impl PyStandardMaterial {
             ..Default::default()
         };
 
-        Ok(Self::from_owned(material))
+        Ok(Self::from_owned(material).into())
     }
 
     #[staticmethod]

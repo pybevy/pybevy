@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 
-#[pyclass(name = "SubCameraView")]
+#[pyclass(name = "SubCameraView", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PySubCameraView {
     storage: ValueStorage<SubCameraView>,

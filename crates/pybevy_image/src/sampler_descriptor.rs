@@ -6,7 +6,7 @@ use crate::{
     image_filter_mode::PyImageFilterMode, image_sampler_border_color::PyImageSamplerBorderColor,
 };
 
-#[pyclass(name = "ImageSamplerDescriptor", eq)]
+#[pyclass(name = "ImageSamplerDescriptor", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyImageSamplerDescriptor {
     inner: ImageSamplerDescriptor,

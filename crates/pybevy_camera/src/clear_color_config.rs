@@ -2,7 +2,7 @@ use bevy::camera::ClearColorConfig;
 use pybevy_color::color::PyColor;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ClearColorConfig", frozen)]
+#[pyclass(name = "ClearColorConfig", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyClearColorConfig {
     inner: ClearColorConfig,

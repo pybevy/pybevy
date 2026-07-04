@@ -7,7 +7,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::common::fmt_f32;
 
-#[pyclass(name = "Srgba", eq)]
+#[pyclass(name = "Srgba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PySrgba {
     storage: ValueStorage<Srgba>,

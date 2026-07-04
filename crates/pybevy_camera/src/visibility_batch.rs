@@ -7,7 +7,7 @@ use bevy::{
 use pybevy_core::{BatchComponent, registry::global_registry};
 use pyo3::prelude::*;
 
-#[pyclass(name = "VisibilityBatch")]
+#[pyclass(name = "VisibilityBatch", from_py_object)]
 #[derive(Debug)]
 pub struct PyVisibilityBatch {
     /// Boolean or integer array indicating visibility state.

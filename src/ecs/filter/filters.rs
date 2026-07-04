@@ -6,7 +6,7 @@ use crate::ecs::{
     filter::{parse_multi_component_filter, parse_single_component_filter},
 };
 
-#[pyclass(name = "With")]
+#[pyclass(name = "With", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWith {
     pub(crate) values: SmallVec<[PyComponentType; 4]>,
@@ -26,7 +26,7 @@ impl PyWith {
     }
 }
 
-#[pyclass(name = "Without")]
+#[pyclass(name = "Without", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWithout {
     pub(crate) values: SmallVec<[PyComponentType; 4]>,
@@ -46,7 +46,7 @@ impl PyWithout {
     }
 }
 
-#[pyclass(name = "Changed")]
+#[pyclass(name = "Changed", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyChanged {
     pub(crate) component_type: PyComponentType,
@@ -66,7 +66,7 @@ impl PyChanged {
     }
 }
 
-#[pyclass(name = "Added")]
+#[pyclass(name = "Added", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAdded {
     pub(crate) component_type: PyComponentType,
@@ -86,7 +86,7 @@ impl PyAdded {
     }
 }
 
-#[pyclass(name = "Has")]
+#[pyclass(name = "Has", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHas {
     pub(crate) component_type: PyComponentType,
@@ -106,7 +106,7 @@ impl PyHas {
     }
 }
 
-#[pyclass(name = "AnyOf")]
+#[pyclass(name = "AnyOf", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAnyOf {
     pub(crate) values: SmallVec<[PyComponentType; 4]>,

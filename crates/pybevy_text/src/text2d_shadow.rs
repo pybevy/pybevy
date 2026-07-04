@@ -16,14 +16,14 @@ pub struct PyText2dShadow {
 impl PyText2dShadow {
     #[new]
     #[pyo3(signature = (offset = None, color = None))]
-    pub fn new(offset: Option<PyVec2>, color: Option<PyColor>) -> (Self, PyComponent) {
+    pub fn new(offset: Option<PyVec2>, color: Option<PyColor>) -> PyClassInitializer<Self> {
         let default = Text2dShadow::default();
         let shadow = Text2dShadow {
             offset: offset.map(Into::into).unwrap_or(default.offset),
             color: color.map(Into::into).unwrap_or(default.color),
         };
 
-        Self::from_owned(shadow)
+        Self::from_owned(shadow).into()
     }
 
     #[getter]

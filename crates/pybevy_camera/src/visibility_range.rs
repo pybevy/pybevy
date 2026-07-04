@@ -20,7 +20,7 @@ impl PyVisibilityRange {
         start_margin: Option<&PyRange>,
         end_margin: Option<&PyRange>,
         use_aabb: bool,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let start: Range<f32> = match start_margin {
             Some(r) => r.into(),
             None => 0.0..0.0,
@@ -33,7 +33,7 @@ impl PyVisibilityRange {
             start_margin: start,
             end_margin: end,
             use_aabb,
-        }))
+        }).into())
     }
 
     #[staticmethod]

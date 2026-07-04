@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Xyza", eq)]
+#[pyclass(name = "Xyza", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyXyza {
     storage: ValueStorage<Xyza>,

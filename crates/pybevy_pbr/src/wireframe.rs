@@ -13,8 +13,8 @@ pub struct PyWireframe {
 #[pymethods]
 impl PyWireframe {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(Wireframe)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(Wireframe).into()
     }
 
     pub fn __eq__(&self, other: &Self) -> PyResult<bool> {

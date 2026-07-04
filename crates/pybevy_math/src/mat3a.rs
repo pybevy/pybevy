@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::vec3a::PyVec3A;
 
-#[pyclass(name = "Mat3A")]
+#[pyclass(name = "Mat3A", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMat3A {
     storage: ValueStorage<Mat3A>,

@@ -13,13 +13,13 @@ pub struct PyTouches {
 #[pymethods]
 impl PyTouches {
     #[new]
-    pub fn new() -> (Self, PyResource) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             Self {
                 storage: ResourceStorage::owned(Touches::default()),
             },
             PyResource,
-        )
+        ).into()
     }
 
     pub fn any_just_pressed(&self) -> PyResult<bool> {
@@ -125,7 +125,7 @@ impl PyTouches {
 
 /// Owned snapshot of touch data. Can't wrap Bevy's `Touch` directly because its fields are private
 /// with no public constructor.
-#[pyclass(name = "Touch")]
+#[pyclass(name = "Touch", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTouch {
     id: u64,

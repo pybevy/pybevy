@@ -61,7 +61,7 @@ impl PyDirectionalLight {
         affects_lightmapped_mesh_diffuse: bool,
         shadow_depth_bias: f32,
         shadow_normal_bias: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(DirectionalLight {
             color: color.into(),
             illuminance,
@@ -71,7 +71,7 @@ impl PyDirectionalLight {
             shadow_normal_bias,
             // `contact_shadows_enabled` is not exposed; it takes its default (off).
             ..Default::default()
-        })
+        }).into()
     }
 
     #[getter]

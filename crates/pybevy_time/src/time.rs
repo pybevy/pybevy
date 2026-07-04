@@ -6,7 +6,7 @@ use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 #[pyresource(Time, bridge)]
-#[pyclass(name = "Time", extends = PyResource)]
+#[pyclass(name = "Time", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTime {
     pub storage: ResourceStorage<Time>,
@@ -15,8 +15,8 @@ pub struct PyTime {
 #[pymethods]
 impl PyTime {
     #[new]
-    pub fn new() -> (Self, PyResource) {
-        (Time::default().into(), PyResource)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Time::default().into(), PyResource).into()
     }
 
     pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
@@ -80,7 +80,7 @@ impl PyTime {
 }
 
 #[pyresource(Time<Fixed>, bridge, "TimeFixed")]
-#[pyclass(name = "TimeFixed", extends = PyResource)]
+#[pyclass(name = "TimeFixed", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeFixed {
     pub storage: ResourceStorage<Time<Fixed>>,
@@ -89,8 +89,8 @@ pub struct PyTimeFixed {
 #[pymethods]
 impl PyTimeFixed {
     #[new]
-    pub fn new() -> (Self, PyResource) {
-        (Time::<Fixed>::default().into(), PyResource)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Time::<Fixed>::default().into(), PyResource).into()
     }
 
     #[staticmethod]
@@ -211,7 +211,7 @@ impl PyTimeFixed {
 }
 
 #[pyresource(Time<Virtual>, bridge, "TimeVirtual")]
-#[pyclass(name = "TimeVirtual", extends = PyResource)]
+#[pyclass(name = "TimeVirtual", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeVirtual {
     pub storage: ResourceStorage<Time<Virtual>>,
@@ -220,8 +220,8 @@ pub struct PyTimeVirtual {
 #[pymethods]
 impl PyTimeVirtual {
     #[new]
-    pub fn new() -> (Self, PyResource) {
-        (Time::<Virtual>::default().into(), PyResource)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Time::<Virtual>::default().into(), PyResource).into()
     }
 
     pub fn pause(&mut self) -> PyResult<()> {
@@ -338,7 +338,7 @@ impl PyTimeVirtual {
 }
 
 #[pyresource(Time<Real>)]
-#[pyclass(name = "TimeReal", extends = PyResource)]
+#[pyclass(name = "TimeReal", extends = PyResource, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeReal {
     pub storage: ResourceStorage<Time<Real>>,
@@ -347,8 +347,8 @@ pub struct PyTimeReal {
 #[pymethods]
 impl PyTimeReal {
     #[new]
-    pub fn new() -> (Self, PyResource) {
-        (Time::<Real>::default().into(), PyResource)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Time::<Real>::default().into(), PyResource).into()
     }
 
     pub fn delta(&self) -> PyResult<Duration> {

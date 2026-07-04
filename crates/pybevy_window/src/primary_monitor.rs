@@ -12,8 +12,8 @@ pub struct PyPrimaryMonitor {
 #[pymethods]
 impl PyPrimaryMonitor {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(PrimaryMonitor)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(PrimaryMonitor).into()
     }
 
     pub fn __repr__(&self) -> &str {

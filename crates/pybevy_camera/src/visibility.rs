@@ -48,8 +48,8 @@ impl PyVisibility {
     }
 
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (Visibility::Inherited.into(), PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Visibility::Inherited.into(), PyComponent).into()
     }
 
     pub fn toggle_inherited_visible(&mut self) -> PyResult<()> {

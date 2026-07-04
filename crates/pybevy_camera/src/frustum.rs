@@ -19,7 +19,7 @@ pub struct PyFrustum {
 impl PyFrustum {
     #[new]
     #[pyo3(signature = (view_frustum = None))]
-    pub fn new(view_frustum: Option<PyViewFrustum>) -> (Self, PyComponent) {
+    pub fn new(view_frustum: Option<PyViewFrustum>) -> PyClassInitializer<Self> {
         let frustum = match view_frustum {
             Some(view_frustum) => Frustum(view_frustum.into()),
             None => Frustum::default(),
@@ -29,7 +29,7 @@ impl PyFrustum {
                 storage: ComponentStorage::owned(frustum),
             },
             PyComponent,
-        )
+        ).into()
     }
 
     #[getter]

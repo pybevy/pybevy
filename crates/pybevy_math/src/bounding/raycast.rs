@@ -16,7 +16,7 @@ use crate::{
     vec3::PyVec3,
 };
 
-#[pyclass(name = "RayCast2d")]
+#[pyclass(name = "RayCast2d", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRayCast2d {
     ray_cast: RayCast2d,
@@ -100,7 +100,7 @@ impl PyRayCast2d {
     }
 }
 
-#[pyclass(name = "RayCast3d")]
+#[pyclass(name = "RayCast3d", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRayCast3d {
     ray_cast: RayCast3d,

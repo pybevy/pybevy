@@ -15,9 +15,9 @@ pub struct PyBackgroundColor {
 impl PyBackgroundColor {
     #[new]
     #[pyo3(signature = (color = None))]
-    pub fn new(color: Option<PyColor>) -> (Self, PyComponent) {
+    pub fn new(color: Option<PyColor>) -> PyClassInitializer<Self> {
         let c = color.map(|c| c.into()).unwrap_or(Color::NONE);
-        Self::from_owned(BackgroundColor(c))
+        Self::from_owned(BackgroundColor(c)).into()
     }
 
     #[getter]

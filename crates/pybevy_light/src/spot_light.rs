@@ -97,7 +97,7 @@ impl PySpotLight {
         shadow_map_near_z: f32,
         outer_angle: f32,
         inner_angle: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(SpotLight {
             color: color.into(),
             intensity,
@@ -112,7 +112,7 @@ impl PySpotLight {
             inner_angle,
             // `contact_shadows_enabled` is not exposed; it takes its default (off).
             ..Default::default()
-        })
+        }).into()
     }
 
     #[getter]

@@ -1,7 +1,7 @@
 use bevy::window::EnabledButtons;
 use pyo3::prelude::*;
 
-#[pyclass(name = "EnabledButtons", eq)]
+#[pyclass(name = "EnabledButtons", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyEnabledButtons(pub EnabledButtons);
 

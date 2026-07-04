@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTorusMeshBuilder};
 
-#[pyclass(name = "Torus", extends = PyMeshable, eq)]
+#[pyclass(name = "Torus", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyTorus(pub(crate) Torus);
 
@@ -32,7 +32,7 @@ impl PyTorus {
         outer_radius: f32,
         minor_radius: Option<f32>,
         major_radius: Option<f32>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let (Some(minor), Some(major)) = (minor_radius, major_radius) {
             return (
                 Self(Torus {
@@ -40,9 +40,9 @@ impl PyTorus {
                     major_radius: major,
                 }),
                 PyMeshable,
-            );
+            ).into();
         }
-        (Self(Torus::new(inner_radius, outer_radius)), PyMeshable)
+        (Self(Torus::new(inner_radius, outer_radius)), PyMeshable).into()
     }
 
     #[getter]

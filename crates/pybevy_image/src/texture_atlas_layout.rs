@@ -5,7 +5,7 @@ use pybevy_math::{urect::PyURect, uvec2::PyUVec2};
 use pyo3::prelude::*;
 
 #[pyasset(TextureAtlasLayout, bridge, not_loadable)]
-#[pyclass(name = "TextureAtlasLayout", extends = PyAsset, eq)]
+#[pyclass(name = "TextureAtlasLayout", extends = PyAsset, eq, skip_from_py_object)]
 #[derive(Debug, PartialEq)]
 pub struct PyTextureAtlasLayout {
     pub(crate) storage: AssetStorage<TextureAtlasLayout>,

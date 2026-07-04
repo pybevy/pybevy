@@ -13,8 +13,8 @@ pub struct PyAnimatedBy {
 #[pymethods]
 impl PyAnimatedBy {
     #[new]
-    pub fn new(entity: &PyEntity) -> (Self, PyComponent) {
-        Self::from_owned(AnimatedBy(entity.0))
+    pub fn new(entity: &PyEntity) -> PyClassInitializer<Self> {
+        Self::from_owned(AnimatedBy(entity.0)).into()
     }
 
     #[getter]

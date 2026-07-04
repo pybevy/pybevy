@@ -2,7 +2,7 @@ use bevy::ui::widget::NodeImageMode;
 use pybevy_sprite::texture_slicer::PyTextureSlicer;
 use pyo3::prelude::*;
 
-#[pyclass(name = "NodeImageMode", frozen, eq)]
+#[pyclass(name = "NodeImageMode", frozen, eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PyNodeImageMode {
     #[pyo3(name = "Auto")]

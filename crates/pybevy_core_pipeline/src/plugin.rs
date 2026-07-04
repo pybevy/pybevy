@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(CorePipelinePlugin)]
-#[pyclass(name = "CorePipelinePlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "CorePipelinePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCorePipelinePlugin;
 
 #[pymethods]
 impl PyCorePipelinePlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyCorePipelinePlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyCorePipelinePlugin, PyPlugin).into()
     }
 }
 

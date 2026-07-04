@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::wireframe_topology::PyWireframeTopology;
 
 #[pyresource(WireframeConfig, bridge)]
-#[pyclass(name = "WireframeConfig", extends = PyResource)]
+#[pyclass(name = "WireframeConfig", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeConfig {
     pub storage: ResourceStorage<WireframeConfig>,
@@ -27,13 +27,13 @@ impl PyWireframeConfig {
         default_color: PyColor,
         default_line_width: f32,
         default_topology: PyWireframeTopology,
-    ) -> (Self, PyResource) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(WireframeConfig {
             global: global_,
             default_color: default_color.0,
             default_line_width,
             default_topology: default_topology.into(),
-        })
+        }).into()
     }
 
     #[getter]

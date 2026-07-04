@@ -8,7 +8,7 @@ const DEFAULT_USAGES: u32 = TextureUsages::RENDER_ATTACHMENT.bits()
     | TextureUsages::COPY_SRC.bits();
 
 #[pywrap(CameraMainTextureUsages, bridge)]
-#[pyclass(name = "CameraMainTextureUsages", extends = PyComponent, frozen)]
+#[pyclass(name = "CameraMainTextureUsages", extends = PyComponent, frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyCameraMainTextureUsages(pub(crate) CameraMainTextureUsages);
 
@@ -16,12 +16,12 @@ pub struct PyCameraMainTextureUsages(pub(crate) CameraMainTextureUsages);
 impl PyCameraMainTextureUsages {
     #[new]
     #[pyo3(signature = (flags = DEFAULT_USAGES))]
-    pub fn new(flags: u32) -> (Self, PyComponent) {
+    pub fn new(flags: u32) -> PyClassInitializer<Self> {
         let usages = TextureUsages::from_bits_truncate(flags);
         (
             PyCameraMainTextureUsages(CameraMainTextureUsages(usages)),
             PyComponent,
-        )
+        ).into()
     }
 
     #[getter]

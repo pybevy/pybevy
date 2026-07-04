@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(PbrPlugin)]
-#[pyclass(name = "PbrPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "PbrPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyPbrPlugin;
 
 #[pymethods]
 impl PyPbrPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyPbrPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyPbrPlugin, PyPlugin).into()
     }
 }
 

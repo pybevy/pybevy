@@ -13,8 +13,8 @@ pub struct PyNoWireframe {
 #[pymethods]
 impl PyNoWireframe {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(NoWireframe)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(NoWireframe).into()
     }
 
     pub fn __eq__(&self, other: &Self) -> PyResult<bool> {

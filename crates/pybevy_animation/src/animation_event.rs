@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-#[pyclass(name = "AnimationEvent", eq)]
+#[pyclass(name = "AnimationEvent", eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyAnimationEvent {
     #[pyo3(get)]
@@ -26,7 +26,7 @@ impl PyAnimationEvent {
     }
 }
 
-#[pyclass(name = "AnimationEventData")]
+#[pyclass(name = "AnimationEventData", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAnimationEventData {
     #[pyo3(get)]

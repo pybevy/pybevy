@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(WindowCloseRequested)]
-#[pyclass(name = "WindowCloseRequested", extends = PyMessage, eq)]
+#[pyclass(name = "WindowCloseRequested", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowCloseRequested {
     pub window: PyEntity,
@@ -21,8 +21,8 @@ impl From<&WindowCloseRequested> for PyWindowCloseRequested {
 #[pymethods]
 impl PyWindowCloseRequested {
     #[new]
-    fn new(window: PyEntity) -> (Self, PyMessage) {
-        (PyWindowCloseRequested { window }, PyMessage)
+    fn new(window: PyEntity) -> PyClassInitializer<Self> {
+        (PyWindowCloseRequested { window }, PyMessage).into()
     }
 
     #[getter]

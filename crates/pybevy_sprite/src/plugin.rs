@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(SpritePlugin)]
-#[pyclass(name = "SpritePlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "SpritePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpritePlugin;
 
 #[pymethods]
 impl PySpritePlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PySpritePlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PySpritePlugin, PyPlugin).into()
     }
 }
 
@@ -30,15 +30,15 @@ impl PluginBuild for PySpritePlugin {
 }
 
 #[pyplugin(ColorMaterialPlugin)]
-#[pyclass(name = "ColorMaterialPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "ColorMaterialPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyColorMaterialPlugin;
 
 #[pymethods]
 impl PyColorMaterialPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyColorMaterialPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyColorMaterialPlugin, PyPlugin).into()
     }
 }
 

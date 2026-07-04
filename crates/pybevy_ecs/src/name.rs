@@ -14,8 +14,8 @@ pub struct PyName {
 impl PyName {
     #[new]
     #[pyo3(signature = (name = String::new()))]
-    pub fn new(name: String) -> (Self, PyComponent) {
-        Self::from_owned(Name::new(name))
+    pub fn new(name: String) -> PyClassInitializer<Self> {
+        Self::from_owned(Name::new(name)).into()
     }
 
     #[getter]

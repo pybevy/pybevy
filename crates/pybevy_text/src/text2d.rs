@@ -13,8 +13,8 @@ pub struct PyText2d {
 #[pymethods]
 impl PyText2d {
     #[new]
-    pub fn new(text: String) -> (Self, PyComponent) {
-        (Text2d(text).into(), PyComponent)
+    pub fn new(text: String) -> PyClassInitializer<Self> {
+        (Text2d(text).into(), PyComponent).into()
     }
 
     #[getter]

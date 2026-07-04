@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircleMeshBuilder};
 
-#[pyclass(name = "Circle", extends = PyMeshable, eq)]
+#[pyclass(name = "Circle", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCircle(pub(crate) Circle);
 
@@ -18,8 +18,8 @@ pub struct PyCircle(pub(crate) Circle);
 impl PyCircle {
     #[new]
     #[pyo3(signature = (radius=0.5))]
-    pub fn new(radius: f32) -> (Self, PyMeshable) {
-        (Self(Circle::new(radius)), PyMeshable)
+    pub fn new(radius: f32) -> PyClassInitializer<Self> {
+        (Self(Circle::new(radius)), PyMeshable).into()
     }
 
     #[getter]

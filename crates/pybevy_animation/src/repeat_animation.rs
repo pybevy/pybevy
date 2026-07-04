@@ -1,7 +1,7 @@
 use bevy::animation::RepeatAnimation;
 use pyo3::prelude::*;
 
-#[pyclass(name = "RepeatAnimation", eq)]
+#[pyclass(name = "RepeatAnimation", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyRepeatAnimation {
     Never(),

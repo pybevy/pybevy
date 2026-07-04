@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(WireframePlugin)]
-#[pyclass(name = "WireframePlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "WireframePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyWireframePlugin;
 
 #[pymethods]
 impl PyWireframePlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyWireframePlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyWireframePlugin, PyPlugin).into()
     }
 }
 

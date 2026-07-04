@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{dir3::PyDir3, vec3::PyVec3};
 
-#[pyclass(name = "InfinitePlane3d", frozen, eq)]
+#[pyclass(name = "InfinitePlane3d", frozen, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyInfinitePlane3d {
     pub(crate) inner: InfinitePlane3d,

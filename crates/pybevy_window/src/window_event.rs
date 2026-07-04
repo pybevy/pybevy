@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use crate::{app_lifecycle::PyAppLifecycle, window_theme::PyWindowTheme};
 
-#[pyclass(name = "WindowEvent", eq, frozen)]
+#[pyclass(name = "WindowEvent", eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyWindowEvent {
     #[pyo3(constructor = (lifecycle,))]

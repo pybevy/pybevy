@@ -7,7 +7,7 @@ use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[pycomponent(NotShadowCaster, unit, bridge)]
-#[pyclass(name = "NotShadowCaster", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NotShadowCaster", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNotShadowCaster;
 
@@ -34,8 +34,8 @@ impl TryFrom<&NotShadowCaster> for PyNotShadowCaster {
 #[pymethods]
 impl PyNotShadowCaster {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNotShadowCaster, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNotShadowCaster, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -44,7 +44,7 @@ impl PyNotShadowCaster {
 }
 
 #[pycomponent(NotShadowReceiver, unit, bridge)]
-#[pyclass(name = "NotShadowReceiver", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NotShadowReceiver", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNotShadowReceiver;
 
@@ -71,8 +71,8 @@ impl TryFrom<&NotShadowReceiver> for PyNotShadowReceiver {
 #[pymethods]
 impl PyNotShadowReceiver {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNotShadowReceiver, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNotShadowReceiver, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -81,7 +81,7 @@ impl PyNotShadowReceiver {
 }
 
 #[pycomponent(TransmittedShadowReceiver, unit, bridge)]
-#[pyclass(name = "TransmittedShadowReceiver", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "TransmittedShadowReceiver", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyTransmittedShadowReceiver;
 
@@ -108,8 +108,8 @@ impl TryFrom<&TransmittedShadowReceiver> for PyTransmittedShadowReceiver {
 #[pymethods]
 impl PyTransmittedShadowReceiver {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyTransmittedShadowReceiver, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyTransmittedShadowReceiver, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -118,7 +118,7 @@ impl PyTransmittedShadowReceiver {
 }
 
 #[pycomponent(VolumetricLight, unit, bridge)]
-#[pyclass(name = "VolumetricLight", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "VolumetricLight", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyVolumetricLight;
 
@@ -145,8 +145,8 @@ impl TryFrom<&VolumetricLight> for PyVolumetricLight {
 #[pymethods]
 impl PyVolumetricLight {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyVolumetricLight, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyVolumetricLight, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -171,10 +171,10 @@ impl PyLightProbe {
 impl PyLightProbe {
     #[new]
     #[pyo3(signature = (falloff = PyLightProbe::default_falloff()))]
-    pub fn new(falloff: PyVec3) -> (Self, PyComponent) {
+    pub fn new(falloff: PyVec3) -> PyClassInitializer<Self> {
         Self::from_owned(LightProbe {
             falloff: falloff.into(),
-        })
+        }).into()
     }
 
     #[getter]

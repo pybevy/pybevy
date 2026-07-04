@@ -45,7 +45,7 @@ fn py_format_to_rust(format: PyImageFormat) -> RustImageFormat {
     }
 }
 
-#[pyclass(name = "RenderAssetUsages")]
+#[pyclass(name = "RenderAssetUsages", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyRenderAssetUsages {
     inner: RenderAssetUsages,
@@ -190,7 +190,7 @@ impl ImagePixelContextMut {
 }
 
 #[pyasset(Image, bridge)]
-#[pyclass(name = "Image", extends = PyAsset)]
+#[pyclass(name = "Image", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyImage {
     pub storage: AssetStorage<Image>,
@@ -218,7 +218,7 @@ impl PyImage {
         data: Option<Vec<u8>>,
         format: Option<PyTextureFormat>,
         asset_usage: Option<PyRenderAssetUsages>,
-    ) -> PyResult<(Self, PyAsset)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let extent: Extent3d = size.into();
         let format: TextureFormat = format.unwrap_or(PyTextureFormat::Rgba8UnormSrgb).into();
         let pixel_count = (extent.width * extent.height * extent.depth_or_array_layers) as usize;
@@ -257,7 +257,7 @@ impl PyImage {
             data,
             format,
             asset_usage.map(Into::into).unwrap_or_default(),
-        )))
+        )).into())
     }
 
     #[staticmethod]

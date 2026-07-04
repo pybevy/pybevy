@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-#[pyclass(name = "Camera3dDepthTextureUsage", frozen, eq)]
+#[pyclass(name = "Camera3dDepthTextureUsage", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCamera3dDepthTextureUsage(pub u32);
 

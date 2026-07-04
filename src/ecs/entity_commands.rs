@@ -10,7 +10,7 @@ use crate::ecs::observer_registry::ObserverRegistry;
 
 /// Represents a handle to perform deferred operations on an entity.
 /// Operations are queued and applied later when the Commands are flushed.
-#[pyclass(name = "EntityCommands")]
+#[pyclass(name = "EntityCommands", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEntityCommands {
     pub(crate) id: Entity,

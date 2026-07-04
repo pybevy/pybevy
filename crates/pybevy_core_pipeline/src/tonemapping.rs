@@ -4,15 +4,15 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Tonemapping, bridge)]
-#[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
+#[pyclass(name = "Tonemapping", extends = PyComponent, frozen, skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyTonemapping(pub(crate) Tonemapping);
 
 #[pymethods]
 impl PyTonemapping {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(Tonemapping::TonyMcMapface)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(Tonemapping::TonyMcMapface).into()
     }
 
     #[classattr]

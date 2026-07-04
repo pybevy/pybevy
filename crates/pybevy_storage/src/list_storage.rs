@@ -171,7 +171,7 @@ pub fn normalize_index(index: isize, len: usize) -> Result<usize, StorageError> 
 macro_rules! impl_py_list {
     // Primitive type variant - no conversion needed
     ($py_name:ident, $py_class_name:literal, $elem:ty) => {
-        #[pyo3::pyclass(name = $py_class_name)]
+        #[pyo3::pyclass(name = $py_class_name, skip_from_py_object)]
         #[derive(Debug, Clone)]
         pub struct $py_name {
             storage: $crate::list_storage::ListStorage<$elem>,
