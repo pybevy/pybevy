@@ -50,7 +50,6 @@ impl PyScreenSpaceReflections {
         })
     }
 
-    /// The perceptual roughness range (start, end) over which SSR fades in.
     #[getter]
     pub fn min_perceptual_roughness(&self) -> PyResult<(f32, f32)> {
         let r = &self.as_ref()?.min_perceptual_roughness;
@@ -63,7 +62,6 @@ impl PyScreenSpaceReflections {
         Ok(())
     }
 
-    /// The perceptual roughness range (start, end) over which SSR fades out.
     #[getter]
     pub fn max_perceptual_roughness(&self) -> PyResult<(f32, f32)> {
         let r = &self.as_ref()?.max_perceptual_roughness;
@@ -76,7 +74,6 @@ impl PyScreenSpaceReflections {
         Ok(())
     }
 
-    /// The screen-edge fade range (start, end), in fraction of screen size.
     #[getter]
     pub fn edge_fadeout(&self) -> PyResult<(f32, f32)> {
         let r = &self.as_ref()?.edge_fadeout;

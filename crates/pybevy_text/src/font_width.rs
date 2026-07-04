@@ -1,7 +1,6 @@
 use bevy::text::FontWidth;
 use pyo3::prelude::*;
 
-/// The width (stretch) of a font face as a float ratio (0.5-2.0).
 #[pyclass(name = "FontWidth", frozen, eq)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyFontWidth(pub(crate) FontWidth);
