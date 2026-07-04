@@ -1,8 +1,9 @@
 use bevy::light::{
     LightProbe, NotShadowCaster, NotShadowReceiver, TransmittedShadowReceiver, VolumetricLight,
 };
-use pybevy_core::PyComponent;
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
+use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[pycomponent(NotShadowCaster, unit, bridge)]
@@ -153,43 +154,45 @@ impl PyVolumetricLight {
     }
 }
 
-#[pycomponent(LightProbe, unit, bridge)]
-#[pyclass(name = "LightProbe", extends = PyComponent, frozen, eq)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PyLightProbe;
-
-impl From<LightProbe> for PyLightProbe {
-    fn from(_: LightProbe) -> Self {
-        PyLightProbe
-    }
+#[pycomponent(LightProbe, bridge)]
+#[pyclass(name = "LightProbe", extends = PyComponent)]
+#[derive(Debug)]
+pub struct PyLightProbe {
+    pub(crate) storage: ComponentStorage<LightProbe>,
 }
 
-impl From<PyLightProbe> for LightProbe {
-    fn from(_: PyLightProbe) -> Self {
-        LightProbe
-    }
-}
-
-impl TryFrom<&LightProbe> for PyLightProbe {
-    type Error = PyErr;
-
-    fn try_from(_: &LightProbe) -> PyResult<Self> {
-        Ok(PyLightProbe)
+impl PyLightProbe {
+    fn default_falloff() -> PyVec3 {
+        LightProbe::default().falloff.into()
     }
 }
 
 #[pymethods]
 impl PyLightProbe {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyLightProbe, PyComponent)
+    #[pyo3(signature = (falloff = PyLightProbe::default_falloff()))]
+    pub fn new(falloff: PyVec3) -> (Self, PyComponent) {
+        Self::from_owned(LightProbe {
+            falloff: falloff.into(),
+        })
     }
 
-    pub fn __repr__(&self) -> &'static str {
-        "LightProbe()"
+    #[getter]
+    pub fn falloff(&self) -> PyResult<PyVec3> {
+        Ok(self.as_ref()?.falloff.into())
     }
 
-    pub fn __str__(&self) -> &'static str {
-        "LightProbe()"
+    #[setter]
+    pub fn set_falloff(&mut self, falloff: PyVec3) -> PyResult<()> {
+        self.as_mut()?.falloff = falloff.into();
+        Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("LightProbe(falloff={:?})", self.as_ref()?.falloff))
+    }
+
+    fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()?.falloff == other.as_ref()?.falloff)
     }
 }

@@ -1,13 +1,13 @@
-use bevy::{
-    camera::primitives::Frustum,
-    math::{Mat4, Vec3},
-};
+use bevy::camera::primitives::Frustum;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pybevy_math::{affine3a::PyAffine3A, mat4::PyMat4, vec3::PyVec3};
+use pybevy_math::{
+    affine3a::PyAffine3A,
+    primitives::{half_space::PyHalfSpace, view_frustum::PyViewFrustum},
+};
 use pyo3::prelude::*;
 
-use crate::{half_space::PyHalfSpace, sphere::PySphere};
+use crate::sphere::PySphere;
 
 #[pycomponent(Frustum, bridge)]
 #[pyclass(name = "Frustum", extends = PyComponent)]
@@ -18,41 +18,29 @@ pub struct PyFrustum {
 #[pymethods]
 impl PyFrustum {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
+    #[pyo3(signature = (view_frustum = None))]
+    pub fn new(view_frustum: Option<PyViewFrustum>) -> (Self, PyComponent) {
+        let frustum = match view_frustum {
+            Some(view_frustum) => Frustum(view_frustum.into()),
+            None => Frustum::default(),
+        };
         (
             PyFrustum {
-                storage: ComponentStorage::owned(Frustum::default()),
+                storage: ComponentStorage::owned(frustum),
             },
             PyComponent,
         )
     }
 
-    #[staticmethod]
-    pub fn from_clip_from_world(py: Python<'_>, clip_from_world: &PyMat4) -> PyResult<Py<Self>> {
-        let mat: Mat4 = clip_from_world.into();
-        Py::new(py, Self::from_owned(Frustum::from_clip_from_world(&mat)))
+    #[getter]
+    pub fn value(&self) -> PyResult<PyViewFrustum> {
+        Ok(self.as_ref()?.0.into())
     }
 
-    #[staticmethod]
-    pub fn from_clip_from_world_custom_far(
-        py: Python<'_>,
-        clip_from_world: &PyMat4,
-        view_translation: PyVec3,
-        view_backward: PyVec3,
-        far: f32,
-    ) -> PyResult<Py<Self>> {
-        let mat: Mat4 = clip_from_world.into();
-        let translation: Vec3 = view_translation.into();
-        let backward: Vec3 = view_backward.into();
-        Py::new(
-            py,
-            Self::from_owned(Frustum::from_clip_from_world_custom_far(
-                &mat,
-                &translation,
-                &backward,
-                far,
-            )),
-        )
+    #[setter]
+    pub fn set_value(&mut self, view_frustum: PyViewFrustum) -> PyResult<()> {
+        self.as_mut()?.0 = view_frustum.into();
+        Ok(())
     }
 
     #[getter]

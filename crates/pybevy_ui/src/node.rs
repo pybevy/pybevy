@@ -5,8 +5,8 @@ use pyo3::prelude::*;
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
-    PyGridAutoFlow, PyJustifyContent, PyJustifyItems, PyJustifySelf, PyPositionType,
-    grid_placement::PyGridPlacement, grid_track::PyGridTrack, overflow::PyOverflow,
+    PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
+    PyPositionType, grid_placement::PyGridPlacement, grid_track::PyGridTrack, overflow::PyOverflow,
     overflow_clip_margin::PyOverflowClipMargin, repeated_grid_track::PyRepeatedGridTrack,
     ui_rect::PyUiRect, val::PyVal,
 };
@@ -167,6 +167,17 @@ impl PyNode {
     #[setter]
     pub fn set_flex_direction(&mut self, value: PyFlexDirection) -> PyResult<()> {
         self.as_mut()?.flex_direction = value.into();
+        Ok(())
+    }
+
+    #[getter]
+    pub fn direction(&self) -> PyResult<PyInlineDirection> {
+        Ok(self.as_ref()?.direction.into())
+    }
+
+    #[setter]
+    pub fn set_direction(&mut self, value: PyInlineDirection) -> PyResult<()> {
+        self.as_mut()?.direction = value.into();
         Ok(())
     }
 

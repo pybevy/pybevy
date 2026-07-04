@@ -25,9 +25,9 @@ impl From<PyColorStop> for ColorStop {
 #[pymethods]
 impl PyColorStop {
     #[new]
-    #[pyo3(signature = (color = None, point = PyVal::zero(), *, hint = 0.5))]
+    #[pyo3(signature = (color = None, point = PyVal::new(), *, hint = 0.5))]
     pub fn new(color: Option<PyColor>, point: PyVal, hint: f32) -> Self {
-        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::NONE);
+        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::WHITE);
         PyColorStop {
             inner: ColorStop {
                 color: bevy_color,

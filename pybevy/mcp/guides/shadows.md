@@ -8,11 +8,11 @@ Shadows are off by default. Enable per-light:
 
 ```python
 commands.spawn(
-    DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+    DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
 )
 commands.spawn(
-    PointLight(intensity=80000.0, shadows_enabled=True),
+    PointLight(intensity=80000.0, shadow_maps_enabled=True),
     Transform.from_xyz(2.0, 3.0, 0.0),
 )
 ```
@@ -61,10 +61,10 @@ Two bias values prevent shadow artifacts. Each light type has its own defaults:
 
 ```python
 # If you see shadow acne, increase depth_bias
-DirectionalLight(shadows_enabled=True, shadow_depth_bias=0.05)
+DirectionalLight(shadow_maps_enabled=True, shadow_depth_bias=0.05)
 
 # If shadow floats away from object, decrease normal_bias
-PointLight(shadows_enabled=True, shadow_normal_bias=0.3)
+PointLight(shadow_maps_enabled=True, shadow_normal_bias=0.3)
 ```
 
 **Rule of thumb:** Increase `depth_bias` to fix acne; decrease `normal_bias` to fix peter panning. They trade off against each other — find the balance for your scene.
@@ -78,7 +78,7 @@ from pybevy.light import CascadeShadowConfig
 
 # Default: 4 cascades
 commands.spawn(
-    DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+    DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
     CascadeShadowConfig(
         bounds=[10.0, 28.0, 78.0, 150.0],
         overlap_proportion=0.2,
@@ -145,7 +145,7 @@ commands.spawn(Mesh3d(leaf_mesh), MeshMaterial3d(leaf_mat), TransmittedShadowRec
 ### No Shadows Visible
 
 **Checklist:**
-1. `shadows_enabled=True` on the light?
+1. `shadow_maps_enabled=True` on the light?
 2. Light is actually illuminating the area? (check `range` for point/spot)
 3. Camera is within cascade bounds? (increase `CascadeShadowConfig` bounds)
 4. Object isn't marked `NotShadowCaster()`?

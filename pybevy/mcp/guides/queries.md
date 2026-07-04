@@ -57,3 +57,13 @@ View is 30-50x faster than Query for bulk operations. See `guide://performance`.
 2. `get_component_schema {"name": "Transform"}` — See available fields
 3. `set_component {"entity_id": N, "component": "Transform", "fields": {...}}` — Modify
 4. `capture_screenshot` — Verify visually
+
+## Gotcha: Resource Entities
+
+Resources live on entities (bevy 0.19), so a bare `Query[Entity]` also matches them. Despawning one destroys the resource and panics later. Always scope entity queries with a component:
+
+```python
+def cleanup(commands: Commands, query: Query[Entity, With[Enemy]]) -> None:  # not Query[Entity]
+    for e in query:
+        commands.entity(e).despawn()
+```

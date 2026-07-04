@@ -25,7 +25,7 @@ def setup(
             color=Color.srgb(1.0, 0.0, 0.0),  # Red
             intensity=500000.0,
             range=20.0,
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_xyz(0.0, 2.0, 0.0),
         PulsatingLight(),

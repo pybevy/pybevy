@@ -4,7 +4,6 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(ScreenSpaceReflections, bridge, view_fields = [
-    perceptual_roughness_threshold,
     thickness,
     linear_steps,
     linear_march_exponent,
@@ -20,39 +19,70 @@ pub struct PyScreenSpaceReflections {
 impl PyScreenSpaceReflections {
     #[new]
     #[pyo3(signature = (
-        perceptual_roughness_threshold = 0.1,
+        min_perceptual_roughness = (0.08_f32, 0.12_f32),
+        max_perceptual_roughness = (0.55_f32, 0.6_f32),
         thickness = 0.25,
-        linear_steps = 16,
+        linear_steps = 10,
         linear_march_exponent = 1.0,
-        bisection_steps = 4,
+        edge_fadeout = (0.0_f32, 0.0_f32),
+        bisection_steps = 5,
         use_secant = true
     ))]
     pub fn new(
-        perceptual_roughness_threshold: f32,
+        min_perceptual_roughness: (f32, f32),
+        max_perceptual_roughness: (f32, f32),
         thickness: f32,
         linear_steps: u32,
         linear_march_exponent: f32,
+        edge_fadeout: (f32, f32),
         bisection_steps: u32,
         use_secant: bool,
     ) -> (Self, PyComponent) {
         Self::from_owned(ScreenSpaceReflections {
-            perceptual_roughness_threshold,
+            min_perceptual_roughness: min_perceptual_roughness.0..min_perceptual_roughness.1,
+            max_perceptual_roughness: max_perceptual_roughness.0..max_perceptual_roughness.1,
             thickness,
             linear_steps,
             linear_march_exponent,
+            edge_fadeout: edge_fadeout.0..edge_fadeout.1,
             bisection_steps,
             use_secant,
         })
     }
 
     #[getter]
-    pub fn perceptual_roughness_threshold(&self) -> PyResult<f32> {
-        Ok(self.as_ref()?.perceptual_roughness_threshold)
+    pub fn min_perceptual_roughness(&self) -> PyResult<(f32, f32)> {
+        let r = &self.as_ref()?.min_perceptual_roughness;
+        Ok((r.start, r.end))
     }
 
     #[setter]
-    pub fn set_perceptual_roughness_threshold(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.perceptual_roughness_threshold = value;
+    pub fn set_min_perceptual_roughness(&mut self, value: (f32, f32)) -> PyResult<()> {
+        self.as_mut()?.min_perceptual_roughness = value.0..value.1;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn max_perceptual_roughness(&self) -> PyResult<(f32, f32)> {
+        let r = &self.as_ref()?.max_perceptual_roughness;
+        Ok((r.start, r.end))
+    }
+
+    #[setter]
+    pub fn set_max_perceptual_roughness(&mut self, value: (f32, f32)) -> PyResult<()> {
+        self.as_mut()?.max_perceptual_roughness = value.0..value.1;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn edge_fadeout(&self) -> PyResult<(f32, f32)> {
+        let r = &self.as_ref()?.edge_fadeout;
+        Ok((r.start, r.end))
+    }
+
+    #[setter]
+    pub fn set_edge_fadeout(&mut self, value: (f32, f32)) -> PyResult<()> {
+        self.as_mut()?.edge_fadeout = value.0..value.1;
         Ok(())
     }
 

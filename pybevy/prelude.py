@@ -49,7 +49,6 @@ from .camera import (
     PerspectiveProjection,
     Projection,
     ScalingMode,
-    Skybox,
     ViewVisibility,
     Visibility,
 )
@@ -77,6 +76,7 @@ from .ecs import (
     Component,
     Despawn,
     DespawnOnExit,
+    Discard,
     Entity,
     Has,
     Insert,
@@ -94,7 +94,6 @@ from .ecs import (
     OnTransition,
     Query,
     Remove,
-    Replace,
     Res,
     ResMut,
     Resource,
@@ -136,8 +135,10 @@ from .light import (
     GlobalAmbientLight,
     LightProbe,
     PointLight,
+    Skybox,
     SpotLight,
 )
+from .material import AlphaMode
 from .math import (
     Annulus,
     Capsule2d,
@@ -195,14 +196,12 @@ from .mesh import (
 from .pbr import DistanceFog, FogFalloff, ParallaxMappingMethod, StandardMaterial
 from .post_process import Bloom, BloomCompositeMode, BloomPrefilter
 from .render import (
-    AlphaMode,
     ColorGrading,
     ColorGradingGlobal,
     ColorGradingSection,
     Hdr,
     Msaa,
 )
-from .scene import DynamicScene, DynamicSceneRoot, Scene, SceneRoot, SceneSpawner
 from .shader import Shader
 from .sprite import (
     ColorMaterial,
@@ -242,6 +241,7 @@ from .ui import (
     GridPlacement,
     GridTrack,
     ImageNode,
+    InlineDirection,
     Interaction,
     IsDefaultUiCamera,
     JustifyContent,
@@ -253,7 +253,6 @@ from .ui import (
     Outline,
     Overflow,
     OverflowAxis,
-    OverflowClipBox,
     OverflowClipMargin,
     PositionType,
     RepeatedGridTrack,
@@ -262,6 +261,7 @@ from .ui import (
     UiTargetCamera,
     Val,
     Val2,
+    VisualBox,
     ZIndex,
 )
 from .window import (
@@ -276,6 +276,13 @@ from .window import (
     WindowPlugin,
     WindowPosition,
     WindowResizeConstraints,
+)
+from .world_serialization import (
+    DynamicWorld,
+    DynamicWorldRoot,
+    WorldAsset,
+    WorldAssetRoot,
+    WorldInstanceSpawner,
 )
 
 # Schedule aliases
@@ -340,8 +347,8 @@ FixedLast = Stage.FixedLast
 #   SerializedAnimationGraph, SerializedAnimationGraphNode,
 #   ThreadedAnimationGraph, ThreadedAnimationGraphs
 #
-# Scene:
-#   DynamicSceneBuilder, SceneFilter
+# World serialization:
+#   DynamicWorldBuilder, WorldFilter
 #
 # Assets:
 #   AssetId, AssetMode, DynamicTextureAtlasBuilder, NonPathHandleError,
@@ -508,13 +515,13 @@ __all__ = [
     "NextState",
     "Add",
     "Despawn",
+    "Discard",
     "Insert",
     "On",
     "OnEnter",
     "OnExit",
     "OnTransition",
     "Remove",
-    "Replace",
     "Query",
     "Res",
     "ResMut",
@@ -616,12 +623,12 @@ __all__ = [
     "FogFalloff",
     "ParallaxMappingMethod",
     "StandardMaterial",
-    # Scene
-    "DynamicScene",
-    "DynamicSceneRoot",
-    "Scene",
-    "SceneRoot",
-    "SceneSpawner",
+    # World serialization
+    "DynamicWorld",
+    "DynamicWorldRoot",
+    "WorldAsset",
+    "WorldAssetRoot",
+    "WorldInstanceSpawner",
     # Shader
     "Shader",
     # Sprite
@@ -662,6 +669,7 @@ __all__ = [
     "FlexDirection",
     "FlexWrap",
     "GlobalZIndex",
+    "InlineDirection",
     "GridAutoFlow",
     "GridPlacement",
     "GridTrack",
@@ -677,7 +685,7 @@ __all__ = [
     "Outline",
     "Overflow",
     "OverflowAxis",
-    "OverflowClipBox",
+    "VisualBox",
     "OverflowClipMargin",
     "PositionType",
     "RepeatedGridTrack",

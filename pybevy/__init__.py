@@ -8,6 +8,7 @@ from . import (
     color,
     core_pipeline,
     ecs,
+    gizmos,
     gltf,
     image,
     input,
@@ -19,7 +20,6 @@ from . import (
     post_process,
     prelude,
     render,
-    scene,
     shader,
     sprite,
     text,
@@ -29,6 +29,7 @@ from . import (
     wgpu,
     window,
     winit,
+    world_serialization,
 )
 from ._constants import _apply as _apply_constant_descriptors
 from .decorators import (
@@ -69,6 +70,7 @@ __all__ = [
     "color",
     "core_pipeline",
     "ecs",
+    "gizmos",
     "gltf",
     "image",
     "input",
@@ -80,7 +82,6 @@ __all__ = [
     "post_process",
     "prelude",
     "render",
-    "scene",
     "shader",
     "sprite",
     "text",
@@ -90,4 +91,5 @@ __all__ = [
     "wgpu",
     "window",
     "winit",
+    "world_serialization",
 ]

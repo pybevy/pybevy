@@ -12,4 +12,4 @@ pyo3 = { workspace = true, features = ["macros"] }
 bevy = { workspace = true, features = ["bevy_render"] }
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
-naga = "27"
+naga = "29"

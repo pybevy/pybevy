@@ -1539,7 +1539,7 @@ holder = Holder()
 
     #[test]
     fn world_despawn_vs_entity_mut_despawn_baseline() {
-        // Pin the Bevy 0.18 contract our despawn_entity handler relies on:
+        // Pin the Bevy contract our despawn_entity handler relies on:
         // both `World::despawn` AND `EntityWorldMut::despawn` walk the
         // `Children` relationship recursively. If a future Bevy release
         // changes World::despawn back to non-recursive, despawn_entity

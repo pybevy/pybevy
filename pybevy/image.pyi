@@ -90,15 +90,19 @@ class ImageFormatSettingWithFormat: ...
 class RenderAssetUsages:
     """Asset usage flags indicating which worlds can access this asset.
 
-    Specifies whether the asset is available in the main world, render world, or both.
+    Combine flags with `|`: `RenderAssetUsages.MAIN_WORLD | RenderAssetUsages.RENDER_WORLD`.
     """
-    @property
-    def main_world(self) -> bool:
-        """Whether this asset is available in the main world."""
 
-    @property
-    def render_world(self) -> bool:
-        """Whether this asset is available in the render world."""
+    MAIN_WORLD: ClassVar[RenderAssetUsages]
+    RENDER_WORLD: ClassVar[RenderAssetUsages]
+
+    def __init__(self) -> None:
+        """Create the default usage flags, `MAIN_WORLD | RENDER_WORLD` (matches bevy's `RenderAssetUsages::default()`)."""
+
+    def __or__(self, other: RenderAssetUsages) -> RenderAssetUsages: ...
+    def __eq__(self, other: object) -> bool: ...
+    def contains(self, other: RenderAssetUsages) -> bool:
+        """Whether all flags in `other` are set on this value."""
 
 class ImagePlugin(Plugin):
     """Plugin that adds Image asset support and configures texture loading.
@@ -236,19 +240,24 @@ class Image(Asset):
     def __init__(
         self,
         size: Extent3d = Extent3d(1, 1, 1),
+        dimension: TextureDimension | None = None,
         data: bytes | list[int] | np.ndarray | None = None,
+        format: TextureFormat | None = None,
+        asset_usage: RenderAssetUsages | None = None,
     ) -> None:
-        """Create a new image with the specified size and optional data.
-
-        Creates an RGBA8 texture with default settings. For white pixels by default
-        if no data is provided. For more control over format and dimension, use
-        the static constructor methods like `new_fill()` or `new_target_texture()`.
+        """Create a new image, mirroring bevy's `Image::new`.
 
         Args:
             size: Texture dimensions (width, height, depth_or_array_layers).
                   Default is 1x1x1 single pixel.
-            data: Optional pixel data. If None, fills with white (255, 255, 255, 255).
-                  Can be bytes, list of ints, or numpy array.
+            dimension: Texture dimension. Defaults to TextureDimension.D2.
+            data: Optional pixel data. If None, fills with max-value bytes
+                  (white for 8-bit unorm formats). Must match size and format;
+                  raises ValueError on length mismatch. Can be bytes, list of
+                  ints, or numpy array.
+            format: Texture format. Defaults to TextureFormat.Rgba8UnormSrgb.
+            asset_usage: Which worlds keep the asset. Defaults to both
+                  (bevy's `RenderAssetUsages::default()`).
 
         Example:
             ```python
@@ -260,7 +269,7 @@ class Image(Asset):
 
             # Create with custom data
             pixels = [255, 0, 0, 255] * (64 * 64)  # Red texture
-            img = Image(Extent3d(64, 64, 1), pixels)
+            img = Image(Extent3d(64, 64, 1), data=pixels)
             ```
         """
 
@@ -1312,6 +1321,14 @@ class ImageArrayLayout:
     @staticmethod
     def row_height(pixels: int) -> ImageArrayLayout:
         """Create a layout with a specific row height in pixels."""
+
+    @staticmethod
+    def grid_count(columns: int, rows: int) -> ImageArrayLayout:
+        """Create a layout with a specific number of columns and rows."""
+
+    @staticmethod
+    def grid_size(tile_width_pixels: int, tile_height_pixels: int) -> ImageArrayLayout:
+        """Create a layout with a specific tile width and height in pixels."""
 
 class ImageLoaderSettings:
     """Settings for loading an Image using an ImageLoader.

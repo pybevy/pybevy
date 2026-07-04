@@ -9,8 +9,8 @@ from pybevy.ecs import Message, Resource
 from pybevy.image import Image, ImageLoaderSettings
 from pybevy.mesh import Mesh, Meshable, MeshBuilder
 from pybevy.pbr import StandardMaterial
-from pybevy.scene import Scene
 from pybevy.sprite import ColorMaterial
+from pybevy.world_serialization import WorldAsset
 
 A = TypeVar("A", bound=Asset)
 
@@ -133,7 +133,7 @@ class AssetIter(Iterator[tuple[Handle[A], A]]):
 class AssetServer(Resource):
     def load(self, path: str | AssetPath, asset_type: type[A]) -> Handle[A]: ...
 
-    def load_scene(self, path: str | AssetPath) -> Handle[Scene]: ...
+    def load_world_asset(self, path: str | AssetPath) -> Handle[WorldAsset]: ...
     def load_image(self, path: str | AssetPath) -> Handle[Image]: ...
     def load_with_settings(self, path: str | AssetPath, asset_type: type[A], settings: ImageLoaderSettings) -> Handle[A]:
         """Load an asset with custom loader settings.
@@ -250,10 +250,10 @@ class AssetServer(Resource):
         Example:
             ```python
             # First load
-            handle1 = asset_server.load("model.gltf", Scene)
+            handle1 = asset_server.load("model.gltf", WorldAsset)
 
             # Later, retrieve the same handle without re-loading
-            handle2 = asset_server.get_handle("model.gltf", Scene)
+            handle2 = asset_server.get_handle("model.gltf", WorldAsset)
             assert handle1 == handle2  # Same handle
             ```
         """

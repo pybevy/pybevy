@@ -1,6 +1,6 @@
 """Animated Fox — GLB skeletal animation with playback control.
 
-Loads Fox.glb and plays the Run animation. Uses MessageReader[SceneInstanceReady]
+Loads Fox.glb and plays the Run animation. Uses MessageReader[WorldInstanceReady]
 to detect when the scene finishes loading, then finds the AnimationPlayer in the
 scene hierarchy and starts playback.
 """
@@ -12,7 +12,7 @@ from pybevy.animation import (
     AnimationPlayer,
 )
 from pybevy.prelude import *
-from pybevy.scene import SceneInstanceReady
+from pybevy.world_serialization import WorldInstanceReady
 
 FOX_PATH = "bevy/models/animated/Fox.glb"
 
@@ -44,8 +44,8 @@ def setup(
     # Fox with animation info
     commands.spawn(
         AnimationToPlay(graph_handle, index),
-        SceneRoot(asset_server.load(
-            GltfAssetLabel.Scene(0).from_asset(FOX_PATH), Scene
+        WorldAssetRoot(asset_server.load(
+            GltfAssetLabel.Scene(0).from_asset(FOX_PATH), WorldAsset
         )),
     )
 
@@ -57,7 +57,7 @@ def setup(
 
     # Light
     commands.spawn(
-        DirectionalLight(illuminance=5000.0, shadows_enabled=True),
+        DirectionalLight(illuminance=5000.0, shadow_maps_enabled=True),
         Transform.from_rotation(Quat.from_euler(EulerRot.ZYX, 0.0, 1.0, -0.785)),
     )
     commands.insert_resource(GlobalAmbientLight(brightness=2000.0))
@@ -65,7 +65,7 @@ def setup(
 
 def play_animation_when_ready(
     commands: Commands,
-    scene_ready: MessageReader[SceneInstanceReady],
+    scene_ready: MessageReader[WorldInstanceReady],
     animations_to_play: Query[AnimationToPlay],
     children_query: Query[Children],
     players: Query[Mut[AnimationPlayer]],

@@ -17,7 +17,9 @@ use bevy::{
     ecs::{
         message::MessageWriter,
         resource::Resource,
-        schedule::{Chain, ExecutorKind, IntoScheduleConfigs, ScheduleConfigs, Schedules},
+        schedule::{
+            Chain, IntoScheduleConfigs, ScheduleConfigs, Schedules, SingleThreadedExecutor,
+        },
         system::Res,
         world::World,
     },
@@ -520,7 +522,7 @@ impl PyApp {
                                             $lbl
                                         ))
                                     })?
-                                    .set_executor_kind(ExecutorKind::SingleThreaded);
+                                    .set_executor(SingleThreadedExecutor::new());
                             }
                         };
                     }

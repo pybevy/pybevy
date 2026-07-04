@@ -1,5 +1,69 @@
 # Changelog
 
+## Unreleased
+
+### Bevy 0.19 upgrade
+
+PyBevy now tracks Bevy 0.19.0 (from 0.18). PyBevy mirrors Bevy's API surface,
+so upstream renames, module moves, and default changes flow through to Python.
+
+#### Module moves (import paths changed, class names unchanged)
+
+- `HalfSpace`: `pybevy.camera` -> `pybevy.math` (Bevy moved it to `bevy_math`)
+- `Atmosphere`, `ScatteringMedium`, `Falloff`, `Skybox`: `pybevy.pbr`/`pybevy.camera` -> `pybevy.light` (Bevy moved them to `bevy_light`; `AtmosphereSettings` and `AtmosphereMode` stay in `pybevy.pbr`)
+- `ScreenSpaceTransmissionQuality`: `pybevy.camera` -> `pybevy.pbr`
+- New `pybevy.material` module mirroring Bevy's new `bevy_material` crate: `AlphaMode` (from `pybevy.render`) and `OpaqueRendererMethod` (from `pybevy.pbr`) moved there; `DefaultOpaqueRendererMethod` stays in `pybevy.pbr`
+- `UvChannel`: `pybevy.pbr` -> `pybevy.mesh`
+
+#### Renames and removals (mirroring Bevy 0.19)
+
+- Module `pybevy.scene` -> `pybevy.world_serialization` (Bevy renamed `bevy_scene` to `bevy_world_serialization`; the "Scene" name was reused upstream for the new BSN system, which PyBevy does not adopt)
+- `Scene` -> `WorldAsset`; `DynamicScene` -> `DynamicWorld`; `SceneRoot` -> `WorldAssetRoot`; `DynamicSceneRoot` -> `DynamicWorldRoot`; `SceneSpawner` -> `WorldInstanceSpawner`; `SceneInstanceReady` -> `WorldInstanceReady`; `ScenePlugin` -> `WorldSerializationPlugin` (`InstanceId` is unchanged)
+- `AssetServer.load_scene()` -> `AssetServer.load_world_asset()`
+- Lifecycle marker `Replace` renamed to `Discard` (`On[Discard, T]`)
+- Lights: `shadows_enabled` -> `shadow_maps_enabled` (PointLight/SpotLight/DirectionalLight constructor kwarg, property, `from_numpy` kwarg, View column)
+- `Atmosphere`: `bottom_radius`/`top_radius` -> `inner_radius`/`outer_radius`; `earthlike()` -> `earth()` (also on `ScatteringMedium`); `AtmosphereSettings.scene_units_to_m` removed
+- `Camera3d`: `screen_space_specular_transmission_steps`/`_quality` removed; use the new `ScreenSpaceTransmission` component (`pybevy.pbr`) instead
+- `ScreenSpaceReflections`: `perceptual_roughness_threshold` -> `min_perceptual_roughness`/`max_perceptual_roughness` range tuples; new `edge_fadeout`
+- `OverflowClipBox` -> `VisualBox`; `ImageNode.texture` -> `ImageNode.image`; `Plane3dMeshBuilder` -> `PlaneMeshBuilder`
+- `ComputedNode.stack_index` removed; query the new `ComputedStackIndex` component instead
+- `FontAtlas.texture_atlas` now returns a `TextureAtlasLayout` (Bevy stores the layout inline; it is no longer a `Handle`); `FontAtlasKey` gained `id`/`index`/`variations_hash`
+- `FontStyle` is now a proper enum: `FontStyle.Normal()`, `FontStyle.Italic()`, `FontStyle.Oblique(angle)` (was `NORMAL`/`ITALIC` constants + `oblique()`)
+- `Cone.from_dimensions`/`Cylinder.from_dimensions` removed; `Cuboid.from_corners(min=, max=)` -> `(point1=, point2=)`
+- `GltfAssetLabel.MorphTarget` removed (the sub-asset no longer exists in Bevy); `GltfAssetLabel.Material(n)` now labels a `GltfMaterial` sub-asset, the processed `StandardMaterial` lives under the `"/std"` label suffix
+- `Shader.with_import_path()` removed (Bevy has no such builder); assign the `import_path` property instead
+- `Frustum.from_clip_from_world`/`from_clip_from_world_custom_far` moved to the new `ViewFrustum` class (`pybevy.math`), mirroring Bevy 0.19's split where `Frustum` is a newtype over `bevy_math`'s `ViewFrustum`: build with `Frustum(ViewFrustum.from_clip_from_world(mat))`; the payload is exposed as `Frustum.value`
+- `FontAtlasSet.get_by_font(font)` -> `items()` (Bevy 0.19 keys atlases by `FontAtlasKey`, not font handle; the old method had stopped filtering); the set is also iterable like a dict (`for key in font_atlas_set`, `len(font_atlas_set)`)
+- `TextFont.font_size` now returns a `FontSize` enum value (`FontSize.Px(20.0)`, `.Vw`, `.Vh`, `.VMin`, `.VMax`, `.Rem`) mirroring Bevy's `FontSize`; plain floats are still accepted everywhere a size is written and mean `Px`. `TextFont.font` now returns a `FontSource` (`FontSource.Handle(h)`, `.Family(name)`, or a generic family like `.Monospace()`) and accepts a `FontSource`, `Handle`, or family-name `str`
+- `TextFont.from_numpy` removed (Bevy's `FontSize` enum is not zero-copy batchable)
+- `PerspectiveProjection(fov=None, ...)` no longer accepts `None`; parameters are plain floats
+
+#### Behavior changes (same code, different result)
+
+- `Ellipse(half_size)` now sets the half-size directly, matching Bevy's `Ellipse::new` (previously the argument was halved); `Ellipse()` defaults to half_size (1.0, 0.5)
+- `Skybox`: `image` is now optional (`Skybox()` == Bevy's default with no image); the `image` property returns `None` when unset
+- Constructor defaults aligned with Bevy 0.19 `Default` impls: `Cone`/`Cylinder` radius 0.5; `CircularSector`/`CircularSegment` radius 0.5, half_angle 2*pi/3; `RegularPolygon` circumradius 0.5; `Segment2d` endpoints (-0.5,0)/(0.5,0); `FocusPolicy()` is `Pass`; `TextShadow` offset (4,4), color rgba(0,0,0,0.75); `DistanceFog.directional_light_color` `NONE`; `ColorMaterial.alpha_mode` `Blend`; `Outline` width `px(1)`, color `WHITE`; `ShadowStyle` percent offsets/blur, color `BLACK`; `ColorStop`/`AngularColorStop` color `WHITE`; `ScreenSpaceAmbientOcclusion.constant_object_thickness` 0.25; `ScreenSpaceReflections` linear_steps 10, bisection_steps 5
+- Bare `Query[Entity]` also matches resource entities in Bevy 0.19 (resources are stored as entities); filter with component markers where exact counts matter
+- `PbrPlugin` now requires `GltfPlugin` to be added before it (Bevy's `PbrPlugin::build` registers a glTF material extension handler; `DefaultPlugins` order provides this automatically, manual plugin lists must add `GltfPlugin` first)
+- System-parameter validation failures and command errors now panic via Bevy's default error handler (Bevy 0.19 validates parameters while fetching data and routes failures to the app error handler; on 0.18 such systems were skipped silently). Consequence for manual plugin lists: `LightPlugin` needs `ImagePlugin` and `GizmoPlugin` present or its atmosphere/light-gizmo systems panic (`DefaultPlugins` provides both automatically)
+- `Image(...)` constructor now mirrors Bevy's `Image::new` parameter order (`size`, `dimension`, `data`, `format`, `asset_usage`): `data` moved from 2nd to 3rd position, so pass it as a keyword; a data/size/format length mismatch now raises `ValueError` instead of a debug panic
+
+#### Additions
+
+- `ScreenSpaceTransmission` component (`pybevy.pbr`): per-camera transmission `steps`/`quality`
+- `ScatteringTerm` + `PhaseFunction` (`pybevy.light`); `ScatteringMedium(falloff_resolution=, phase_resolution=, terms=[...])` mirroring Bevy's `new`, plus `label`/`terms` properties
+- `WireframeTopology` enum; `WireframeConfig.default_line_width`/`default_topology`; `WireframeMaterial.line_width`/`topology`
+- `ComputedStackIndex` component (`pybevy.ui`): UI draw order, auto-added to nodes
+- `Justify.Start`/`Justify.End`; `Tonemapping.BLENDER_FILMIC`; `Bloom.OLD_SCHOOL`/`SCREEN_BLUR`; `SunDisk.OFF`
+- `FontSize` and `FontSource` enums (`pybevy.text`); `TextFont.with_family(name)`
+- `FontWidth`/`FontStyle`/`FontHinting` types; `FontWidth(value)` constructor + `value` getter; `TextFont(width=, style=)`; `Node.direction` (`InlineDirection`); `ImageNode.visual_box`; `ImageArrayLayout.grid_count`/`grid_size`; `Atmosphere.mars()`/`ScatteringMedium.mars()`; `LightProbe.falloff`
+- `Image(dimension=, format=, asset_usage=)` constructor params (mirroring `Image::new`); `RenderAssetUsages` flags mirroring Bevy's bitflags: `MAIN_WORLD`/`RENDER_WORLD` constants, `|`, `contains()`, `==`; `RenderAssetUsages()` is Bevy's default (both worlds)
+- `TextureFormat` and `TextureDimension` now support value equality (`==` compared by identity before)
+- `pybevy.gizmos` module with `GizmoPlugin`, mirroring `bevy_gizmos::GizmoPlugin` (initializes gizmo assets/config; required alongside `LightPlugin` in manual plugin lists, add it after `AssetPlugin` and `MeshPlugin`)
+- `WireframePlugin` (`pybevy.pbr`): registers Bevy's wireframe render systems; previously the `Wireframe`/`WireframeConfig` wrappers existed but nothing rendered them
+- `ScatteringMedium.terms` is now writable (mirrors the public field; e.g. appending a haze term to the earth defaults)
+- New example `examples/bevy/large_scenes/bevy_city.py`: port of Bevy 0.19's procedurally generated city stress test (auto-downloads the CC0 Kenney kits on first run)
+
 ## 0.2.1
 
 ### Bug fixes

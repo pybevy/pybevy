@@ -7,34 +7,14 @@ from pybevy.assets import Asset, Handle
 from pybevy.color import Color, LinearRgba
 from pybevy.ecs import Batchable, Component, Resource
 from pybevy.image import Image
+from pybevy.material import AlphaMode, OpaqueRendererMethod
 from pybevy.math import Affine2, Rect, UVec2, UVec3, Vec3
-from pybevy.render import AlphaMode, Face
+from pybevy.mesh import UvChannel
+from pybevy.render import Face
 
 class PbrPlugin(Plugin):
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...
-
-class UvChannel:
-    """UV channel selection for texture mapping."""
-
-    Uv0: ClassVar[UvChannel]
-    Uv1: ClassVar[UvChannel]
-    UV0: ClassVar[UvChannel]
-    UV1: ClassVar[UvChannel]
-
-    def __init__(self) -> None: ...
-
-class OpaqueRendererMethod:
-    """Opaque rendering method selection."""
-
-    Forward: ClassVar[OpaqueRendererMethod]
-    Deferred: ClassVar[OpaqueRendererMethod]
-    Auto: ClassVar[OpaqueRendererMethod]
-    FORWARD: ClassVar[OpaqueRendererMethod]
-    DEFERRED: ClassVar[OpaqueRendererMethod]
-    AUTO: ClassVar[OpaqueRendererMethod]
-
-    def __int__(self) -> int: ...
 
 class ParallaxMappingMethod:
     OCCLUSION: ClassVar[ParallaxMappingMethod]
@@ -291,7 +271,7 @@ class ScreenSpaceAmbientOcclusion(Component):
     def __init__(
         self,
         quality_level: ScreenSpaceAmbientOcclusionQualityLevel = ...,
-        constant_object_thickness: float = 0.0,
+        constant_object_thickness: float = 0.25,
     ) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
@@ -313,6 +293,37 @@ class ScreenSpaceAmbientOcclusion(Component):
         *,
         constant_object_thickness: np.ndarray | None = None,
     ) -> Batchable: ...
+
+class ScreenSpaceTransmissionQuality:
+    """Quality setting for screen space specular transmission."""
+    Low: ScreenSpaceTransmissionQuality
+    Medium: ScreenSpaceTransmissionQuality
+    High: ScreenSpaceTransmissionQuality
+    Ultra: ScreenSpaceTransmissionQuality
+
+class ScreenSpaceTransmission(Component):
+    """Configures screen space transmission (refraction) behavior.
+
+    Trades performance against visual fidelity for transmissive materials.
+    """
+
+    def __init__(
+        self,
+        steps: int = 1,
+        quality: ScreenSpaceTransmissionQuality = ...,
+    ) -> None: ...
+
+    @property
+    def steps(self) -> int:
+        """Number of steps in the Transmissive3d pass (0 disables refraction)."""
+    @steps.setter
+    def steps(self, value: int) -> None: ...
+
+    @property
+    def quality(self) -> ScreenSpaceTransmissionQuality:
+        """Quality of the transmission blur effect."""
+    @quality.setter
+    def quality(self, value: ScreenSpaceTransmissionQuality) -> None: ...
 
 class Wireframe(Component):
     """Wireframe rendering marker component.
@@ -356,6 +367,21 @@ class NoWireframe(Component):
     def __init__(self) -> None: ...
     def __eq__(self, other: object) -> bool: ...
 
+class WireframeTopology:
+    """Controls whether wireframe edges follow triangle or quad topology."""
+
+    Triangles: WireframeTopology
+    Quads: WireframeTopology
+    """Best-effort quad detection from a triangle mesh (may have false positives/negatives)."""
+
+    def __eq__(self, other: object) -> bool: ...
+
+class WireframePlugin(Plugin):
+    """Enables wireframe rendering for meshes with Wireframe or WireframeConfig.global_."""
+
+    def __init__(self) -> None: ...
+    def build(self, app: App) -> None: ...
+
 class WireframeConfig(Resource):
     """Global wireframe configuration resource.
 
@@ -368,6 +394,8 @@ class WireframeConfig(Resource):
         self,
         global_: bool = False,
         default_color: Color = ...,
+        default_line_width: float = 1.0,
+        default_topology: WireframeTopology = ...,
     ) -> None: ...
 
     @property
@@ -382,15 +410,42 @@ class WireframeConfig(Resource):
     @default_color.setter
     def default_color(self, value: Color) -> None: ...
 
+    @property
+    def default_line_width(self) -> float:
+        """Default wireframe line width in pixels."""
+    @default_line_width.setter
+    def default_line_width(self, value: float) -> None: ...
+
+    @property
+    def default_topology(self) -> WireframeTopology:
+        """Default edge topology."""
+    @default_topology.setter
+    def default_topology(self, value: WireframeTopology) -> None: ...
+
 class WireframeMaterial(Asset):
     """Material asset for wireframe rendering.
 
     A specialized material used for rendering meshes in wireframe mode.
     """
 
-    def __init__(self, color: Color = ...) -> None: ...
+    def __init__(
+        self,
+        color: Color = ...,
+        line_width: float = 1.0,
+        topology: WireframeTopology = ...,
+    ) -> None: ...
     @property
     def color(self) -> Color: ...
+    @color.setter
+    def color(self, value: Color) -> None: ...
+    @property
+    def line_width(self) -> float: ...
+    @line_width.setter
+    def line_width(self, value: float) -> None: ...
+    @property
+    def topology(self) -> WireframeTopology: ...
+    @topology.setter
+    def topology(self, value: WireframeTopology) -> None: ...
 
 class Mesh3dWireframe(Component):
     """Component holding a wireframe material handle.
@@ -415,19 +470,33 @@ class ScreenSpaceReflections(Component):
 
     def __init__(
         self,
-        perceptual_roughness_threshold: float = 0.1,
+        min_perceptual_roughness: tuple[float, float] = (0.08, 0.12),
+        max_perceptual_roughness: tuple[float, float] = (0.55, 0.6),
         thickness: float = 0.25,
-        linear_steps: int = 16,
+        linear_steps: int = 10,
         linear_march_exponent: float = 1.0,
-        bisection_steps: int = 4,
+        edge_fadeout: tuple[float, float] = (0.0, 0.0),
+        bisection_steps: int = 5,
         use_secant: bool = True,
     ) -> None: ...
 
     @property
-    def perceptual_roughness_threshold(self) -> float:
-        """Roughness threshold above which SSR is disabled."""
-    @perceptual_roughness_threshold.setter
-    def perceptual_roughness_threshold(self, value: float) -> None: ...
+    def min_perceptual_roughness(self) -> tuple[float, float]:
+        """The perceptual roughness range (start, end) over which SSR fades in."""
+    @min_perceptual_roughness.setter
+    def min_perceptual_roughness(self, value: tuple[float, float]) -> None: ...
+
+    @property
+    def max_perceptual_roughness(self) -> tuple[float, float]:
+        """The perceptual roughness range (start, end) over which SSR fades out."""
+    @max_perceptual_roughness.setter
+    def max_perceptual_roughness(self, value: tuple[float, float]) -> None: ...
+
+    @property
+    def edge_fadeout(self) -> tuple[float, float]:
+        """The screen-edge fade range (start, end), in fraction of screen size."""
+    @edge_fadeout.setter
+    def edge_fadeout(self, value: tuple[float, float]) -> None: ...
 
     @property
     def thickness(self) -> float:
@@ -462,7 +531,6 @@ class ScreenSpaceReflections(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        perceptual_roughness_threshold: np.ndarray | None = None,
         thickness: np.ndarray | None = None,
         linear_steps: np.ndarray | None = None,
         linear_march_exponent: np.ndarray | None = None,
@@ -539,83 +607,6 @@ class AtmosphereMode:
     LOOKUP_TEXTURE: ClassVar[AtmosphereMode]
     RAYMARCHED: ClassVar[AtmosphereMode]
 
-class ScatteringMedium(Asset):
-    """Asset defining how a material scatters light.
-
-    In Bevy 0.18, atmospheric scattering parameters (rayleigh, mie, ozone)
-    moved from Atmosphere into ScatteringMedium assets. Atmosphere now
-    references a Handle[ScatteringMedium].
-
-    Example:
-        >>> from pybevy.pbr import ScatteringMedium
-        >>> medium = ScatteringMedium()  # default (earth-like) medium
-        >>> earth_medium = ScatteringMedium.earthlike()
-    """
-
-    def __init__(self) -> None: ...
-
-    @staticmethod
-    def earthlike(
-        falloff_resolution: int = 256,
-        phase_resolution: int = 256,
-    ) -> ScatteringMedium:
-        """Create an earth-like scattering medium preset."""
-
-class Atmosphere(Component):
-    """Atmospheric scattering component for realistic sky rendering.
-
-    When added to a camera, enables procedural atmospheric scattering that
-    simulates realistic sky colors, sunsets, and aerial perspective. Based on
-    Hillaire's 2020 paper on real-time atmospheric scattering.
-
-    In Bevy 0.18, scattering parameters (rayleigh, mie, ozone) moved to
-    ScatteringMedium assets. Atmosphere now references a Handle to a
-    ScatteringMedium.
-
-    Example:
-        >>> from pybevy.pbr import Atmosphere
-        >>> # Create with a ScatteringMedium handle
-        >>> atmo = Atmosphere(medium=medium_handle)
-        >>> # Or use earthlike preset
-        >>> atmo = Atmosphere.earthlike(medium_handle)
-    """
-
-    def __init__(
-        self,
-        medium: Handle[ScatteringMedium],
-        bottom_radius: float,
-        top_radius: float,
-        ground_albedo: Vec3,
-    ) -> None: ...
-
-    @staticmethod
-    def earthlike(medium: Handle[ScatteringMedium]) -> Atmosphere:
-        """Create an earth-like atmosphere with the given ScatteringMedium handle."""
-
-    @property
-    def medium(self) -> Handle[ScatteringMedium]:
-        """Handle to the ScatteringMedium asset."""
-    @medium.setter
-    def medium(self, value: Handle[ScatteringMedium]) -> None: ...
-
-    @property
-    def bottom_radius(self) -> float:
-        """Radius of the planet in meters."""
-    @bottom_radius.setter
-    def bottom_radius(self, value: float) -> None: ...
-
-    @property
-    def top_radius(self) -> float:
-        """Radius at which atmosphere ends in meters (from planet center)."""
-    @top_radius.setter
-    def top_radius(self, value: float) -> None: ...
-
-    @property
-    def ground_albedo(self) -> Vec3:
-        """Average surface albedo for multiscattering calculations."""
-    @ground_albedo.setter
-    def ground_albedo(self, value: Vec3) -> None: ...
-
 class AtmosphereSettings(Component):
     """Configuration for atmosphere LUT (Look-Up Table) resolution and sampling.
 
@@ -636,7 +627,6 @@ class AtmosphereSettings(Component):
         sky_view_lut_samples: int = 16,
         aerial_view_lut_samples: int = 10,
         aerial_view_lut_max_distance: float = 32000.0,
-        scene_units_to_m: float = 1.0,
         sky_max_samples: int = 16,
         rendering_method: AtmosphereMode = ...,
     ) -> None: ...
@@ -702,12 +692,6 @@ class AtmosphereSettings(Component):
     def aerial_view_lut_max_distance(self, value: float) -> None: ...
 
     @property
-    def scene_units_to_m(self) -> float:
-        """Conversion factor from scene units to meters."""
-    @scene_units_to_m.setter
-    def scene_units_to_m(self, value: float) -> None: ...
-
-    @property
     def sky_max_samples(self) -> int:
         """Maximum samples for raymarched sky rendering."""
     @sky_max_samples.setter
@@ -728,7 +712,6 @@ class AtmosphereSettings(Component):
         sky_view_lut_samples: np.ndarray | None = None,
         aerial_view_lut_samples: np.ndarray | None = None,
         aerial_view_lut_max_distance: np.ndarray | None = None,
-        scene_units_to_m: np.ndarray | None = None,
         sky_max_samples: np.ndarray | None = None,
     ) -> Batchable: ...
 
@@ -821,21 +804,6 @@ class ForwardDecal(Component):
 
     def __init__(self) -> None: ...
     def __eq__(self, other: object) -> bool: ...
-
-class Falloff:
-    """Falloff mode controlling intensity decay over distance."""
-
-    @staticmethod
-    def linear() -> Falloff:
-        """Linear falloff."""
-
-    @staticmethod
-    def exponential(scale: float) -> Falloff:
-        """Exponential falloff with given scale."""
-
-    @staticmethod
-    def tent(center: float, width: float) -> Falloff:
-        """Tent-shaped falloff with given center and width."""
 
 class MeshMaterial3dShader(Component):
     """Component that assigns a ShaderMaterial to a mesh entity.

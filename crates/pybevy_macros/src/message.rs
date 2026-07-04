@@ -200,7 +200,7 @@ fn generate_message_bridge_tokens(
             fn resource_id(&self, world: &bevy::ecs::world::World) -> Option<bevy::ecs::component::ComponentId> {
                 use bevy::ecs::message::Messages;
 
-                world.components().resource_id::<Messages<#bevy_type>>()
+                world.components().component_id::<Messages<#bevy_type>>()
             }
         }
     };

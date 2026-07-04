@@ -34,6 +34,19 @@ commands.spawn(
 )
 ```
 
+### Font Sizes and Sources
+
+`font_size` accepts a float (pixels) or a `FontSize` unit; `font` accepts a `Handle`, a family-name string, or a `FontSource`:
+
+```python
+from pybevy.text import FontSize, FontSource
+
+TextFont(font_size=FontSize.Rem(1.5))          # relative to root font size (Px/Vw/Vh/VMin/VMax/Rem)
+TextFont(font="Fira Mono")                      # family by name
+TextFont(font=FontSource.Monospace())           # generic family (Serif, SansSerif, Monospace, ...)
+TextFont(weight=FontWeight.BOLD, style=FontStyle.Italic())  # variable font properties
+```
+
 ### Absolute Positioning
 
 Use `position_type = 1` (Absolute) to place text anywhere on screen:

@@ -317,8 +317,8 @@ mod tests {
 
     #[test]
     fn f32_from_numpy() {
-        let data = [3.14f32, 2.71];
-        assert!((f32::from_numpy_f32_slice(&data, 0) - 3.14).abs() < 1e-6);
+        let data = [1.5f32, 2.71];
+        assert!((f32::from_numpy_f32_slice(&data, 0) - 1.5).abs() < 1e-6);
         assert!((f32::from_numpy_f32_slice(&data, 1) - 2.71).abs() < 1e-6);
     }
 

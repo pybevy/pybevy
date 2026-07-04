@@ -32,7 +32,7 @@ def setup(
         MeshMaterial3d(materials.add(StandardMaterial.from_color(Color.srgb(0.5, 0.6, 1.0)))),
         Transform.from_xyz(0.0, 0.5, 0.0),
     )
-    commands.spawn(PointLight(shadows_enabled=True), Transform.from_xyz(4.0, 8.0, 4.0))
+    commands.spawn(PointLight(shadow_maps_enabled=True), Transform.from_xyz(4.0, 8.0, 4.0))
 
     # Camera rendering to offscreen image (required for headless)
     render_target = Image.new_render_target(width=256, height=256)

@@ -30,7 +30,7 @@ def setup(
 
     # Bright directional light (needed for transmission to be visible)
     commands.spawn(
-        DirectionalLight(illuminance=15000.0, shadows_enabled=True),
+        DirectionalLight(illuminance=15000.0, shadow_maps_enabled=True),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.7, 0.5, 0.0)),
         Name("sun"),
     )
@@ -121,3 +121,4 @@ if __name__ == "__main__":
 - **TransmittedShadowReceiver** shows shadows on the back side of leaves
 - Place objects behind glass so refraction is visible
 - Bright lighting is essential — transmission needs plenty of light to look good
+- Refraction quality is per-camera: `ScreenSpaceTransmission(steps=2, quality=ScreenSpaceTransmissionQuality.High)` (pybevy.pbr) on the camera; `steps=0` disables refraction

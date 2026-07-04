@@ -21,4 +21,4 @@ pybevy_wgpu = { workspace = true }
 pybevy_image = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_math = { workspace = true }
-wgpu-types = "27"
+wgpu-types = "29"

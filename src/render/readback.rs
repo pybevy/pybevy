@@ -56,12 +56,11 @@ use bevy::{
     render::{
         Extract, Render, RenderApp, RenderSystems,
         render_asset::RenderAssets,
-        render_graph::{self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel},
         render_resource::{
             Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, MapMode, PollType,
             TexelCopyBufferInfo, TexelCopyBufferLayout,
         },
-        renderer::{RenderContext, RenderDevice, RenderQueue},
+        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
         texture::GpuImage,
     },
 };
@@ -217,11 +216,10 @@ impl Plugin for ImageCopyPlugin {
 
         let render_app = app.sub_app_mut(RenderApp);
 
-        // Add render graph node
-        let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
-        graph.add_node(ImageCopyLabel, ImageCopyDriver);
-        graph.add_node_edge(bevy::render::graph::CameraDriverLabel, ImageCopyLabel);
-        debug!("[ImageCopyPlugin] Added render graph node and edge");
+        // Render passes are systems; the image-copy pass runs in the top-level
+        // `RenderGraph` schedule.
+        render_app.add_systems(RenderGraph, image_copy_driver);
+        debug!("[ImageCopyPlugin] Added image copy driver system");
 
         render_app
             .add_systems(ExtractSchedule, image_copy_extract)
@@ -333,86 +331,67 @@ fn image_copy_extract(mut commands: Commands, image_copiers: Extract<Query<&Imag
     ));
 }
 
-/// Render graph label
-#[derive(Debug, PartialEq, Eq, Clone, Hash, RenderLabel)]
-struct ImageCopyLabel;
+/// Render-graph-schedule system that copies a GPU texture to a CPU buffer.
+///
+/// Render passes are systems; this runs in the top-level `RenderGraph` schedule.
+fn image_copy_driver(
+    render_context: RenderContext,
+    image_copiers: Res<ImageCopiers>,
+    render_queue: Res<RenderQueue>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+) {
+    debug!(
+        "[image_copy_driver] called - found {} ImageCopiers",
+        image_copiers.len()
+    );
 
-/// Render graph node that copies GPU texture to CPU buffer
-#[derive(Default)]
-struct ImageCopyDriver;
-
-impl render_graph::Node for ImageCopyDriver {
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        debug!("[ImageCopyDriver] run() called - starting texture copy");
-
-        // SAFETY: ImageCopiers is inserted by our plugin; RenderAssets<GpuImage> is
-        // inserted by Bevy's render pipeline. Both are guaranteed present when this
-        // render graph node runs.
-        let image_copiers = world.get_resource::<ImageCopiers>().unwrap();
-        let gpu_images = world.get_resource::<RenderAssets<GpuImage>>().unwrap();
-
-        debug!(
-            "[ImageCopyDriver] Found {} ImageCopiers",
-            image_copiers.len()
-        );
-
-        for image_copier in image_copiers.iter() {
-            if !image_copier.enabled() {
-                debug!("[ImageCopyDriver] Skipping disabled ImageCopier");
-                continue;
-            }
-
-            debug!("[ImageCopyDriver] Copying texture to buffer");
-            let Some(src_image) = gpu_images.get(&image_copier.src_image) else {
-                debug!("[ImageCopyDriver] Source image not yet loaded, skipping");
-                continue;
-            };
-
-            let mut encoder = render_context
-                .render_device()
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-
-            let block_dimensions = src_image.texture_format.block_dimensions();
-            let Some(block_size) = src_image.texture_format.block_copy_size(None) else {
-                debug!("[ImageCopyDriver] Unsupported texture format, skipping");
-                continue;
-            };
-
-            // Calculate padded bytes per row (wgpu alignment)
-            let padded_bytes_per_row = RenderDevice::align_copy_bytes_per_row(
-                (src_image.size.width as usize / block_dimensions.0 as usize) * block_size as usize,
-            );
-
-            let Some(bytes_per_row) = std::num::NonZero::<u32>::new(padded_bytes_per_row as u32)
-            else {
-                debug!("[ImageCopyDriver] Zero bytes per row, skipping");
-                continue;
-            };
-
-            encoder.copy_texture_to_buffer(
-                src_image.texture.as_image_copy(),
-                TexelCopyBufferInfo {
-                    buffer: &image_copier.buffer,
-                    layout: TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row.into()),
-                        rows_per_image: None,
-                    },
-                },
-                src_image.size,
-            );
-
-            // SAFETY: RenderQueue is always present when the render graph runs.
-            let render_queue = world.get_resource::<RenderQueue>().unwrap();
-            render_queue.submit(std::iter::once(encoder.finish()));
+    for image_copier in image_copiers.iter() {
+        if !image_copier.enabled() {
+            debug!("[image_copy_driver] Skipping disabled ImageCopier");
+            continue;
         }
 
-        Ok(())
+        debug!("[image_copy_driver] Copying texture to buffer");
+        let Some(src_image) = gpu_images.get(&image_copier.src_image) else {
+            debug!("[image_copy_driver] Source image not yet loaded, skipping");
+            continue;
+        };
+
+        let mut encoder = render_context
+            .render_device()
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let block_dimensions = src_image.texture_descriptor.format.block_dimensions();
+        let Some(block_size) = src_image.texture_descriptor.format.block_copy_size(None) else {
+            debug!("[image_copy_driver] Unsupported texture format, skipping");
+            continue;
+        };
+
+        // Calculate padded bytes per row (wgpu alignment)
+        let padded_bytes_per_row = RenderDevice::align_copy_bytes_per_row(
+            (src_image.texture_descriptor.size.width as usize / block_dimensions.0 as usize)
+                * block_size as usize,
+        );
+
+        let Some(bytes_per_row) = std::num::NonZero::<u32>::new(padded_bytes_per_row as u32) else {
+            debug!("[image_copy_driver] Zero bytes per row, skipping");
+            continue;
+        };
+
+        encoder.copy_texture_to_buffer(
+            src_image.texture.as_image_copy(),
+            TexelCopyBufferInfo {
+                buffer: &image_copier.buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row.into()),
+                    rows_per_image: None,
+                },
+            },
+            src_image.texture_descriptor.size,
+        );
+
+        render_queue.submit(std::iter::once(encoder.finish()));
     }
 }
 

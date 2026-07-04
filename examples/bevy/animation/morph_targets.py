@@ -2,7 +2,7 @@
 
 Demonstrates:
 - Loading GLTF scenes with morph target animations
-- SceneInstanceReady message for scene load notifications
+- WorldInstanceReady message for scene load notifications
 - MessageReader pattern for scene loading events
 - AnimationGraph.from_clip() for animation setup
 - Recursive hierarchy traversal with Children component
@@ -10,7 +10,7 @@ Demonstrates:
 
 This example loads a GLTF model with morph target animation and plays it in a loop.
 
-Note: Uses MessageReader[SceneInstanceReady] instead of Bevy's Observer pattern,
+Note: Uses MessageReader[WorldInstanceReady] instead of Bevy's Observer pattern,
 which provides equivalent functionality for scene loading notifications.
 """
 
@@ -24,7 +24,7 @@ from pybevy.animation import (
     AnimationPlayer,
 )
 from pybevy.prelude import *
-from pybevy.scene import SceneInstanceReady
+from pybevy.world_serialization import WorldInstanceReady
 
 
 @component
@@ -56,8 +56,8 @@ def setup(
     # Spawn scene root with animation info
     commands.spawn(
         AnimationToPlay(graph_handle, index),
-        SceneRoot(
-            asset_server.load(GltfAssetLabel.Scene(0).from_asset(gltf_path), Scene)
+        WorldAssetRoot(
+            asset_server.load(GltfAssetLabel.Scene(0).from_asset(gltf_path), WorldAsset)
         ),
     )
 
@@ -76,7 +76,7 @@ def setup(
 
 def play_animation_when_ready(
     commands: Commands,
-    scene_ready: MessageReader[SceneInstanceReady],
+    scene_ready: MessageReader[WorldInstanceReady],
     animations_to_play: Query[AnimationToPlay],
     children: Query[Children],
     players: Query[Mut[AnimationPlayer]],
@@ -84,7 +84,7 @@ def play_animation_when_ready(
     """Play animation when scene instance is ready.
 
     This uses MessageReader instead of Bevy's Observer pattern.
-    The SceneInstanceReady message is sent when scenes finish loading.
+    The WorldInstanceReady message is sent when scenes finish loading.
     """
     for event in scene_ready:
         # Get the animation info for this scene entity

@@ -26,7 +26,7 @@ def setup(
         Name("camera"),
     )
     commands.spawn(
-        DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+        DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
     )
 

@@ -35,7 +35,7 @@ def setup(
         DirectionalLight(
             illuminance=10000.0,
             color=Color.srgb(1.0, 0.95, 0.85),
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
         Name("sun"),

@@ -14,6 +14,7 @@ pub mod primitives;
 pub mod skinned_mesh;
 pub mod skinned_mesh_inverse_bindposes;
 pub mod sphere_kind;
+pub mod uv_channel;
 pub mod vertex_attribute;
 
 use pyo3::prelude::*;
@@ -79,6 +80,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<vertex_attribute::PyMeshVertexAttribute>()?;
     m.add_class::<primitive_topology::PyPrimitiveTopology>()?;
     m.add_class::<sphere_kind::PySphereKind>()?;
+    m.add_class::<uv_channel::PyUvChannel>()?;
     m.add_class::<vertex_attribute::PyVertexAttributeValues>()?;
     m.add_class::<mesh::MeshAttributeContext>()?;
     m.add_class::<mesh::MeshAttributeContextMut>()?;

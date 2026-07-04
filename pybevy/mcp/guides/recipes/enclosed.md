@@ -43,7 +43,7 @@ def setup(
         DirectionalLight(
             illuminance=8000.0,
             color=Color.srgb(0.6, 0.55, 0.8),
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.7, 0.5, 0.0)),
         Name("sun"),
@@ -111,7 +111,7 @@ def setup(
     # Central accent light (matches the emissive object color)
     commands.spawn(
         PointLight(intensity=500000.0, color=Color.srgb(0.6, 0.2, 1.0),
-                   range=18.0, shadows_enabled=True),
+                   range=18.0, shadow_maps_enabled=True),
         Transform.from_xyz(0, 3.5, 0), Name("light_center"),
     )
     # Corner fill lights — use 4 to eliminate dark pockets

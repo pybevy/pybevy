@@ -60,6 +60,18 @@ impl PyTonemapping {
         Py::new(py, Self::from_owned(Tonemapping::TonyMcMapface))
     }
 
+    #[classattr]
+    #[pyo3(name = "BLENDER_FILMIC")]
+    pub fn blender_filmic(py: Python) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(Tonemapping::BlenderFilmic))
+    }
+
+    #[classattr]
+    #[pyo3(name = "PBR_NEUTRAL")]
+    pub fn pbr_neutral(py: Python) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(Tonemapping::KhronosPbrNeutral))
+    }
+
     pub fn __repr__(&self) -> &'static str {
         match self.0 {
             Tonemapping::None => "Tonemapping.NONE",
@@ -72,6 +84,7 @@ impl PyTonemapping {
             }
             Tonemapping::TonyMcMapface => "Tonemapping.TONY_MC_MAPFACE",
             Tonemapping::BlenderFilmic => "Tonemapping.BLENDER_FILMIC",
+            Tonemapping::KhronosPbrNeutral => "Tonemapping.PBR_NEUTRAL",
         }
     }
 }

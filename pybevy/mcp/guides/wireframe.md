@@ -57,6 +57,22 @@ commands.spawn(
 )
 ```
 
+## Line Width & Topology
+
+```python
+from pybevy.pbr import WireframeConfig, WireframeMaterial, WireframeTopology
+
+# Global defaults
+commands.insert_resource(WireframeConfig(
+    global_=True, default_line_width=2.0, default_topology=WireframeTopology.Quads))
+
+# Per-entity override
+commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), Wireframe(),
+               WireframeMaterial(line_width=3.0, topology=WireframeTopology.Triangles))
+```
+
+`WireframeTopology.Quads` draws quad edges (best-effort detection from triangles); `Triangles` shows every triangle edge.
+
 ## Visual Tips
 
 Wireframe lines are thin and hard to see with bright lighting. For best visibility:

@@ -36,17 +36,6 @@ impl PyComputedNode {
     }
 
     #[getter]
-    pub fn stack_index(&self) -> PyResult<u32> {
-        Ok(self.as_ref()?.stack_index)
-    }
-
-    #[setter]
-    pub fn set_stack_index(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.stack_index = value;
-        Ok(())
-    }
-
-    #[getter]
     pub fn unrounded_size(&self) -> PyResult<PyVec2> {
         Ok(self.storage.borrow_field_as(|c| &c.unrounded_size)?)
     }
@@ -123,9 +112,6 @@ impl PyComputedNode {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let inner = self.as_ref()?;
-        Ok(format!(
-            "ComputedNode(size={:?}, stack_index={})",
-            inner.size, inner.stack_index
-        ))
+        Ok(format!("ComputedNode(size={:?})", inner.size))
     }
 }

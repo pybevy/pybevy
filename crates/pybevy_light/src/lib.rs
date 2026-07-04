@@ -1,4 +1,5 @@
 pub mod ambient_light;
+pub mod atmosphere;
 pub mod atmosphere_environment_map_light;
 pub mod cascade;
 pub mod cascade_shadow_config;
@@ -6,15 +7,20 @@ pub mod cascades;
 pub mod clustered_decal;
 pub mod directional_light;
 pub mod environment_map_light;
+pub mod falloff;
 pub mod fog_volume;
 pub mod generated_environment_map_light;
 pub mod irradiance_volume;
 pub mod light_texture;
+pub mod phase_function;
 pub mod plugin;
 pub mod point_light;
+pub mod scattering_medium;
+pub mod scattering_term;
 pub mod shadow_filtering_method;
 pub mod shadow_map;
 pub mod shadow_markers;
+pub mod skybox;
 pub mod spot_light;
 pub mod sun_disk;
 pub mod volumetric_fog;
@@ -29,6 +35,7 @@ pub mod prelude {
         generated_environment_map_light::PyGeneratedEnvironmentMapLight,
         plugin::PyLightPlugin,
         point_light::PyPointLight,
+        skybox::PySkybox,
         spot_light::PySpotLight,
     };
 }
@@ -64,5 +71,11 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<shadow_map::PyPointLightShadowMap>()?;
     m.add_class::<shadow_map::PyDirectionalLightShadowMap>()?;
     m.add_class::<cascade_shadow_config::PyCascadeShadowConfig>()?;
+    m.add_class::<atmosphere::PyAtmosphere>()?;
+    m.add_class::<scattering_medium::PyScatteringMedium>()?;
+    m.add_class::<scattering_term::PyScatteringTerm>()?;
+    m.add_class::<phase_function::PyPhaseFunction>()?;
+    m.add_class::<falloff::PyFalloff>()?;
+    m.add_class::<skybox::PySkybox>()?;
     parent.add_submodule(&m)
 }

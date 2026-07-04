@@ -27,7 +27,7 @@ impl From<PyRadialGradient> for RadialGradient {
 #[pymethods]
 impl PyRadialGradient {
     #[new]
-    #[pyo3(signature = (position = PyUiPosition::center(PyVal::new(), PyVal::new()), shape = PyRadialGradientShape::new(), stops = vec![]))]
+    #[pyo3(signature = (position = PyUiPosition::center(PyVal::zero(), PyVal::zero()), shape = PyRadialGradientShape::new(), stops = vec![]))]
     pub fn new(
         position: PyUiPosition,
         shape: PyRadialGradientShape,

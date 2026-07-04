@@ -84,9 +84,9 @@ impl PyDefaultPlugins {
             );
             bevy_app.add_plugins(WgpuErrorHandlerPlugin);
 
-            // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
-            // works without requiring an explicit ScenePlugin() addition.
-            bevy_app.add_observer(pybevy_scene::scene_instance_ready_bridge);
+            // Register the WorldInstanceReady observer so MessageReader[WorldInstanceReady]
+            // works without requiring an explicit WorldSerializationPlugin() addition.
+            bevy_app.add_observer(pybevy_world_serialization::world_instance_ready_bridge);
             Ok(())
         })
     }
@@ -271,9 +271,9 @@ impl PyPluginGroupBuilder {
             let builder = self.apply_to_bevy(app.py())?;
             bevy_app.add_plugins(builder);
             bevy_app.add_plugins(WgpuErrorHandlerPlugin);
-            // Register the SceneInstanceReady observer so MessageReader[SceneInstanceReady]
-            // works without requiring an explicit ScenePlugin() addition.
-            bevy_app.add_observer(pybevy_scene::scene_instance_ready_bridge);
+            // Register the WorldInstanceReady observer so MessageReader[WorldInstanceReady]
+            // works without requiring an explicit WorldSerializationPlugin() addition.
+            bevy_app.add_observer(pybevy_world_serialization::world_instance_ready_bridge);
             Ok(())
         })
     }
@@ -348,7 +348,7 @@ fn apply_plugin_configuration(
                 wgpu_settings.power_preference = (*pp).into();
             }
             let mut bevy_plugin = RenderPlugin {
-                render_creation: RenderCreation::Automatic(wgpu_settings),
+                render_creation: RenderCreation::Automatic(Box::new(wgpu_settings)),
                 ..Default::default()
             };
             if let Some(sync) = render_plugin.synchronous_pipeline_compilation {

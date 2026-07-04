@@ -56,7 +56,7 @@ def setup(
         PointLight(
             intensity=10_000_000.0,
             range=100.0,
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_xyz(8.0, 16.0, 8.0),
     )

@@ -19,7 +19,7 @@ impl PyDistanceFog {
     #[pyo3(signature = (
         color = PyColor(Color::WHITE),
         falloff = PyFogFalloff::Linear { start: 0.0, end: 100.0 },
-        directional_light_color = PyColor(Color::WHITE),
+        directional_light_color = PyColor(Color::NONE),
         directional_light_exponent = 8.0
     ))]
     pub fn new(

@@ -143,6 +143,8 @@ impl PyWorld {
         self.validity.clone()
     }
 
+    // validity-checked raw pointer access, see docs/safety.md
+    #[allow(clippy::mut_from_ref)]
     pub(crate) fn world_mut(&self) -> PyResult<&mut World> {
         self.check_valid()?;
         Ok(match &self.storage {
@@ -1182,13 +1184,14 @@ impl PyWorld {
         Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Despawn);
     }
 
-    /// Trigger lifecycle events for components replaced on an entity.
-    /// This triggers when a component is inserted onto an entity that already has it.
-    pub(crate) fn trigger_lifecycle_events_for_replace(
+    /// Trigger lifecycle events for component values discarded on an entity.
+    /// This triggers when a component is inserted onto an entity that already has it,
+    /// before the old value is replaced.
+    pub(crate) fn trigger_lifecycle_events_for_discard(
         world_ptr: *mut World,
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
     ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Replace);
+        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Discard);
     }
 }

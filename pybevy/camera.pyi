@@ -7,9 +7,9 @@ from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image
 from pybevy.math import (
     Affine3A,
+    HalfSpace,
     Mat3A,
     Mat4,
-    Quat,
     Range,
     Ray3d,
     Rect,
@@ -19,6 +19,7 @@ from pybevy.math import (
     Vec3,
     Vec3A,
     Vec4,
+    ViewFrustum,
 )
 from pybevy.transform import GlobalTransform
 
@@ -154,27 +155,16 @@ class Camera3dDepthTextureUsage:
     """Texture usage flags for depth buffer."""
     def __init__(self, flags: int) -> None: ...
 
-class ScreenSpaceTransmissionQuality:
-    """Quality setting for screen space specular transmission."""
-    Low: ScreenSpaceTransmissionQuality
-    Medium: ScreenSpaceTransmissionQuality
-    High: ScreenSpaceTransmissionQuality
-    Ultra: ScreenSpaceTransmissionQuality
-
 class Camera3d(Component):
-    """3D camera component with configurable depth and transmission settings."""
+    """3D camera component with configurable depth settings."""
 
     depth_load_op: Camera3dDepthLoadOp
     depth_texture_usages: Camera3dDepthTextureUsage
-    screen_space_specular_transmission_steps: int
-    screen_space_specular_transmission_quality: ScreenSpaceTransmissionQuality
 
     def __init__(
         self,
         depth_load_op: Camera3dDepthLoadOp = ...,
         depth_texture_usages: Camera3dDepthTextureUsage = ...,
-        screen_space_specular_transmission_steps: int = 1,
-        screen_space_specular_transmission_quality: ScreenSpaceTransmissionQuality = ...,
     ) -> None: ...
     def __copy__(self) -> Camera3d: ...
     def __deepcopy__(self, memo: dict[int, object]) -> Camera3d: ...
@@ -854,22 +844,6 @@ class Sphere:
         self, center: Vec3A | None = None, radius: float = 0.0
     ) -> None: ...
 
-class HalfSpace:
-    """A region of 3D space defined by a bisecting 2D plane.
-
-    The first 3 components of the Vec4 represent the plane's unit normal,
-    and the 4th component is the signed distance from the plane to the origin.
-    """
-
-    @property
-    def normal(self) -> Vec4: ...
-    @property
-    def d(self) -> float: ...
-    @property
-    def normal_d(self) -> Vec4: ...
-
-    def __init__(self, normal_d: Vec4) -> None: ...
-
 class Aabb(Component):
     """An axis-aligned bounding box, defined by a center and half-extents.
 
@@ -935,35 +909,16 @@ class Frustum(Component):
     Used for frustum culling to determine which entities should be rendered.
     """
 
+    value: ViewFrustum
+    """The wrapped ViewFrustum (bevy newtype payload)."""
+
     @property
     def half_spaces(self) -> list[HalfSpace]: ...
     @half_spaces.setter
     def half_spaces(self, value: list[HalfSpace]) -> None: ...
 
-    def __init__(self) -> None: ...
-
-    @staticmethod
-    def from_clip_from_world(clip_from_world: Mat4) -> Frustum:
-        """Creates a frustum from a clip-from-world matrix."""
-
-    @staticmethod
-    def from_clip_from_world_custom_far(
-        clip_from_world: Mat4,
-        view_translation: Vec3,
-        view_backward: Vec3,
-        far: float,
-    ) -> Frustum:
-        """Creates a frustum from clip-from-world matrix with a custom far plane.
-
-        Args:
-            clip_from_world: The clip-from-world (view-projection) matrix
-            view_translation: Camera position in world space
-            view_backward: Camera backward direction (opposite of view direction)
-            far: Custom far plane distance
-
-        Returns:
-            A new Frustum with the specified far plane
-        """
+    def __init__(self, view_frustum: ViewFrustum | None = None) -> None:
+        """Wrap a ViewFrustum, e.g. `Frustum(ViewFrustum.from_clip_from_world(mat))`."""
 
     def intersects_sphere(self, sphere: Sphere, intersect_far: bool) -> bool:
         """Checks if a sphere intersects with the frustum.
@@ -1240,26 +1195,6 @@ class RenderLayers(Component):
     def __xor__(self, other: RenderLayers) -> RenderLayers:
         """Bitwise XOR of two RenderLayers (same as symmetric_difference)."""
 
-class Skybox(Component):
-    """Skybox component that displays an environment map as the background."""
-
-    image: Handle[Image]
-    brightness: float
-    rotation: Quat
-
-    def __init__(
-        self,
-        image: Handle[Image],
-        brightness: float = 0.0,
-        rotation: Quat = ...,
-    ) -> None: ...
-
-    @staticmethod
-    def from_numpy(  # type: ignore[override]
-        *,
-        brightness: np.ndarray | None = None,
-    ) -> Batchable: ...
-
 class Exposure(Component):
     """Controls camera exposure for HDR rendering using EV100 values.
 
@@ -1389,10 +1324,10 @@ class PerspectiveProjection:
 
     def __init__(
         self,
-        fov: float | None = None,
-        aspect_ratio: float | None = None,
-        near: float | None = None,
-        far: float | None = None,
+        fov: float = 0.7853982,
+        aspect_ratio: float = 1.0,
+        near: float = 0.1,
+        far: float = 1000.0,
     ) -> None: ...
 
     def get_clip_from_view(self) -> Mat4:

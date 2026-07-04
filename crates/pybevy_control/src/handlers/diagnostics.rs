@@ -1,5 +1,5 @@
 use bevy::{
-    ecs::{entity::Entity, world::World},
+    ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World},
     time::Time,
 };
 
@@ -15,7 +15,9 @@ use crate::bridge::ControlError;
 /// snapshot-based implementation could be up to 1 second stale because the
 /// overlay system updates it on a 1 Hz tick.
 fn live_entity_count(world: &mut World) -> u64 {
-    let mut q = world.query::<Entity>();
+    // Exclude resource-entities (resources are stored as entities) so the count
+    // reflects only real game entities, matching list_entities / scene_summary.
+    let mut q = world.query_filtered::<Entity, Without<IsResource>>();
     q.iter(world).count() as u64
 }
 

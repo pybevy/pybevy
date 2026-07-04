@@ -984,12 +984,12 @@ pub fn control_poll_system(world: &mut World) {
     // scope as appropriate for the backend.
     if !sync_requests.is_empty() {
         let mut runtime = world
-            .remove_non_send_resource::<Box<dyn crate::runtime::ControlRuntime>>()
+            .remove_non_send::<Box<dyn crate::runtime::ControlRuntime>>()
             .expect("ControlRuntime resource missing");
 
         runtime.dispatch_batch(world, sync_requests);
 
-        world.insert_non_send_resource(runtime);
+        world.insert_non_send(runtime);
     }
 
     // Store deferred screenshots
@@ -1216,9 +1216,7 @@ mod tests {
                 world.insert_resource(receiver);
 
                 // Insert the runtime resource
-                world.insert_non_send_resource(
-                    Box::new(Pyo3ControlRuntime) as Box<dyn ControlRuntime>
-                );
+                world.insert_non_send(Box::new(Pyo3ControlRuntime) as Box<dyn ControlRuntime>);
 
                 // Spawn 6 entities with Transform
                 let entities: Vec<Entity> = (0..6)

@@ -56,9 +56,11 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_core_pipeline::add_module(m)?;
     pybevy_color::add_module(m)?;
     pybevy_gltf::add_module(m)?;
+    pybevy_gizmos::add_module(m)?;
     pybevy_image::add_module(m)?;
     pybevy_input::add_module(m)?;
     pybevy_light::add_module(m)?;
+    pybevy_material::add_module(m)?;
     pybevy_math::add_module(m)?;
     pybevy_mesh::add_module(m)?;
     pybevy_pbr::add_module(m)?;
@@ -66,7 +68,6 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_render::add_module(m)?;
     pybevy_shader::add_module(m)?;
     pybevy_wgpu::add_module(m)?;
-    pybevy_scene::add_module(m)?;
     pybevy_sprite::add_module(m)?;
     pybevy_text::add_module(m)?;
     pybevy_time::add_module(m)?;
@@ -74,6 +75,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_transform::add_module(m)?;
     pybevy_window::add_module(m)?;
     pybevy_winit::add_module(m)?;
+    pybevy_world_serialization::add_module(m)?;
 
     #[cfg(feature = "mcp")]
     {

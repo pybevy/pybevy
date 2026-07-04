@@ -2,7 +2,7 @@
 
 This example demonstrates:
 - Loading GLTF assets using GltfPlugin
-- Spawning GLTF scenes using SceneRoot
+- Spawning GLTF scenes using WorldAssetRoot
 - Setting up lighting and camera for 3D rendering
 """
 
@@ -28,12 +28,12 @@ def setup(commands: Commands, server: Res[AssetServer]) -> None:
     )
 
     # Spawn directional light with shadows
-    commands.spawn(DirectionalLight(shadows_enabled=True))
+    commands.spawn(DirectionalLight(shadow_maps_enabled=True))
 
     # Load and spawn the GLTF scene
     # Note: Using FlightHelmet model from assets/models/FlightHelmet/
-    scene_handle = server.load("bevy/models/FlightHelmet/FlightHelmet.gltf#Scene0", Scene)
-    commands.spawn(SceneRoot(scene_handle))
+    scene_handle = server.load("bevy/models/FlightHelmet/FlightHelmet.gltf#Scene0", WorldAsset)
+    commands.spawn(WorldAssetRoot(scene_handle))
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ exclude = ["examples/rust/*", "crates/pybevy_browser", "crates/pybevy_replicon"]
 
 [workspace.dependencies]
 pyo3 = { version = "0.27", default-features = false, features = ["multiple-pymethods"] }
-bevy = { version = "0.18.1", default-features = false }
+bevy = { version = "0.19.0", default-features = false }
 numpy = "0.27"
 uuid = { version = "1.17.0", features = ["v4"] }
 inventory = "0.3"
@@ -61,7 +61,9 @@ pybevy_core_pipeline = { path = "./crates/pybevy_core_pipeline", version = "=0.2
 pybevy_camera = { path = "./crates/pybevy_camera", version = "=0.2.1" }
 pybevy_post_process = { path = "./crates/pybevy_post_process", version = "=0.2.1" }
 pybevy_gltf = { path = "./crates/pybevy_gltf", version = "=0.2.1" }
+pybevy_gizmos = { path = "./crates/pybevy_gizmos", version = "=0.2.1" }
 pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.2.1" }
+pybevy_material = { path = "./crates/pybevy_material", version = "=0.2.1" }
 pybevy_mesh = { path = "./crates/pybevy_mesh", version = "=0.2.1" }
 pybevy_render = { path = "./crates/pybevy_render", version = "=0.2.1" }
 pybevy_sprite = { path = "./crates/pybevy_sprite", version = "=0.2.1" }
@@ -74,7 +76,7 @@ pybevy_pbr = { path = "./crates/pybevy_pbr", version = "=0.2.1" }
 pybevy_shader = { path = "./crates/pybevy_shader", version = "=0.2.1" }
 pybevy_shader_types = { path = "./crates/pybevy_shader_types", version = "=0.2.1" }
 pybevy_wgpu = { path = "./crates/pybevy_wgpu", version = "=0.2.1" }
-pybevy_scene = { path = "./crates/pybevy_scene", version = "=0.2.1" }
+pybevy_world_serialization = { path = "./crates/pybevy_world_serialization", version = "=0.2.1" }
 pybevy_control = { path = "./crates/pybevy_control", version = "=0.2.1" }
 pybevy_reload = { path = "./crates/pybevy_reload", version = "=0.2.1" }
 
@@ -95,6 +97,8 @@ pybevy_core_pipeline = { workspace = true }
 pybevy_camera = { workspace = true }
 pybevy_post_process = { workspace = true }
 pybevy_gltf = { workspace = true }
+pybevy_gizmos = { workspace = true }
+pybevy_material = { workspace = true }
 pybevy_mesh = { workspace = true }
 pybevy_render = { workspace = true }
 pybevy_shader = { workspace = true }
@@ -106,7 +110,7 @@ pybevy_text = { workspace = true }
 pybevy_animation = { workspace = true }
 pybevy_image = { workspace = true }
 pybevy_pbr = { workspace = true }
-pybevy_scene = { workspace = true }
+pybevy_world_serialization = { workspace = true }
 pybevy_reload = { workspace = true }
 pybevy_control = { workspace = true, optional = true }
 rayon = "1.10"
@@ -132,7 +136,7 @@ bevy = { workspace = true, features = [
     "mesh_picking",
     "bevy_post_process",
     "bevy_render",
-    "bevy_scene",
+    "bevy_world_serialization",
     "bevy_sprite",
     "bevy_state",
     "bevy_text",
@@ -149,7 +153,7 @@ bevy = { workspace = true, features = [
     "reflect_auto_register",
 ] }
 
-accesskit = { version = "0.21", default-features = false }
+accesskit = { version = "0.24", default-features = false }
 
 pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.2.1" }
 
@@ -158,9 +162,9 @@ uuid = { workspace = true }
 sysinfo = "0.37"
 paste = "1.0"
 
-wgpu = { version = "27", default-features = false }
-wgpu-types = "27"
-naga = { version = "27", default-features = false }
+wgpu = { version = "29", default-features = false }
+wgpu-types = "29"
+naga = { version = "29", default-features = false }
 
 thiserror = "2.0"
 

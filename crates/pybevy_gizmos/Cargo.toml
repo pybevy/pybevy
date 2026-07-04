@@ -1,0 +1,17 @@
+[package]
+name = "pybevy_gizmos"
+version = "0.2.1"
+edition = "2024"
+description = "Gizmo plugin for PyBevy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = ["bevy_gizmos"]

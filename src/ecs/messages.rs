@@ -55,7 +55,7 @@ macro_rules! add_message_arms {
                     $idx => {
                         $app.add_message::<[<CustomMessage $type_num>]>();
                         // Get the ComponentId for the Messages resource
-                        $app.world().resource_id::<Messages<[<CustomMessage $type_num>]>>().unwrap()
+                        $app.world().component_id::<Messages<[<CustomMessage $type_num>]>>().unwrap()
                     }
                 )+
                 _ => unreachable!(),
@@ -210,15 +210,15 @@ impl PyMessages {
                     Ok(Py::new(py, PyWindowEvent::from_bevy(py, msg)?)?.into_any())
                 })
             }
-            MessageType::SceneInstanceReady => {
-                use pybevy_scene::{
-                    SceneInstanceReadyMessage, scene_instance_ready::PySceneInstanceReady,
+            MessageType::WorldInstanceReady => {
+                use pybevy_world_serialization::{
+                    WorldInstanceReadyMessage, world_instance_ready::PyWorldInstanceReady,
                 };
-                self.iter_messages::<SceneInstanceReadyMessage, _>(
+                self.iter_messages::<WorldInstanceReadyMessage, _>(
                     py,
                     world,
                     cursor_state,
-                    |msg, py| Ok(Py::new(py, PySceneInstanceReady::from(&msg.0))?.into_any()),
+                    |msg, py| Ok(Py::new(py, PyWorldInstanceReady::from(&msg.0))?.into_any()),
                 )
             }
             MessageType::AssetEventImage => {
@@ -290,10 +290,10 @@ impl PyMessages {
                     world.get_resource_or_insert_with(Messages::<WindowEvent>::default);
                 Ok(f(&mut Wrap(&mut *messages)))
             }
-            MessageType::SceneInstanceReady => {
-                use pybevy_scene::SceneInstanceReadyMessage;
+            MessageType::WorldInstanceReady => {
+                use pybevy_world_serialization::WorldInstanceReadyMessage;
                 let mut messages = world.get_resource_or_insert_with(|| {
-                    Messages::<SceneInstanceReadyMessage>::default()
+                    Messages::<WorldInstanceReadyMessage>::default()
                 });
                 Ok(f(&mut Wrap(&mut *messages)))
             }
@@ -434,7 +434,7 @@ pub enum MessageType {
     KeyboardInput,
     GamepadRumbleRequest,
     WindowEvent,
-    SceneInstanceReady,
+    WorldInstanceReady,
     AssetEventImage,
     #[allow(dead_code)] // variant used by message bridge system
     AssetEventMesh,
@@ -455,7 +455,7 @@ impl PartialEq for MessageType {
             (MessageType::KeyboardInput, MessageType::KeyboardInput) => true,
             (MessageType::GamepadRumbleRequest, MessageType::GamepadRumbleRequest) => true,
             (MessageType::WindowEvent, MessageType::WindowEvent) => true,
-            (MessageType::SceneInstanceReady, MessageType::SceneInstanceReady) => true,
+            (MessageType::WorldInstanceReady, MessageType::WorldInstanceReady) => true,
             (MessageType::AssetEventImage, MessageType::AssetEventImage) => true,
             (MessageType::AssetEventMesh, MessageType::AssetEventMesh) => true,
             (MessageType::Custom(a), MessageType::Custom(b)) => a.is(b),
@@ -471,7 +471,7 @@ impl Clone for MessageType {
             MessageType::KeyboardInput => MessageType::KeyboardInput,
             MessageType::GamepadRumbleRequest => MessageType::GamepadRumbleRequest,
             MessageType::WindowEvent => MessageType::WindowEvent,
-            MessageType::SceneInstanceReady => MessageType::SceneInstanceReady,
+            MessageType::WorldInstanceReady => MessageType::WorldInstanceReady,
             MessageType::AssetEventImage => MessageType::AssetEventImage,
             MessageType::AssetEventMesh => MessageType::AssetEventMesh,
             MessageType::Custom(ty) => Python::attach(|py| MessageType::Custom(ty.clone_ref(py))),
@@ -487,22 +487,22 @@ impl MessageType {
     pub(crate) fn resource_id(&self, world: &World) -> Option<ComponentId> {
         match self {
             MessageType::KeyboardInput => {
-                world.components().resource_id::<Messages<KeyboardInput>>()
+                world.components().component_id::<Messages<KeyboardInput>>()
             }
             MessageType::GamepadRumbleRequest => {
                 // PyBevy-only type with no actual Messages resource
                 None
             }
-            MessageType::WindowEvent => world.components().resource_id::<Messages<WindowEvent>>(),
-            MessageType::SceneInstanceReady => world
+            MessageType::WindowEvent => world.components().component_id::<Messages<WindowEvent>>(),
+            MessageType::WorldInstanceReady => world
                 .components()
-                .resource_id::<Messages<pybevy_scene::SceneInstanceReadyMessage>>(),
+                .component_id::<Messages<pybevy_world_serialization::WorldInstanceReadyMessage>>(),
             MessageType::AssetEventImage => world
                 .components()
-                .resource_id::<Messages<AssetEvent<Image>>>(),
+                .component_id::<Messages<AssetEvent<Image>>>(),
             MessageType::AssetEventMesh => world
                 .components()
-                .resource_id::<Messages<AssetEvent<Mesh>>>(),
+                .component_id::<Messages<AssetEvent<Mesh>>>(),
             MessageType::Custom(py_type) => {
                 let type_ptr = Python::attach(|py| py_type.bind(py).as_type_ptr());
                 world
@@ -527,8 +527,8 @@ impl PyMessageType {
         use pybevy_input::{
             gamepad_rumble_request::PyGamepadRumbleRequest, keyboard_input::PyKeyboardInput,
         };
-        use pybevy_scene::scene_instance_ready::PySceneInstanceReady;
         use pybevy_window::window_event::PyWindowEvent;
+        use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;
         use pyo3::{PyTypeInfo, types::PyTypeMethods};
 
         let py = message.py();
@@ -553,8 +553,8 @@ impl PyMessageType {
             return Ok(PyMessageType(MessageType::WindowEvent));
         }
 
-        if message.is(<PySceneInstanceReady as PyTypeInfo>::type_object(py)) {
-            return Ok(PyMessageType(MessageType::SceneInstanceReady));
+        if message.is(<PyWorldInstanceReady as PyTypeInfo>::type_object(py)) {
+            return Ok(PyMessageType(MessageType::WorldInstanceReady));
         }
 
         // Check for AssetEvent types

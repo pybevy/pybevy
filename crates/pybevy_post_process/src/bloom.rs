@@ -83,6 +83,18 @@ impl PyBloom {
         Python::attach(|py| Py::new(py, (PyBloom::from(Bloom::ANAMORPHIC), PyComponent)))
     }
 
+    #[staticmethod]
+    #[pyo3(name = "OLD_SCHOOL")]
+    pub fn old_school() -> PyResult<Py<Self>> {
+        Python::attach(|py| Py::new(py, (PyBloom::from(Bloom::OLD_SCHOOL), PyComponent)))
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "SCREEN_BLUR")]
+    pub fn screen_blur() -> PyResult<Py<Self>> {
+        Python::attach(|py| Py::new(py, (PyBloom::from(Bloom::SCREEN_BLUR), PyComponent)))
+    }
+
     #[getter]
     pub fn intensity(&self) -> PyResult<f32> {
         Ok(self.as_ref()?.intensity)

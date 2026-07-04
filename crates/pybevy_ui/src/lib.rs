@@ -7,6 +7,7 @@ pub mod border_radius;
 pub mod box_shadow;
 pub mod color_stop;
 pub mod computed_node;
+pub mod computed_stack_index;
 pub mod conic_gradient;
 pub mod enums;
 pub mod focus_policy;
@@ -41,8 +42,8 @@ pub mod z_index;
 
 use enums::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
-    PyGridAutoFlow, PyInterpolationColorSpace, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyOverflowAxis, PyOverflowClipBox, PyPositionType,
+    PyGridAutoFlow, PyInlineDirection, PyInterpolationColorSpace, PyJustifyContent, PyJustifyItems,
+    PyJustifySelf, PyOverflowAxis, PyPositionType, PyVisualBox,
 };
 use pyo3::prelude::*;
 
@@ -53,7 +54,8 @@ pub mod prelude {
         border_radius::PyBorderRadius,
         enums::{
             PyAlignContent, PyAlignItems, PyAlignSelf, PyDisplay, PyFlexDirection, PyFlexWrap,
-            PyGridAutoFlow, PyJustifyContent, PyJustifyItems, PyJustifySelf, PyPositionType,
+            PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
+            PyPositionType,
         },
         grid_placement::PyGridPlacement,
         grid_track::PyGridTrack,
@@ -83,6 +85,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<border_gradient::PyBorderGradient>()?;
     m.add_class::<box_shadow::PyBoxShadow>()?;
     m.add_class::<computed_node::PyComputedNode>()?;
+    m.add_class::<computed_stack_index::PyComputedStackIndex>()?;
     m.add_class::<image_node::PyImageNode>()?;
     m.add_class::<node::PyNode>()?;
     m.add_class::<outline::PyOutline>()?;
@@ -115,11 +118,12 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyJustifySelf>()?;
     m.add_class::<PyPositionType>()?;
     m.add_class::<PyFlexWrap>()?;
+    m.add_class::<PyInlineDirection>()?;
     m.add_class::<PyOverflowAxis>()?;
     m.add_class::<PyBoxSizing>()?;
     m.add_class::<PyGridAutoFlow>()?;
     m.add_class::<PyInterpolationColorSpace>()?;
-    m.add_class::<PyOverflowClipBox>()?;
+    m.add_class::<PyVisualBox>()?;
     m.add_class::<overflow::PyOverflow>()?;
     m.add_class::<overflow_clip_margin::PyOverflowClipMargin>()?;
     m.add_class::<node_image_mode::PyNodeImageMode>()?;

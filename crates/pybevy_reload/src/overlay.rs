@@ -7,8 +7,9 @@ use bevy::{
     mesh::Mesh,
     pbr::{StandardMaterial, wireframe::WireframeMaterial},
     prelude::{ImageNode, Resource, TextColor, TextFont, default},
-    scene::Scene,
+    text::FontSize,
     ui::{Node, PositionType, Val, widget::Text},
+    world_serialization::WorldAsset,
 };
 use sysinfo::ProcessRefreshKind;
 
@@ -95,7 +96,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
     let entity = world.spawn((
         Text::new("Hot Reload: Gen 0 | Last: -- | Reloads: 0 | Default: Partial (F6) | F5=Full | Mem: 0.0MB | CPU: 0.0% | GPU: -- | VRAM: --"),
         TextFont {
-            font_size: 15.0,
+            font_size: FontSize::Px(15.0),
             ..default()
         },
         TextColor(Color::srgba(0.0, 1.0, 0.0, 1.0)), // Fully opaque green
@@ -119,7 +120,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
     let error_entity = world.spawn((
         Text::new(""),
         TextFont {
-            font_size: 15.0,
+            font_size: FontSize::Px(15.0),
             ..default()
         },
         TextColor(Color::srgba(1.0, 0.3, 0.3, 1.0)), // Red for errors
@@ -252,10 +253,10 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
                 stats.asset_counts.insert("AnimClip".to_string(), count);
             }
         }
-        if let Some(assets) = world.get_resource::<Assets<Scene>>() {
+        if let Some(assets) = world.get_resource::<Assets<WorldAsset>>() {
             let count = assets.len();
             if count > 0 {
-                stats.asset_counts.insert("Scene".to_string(), count);
+                stats.asset_counts.insert("WorldAsset".to_string(), count);
             }
         }
         if let Some(assets) = world.get_resource::<Assets<TextureAtlasLayout>>() {

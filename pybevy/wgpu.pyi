@@ -19,12 +19,16 @@ class Extent3d:
 class TextureDimension:
     """Texture dimension - 1D, 2D, or 3D."""
 
+    def __eq__(self, other: object) -> bool: ...
+
     D1: ClassVar[TextureDimension]
     D2: ClassVar[TextureDimension]
     D3: ClassVar[TextureDimension]
 
 class TextureFormat:
     """Texture format enumeration - controls how pixel data is interpreted."""
+
+    def __eq__(self, other: object) -> bool: ...
 
     # CamelCase variants (PyO3 enum members)
     R8Unorm: ClassVar[TextureFormat]

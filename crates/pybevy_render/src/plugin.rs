@@ -54,7 +54,9 @@ impl PluginBuild for PyRenderPlugin {
             wgpu_settings.power_preference = (*pp).into();
         }
         let mut render_plugin = bevy::render::RenderPlugin {
-            render_creation: bevy::render::settings::RenderCreation::Automatic(wgpu_settings),
+            render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
+                wgpu_settings,
+            )),
             ..Default::default()
         };
         if let Some(sync) = config.synchronous_pipeline_compilation {

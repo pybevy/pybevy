@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
-        system::{ReadOnlySystem, RunSystemError, System, SystemIn, SystemParamValidationError},
+        system::{ReadOnlySystem, RunSystemError, System, SystemIn},
         world::{DeferredWorld, World, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
@@ -153,13 +153,6 @@ impl System for DynamicCondition {
 
     fn initialize(&mut self, world: &mut World) -> bevy::ecs::query::FilteredAccessSet {
         self.inner.initialize(world)
-    }
-
-    unsafe fn validate_param_unsafe(
-        &mut self,
-        world: UnsafeWorldCell,
-    ) -> Result<(), SystemParamValidationError> {
-        unsafe { self.inner.validate_param_unsafe(world) }
     }
 
     fn check_change_tick(&mut self, change_tick: CheckChangeTicks) {

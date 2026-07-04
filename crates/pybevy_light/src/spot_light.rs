@@ -13,7 +13,7 @@ use pyo3::prelude::*;
     shadow_map_near_z,
     outer_angle,
     inner_angle,
-    shadows_enabled,
+    shadow_maps_enabled,
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
 #[pyclass(name = "SpotLight", extends = PyComponent)]
@@ -39,8 +39,8 @@ impl PySpotLight {
         SpotLight::default().radius
     }
 
-    fn default_shadows_enabled() -> bool {
-        SpotLight::default().shadows_enabled
+    fn default_shadow_maps_enabled() -> bool {
+        SpotLight::default().shadow_maps_enabled
     }
 
     fn default_affects_lightmapped_mesh_diffuse() -> bool {
@@ -77,7 +77,7 @@ impl PySpotLight {
         intensity = Self::default_intensity(),
         range = Self::default_range(),
         radius = Self::default_radius(),
-        shadows_enabled = Self::default_shadows_enabled(),
+        shadow_maps_enabled = Self::default_shadow_maps_enabled(),
         affects_lightmapped_mesh_diffuse = Self::default_affects_lightmapped_mesh_diffuse(),
         shadow_depth_bias = Self::default_shadow_depth_bias(),
         shadow_normal_bias = Self::default_shadow_normal_bias(),
@@ -90,7 +90,7 @@ impl PySpotLight {
         intensity: f32,
         range: f32,
         radius: f32,
-        shadows_enabled: bool,
+        shadow_maps_enabled: bool,
         affects_lightmapped_mesh_diffuse: bool,
         shadow_depth_bias: f32,
         shadow_normal_bias: f32,
@@ -103,13 +103,15 @@ impl PySpotLight {
             intensity,
             range,
             radius,
-            shadows_enabled,
+            shadow_maps_enabled,
             affects_lightmapped_mesh_diffuse,
             shadow_depth_bias,
             shadow_normal_bias,
             shadow_map_near_z,
             outer_angle,
             inner_angle,
+            // `contact_shadows_enabled` is not exposed; it takes its default (off).
+            ..Default::default()
         })
     }
 
@@ -158,13 +160,13 @@ impl PySpotLight {
     }
 
     #[getter]
-    pub fn shadows_enabled(&self) -> PyResult<bool> {
-        Ok(self.as_ref()?.shadows_enabled)
+    pub fn shadow_maps_enabled(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.shadow_maps_enabled)
     }
 
     #[setter]
-    pub fn set_shadows_enabled(&mut self, value: bool) -> PyResult<()> {
-        self.as_mut()?.shadows_enabled = value;
+    pub fn set_shadow_maps_enabled(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.shadow_maps_enabled = value;
         Ok(())
     }
 

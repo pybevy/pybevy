@@ -8,8 +8,12 @@ use bevy::{
     },
     prelude::ReflectDefault,
     reflect::{
-        DynamicEnum, DynamicStruct, DynamicTuple, DynamicVariant, PartialReflect, ReflectMut,
-        StructInfo, TypeInfo, TypeRegistry, VariantInfo,
+        PartialReflect, ReflectMut, TypeInfo, TypeRegistry,
+        enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo},
+        list::DynamicList,
+        structs::{DynamicStruct, StructInfo},
+        tuple::DynamicTuple,
+        tuple_struct::DynamicTupleStruct,
     },
 };
 use serde_json::{Map, Value};
@@ -266,7 +270,7 @@ fn json_to_reflect(
 }
 
 /// Check if an enum type is `Option<T>` (has exactly "None" and "Some" variants).
-fn is_option_enum(enum_info: &bevy::reflect::EnumInfo) -> bool {
+fn is_option_enum(enum_info: &EnumInfo) -> bool {
     enum_info.variant_len() == 2
         && enum_info.variant("None").is_some()
         && enum_info.variant("Some").is_some()
@@ -276,7 +280,7 @@ fn is_option_enum(enum_info: &bevy::reflect::EnumInfo) -> bool {
 /// JSON null → None variant, anything else → Some(inner_value).
 fn convert_option(
     value: &Value,
-    enum_info: &bevy::reflect::EnumInfo,
+    enum_info: &EnumInfo,
     type_info: Option<&'static TypeInfo>,
     registry: &TypeRegistry,
 ) -> Result<Box<dyn PartialReflect>, String> {
@@ -294,7 +298,7 @@ fn convert_option(
         .ok_or("Option enum missing 'Some' variant")?;
 
     let inner_type_id = match some_variant {
-        bevy::reflect::VariantInfo::Tuple(tuple_info) if tuple_info.field_len() == 1 => {
+        VariantInfo::Tuple(tuple_info) if tuple_info.field_len() == 1 => {
             tuple_info.field_at(0).unwrap().type_id()
         }
         _ => return Err("Option 'Some' variant has unexpected shape".into()),
@@ -339,7 +343,7 @@ fn convert_array(
     // TupleStruct shorthand: [x, y] → TupleStruct(x, y) (e.g., UVec2, IVec2)
     if let Some(TypeInfo::TupleStruct(info)) = target_type_info {
         if info.field_len() == arr.len() {
-            let mut dynamic = bevy::reflect::DynamicTupleStruct::default();
+            let mut dynamic = DynamicTupleStruct::default();
             dynamic.set_represented_type(target_type_info);
             for (i, arr_item) in arr.iter().enumerate().take(info.field_len()) {
                 let field_info = info.field_at(i).unwrap();
@@ -361,7 +365,7 @@ fn convert_array(
         let item_type_id = list_info.item_ty().id();
         let item_type_info = registry.get(item_type_id).map(|r| r.type_info());
 
-        let mut dynamic_list = bevy::reflect::DynamicList::default();
+        let mut dynamic_list = DynamicList::default();
         dynamic_list.set_represented_type(target_type_info);
         for item in arr {
             let reflected = json_to_reflect(item, item_type_id, item_type_info, registry)?;
@@ -431,7 +435,7 @@ fn convert_object(
 fn convert_enum_variant(
     variant_name: &str,
     variant_value: &Value,
-    enum_info: &bevy::reflect::EnumInfo,
+    enum_info: &EnumInfo,
     type_info: Option<&'static TypeInfo>,
     registry: &TypeRegistry,
 ) -> Result<Box<dyn PartialReflect>, String> {

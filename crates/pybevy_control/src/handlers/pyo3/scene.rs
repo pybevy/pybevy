@@ -6,7 +6,9 @@ use bevy::{
         entity::Entity,
         hierarchy::ChildOf,
         name::Name,
+        prelude::Without,
         reflect::{AppTypeRegistry, ReflectComponent},
+        resource::IsResource,
         schedule::Schedules,
         world::{EntityRef as BevyEntityRef, World},
     },
@@ -341,7 +343,8 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
     let mut entities = Vec::new();
     let bridges = all_component_bridges();
 
-    let mut query_state = world.query::<Entity>();
+    // Exclude resource-entities (resources are stored as entities).
+    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
     let entity_list: Vec<Entity> = query_state.iter(world).collect();
 
     for entity in &entity_list {
@@ -429,7 +432,8 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         .map(|info| info.iter().map(|(_, entry)| entry.name.clone()).collect())
         .unwrap_or_default();
 
-    let mut query_state = world.query::<Entity>();
+    // Exclude resource-entities (resources are stored as entities).
+    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
     let entity_count = query_state.iter(world).count();
 
     // Sample named entities (user's scene entities) for component detection
@@ -688,7 +692,8 @@ pub fn query_entities(
 ) -> Result<serde_json::Value, ControlError> {
     let bridges = all_component_bridges();
 
-    let mut query_state = world.query::<Entity>();
+    // Exclude resource-entities (resources are stored as entities).
+    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
     let all_entities: Vec<Entity> = query_state.iter(world).collect();
 
     let mut matching = Vec::new();
@@ -1171,7 +1176,7 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::
 
 /// Resolve an EntityRef to a Bevy Entity
 /// Get the bounding box (AABB) of an entity, both local and world-space.
-/// Falls back to merging descendant AABBs for SceneRoot/GLB hierarchy entities.
+/// Falls back to merging descendant AABBs for WorldAssetRoot/GLB hierarchy entities.
 pub fn get_bounding_box(
     world: &mut World,
     entity_ref: EntityRef,
@@ -1234,7 +1239,7 @@ pub fn get_bounding_box(
         }));
     }
 
-    // Fallback: merge descendant AABBs (SceneRoot/GLB entities)
+    // Fallback: merge descendant AABBs (WorldAssetRoot/GLB entities)
     let merged = crate::handlers::spatial::compute_world_aabb(world, entity)
         .map_err(|_| ControlError::not_found("Entity has no Aabb (no mesh?)"))?;
 
@@ -1276,7 +1281,8 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
 
     let bridges = all_component_bridges();
 
-    let mut query_state = world.query::<Entity>();
+    // Exclude resource-entities (resources are stored as entities).
+    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
     let entity_list: Vec<Entity> = query_state.iter(world).collect();
     let total = entity_list.len();
 
@@ -2205,7 +2211,7 @@ mod tests {
         let mut world = World::new();
         let parent = world
             .spawn((
-                Name::new("SceneRoot"),
+                Name::new("WorldAssetRoot"),
                 GlobalTransform::default(),
                 Transform::default(),
             ))
@@ -2217,7 +2223,8 @@ mod tests {
             ))
             .id();
         world.entity_mut(parent).add_children(&[child]);
-        let result = get_bounding_box(&mut world, EntityRef::Name("SceneRoot".into())).unwrap();
+        let result =
+            get_bounding_box(&mut world, EntityRef::Name("WorldAssetRoot".into())).unwrap();
         assert!(result["resolved_from_children"].as_bool().unwrap());
         assert!(result["local"].is_null());
         assert!(result["world"]["size"].is_array());

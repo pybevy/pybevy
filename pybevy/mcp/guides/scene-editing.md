@@ -71,7 +71,7 @@ Partial updates — only specify fields to change:
 set_component {
     "name": "warm_light",
     "component": "PointLight",
-    "fields": {"intensity": 2000, "shadows_enabled": true}
+    "fields": {"intensity": 2000, "shadow_maps_enabled": true}
 }
 ```
 
@@ -317,7 +317,7 @@ This lets you confirm animations produce correct values at specific moments with
 ```
 # Spawn a light with name
 spawn_entity {"components": {
-    "PointLight": {"intensity": 5000.0, "color": [1.0, 0.8, 0.6, 1.0], "shadows_enabled": true},
+    "PointLight": {"intensity": 5000.0, "color": [1.0, 0.8, 0.6, 1.0], "shadow_maps_enabled": true},
     "Transform": {"translation": [0, 3, 0]},
     "Name": "my_light"
 }}

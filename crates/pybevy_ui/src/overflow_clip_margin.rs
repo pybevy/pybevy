@@ -1,7 +1,7 @@
 use bevy::ui::OverflowClipMargin;
 use pyo3::prelude::*;
 
-use crate::enums::PyOverflowClipBox;
+use crate::enums::PyVisualBox;
 
 #[pyclass(name = "OverflowClipMargin", frozen, eq)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,8 +25,8 @@ impl From<PyOverflowClipMargin> for OverflowClipMargin {
 impl PyOverflowClipMargin {
     #[new]
     #[pyo3(signature = (visual_box = None, margin = 0.0))]
-    pub fn new(visual_box: Option<PyOverflowClipBox>, margin: f32) -> Self {
-        let vb = visual_box.unwrap_or(PyOverflowClipBox::PaddingBox);
+    pub fn new(visual_box: Option<PyVisualBox>, margin: f32) -> Self {
+        let vb = visual_box.unwrap_or(PyVisualBox::PaddingBox);
         PyOverflowClipMargin {
             inner: OverflowClipMargin {
                 visual_box: vb.into(),
@@ -63,7 +63,7 @@ impl PyOverflowClipMargin {
     }
 
     #[getter]
-    pub fn visual_box(&self) -> PyOverflowClipBox {
+    pub fn visual_box(&self) -> PyVisualBox {
         self.inner.visual_box.into()
     }
 

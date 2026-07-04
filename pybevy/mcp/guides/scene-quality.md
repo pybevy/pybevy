@@ -115,7 +115,7 @@ Start with `guide://patterns` + one matching recipe. Read topic guides (lighting
 ## Scene-Type Checklists
 
 ### Outdoor / Nature
-- [ ] `Atmosphere.earthlike()` for sky (no flat gray)
+- [ ] `Atmosphere.earth()` for sky (no flat gray)
 - [ ] Ground plane large enough that edges aren't visible (>= 40x40)
 - [ ] Trees/rocks at perimeter with scale variation (0.7x–1.5x)
 - [ ] At least one water feature if pastoral
@@ -124,7 +124,7 @@ Start with `guide://patterns` + one matching recipe. Read topic guides (lighting
 
 ### Architecture / Interior
 - [ ] Multiple PointLights (4+) to eliminate dark corners
-- [ ] DirectionalLight as fill only (shadows_enabled=False)
+- [ ] DirectionalLight as fill only (shadow_maps_enabled=False)
 - [ ] Material base_colors 0.25+ (brighter than outdoor — no sky bounce)
 - [ ] Furniture/props to define spaces
 - [ ] Bloom intensity low (0.05–0.12)

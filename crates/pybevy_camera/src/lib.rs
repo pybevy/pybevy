@@ -11,7 +11,6 @@ pub mod cubemap_layout;
 pub mod cubemap_visible_entities;
 pub mod exposure;
 pub mod frustum;
-pub mod half_space;
 pub mod inherited_visibility;
 pub mod main_pass_resolution_override;
 pub mod normalized_render_target;
@@ -20,8 +19,6 @@ pub mod plugin;
 pub mod projection;
 pub mod render_layers;
 pub mod render_target;
-pub mod screen_space_transmission_quality;
-pub mod skybox;
 pub mod sphere;
 pub mod sub_camera_view;
 pub mod unit_markers;
@@ -48,7 +45,6 @@ pub mod prelude {
         projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection},
         render_layers::PyRenderLayers,
         scaling_mode::PyScalingMode,
-        skybox::PySkybox,
         unit_markers::PyCamera2d,
         view_visibility::PyViewVisibility,
         viewport::PyViewport,
@@ -84,15 +80,12 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<visibility_batch::PyVisibilityBatch>()?;
     m.add_class::<visibility_class::PyVisibilityClass>()?;
     m.add_class::<visible_mesh_entities::PyVisibleMeshEntities>()?;
-    m.add_class::<skybox::PySkybox>()?;
     m.add_class::<render_target::PyRenderTarget>()?;
     m.add_class::<normalized_render_target::PyNormalizedRenderTarget>()?;
     m.add_class::<physical_camera_parameters::PyPhysicalCameraParameters>()?;
-    m.add_class::<half_space::PyHalfSpace>()?;
     m.add_class::<sphere::PySphere>()?;
     m.add_class::<scaling_mode::PyScalingMode>()?;
     m.add_class::<cubemap_layout::PyCubemapLayout>()?;
-    m.add_class::<screen_space_transmission_quality::PyScreenSpaceTransmissionQuality>()?;
     m.add_class::<camera_3d_depth_load_op::PyCamera3dDepthLoadOp>()?;
     m.add_class::<camera_3d_depth_texture_usage::PyCamera3dDepthTextureUsage>()?;
     m.add_class::<clear_color_config::PyClearColorConfig>()?;

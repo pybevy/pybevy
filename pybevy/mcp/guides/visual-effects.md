@@ -26,7 +26,7 @@ silhouette_mat = materials.add(StandardMaterial(
 ```python
 # Light pointing toward the camera (backlight)
 commands.spawn(
-    DirectionalLight(illuminance=6000.0, color=Color.srgb(0.6, 0.7, 1.0), shadows_enabled=True),
+    DirectionalLight(illuminance=6000.0, color=Color.srgb(0.6, 0.7, 1.0), shadow_maps_enabled=True),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.3, 3.14, 0.0)),
 )
 # Keep ambient very low so front faces stay dark

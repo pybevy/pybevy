@@ -12,7 +12,7 @@ from pybevy.animation import (
     AnimationClip, AnimationGraph, AnimationGraphHandle,
     AnimationNodeIndex, AnimationPlayer, AnimationTransitions,
 )
-from pybevy.scene import SceneRoot, Scene, SceneInstanceReady
+from pybevy.world_serialization import WorldAsset, WorldAssetRoot, WorldInstanceReady
 from pybevy.gltf import GltfAssetLabel
 
 def setup(
@@ -32,8 +32,8 @@ def setup(
 
     # Spawn model with animation components
     commands.spawn(
-        SceneRoot(asset_server.load(
-            GltfAssetLabel.Scene(0).from_asset("models/fox.glb"), Scene
+        WorldAssetRoot(asset_server.load(
+            GltfAssetLabel.Scene(0).from_asset("models/fox.glb"), WorldAsset
         )),
         Transform.from_xyz(0.0, 0.0, 0.0),
         Name("fox"),
@@ -42,7 +42,7 @@ def setup(
 
 ## Starting Playback After Scene Loads
 
-GLB scenes load asynchronously. The `AnimationPlayer` component is created by Bevy inside the scene hierarchy, not on your spawned entity. Use `SceneInstanceReady` to detect when loading finishes, then find the player in children.
+GLB scenes load asynchronously. The `AnimationPlayer` component is created by Bevy inside the scene hierarchy, not on your spawned entity. Use `WorldInstanceReady` to detect when loading finishes, then find the player in children.
 
 ```python
 @component
@@ -54,7 +54,7 @@ class AnimationToPlay(Component):
 
 def play_when_ready(
     commands: Commands,
-    scene_ready: MessageReader[SceneInstanceReady],
+    scene_ready: MessageReader[WorldInstanceReady],
     animations: Query[AnimationToPlay],
     children_query: Query[Children],
     players: Query[Mut[AnimationPlayer]],
@@ -83,7 +83,7 @@ def iter_descendants(entity: Entity, children_query: Query[Children]):
         yield from iter_descendants(child, children_query)
 ```
 
-**Critical gotcha:** `AnimationGraphHandle` must be inserted on the **same entity** as the `AnimationPlayer` (a child inside the scene hierarchy), not on the `SceneRoot` entity. If placed on the wrong entity, nothing happens and there's no error.
+**Critical gotcha:** `AnimationGraphHandle` must be inserted on the **same entity** as the `AnimationPlayer` (a child inside the scene hierarchy), not on the `WorldAssetRoot` entity. If placed on the wrong entity, nothing happens and there's no error.
 
 ## Animation Clip Naming
 

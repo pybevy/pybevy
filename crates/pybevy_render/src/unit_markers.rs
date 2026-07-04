@@ -1,7 +1,8 @@
-use bevy::render::{
-    batching::NoAutomaticBatching,
-    experimental::occlusion_culling::OcclusionCulling,
-    view::{Hdr, NoIndirectDrawing},
+use bevy::{
+    camera::Hdr,
+    render::{
+        batching::NoAutomaticBatching, occlusion_culling::OcclusionCulling, view::NoIndirectDrawing,
+    },
 };
 use pybevy_core::PyComponent;
 use pybevy_macros::pycomponent;

@@ -70,6 +70,8 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 **Presets:**
 - `Bloom.NATURAL` — Subtle, physically-based glow
 - `Bloom.ANAMORPHIC` — Wide horizontal streaks (cinematic lens flare look)
+- `Bloom.OLD_SCHOOL` — Hard threshold glow (retro/arcade look)
+- `Bloom.SCREEN_BLUR` — Blurs the whole screen (dream/flashback effect)
 
 **Anamorphic bloom (manual):** Use `scale=Vec2(0.2, 1.0)` to stretch bloom horizontally:
 
@@ -87,7 +89,8 @@ Bloom(intensity=0.3, prefilter=BloomPrefilter(threshold=1.5, threshold_softness=
 
 Both are camera components. See `guide://lighting` for full details:
 - `DistanceFog(color=..., falloff=FogFalloff.Exponential(0.002))` — distance-based fog
-- `Atmosphere.earthlike(medium_handle)` — physically-based sky (requires `ScatteringMedium` asset)
+- `Atmosphere.earth(medium_handle)` — physically-based sky (requires `ScatteringMedium` asset)
+- `Atmosphere.mars(medium_handle)` — Mars variant (use with `ScatteringMedium.mars(...)` for dusty red sky)
 
 ### Tonemapping
 
@@ -97,7 +100,7 @@ Controls how HDR colors map to screen colors.
 commands.spawn(Camera3d(), Tonemapping.TONY_MC_MAPFACE)
 ```
 
-Common options: `Tonemapping.TONY_MC_MAPFACE` (cinematic), `Tonemapping.ACES_FITTED` (film).
+Common options: `Tonemapping.TONY_MC_MAPFACE` (cinematic), `Tonemapping.ACES_FITTED` (film), `Tonemapping.BLENDER_FILMIC` (matches Blender renders).
 
 ### Wireframe
 
@@ -129,7 +132,7 @@ commands.spawn(
 )
 ```
 
-**SSR** (Screen-Space Reflections) adds real-time reflections on metallic surfaces. Best on `metallic >= 0.9, perceptual_roughness <= 0.1`:
+**SSR** (Screen-Space Reflections) adds real-time reflections on metallic surfaces. Best on `metallic >= 0.9, perceptual_roughness <= 0.1`. Tuning: `min_perceptual_roughness`/`max_perceptual_roughness` take `(start, end)` fade tuples, `edge_fadeout=(x, y)` fades reflections near screen edges:
 
 ```python
 commands.spawn(
@@ -147,8 +150,7 @@ ChromaticAberration, DepthOfField, and MotionBlur are not yet available in PyBev
 A cube-map texture rendered as the background. Pair with `EnvironmentMapLight` for reflections that match:
 
 ```python
-from pybevy.camera import Skybox
-from pybevy.light import EnvironmentMapLight
+from pybevy.light import EnvironmentMapLight, Skybox
 
 commands.spawn(
     Camera3d(),
@@ -268,7 +270,7 @@ commands.spawn(
     Transform.from_xyz(10, 8, 10).looking_at(Vec3(0, 2, 0), Vec3.Y),
     Bloom(intensity=0.2, low_frequency_boost=0.6),
     DistanceFog(color=Color.srgb(0.6, 0.65, 0.75), falloff=FogFalloff.Exponential(0.002)),
-    Atmosphere.earthlike(medium_handle),
+    Atmosphere.earth(medium_handle),
 )
 ```
 

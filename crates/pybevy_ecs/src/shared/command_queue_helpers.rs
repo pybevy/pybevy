@@ -13,7 +13,7 @@ pub fn create_commands_from_queue<'a>(
     queue: &'a mut CommandQueue,
     world: UnsafeWorldCell<'a>,
 ) -> Commands<'a, 'a> {
-    let allocator = world.entities_allocator();
+    let allocator = world.entity_allocator();
     let entities = world.entities();
     Commands::new_from_entities(queue, allocator, entities)
 }

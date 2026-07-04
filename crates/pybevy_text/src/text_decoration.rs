@@ -4,7 +4,6 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-// Strikethrough - marker component
 #[pycomponent(Strikethrough, unit, bridge)]
 #[pyclass(name = "Strikethrough", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
@@ -41,7 +40,6 @@ impl PyStrikethrough {
     }
 }
 
-// Underline - marker component
 #[pycomponent(Underline, unit, bridge)]
 #[pyclass(name = "Underline", extends = PyComponent, frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
@@ -78,7 +76,6 @@ impl PyUnderline {
     }
 }
 
-// StrikethroughColor - Color wrapper component
 #[pycomponent(StrikethroughColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "StrikethroughColor", extends = PyComponent)]
 #[derive(Debug)]
@@ -104,9 +101,12 @@ impl PyStrikethroughColor {
         self.as_mut()?.0 = color.into();
         Ok(())
     }
+
+    fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
+    }
 }
 
-// UnderlineColor - Color wrapper component
 #[pycomponent(UnderlineColor, bridge, batch_only_fields = [0 as color])]
 #[pyclass(name = "UnderlineColor", extends = PyComponent)]
 #[derive(Debug)]
@@ -131,5 +131,9 @@ impl PyUnderlineColor {
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
         self.as_mut()?.0 = color.into();
         Ok(())
+    }
+
+    fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
     }
 }

@@ -28,7 +28,7 @@ impl From<PySegment2d> for Segment2d {
 #[pymethods]
 impl PySegment2d {
     #[new]
-    #[pyo3(signature = (point1 = PyVec2::ZERO, point2 = PyVec2::ZERO, *, vertices = None))]
+    #[pyo3(signature = (point1 = PyVec2::vec2(bevy::math::Vec2::new(-0.5, 0.0)), point2 = PyVec2::vec2(bevy::math::Vec2::new(0.5, 0.0)), *, vertices = None))]
     pub fn new(
         point1: PyVec2,
         point2: PyVec2,

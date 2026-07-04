@@ -2,7 +2,8 @@ use std::{collections::HashSet, time::Instant};
 
 use bevy::{
     app::Startup,
-    ecs::{entity::Entity, schedule::Schedules, world::World},
+    ecs::{entity::Entity, resource::IsResource, schedule::Schedules, world::World},
+    prelude::Without,
     time::{Real, Time},
 };
 
@@ -273,7 +274,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     // Snapshot all entities so we can clean up on failure
     // (catches Bevy side-effect entities spawned during a failed Startup).
     let pre_startup_entities: std::collections::HashSet<Entity> = if mode == ReloadMode::Full {
-        world.query::<Entity>().iter(world).collect()
+        world
+            .query_filtered::<Entity, Without<IsResource>>()
+            .iter(world)
+            .collect()
     } else {
         std::collections::HashSet::new()
     };
@@ -305,7 +309,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 );
 
                 {
-                    let post_entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
+                    let post_entities: Vec<Entity> = world
+                        .query_filtered::<Entity, Without<IsResource>>()
+                        .iter(world)
+                        .collect();
                     let mut cleaned = 0;
                     for entity in post_entities {
                         if !pre_startup_entities.contains(&entity)
@@ -386,7 +393,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         // the panic path) so we don't leave orphaned render targets,
         // cameras, or other partially-created scene objects.
         {
-            let post_entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
+            let post_entities: Vec<Entity> = world
+                .query_filtered::<Entity, Without<IsResource>>()
+                .iter(world)
+                .collect();
             let mut cleaned = 0;
             for entity in post_entities {
                 if !pre_startup_entities.contains(&entity) && world.get_entity(entity).is_ok() {
@@ -875,7 +885,12 @@ mod tests {
         let (mut world, gen_counter) = setup_world();
         let state = MockState::new(gen_counter);
 
-        let pre_entity_count = world.query::<Entity>().iter(&world).count();
+        // Resources are stored as entities; exclude them so the count
+        // reflects only game entities, matching the cleanup logic under test.
+        let pre_entity_count = world
+            .query_filtered::<Entity, Without<IsResource>>()
+            .iter(&world)
+            .count();
 
         let result = perform_reload(
             &mut world,
@@ -886,7 +901,10 @@ mod tests {
 
         assert!(result.is_err(), "reload should fail");
 
-        let post_entity_count = world.query::<Entity>().iter(&world).count();
+        let post_entity_count = world
+            .query_filtered::<Entity, Without<IsResource>>()
+            .iter(&world)
+            .count();
         assert_eq!(
             post_entity_count, pre_entity_count,
             "entities spawned during failed Startup should be cleaned up \
