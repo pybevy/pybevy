@@ -57,6 +57,7 @@ pillow = "^12.2.0"
 types-pillow = "^10.2.0"
 pytest-cov = "^7.1.0"
 pyright = "^1.1.408"
+pytest-timeout = "^2.3.1"
 
 [tool.poetry.group.jax]
 optional = true
@@ -171,6 +172,8 @@ filterwarnings = [
 markers = [
     "window: marks tests requiring DefaultPlugins (deselected by default due to event loop limitation)",
 ]
+timeout = 10
+timeout_method = "thread"
 
 [tool.coverage.run]
 source = ["pybevy"]

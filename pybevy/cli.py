@@ -425,6 +425,12 @@ def _run_script(
                     changed_files=changed_files,
                 )
 
+                # Match `python script.py` semantics: ensure the script's
+                # directory is on sys.path so sibling imports resolve.
+                # runpy.run_path doesn't do this for plain .py files.
+                if parent_dir not in sys.path:
+                    sys.path.insert(0, parent_dir)
+
                 module_globals = runpy.run_path(script_path, init_globals={})
 
             # Look for create_app (legacy) or any @entrypoint decorated function

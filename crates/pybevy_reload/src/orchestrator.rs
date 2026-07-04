@@ -216,13 +216,22 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     }
 
     if mode == ReloadMode::Full {
-        runtime.register_resources(world, &defs)?;
+        if let Err(e) = runtime.register_resources(world, &defs) {
+            flag_reload_failure(world, e.message.clone());
+            return Err(e);
+        }
     }
 
-    runtime.register_messages(world, &defs, new_generation)?;
+    if let Err(e) = runtime.register_messages(world, &defs, new_generation) {
+        flag_reload_failure(world, e.message.clone());
+        return Err(e);
+    }
 
     if mode == ReloadMode::Full {
-        runtime.register_observers(world, &defs)?;
+        if let Err(e) = runtime.register_observers(world, &defs) {
+            flag_reload_failure(world, e.message.clone());
+            return Err(e);
+        }
     }
 
     // System delta detection
@@ -242,7 +251,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     // Register systems
     runtime.clear_param_cache();
-    let system_handles = runtime.register_systems(world, defs, new_generation)?;
+    let system_handles = match runtime.register_systems(world, defs, new_generation) {
+        Ok(handles) => handles,
+        Err(e) => {
+            flag_reload_failure(world, e.message.clone());
+            return Err(e);
+        }
+    };
 
     // Run Startup with rollback on panic
     // Snapshot pre-Startup error state: both the timestamp and whether an
@@ -475,6 +490,14 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     }
 
     Ok(())
+}
+
+/// Mark `ReloadResult` as failed before propagating a registration error.
+fn flag_reload_failure(world: &mut World, message: String) {
+    let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
+    result.failed = true;
+    result.failure_reason = Some(message);
+    result.running_previous_generation = true;
 }
 
 /// Trait abstracting the generation counter manipulation on the shared hot reload state.
@@ -913,6 +936,218 @@ mod tests {
         assert!(
             gen_res.has_startup_run(2),
             "Startup should have run for generation 2"
+        );
+    }
+
+    /// Runtime that returns Err from register_systems.
+    struct RegisterSystemsErrorRuntime;
+
+    impl ReloadRuntime for RegisterSystemsErrorRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+            None
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            _world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            Err(ReloadError {
+                message: "synthetic register_systems failure".into(),
+                is_load_failure: false,
+            })
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    /// Runtime that returns Err from register_resources.
+    struct RegisterResourcesErrorRuntime;
+
+    impl ReloadRuntime for RegisterResourcesErrorRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+            None
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            _world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Err(ReloadError {
+                message: "synthetic register_resources failure".into(),
+                is_load_failure: false,
+            })
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    /// register_systems Err must flag ReloadResult.failed and failure_reason.
+    #[test]
+    fn register_systems_error_flags_reload_result() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+
+        let result = perform_reload(
+            &mut world,
+            &mut RegisterSystemsErrorRuntime,
+            ReloadMode::Full,
+            &state,
+        );
+
+        assert!(
+            result.is_err(),
+            "reload should fail when register_systems errors"
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "synthetic register_systems failure");
+
+        let reload_result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(reload_result.failed, "ReloadResult.failed should be true");
+        assert_eq!(
+            reload_result.failure_reason.as_deref(),
+            Some("synthetic register_systems failure"),
+        );
+        assert!(
+            reload_result.running_previous_generation,
+            "running_previous_generation should be true",
+        );
+    }
+
+    /// register_resources Err must flag ReloadResult.failed and failure_reason.
+    #[test]
+    fn register_resources_error_flags_reload_result() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+
+        let result = perform_reload(
+            &mut world,
+            &mut RegisterResourcesErrorRuntime,
+            ReloadMode::Full,
+            &state,
+        );
+
+        assert!(
+            result.is_err(),
+            "reload should fail when register_resources errors"
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "synthetic register_resources failure");
+
+        let reload_result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(reload_result.failed, "ReloadResult.failed should be true");
+        assert_eq!(
+            reload_result.failure_reason.as_deref(),
+            Some("synthetic register_resources failure"),
         );
     }
 }

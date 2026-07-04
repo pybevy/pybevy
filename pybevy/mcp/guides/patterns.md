@@ -459,6 +459,8 @@ class DamageEvent(Message):
 app.add_message(DamageEvent)
 ```
 
+> **Note:** Messages must be registered via `app.add_message(...)` inside the scene's `@entrypoint`. Unlike components and resources, there is no runtime `world.register_message()` and no MCP `run_code` workaround — `add_message` installs both the `Messages<T>` resource *and* the per-frame `update_messages` system, which can only be added through `App`. Adding a new message type requires editing the scene file and reloading.
+
 #### Sending and Receiving
 
 ```python

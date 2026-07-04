@@ -198,16 +198,31 @@ pub fn process_pending_reloads(world: &mut World) {
                 response["error"] = serde_json::json!(error_msg);
                 response["traceback"] = serde_json::json!(last_error.traceback);
             }
-            if response.get("error").is_none() {
-                response["error"] = serde_json::json!(null);
-            }
 
-            // Check for escalation
+            // Surface registration/Startup failures flagged on ReloadResult.
             if let Some(reload_result) = world.get_resource::<ReloadResult>() {
+                if reload_result.failed {
+                    response["status"] = serde_json::json!("reload_failed");
+                    if response.get("error").map(|v| v.is_null()).unwrap_or(true) {
+                        response["error"] = serde_json::json!(
+                            reload_result
+                                .failure_reason
+                                .as_deref()
+                                .unwrap_or("unknown registration failure")
+                        );
+                    }
+                    if let Some(ref reason) = reload_result.failure_reason {
+                        response["failure_reason"] = serde_json::json!(reason);
+                    }
+                }
                 response["escalated"] = serde_json::json!(reload_result.escalated);
                 if let Some(ref reason) = reload_result.escalation_reason {
                     response["escalation_reason"] = serde_json::json!(reason);
                 }
+            }
+
+            if response.get("error").is_none() {
+                response["error"] = serde_json::json!(null);
             }
 
             let _ = reload.response_tx.send(Ok(response));
@@ -265,6 +280,24 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                     }
 
                     if let Some(reload_result) = world.get_resource::<ReloadResult>() {
+                        if reload_result.failed {
+                            reload_response["status"] = serde_json::json!("reload_failed");
+                            let reason_str = reload_result
+                                .failure_reason
+                                .as_deref()
+                                .unwrap_or("unknown registration failure");
+                            if reload_response
+                                .get("error")
+                                .map(|v| v.is_null())
+                                .unwrap_or(true)
+                            {
+                                reload_response["error"] = serde_json::json!(reason_str);
+                            }
+                            if let Some(ref reason) = reload_result.failure_reason {
+                                reload_response["failure_reason"] = serde_json::json!(reason);
+                            }
+                            has_error = true;
+                        }
                         reload_response["escalated"] = serde_json::json!(reload_result.escalated);
                         if let Some(ref reason) = reload_result.escalation_reason {
                             reload_response["escalation_reason"] = serde_json::json!(reason);
@@ -698,6 +731,32 @@ mod tests {
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result["error"], "runtime crash");
         assert!(result.get("traceback").is_some());
+    }
+
+    #[test]
+    fn process_pending_reloads_surfaces_reload_result_failed() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        world.insert_resource(ReloadResult {
+            failed: true,
+            failure_reason: Some("AttributeError: bogus".into()),
+            running_previous_generation: true,
+            ..ReloadResult::default()
+        });
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        world.insert_resource(PendingReloadResponses {
+            pending: vec![PendingReloadResponse {
+                response_tx: tx,
+                frames_remaining: 0,
+                mode: ReloadMode::Full,
+                error_timestamp_before: 0.0,
+            }],
+        });
+        process_pending_reloads(&mut world);
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result["status"], "reload_failed");
+        assert_eq!(result["error"], "AttributeError: bogus");
+        assert_eq!(result["failure_reason"], "AttributeError: bogus");
     }
 
     #[test]

@@ -1062,6 +1062,17 @@ impl PyWorld {
             }
         }
 
+        // Check all registered custom Python components.
+        // Without this, `On[Despawn, MyCustomComponent]` observers would never
+        // fire because the dispatcher iterates this list to build event keys.
+        if let Some(custom_info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
+            for (component_id, entry) in custom_info.iter() {
+                if entity_ref.contains_id(component_id) {
+                    component_types.push(PyComponentType::Custom(entry.type_ptr));
+                }
+            }
+        }
+
         component_types
     }
 

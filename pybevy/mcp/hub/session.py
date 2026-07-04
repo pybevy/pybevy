@@ -63,6 +63,7 @@ class SessionManager:
         self._lock = threading.Lock()
         self._monitor_thread: threading.Thread | None = None
         self._monitor_running = False
+        self._monitor_stop = threading.Event()
 
     def create_session(
         self,
@@ -188,6 +189,7 @@ class SessionManager:
         session.process = None
 
     def start_monitor(self) -> None:
+        self._monitor_stop.clear()
         if self._monitor_thread is not None:
             return
         self._monitor_running = True
@@ -197,6 +199,7 @@ class SessionManager:
 
     def stop_monitor(self) -> None:
         self._monitor_running = False
+        self._monitor_stop.set()
         if self._monitor_thread is not None:
             self._monitor_thread.join(timeout=5)
             self._monitor_thread = None
@@ -207,7 +210,10 @@ class SessionManager:
                 self._monitor_tick()
             except Exception:
                 logger.exception("Monitor tick error")
-            time.sleep(2.0)
+            # Event-based wait so stop_monitor() returns promptly instead of
+            # blocking up to 2s for time.sleep to elapse.
+            if self._monitor_stop.wait(2.0):
+                break
 
     def _monitor_tick(self) -> None:
         with self._lock:

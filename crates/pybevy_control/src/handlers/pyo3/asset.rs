@@ -23,7 +23,7 @@ pub fn mutate_asset(
     let mut errors = Vec::new();
 
     Python::attach(|py| {
-        // 1. Find the component bridge for the handle component (e.g. MeshMaterial3d)
+        // Find the component bridge for the handle component (e.g. MeshMaterial3d)
         let comp_bridge = pybevy_core::registry::global_registry::all_component_bridges()
             .into_iter()
             .find(|b| b.name() == component.as_str());
@@ -33,7 +33,7 @@ pub fn mutate_asset(
             return;
         };
 
-        // 2. Extract the component to get the PyHandle
+        // Extract the component to get the PyHandle
         let validity_flag = pybevy_core::ValidityFlag::new_read();
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
@@ -56,19 +56,19 @@ pub fn mutate_asset(
             return;
         };
 
-        // 3. Get the handle from the component (call .handle() method)
+        // Get the handle from the component
         let bound = handle_obj.bind(py);
-        let py_handle = match bound.call_method0("handle") {
+        let py_handle = match bound.getattr("handle") {
             Ok(h) => h,
             Err(e) => {
                 errors.push(format!(
-                    "Component '{component}' has no handle() method: {e}"
+                    "Component '{component}' has no 'handle' attribute: {e}"
                 ));
                 return;
             }
         };
 
-        // 4. Extract the PyHandle and convert to UntypedHandle
+        // Extract the PyHandle and convert to UntypedHandle
         let handle: PyRef<pybevy_core::PyHandle> = match py_handle.extract() {
             Ok(h) => h,
             Err(e) => {
@@ -85,7 +85,7 @@ pub fn mutate_asset(
             }
         };
 
-        // 5. Find the asset bridge by name
+        // Find the asset bridge by name
         let asset_bridge =
             pybevy_core::registry::global_registry::get_asset_bridge_by_name(&asset_type);
 
@@ -94,7 +94,7 @@ pub fn mutate_asset(
             return;
         };
 
-        // 6. Get mutable access to the asset
+        // Get mutable access to the asset
         let write_flag = pybevy_core::ValidityFlag::new_write();
         let write_validity = write_flag.with_access_mode(pybevy_core::AccessMode::Write);
 
@@ -149,7 +149,7 @@ mod tests {
     use std::sync::Once;
 
     use bevy::ecs::{name::Name, world::World};
-    use pyo3::prelude::*;
+    use pyo3::{ffi::c_str, prelude::*};
 
     use super::*;
     use crate::bridge::ErrorCode;
@@ -238,6 +238,54 @@ mod tests {
         let errors = result["errors"].as_array().unwrap();
         assert!(!errors.is_empty());
         assert!(errors[0].as_str().unwrap().contains("not in registry"));
+    }
+
+    /// Regression: the handler must access `.handle` as a property (getter),
+    /// not call it as `.handle()`. The Python `Mesh3d` / `MeshMaterial3d`
+    /// pyclasses expose `handle` via `#[getter]`, so calling it as a method
+    /// raises `TypeError: 'builtins.Handle' object is not callable`.
+    ///
+    /// This test reproduces that contract using a stand-in Python class with
+    /// `handle` as a `@property`, mirroring the pyclass shape.
+    #[test]
+    fn handle_is_accessed_as_property_not_method() {
+        setup_python();
+        Python::attach(|py| {
+            let module = PyModule::from_code(
+                py,
+                c_str!(
+                    r#"
+class FakeMeshComponent:
+    def __init__(self, h):
+        self._h = h
+    @property
+    def handle(self):
+        return self._h
+"#
+                ),
+                c_str!("fake_mesh.py"),
+                c_str!("fake_mesh"),
+            )
+            .unwrap();
+            let cls = module.getattr("FakeMeshComponent").unwrap();
+            let inst = cls.call1(("MY_HANDLE",)).unwrap();
+
+            // Production path: getattr-based access must succeed.
+            let via_getter = inst.getattr("handle").expect("getattr should succeed");
+            let value: String = via_getter.extract().unwrap();
+            assert_eq!(value, "MY_HANDLE");
+
+            // Old broken path: call_method0 must fail with a TypeError matching
+            // the symptom seen in the bug report.
+            let err = inst
+                .call_method0("handle")
+                .expect_err("call_method0 must fail when handle is a property");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("not callable"),
+                "expected 'not callable' TypeError, got: {msg}",
+            );
+        });
     }
 
     #[test]

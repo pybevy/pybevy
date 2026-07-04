@@ -26,6 +26,11 @@ pub struct NativeResourceSnapshot {
 /// (plugin-init) and should be preserved. Everything else is despawned,
 /// including Bevy side-effect entities (e.g., `PointerId`).
 pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, verbose: bool) {
+    // Capture user-set Time knobs before any clear step can reset them.
+    let virtual_time_state: Option<(bool, f32)> = world
+        .get_resource::<Time<Virtual>>()
+        .map(|t| (t.is_paused(), t.relative_speed()));
+
     // Despawn all entities not in the base set and not explicitly retained.
     let base = world
         .get_resource::<BaseEntitySet>()
@@ -92,16 +97,8 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         runtime.clear_native_resources(world, &initial, verbose);
     }
 
-    // Reset Time<Virtual> across full reload, but preserve the user-visible
-    // knobs (pause, relative_speed). elapsed_secs counts simulation progress
-    // and a fresh reload should restart playback from t=0; pause and speed
-    // are external intentions the agent set explicitly (`pause_time`,
-    // `set_time_scale`, `reload(pause=true, time_scale=...)`) and shouldn't
-    // silently flip back on reload.
-    if let Some(virtual_time) = world.get_resource::<Time<Virtual>>() {
-        let was_paused = virtual_time.is_paused();
-        let speed = virtual_time.relative_speed();
-
+    // Restore captured Time knobs onto a fresh Time (elapsed=0 by construction).
+    if let Some((was_paused, speed)) = virtual_time_state {
         let mut fresh = Time::<Virtual>::default();
         fresh.set_relative_speed(speed);
         if was_paused {
@@ -739,6 +736,129 @@ mod tests {
             (speed - 0.25).abs() < 1e-6,
             "relative_speed should survive clear_world_state (got {})",
             speed
+        );
+    }
+
+    /// Runtime that mirrors real Pyo3ReloadRuntime: clear_native_resources
+    /// resets bridged Bevy-plugin resources (incl. Time<Virtual>) to default.
+    struct TimeResetRuntime;
+
+    impl ReloadRuntime for TimeResetRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
+            None
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> std::collections::HashSet<String> {
+            std::collections::HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            _world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _keep_after: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, world: &World) -> HashSet<TypeId> {
+            let mut initial = HashSet::new();
+            if world.contains_resource::<Time<Virtual>>() {
+                initial.insert(TypeId::of::<Time<Virtual>>());
+            }
+            initial
+        }
+        fn clear_native_resources(
+            &self,
+            world: &mut World,
+            initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+            if initial.contains(&TypeId::of::<Time<Virtual>>()) {
+                world.insert_resource(Time::<Virtual>::default());
+            }
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: std::collections::HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    /// clear_native_resources resets Time<Virtual> to default for any bridged
+    /// Bevy-plugin resource; the capture-and-restore must run around that step,
+    /// not after, or pause+speed flip back to defaults.
+    #[test]
+    fn clear_world_state_preserves_time_across_native_reset() {
+        let mut world = World::new();
+
+        // Time<Virtual> exists at snapshot time (mirrors TimePlugin in real app).
+        world.insert_resource(Time::<Virtual>::default());
+
+        let runtime = TimeResetRuntime;
+        let initial = runtime.snapshot_native_resources(&world);
+        world.insert_resource(NativeResourceSnapshot { initial });
+
+        // User code sets pause and speed.
+        let mut time_virt = world.resource_mut::<Time<Virtual>>();
+        time_virt.pause();
+        time_virt.set_relative_speed(0.25);
+        time_virt.advance_by(Duration::from_secs(7));
+        drop(time_virt);
+
+        let mut runtime = TimeResetRuntime;
+        clear_world_state(&mut world, &mut runtime, false);
+
+        let after = world.resource::<Time<Virtual>>();
+        assert!(
+            after.is_paused(),
+            "pause must survive clear_native_resources reset"
+        );
+        assert!(
+            (after.relative_speed() - 0.25).abs() < 1e-6,
+            "relative_speed must survive clear_native_resources reset (got {})",
+            after.relative_speed()
+        );
+        assert_eq!(
+            after.elapsed_secs(),
+            0.0,
+            "elapsed should reset to zero on full reload"
         );
     }
 

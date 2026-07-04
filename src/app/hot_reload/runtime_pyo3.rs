@@ -24,6 +24,7 @@ use super::{cleanup, registry::DynamicSystemRegistry, util::get_python_gc_object
 use crate::{
     app::{PyStage, SimTick, app::PyApp, chained_systems::PyChainedSystems},
     ecs::{
+        conditional_system::{PyConditionalSystem, build_conditional_system_config},
         dynamic_system::{DynamicSystem, DynamicSystemHandle},
         messages::MessageRegistry,
         observer_registry::ObserverRegistry,
@@ -57,7 +58,28 @@ fn add_systems_to_schedule(
         let result = Python::attach(|py| -> PyResult<()> {
             let system_bound = system_func.bind(py);
 
-            if let Ok(chained) = system_bound.extract::<PyChainedSystems>() {
+            if let Ok(conditional) = system_bound.extract::<PyConditionalSystem>() {
+                let system_inner = conditional.system.clone_ref(py);
+                let condition = conditional.condition;
+
+                let dynamic_system = DynamicSystem::new(
+                    system_inner,
+                    generation,
+                    error_state.clone(),
+                    system_stage,
+                )?;
+                system_handles.push(dynamic_system.handle());
+
+                let config = build_conditional_system_config(
+                    dynamic_system,
+                    condition,
+                    generation,
+                    error_state.clone(),
+                    system_stage,
+                    is_startup,
+                )?;
+                schedule.add_systems(config);
+            } else if let Ok(chained) = system_bound.extract::<PyChainedSystems>() {
                 let systems_tuple = chained.systems.bind(py);
                 let mut dynamic_systems = Vec::new();
 
@@ -185,7 +207,13 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             for (_stage, systems) in &defs.systems {
                 for sys in systems {
                     let sys_bound = sys.bind(py);
-                    if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
+                    if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
+                        if let Ok(name) = conditional.system.bind(py).getattr("__name__")
+                            && let Ok(s) = name.extract::<String>()
+                        {
+                            names.insert(s);
+                        }
+                    } else if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
                         for inner in chained.systems.bind(py).iter() {
                             if let Ok(name) = inner.getattr("__name__")
                                 && let Ok(s) = name.extract::<String>()
@@ -211,6 +239,15 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         generation: u32,
     ) -> Result<Vec<DynamicSystemHandle>, ReloadError> {
         let mut system_handles: Vec<DynamicSystemHandle> = Vec::new();
+
+        // Drain any errors left over from a previous reload attempt. The error
+        // queue is shared across reloads, and `error_lock.last()` below would
+        // otherwise pick up a stale failure even when this attempt added every
+        // system cleanly, leaving the JSON `failure_reason` permanently sticky.
+        {
+            let mut error_lock = lock_or_recover(&self.error_state);
+            error_lock.clear();
+        }
 
         for (stage, systems) in defs.systems {
             if systems.is_empty() {

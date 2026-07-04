@@ -362,6 +362,8 @@ run_code {"code": "e = Entity.from_bits(123456); print(world.entity(e))"}
 
 **Note:** `run_code` with `world.run_system_once()` queries against the live world state. Prior MCP mutations (spawn, set_component) are automatically flushed before the system runs, so queries should see all entities.
 
+**Messages cannot be registered from `run_code`.** `World` exposes `register_resource` and `register_component`, but there is no `world.register_message()` because `app.add_message(MyMessage)` also installs the per-frame `update_messages` system, which can only be added through `App`. To add a new message type, edit the scene's `@entrypoint` and reload. See `guide://patterns` (Messages section) for details.
+
 ## Troubleshooting
 
 - **Entity not found**: IDs change after full reload. Use `Name` or re-query.

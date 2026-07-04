@@ -132,19 +132,52 @@ pub fn aabb_min_distance(a: &WorldAabb, b: &WorldAabb) -> f32 {
 
 /// Penetration depth and dominant axis for overlapping AABBs.
 /// Returns (depth, axis_name) where axis_name is "X", "Y", or "Z".
+/// Skips axes where either AABB has near-zero extent (e.g. flat plane geometry).
 pub fn compute_penetration(a: &WorldAabb, b: &WorldAabb) -> (f32, &'static str) {
+    const EPS: f32 = 1e-4;
+
     let overlap_x = (a.max.x.min(b.max.x) - a.min.x.max(b.min.x)).max(0.0);
     let overlap_y = (a.max.y.min(b.max.y) - a.min.y.max(b.min.y)).max(0.0);
     let overlap_z = (a.max.z.min(b.max.z) - a.min.z.max(b.min.z)).max(0.0);
 
-    // The penetration depth is the minimum overlap (shallowest axis)
-    if overlap_x <= overlap_y && overlap_x <= overlap_z {
-        (overlap_x, "X")
-    } else if overlap_y <= overlap_z {
-        (overlap_y, "Y")
-    } else {
-        (overlap_z, "Z")
+    let size_a_x = a.max.x - a.min.x;
+    let size_a_y = a.max.y - a.min.y;
+    let size_a_z = a.max.z - a.min.z;
+    let size_b_x = b.max.x - b.min.x;
+    let size_b_y = b.max.y - b.min.y;
+    let size_b_z = b.max.z - b.min.z;
+
+    let axis_eligible = |sa: f32, sb: f32| sa > EPS && sb > EPS;
+    let elig_x = axis_eligible(size_a_x, size_b_x);
+    let elig_y = axis_eligible(size_a_y, size_b_y);
+    let elig_z = axis_eligible(size_a_z, size_b_z);
+
+    // Fallback when no axis is eligible: preserve original min-overlap selection.
+    if !elig_x && !elig_y && !elig_z {
+        if overlap_x <= overlap_y && overlap_x <= overlap_z {
+            return (overlap_x, "X");
+        } else if overlap_y <= overlap_z {
+            return (overlap_y, "Y");
+        } else {
+            return (overlap_z, "Z");
+        }
     }
+
+    // Pick minimum overlap among eligible axes only.
+    let mut best: Option<(f32, &'static str)> = None;
+    let mut consider = |elig: bool, depth: f32, name: &'static str| {
+        if !elig {
+            return;
+        }
+        match best {
+            Some((d, _)) if depth >= d => {}
+            _ => best = Some((depth, name)),
+        }
+    };
+    consider(elig_x, overlap_x, "X");
+    consider(elig_y, overlap_y, "Y");
+    consider(elig_z, overlap_z, "Z");
+    best.unwrap()
 }
 
 /// Human-readable direction description.
@@ -1720,6 +1753,64 @@ mod tests {
     #[test]
     fn round6_f64_basic() {
         assert_eq!(super::round6_f64(0.0024348448496311903), 0.002435);
+    }
+
+    #[test]
+    fn compute_penetration_cube_straddles_flat_ground() {
+        // Cube straddling a flat plane (Y extent = 0). Must not pick the degenerate Y axis.
+        // Cube is fully contained on X and Z within the plane, so overlap on those axes is 2.0.
+        let a = make_aabb(1, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]);
+        let b = make_aabb(2, [-15.0, 0.0, -15.0], [15.0, 0.0, 15.0]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_ne!(axis, "Y", "Y is degenerate and must be skipped");
+        assert!(axis == "X" || axis == "Z");
+        assert!(depth > 0.0, "expected positive depth, got {}", depth);
+        assert!(
+            (depth - 2.0).abs() < 1e-5,
+            "expected depth ~2.0, got {}",
+            depth
+        );
+    }
+
+    #[test]
+    fn compute_penetration_no_degenerate_picks_min() {
+        // Regression: all axes eligible, smallest overlap (Y=0.3) wins.
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.0, 1.7, 1.0], [3.0, 3.7, 3.0]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_eq!(axis, "Y");
+        assert!((depth - 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_penetration_one_axis_degenerate_excluded() {
+        // b is flat on X. Eligible axes Y (overlap 0.5) and Z (overlap 1.0). Y wins.
+        let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        let b = make_aabb(2, [1.0, 1.5, 1.0], [1.0, 4.0, 3.0]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_ne!(axis, "X");
+        assert_eq!(axis, "Y");
+        assert!((depth - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_penetration_all_degenerate_no_panic() {
+        // Two coincident points: no eligible axis, fallback picks min overlap (all 0).
+        let a = make_aabb(1, [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]);
+        let b = make_aabb(2, [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]);
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_eq!(depth, 0.0);
+        assert!(axis == "X" || axis == "Y" || axis == "Z");
+    }
+
+    #[test]
+    fn compute_penetration_thin_wall_skips_x() {
+        // Vertical thin wall: b has degenerate X. Picked axis must be Y or Z.
+        let a = make_aabb(1, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]);
+        let b = make_aabb(2, [0.0, -5.0, -5.0], [0.0, 5.0, 5.0]);
+        let (_depth, axis) = compute_penetration(&a, &b);
+        assert_ne!(axis, "X");
+        assert!(axis == "Y" || axis == "Z");
     }
 
     #[test]

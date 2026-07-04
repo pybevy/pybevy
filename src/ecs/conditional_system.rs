@@ -1,4 +1,14 @@
+use std::sync::{Arc, Mutex};
+
+use bevy::ecs::{
+    change_detection::Res,
+    schedule::{IntoScheduleConfigs, ScheduleConfigs},
+    system::ScheduleSystem,
+};
+use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{prelude::*, types::PyDict};
+
+use crate::ecs::{dynamic_condition::DynamicCondition, dynamic_system::DynamicSystem};
 
 /// Wrapper for a system with a run condition
 /// Similar to Bevy's IntoSystemConfigs::run_if()
@@ -24,6 +34,12 @@ impl PyConditionalSystem {
     #[new]
     pub fn new(system: Py<PyAny>, condition: Py<PyAny>) -> Self {
         Self { system, condition }
+    }
+
+    /// Proxy to the inner system's __name__ for introspection paths.
+    #[getter]
+    pub fn __name__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Ok(self.system.bind(py).getattr("__name__")?.unbind())
     }
 
     /// Combine this condition with another using AND logic
@@ -130,4 +146,65 @@ result = make_not(c, functools)";
 #[pyfunction]
 pub fn run_if(system: Py<PyAny>, condition: Py<PyAny>) -> PyResult<PyConditionalSystem> {
     Ok(PyConditionalSystem::new(system, condition))
+}
+
+/// Apply the appropriate run_if (DynamicCondition or generation-gated closure) to a DynamicSystem.
+pub(crate) fn build_conditional_system_config(
+    dynamic_system: DynamicSystem,
+    condition: Py<PyAny>,
+    generation: u32,
+    error_state: Arc<Mutex<Vec<PyErr>>>,
+    system_stage: SystemStage,
+    is_startup: bool,
+) -> PyResult<ScheduleConfigs<ScheduleSystem>> {
+    let has_params = Python::attach(|py| -> bool {
+        let Ok(inspect) = py.import("inspect") else {
+            return false;
+        };
+        let Ok(sig) = inspect.call_method1("signature", (condition.bind(py),)) else {
+            return false;
+        };
+        let Ok(params) = sig.getattr("parameters") else {
+            return false;
+        };
+        let Ok(values) = params.call_method0("values") else {
+            return false;
+        };
+        values.len().unwrap_or(0) > 0
+    });
+
+    if has_params {
+        let dynamic_condition =
+            DynamicCondition::new(condition, generation, error_state, system_stage)?;
+        Ok(dynamic_system.run_if(dynamic_condition))
+    } else {
+        let expected_gen = generation;
+        let combined = move |gen_res: Option<Res<HotReloadGeneration>>| -> bool {
+            let gen_check = if is_startup {
+                match gen_res {
+                    Some(ref res) => res.current == expected_gen || res.current == expected_gen + 1,
+                    None => true,
+                }
+            } else {
+                match gen_res {
+                    Some(ref res) => res.current == expected_gen,
+                    None => true,
+                }
+            };
+            if !gen_check {
+                return false;
+            }
+            Python::attach(|py| match condition.bind(py).call0() {
+                Ok(obj) => obj.extract::<bool>().unwrap_or_else(|e| {
+                    eprintln!("run_if condition must return bool: {}", e);
+                    false
+                }),
+                Err(e) => {
+                    eprintln!("Error calling run_if condition: {}", e);
+                    false
+                }
+            })
+        };
+        Ok(dynamic_system.run_if(combined))
+    }
 }

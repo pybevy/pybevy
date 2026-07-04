@@ -623,7 +623,7 @@ class Camera(Component):
             ... ) -> None:
             ...     camera, cam_transform = camera_query.get()
             ...     for entity_transform in entity_query:
-            ...         world_pos = entity_transform.translation()
+            ...         world_pos = entity_transform.translation
             ...         try:
             ...             screen_pos = camera.world_to_viewport(cam_transform, world_pos)
             ...             print(f"Enemy at screen position: {screen_pos}")
@@ -742,9 +742,6 @@ class Visibility(Component):
     def __init__(self) -> None: ...
     @staticmethod
     def from_numpy(visibility: np.ndarray) -> Batchable: ...  # type: ignore[override]
-    def is_visible(self) -> bool: ...
-    def is_hidden(self) -> bool: ...
-    def is_inherited(self) -> bool: ...
     def toggle_inherited_visible(self) -> None:
         """Toggle between Inherited and Visible states."""
     def toggle_inherited_hidden(self) -> None:
