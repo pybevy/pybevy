@@ -10,6 +10,7 @@ homepage = "https://pybevy.com"
 [dependencies]
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["macros"] }
+pybevy_color = { workspace = true }
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
 pybevy_math = { workspace = true }
