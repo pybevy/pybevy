@@ -14,8 +14,8 @@ pub struct PyText {
 impl PyText {
     #[new]
     #[pyo3(signature = (content = String::new()))]
-    pub fn new(content: String) -> (Self, PyComponent) {
-        Self::from_owned(Text::new(content))
+    pub fn new(content: String) -> PyClassInitializer<Self> {
+        Self::from_owned(Text::new(content)).into()
     }
 
     #[getter]

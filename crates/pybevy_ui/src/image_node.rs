@@ -17,7 +17,7 @@ pub struct PyImageNode {
 #[pymethods]
 impl PyImageNode {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let py_handle = extract_handle_from_any(handle)?;
 
         if let Some(name) = py_handle.asset_type_name()
@@ -30,7 +30,7 @@ impl PyImageNode {
         }
 
         let bevy_handle: Handle<Image> = py_handle.try_into()?;
-        Ok(Self::from_owned(ImageNode::new(bevy_handle)))
+        Ok(Self::from_owned(ImageNode::new(bevy_handle)).into())
     }
 
     #[staticmethod]

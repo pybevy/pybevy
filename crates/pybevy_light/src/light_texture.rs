@@ -13,12 +13,13 @@ pub struct PyDirectionalLightTexture {
 #[pymethods]
 impl PyDirectionalLightTexture {
     #[new]
-    pub fn new(image: &Bound<'_, PyAny>, tiled: bool) -> PyResult<(Self, PyComponent)> {
+    pub fn new(image: &Bound<'_, PyAny>, tiled: bool) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(DirectionalLightTexture {
             image: handle.try_into()?,
             tiled,
-        }))
+        })
+        .into())
     }
 
     #[getter]
@@ -53,11 +54,12 @@ pub struct PySpotLightTexture {
 #[pymethods]
 impl PySpotLightTexture {
     #[new]
-    pub fn new(image: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(image: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(SpotLightTexture {
             image: handle.try_into()?,
-        }))
+        })
+        .into())
     }
 
     #[getter]
@@ -84,12 +86,13 @@ impl PyPointLightTexture {
     pub fn new(
         image: &Bound<'_, PyAny>,
         cubemap_layout: PyCubemapLayout,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(PointLightTexture {
             image: handle.try_into()?,
             cubemap_layout: cubemap_layout.into(),
-        }))
+        })
+        .into())
     }
 
     #[getter]

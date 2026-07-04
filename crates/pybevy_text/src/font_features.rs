@@ -1,7 +1,7 @@
 use bevy::text::{FontFeatureTag, FontFeatures};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[pyclass(name = "FontFeatures")]
+#[pyclass(name = "FontFeatures", from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyFontFeatures {
     features: Vec<([u8; 4], u32)>,

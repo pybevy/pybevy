@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Msaa, bridge, copy)]
-#[pyclass(name = "Msaa", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Msaa", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMsaa(pub(crate) Msaa);
 

@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use super::aabb3d::PyAabb3d;
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "BoundingSphere")]
+#[pyclass(name = "BoundingSphere", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingSphere {
     storage: ValueStorage<BoundingSphere>,

@@ -15,7 +15,7 @@ pub enum SpriteImageModeInner {
     },
 }
 
-#[pyclass(name = "SpriteImageMode", frozen, eq)]
+#[pyclass(name = "SpriteImageMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PySpriteImageMode(pub(crate) SpriteImageModeInner);
 

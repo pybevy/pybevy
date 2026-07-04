@@ -4,7 +4,7 @@ use pybevy_macros::pyasset;
 use pyo3::{prelude::*, types::PyBytes};
 
 #[pyasset(Font, bridge)]
-#[pyclass(name = "Font", extends = PyAsset)]
+#[pyclass(name = "Font", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyFont {
     pub(crate) storage: AssetStorage<Font>,

@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Oklaba", eq)]
+#[pyclass(name = "Oklaba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOklaba {
     storage: ValueStorage<Oklaba>,

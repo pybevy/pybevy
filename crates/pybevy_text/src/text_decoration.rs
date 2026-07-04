@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Strikethrough, unit, bridge)]
-#[pyclass(name = "Strikethrough", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Strikethrough", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyStrikethrough;
 
@@ -31,8 +31,8 @@ impl TryFrom<&Strikethrough> for PyStrikethrough {
 #[pymethods]
 impl PyStrikethrough {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyStrikethrough, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyStrikethrough, PyComponent).into()
     }
 
     fn __repr__(&self) -> &'static str {
@@ -41,7 +41,7 @@ impl PyStrikethrough {
 }
 
 #[pycomponent(Underline, unit, bridge)]
-#[pyclass(name = "Underline", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Underline", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyUnderline;
 
@@ -67,8 +67,8 @@ impl TryFrom<&Underline> for PyUnderline {
 #[pymethods]
 impl PyUnderline {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyUnderline, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyUnderline, PyComponent).into()
     }
 
     fn __repr__(&self) -> &'static str {
@@ -87,8 +87,8 @@ pub struct PyStrikethroughColor {
 impl PyStrikethroughColor {
     #[new]
     #[pyo3(signature = (color = PyColor::default()))]
-    pub fn new(color: PyColor) -> (Self, PyComponent) {
-        Self::from_owned(StrikethroughColor(color.into()))
+    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
+        Self::from_owned(StrikethroughColor(color.into())).into()
     }
 
     #[getter]
@@ -118,8 +118,8 @@ pub struct PyUnderlineColor {
 impl PyUnderlineColor {
     #[new]
     #[pyo3(signature = (color = PyColor::default()))]
-    pub fn new(color: PyColor) -> (Self, PyComponent) {
-        Self::from_owned(UnderlineColor(color.into()))
+    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
+        Self::from_owned(UnderlineColor(color.into())).into()
     }
 
     #[getter]

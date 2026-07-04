@@ -1,7 +1,7 @@
 use bevy::camera::ScalingMode;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ScalingMode")]
+#[pyclass(name = "ScalingMode", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyScalingMode {
     pub(crate) inner: ScalingMode,

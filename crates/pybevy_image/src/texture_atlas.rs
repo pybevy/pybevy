@@ -6,7 +6,7 @@ use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 #[pyfield]
-#[pyclass(name = "TextureAtlas", eq)]
+#[pyclass(name = "TextureAtlas", eq, from_py_object)]
 #[derive(Debug)]
 pub struct PyTextureAtlas {
     storage: FieldStorage<TextureAtlas>,

@@ -12,13 +12,14 @@ pub struct PyVisibilityClass {
 #[pymethods]
 impl PyVisibilityClass {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             PyVisibilityClass {
                 storage: ComponentStorage::owned(VisibilityClass::default()),
             },
             PyComponent,
         )
+            .into()
     }
 
     pub fn __len__(&self) -> PyResult<usize> {

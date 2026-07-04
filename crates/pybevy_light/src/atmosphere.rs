@@ -19,14 +19,15 @@ impl PyAtmosphere {
         outer_radius: f32,
         ground_albedo: PyVec3,
         medium: &Bound<'_, PyAny>,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(medium)?;
         Ok(Self::from_owned(Atmosphere {
             inner_radius,
             outer_radius,
             ground_albedo: ground_albedo.into(),
             medium: handle.try_into()?,
-        }))
+        })
+        .into())
     }
     #[staticmethod]
     #[pyo3(signature = (medium))]

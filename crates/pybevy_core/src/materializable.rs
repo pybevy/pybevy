@@ -4,7 +4,7 @@ use pyo3::{exceptions::PyNotImplementedError, prelude::*};
 ///
 /// This is a marker class for the Python type hierarchy.
 /// Subclasses (like Color) can be used in material contexts.
-#[pyclass(name = "Materializable", subclass, frozen)]
+#[pyclass(name = "Materializable", subclass, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMaterializable;
 

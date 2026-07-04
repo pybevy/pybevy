@@ -1,7 +1,7 @@
 use bevy::ui::GridTrack;
 use pyo3::prelude::*;
 
-#[pyclass(name = "GridTrack", eq)]
+#[pyclass(name = "GridTrack", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGridTrack {
     pub(crate) inner: GridTrack,

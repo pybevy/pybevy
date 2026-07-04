@@ -6,7 +6,7 @@ use pyo3::{
 
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "EulerRot")]
+#[pyclass(name = "EulerRot", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub enum PyEulerRot {
     ZYX,
@@ -30,7 +30,7 @@ impl From<PyEulerRot> for EulerRot {
     }
 }
 
-#[pyclass(name = "Quat")]
+#[pyclass(name = "Quat", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyQuat {
     storage: ValueStorage<Quat>,
@@ -95,6 +95,19 @@ impl PyQuat {
 
 #[pymethods]
 impl PyQuat {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    pub fn py_new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Self> {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Quat cannot be constructed directly (raw xyzw components are error-prone); \
+             use Quat.from_xyzw(x, y, z, w), Quat.from_axis_angle(axis, angle), \
+             Quat.from_euler(EulerRot.XYZ, x, y, z), or Quat.IDENTITY",
+        ))
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     pub fn identity() -> Self {

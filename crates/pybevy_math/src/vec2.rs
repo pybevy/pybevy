@@ -8,7 +8,7 @@ use pyo3::{
 
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "Vec2")]
+#[pyclass(name = "Vec2", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyVec2 {
     pub(crate) storage: ValueStorage<Vec2>,

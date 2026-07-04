@@ -25,7 +25,7 @@ impl From<SliceScaleMode> for PySliceScaleModeInner {
     }
 }
 
-#[pyclass(name = "SliceScaleMode", frozen, eq)]
+#[pyclass(name = "SliceScaleMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PySliceScaleMode {
     pub(crate) inner: PySliceScaleModeInner,

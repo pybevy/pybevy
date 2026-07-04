@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::wireframe_topology::PyWireframeTopology;
 
 #[pyasset(WireframeMaterial, bridge, not_loadable)]
-#[pyclass(name = "WireframeMaterial", extends = PyAsset)]
+#[pyclass(name = "WireframeMaterial", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeMaterial {
     pub storage: AssetStorage<WireframeMaterial>,
@@ -21,13 +21,17 @@ impl PyWireframeMaterial {
         line_width = 1.0,
         topology = PyWireframeTopology::Triangles
     ))]
-    pub fn new(color: PyColor, line_width: f32, topology: PyWireframeTopology) -> (Self, PyAsset) {
+    pub fn new(
+        color: PyColor,
+        line_width: f32,
+        topology: PyWireframeTopology,
+    ) -> PyClassInitializer<Self> {
         let material = WireframeMaterial {
             color: color.into(),
             line_width,
             topology: topology.into(),
         };
-        Self::from_owned(material)
+        Self::from_owned(material).into()
     }
 
     #[getter]

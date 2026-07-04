@@ -16,9 +16,9 @@ pub struct PyAccessibilityNode {
 impl PyAccessibilityNode {
     #[new]
     #[pyo3(signature = (role = PyRole::Unknown))]
-    pub fn new(role: PyRole) -> (Self, PyComponent) {
+    pub fn new(role: PyRole) -> PyClassInitializer<Self> {
         let node = Node::new(role.into());
-        Self::from_owned(AccessibilityNode::from(node))
+        Self::from_owned(AccessibilityNode::from(node)).into()
     }
 
     #[getter]

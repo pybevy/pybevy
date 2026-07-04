@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-#[pyclass(name = "AnimationCurve", subclass)]
+#[pyclass(name = "AnimationCurve", subclass, skip_from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyAnimationCurve;
 

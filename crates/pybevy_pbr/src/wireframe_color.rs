@@ -15,8 +15,8 @@ pub struct PyWireframeColor {
 impl PyWireframeColor {
     #[new]
     #[pyo3(signature = (color = PyColor(Color::WHITE)))]
-    pub fn new(color: PyColor) -> (Self, PyComponent) {
-        Self::from_owned(WireframeColor { color: color.0 })
+    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
+        Self::from_owned(WireframeColor { color: color.0 }).into()
     }
 
     #[getter]

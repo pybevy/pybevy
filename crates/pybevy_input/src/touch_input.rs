@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use crate::touch_phase::PyTouchPhase;
 
 #[pymessage(TouchInput)]
-#[pyclass(name = "TouchInput", extends = PyMessage, frozen)]
+#[pyclass(name = "TouchInput", extends = PyMessage, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTouchInput {
     #[pyo3(get)]
@@ -64,7 +64,7 @@ impl PyTouchInput {
         id: u64,
         force: Option<f64>,
         window: PyEntity,
-    ) -> (Self, PyMessage) {
+    ) -> PyClassInitializer<Self> {
         (
             PyTouchInput {
                 phase,
@@ -75,6 +75,7 @@ impl PyTouchInput {
             },
             PyMessage,
         )
+            .into()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

@@ -93,7 +93,7 @@ impl PyAppReloadState {
 
 /// Python-exposed hot reload control resource (for in-game systems)
 /// This allows Python systems to request reloads dynamically (e.g., on F5 press)
-#[pyclass(name = "HotReloadControl", extends = PyResource, frozen)]
+#[pyclass(name = "HotReloadControl", extends = PyResource, frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyHotReloadControl {
     state: HotReloadState,
@@ -429,15 +429,15 @@ pub fn add_hot_reload_system(
 /// app = App()
 /// app.add_plugins(HotReloadPlugin())
 /// ```
-#[pyclass(name = "HotReloadPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "HotReloadPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyHotReloadPlugin;
 
 #[pymethods]
 impl PyHotReloadPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyHotReloadPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyHotReloadPlugin, PyPlugin).into()
     }
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {

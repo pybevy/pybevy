@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{dir2::PyDir2, vec2::PyVec2};
 
-#[pyclass(name = "Plane2d", frozen, eq)]
+#[pyclass(name = "Plane2d", frozen, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyPlane2d {
     pub(crate) inner: Plane2d,

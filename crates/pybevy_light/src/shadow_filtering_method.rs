@@ -4,15 +4,15 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(ShadowFilteringMethod, bridge)]
-#[pyclass(name = "ShadowFilteringMethod", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "ShadowFilteringMethod", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyShadowFilteringMethod(pub(crate) ShadowFilteringMethod);
 
 #[pymethods]
 impl PyShadowFilteringMethod {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(ShadowFilteringMethod::Gaussian)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(ShadowFilteringMethod::Gaussian).into()
     }
 
     #[classattr]

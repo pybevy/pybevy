@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::winit::UpdateMode;
 use pyo3::prelude::*;
-#[pyclass(name = "UpdateMode", frozen)]
+#[pyclass(name = "UpdateMode", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyUpdateMode(pub(crate) UpdateMode);
 

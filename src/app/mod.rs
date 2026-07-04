@@ -25,7 +25,7 @@ pub mod task_pool;
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimTick;
 
-#[pyclass(name = "Stage", frozen)]
+#[pyclass(name = "Stage", frozen, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum PyStage {
     Startup,

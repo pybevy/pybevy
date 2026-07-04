@@ -1,7 +1,7 @@
 use bevy::camera::PhysicalCameraParameters;
 use pyo3::prelude::*;
 
-#[pyclass(name = "PhysicalCameraParameters")]
+#[pyclass(name = "PhysicalCameraParameters", skip_from_py_object)]
 #[derive(Clone, Copy, Default)]
 pub struct PyPhysicalCameraParameters {
     pub(crate) inner: PhysicalCameraParameters,

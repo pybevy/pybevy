@@ -4,15 +4,15 @@ use pyo3::prelude::*;
 
 use crate::app::app::PyApp;
 
-#[pyclass(name = "TaskPoolPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "TaskPoolPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTaskPoolPlugin;
 
 #[pymethods]
 impl PyTaskPoolPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyTaskPoolPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyTaskPoolPlugin, PyPlugin).into()
     }
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {

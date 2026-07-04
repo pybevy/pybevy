@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[pyhandle(DynamicWorldRoot)]
-#[pyclass(name = "DynamicWorldRoot", extends = PyComponent, eq, frozen)]
+#[pyclass(name = "DynamicWorldRoot", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyDynamicWorldRoot(pub(crate) PyHandle);
 
@@ -25,7 +25,7 @@ impl From<&DynamicWorldRoot> for PyDynamicWorldRoot {
 #[pymethods]
 impl PyDynamicWorldRoot {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<(Self, PyComponent)> {
+    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(handle)?;
 
         if let Some(name) = handle.asset_type_name()
@@ -37,7 +37,7 @@ impl PyDynamicWorldRoot {
             )));
         }
 
-        Ok((Self(handle), PyComponent))
+        Ok((Self(handle), PyComponent).into())
     }
 
     pub fn handle(&self) -> PyResult<PyHandle> {

@@ -4,15 +4,15 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(FocusPolicy, bridge)]
-#[pyclass(name = "FocusPolicy", extends = PyComponent, eq)]
+#[pyclass(name = "FocusPolicy", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyFocusPolicy(pub(crate) FocusPolicy);
 
 #[pymethods]
 impl PyFocusPolicy {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(FocusPolicy::default())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(FocusPolicy::default()).into()
     }
 
     #[staticmethod]

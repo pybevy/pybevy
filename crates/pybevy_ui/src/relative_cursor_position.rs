@@ -14,8 +14,8 @@ pub struct PyRelativeCursorPosition {
 #[pymethods]
 impl PyRelativeCursorPosition {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(RelativeCursorPosition::default())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(RelativeCursorPosition::default()).into()
     }
 
     #[getter]

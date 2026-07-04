@@ -14,13 +14,14 @@ pub struct PyButtonInput {
 #[pymethods]
 impl PyButtonInput {
     #[new]
-    pub fn new() -> (Self, PyResource) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             Self {
                 storage: ResourceStorage::owned(ButtonInput::default()),
             },
             PyResource,
         )
+            .into()
     }
 
     pub fn just_pressed(&self, input: PyKeyCode) -> PyResult<bool> {

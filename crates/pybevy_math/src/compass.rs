@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use crate::vec2::PyVec2;
 
 #[pyenum(CompassOctant)]
-#[pyclass(name = "CompassOctant", eq)]
+#[pyclass(name = "CompassOctant", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCompassOctant {
     North,
@@ -46,7 +46,7 @@ impl PyCompassOctant {
 }
 
 #[pyenum(CompassQuadrant)]
-#[pyclass(name = "CompassQuadrant", eq)]
+#[pyclass(name = "CompassQuadrant", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCompassQuadrant {
     North,

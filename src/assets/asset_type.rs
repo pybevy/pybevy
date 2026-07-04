@@ -7,7 +7,7 @@ use pyo3::{exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType
 /// in the global AssetBridge registry. When `Assets[HologramMaterial]` is used
 /// with a `@material`-decorated class, `wrapper_class` stores the original
 /// Python class pointer so `get_mut()` can auto-wrap results.
-#[pyclass(name = "AssetTypeParam", frozen)]
+#[pyclass(name = "AssetTypeParam", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAssetTypeParam {
     type_ptr: *const PyTypeObject,

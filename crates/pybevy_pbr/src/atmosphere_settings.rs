@@ -51,7 +51,7 @@ impl PyAtmosphereSettings {
         aerial_view_lut_max_distance: f32,
         sky_max_samples: u32,
         rendering_method: PyAtmosphereMode,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(AtmosphereSettings {
             transmittance_lut_size: transmittance_lut_size.into(),
             multiscattering_lut_size: multiscattering_lut_size.into(),
@@ -66,6 +66,7 @@ impl PyAtmosphereSettings {
             sky_max_samples,
             rendering_method: rendering_method.into(),
         })
+        .into()
     }
 
     #[getter]

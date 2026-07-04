@@ -13,15 +13,15 @@ pub mod prelude {
 }
 
 #[pyplugin(TransformPlugin)]
-#[pyclass(name = "TransformPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "TransformPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransformPlugin;
 
 #[pymethods]
 impl PyTransformPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyTransformPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyTransformPlugin, PyPlugin).into()
     }
 }
 

@@ -12,7 +12,7 @@ pub struct PyLoadedFolder {
 #[pymethods]
 impl PyLoadedFolder {
     #[new]
-    fn new() -> (Self, PyAsset) {
+    fn new() -> PyClassInitializer<Self> {
         (
             PyLoadedFolder {
                 storage: AssetStorage::owned(LoadedFolder {
@@ -21,6 +21,7 @@ impl PyLoadedFolder {
             },
             PyAsset,
         )
+            .into()
     }
 
     /// Get the list of asset handles in this folder.

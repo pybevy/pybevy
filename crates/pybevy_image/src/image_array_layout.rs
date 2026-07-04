@@ -1,7 +1,7 @@
 use bevy::image::ImageArrayLayout;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ImageArrayLayout", frozen)]
+#[pyclass(name = "ImageArrayLayout", frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyImageArrayLayout(pub(crate) ImageArrayLayout);
 

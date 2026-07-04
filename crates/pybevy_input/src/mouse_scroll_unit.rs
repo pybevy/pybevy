@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(MouseScrollUnit)]
-#[pyclass(name = "MouseScrollUnit", eq, frozen)]
+#[pyclass(name = "MouseScrollUnit", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyMouseScrollUnit {
     Line,

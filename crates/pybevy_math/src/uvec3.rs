@@ -2,7 +2,7 @@ use bevy::math::UVec3;
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-#[pyclass(name = "UVec3")]
+#[pyclass(name = "UVec3", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyUVec3 {
     storage: ValueStorage<UVec3>,

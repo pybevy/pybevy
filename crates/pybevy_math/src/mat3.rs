@@ -8,7 +8,7 @@ use pyo3::{
 
 use super::{quat::PyQuat, vec2::PyVec2, vec3::PyVec3};
 
-#[pyclass(name = "Mat3")]
+#[pyclass(name = "Mat3", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMat3 {
     storage: ValueStorage<Mat3>,

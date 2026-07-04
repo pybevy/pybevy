@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{falloff::PyFalloff, phase_function::PyPhaseFunction};
 
-#[pyclass(name = "ScatteringTerm")]
+#[pyclass(name = "ScatteringTerm", from_py_object)]
 #[derive(Clone)]
 pub struct PyScatteringTerm {
     pub(crate) inner: ScatteringTerm,

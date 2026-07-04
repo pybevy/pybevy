@@ -16,10 +16,11 @@ pub struct PyBorderGradient {
 impl PyBorderGradient {
     #[new]
     #[pyo3(signature = (gradients = vec![]))]
-    pub fn new(gradients: Vec<PyGradient>) -> (Self, PyComponent) {
+    pub fn new(gradients: Vec<PyGradient>) -> PyClassInitializer<Self> {
         Self::from_owned(BorderGradient(
             gradients.into_iter().map(|g| g.inner).collect(),
         ))
+        .into()
     }
 
     pub fn add_gradient(&mut self, gradient: PyGradient) -> PyResult<()> {

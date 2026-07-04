@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[pyclass(name = "ColorStop", eq)]
+#[pyclass(name = "ColorStop", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyColorStop {
     pub(crate) inner: ColorStop,

@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
-#[pyclass(name = "GamepadEvent")]
+#[pyclass(name = "GamepadEvent", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyGamepadEvent {
     Connection {

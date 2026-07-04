@@ -77,7 +77,7 @@ pub struct PyState {
 impl PyState {
     /// Create a new State resource
     #[new]
-    fn py_new(py: Python, initial_state: Py<PyAny>) -> PyResult<(Self, PyResource)> {
+    fn py_new(py: Python, initial_state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let state_type = initial_state.bind(py).get_type().unbind();
 
         // Validate it's a registered state type
@@ -89,7 +89,8 @@ impl PyState {
                 state_type,
             },
             PyResource,
-        ))
+        )
+            .into())
     }
 
     /// Get the current state value
@@ -525,12 +526,12 @@ pub struct PyDespawnOnExit {
 #[pymethods]
 impl PyDespawnOnExit {
     #[new]
-    fn new(py: Python, state: Py<PyAny>) -> PyResult<(Self, PyComponent)> {
+    fn new(py: Python, state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         // Validate state type
         let state_type = state.bind(py).get_type().unbind();
         PyState::validate_state_type(py, &state_type)?;
 
-        Ok((PyDespawnOnExit { state_value: state }, PyComponent))
+        Ok((PyDespawnOnExit { state_value: state }, PyComponent).into())
     }
 
     fn __repr__(&self, py: Python) -> PyResult<String> {
@@ -561,12 +562,12 @@ pub struct PyDespawnOnEnter {
 #[pymethods]
 impl PyDespawnOnEnter {
     #[new]
-    fn new(py: Python, state: Py<PyAny>) -> PyResult<(Self, PyComponent)> {
+    fn new(py: Python, state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         // Validate state type
         let state_type = state.bind(py).get_type().unbind();
         PyState::validate_state_type(py, &state_type)?;
 
-        Ok((PyDespawnOnEnter { state_value: state }, PyComponent))
+        Ok((PyDespawnOnEnter { state_value: state }, PyComponent).into())
     }
 
     fn __repr__(&self, py: Python) -> PyResult<String> {

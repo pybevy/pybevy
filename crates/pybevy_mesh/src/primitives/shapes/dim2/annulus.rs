@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use super::circle::PyCircle;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyAnnulusMeshBuilder};
 
-#[pyclass(name = "Annulus", extends = PyMeshable, eq)]
+#[pyclass(name = "Annulus", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyAnnulus(pub(crate) Annulus);
 
@@ -36,7 +36,7 @@ impl PyAnnulus {
         outer_radius: f32,
         inner_circle: Option<&PyCircle>,
         outer_circle: Option<&PyCircle>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let (Some(inner), Some(outer)) = (inner_circle, outer_circle) {
             return (
                 Self(Annulus {
@@ -44,9 +44,10 @@ impl PyAnnulus {
                     outer_circle: Circle::new(outer.radius()),
                 }),
                 PyMeshable,
-            );
+            )
+                .into();
         }
-        (Self(Annulus::new(inner_radius, outer_radius)), PyMeshable)
+        (Self(Annulus::new(inner_radius, outer_radius)), PyMeshable).into()
     }
 
     #[getter]

@@ -24,7 +24,7 @@ fn duration_from_py(py_duration: &Bound<'_, PyAny>) -> PyResult<Duration> {
     ))
 }
 
-#[pyclass(name = "Stopwatch", eq)]
+#[pyclass(name = "Stopwatch", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PyStopwatch {
     pub(crate) stopwatch: Stopwatch,

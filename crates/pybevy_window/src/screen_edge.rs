@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ScreenEdge)]
-#[pyclass(name = "ScreenEdge", eq)]
+#[pyclass(name = "ScreenEdge", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyScreenEdge {
     None,

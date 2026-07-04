@@ -1,6 +1,6 @@
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
-#[pyclass(name = "ChainedSystems")]
+#[pyclass(name = "ChainedSystems", from_py_object)]
 pub struct PyChainedSystems {
     pub systems: Py<PyTuple>,
 }

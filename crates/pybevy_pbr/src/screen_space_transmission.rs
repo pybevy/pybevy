@@ -18,11 +18,15 @@ impl PyScreenSpaceTransmission {
         steps = 1,
         quality = PyScreenSpaceTransmissionQuality::Medium
     ))]
-    pub fn new(steps: usize, quality: PyScreenSpaceTransmissionQuality) -> (Self, PyComponent) {
+    pub fn new(
+        steps: usize,
+        quality: PyScreenSpaceTransmissionQuality,
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(ScreenSpaceTransmission {
             steps,
             quality: quality.into(),
         })
+        .into()
     }
 
     #[getter]

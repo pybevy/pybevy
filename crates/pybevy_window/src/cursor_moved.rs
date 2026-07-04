@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pymessage(CursorMoved)]
-#[pyclass(name = "CursorMoved", extends = PyMessage, eq)]
+#[pyclass(name = "CursorMoved", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorMoved {
     pub position: PyVec2,
@@ -27,7 +27,7 @@ impl From<&CursorMoved> for PyCursorMoved {
 impl PyCursorMoved {
     #[new]
     #[pyo3(signature = (position, window, delta=None))]
-    fn new(position: PyVec2, window: PyEntity, delta: Option<PyVec2>) -> (Self, PyMessage) {
+    fn new(position: PyVec2, window: PyEntity, delta: Option<PyVec2>) -> PyClassInitializer<Self> {
         (
             PyCursorMoved {
                 position,
@@ -36,6 +36,7 @@ impl PyCursorMoved {
             },
             PyMessage,
         )
+            .into()
     }
 
     #[getter]

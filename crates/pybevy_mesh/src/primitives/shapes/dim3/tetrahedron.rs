@@ -13,7 +13,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTetrahedronMeshBuilder,
 };
 
-#[pyclass(name = "Tetrahedron", extends = PyMeshable, eq)]
+#[pyclass(name = "Tetrahedron", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyTetrahedron(pub(crate) Tetrahedron);
 
@@ -46,7 +46,7 @@ impl PyTetrahedron {
         c: PyVec3,
         d: PyVec3,
         vertices: Option<[PyVec3; 4]>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let Some(v) = vertices {
             let verts = [
                 (&v[0]).into(),
@@ -54,7 +54,7 @@ impl PyTetrahedron {
                 (&v[2]).into(),
                 (&v[3]).into(),
             ];
-            return (Self(Tetrahedron { vertices: verts }), PyMeshable);
+            return (Self(Tetrahedron { vertices: verts }), PyMeshable).into();
         }
         let a_vec: Vec3 = a.into();
         let b_vec: Vec3 = b.into();
@@ -65,6 +65,7 @@ impl PyTetrahedron {
             Self(Tetrahedron::new(a_vec, b_vec, c_vec, d_vec)),
             PyMeshable,
         )
+            .into()
     }
 
     #[getter]

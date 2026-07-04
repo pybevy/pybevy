@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(GizmoPlugin)]
-#[pyclass(name = "GizmoPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "GizmoPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyGizmoPlugin;
 
 #[pymethods]
 impl PyGizmoPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyGizmoPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyGizmoPlugin, PyPlugin).into()
     }
 }
 

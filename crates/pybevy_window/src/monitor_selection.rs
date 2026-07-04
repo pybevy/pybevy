@@ -2,7 +2,7 @@ use bevy::window::MonitorSelection;
 use pybevy_core::PyEntity;
 use pyo3::prelude::*;
 
-#[pyclass(name = "MonitorSelection", eq, frozen)]
+#[pyclass(name = "MonitorSelection", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyMonitorSelection {
     Current(),

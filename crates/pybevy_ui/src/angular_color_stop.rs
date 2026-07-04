@@ -2,7 +2,7 @@ use bevy::{color::Color, ui::AngularColorStop};
 use pybevy_color::color::PyColor;
 use pyo3::prelude::*;
 
-#[pyclass(name = "AngularColorStop", eq)]
+#[pyclass(name = "AngularColorStop", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyAngularColorStop {
     pub(crate) inner: AngularColorStop,

@@ -18,7 +18,7 @@ impl PySpatialListener {
         gap: f32,
         left_ear_offset: Option<PyVec3>,
         right_ear_offset: Option<PyVec3>,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         let mut listener = SpatialListener::new(gap);
         if let Some(offset) = left_ear_offset {
             listener.left_ear_offset = offset.into();
@@ -26,7 +26,7 @@ impl PySpatialListener {
         if let Some(offset) = right_ear_offset {
             listener.right_ear_offset = offset.into();
         }
-        Self::from_owned(listener)
+        Self::from_owned(listener).into()
     }
 
     #[getter]

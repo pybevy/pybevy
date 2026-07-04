@@ -14,13 +14,14 @@ pub struct PyMouseInput {
 #[pymethods]
 impl PyMouseInput {
     #[new]
-    pub fn new() -> (Self, PyResource) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             Self {
                 storage: ResourceStorage::owned(ButtonInput::default()),
             },
             PyResource,
         )
+            .into()
     }
 
     pub fn just_pressed(&self, button: PyMouseButton) -> PyResult<bool> {

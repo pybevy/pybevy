@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(GltfPlugin)]
-#[pyclass(name = "GltfPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "GltfPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyGltfPlugin;
 
 #[pymethods]
 impl PyGltfPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyGltfPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyGltfPlugin, PyPlugin).into()
     }
 }
 

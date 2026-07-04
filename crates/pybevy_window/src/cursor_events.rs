@@ -5,7 +5,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(CursorEntered)]
-#[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
+#[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorEntered {
     #[pyo3(get)]
@@ -29,8 +29,8 @@ impl From<&CursorEntered> for PyCursorEntered {
 #[pymethods]
 impl PyCursorEntered {
     #[new]
-    pub fn new(window: PyEntity) -> (Self, PyMessage) {
-        (PyCursorEntered { window }, PyMessage)
+    pub fn new(window: PyEntity) -> PyClassInitializer<Self> {
+        (PyCursorEntered { window }, PyMessage).into()
     }
 
     pub fn __repr__(&self) -> String {
@@ -39,7 +39,7 @@ impl PyCursorEntered {
 }
 
 #[pymessage(CursorLeft)]
-#[pyclass(name = "CursorLeft", extends = PyMessage, frozen, eq)]
+#[pyclass(name = "CursorLeft", extends = PyMessage, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorLeft {
     #[pyo3(get)]
@@ -63,8 +63,8 @@ impl From<&CursorLeft> for PyCursorLeft {
 #[pymethods]
 impl PyCursorLeft {
     #[new]
-    pub fn new(window: PyEntity) -> (Self, PyMessage) {
-        (PyCursorLeft { window }, PyMessage)
+    pub fn new(window: PyEntity) -> PyClassInitializer<Self> {
+        (PyCursorLeft { window }, PyMessage).into()
     }
 
     pub fn __repr__(&self) -> String {

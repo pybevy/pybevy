@@ -127,8 +127,8 @@ impl PyRenderLayers {
     }
 
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (RenderLayers::default().into(), PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (RenderLayers::default().into(), PyComponent).into()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

@@ -6,7 +6,7 @@ use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 #[pyasset(Pitch, bridge)]
-#[pyclass(name = "Pitch", extends = pybevy_core::PyAsset)]
+#[pyclass(name = "Pitch", extends = pybevy_core::PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyPitch {
     pub(crate) storage: AssetStorage<Pitch>,
@@ -16,9 +16,9 @@ pub struct PyPitch {
 impl PyPitch {
     #[new]
     #[pyo3(signature = (frequency, duration))]
-    pub fn new(frequency: f32, duration: f64) -> (Self, pybevy_core::PyAsset) {
+    pub fn new(frequency: f32, duration: f64) -> PyClassInitializer<Self> {
         let pitch = Pitch::new(frequency, Duration::from_secs_f64(duration));
-        Self::from_owned(pitch)
+        Self::from_owned(pitch).into()
     }
 
     #[getter]

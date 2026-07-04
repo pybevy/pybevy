@@ -9,7 +9,7 @@ use crate::{
     vec3::PyVec3,
 };
 
-#[pyclass(name = "Ray2d", eq)]
+#[pyclass(name = "Ray2d", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRay2d(pub(crate) Ray2d);
 
@@ -89,7 +89,7 @@ impl PyRay2d {
     }
 }
 
-#[pyclass(name = "Ray3d", eq)]
+#[pyclass(name = "Ray3d", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRay3d(pub(crate) Ray3d);
 

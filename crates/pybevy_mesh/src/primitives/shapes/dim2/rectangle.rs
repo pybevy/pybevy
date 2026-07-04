@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRectangleMeshBuilder,
 };
 
-#[pyclass(name = "Rectangle", extends = PyMeshable, eq)]
+#[pyclass(name = "Rectangle", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyRectangle(pub(crate) Rectangle);
 
@@ -17,16 +17,17 @@ pub struct PyRectangle(pub(crate) Rectangle);
 impl PyRectangle {
     #[new]
     #[pyo3(signature = (width=1.0, height=1.0, *, half_size=None))]
-    pub fn new(width: f32, height: f32, half_size: Option<PyVec2>) -> (Self, PyMeshable) {
+    pub fn new(width: f32, height: f32, half_size: Option<PyVec2>) -> PyClassInitializer<Self> {
         if let Some(hs) = half_size {
             return (
                 Self(Rectangle {
                     half_size: hs.into(),
                 }),
                 PyMeshable,
-            );
+            )
+                .into();
         }
-        (Self(Rectangle::new(width, height)), PyMeshable)
+        (Self(Rectangle::new(width, height)), PyMeshable).into()
     }
 
     #[staticmethod]

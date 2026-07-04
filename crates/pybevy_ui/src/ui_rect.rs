@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[pyclass(name = "UiRect", eq)]
+#[pyclass(name = "UiRect", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyUiRect {
     pub(crate) inner: UiRect,

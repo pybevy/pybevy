@@ -76,7 +76,7 @@ impl PyFogVolume {
         scattering_asymmetry: f32,
         light_tint: PyColor,
         light_intensity: f32,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let texture = match density_texture {
             Some(h) => Some(extract_handle_from_any(h)?.try_into()?),
             None => None,
@@ -91,7 +91,8 @@ impl PyFogVolume {
             scattering_asymmetry,
             light_tint: light_tint.into(),
             light_intensity,
-        }))
+        })
+        .into())
     }
 
     #[getter]

@@ -3,7 +3,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Rect", frozen)]
+#[pyclass(name = "Rect", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRect {
     #[pyo3(get)]

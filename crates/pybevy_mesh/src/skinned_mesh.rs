@@ -16,11 +16,12 @@ impl PySkinnedMesh {
     pub fn new(
         inverse_bindposes: PyHandle,
         joints: Vec<PyEntity>,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(SkinnedMesh {
             inverse_bindposes: inverse_bindposes.try_into()?,
             joints: joints.into_iter().map(|e| e.0).collect(),
-        }))
+        })
+        .into())
     }
 
     #[getter]

@@ -1,7 +1,7 @@
 use bevy::pbr::ParallaxMappingMethod;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ParallaxMappingMethod", frozen, eq)]
+#[pyclass(name = "ParallaxMappingMethod", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyParallaxMappingMethod {
     Occlusion(),

@@ -19,7 +19,7 @@ impl PyWindowPlugin {
     pub fn new(
         primary_window: Option<PyRef<'_, PyWindow>>,
         exit_condition: Option<PyExitCondition>,
-    ) -> PyResult<(Self, PyPlugin)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let window = match primary_window {
             Some(w) => Some(w.storage.as_ref()?.clone().into()),
             None => None,
@@ -30,7 +30,8 @@ impl PyWindowPlugin {
                 exit_condition,
             },
             PyPlugin,
-        ))
+        )
+            .into())
     }
 }
 

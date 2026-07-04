@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{PyInterpolationColorSpace, color_stop::PyColorStop};
 
-#[pyclass(name = "LinearGradient", eq)]
+#[pyclass(name = "LinearGradient", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyLinearGradient {
     pub(crate) inner: LinearGradient,

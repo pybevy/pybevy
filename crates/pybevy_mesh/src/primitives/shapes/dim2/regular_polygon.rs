@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRegularPolygonMeshBuilder,
 };
 
-#[pyclass(name = "RegularPolygon", extends = PyMeshable, eq)]
+#[pyclass(name = "RegularPolygon", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRegularPolygon(pub(crate) RegularPolygon);
 
@@ -29,8 +29,8 @@ impl From<RegularPolygon> for PyRegularPolygon {
 impl PyRegularPolygon {
     #[new]
     #[pyo3(signature = (circumradius = 0.5, sides = 6))]
-    pub fn new(circumradius: f32, sides: u32) -> (Self, PyMeshable) {
-        (Self(RegularPolygon::new(circumradius, sides)), PyMeshable)
+    pub fn new(circumradius: f32, sides: u32) -> PyClassInitializer<Self> {
+        (Self(RegularPolygon::new(circumradius, sides)), PyMeshable).into()
     }
 
     #[getter]

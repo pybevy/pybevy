@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[pyclass(name = "ShadowStyle", eq)]
+#[pyclass(name = "ShadowStyle", eq, from_py_object)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PyShadowStyle {
     pub inner: ShadowStyle,

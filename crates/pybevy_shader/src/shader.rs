@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[pyasset(Shader, bridge)]
-#[pyclass(name = "Shader", extends = pybevy_core::PyAsset)]
+#[pyclass(name = "Shader", extends = pybevy_core::PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyShader {
     storage: AssetStorage<Shader>,

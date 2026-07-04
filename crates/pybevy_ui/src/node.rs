@@ -21,8 +21,8 @@ pub struct PyNode {
 #[pymethods]
 impl PyNode {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(Node::default())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(Node::default()).into()
     }
 
     #[setter]

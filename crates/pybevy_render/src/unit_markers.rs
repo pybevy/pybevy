@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 ///
 /// When added to a camera entity, enables high dynamic range rendering.
 #[pycomponent(Hdr, unit, bridge)]
-#[pyclass(name = "Hdr", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Hdr", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyHdr;
 
@@ -39,8 +39,8 @@ impl TryFrom<&Hdr> for PyHdr {
 #[pymethods]
 impl PyHdr {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyHdr, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyHdr, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -53,7 +53,7 @@ impl PyHdr {
 /// Prevents the entity from being automatically batched with similar
 /// entities during rendering.
 #[pycomponent(NoAutomaticBatching, unit, bridge)]
-#[pyclass(name = "NoAutomaticBatching", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NoAutomaticBatching", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoAutomaticBatching;
 
@@ -80,8 +80,8 @@ impl TryFrom<&NoAutomaticBatching> for PyNoAutomaticBatching {
 #[pymethods]
 impl PyNoAutomaticBatching {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNoAutomaticBatching, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNoAutomaticBatching, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -93,7 +93,7 @@ impl PyNoAutomaticBatching {
 ///
 /// Prevents the entity from using indirect draw calls during rendering.
 #[pycomponent(NoIndirectDrawing, unit, bridge)]
-#[pyclass(name = "NoIndirectDrawing", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NoIndirectDrawing", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoIndirectDrawing;
 
@@ -120,8 +120,8 @@ impl TryFrom<&NoIndirectDrawing> for PyNoIndirectDrawing {
 #[pymethods]
 impl PyNoIndirectDrawing {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNoIndirectDrawing, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNoIndirectDrawing, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -135,7 +135,7 @@ impl PyNoIndirectDrawing {
 /// which can improve performance by not rendering objects hidden behind
 /// other objects.
 #[pycomponent(OcclusionCulling, unit, bridge)]
-#[pyclass(name = "OcclusionCulling", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "OcclusionCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyOcclusionCulling;
 
@@ -162,8 +162,8 @@ impl TryFrom<&OcclusionCulling> for PyOcclusionCulling {
 #[pymethods]
 impl PyOcclusionCulling {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyOcclusionCulling, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyOcclusionCulling, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {

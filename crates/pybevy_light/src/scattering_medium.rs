@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use crate::scattering_term::PyScatteringTerm;
 
 #[pyasset(ScatteringMedium, bridge, not_loadable)]
-#[pyclass(name = "ScatteringMedium", extends = PyAsset)]
+#[pyclass(name = "ScatteringMedium", extends = PyAsset, skip_from_py_object)]
 pub struct PyScatteringMedium {
     pub(crate) storage: AssetStorage<ScatteringMedium>,
 }
@@ -25,7 +25,7 @@ impl PyScatteringMedium {
         falloff_resolution: u32,
         phase_resolution: u32,
         terms: Option<Vec<PyScatteringTerm>>,
-    ) -> (Self, PyAsset) {
+    ) -> PyClassInitializer<Self> {
         // terms omitted keeps bevy's Default: ScatteringMedium::earth(256, 256)
         let medium = match terms {
             Some(terms) => ScatteringMedium::new(
@@ -35,7 +35,7 @@ impl PyScatteringMedium {
             ),
             None => ScatteringMedium::earth(falloff_resolution, phase_resolution),
         };
-        Self::from_owned(medium)
+        Self::from_owned(medium).into()
     }
 
     #[getter]

@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[pyplugin(ControlBevyPlugin)]
-#[pyclass(name = "McpPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "McpPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyControlPlugin {
     pub port: u16,
@@ -46,7 +46,7 @@ impl PyControlPlugin {
         manipulation: bool,
         execute_python: bool,
         api_discovery: bool,
-    ) -> (Self, PyPlugin) {
+    ) -> PyClassInitializer<Self> {
         (
             PyControlPlugin {
                 port,
@@ -58,6 +58,7 @@ impl PyControlPlugin {
             },
             PyPlugin,
         )
+            .into()
     }
 
     pub fn __repr__(&self) -> String {

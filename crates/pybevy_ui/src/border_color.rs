@@ -21,7 +21,7 @@ impl PyBorderColor {
         right: Option<PyColor>,
         bottom: Option<PyColor>,
         left: Option<PyColor>,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         let base = color.map(Color::from).unwrap_or(Color::NONE);
         let bc = BorderColor {
             top: top.map(Color::from).unwrap_or(base),
@@ -29,7 +29,7 @@ impl PyBorderColor {
             bottom: bottom.map(Color::from).unwrap_or(base),
             left: left.map(Color::from).unwrap_or(base),
         };
-        Self::from_owned(bc)
+        Self::from_owned(bc).into()
     }
 
     #[staticmethod]

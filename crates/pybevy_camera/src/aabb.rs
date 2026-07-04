@@ -20,7 +20,7 @@ pub struct PyAabb {
 impl PyAabb {
     #[new]
     #[pyo3(signature = (center=PyVec3A::vec3a(Vec3A::ZERO), half_extents=PyVec3A::vec3a(Vec3A::ZERO)))]
-    pub fn new(center: PyVec3A, half_extents: PyVec3A) -> (Self, PyComponent) {
+    pub fn new(center: PyVec3A, half_extents: PyVec3A) -> PyClassInitializer<Self> {
         (
             PyAabb {
                 storage: ComponentStorage::owned(Aabb {
@@ -30,6 +30,7 @@ impl PyAabb {
             },
             PyComponent,
         )
+            .into()
     }
 
     #[staticmethod]

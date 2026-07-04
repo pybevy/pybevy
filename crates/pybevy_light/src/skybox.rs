@@ -22,7 +22,7 @@ impl PySkybox {
         image: Option<&Bound<'_, PyAny>>,
         brightness: f32,
         rotation: PyQuat,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let image = match image {
             Some(image) => Some(extract_handle_from_any(image)?.try_into()?),
             None => None,
@@ -31,7 +31,8 @@ impl PySkybox {
             image,
             brightness,
             rotation: rotation.into(),
-        }))
+        })
+        .into())
     }
 
     #[getter]

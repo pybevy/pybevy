@@ -518,7 +518,7 @@ impl MessageType {
     }
 }
 
-#[pyclass(name = "MessageType", eq, frozen)]
+#[pyclass(name = "MessageType", eq, frozen, skip_from_py_object)]
 #[derive(Debug, PartialEq, Clone)]
 pub struct PyMessageType(pub(crate) MessageType);
 

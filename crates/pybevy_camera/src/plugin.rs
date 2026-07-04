@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(CameraPlugin)]
-#[pyclass(name = "CameraPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "CameraPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCameraPlugin;
 
 #[pymethods]
 impl PyCameraPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyCameraPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyCameraPlugin, PyPlugin).into()
     }
 }
 

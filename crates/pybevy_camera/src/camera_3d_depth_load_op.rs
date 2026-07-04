@@ -1,7 +1,7 @@
 use bevy::camera::Camera3dDepthLoadOp;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Camera3dDepthLoadOp", frozen, eq)]
+#[pyclass(name = "Camera3dDepthLoadOp", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyCamera3dDepthLoadOp {
     Clear(f32),

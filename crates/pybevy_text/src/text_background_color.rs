@@ -25,8 +25,8 @@ impl PyTextBackgroundColor {
 impl PyTextBackgroundColor {
     #[new]
     #[pyo3(signature = (color = Self::default_color()))]
-    pub fn new(color: PyColor) -> (Self, PyComponent) {
-        Self::from_owned(TextBackgroundColor(color.into()))
+    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
+        Self::from_owned(TextBackgroundColor(color.into())).into()
     }
 
     #[getter]

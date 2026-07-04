@@ -11,15 +11,15 @@ pub mod prelude {
 }
 
 #[pyplugin(AccessibilityPlugin)]
-#[pyclass(name = "AccessibilityPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "AccessibilityPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAccessibilityPlugin;
 
 #[pymethods]
 impl PyAccessibilityPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyAccessibilityPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyAccessibilityPlugin, PyPlugin).into()
     }
 }
 

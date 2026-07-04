@@ -83,7 +83,7 @@ impl PyPointLight {
         shadow_depth_bias: f32,
         shadow_normal_bias: f32,
         shadow_map_near_z: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(PointLight {
             color: color.into(),
             intensity,
@@ -97,6 +97,7 @@ impl PyPointLight {
             // `contact_shadows_enabled` is not exposed; it takes its default (off).
             ..Default::default()
         })
+        .into()
     }
 
     #[getter]

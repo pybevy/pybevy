@@ -39,7 +39,7 @@ impl PyPlaybackSettings {
         start_position: Option<Duration>,
         duration: Option<Duration>,
         spatial_scale: Option<PySpatialScale>,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         let settings = PlaybackSettings {
             mode: mode.map(Into::into).unwrap_or(PlaybackMode::Once),
             volume: volume.map(Into::into).unwrap_or_default(),
@@ -51,7 +51,7 @@ impl PyPlaybackSettings {
             duration,
             spatial_scale: spatial_scale.map(|s| s.inner),
         };
-        Self::from_owned(settings)
+        Self::from_owned(settings).into()
     }
 
     #[staticmethod]

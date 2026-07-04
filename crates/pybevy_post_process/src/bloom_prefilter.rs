@@ -4,7 +4,7 @@ use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 #[pyfield]
-#[pyclass(name = "BloomPrefilter")]
+#[pyclass(name = "BloomPrefilter", from_py_object)]
 pub struct PyBloomPrefilter {
     pub(crate) storage: FieldStorage<BloomPrefilter>,
 }

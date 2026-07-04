@@ -21,8 +21,8 @@ pub struct PyRenderTarget {
 #[pymethods]
 impl PyRenderTarget {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(RenderTarget::Window(WindowRef::default()))
+    pub fn new() -> pyo3::PyClassInitializer<Self> {
+        Self::from_owned(RenderTarget::Window(WindowRef::default())).into()
     }
 
     #[staticmethod]

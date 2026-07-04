@@ -44,7 +44,7 @@ impl PyBloom {
         composite_mode: PyBloomCompositeMode,
         max_mip_dimension: u32,
         scale: Option<Bound<'_, PyAny>>,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let scale_vec = if let Some(s) = scale {
             Vec2::new(
                 s.getattr("x")?.extract::<f32>()?,
@@ -68,7 +68,7 @@ impl PyBloom {
             scale: scale_vec,
         };
 
-        Ok(Self::from_owned(bloom))
+        Ok(Self::from_owned(bloom).into())
     }
 
     #[staticmethod]

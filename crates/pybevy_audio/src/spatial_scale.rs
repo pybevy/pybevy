@@ -17,7 +17,7 @@ fn parse_scale_arg(ob: &Bound<'_, PyAny>) -> PyResult<SpatialScale> {
     }
 }
 
-#[pyclass(name = "SpatialScale", frozen)]
+#[pyclass(name = "SpatialScale", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpatialScale {
     pub inner: SpatialScale,

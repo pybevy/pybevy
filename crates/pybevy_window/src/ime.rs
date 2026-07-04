@@ -23,7 +23,7 @@ pub enum ImeData {
 }
 
 #[pymessage(Ime)]
-#[pyclass(name = "Ime", extends = PyMessage, eq)]
+#[pyclass(name = "Ime", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyIme {
     data: ImeData,

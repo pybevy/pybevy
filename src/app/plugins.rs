@@ -47,8 +47,8 @@ pub struct PyDefaultPlugins;
 #[pymethods]
 impl PyDefaultPlugins {
     #[new]
-    pub fn new() -> (Self, PyPluginGroup) {
-        (PyDefaultPlugins, PyPluginGroup)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyDefaultPlugins, PyPluginGroup).into()
     }
 
     pub fn set(&self, py: Python, plugin: Bound<'_, PyAny>) -> PyResult<Py<PyPluginGroupBuilder>> {
@@ -115,7 +115,7 @@ impl PluginTypeId {
 unsafe impl Send for PluginTypeId {}
 unsafe impl Sync for PluginTypeId {}
 
-#[pyclass(name = "PluginGroupBuilder", extends = PyPluginGroup)]
+#[pyclass(name = "PluginGroupBuilder", extends = PyPluginGroup, skip_from_py_object)]
 pub struct PyPluginGroupBuilder {
     configured_plugins: HashMap<PluginConfigType, Py<PyAny>>,
     disabled_plugins: HashSet<PluginConfigType>,
@@ -379,15 +379,15 @@ fn disable_plugin(
     }
 }
 
-#[pyclass(name = "MinimalPlugins", extends = PyPlugin, frozen)]
+#[pyclass(name = "MinimalPlugins", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyMinimalPlugins;
 
 #[pymethods]
 impl PyMinimalPlugins {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyMinimalPlugins, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyMinimalPlugins, PyPlugin).into()
     }
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {

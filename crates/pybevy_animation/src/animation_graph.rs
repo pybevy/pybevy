@@ -10,7 +10,7 @@ use pyo3::{
 use crate::animation_node_index::PyAnimationNodeIndex;
 
 #[pyasset(AnimationGraph, bridge)]
-#[pyclass(name = "AnimationGraph", extends = PyAsset)]
+#[pyclass(name = "AnimationGraph", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAnimationGraph {
     pub(crate) storage: AssetStorage<AnimationGraph>,
@@ -19,8 +19,8 @@ pub struct PyAnimationGraph {
 #[pymethods]
 impl PyAnimationGraph {
     #[new]
-    pub fn new() -> (Self, PyAsset) {
-        (Self::from(AnimationGraph::default()), PyAsset)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Self::from(AnimationGraph::default()), PyAsset).into()
     }
 
     #[staticmethod]
@@ -137,7 +137,7 @@ impl PyAnimationGraph {
     }
 }
 
-#[pyclass(name = "AnimationNodeType", eq)]
+#[pyclass(name = "AnimationNodeType", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyAnimationNodeType {
     Clip(PyHandle),
@@ -168,7 +168,7 @@ impl PyAnimationNodeType {
     }
 }
 
-#[pyclass(name = "AnimationGraphNode")]
+#[pyclass(name = "AnimationGraphNode", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationGraphNode(pub AnimationGraphNode);
 

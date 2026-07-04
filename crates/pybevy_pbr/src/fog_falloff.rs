@@ -3,7 +3,7 @@ use pybevy_color::color::PyColor;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
-#[pyclass(name = "FogFalloff", frozen)]
+#[pyclass(name = "FogFalloff", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyFogFalloff {
     Linear {

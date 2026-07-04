@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::volume::PyVolume;
 
 #[pyresource(GlobalVolume, bridge)]
-#[pyclass(name = "GlobalVolume", extends = PyResource)]
+#[pyclass(name = "GlobalVolume", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyGlobalVolume {
     pub(crate) storage: ResourceStorage<GlobalVolume>,
@@ -16,12 +16,12 @@ pub struct PyGlobalVolume {
 impl PyGlobalVolume {
     #[new]
     #[pyo3(signature = (volume=None))]
-    pub fn new(volume: Option<PyVolume>) -> (Self, PyResource) {
+    pub fn new(volume: Option<PyVolume>) -> PyClassInitializer<Self> {
         let global_volume = match volume {
             Some(v) => GlobalVolume::new(v.into()),
             None => GlobalVolume::default(),
         };
-        Self::from_owned(global_volume)
+        Self::from_owned(global_volume).into()
     }
 
     #[getter]

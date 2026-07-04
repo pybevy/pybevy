@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::ecs::message::PyMessage;
 
-#[pyclass(name = "AssetEventType", eq, eq_int, frozen)]
+#[pyclass(name = "AssetEventType", eq, eq_int, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyAssetEventType {
     Added,
@@ -37,7 +37,7 @@ impl PyAssetEventType {
     }
 }
 
-#[pyclass(name = "AssetEvent", extends = PyMessage)]
+#[pyclass(name = "AssetEvent", extends = PyMessage, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAssetEvent {
     #[pyo3(get)]

@@ -3,7 +3,7 @@ use pyo3::{prelude::*, types::PyList};
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Polygon", eq)]
+#[pyclass(name = "Polygon", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyPolygon {
     pub(crate) inner: Polygon,

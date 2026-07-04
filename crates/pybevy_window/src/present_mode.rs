@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(PresentMode)]
-#[pyclass(name = "PresentMode", eq)]
+#[pyclass(name = "PresentMode", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyPresentMode {
     AutoVsync,

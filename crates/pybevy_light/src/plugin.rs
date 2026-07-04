@@ -4,15 +4,15 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(LightPlugin)]
-#[pyclass(name = "LightPlugin", extends = PyPlugin, frozen)]
+#[pyclass(name = "LightPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyLightPlugin;
 
 #[pymethods]
 impl PyLightPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyLightPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyLightPlugin, PyPlugin).into()
     }
 }
 

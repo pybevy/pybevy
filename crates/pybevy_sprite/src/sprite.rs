@@ -42,7 +42,7 @@ impl PySprite {
         rect: Option<PyRect>,
         texture_atlas: Option<PyTextureAtlas>,
         image_mode: PySpriteImageMode,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let py_handle = extract_handle_from_any(image)?;
         let image_handle = py_handle.try_into()?;
         let texture_atlas_handle = texture_atlas.map(|ta| ta.try_into()).transpose()?;
@@ -58,7 +58,8 @@ impl PySprite {
             rect: rect_bevy,
             texture_atlas: texture_atlas_handle,
             image_mode: image_mode.into(),
-        }))
+        })
+        .into())
     }
 
     #[staticmethod]

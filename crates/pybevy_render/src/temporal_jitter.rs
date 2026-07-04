@@ -14,10 +14,11 @@ pub struct PyTemporalJitter {
 impl PyTemporalJitter {
     #[new]
     #[pyo3(signature = (offset = PyVec2::ZERO))]
-    pub fn new(offset: PyVec2) -> (Self, PyComponent) {
+    pub fn new(offset: PyVec2) -> PyClassInitializer<Self> {
         Self::from_owned(TemporalJitter {
             offset: offset.into(),
         })
+        .into()
     }
 
     #[getter]

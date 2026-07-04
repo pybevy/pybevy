@@ -65,7 +65,7 @@ impl PyTextFont {
         width: PyFontWidth,
         style: PyFontStyle,
         font_features: PyFontFeatures,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let font = match font {
             Some(obj) => extract_font_source_from_any(obj)?,
             None => FontSource::default(),
@@ -84,7 +84,8 @@ impl PyTextFont {
             style: style.into(),
             font_features: font_features.into(),
             ..Default::default()
-        }))
+        })
+        .into())
     }
 
     #[staticmethod]

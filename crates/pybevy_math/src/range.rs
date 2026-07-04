@@ -3,7 +3,7 @@ use std::ops::Range;
 use pybevy_core::{FieldStorage, FromBorrowedStorage};
 use pyo3::prelude::*;
 
-#[pyclass(name = "Range")]
+#[pyclass(name = "Range", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRange {
     storage: FieldStorage<Range<f32>>,

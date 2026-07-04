@@ -22,7 +22,7 @@ use pyo3::{
 ///     value: int
 ///     text: str
 /// ```
-#[pyclass(name = "Message", subclass)]
+#[pyclass(name = "Message", subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMessage;
 

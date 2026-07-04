@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCuboidMeshBuilder};
 
-#[pyclass(name = "Cuboid", extends = PyMeshable, eq)]
+#[pyclass(name = "Cuboid", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCuboid(pub(crate) Cuboid);
 
@@ -20,16 +20,17 @@ impl PyCuboid {
         y_length: f32,
         z_length: f32,
         half_size: Option<PyVec3>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let Some(hs) = half_size {
             return (
                 Self(Cuboid {
                     half_size: hs.into(),
                 }),
                 PyMeshable,
-            );
+            )
+                .into();
         }
-        (Self(Cuboid::new(x_length, y_length, z_length)), PyMeshable)
+        (Self(Cuboid::new(x_length, y_length, z_length)), PyMeshable).into()
     }
 
     #[staticmethod]

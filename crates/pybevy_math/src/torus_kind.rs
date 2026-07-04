@@ -1,7 +1,7 @@
 use bevy::math::primitives::TorusKind;
 use pyo3::prelude::*;
 
-#[pyclass(name = "TorusKind", eq)]
+#[pyclass(name = "TorusKind", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTorusKind {
     Ring,

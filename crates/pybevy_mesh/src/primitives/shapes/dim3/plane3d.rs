@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};
 
-#[pyclass(name = "Plane3d", extends = PyMeshable, eq)]
+#[pyclass(name = "Plane3d", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyPlane3d(pub Plane3d);
 
@@ -15,11 +15,12 @@ impl PyPlane3d {
         normal = PyDir3::Y.as_vec3(),
         half_size = PyVec2::splat(0.5)
     ))]
-    pub fn new(normal: PyVec3, half_size: PyVec2) -> (Self, PyMeshable) {
+    pub fn new(normal: PyVec3, half_size: PyVec2) -> PyClassInitializer<Self> {
         (
             Self(Plane3d::new(normal.into(), half_size.into())),
             PyMeshable,
         )
+            .into()
     }
 
     #[staticmethod]

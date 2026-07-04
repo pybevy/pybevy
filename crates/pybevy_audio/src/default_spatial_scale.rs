@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::spatial_scale::PySpatialScale;
 
 #[pyresource(DefaultSpatialScale, bridge)]
-#[pyclass(name = "DefaultSpatialScale", extends = PyResource)]
+#[pyclass(name = "DefaultSpatialScale", extends = PyResource, from_py_object)]
 pub struct PyDefaultSpatialScale {
     pub(crate) storage: ResourceStorage<DefaultSpatialScale>,
 }
@@ -15,12 +15,12 @@ pub struct PyDefaultSpatialScale {
 impl PyDefaultSpatialScale {
     #[new]
     #[pyo3(signature = (scale=None))]
-    pub fn new(scale: Option<PySpatialScale>) -> (Self, PyResource) {
+    pub fn new(scale: Option<PySpatialScale>) -> PyClassInitializer<Self> {
         let default_scale = match scale {
             Some(s) => DefaultSpatialScale(s.inner),
             None => DefaultSpatialScale::default(),
         };
-        Self::from_owned(default_scale)
+        Self::from_owned(default_scale).into()
     }
 
     #[getter]

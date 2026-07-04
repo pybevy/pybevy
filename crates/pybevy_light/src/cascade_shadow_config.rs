@@ -36,12 +36,13 @@ impl PyCascadeShadowConfig {
         bounds: Vec<f32>,
         overlap_proportion: f32,
         minimum_distance: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(CascadeShadowConfig {
             bounds,
             overlap_proportion,
             minimum_distance,
         })
+        .into()
     }
 
     #[getter]

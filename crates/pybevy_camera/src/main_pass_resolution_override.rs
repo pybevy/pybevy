@@ -26,12 +26,13 @@ impl From<MainPassResolutionOverride> for PyMainPassResolutionOverride {
 #[pymethods]
 impl PyMainPassResolutionOverride {
     #[new]
-    pub fn new(resolution: &PyUVec2) -> (Self, PyComponent) {
+    pub fn new(resolution: &PyUVec2) -> PyClassInitializer<Self> {
         let res: UVec2 = resolution.into();
         (
             PyMainPassResolutionOverride { resolution: res },
             PyComponent,
         )
+            .into()
     }
 
     #[getter]

@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use uuid::Uuid;
 
 #[pywrap(AnimationTargetId, bridge, copy)]
-#[pyclass(name = "AnimationTargetId", extends = PyComponent, frozen, eq)]
+#[pyclass(from_py_object, name = "AnimationTargetId", extends = PyComponent, frozen, eq)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PyAnimationTargetId(pub(crate) AnimationTargetId);
 

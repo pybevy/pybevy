@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySegment2dMeshBuilder,
 };
 
-#[pyclass(name = "Segment2d", extends = PyMeshable, eq)]
+#[pyclass(name = "Segment2d", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PySegment2d(pub(crate) Segment2d);
 
@@ -33,16 +33,17 @@ impl PySegment2d {
         point1: PyVec2,
         point2: PyVec2,
         vertices: Option<[PyVec2; 2]>,
-    ) -> (Self, PyMeshable) {
+    ) -> PyClassInitializer<Self> {
         if let Some(v) = vertices {
             return (
                 Self(Segment2d {
                     vertices: [v[0].get(), v[1].get()],
                 }),
                 PyMeshable,
-            );
+            )
+                .into();
         }
-        (Self(Segment2d::new(point1.get(), point2.get())), PyMeshable)
+        (Self(Segment2d::new(point1.get(), point2.get())), PyMeshable).into()
     }
 
     #[staticmethod]

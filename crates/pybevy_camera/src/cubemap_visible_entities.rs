@@ -14,13 +14,14 @@ pub struct PyCubemapVisibleEntities {
 #[pymethods]
 impl PyCubemapVisibleEntities {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             PyCubemapVisibleEntities {
                 storage: ComponentStorage::owned(CubemapVisibleEntities::default()),
             },
             PyComponent,
         )
+            .into()
     }
 
     pub fn get(&self, py: Python<'_>, i: usize) -> PyResult<Py<PyVisibleMeshEntities>> {

@@ -16,7 +16,7 @@ pub struct PyTextShadow {
 impl PyTextShadow {
     #[new]
     #[pyo3(signature = (offset = None, color = None))]
-    pub fn new(offset: Option<PyVec2>, color: Option<PyColor>) -> (Self, PyComponent) {
+    pub fn new(offset: Option<PyVec2>, color: Option<PyColor>) -> PyClassInitializer<Self> {
         let bevy_offset: Vec2 = offset.map(|o| o.into()).unwrap_or(Vec2::splat(4.0));
         let bevy_color: Color = color
             .map(|c| c.into())
@@ -25,6 +25,7 @@ impl PyTextShadow {
             offset: bevy_offset,
             color: bevy_color,
         })
+        .into()
     }
 
     #[getter]

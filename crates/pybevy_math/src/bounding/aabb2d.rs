@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use super::bounding_circle::PyBoundingCircle;
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Aabb2d")]
+#[pyclass(name = "Aabb2d", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAabb2d {
     storage: ValueStorage<Aabb2d>,
@@ -164,7 +164,7 @@ impl PyAabb2d {
     }
 }
 
-#[pyclass(name = "Isometry2d", eq)]
+#[pyclass(name = "Isometry2d", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyIsometry2d {
     inner: bevy::math::Isometry2d,

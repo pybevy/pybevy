@@ -8,7 +8,7 @@ use super::{
     repeat_animation::PyRepeatAnimation,
 };
 
-#[pyclass(name = "AnimationTarget", extends = PyComponent, eq)]
+#[pyclass(name = "AnimationTarget", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyAnimationTarget {
     pub id: PyAnimationTargetId,
@@ -20,8 +20,8 @@ pub struct PyAnimationTarget {
 #[pymethods]
 impl PyAnimationTarget {
     #[new]
-    pub fn new(id: &PyAnimationTargetId, player: PyEntity) -> (Self, PyComponent) {
-        (Self { id: *id, player }, PyComponent)
+    pub fn new(id: &PyAnimationTargetId, player: PyEntity) -> PyClassInitializer<Self> {
+        (Self { id: *id, player }, PyComponent).into()
     }
 
     #[getter]
@@ -214,8 +214,8 @@ pub struct PyAnimationPlayer {
 #[pymethods]
 impl PyAnimationPlayer {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(AnimationPlayer::default())
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(AnimationPlayer::default()).into()
     }
 
     pub fn play(

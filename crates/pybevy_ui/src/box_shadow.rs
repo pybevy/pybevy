@@ -17,11 +17,11 @@ pub struct PyBoxShadow {
 impl PyBoxShadow {
     #[new]
     #[pyo3(signature = (shadows = None))]
-    pub fn new(shadows: Option<Vec<PyShadowStyle>>) -> (Self, PyComponent) {
+    pub fn new(shadows: Option<Vec<PyShadowStyle>>) -> PyClassInitializer<Self> {
         let shadow_styles = shadows
             .map(|s| s.into_iter().map(|style| style.inner).collect())
             .unwrap_or_default();
-        Self::from_owned(BoxShadow(shadow_styles))
+        Self::from_owned(BoxShadow(shadow_styles)).into()
     }
 
     #[staticmethod]

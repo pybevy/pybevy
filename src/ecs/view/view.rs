@@ -61,7 +61,7 @@ use crate::ecs::{
 ///
 /// SAFETY: This struct uses raw pointers to World and must only be used
 /// within the scope of a system execution.
-#[pyclass(name = "View", frozen)]
+#[pyclass(name = "View", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyView {
     /// Component types accessible in this view
@@ -1137,7 +1137,7 @@ impl PyViewCol {
 }
 
 /// Mutable column proxy for component fields
-#[pyclass(name = "ViewColMut", frozen)]
+#[pyclass(name = "ViewColMut", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyViewColMut {
     view_ptr: *const PyView,

@@ -34,8 +34,8 @@ impl TryFrom<&PyAppExit> for AppExit {
 #[pymethods]
 impl PyAppExit {
     #[new]
-    pub fn new() -> (Self, PyMessage) {
-        (Self(AppExit::Success), PyMessage)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Self(AppExit::Success), PyMessage).into()
     }
 
     #[classattr]

@@ -14,9 +14,9 @@ pub struct PySkinnedMeshInverseBindposes {
 #[pymethods]
 impl PySkinnedMeshInverseBindposes {
     #[new]
-    pub fn new(matrices: Vec<PyMat4>) -> (Self, PyAsset) {
+    pub fn new(matrices: Vec<PyMat4>) -> PyClassInitializer<Self> {
         let mat4s: Vec<bevy::math::Mat4> = matrices.into_iter().map(|m| m.into()).collect();
-        Self::from_owned(SkinnedMeshInverseBindposes::from(mat4s))
+        Self::from_owned(SkinnedMeshInverseBindposes::from(mat4s)).into()
     }
 
     pub fn __len__(&self) -> PyResult<usize> {

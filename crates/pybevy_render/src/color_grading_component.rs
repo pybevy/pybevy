@@ -25,7 +25,7 @@ impl PyColorGrading {
         shadows: PyColorGradingSection,
         midtones: PyColorGradingSection,
         highlights: PyColorGradingSection,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let color_grading = ColorGrading {
             global: global_.try_into()?,
             shadows: shadows.try_into()?,
@@ -33,7 +33,7 @@ impl PyColorGrading {
             highlights: highlights.try_into()?,
         };
 
-        Ok(Self::from_owned(color_grading))
+        Ok(Self::from_owned(color_grading).into())
     }
 
     #[getter(global_)]

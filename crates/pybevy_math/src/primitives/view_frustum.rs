@@ -4,7 +4,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use super::half_space::PyHalfSpace;
 use crate::{mat4::PyMat4, vec3::PyVec3};
 
-#[pyclass(name = "ViewFrustum", eq)]
+#[pyclass(name = "ViewFrustum", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyViewFrustum {
     pub(crate) inner: ViewFrustum,

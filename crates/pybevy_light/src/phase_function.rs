@@ -4,7 +4,7 @@ use bevy::{asset::Handle, image::Image, light::atmosphere::PhaseFunction};
 use pybevy_core::extract_handle_from_any;
 use pyo3::prelude::*;
 
-#[pyclass(name = "PhaseFunction", frozen)]
+#[pyclass(name = "PhaseFunction", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyPhaseFunction(pub(crate) PhaseFunction);
 

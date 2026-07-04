@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Laba", eq)]
+#[pyclass(name = "Laba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLaba {
     storage: ValueStorage<Laba>,

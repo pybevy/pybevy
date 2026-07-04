@@ -5,12 +5,12 @@ use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
 use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId};
 
-#[pyclass(name = "VariableCurve", extends = PyAnimationCurve)]
+#[pyclass(name = "VariableCurve", extends = PyAnimationCurve, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVariableCurve(pub(crate) VariableCurve);
 
 #[pyasset(AnimationClip, bridge)]
-#[pyclass(name = "AnimationClip", extends = PyAsset)]
+#[pyclass(name = "AnimationClip", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAnimationClip {
     pub(crate) storage: AssetStorage<AnimationClip>,
@@ -19,8 +19,8 @@ pub struct PyAnimationClip {
 #[pymethods]
 impl PyAnimationClip {
     #[new]
-    pub fn new() -> (Self, PyAsset) {
-        (Self::from(AnimationClip::default()), PyAsset)
+    pub fn new() -> PyClassInitializer<Self> {
+        (Self::from(AnimationClip::default()), PyAsset).into()
     }
 
     pub fn duration(&self) -> PyResult<f32> {

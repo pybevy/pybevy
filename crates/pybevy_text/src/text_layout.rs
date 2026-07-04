@@ -29,11 +29,12 @@ impl PyTextLayout {
         justify = Self::default_justify(),
         linebreak = Self::default_linebreak()
     ))]
-    pub fn new(justify: PyJustify, linebreak: PyLineBreak) -> (Self, PyComponent) {
+    pub fn new(justify: PyJustify, linebreak: PyLineBreak) -> PyClassInitializer<Self> {
         Self::from_owned(TextLayout {
             justify: justify.into(),
             linebreak: linebreak.into(),
         })
+        .into()
     }
 
     #[staticmethod]

@@ -3,7 +3,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{rot2::PyRot2, vec2::PyVec2};
 
-#[pyclass(name = "Dir2", eq)]
+#[pyclass(name = "Dir2", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyDir2(pub(crate) Dir2);
 

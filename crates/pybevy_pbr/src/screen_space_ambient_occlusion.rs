@@ -22,11 +22,12 @@ impl PyScreenSpaceAmbientOcclusion {
     pub fn new(
         quality_level: PyScreenSpaceAmbientOcclusionQualityLevel,
         constant_object_thickness: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(ScreenSpaceAmbientOcclusion {
             quality_level: quality_level.into(),
             constant_object_thickness,
         })
+        .into()
     }
 
     #[getter]

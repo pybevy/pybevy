@@ -5,7 +5,7 @@ use bevy::{
 use pybevy_core::{PyHandle, extract_handle_from_any};
 use pyo3::prelude::*;
 
-#[pyclass(name = "FontSource", frozen, eq)]
+#[pyclass(name = "FontSource", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyFontSource {
     Handle { value: PyHandle },

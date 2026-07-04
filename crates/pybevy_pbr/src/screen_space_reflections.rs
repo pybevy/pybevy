@@ -37,7 +37,7 @@ impl PyScreenSpaceReflections {
         edge_fadeout: (f32, f32),
         bisection_steps: u32,
         use_secant: bool,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(ScreenSpaceReflections {
             min_perceptual_roughness: min_perceptual_roughness.0..min_perceptual_roughness.1,
             max_perceptual_roughness: max_perceptual_roughness.0..max_perceptual_roughness.1,
@@ -48,6 +48,7 @@ impl PyScreenSpaceReflections {
             bisection_steps,
             use_secant,
         })
+        .into()
     }
 
     #[getter]

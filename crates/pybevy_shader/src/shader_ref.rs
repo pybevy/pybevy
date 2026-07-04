@@ -2,7 +2,7 @@ use bevy::{asset::AssetPath, shader::ShaderRef};
 use pybevy_core::PyHandle;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ShaderRef", frozen)]
+#[pyclass(name = "ShaderRef", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyShaderRef {
     Default(),

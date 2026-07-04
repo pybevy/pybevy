@@ -6,7 +6,7 @@ use pyo3::{
 
 use crate::{quat::PyQuat, vec3::PyVec3};
 
-#[pyclass(name = "Dir3", eq)]
+#[pyclass(name = "Dir3", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyDir3(pub(crate) Dir3);
 

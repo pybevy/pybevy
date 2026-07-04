@@ -10,7 +10,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(NoCpuCulling, unit, bridge)]
-#[pyclass(name = "NoCpuCulling", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NoCpuCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoCpuCulling;
 
@@ -37,8 +37,8 @@ impl TryFrom<&NoCpuCulling> for PyNoCpuCulling {
 #[pymethods]
 impl PyNoCpuCulling {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNoCpuCulling, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNoCpuCulling, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -47,7 +47,7 @@ impl PyNoCpuCulling {
 }
 
 #[pycomponent(NoFrustumCulling, unit, bridge)]
-#[pyclass(name = "NoFrustumCulling", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NoFrustumCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoFrustumCulling;
 
@@ -74,8 +74,8 @@ impl TryFrom<&NoFrustumCulling> for PyNoFrustumCulling {
 #[pymethods]
 impl PyNoFrustumCulling {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNoFrustumCulling, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNoFrustumCulling, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -84,7 +84,7 @@ impl PyNoFrustumCulling {
 }
 
 #[pycomponent(Camera2d, unit, bridge)]
-#[pyclass(name = "Camera2d", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "Camera2d", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCamera2d;
 
@@ -111,8 +111,8 @@ impl TryFrom<&Camera2d> for PyCamera2d {
 #[pymethods]
 impl PyCamera2d {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyCamera2d, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyCamera2d, PyComponent).into()
     }
 
     pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
@@ -125,7 +125,7 @@ impl PyCamera2d {
 }
 
 #[pycomponent(DepthPrepass, unit, bridge)]
-#[pyclass(name = "DepthPrepass", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "DepthPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDepthPrepass;
 
@@ -152,8 +152,8 @@ impl TryFrom<&DepthPrepass> for PyDepthPrepass {
 #[pymethods]
 impl PyDepthPrepass {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyDepthPrepass, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyDepthPrepass, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -162,7 +162,7 @@ impl PyDepthPrepass {
 }
 
 #[pycomponent(NormalPrepass, unit, bridge)]
-#[pyclass(name = "NormalPrepass", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "NormalPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNormalPrepass;
 
@@ -189,8 +189,8 @@ impl TryFrom<&NormalPrepass> for PyNormalPrepass {
 #[pymethods]
 impl PyNormalPrepass {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyNormalPrepass, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyNormalPrepass, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -199,7 +199,7 @@ impl PyNormalPrepass {
 }
 
 #[pycomponent(MotionVectorPrepass, unit, bridge)]
-#[pyclass(name = "MotionVectorPrepass", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "MotionVectorPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMotionVectorPrepass;
 
@@ -226,8 +226,8 @@ impl TryFrom<&MotionVectorPrepass> for PyMotionVectorPrepass {
 #[pymethods]
 impl PyMotionVectorPrepass {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyMotionVectorPrepass, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyMotionVectorPrepass, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {
@@ -236,7 +236,7 @@ impl PyMotionVectorPrepass {
 }
 
 #[pycomponent(DeferredPrepass, unit, bridge)]
-#[pyclass(name = "DeferredPrepass", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "DeferredPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDeferredPrepass;
 
@@ -263,8 +263,8 @@ impl TryFrom<&DeferredPrepass> for PyDeferredPrepass {
 #[pymethods]
 impl PyDeferredPrepass {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
-        (PyDeferredPrepass, PyComponent)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyDeferredPrepass, PyComponent).into()
     }
 
     pub fn __repr__(&self) -> &'static str {

@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 ///
 /// All asset types (Mesh, StandardMaterial, AudioSource, etc.) extend this class
 /// to provide a common interface and enable isinstance() checks.
-#[pyclass(name = "Asset", subclass)]
+#[pyclass(name = "Asset", subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAsset;
 

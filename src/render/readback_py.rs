@@ -13,8 +13,8 @@ pub struct PyImageCopyPlugin;
 #[pymethods]
 impl PyImageCopyPlugin {
     #[new]
-    pub fn new() -> (Self, PyPlugin) {
-        (PyImageCopyPlugin, PyPlugin)
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyImageCopyPlugin, PyPlugin).into()
     }
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {

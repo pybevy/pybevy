@@ -1,7 +1,7 @@
 use bevy::input::keyboard::KeyCode;
 use pyo3::prelude::*;
 
-#[pyclass(name = "KeyCode", eq, frozen)]
+#[pyclass(name = "KeyCode", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyKeyCode {
     F1,

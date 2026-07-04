@@ -12,13 +12,14 @@ pub struct PyVisibleMeshEntities {
 #[pymethods]
 impl PyVisibleMeshEntities {
     #[new]
-    pub fn new() -> (Self, PyComponent) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             PyVisibleMeshEntities {
                 storage: ComponentStorage::owned(VisibleMeshEntities::default()),
             },
             PyComponent,
         )
+            .into()
     }
     pub fn entities(&self) -> PyResult<Vec<PyEntity>> {
         Ok(self

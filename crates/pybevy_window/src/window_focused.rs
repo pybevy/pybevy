@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(WindowFocused)]
-#[pyclass(name = "WindowFocused", extends = PyMessage, eq)]
+#[pyclass(name = "WindowFocused", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowFocused {
     pub focused: bool,
@@ -23,8 +23,8 @@ impl From<&WindowFocused> for PyWindowFocused {
 #[pymethods]
 impl PyWindowFocused {
     #[new]
-    fn new(focused: bool, window: PyEntity) -> (Self, PyMessage) {
-        (PyWindowFocused { focused, window }, PyMessage)
+    fn new(focused: bool, window: PyEntity) -> PyClassInitializer<Self> {
+        (PyWindowFocused { focused, window }, PyMessage).into()
     }
 
     #[getter]

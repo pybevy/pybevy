@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[pyclass(name = "RadialGradientShape", eq)]
+#[pyclass(name = "RadialGradientShape", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyRadialGradientShape {
     pub(crate) inner: RadialGradientShape,

@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
 
-#[pyclass(name = "Affine3A")]
+#[pyclass(name = "Affine3A", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAffine3A {
     storage: ValueStorage<Affine3A>,

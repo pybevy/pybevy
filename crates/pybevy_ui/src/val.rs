@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::ui_rect::PyUiRect;
 
-#[pyclass(name = "Val")]
+#[pyclass(name = "Val", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyVal {
     pub(crate) inner: Val,

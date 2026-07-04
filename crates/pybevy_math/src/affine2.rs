@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3::PyMat3, vec2::PyVec2};
 
-#[pyclass(name = "Affine2")]
+#[pyclass(name = "Affine2", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAffine2 {
     storage: ValueStorage<Affine2>,
@@ -224,7 +224,7 @@ impl PyAffine2 {
     }
 }
 
-#[pyclass(name = "Mat2")]
+#[pyclass(name = "Mat2", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMat2 {
     storage: ValueStorage<Mat2>,

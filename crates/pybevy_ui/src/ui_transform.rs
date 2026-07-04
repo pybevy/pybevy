@@ -21,7 +21,7 @@ impl PyUiTransform {
         translation: Option<PyVal2>,
         scale: Option<PyVec2>,
         rotation: Option<PyRot2>,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         let mut transform = UiTransform::IDENTITY;
         if let Some(t) = translation {
             transform.translation = t.into();
@@ -32,7 +32,7 @@ impl PyUiTransform {
         if let Some(r) = rotation {
             transform.rotation = r.into();
         }
-        Self::from_owned(transform)
+        Self::from_owned(transform).into()
     }
 
     #[staticmethod]

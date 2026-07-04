@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use super::common::fmt_f32;
 
-#[pyclass(name = "LinearRgba", eq)]
+#[pyclass(name = "LinearRgba", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLinearRgba {
     storage: ValueStorage<LinearRgba>,

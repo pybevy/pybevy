@@ -41,7 +41,7 @@ impl PyWindow {
         mode: PyWindowMode,
         transparent: bool,
         window_level: PyWindowLevel,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let window = Window {
             title,
             resolution: resolution.try_into()?,
@@ -53,7 +53,7 @@ impl PyWindow {
             ..Default::default()
         };
 
-        Ok(Self::from_owned(window))
+        Ok(Self::from_owned(window).into())
     }
 
     #[getter]

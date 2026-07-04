@@ -9,7 +9,7 @@ use bevy::{
 use pybevy_core::{PyEntity, PyHandle};
 use pyo3::prelude::*;
 
-#[pyclass(name = "NormalizedRenderTarget", frozen, eq)]
+#[pyclass(from_py_object, name = "NormalizedRenderTarget", frozen, eq)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyNormalizedRenderTarget(pub(crate) NormalizedRenderTarget);
 

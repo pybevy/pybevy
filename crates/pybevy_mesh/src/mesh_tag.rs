@@ -13,8 +13,8 @@ pub struct PyMeshTag {
 impl PyMeshTag {
     #[new]
     #[pyo3(signature = (value = 0))]
-    pub fn new(value: u32) -> (Self, PyComponent) {
-        Self::from_owned(MeshTag(value))
+    pub fn new(value: u32) -> PyClassInitializer<Self> {
+        Self::from_owned(MeshTag(value)).into()
     }
 
     #[getter]

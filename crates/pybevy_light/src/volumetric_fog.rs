@@ -43,13 +43,14 @@ impl PyVolumetricFog {
         ambient_intensity: f32,
         step_count: u32,
         jitter: f32,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(VolumetricFog {
             ambient_color: ambient_color.into(),
             ambient_intensity,
             step_count,
             jitter,
         })
+        .into()
     }
 
     #[getter]

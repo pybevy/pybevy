@@ -6,7 +6,7 @@ use crate::{
     slice_scale_mode::{PySliceScaleMode, PySliceScaleModeInner},
 };
 
-#[pyclass(name = "TextureSlicer", frozen, eq)]
+#[pyclass(name = "TextureSlicer", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyTextureSlicer {
     border: PyBorderRect,

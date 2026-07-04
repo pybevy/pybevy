@@ -17,12 +17,13 @@ pub struct PyOutline {
 impl PyOutline {
     #[new]
     #[pyo3(signature = (width = PyVal::px(1.0), offset = PyVal::zero(), color = None))]
-    pub fn new(width: PyVal, offset: PyVal, color: Option<PyColor>) -> (Self, PyComponent) {
+    pub fn new(width: PyVal, offset: PyVal, color: Option<PyColor>) -> PyClassInitializer<Self> {
         Self::from_owned(Outline {
             width: width.into(),
             offset: offset.into(),
             color: color.map(|c| c.into()).unwrap_or(Color::WHITE),
         })
+        .into()
     }
 
     #[getter]

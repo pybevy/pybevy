@@ -36,12 +36,13 @@ impl PyAtmosphereEnvironmentMapLight {
         intensity: f32,
         affects_lightmapped_mesh_diffuse: bool,
         size: PyUVec2,
-    ) -> (Self, PyComponent) {
+    ) -> PyClassInitializer<Self> {
         Self::from_owned(AtmosphereEnvironmentMapLight {
             intensity,
             affects_lightmapped_mesh_diffuse,
             size: size.into(),
         })
+        .into()
     }
 
     #[getter]

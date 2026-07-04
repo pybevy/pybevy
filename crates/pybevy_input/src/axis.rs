@@ -20,13 +20,14 @@ impl PyAxis {
     const MAX: f32 = Axis::<GamepadAxis>::MAX;
 
     #[new]
-    pub fn new() -> (Self, PyResource) {
+    pub fn new() -> PyClassInitializer<Self> {
         (
             Self {
                 storage: ResourceStorage::owned(Axis::default()),
             },
             PyResource,
         )
+            .into()
     }
 
     pub fn get(&self, axis: PyGamepadAxis) -> PyResult<Option<f32>> {
