@@ -40,7 +40,8 @@ impl PyTorus {
                     major_radius: major,
                 }),
                 PyMeshable,
-            ).into();
+            )
+                .into();
         }
         (Self(Torus::new(inner_radius, outer_radius)), PyMeshable).into()
     }

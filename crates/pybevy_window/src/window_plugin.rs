@@ -30,7 +30,8 @@ impl PyWindowPlugin {
                 exit_condition,
             },
             PyPlugin,
-        ).into())
+        )
+            .into())
     }
 }
 

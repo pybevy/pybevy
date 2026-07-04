@@ -20,7 +20,8 @@ impl PyCubemapFrusta {
                 storage: ComponentStorage::owned(CubemapFrusta::default()),
             },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     pub fn frusta(&self, py: Python<'_>) -> PyResult<Vec<Py<PyFrustum>>> {

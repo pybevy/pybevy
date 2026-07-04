@@ -27,7 +27,8 @@ impl PyCuboid {
                     half_size: hs.into(),
                 }),
                 PyMeshable,
-            ).into();
+            )
+                .into();
         }
         (Self(Cuboid::new(x_length, y_length, z_length)), PyMeshable).into()
     }

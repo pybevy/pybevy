@@ -190,7 +190,8 @@ impl PyGamepadConnection {
                 product_id,
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

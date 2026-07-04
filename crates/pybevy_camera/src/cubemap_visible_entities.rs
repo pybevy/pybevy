@@ -20,7 +20,8 @@ impl PyCubemapVisibleEntities {
                 storage: ComponentStorage::owned(CubemapVisibleEntities::default()),
             },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     pub fn get(&self, py: Python<'_>, i: usize) -> PyResult<Py<PyVisibleMeshEntities>> {

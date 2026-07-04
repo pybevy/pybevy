@@ -48,7 +48,8 @@ impl PyGeneratedEnvironmentMapLight {
             intensity,
             rotation: rotation.into(),
             affects_lightmapped_mesh_diffuse,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

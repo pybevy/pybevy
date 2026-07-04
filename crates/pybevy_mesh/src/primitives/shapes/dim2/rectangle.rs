@@ -24,7 +24,8 @@ impl PyRectangle {
                     half_size: hs.into(),
                 }),
                 PyMeshable,
-            ).into();
+            )
+                .into();
         }
         (Self(Rectangle::new(width, height)), PyMeshable).into()
     }

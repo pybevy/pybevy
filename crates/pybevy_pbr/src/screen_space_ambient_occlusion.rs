@@ -26,7 +26,8 @@ impl PyScreenSpaceAmbientOcclusion {
         Self::from_owned(ScreenSpaceAmbientOcclusion {
             quality_level: quality_level.into(),
             constant_object_thickness,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

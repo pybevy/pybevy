@@ -174,7 +174,8 @@ impl PyLightProbe {
     pub fn new(falloff: PyVec3) -> PyClassInitializer<Self> {
         Self::from_owned(LightProbe {
             falloff: falloff.into(),
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

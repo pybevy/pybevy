@@ -18,7 +18,8 @@ impl PyDirectionalLightTexture {
         Ok(Self::from_owned(DirectionalLightTexture {
             image: handle.try_into()?,
             tiled,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]
@@ -57,7 +58,8 @@ impl PySpotLightTexture {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(SpotLightTexture {
             image: handle.try_into()?,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]
@@ -89,7 +91,8 @@ impl PyPointLightTexture {
         Ok(Self::from_owned(PointLightTexture {
             image: handle.try_into()?,
             cubemap_layout: cubemap_layout.into(),
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

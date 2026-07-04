@@ -18,7 +18,8 @@ impl PyPointLightShadowMap {
         (
             PyPointLightShadowMap::from(PointLightShadowMap { size }),
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]
@@ -52,7 +53,8 @@ impl PyDirectionalLightShadowMap {
         (
             PyDirectionalLightShadowMap::from(DirectionalLightShadowMap { size }),
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

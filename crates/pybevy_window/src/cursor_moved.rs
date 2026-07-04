@@ -35,7 +35,8 @@ impl PyCursorMoved {
                 window,
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

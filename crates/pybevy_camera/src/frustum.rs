@@ -29,7 +29,8 @@ impl PyFrustum {
                 storage: ComponentStorage::owned(frustum),
             },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

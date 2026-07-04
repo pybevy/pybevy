@@ -27,7 +27,8 @@ impl PyRenderPlugin {
                 synchronous_pipeline_compilation,
             },
             PyPlugin,
-        ).into()
+        )
+            .into()
     }
 
     pub fn __repr__(&self) -> String {

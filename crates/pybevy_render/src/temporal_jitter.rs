@@ -17,7 +17,8 @@ impl PyTemporalJitter {
     pub fn new(offset: PyVec2) -> PyClassInitializer<Self> {
         Self::from_owned(TemporalJitter {
             offset: offset.into(),
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

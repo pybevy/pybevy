@@ -19,7 +19,8 @@ impl PyTouches {
                 storage: ResourceStorage::owned(Touches::default()),
             },
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     pub fn any_just_pressed(&self) -> PyResult<bool> {

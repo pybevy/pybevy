@@ -74,7 +74,8 @@ impl PyTouchInput {
                 window,
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

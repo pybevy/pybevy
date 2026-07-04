@@ -33,7 +33,8 @@ impl PyVisibilityRange {
             start_margin: start,
             end_margin: end,
             use_aabb,
-        }).into())
+        })
+        .into())
     }
 
     #[staticmethod]

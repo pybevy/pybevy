@@ -20,7 +20,8 @@ impl PyUiScale {
                 storage: ResourceStorage::owned(UiScale(scale)),
             },
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

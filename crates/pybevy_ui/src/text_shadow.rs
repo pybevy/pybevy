@@ -24,7 +24,8 @@ impl PyTextShadow {
         Self::from_owned(TextShadow {
             offset: bevy_offset,
             color: bevy_color,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

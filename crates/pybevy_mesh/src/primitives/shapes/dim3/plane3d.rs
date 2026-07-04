@@ -19,7 +19,8 @@ impl PyPlane3d {
         (
             Self(Plane3d::new(normal.into(), half_size.into())),
             PyMeshable,
-        ).into()
+        )
+            .into()
     }
 
     #[staticmethod]

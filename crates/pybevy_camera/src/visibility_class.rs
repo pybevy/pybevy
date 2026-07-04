@@ -18,7 +18,8 @@ impl PyVisibilityClass {
                 storage: ComponentStorage::owned(VisibilityClass::default()),
             },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     pub fn __len__(&self) -> PyResult<usize> {

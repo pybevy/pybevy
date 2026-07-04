@@ -33,7 +33,8 @@ impl PyTextLayout {
         Self::from_owned(TextLayout {
             justify: justify.into(),
             linebreak: linebreak.into(),
-        }).into()
+        })
+        .into()
     }
 
     #[staticmethod]

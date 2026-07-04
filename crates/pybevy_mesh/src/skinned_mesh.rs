@@ -20,7 +20,8 @@ impl PySkinnedMesh {
         Ok(Self::from_owned(SkinnedMesh {
             inverse_bindposes: inverse_bindposes.try_into()?,
             joints: joints.into_iter().map(|e| e.0).collect(),
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

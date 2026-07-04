@@ -26,7 +26,8 @@ impl PyLightmap {
                 .map(Into::into)
                 .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0)),
             bicubic_sampling,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

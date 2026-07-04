@@ -40,7 +40,8 @@ impl PySegment2d {
                     vertices: [v[0].get(), v[1].get()],
                 }),
                 PyMeshable,
-            ).into();
+            )
+                .into();
         }
         (Self(Segment2d::new(point1.get(), point2.get())), PyMeshable).into()
     }

@@ -29,7 +29,8 @@ impl PyAabb {
                 }),
             },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     #[staticmethod]

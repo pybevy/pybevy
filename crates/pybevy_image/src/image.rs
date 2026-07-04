@@ -257,7 +257,8 @@ impl PyImage {
             data,
             format,
             asset_usage.map(Into::into).unwrap_or_default(),
-        )).into())
+        ))
+        .into())
     }
 
     #[staticmethod]

@@ -26,7 +26,8 @@ impl PyAxis {
                 storage: ResourceStorage::owned(Axis::default()),
             },
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     pub fn get(&self, axis: PyGamepadAxis) -> PyResult<Option<f32>> {

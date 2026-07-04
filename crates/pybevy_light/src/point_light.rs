@@ -96,7 +96,8 @@ impl PyPointLight {
             shadow_map_near_z,
             // `contact_shadows_enabled` is not exposed; it takes its default (off).
             ..Default::default()
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

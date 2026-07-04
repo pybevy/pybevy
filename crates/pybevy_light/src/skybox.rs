@@ -31,7 +31,8 @@ impl PySkybox {
             image,
             brightness,
             rotation: rotation.into(),
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

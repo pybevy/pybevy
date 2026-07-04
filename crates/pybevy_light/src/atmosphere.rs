@@ -26,7 +26,8 @@ impl PyAtmosphere {
             outer_radius,
             ground_albedo: ground_albedo.into(),
             medium: handle.try_into()?,
-        }).into())
+        })
+        .into())
     }
     #[staticmethod]
     #[pyo3(signature = (medium))]

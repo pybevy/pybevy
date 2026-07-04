@@ -47,7 +47,8 @@ impl PyScreenSpaceReflections {
             edge_fadeout: edge_fadeout.0..edge_fadeout.1,
             bisection_steps,
             use_secant,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

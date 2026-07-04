@@ -89,7 +89,8 @@ impl PyState {
                 state_type,
             },
             PyResource,
-        ).into())
+        )
+            .into())
     }
 
     /// Get the current state value

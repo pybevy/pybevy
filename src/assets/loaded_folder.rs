@@ -20,7 +20,8 @@ impl PyLoadedFolder {
                 }),
             },
             PyAsset,
-        ).into()
+        )
+            .into()
     }
 
     /// Get the list of asset handles in this folder.

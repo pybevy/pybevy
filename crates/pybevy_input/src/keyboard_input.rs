@@ -50,7 +50,8 @@ impl PyKeyboardInput {
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

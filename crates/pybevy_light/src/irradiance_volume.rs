@@ -26,7 +26,8 @@ impl PyIrradianceVolume {
             voxels: handle,
             intensity,
             affects_lightmapped_meshes,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

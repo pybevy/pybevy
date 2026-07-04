@@ -62,7 +62,8 @@ impl PyGlobalAmbientLight {
             }
             .into(),
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]
@@ -136,7 +137,8 @@ impl PyAmbientLight {
             color: color.into(),
             brightness,
             affects_lightmapped_meshes,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

@@ -58,7 +58,8 @@ impl PySprite {
             rect: rect_bevy,
             texture_atlas: texture_atlas_handle,
             image_mode: image_mode.into(),
-        }).into())
+        })
+        .into())
     }
 
     #[staticmethod]

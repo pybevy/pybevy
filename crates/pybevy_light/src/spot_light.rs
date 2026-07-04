@@ -112,7 +112,8 @@ impl PySpotLight {
             inner_angle,
             // `contact_shadows_enabled` is not exposed; it takes its default (off).
             ..Default::default()
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

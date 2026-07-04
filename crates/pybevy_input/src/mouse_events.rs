@@ -60,7 +60,8 @@ impl PyMouseButtonInput {
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]
@@ -169,7 +170,12 @@ impl From<&MouseWheel> for PyMouseWheel {
 impl PyMouseWheel {
     #[new]
     #[pyo3(signature = (x, y, unit = PyMouseScrollUnit::Line, window=None))]
-    fn new(x: f32, y: f32, unit: PyMouseScrollUnit, window: Option<PyEntity>) -> PyClassInitializer<Self> {
+    fn new(
+        x: f32,
+        y: f32,
+        unit: PyMouseScrollUnit,
+        window: Option<PyEntity>,
+    ) -> PyClassInitializer<Self> {
         (
             PyMouseWheel {
                 x,
@@ -178,7 +184,8 @@ impl PyMouseWheel {
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

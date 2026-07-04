@@ -41,7 +41,8 @@ impl PyCascadeShadowConfig {
             bounds,
             overlap_proportion,
             minimum_distance,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

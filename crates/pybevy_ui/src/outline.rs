@@ -22,7 +22,8 @@ impl PyOutline {
             width: width.into(),
             offset: offset.into(),
             color: color.map(|c| c.into()).unwrap_or(Color::WHITE),
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

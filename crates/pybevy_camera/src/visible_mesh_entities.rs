@@ -18,7 +18,8 @@ impl PyVisibleMeshEntities {
                 storage: ComponentStorage::owned(VisibleMeshEntities::default()),
             },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
     pub fn entities(&self) -> PyResult<Vec<PyEntity>> {
         Ok(self

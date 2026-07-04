@@ -33,7 +33,8 @@ impl PyWireframeConfig {
             default_color: default_color.0,
             default_line_width,
             default_topology: default_topology.into(),
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

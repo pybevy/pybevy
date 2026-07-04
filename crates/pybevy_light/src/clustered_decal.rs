@@ -41,7 +41,8 @@ impl PyClusteredDecal {
             metallic_roughness_texture: convert_optional_handle(metallic_roughness_texture)?,
             emissive_texture: convert_optional_handle(emissive_texture)?,
             tag,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

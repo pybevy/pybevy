@@ -91,7 +91,8 @@ impl PyFogVolume {
             scattering_asymmetry,
             light_tint: light_tint.into(),
             light_intensity,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

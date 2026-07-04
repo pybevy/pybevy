@@ -84,7 +84,8 @@ impl PyTextFont {
             style: style.into(),
             font_features: font_features.into(),
             ..Default::default()
-        }).into())
+        })
+        .into())
     }
 
     #[staticmethod]

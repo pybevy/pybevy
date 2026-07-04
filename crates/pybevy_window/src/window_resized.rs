@@ -33,7 +33,8 @@ impl PyWindowResized {
                 window,
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

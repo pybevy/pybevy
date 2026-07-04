@@ -49,7 +49,8 @@ impl PyVolumetricFog {
             ambient_intensity,
             step_count,
             jitter,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

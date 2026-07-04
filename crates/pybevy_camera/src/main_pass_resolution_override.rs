@@ -31,7 +31,8 @@ impl PyMainPassResolutionOverride {
         (
             PyMainPassResolutionOverride { resolution: res },
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

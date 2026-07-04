@@ -20,7 +20,8 @@ impl PyButtonInput {
                 storage: ResourceStorage::owned(ButtonInput::default()),
             },
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     pub fn just_pressed(&self, input: PyKeyCode) -> PyResult<bool> {

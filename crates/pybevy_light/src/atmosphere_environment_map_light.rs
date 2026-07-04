@@ -41,7 +41,8 @@ impl PyAtmosphereEnvironmentMapLight {
             intensity,
             affects_lightmapped_mesh_diffuse,
             size: size.into(),
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

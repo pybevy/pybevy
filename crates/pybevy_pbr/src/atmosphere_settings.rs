@@ -65,7 +65,8 @@ impl PyAtmosphereSettings {
             aerial_view_lut_max_distance,
             sky_max_samples,
             rendering_method: rendering_method.into(),
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

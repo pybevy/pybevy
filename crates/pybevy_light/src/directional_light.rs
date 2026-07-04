@@ -71,7 +71,8 @@ impl PyDirectionalLight {
             shadow_normal_bias,
             // `contact_shadows_enabled` is not exposed; it takes its default (off).
             ..Default::default()
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

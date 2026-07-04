@@ -21,7 +21,11 @@ impl PyWireframeMaterial {
         line_width = 1.0,
         topology = PyWireframeTopology::Triangles
     ))]
-    pub fn new(color: PyColor, line_width: f32, topology: PyWireframeTopology) -> PyClassInitializer<Self> {
+    pub fn new(
+        color: PyColor,
+        line_width: f32,
+        topology: PyWireframeTopology,
+    ) -> PyClassInitializer<Self> {
         let material = WireframeMaterial {
             color: color.into(),
             line_width,

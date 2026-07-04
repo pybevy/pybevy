@@ -64,7 +64,8 @@ impl PyTetrahedron {
         (
             Self(Tetrahedron::new(a_vec, b_vec, c_vec, d_vec)),
             PyMeshable,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

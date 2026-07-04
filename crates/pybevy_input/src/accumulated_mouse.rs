@@ -24,7 +24,8 @@ impl PyAccumulatedMouseMotion {
                 storage: ResourceStorage::owned(AccumulatedMouseMotion { delta: Vec2::ZERO }),
             },
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]
@@ -73,7 +74,8 @@ impl PyAccumulatedMouseScroll {
                 unit,
             },
             PyResource,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

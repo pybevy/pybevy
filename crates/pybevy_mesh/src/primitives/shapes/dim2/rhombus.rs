@@ -38,12 +38,14 @@ impl PyRhombus {
                     half_diagonals: hd.into(),
                 }),
                 PyMeshable,
-            ).into();
+            )
+                .into();
         }
         (
             Self(Rhombus::new(horizontal_diagonal, vertical_diagonal)),
             PyMeshable,
-        ).into()
+        )
+            .into()
     }
 
     #[staticmethod]

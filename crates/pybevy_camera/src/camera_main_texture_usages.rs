@@ -21,7 +21,8 @@ impl PyCameraMainTextureUsages {
         (
             PyCameraMainTextureUsages(CameraMainTextureUsages(usages)),
             PyComponent,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

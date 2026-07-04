@@ -29,7 +29,8 @@ impl PyGamepadRumbleRequest {
                 gamepad_entity: gamepad,
             },
             PyMessage,
-        ).into()
+        )
+            .into()
     }
 
     #[getter]

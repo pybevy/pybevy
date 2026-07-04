@@ -33,7 +33,8 @@ impl PyDistanceFog {
             falloff: falloff.into(),
             directional_light_color: directional_light_color.0,
             directional_light_exponent,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

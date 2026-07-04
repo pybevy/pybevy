@@ -112,7 +112,8 @@ impl PyMesh {
         Self::from_owned(Mesh::new(
             primitive_topology.into(),
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        )).into()
+        ))
+        .into()
     }
 
     pub fn primitive_topology(&self) -> PyResult<PyPrimitiveTopology> {

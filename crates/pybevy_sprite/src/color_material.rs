@@ -39,7 +39,8 @@ impl PyColorMaterial {
             texture: texture_handle,
             alpha_mode: alpha_mode.into(),
             uv_transform: Affine2::IDENTITY,
-        }).into())
+        })
+        .into())
     }
 
     #[getter]

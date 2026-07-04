@@ -57,7 +57,8 @@ impl PyControlPlugin {
                 api_discovery,
             },
             PyPlugin,
-        ).into()
+        )
+            .into()
     }
 
     pub fn __repr__(&self) -> String {

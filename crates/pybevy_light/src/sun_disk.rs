@@ -29,7 +29,8 @@ impl PySunDisk {
         Self::from_owned(SunDisk {
             angular_size,
             intensity,
-        }).into()
+        })
+        .into()
     }
 
     #[getter]

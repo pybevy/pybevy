@@ -19,7 +19,8 @@ impl PyBorderGradient {
     pub fn new(gradients: Vec<PyGradient>) -> PyClassInitializer<Self> {
         Self::from_owned(BorderGradient(
             gradients.into_iter().map(|g| g.inner).collect(),
-        )).into()
+        ))
+        .into()
     }
 
     pub fn add_gradient(&mut self, gradient: PyGradient) -> PyResult<()> {

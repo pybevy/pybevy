@@ -44,7 +44,8 @@ impl PyAnnulus {
                     outer_circle: Circle::new(outer.radius()),
                 }),
                 PyMeshable,
-            ).into();
+            )
+                .into();
         }
         (Self(Annulus::new(inner_radius, outer_radius)), PyMeshable).into()
     }
