@@ -25,6 +25,7 @@ bevy = { workspace = true, default-features = false, features = [
     "bevy_log",
     "bevy_state",
     "bevy_ui",
+    "debug",
     "png",
 ] }
 pybevy_core = { workspace = true }

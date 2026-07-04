@@ -52,18 +52,6 @@ impl PyVisibility {
         (Visibility::Inherited.into(), PyComponent)
     }
 
-    pub fn is_visible(&self) -> PyResult<bool> {
-        Ok(*self.as_ref()? == Visibility::Visible)
-    }
-
-    pub fn is_hidden(&self) -> PyResult<bool> {
-        Ok(*self.as_ref()? == Visibility::Hidden)
-    }
-
-    pub fn is_inherited(&self) -> PyResult<bool> {
-        Ok(*self.as_ref()? == Visibility::Inherited)
-    }
-
     pub fn toggle_inherited_visible(&mut self) -> PyResult<()> {
         self.as_mut()?.toggle_inherited_visible();
         Ok(())

@@ -754,6 +754,23 @@ pub fn insert_resource(
     resource_type: String,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, ControlError> {
+    // Reject scalar/array values up front; field application requires a JSON object.
+    match &value {
+        serde_json::Value::Object(_) | serde_json::Value::Null => {}
+        other => {
+            let kind = match other {
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Array(_) => "array",
+                _ => "non-object",
+            };
+            return Err(ControlError::invalid_params(format!(
+                "set_resource value for '{resource_type}' must be a JSON object (got {kind})"
+            )));
+        }
+    }
+
     // Try bridge registry first
     let bridge_result = Python::attach(|py| {
         for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
@@ -2384,5 +2401,91 @@ holder = Holder()
             "Should not report 'not found on entity' — should attempt creation. Got: {}",
             err.message
         );
+    }
+
+    #[test]
+    fn insert_resource_rejects_string_value() {
+        let mut world = World::new();
+        let result = insert_resource(
+            &mut world,
+            "DirectionalLightShadowMap".to_string(),
+            serde_json::json!("not-an-object"),
+        );
+        let err = result.expect_err("string value must be rejected");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(
+            err.message.contains("must be a JSON object"),
+            "expected guidance message, got: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("string"),
+            "expected message to name the type 'string', got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn insert_resource_rejects_number_value() {
+        let mut world = World::new();
+        let result = insert_resource(
+            &mut world,
+            "DirectionalLightShadowMap".to_string(),
+            serde_json::json!(42),
+        );
+        let err = result.expect_err("number value must be rejected");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(err.message.contains("must be a JSON object"));
+        assert!(err.message.contains("number"));
+    }
+
+    #[test]
+    fn insert_resource_rejects_bool_value() {
+        let mut world = World::new();
+        let result = insert_resource(
+            &mut world,
+            "DirectionalLightShadowMap".to_string(),
+            serde_json::json!(true),
+        );
+        let err = result.expect_err("bool value must be rejected");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(err.message.contains("must be a JSON object"));
+        assert!(err.message.contains("bool"));
+    }
+
+    #[test]
+    fn insert_resource_rejects_array_value() {
+        let mut world = World::new();
+        let result = insert_resource(
+            &mut world,
+            "DirectionalLightShadowMap".to_string(),
+            serde_json::json!([1, 2, 3]),
+        );
+        let err = result.expect_err("array value must be rejected");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert!(err.message.contains("must be a JSON object"));
+        assert!(err.message.contains("array"));
+    }
+
+    #[test]
+    fn insert_resource_accepts_null_value() {
+        // Null is treated as a no-op patch; the not-found path returns an error,
+        // but the validation itself must not reject Null.
+        let mut world = World::new();
+        let result = insert_resource(
+            &mut world,
+            "NoSuchResource".to_string(),
+            serde_json::Value::Null,
+        );
+        // Either ok or some non-validation error is acceptable; what matters is that
+        // we did not get the InvalidParams "must be a JSON object" rejection.
+        if let Err(err) = result {
+            assert_ne!(
+                err.code,
+                ErrorCode::InvalidParams,
+                "Null must not be rejected by the value-shape validation, got: {}",
+                err.message
+            );
+        }
     }
 }

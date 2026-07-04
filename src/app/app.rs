@@ -48,8 +48,7 @@ use crate::{
         plugins::{PyDefaultPlugins, PyPluginGroupBuilder},
     },
     ecs::{
-        conditional_system::PyConditionalSystem,
-        dynamic_condition::DynamicCondition,
+        conditional_system::{PyConditionalSystem, build_conditional_system_config},
         dynamic_system::{DynamicSystem, clear_system_param_cache},
         messages::MessageRegistry,
         observer_registry::ObserverRegistry,
@@ -682,176 +681,122 @@ impl PyApp {
 
                 // Add systems directly to the app with generation-based run conditions
                 BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
+                    let mut apps = apps_cell.borrow_mut();
+                    let app = pyself.get_app_mut(&mut apps)?;
 
-            for system in systems {
-                // Check if this is a ChainedSystems object
-                if let Ok(chained) = system.extract::<PyChainedSystems>() {
-                    // Handle chained systems
-                    let system_stage = Self::get_system_stage(stage);
+                    for system in systems {
+                        // Check if this is a ChainedSystems object
+                        if let Ok(chained) = system.extract::<PyChainedSystems>() {
+                            // Handle chained systems
+                            let system_stage = Self::get_system_stage(stage);
 
-                    // Create DynamicSystem for each system in the chain
-                    let py = system.py();
-                    let systems_tuple = chained.systems.bind(py);
-                    let mut dynamic_systems = Vec::new();
+                            // Create DynamicSystem for each system in the chain
+                            let py = system.py();
+                            let systems_tuple = chained.systems.bind(py);
+                            let mut dynamic_systems = Vec::new();
 
-                    for sys in systems_tuple.iter() {
-                        let dynamic_system = DynamicSystem::new(
-                            sys.unbind(),
-                            current_generation,
-                            error_state.clone(),
-                            system_stage,
-                        )?;
-                        dynamic_systems.push(dynamic_system);
-                    }
-
-                    // Add run conditions and chain the systems
-
-                    if dynamic_systems.is_empty() {
-                        return Err(PyRuntimeError::new_err("Empty chained systems"));
-                    }
-
-                    let is_startup = matches!(
-                        stage,
-                        PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup
-                    );
-
-                    // Build chained SystemConfigs directly — supports any number of systems
-                    let configs: Vec<ScheduleConfigs<_>> = dynamic_systems
-                        .into_iter()
-                        .map(|sys| {
-                            if is_startup {
-                                sys.run_if(startup_or_reload(current_generation))
-                            } else {
-                                sys.run_if(generation_matches(current_generation))
+                            for sys in systems_tuple.iter() {
+                                let dynamic_system = DynamicSystem::new(
+                                    sys.unbind(),
+                                    current_generation,
+                                    error_state.clone(),
+                                    system_stage,
+                                )?;
+                                dynamic_systems.push(dynamic_system);
                             }
-                        })
-                        .collect();
 
-                    let chained = ScheduleConfigs::Configs {
-                        configs,
-                        collective_conditions: Vec::new(),
-                        metadata: Chain::Chained(Default::default()),
-                    };
+                            // Add run conditions and chain the systems
 
-                    add_to_schedule!(app, stage, chained);
-                } else {
-                    // Handle regular systems (not chained)
-                    let system_list: Vec<Bound<PyAny>> = match system.try_iter() {
-                        Ok(iter) => iter.collect::<Result<Vec<_>, _>>()?,
-                        Err(_) => vec![system],
-                    };
+                            if dynamic_systems.is_empty() {
+                                return Err(PyRuntimeError::new_err("Empty chained systems"));
+                            }
 
-                    for sys in system_list {
-                        // Check if this is a conditional system (run_if)
-                        let (system_func, condition_func) = if let Ok(conditional) = sys.extract::<PyConditionalSystem>() {
-                            // Extract system and condition from PyConditionalSystem
-                            let py = sys.py();
-                            (conditional.system.bind(py).clone(), Some(conditional.condition))
+                            let is_startup = matches!(
+                                stage,
+                                PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup
+                            );
+
+                            // Build chained SystemConfigs directly — supports any number of systems
+                            let configs: Vec<ScheduleConfigs<_>> = dynamic_systems
+                                .into_iter()
+                                .map(|sys| {
+                                    if is_startup {
+                                        sys.run_if(startup_or_reload(current_generation))
+                                    } else {
+                                        sys.run_if(generation_matches(current_generation))
+                                    }
+                                })
+                                .collect();
+
+                            let chained = ScheduleConfigs::Configs {
+                                configs,
+                                collective_conditions: Vec::new(),
+                                metadata: Chain::Chained(Default::default()),
+                            };
+
+                            add_to_schedule!(app, stage, chained);
                         } else {
-                            // Regular system without condition
-                            (sys.clone(), None)
-                        };
+                            // Handle regular systems (not chained)
+                            let system_list: Vec<Bound<PyAny>> = match system.try_iter() {
+                                Ok(iter) => iter.collect::<Result<Vec<_>, _>>()?,
+                                Err(_) => vec![system],
+                            };
 
-                        // Convert PyStage to SystemStage for profiler
-                        let system_stage = Self::get_system_stage(stage);
+                            for sys in system_list {
+                                // Check if this is a conditional system (run_if)
+                                let (system_func, condition_func) =
+                                    if let Ok(conditional) = sys.extract::<PyConditionalSystem>() {
+                                        let py = sys.py();
+                                        (
+                                            conditional.system.bind(py).clone(),
+                                            Some(conditional.condition),
+                                        )
+                                    } else {
+                                        (sys.clone(), None)
+                                    };
 
-                        let dynamic_system = DynamicSystem::new(
-                            system_func.unbind(),
-                            current_generation,
-                            error_state.clone(),
-                            system_stage,
-                        )?;
+                                let system_stage = Self::get_system_stage(stage);
 
-                        // Always add generation-based run conditions for hot reload support
-
-                        // Add user condition if present
-                        if let Some(cond) = condition_func {
-                            // Check if the condition has parameters by inspecting it
-                            let has_params = Python::attach(|py| -> bool {
-                                let inspect = py.import("inspect").ok();
-                                if let Some(inspect_mod) = inspect
-                                    && let Ok(sig) = inspect_mod.call_method1("signature", (cond.bind(py),))
-                                        && let Ok(params) = sig.getattr("parameters")
-                                            && let Ok(values) = params.getattr("values")
-                                                && let Ok(params_list) = values.call0() {
-                                                    return params_list.len().unwrap_or(0) > 0;
-                                                }
-                                false
-                            });
-
-                            if has_params {
-                                // Condition has system parameters - use DynamicCondition
-                                // (it includes generation checking internally)
-                                let dynamic_condition = DynamicCondition::new(
-                                    cond,
+                                let dynamic_system = DynamicSystem::new(
+                                    system_func.unbind(),
                                     current_generation,
                                     error_state.clone(),
                                     system_stage,
                                 )?;
 
-                                add_to_schedule!(app, stage, dynamic_system.run_if(dynamic_condition));
-                            } else {
-                                // Simple parameterless condition - use closure (current approach)
-                                // Create combined closure that includes both generation check and user condition
-                                let is_startup_schedule = matches!(stage, PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup);
-                                let expected_gen = current_generation;
-
-                                let combined_condition = move |generation_res: Option<Res<HotReloadGeneration>>| -> bool {
-                                    // First check generation
-                                    let gen_check = if is_startup_schedule {
-                                        // Startup schedules use startup_or_reload logic
-                                        match generation_res {
-                                            Some(ref res) => {
-                                                res.current == expected_gen || res.current == expected_gen + 1
-                                            }
-                                            None => true,
-                                        }
-                                    } else {
-                                        // Other schedules use generation_matches logic
-                                        match generation_res {
-                                            Some(ref res) => res.current == expected_gen,
-                                            None => true,
-                                        }
+                                if let Some(cond) = condition_func {
+                                    let is_startup = matches!(
+                                        stage,
+                                        PyStage::Startup
+                                            | PyStage::PreStartup
+                                            | PyStage::PostStartup
+                                    );
+                                    let config = build_conditional_system_config(
+                                        dynamic_system,
+                                        cond,
+                                        current_generation,
+                                        error_state.clone(),
+                                        system_stage,
+                                        is_startup,
+                                    )?;
+                                    add_to_schedule!(app, stage, config);
+                                } else {
+                                    // No user condition - just use generation condition
+                                    let run_condition = match stage {
+                                        PyStage::Startup
+                                        | PyStage::PreStartup
+                                        | PyStage::PostStartup => dynamic_system
+                                            .run_if(startup_or_reload(current_generation)),
+                                        _ => dynamic_system
+                                            .run_if(generation_matches(current_generation)),
                                     };
-
-                                    if !gen_check {
-                                        return false;
-                                    }
-
-                                    // Then check user condition
-                                    Python::attach(|py| {
-                                        let result = cond.bind(py).call0();
-                                        match result {
-                                            Ok(obj) => obj.extract::<bool>().unwrap_or_else(|e| {
-                                                eprintln!("run_if condition must return bool: {}", e);
-                                                false
-                                            }),
-                                            Err(e) => {
-                                                eprintln!("Error calling run_if condition: {}", e);
-                                                false
-                                            }
-                                        }
-                                    })
-                                };
-
-                                add_to_schedule!(app, stage, dynamic_system.run_if(combined_condition));
+                                    add_to_schedule!(app, stage, run_condition);
+                                }
                             }
-                        } else {
-                            // No user condition - just use generation condition
-                            let run_condition = match stage {
-                                PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup =>
-                                    dynamic_system.run_if(startup_or_reload(current_generation)),
-                                _ => dynamic_system.run_if(generation_matches(current_generation)),
-                            };
-                            add_to_schedule!(app, stage, run_condition);
                         }
                     }
-                }
-            }
-            Ok(pyself.into())
-        })
+                    Ok(pyself.into())
+                })
             }
         }
     }

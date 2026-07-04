@@ -326,13 +326,21 @@ fn composite_turnaround(
 ) -> Result<serde_json::Value, ControlError> {
     turnaround.captures.sort_by_key(|(idx, _)| *idx);
 
-    let cols = turnaround.columns.max(1) as usize;
     let count = turnaround.captures.len();
-    let rows = count.div_ceil(cols);
-
     if count == 0 {
         return Err(ControlError::internal("No turnaround captures collected"));
     }
+
+    // Treat user-supplied columns as a max; shrink to a divisor of count when possible
+    // to avoid trailing empty cells. Floor at ceil(preferred/2) so prime counts don't
+    // collapse to a single column.
+    let preferred = (turnaround.columns.max(1) as usize).min(count);
+    let min_cols = preferred.div_ceil(2);
+    let cols = (min_cols..=preferred)
+        .rev()
+        .find(|&c| count % c == 0)
+        .unwrap_or(preferred);
+    let rows = count.div_ceil(cols);
 
     let cell_w = turnaround.captures[0].1.width();
     let cell_h = turnaround.captures[0].1.height();
@@ -749,5 +757,70 @@ mod tests {
         let val = result.unwrap();
         // 2 columns * 10px = 20px width
         assert_eq!(val["width"], 20);
+    }
+
+    fn make_captures(n: usize, w: u32, h: u32) -> Vec<(usize, RgbImage)> {
+        (0..n)
+            .map(|i| (i, RgbImage::from_pixel(w, h, Rgb([80, 80, 80]))))
+            .collect()
+    }
+
+    fn make_viewpoints(n: usize) -> Vec<TurnaroundView> {
+        (0..n)
+            .map(|i| TurnaroundView {
+                position: [0.0, 0.0, 10.0],
+                label: format!("{i}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn composite_turnaround_count_le_columns_clamps_to_count() {
+        // count=2, columns=4: cols clamps to 2, single row, no empty cells.
+        let mut t = make_turnaround(make_viewpoints(2), make_captures(2, 10, 10), 4, None);
+        let val = composite_turnaround(&mut t).unwrap();
+        // 2 cols * 10 = 20 wide; 1 row * (10 + 20 label) = 30 tall.
+        assert_eq!(val["width"], 20);
+        assert_eq!(val["height"], 30);
+    }
+
+    #[test]
+    fn composite_turnaround_count_4_columns_3_picks_2x2() {
+        // The original bug repro: count=4, columns=3 left two grey cells.
+        // Fix shrinks cols to 2 (largest divisor of 4 in [2,3]), giving a clean 2x2.
+        let mut t = make_turnaround(make_viewpoints(4), make_captures(4, 10, 10), 3, None);
+        let val = composite_turnaround(&mut t).unwrap();
+        // 2 cols * 10 = 20 wide; 2 rows * (10 + 20) = 60 tall.
+        assert_eq!(val["width"], 20);
+        assert_eq!(val["height"], 60);
+    }
+
+    #[test]
+    fn composite_turnaround_prime_count_keeps_user_columns() {
+        // count=7, columns=3: only divisor in [2,3] is none, so keep cols=3 with 2 trailing empties.
+        let mut t = make_turnaround(make_viewpoints(7), make_captures(7, 10, 10), 3, None);
+        let val = composite_turnaround(&mut t).unwrap();
+        // 3 cols * 10 = 30 wide; rows = ceil(7/3) = 3, so 3 * (10 + 20) = 90 tall.
+        assert_eq!(val["width"], 30);
+        assert_eq!(val["height"], 90);
+    }
+
+    #[test]
+    fn composite_turnaround_count_one_clamps_to_one() {
+        let mut t = make_turnaround(make_viewpoints(1), make_captures(1, 10, 10), 5, None);
+        let val = composite_turnaround(&mut t).unwrap();
+        // 1 col * 10 = 10 wide; 1 row * (10 + 20) = 30 tall.
+        assert_eq!(val["width"], 10);
+        assert_eq!(val["height"], 30);
+    }
+
+    #[test]
+    fn composite_turnaround_count_6_columns_3_keeps_3() {
+        // count=6, columns=3: 6 % 3 == 0 so cols stays 3.
+        let mut t = make_turnaround(make_viewpoints(6), make_captures(6, 10, 10), 3, None);
+        let val = composite_turnaround(&mut t).unwrap();
+        assert_eq!(val["width"], 30);
+        // rows = 2, height = 2 * 30 = 60.
+        assert_eq!(val["height"], 60);
     }
 }

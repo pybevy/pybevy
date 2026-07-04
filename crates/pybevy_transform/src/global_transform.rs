@@ -37,14 +37,17 @@ impl PyGlobalTransform {
         Py::new(py, (GlobalTransform::IDENTITY.into(), PyComponent))
     }
 
+    #[getter]
     pub fn translation(&self) -> PyResult<PyVec3> {
         Ok(self.as_ref()?.translation().into())
     }
 
+    #[getter]
     pub fn rotation(&self) -> PyResult<PyQuat> {
         Ok(self.as_ref()?.rotation().into())
     }
 
+    #[getter]
     pub fn scale(&self) -> PyResult<PyVec3> {
         Ok(self.as_ref()?.scale().into())
     }

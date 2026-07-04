@@ -34,9 +34,11 @@ class GlobalTransform(Component):
     IDENTITY: ClassVar[GlobalTransform]
     """Returns an identity GlobalTransform (no translation, identity rotation, unit scale)."""
 
+    @property
     def translation(self) -> Vec3:
         """Get the world-space translation as a Vec3."""
 
+    @property
     def rotation(self) -> Quat:
         """Get the world-space rotation as a Quat.
 
@@ -44,6 +46,7 @@ class GlobalTransform(Component):
         If you also need translation or scale, use to_scale_rotation_translation() instead.
         """
 
+    @property
     def scale(self) -> Vec3:
         """Get the world-space scale as a Vec3.
 

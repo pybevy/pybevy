@@ -44,8 +44,20 @@ fn get_custom_component_names(world: &World, entity: Entity) -> Vec<String> {
     names
 }
 
+/// Compute archetype/Bevy-internal component counts for an entity.
+/// Returns (archetype_slot_count, bevy_internal_component_count).
+fn entity_component_breakdown(
+    entity_ref: &BevyEntityRef,
+    bridge_count: usize,
+    custom_count: usize,
+) -> (usize, usize) {
+    let archetype = entity_ref.archetype().components().len();
+    let bevy_internal = archetype.saturating_sub(bridge_count + custom_count);
+    (archetype, bevy_internal)
+}
+
 /// Extract field values from a custom component stored as PyObject.
-/// Returns a JSON map of field_name → field_repr.
+/// Returns a JSON map of field_name → JSON-converted value.
 fn extract_custom_component_fields(
     py: Python<'_>,
     entity_ref: &BevyEntityRef,
@@ -88,11 +100,7 @@ fn extract_custom_component_fields(
                 .ok()
                 .and_then(|name| bound.getattr(name.as_str()).ok().map(|value| (name, value)));
             if let Some((name, value)) = name_value {
-                let repr = value
-                    .repr()
-                    .map(|r| r.to_string())
-                    .unwrap_or_else(|_| "<opaque>".to_string());
-                map.insert(name, serde_json::Value::String(repr));
+                map.insert(name, py_value_to_json(&value));
             }
         }
         if !map.is_empty() {
@@ -107,11 +115,7 @@ fn extract_custom_component_fields(
             for (key, value) in py_dict.iter() {
                 if let Ok(k) = key.extract::<String>() {
                     if !k.starts_with('_') {
-                        let repr = value
-                            .repr()
-                            .map(|r| r.to_string())
-                            .unwrap_or_else(|_| "<opaque>".to_string());
-                        map.insert(k, serde_json::Value::String(repr));
+                        map.insert(k, py_value_to_json(&value));
                     }
                 }
             }
@@ -203,7 +207,87 @@ fn extract_bridge_fields_inner(
         }
     }
 
+    // Fallback for tuple-struct enum wrappers with no exposed properties.
+    if map.is_empty()
+        && let Ok(repr) = bound.call_method0("__repr__")
+        && let Ok(repr_str) = repr.extract::<String>()
+    {
+        if let Some(variant) = parse_variant_from_repr(&repr_str) {
+            map.insert("variant".to_string(), serde_json::Value::String(variant));
+        } else {
+            map.insert("repr".to_string(), serde_json::Value::String(repr_str));
+        }
+    }
+
     map
+}
+
+/// Parse the variant name from a Python __repr__ for enum-shaped wrappers.
+/// Handles "Class.VARIANT" (uppercase) and "Class(Variant)" (PascalCase) forms.
+fn parse_variant_from_repr(repr: &str) -> Option<String> {
+    fn is_ident_start(c: char) -> bool {
+        c.is_ascii_alphabetic() || c == '_'
+    }
+    fn is_ident_cont(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_'
+    }
+
+    let bytes = repr.as_bytes();
+    if bytes.is_empty() || !is_ident_start(bytes[0] as char) {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() && is_ident_cont(bytes[i] as char) {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+
+    let sep = bytes[i] as char;
+    let rest = &repr[i + 1..];
+
+    match sep {
+        '.' => {
+            // Variant must be a Python identifier ending the string.
+            // Accepts SCREAMING_SNAKE (Tonemapping.NONE) and mixed case
+            // with digits (Msaa.Sample4, Foo.bar_baz).
+            if rest.is_empty() {
+                return None;
+            }
+            let rb = rest.as_bytes();
+            if !is_ident_start(rb[0] as char) {
+                return None;
+            }
+            for &b in &rb[1..] {
+                if !is_ident_cont(b as char) {
+                    return None;
+                }
+            }
+            Some(rest.to_string())
+        }
+        '(' => {
+            // Variant must be PascalCase identifier followed by ')'.
+            if !rest.ends_with(')') {
+                return None;
+            }
+            let inner = &rest[..rest.len() - 1];
+            if inner.is_empty() {
+                return None;
+            }
+            let ib = inner.as_bytes();
+            if !is_ident_start(ib[0] as char) {
+                return None;
+            }
+            for &b in &ib[1..] {
+                if !is_ident_cont(b as char) {
+                    return None;
+                }
+            }
+            Some(inner.to_string())
+        }
+        _ => None,
+    }
 }
 
 /// Check if a Python type has any writable getset_descriptor properties (non-underscore).
@@ -308,14 +392,16 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
             entry["source_location"] = loc;
         }
 
-        // Report any remaining unknown components
+        // Component breakdown: bridges + custom + Bevy-internal = archetype slots
+        let bridge_count = component_names.len().saturating_sub(custom_names.len());
+        let custom_count = custom_names.len();
         if let Ok(entity_ref) = world.get_entity(*entity) {
-            let archetype_count = entity_ref.archetype().components().len();
-            let known_count = component_names.len();
-            let unknown_count = archetype_count.saturating_sub(known_count);
-            if unknown_count > 0 {
-                entry["unknown_component_count"] = serde_json::json!(unknown_count);
-            }
+            let (archetype_slot_count, bevy_internal) =
+                entity_component_breakdown(&entity_ref, bridge_count, custom_count);
+            entry["archetype_slot_count"] = serde_json::json!(archetype_slot_count);
+            entry["bridge_component_count"] = serde_json::json!(bridge_count);
+            entry["custom_component_count"] = serde_json::json!(custom_count);
+            entry["bevy_internal_component_count"] = serde_json::json!(bevy_internal);
         }
         if !custom_names.is_empty() {
             entry["custom_components"] = serde_json::json!(custom_names);
@@ -337,6 +423,12 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
 
     let bridge_names: Vec<String> = bridges.iter().map(|b| b.name().to_string()).collect();
 
+    // Custom @component types registered via CustomComponentInfo. Duplicates preserved.
+    let custom_names: Vec<String> = world
+        .get_resource::<pybevy_core::CustomComponentInfo>()
+        .map(|info| info.iter().map(|(_, entry)| entry.name.clone()).collect())
+        .unwrap_or_default();
+
     let mut query_state = world.query::<Entity>();
     let entity_count = query_state.iter(world).count();
 
@@ -357,12 +449,14 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
                 .collect();
             let archetype_components = entity_ref.archetype().components().len();
 
+            let detected_custom = get_custom_component_names(world, *entity);
             let label = crate::handlers::spatial::entity_label(world, *entity);
             samples.push(serde_json::json!({
                 "id": entity.to_bits(),
                 "name": name,
                 "label": label,
                 "detected_bridge_components": detected,
+                "detected_custom_components": detected_custom,
                 "archetype_component_count": archetype_components,
             }));
         }
@@ -371,6 +465,8 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
     Ok(serde_json::json!({
         "component_bridge_count": bridges.len(),
         "component_bridge_names": bridge_names,
+        "custom_component_count": custom_names.len(),
+        "custom_component_names": custom_names,
         "resource_bridge_count": resource_bridges.len(),
         "total_entities": entity_count,
         "entity_samples": samples,
@@ -456,13 +552,13 @@ pub fn get_entity(
         }
     }
 
-    // Count remaining unknown components
-    let mut unknown_count = 0;
-    if let Ok(eref) = world.get_entity(entity) {
-        let archetype_count = eref.archetype().components().len();
-        let known_count = components.len() + custom_components.len();
-        unknown_count = archetype_count.saturating_sub(known_count);
-    }
+    // Component breakdown: bridges + custom + Bevy-internal = archetype slots
+    let bridge_count = components.len();
+    let custom_count = custom_components.len();
+    let breakdown = world
+        .get_entity(entity)
+        .ok()
+        .map(|eref| entity_component_breakdown(&eref, bridge_count, custom_count));
 
     // Merge custom components into the components map
     for (k, v) in &custom_components {
@@ -491,8 +587,11 @@ pub fn get_entity(
         result["custom_components"] =
             serde_json::json!(custom_components.keys().collect::<Vec<_>>());
     }
-    if unknown_count > 0 {
-        result["unknown_component_count"] = serde_json::json!(unknown_count);
+    if let Some((archetype_slot_count, bevy_internal)) = breakdown {
+        result["archetype_slot_count"] = serde_json::json!(archetype_slot_count);
+        result["bridge_component_count"] = serde_json::json!(bridge_count);
+        result["custom_component_count"] = serde_json::json!(custom_count);
+        result["bevy_internal_component_count"] = serde_json::json!(bevy_internal);
     }
     Ok(result)
 }
@@ -635,21 +734,24 @@ pub fn query_entities(
             let entity_name = entity_ref.get::<Name>().map(|n| n.as_str().to_string());
             let label = crate::handlers::spatial::entity_label(world, *entity);
 
-            // Detect remaining unknown components
-            let archetype_count = entity_ref.archetype().components().len();
-            let unknown_count = archetype_count.saturating_sub(has_components.len());
+            // Component breakdown: bridges + custom + Bevy-internal = archetype slots
+            let custom_count = custom_names.len();
+            let bridge_count = has_components.len().saturating_sub(custom_count);
+            let (archetype_slot_count, bevy_internal) =
+                entity_component_breakdown(&entity_ref, bridge_count, custom_count);
 
             let mut entry = serde_json::json!({
                 "id": entity.to_bits(),
                 "name": entity_name,
                 "label": label,
                 "components": has_components,
+                "archetype_slot_count": archetype_slot_count,
+                "bridge_component_count": bridge_count,
+                "custom_component_count": custom_count,
+                "bevy_internal_component_count": bevy_internal,
             });
             if !custom_names.is_empty() {
                 entry["custom_components"] = serde_json::json!(custom_names);
-            }
-            if unknown_count > 0 {
-                entry["unknown_component_count"] = serde_json::json!(unknown_count);
             }
             matching.push(entry);
         }
@@ -686,7 +788,7 @@ pub fn query_entities(
 }
 
 /// Extract field values from a custom Python resource (dataclass or plain object).
-/// Returns a JSON map of field_name -> repr(value), or None if no fields found.
+/// Returns a JSON map of field_name -> JSON-converted value, or None if no fields found.
 fn extract_custom_resource_fields(
     py: Python<'_>,
     bound: &Bound<'_, PyAny>,
@@ -708,11 +810,7 @@ fn extract_custom_resource_fields(
                 .ok()
                 .and_then(|name| bound.getattr(name.as_str()).ok().map(|value| (name, value)));
             if let Some((name, value)) = name_value {
-                let repr = value
-                    .repr()
-                    .map(|r| r.to_string())
-                    .unwrap_or_else(|_| "<opaque>".to_string());
-                map.insert(name, serde_json::Value::String(repr));
+                map.insert(name, py_value_to_json(&value));
             }
         }
         if !map.is_empty() {
@@ -727,11 +825,7 @@ fn extract_custom_resource_fields(
             for (key, value) in py_dict.iter() {
                 if let Ok(k) = key.extract::<String>() {
                     if !k.starts_with('_') {
-                        let repr = value
-                            .repr()
-                            .map(|r| r.to_string())
-                            .unwrap_or_else(|_| "<opaque>".to_string());
-                        map.insert(k, serde_json::Value::String(repr));
+                        map.insert(k, py_value_to_json(&value));
                     }
                 }
             }
@@ -835,9 +929,19 @@ pub fn list_systems(world: &mut World) -> Result<serde_json::Value, ControlError
     if let Some(schedules) = world.get_resource::<Schedules>() {
         for (label, schedule) in schedules.iter() {
             let system_count = schedule.systems_len();
+            // Graph may be uninitialized; degrade to empty list rather than failing.
+            let systems: Vec<serde_json::Value> = match schedule.systems() {
+                Ok(iter) => iter
+                    .map(|(_key, system)| serde_json::json!({ "name": system.name().to_string() }))
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
             stages.insert(
                 format!("{label:?}"),
-                serde_json::json!({ "system_count": system_count }),
+                serde_json::json!({
+                    "system_count": system_count,
+                    "systems": systems,
+                }),
             );
         }
     }
@@ -1176,25 +1280,53 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
     let entity_list: Vec<Entity> = query_state.iter(world).collect();
     let total = entity_list.len();
 
-    // Map: label -> (count, source)
-    let mut groups: HashMap<String, (usize, &'static str)> = HashMap::new();
+    // Per-group state for grouping pass.
+    struct GroupInfo {
+        count: u64,
+        source: &'static str,
+        representative_id: Option<u64>,
+        // True only if every entity in the group has a Name equal to the label.
+        all_names_match: bool,
+    }
+
+    let mut groups: HashMap<String, GroupInfo> = HashMap::new();
+
+    // Insert or update a group entry.
+    fn add(
+        groups: &mut HashMap<String, GroupInfo>,
+        label: String,
+        source: &'static str,
+        entity: Entity,
+        name_matches_label: bool,
+    ) {
+        let entry = groups.entry(label).or_insert(GroupInfo {
+            count: 0,
+            source,
+            representative_id: Some(entity.to_bits()),
+            all_names_match: name_matches_label,
+        });
+        entry.count += 1;
+        if !name_matches_label {
+            entry.all_names_match = false;
+        }
+    }
 
     for entity in &entity_list {
         let Ok(entity_ref) = world.get_entity(*entity) else {
-            groups
-                .entry("other".to_string())
-                .or_insert((0, "fallback"))
-                .0 += 1;
+            add(&mut groups, "other".to_string(), "fallback", *entity, false);
             continue;
         };
 
         // Priority 1: Custom Python component name
         let custom_names = get_custom_component_names(world, *entity);
         if let Some(first_custom) = custom_names.first() {
-            groups
-                .entry(first_custom.clone())
-                .or_insert((0, "custom_component"))
-                .0 += 1;
+            add(
+                &mut groups,
+                first_custom.clone(),
+                "custom_component",
+                *entity,
+                false,
+            );
             continue;
         }
 
@@ -1202,7 +1334,8 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         if let Some(name) = entity_ref.get::<Name>() {
             let name_str = name.as_str();
             let label = strip_numeric_suffix(name_str);
-            groups.entry(label).or_insert((0, "name")).0 += 1;
+            let name_matches_label = label == name_str;
+            add(&mut groups, label, "name", *entity, name_matches_label);
             continue;
         }
 
@@ -1216,42 +1349,54 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         let mut found = false;
         for &char_name in CHARACTERISTIC_COMPONENTS {
             if bridge_names.iter().any(|n| n == char_name) {
-                groups
-                    .entry(char_name.to_string())
-                    .or_insert((0, "component"))
-                    .0 += 1;
+                add(
+                    &mut groups,
+                    char_name.to_string(),
+                    "component",
+                    *entity,
+                    false,
+                );
                 found = true;
                 break;
             }
         }
 
         if !found {
-            groups
-                .entry("other".to_string())
-                .or_insert((0, "fallback"))
-                .0 += 1;
+            add(&mut groups, "other".to_string(), "fallback", *entity, false);
         }
     }
 
-    // Build sorted output (by count descending, then name)
-    let mut group_list: Vec<_> = groups.into_iter().collect();
-    group_list.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(&b.0)));
+    // Sort by count descending, then label ascending.
+    let mut group_list: Vec<(String, GroupInfo)> = groups.into_iter().collect();
+    group_list.sort_by(|a, b| b.1.count.cmp(&a.1.count).then_with(|| a.0.cmp(&b.0)));
 
     let groups_json: Vec<serde_json::Value> = group_list
         .iter()
-        .map(|(label, (count, source))| {
-            serde_json::json!({
+        .map(|(label, info)| {
+            // Promote name -> name_prefix when stripping merged distinct Names.
+            let source = if info.source == "name" && info.count > 1 && !info.all_names_match {
+                "name_prefix"
+            } else {
+                info.source
+            };
+            let mut obj = serde_json::json!({
                 "label": label,
-                "count": count,
+                "count": info.count,
                 "source": source,
-            })
+            });
+            // Only include representative_id when it is a useful handle.
+            if info.count > 1 {
+                obj["representative_id"] = serde_json::json!(info.representative_id);
+            } else {
+                obj["representative_id"] = serde_json::Value::Null;
+            }
+            obj
         })
         .collect();
 
-    // Build summary string
     let summary_parts: Vec<String> = group_list
         .iter()
-        .map(|(label, (count, _))| format!("{count} {label}"))
+        .map(|(label, info)| format!("{} {}", info.count, label))
         .collect();
     let summary = format!("{total} entities: {}", summary_parts.join(", "));
 
@@ -1317,7 +1462,12 @@ mod tests {
 
     use bevy::{
         camera::primitives::Aabb,
-        ecs::{component::ComponentId, hierarchy::ChildOf, name::Name},
+        ecs::{
+            component::ComponentId,
+            hierarchy::ChildOf,
+            name::Name,
+            schedule::{Schedule, ScheduleLabel},
+        },
         math::Vec3,
         prelude::{GlobalTransform, Transform},
     };
@@ -1649,6 +1799,74 @@ mod tests {
         let sphere_group = groups.iter().find(|g| g["label"] == "Sphere").unwrap();
         assert_eq!(sphere_group["count"], 1);
     }
+
+    #[test]
+    fn get_scene_summary_single_name_uses_name_source() {
+        let mut world = World::new();
+        world.spawn(Name::new("hero"));
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        let g = groups.iter().find(|g| g["label"] == "hero").unwrap();
+        assert_eq!(g["count"], 1);
+        assert_eq!(g["source"], "name");
+        assert!(g["representative_id"].is_null());
+    }
+
+    #[test]
+    fn get_scene_summary_multiple_same_name_uses_name_source() {
+        let mut world = World::new();
+        let a = world.spawn(Name::new("goblin")).id();
+        let b = world.spawn(Name::new("goblin")).id();
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        let g = groups.iter().find(|g| g["label"] == "goblin").unwrap();
+        assert_eq!(g["count"], 2);
+        assert_eq!(g["source"], "name");
+        let rep = g["representative_id"].as_u64().unwrap();
+        assert!(rep == a.to_bits() || rep == b.to_bits());
+    }
+
+    #[test]
+    fn get_scene_summary_prefix_collision_uses_name_prefix_source() {
+        let mut world = World::new();
+        let a = world.spawn(Name::new("rep_p1")).id();
+        let b = world.spawn(Name::new("rep_p2")).id();
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        let g = groups.iter().find(|g| g["label"] == "rep_p").unwrap();
+        assert_eq!(g["count"], 2);
+        assert_eq!(g["source"], "name_prefix");
+        let rep = g["representative_id"].as_u64().unwrap();
+        assert!(rep == a.to_bits() || rep == b.to_bits());
+    }
+
+    #[test]
+    fn get_scene_summary_representative_id_present_for_component_groups() {
+        let mut world = World::new();
+        // Three unnamed entities with no recognised characteristic component
+        // collapse into the "other" fallback group; representative_id still set.
+        world.spawn_empty();
+        world.spawn_empty();
+        world.spawn_empty();
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        let g = groups.iter().find(|g| g["label"] == "other").unwrap();
+        assert_eq!(g["count"], 3);
+        assert_eq!(g["source"], "fallback");
+        assert!(g["representative_id"].is_u64());
+    }
+
+    #[test]
+    fn get_scene_summary_representative_id_omitted_for_singletons() {
+        let mut world = World::new();
+        world.spawn(Name::new("solo"));
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        let g = groups.iter().find(|g| g["label"] == "solo").unwrap();
+        assert_eq!(g["count"], 1);
+        // Pinned: singletons emit null representative_id.
+        assert!(g["representative_id"].is_null());
+    }
     #[test]
     fn debug_registry_returns_valid_shape() {
         let mut world = World::new();
@@ -1657,6 +1875,91 @@ mod tests {
         assert!(result["resource_bridge_count"].is_number());
         assert!(result["total_entities"].is_number());
         assert!(result["entity_samples"].is_array());
+    }
+
+    #[test]
+    fn debug_registry_includes_custom_component_names() {
+        let mut world = World::new();
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        info.insert(
+            ComponentId::new(10001),
+            pybevy_core::CustomComponentEntry {
+                type_ptr: ptr::null(),
+                name: "Bouncy".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        info.insert(
+            ComponentId::new(10002),
+            pybevy_core::CustomComponentEntry {
+                type_ptr: ptr::null(),
+                name: "BounceCounter".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        let result = debug_registry(&mut world).unwrap();
+        assert_eq!(result["custom_component_count"], 2);
+        let names: Vec<String> = result["custom_component_names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"Bouncy".to_string()));
+        assert!(names.contains(&"BounceCounter".to_string()));
+    }
+
+    #[test]
+    fn debug_registry_no_custom_info_resource_emits_zero() {
+        let mut world = World::new();
+        let result = debug_registry(&mut world).unwrap();
+        assert_eq!(result["custom_component_count"], 0);
+        assert!(
+            result["custom_component_names"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn debug_registry_preserves_duplicate_custom_entries() {
+        let mut world = World::new();
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        // Two distinct ComponentIds with the same name mimic the leak scenario.
+        info.insert(
+            ComponentId::new(20001),
+            pybevy_core::CustomComponentEntry {
+                type_ptr: ptr::null(),
+                name: "Bouncy".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        info.insert(
+            ComponentId::new(20002),
+            pybevy_core::CustomComponentEntry {
+                type_ptr: ptr::null(),
+                name: "Bouncy".to_string(),
+                is_pyobject_storage: true,
+            },
+        );
+        world.insert_resource(info);
+
+        let result = debug_registry(&mut world).unwrap();
+        assert_eq!(result["custom_component_count"], 2);
+        let names: Vec<String> = result["custom_component_names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        let bouncy_count = names.iter().filter(|n| n.as_str() == "Bouncy").count();
+        assert_eq!(
+            bouncy_count, 2,
+            "duplicate Bouncy entries should be visible"
+        );
     }
     #[test]
     fn get_component_schema_search_prefix() {
@@ -1792,6 +2095,73 @@ mod tests {
         let result = query_entities(&mut world, vec![], vec![]).unwrap();
         // With no filters, should return entities that have at least some components
         assert!(result["count"].as_u64().unwrap() >= 2);
+    }
+
+    #[test]
+    fn list_entities_includes_component_breakdown_fields() {
+        setup();
+        let mut world = World::new();
+        world.spawn((Name::new("Sample"), Transform::default()));
+        let result = list_entities(&mut world).unwrap();
+        let entry = result["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == "Sample")
+            .expect("Sample entity should be present");
+        assert!(entry["archetype_slot_count"].is_number());
+        assert!(entry["bridge_component_count"].is_number());
+        assert!(entry["custom_component_count"].is_number());
+        assert!(entry["bevy_internal_component_count"].is_number());
+        assert!(entry.get("unknown_component_count").is_none());
+        let arch = entry["archetype_slot_count"].as_u64().unwrap();
+        let bridge = entry["bridge_component_count"].as_u64().unwrap();
+        let custom = entry["custom_component_count"].as_u64().unwrap();
+        let internal = entry["bevy_internal_component_count"].as_u64().unwrap();
+        assert_eq!(arch, bridge + custom + internal);
+        assert!(bridge >= 1, "Transform bridge should be detected");
+    }
+
+    #[test]
+    fn get_entity_includes_component_breakdown_fields() {
+        setup();
+        let mut world = World::new();
+        let entity = world.spawn((Name::new("Probe"), Transform::default())).id();
+        let result = get_entity(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert!(result["archetype_slot_count"].is_number());
+        assert!(result["bridge_component_count"].is_number());
+        assert!(result["custom_component_count"].is_number());
+        assert!(result["bevy_internal_component_count"].is_number());
+        assert!(result.get("unknown_component_count").is_none());
+        let arch = result["archetype_slot_count"].as_u64().unwrap();
+        let bridge = result["bridge_component_count"].as_u64().unwrap();
+        let custom = result["custom_component_count"].as_u64().unwrap();
+        let internal = result["bevy_internal_component_count"].as_u64().unwrap();
+        assert_eq!(arch, bridge + custom + internal);
+    }
+
+    #[test]
+    fn query_entities_includes_component_breakdown_fields() {
+        setup();
+        let mut world = World::new();
+        world.spawn((Name::new("Q"), Transform::default()));
+        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        let entry = result["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == "Q")
+            .expect("Q entity should be present");
+        assert!(entry["archetype_slot_count"].is_number());
+        assert!(entry["bridge_component_count"].is_number());
+        assert!(entry["custom_component_count"].is_number());
+        assert!(entry["bevy_internal_component_count"].is_number());
+        assert!(entry.get("unknown_component_count").is_none());
+        let arch = entry["archetype_slot_count"].as_u64().unwrap();
+        let bridge = entry["bridge_component_count"].as_u64().unwrap();
+        let custom = entry["custom_component_count"].as_u64().unwrap();
+        let internal = entry["bevy_internal_component_count"].as_u64().unwrap();
+        assert_eq!(arch, bridge + custom + internal);
     }
     #[test]
     fn scene_summary_with_entities() {
@@ -2065,5 +2435,313 @@ mod tests {
             fields.contains_key("translation"),
             "Should detect translation field via Python, got: {fields:?}"
         );
+    }
+
+    #[test]
+    fn parse_variant_from_repr_class_dot_variant() {
+        // SCREAMING_SNAKE (Tonemapping, Visibility classvar form).
+        assert_eq!(
+            parse_variant_from_repr("Tonemapping.NONE"),
+            Some("NONE".to_string())
+        );
+        assert_eq!(
+            parse_variant_from_repr("Visibility.HIDDEN"),
+            Some("HIDDEN".to_string())
+        );
+        // PascalCase + digits (PyMsaa repr is "Msaa.Sample4").
+        assert_eq!(
+            parse_variant_from_repr("Msaa.Sample4"),
+            Some("Sample4".to_string())
+        );
+        // Lowercase identifier with underscore is also a valid Python ident.
+        assert_eq!(
+            parse_variant_from_repr("Foo.bar_baz"),
+            Some("bar_baz".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_variant_from_repr_class_paren_variant() {
+        assert_eq!(
+            parse_variant_from_repr("Visibility(Inherited)"),
+            Some("Inherited".to_string())
+        );
+        assert_eq!(
+            parse_variant_from_repr("Msaa(Sample4)"),
+            Some("Sample4".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_variant_from_repr_returns_none_for_unparseable() {
+        assert_eq!(parse_variant_from_repr("some random string"), None);
+        assert_eq!(parse_variant_from_repr("Foo(123)"), None);
+        assert_eq!(parse_variant_from_repr("Foo()"), None);
+        // After-dot identifier must not start with a digit.
+        assert_eq!(parse_variant_from_repr("Foo.123abc"), None);
+    }
+
+    #[test]
+    fn extract_bridge_fields_inner_fallback_dot_variant() {
+        setup();
+        // Synthetic class mimicking PyTonemapping: no getset, dot-uppercase repr.
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "class _FakeTonemapping:\n    def __repr__(self):\n        return 'Tonemapping.NONE'\ninst = _FakeTonemapping()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+            let map = extract_bridge_fields_inner(&inst);
+            assert_eq!(
+                map.get("variant").and_then(|v| v.as_str()),
+                Some("NONE"),
+                "expected variant=NONE, got: {map:?}"
+            );
+            assert_eq!(map.len(), 1);
+        });
+    }
+
+    #[test]
+    fn extract_bridge_fields_inner_fallback_paren_variant() {
+        setup();
+        // Synthetic class mimicking PyVisibility: no getset, paren-PascalCase repr.
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "class _FakeVisibility:\n    def __repr__(self):\n        return 'Visibility(Inherited)'\ninst = _FakeVisibility()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+            let map = extract_bridge_fields_inner(&inst);
+            assert_eq!(
+                map.get("variant").and_then(|v| v.as_str()),
+                Some("Inherited"),
+                "expected variant=Inherited, got: {map:?}"
+            );
+            assert_eq!(map.len(), 1);
+        });
+    }
+
+    #[test]
+    fn extract_bridge_fields_inner_fallback_msaa_sample4() {
+        setup();
+        // Regression for #291: PyMsaa's __repr__ is "Msaa.Sample4" (PascalCase
+        // variant with digits after the dot). Before the parser was relaxed
+        // to accept any Python identifier after the dot, this fell through to
+        // the {"repr": ...} branch instead of yielding {"variant": "Sample4"}.
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "class _FakeMsaa:\n    def __repr__(self):\n        return 'Msaa.Sample4'\ninst = _FakeMsaa()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+            let map = extract_bridge_fields_inner(&inst);
+            assert_eq!(
+                map.get("variant").and_then(|v| v.as_str()),
+                Some("Sample4"),
+                "expected variant=Sample4, got: {map:?}"
+            );
+            assert!(
+                !map.contains_key("repr"),
+                "should not fall back to repr, got: {map:?}"
+            );
+            assert_eq!(map.len(), 1);
+        });
+    }
+
+    #[test]
+    fn extract_bridge_fields_inner_fallback_unparseable_repr() {
+        setup();
+        // Unparseable repr falls back to {repr: <full>}.
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "class _FakeOpaque:\n    def __repr__(self):\n        return 'opaque thing'\ninst = _FakeOpaque()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+            let map = extract_bridge_fields_inner(&inst);
+            assert_eq!(
+                map.get("repr").and_then(|v| v.as_str()),
+                Some("opaque thing")
+            );
+            assert!(!map.contains_key("variant"));
+        });
+    }
+
+    #[test]
+    fn extract_bridge_fields_inner_struct_unaffected_by_fallback() {
+        setup();
+        // Regression: struct-shaped components still return their full fields.
+        Python::attach(|py| {
+            for bridge in all_component_bridges() {
+                if bridge.name() != "Transform" {
+                    continue;
+                }
+                let py_type = bridge.py_type(py);
+                let inst = py_type.call0().unwrap();
+                let map = extract_bridge_fields_inner(&inst);
+                assert!(
+                    map.contains_key("translation"),
+                    "Transform should expose translation, got: {map:?}"
+                );
+                assert!(
+                    !map.contains_key("variant"),
+                    "Transform should not get variant fallback, got: {map:?}"
+                );
+                assert!(
+                    !map.contains_key("repr"),
+                    "Transform should not get repr fallback, got: {map:?}"
+                );
+                return;
+            }
+            panic!("Transform bridge not found");
+        });
+    }
+
+    #[test]
+    fn extract_custom_resource_fields_str_unquoted() {
+        setup();
+        // Regression: dataclass `str` fields used to come back as Python repr()
+        // (with surrounding single quotes) instead of native JSON strings.
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "from dataclasses import dataclass\n\
+                     @dataclass\n\
+                     class _Element:\n    \
+                         symbol: str = 'C'\n    \
+                         label: str = ''\n    \
+                         atomic_number: int = 6\n    \
+                         tags: list = None\n\
+                     inst = _Element(symbol='N', label='N7', atomic_number=7, tags=['a','b'])\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+            let map = extract_custom_resource_fields(py, &inst).expect("fields");
+
+            assert_eq!(
+                map.get("symbol"),
+                Some(&serde_json::Value::String("N".to_string())),
+                "str field should be JSON string without quotes, got: {map:?}"
+            );
+            assert_eq!(
+                map.get("label"),
+                Some(&serde_json::Value::String("N7".to_string())),
+                "str field should not be repr()-quoted, got: {map:?}"
+            );
+            assert_eq!(
+                map.get("atomic_number"),
+                Some(&serde_json::json!(7)),
+                "int field should be JSON number, got: {map:?}"
+            );
+            assert_eq!(
+                map.get("tags"),
+                Some(&serde_json::json!(["a", "b"])),
+                "list[str] field should be JSON array of bare strings, got: {map:?}"
+            );
+        });
+    }
+
+    // Test-only labels for list_systems coverage.
+    #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    struct TestStage;
+
+    #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    struct EmptyStage;
+
+    fn sys_alpha() {}
+    fn sys_beta() {}
+    fn sys_gamma() {}
+
+    #[test]
+    fn list_systems_returns_names_per_stage() {
+        let mut world = World::new();
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestStage);
+        schedule.add_systems((sys_alpha, sys_beta, sys_gamma));
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world).unwrap();
+        let stage = &val["stages"]["TestStage"];
+        assert_eq!(stage["system_count"], 3);
+        let systems = stage["systems"].as_array().expect("systems array");
+        assert_eq!(systems.len(), 3);
+        let names: Vec<String> = systems
+            .iter()
+            .map(|s| s["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.contains("sys_alpha")),
+            "expected sys_alpha in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("sys_beta")),
+            "expected sys_beta in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("sys_gamma")),
+            "expected sys_gamma in {names:?}"
+        );
+    }
+
+    #[test]
+    fn list_systems_empty_schedule() {
+        let mut world = World::new();
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(EmptyStage);
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world).unwrap();
+        let stage = &val["stages"]["EmptyStage"];
+        assert_eq!(stage["system_count"], 0);
+        let systems = stage["systems"].as_array().expect("systems array");
+        assert!(
+            systems.is_empty(),
+            "expected empty systems, got {systems:?}"
+        );
+    }
+
+    #[test]
+    fn list_systems_count_matches_names_len() {
+        let mut world = World::new();
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestStage);
+        schedule.add_systems((sys_alpha, sys_beta));
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world).unwrap();
+        let stage = &val["stages"]["TestStage"];
+        let count = stage["system_count"].as_u64().unwrap() as usize;
+        let systems_len = stage["systems"].as_array().unwrap().len();
+        assert_eq!(count, systems_len);
     }
 }

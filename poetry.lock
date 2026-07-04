@@ -2591,6 +2591,21 @@ packaging = ">=17.1"
 pytest = ">=7.4,<8.2.2 || >8.2.2"
 
 [[package]]
+name = "pytest-timeout"
+version = "2.4.0"
+description = "pytest plugin to abort hanging tests"
+optional = false
+python-versions = ">=3.7"
+groups = ["dev"]
+files = [
+    {file = "pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2"},
+    {file = "pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a"},
+]
+
+[package.dependencies]
+pytest = ">=7.0.0"
+
+[[package]]
 name = "pytest-xdist"
 version = "3.8.0"
 description = "pytest xdist plugin for distributed testing, most importantly across multiple CPUs"
@@ -3465,4 +3480,4 @@ numba = ["numba"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "5eae775dc3c76a6aa2312e4b0452c668113aa4c07da12294bf1efc195d0d2d35"
+content-hash = "6eb740cd3008dd98bcf6f0e6c7b50613cb8a25eb7a27ab9057267e39153320c5"
