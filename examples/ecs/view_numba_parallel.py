@@ -188,7 +188,7 @@ def setup_scene(
         DirectionalLight(
             illuminance=10000.0,
             color=Color.WHITE,
-            shadows_enabled=False,  # Disable shadows for performance
+            shadow_maps_enabled=False,  # Disable shadows for performance
         ),
         Transform.IDENTITY.looking_at(Vec3(-1.0, -2.5, -1.0), Vec3.Y),
     )

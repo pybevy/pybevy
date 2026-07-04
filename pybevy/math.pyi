@@ -13,7 +13,7 @@ from pybevy.mesh import (
     CylinderMeshBuilder,
     EllipseMeshBuilder,
     Meshable,
-    Plane3dMeshBuilder,
+    PlaneMeshBuilder,
     RectangleMeshBuilder,
     RegularPolygonMeshBuilder,
     RhombusMeshBuilder,
@@ -972,9 +972,7 @@ class Affine3A:
     def __ne__(self, other: object) -> bool: ...
 
 class Cone(Meshable):
-    def __init__(self, radius: float = 1.0, height: float = 1.0) -> None: ...
-    @staticmethod
-    def from_dimensions(radius: float, height: float) -> Cone: ...
+    def __init__(self, radius: float = 0.5, height: float = 1.0) -> None: ...
     @property
     def radius(self) -> float: ...
     @radius.setter
@@ -1055,7 +1053,7 @@ class Plane3d(Meshable):
     def half_size(self) -> Vec2: ...
     @half_size.setter
     def half_size(self, value: Vec2) -> None: ...
-    def mesh(self) -> Plane3dMeshBuilder: ...
+    def mesh(self) -> PlaneMeshBuilder: ...
 
 class InfinitePlane3d:
     """An infinite 3D plane defined by its normal direction."""
@@ -1067,10 +1065,60 @@ class InfinitePlane3d:
     @property
     def normal(self) -> Dir3: ...
 
-class Cylinder(Meshable):
-    def __init__(self, radius: float = 1.0, height: float = 1.0) -> None: ...
+class HalfSpace:
+    """A region of 3D space defined by a bisecting 2D plane.
+
+    The first 3 components of the Vec4 represent the plane's unit normal,
+    and the 4th component is the signed distance from the plane to the origin.
+    """
+
+    @property
+    def normal(self) -> Vec4: ...
+    @property
+    def d(self) -> float: ...
+    @property
+    def normal_d(self) -> Vec4: ...
+
+    def __init__(self, normal_d: Vec4) -> None: ...
+
+class ViewFrustum:
+    """A region of 3D space defined by the intersection of 6 half-spaces.
+
+    Half spaces are ordered left, right, top, bottom, near, far; their normals
+    point towards the interior of the frustum. Wrap in a `Frustum` component
+    (pybevy.camera) to attach it to an entity.
+    """
+
+    NEAR_PLANE_IDX: ClassVar[int]
+    FAR_PLANE_IDX: ClassVar[int]
+
+    @property
+    def half_spaces(self) -> list[HalfSpace]: ...
+    @half_spaces.setter
+    def half_spaces(self, value: list[HalfSpace]) -> None: ...
+
+    def __init__(self) -> None: ...
+
     @staticmethod
-    def from_dimensions(radius: float, height: float) -> Cylinder: ...
+    def from_clip_from_world(clip_from_world: Mat4) -> ViewFrustum:
+        """Creates a view frustum from a clip-from-world matrix."""
+
+    @staticmethod
+    def from_clip_from_world_custom_far(
+        clip_from_world: Mat4,
+        view_translation: Vec3,
+        view_backward: Vec3,
+        far: float,
+    ) -> ViewFrustum:
+        """Creates a view frustum from a clip-from-world matrix with a custom far plane."""
+
+    def corners(self) -> list[Vec3] | None:
+        """The 8 corner points of the frustum, or None if it is unbounded."""
+
+    def __eq__(self, other: object) -> bool: ...
+
+class Cylinder(Meshable):
+    def __init__(self, radius: float = 0.5, height: float = 1.0) -> None: ...
     @property
     def radius(self) -> float: ...
     @radius.setter
@@ -1098,7 +1146,7 @@ class Cuboid(Meshable):
     @staticmethod
     def from_size(size: Vec3) -> Cuboid: ...
     @staticmethod
-    def from_corners(min: Vec3, max: Vec3) -> Cuboid: ...
+    def from_corners(point1: Vec3, point2: Vec3) -> Cuboid: ...
     @staticmethod
     def from_length(length: float) -> Cuboid: ...
     @property
@@ -2260,7 +2308,7 @@ class Capsule2d(Meshable):
     @half_length.setter
     def half_length(self, value: float) -> None: ...
 
-    def __init__(self, radius: float, length: float) -> None:
+    def __init__(self, radius: float = 0.5, length: float = 1.0) -> None:
         """Create a new 2D capsule.
 
         Args:
@@ -2300,7 +2348,7 @@ class Ellipse(Meshable):
     @half_size.setter
     def half_size(self, value: Vec2) -> None: ...
 
-    def __init__(self, half_size: Vec2) -> None:
+    def __init__(self, half_size: Vec2 = ...) -> None:
         """Create a new ellipse from its size.
 
         Args:
@@ -2560,7 +2608,7 @@ class RegularPolygon(Meshable):
     @sides.setter
     def sides(self, value: int) -> None: ...
 
-    def __init__(self, circumradius: float, sides: int) -> None:
+    def __init__(self, circumradius: float = 0.5, sides: int = 6) -> None:
         """Create a new regular polygon.
 
         Args:
@@ -3143,8 +3191,8 @@ class CircularSector:
 
     def __init__(
         self,
-        radius: float = 1.0,
-        half_angle: float = 1.5707963267948966,
+        radius: float = 0.5,
+        half_angle: float = 2.0943951023931953,
         *,
         arc: Arc2d | None = None,
     ) -> None:
@@ -3318,8 +3366,8 @@ class CircularSegment:
 
     def __init__(
         self,
-        radius: float = 1.0,
-        half_angle: float = 1.5707963267948966,
+        radius: float = 0.5,
+        half_angle: float = 2.0943951023931953,
         *,
         arc: Arc2d | None = None,
     ) -> None:

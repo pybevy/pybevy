@@ -17,8 +17,10 @@ impl PyTextShadow {
     #[new]
     #[pyo3(signature = (offset = None, color = None))]
     pub fn new(offset: Option<PyVec2>, color: Option<PyColor>) -> (Self, PyComponent) {
-        let bevy_offset: Vec2 = offset.map(|o| o.into()).unwrap_or(Vec2::ZERO);
-        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::BLACK);
+        let bevy_offset: Vec2 = offset.map(|o| o.into()).unwrap_or(Vec2::splat(4.0));
+        let bevy_color: Color = color
+            .map(|c| c.into())
+            .unwrap_or(Color::linear_rgba(0.0, 0.0, 0.0, 0.75));
         Self::from_owned(TextShadow {
             offset: bevy_offset,
             color: bevy_color,

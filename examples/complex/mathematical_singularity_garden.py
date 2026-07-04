@@ -492,7 +492,7 @@ def setup_scene(
         DirectionalLight(
             illuminance=15000.0,
             color=Color.srgb(1.0, 0.95, 0.8),
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.IDENTITY.looking_at(Vec3(-1.0, -2.0, -1.0), Vec3.Y),
     )
@@ -502,7 +502,7 @@ def setup_scene(
         DirectionalLight(
             illuminance=5000.0,
             color=Color.srgb(0.7, 0.8, 1.0),
-            shadows_enabled=False,
+            shadow_maps_enabled=False,
         ),
         Transform.IDENTITY.looking_at(Vec3(1.0, -1.0, 1.0), Vec3.Y),
     )
@@ -512,7 +512,7 @@ def setup_scene(
         DirectionalLight(
             illuminance=8000.0,
             color=Color.srgb(1.0, 0.7, 0.5),
-            shadows_enabled=False,
+            shadow_maps_enabled=False,
         ),
         Transform.IDENTITY.looking_at(Vec3(0.0, -1.0, 2.0), Vec3.Y),
     )

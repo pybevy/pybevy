@@ -213,11 +213,15 @@ class GltfAssetLabel:
     @staticmethod
     def Primitive(mesh: int, primitive: int) -> GltfAssetLabel: ...
     @staticmethod
-    def MorphTarget(mesh: int, primitive: int) -> GltfAssetLabel: ...
-    @staticmethod
     def Texture(index: int) -> GltfAssetLabel: ...
     @staticmethod
-    def Material(index: int, is_scale_inverted: bool) -> GltfAssetLabel: ...
+    def Material(index: int, is_scale_inverted: bool) -> GltfAssetLabel:
+        """Label for the GltfMaterial sub-asset of a glTF file.
+
+        The processed StandardMaterial lives under the "/std" suffix; load it
+        with an explicit label, e.g.
+        ``AssetPath(path, label=f"{GltfAssetLabel.Material(0, False)}/std")``.
+        """
     @staticmethod
     def DefaultMaterial() -> GltfAssetLabel: ...
     @staticmethod

@@ -43,7 +43,7 @@ def setup(
     commands.spawn(
         DirectionalLight(
             illuminance=1000.0,
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_xyz(0.0, 5.0, 0.0).with_rotation(
             Quat.from_rotation_x(-math.pi / 4.0)

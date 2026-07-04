@@ -147,6 +147,8 @@ pub struct DynamicSystem {
     last_error_msg: Option<String>,
     last_error_print_time: Option<std::time::Instant>,
     suppressed_error_count: u32,
+    /// Parameter-conflict error precomputed in `initialize` (`None` = no conflict)
+    precomputed_validation: Option<SystemParamValidationError>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -308,6 +310,7 @@ impl DynamicSystem {
             last_error_msg: None,
             last_error_print_time: None,
             suppressed_error_count: 0,
+            precomputed_validation: None,
         };
 
         // Validate parameters immediately to catch conflicts early
@@ -474,15 +477,16 @@ impl System for DynamicSystem {
         // (e.g., schedule rebuild edge cases). Without this guard, each hot reload would
         // accumulate duplicate systems that all execute on the same entities every frame.
         {
-            let world_ref = unsafe { world.world() };
-            let current_gen = world_ref
-                .get_resource::<HotReloadGeneration>()
+            // SAFETY: read access to HotReloadGeneration is declared in `initialize`.
+            let current_gen = unsafe { world.get_resource::<HotReloadGeneration>() }
                 .map(|res| res.current)
                 .unwrap_or(0);
             if current_gen != self.expected_generation {
                 return Ok(());
             }
         }
+
+        self.validate_params()?;
 
         // Start timing for profiler (captures entire system execution)
         Python::attach(|py| {
@@ -949,51 +953,6 @@ impl System for DynamicSystem {
 
     fn queue_deferred(&mut self, _world: DeferredWorld) {}
 
-    unsafe fn validate_param_unsafe(
-        &mut self,
-        world: UnsafeWorldCell,
-    ) -> Result<(), SystemParamValidationError> {
-        let params = {
-            let inner = lock_or_recover(&self.inner);
-            if inner.gutted {
-                return Ok(());
-            }
-            inner.system_func.as_ref().unwrap().params.clone()
-        };
-        let accesses = Self::to_param_accesses(&params, |comp_type| {
-            self.get_component_id_for_validation(world, comp_type)
-        });
-        shared_validation::validate_access(&accesses).map_err(|conflict| {
-            let error_msg = format!(
-                "System '{}' has conflicting component access:\n\
-                 - Parameter {} requests {} access to {}\n\
-                 - Parameter {} already has {} access to {}\n\
-                 Rust's borrowing rules forbid multiple mutable references or \
-                 mixing mutable and immutable references to the same data.",
-                self.func_name,
-                conflict.param_idx,
-                if conflict.mutable {
-                    "mutable"
-                } else {
-                    "immutable"
-                },
-                conflict.comp_name,
-                conflict.existing_idx,
-                if conflict.existing_mut {
-                    "mutable"
-                } else {
-                    "immutable"
-                },
-                conflict.existing_name
-            );
-            SystemParamValidationError::new::<Self>(
-                true, // DynamicSystem implements Send + Sync
-                error_msg,
-                format!("parameter_{}", conflict.param_idx),
-            )
-        })
-    }
-
     fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
         // Clone the params from inner so we can release the lock before mutating self fields.
         // Params contain Arc/Py refs so cloning is cheap (refcount bumps).
@@ -1229,6 +1188,52 @@ impl System for DynamicSystem {
             self.add_with(id);
         }
 
+        // run_unsafe's generation guard reads HotReloadGeneration
+        let generation_id = world.register_component::<HotReloadGeneration>();
+        if !self.resources_to_read.contains(&generation_id) {
+            self.resources_to_read.push(generation_id);
+        }
+
+        // Conflict validation needs `&mut World` for ComponentId lookups, so it
+        // runs here; run_unsafe only reads the stored result.
+        let accesses = Self::to_param_accesses(&params, |comp_type| {
+            self.get_component_id_for_validation(world, comp_type)
+        });
+        self.precomputed_validation =
+            shared_validation::validate_access(&accesses)
+                .err()
+                .map(|conflict| {
+                    let error_msg = format!(
+                        "System '{}' has conflicting component access:\n\
+                     - Parameter {} requests {} access to {}\n\
+                     - Parameter {} already has {} access to {}\n\
+                     Rust's borrowing rules forbid multiple mutable references or \
+                     mixing mutable and immutable references to the same data.",
+                        self.func_name,
+                        conflict.param_idx,
+                        if conflict.mutable {
+                            "mutable"
+                        } else {
+                            "immutable"
+                        },
+                        conflict.comp_name,
+                        conflict.existing_idx,
+                        if conflict.existing_mut {
+                            "mutable"
+                        } else {
+                            "immutable"
+                        },
+                        conflict.existing_name
+                    );
+                    // skipped=false: a conflict is an error and must reach the app's
+                    // error handler; skipped errors are dropped silently by executors.
+                    SystemParamValidationError::new::<Self>(
+                        false,
+                        error_msg,
+                        format!("parameter_{}", conflict.param_idx),
+                    )
+                });
+
         build_full_access_set(
             &self.components_to_read,
             &self.components_to_write,
@@ -1250,6 +1255,14 @@ impl System for DynamicSystem {
 }
 
 impl DynamicSystem {
+    /// Return the parameter-conflict error precomputed in `initialize`, if any.
+    fn validate_params(&self) -> Result<(), SystemParamValidationError> {
+        match &self.precomputed_validation {
+            Some(err) => Err(err.clone()),
+            None => Ok(()),
+        }
+    }
+
     /// Validate system parameters for conflicting component access.
     /// This should be called immediately after creating a DynamicSystem to catch errors early.
     pub(crate) fn validate_parameters(&self) -> PyResult<()> {
@@ -1309,13 +1322,9 @@ impl DynamicSystem {
     /// This uses the already-registered IDs from initialize() or looks up custom components.
     fn get_component_id_for_validation(
         &self,
-        world: UnsafeWorldCell,
+        world_ref: &mut World,
         comp_type: &PyComponentType,
     ) -> ComponentId {
-        // SAFETY: We're in validate_param_unsafe which is called during system initialization
-        // The world reference is valid for the duration of this call
-        let world_ref = unsafe { world.world_mut() };
-
         match comp_type {
             PyComponentType::Custom(type_ptr) => {
                 // Look up the already-registered custom component ID

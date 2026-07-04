@@ -86,20 +86,6 @@ impl PyShader {
         Ok(())
     }
 
-    #[pyo3(name = "with_import_path")]
-    pub fn with_import_path(
-        slf: Py<Self>,
-        py: Python<'_>,
-        import_path: String,
-    ) -> PyResult<Py<Self>> {
-        {
-            let mut borrowed = slf.borrow_mut(py);
-            let inner: &mut Shader = (*borrowed).as_mut()?;
-            inner.set_import_path(import_path);
-        }
-        Ok(slf)
-    }
-
     #[getter]
     pub fn imports(&self) -> PyResult<Vec<PyShaderImport>> {
         Ok(self.as_ref()?.imports.iter().map(|i| i.into()).collect())

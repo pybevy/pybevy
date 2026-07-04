@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-use crate::node_image_mode::PyNodeImageMode;
+use crate::{enums::PyVisualBox, node_image_mode::PyNodeImageMode};
 
 #[pycomponent(ImageNode, bridge)]
 #[pyclass(name = "ImageNode", extends = PyComponent)]
@@ -40,13 +40,13 @@ impl PyImageNode {
     }
 
     #[getter]
-    pub fn texture(&self) -> PyResult<PyHandle> {
+    pub fn image(&self) -> PyResult<PyHandle> {
         let handle = &self.as_ref()?.image;
         Ok(handle.into())
     }
 
     #[setter]
-    pub fn set_texture(&mut self, handle: &Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn set_image(&mut self, handle: &Bound<'_, PyAny>) -> PyResult<()> {
         let py_handle = extract_handle_from_any(handle)?;
 
         if let Some(name) = py_handle.asset_type_name()
@@ -118,7 +118,18 @@ impl PyImageNode {
         Ok(())
     }
 
+    #[getter]
+    pub fn visual_box(&self) -> PyResult<PyVisualBox> {
+        Ok(self.as_ref()?.visual_box.into())
+    }
+
+    #[setter]
+    pub fn set_visual_box(&mut self, value: PyVisualBox) -> PyResult<()> {
+        self.as_mut()?.visual_box = value.into();
+        Ok(())
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("ImageNode(texture={:?})", self.as_ref()?.image))
+        Ok(format!("ImageNode(image={:?})", self.as_ref()?.image))
     }
 }

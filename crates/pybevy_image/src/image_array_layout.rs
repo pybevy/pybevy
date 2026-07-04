@@ -29,6 +29,19 @@ impl PyImageArrayLayout {
         PyImageArrayLayout(ImageArrayLayout::RowHeight { pixels })
     }
 
+    #[staticmethod]
+    pub fn grid_count(columns: u32, rows: u32) -> Self {
+        PyImageArrayLayout(ImageArrayLayout::GridCount { columns, rows })
+    }
+
+    #[staticmethod]
+    pub fn grid_size(tile_width_pixels: u32, tile_height_pixels: u32) -> Self {
+        PyImageArrayLayout(ImageArrayLayout::GridSize {
+            tile_width_pixels,
+            tile_height_pixels,
+        })
+    }
+
     pub fn __repr__(&self) -> String {
         match self.0 {
             ImageArrayLayout::RowCount { rows } => {
@@ -36,6 +49,18 @@ impl PyImageArrayLayout {
             }
             ImageArrayLayout::RowHeight { pixels } => {
                 format!("ImageArrayLayout.row_height({})", pixels)
+            }
+            ImageArrayLayout::GridCount { columns, rows } => {
+                format!("ImageArrayLayout.grid_count({}, {})", columns, rows)
+            }
+            ImageArrayLayout::GridSize {
+                tile_width_pixels,
+                tile_height_pixels,
+            } => {
+                format!(
+                    "ImageArrayLayout.grid_size({}, {})",
+                    tile_width_pixels, tile_height_pixels
+                )
             }
         }
     }

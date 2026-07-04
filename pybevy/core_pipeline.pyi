@@ -40,3 +40,5 @@ class Tonemapping(Component):
     AGX: ClassVar[Tonemapping]
     SOMEWHAT_BORING_DISPLAY_TRANSFORM: ClassVar[Tonemapping]
     TONY_MC_MAPFACE: ClassVar[Tonemapping]
+    BLENDER_FILMIC: ClassVar[Tonemapping]
+    PBR_NEUTRAL: ClassVar[Tonemapping]

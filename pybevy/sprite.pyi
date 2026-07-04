@@ -379,7 +379,7 @@ class Anchor(Component):
     TOP_CENTER: ClassVar[Anchor]
     TOP_RIGHT: ClassVar[Anchor]
 
-    def __init__(self, value: Vec2) -> None:
+    def __init__(self, value: Vec2 = ...) -> None:
         """Create an anchor from a Vec2.
 
         Args:

@@ -1,9 +1,9 @@
 use std::{any::TypeId, collections::HashSet};
 
 use bevy::{
-    ecs::{entity::Entity, world::World},
+    ecs::{entity::Entity, resource::IsResource, world::World},
     log::info as log_info,
-    prelude::{Resource, With},
+    prelude::{Resource, With, Without},
     time::{Time, Virtual},
 };
 
@@ -43,8 +43,11 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         .iter(world)
         .collect();
 
+    // Resources are stored as entities; exclude them via the
+    // `IsResource` marker so the cleanup never despawns resource-entities
+    // (doing so triggers a panic when later commands touch them).
     let to_despawn: Vec<Entity> = world
-        .query::<Entity>()
+        .query_filtered::<Entity, Without<IsResource>>()
         .iter(world)
         .filter(|e| !base.contains(e) && !retained.contains(e))
         .collect();
@@ -72,7 +75,10 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         }
     }
 
-    let live_after = world.query::<Entity>().iter(world).count();
+    let live_after = world
+        .query_filtered::<Entity, Without<IsResource>>()
+        .iter(world)
+        .count();
     log_info!(
         "[hot-reload] clear_world_state: {} live entities remaining",
         live_after
@@ -212,7 +218,13 @@ mod tests {
     struct Marker(&'static str);
 
     fn live_entity_count(world: &mut World) -> usize {
-        world.query::<Entity>().iter(world).count()
+        // Resources are stored as entities; exclude them via the
+        // `IsResource` marker so counts reflect only game entities, matching
+        // what the production `clear_world_state` cleanup operates on.
+        world
+            .query_filtered::<Entity, Without<IsResource>>()
+            .iter(world)
+            .count()
     }
 
     /// Count live assets of a given type in the world.

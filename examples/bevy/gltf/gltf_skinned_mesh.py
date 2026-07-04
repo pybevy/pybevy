@@ -1,7 +1,7 @@
 """Skinned mesh animation using GLTF model with hierarchy traversal.
 
 Demonstrates:
-- Loading GLTF scenes with SceneRoot
+- Loading GLTF scenes with WorldAssetRoot
 - Traversing entity hierarchies with ChildOf and Children
 - Animating skeletal joints by navigating parent-child relationships
 - Time-based rotation animation
@@ -37,8 +37,8 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     # Note: Ensure models/SimpleSkin/SimpleSkin.gltf exists in your assets directory
     scene_label = GltfAssetLabel.Scene(0)
     asset_path = scene_label.from_asset("bevy/models/SimpleSkin/SimpleSkin.gltf")
-    scene_handle = asset_server.load(asset_path, Scene)
-    commands.spawn(SceneRoot(scene_handle))
+    scene_handle = asset_server.load(asset_path, WorldAsset)
+    commands.spawn(WorldAssetRoot(scene_handle))
 
 
 def joint_animation(

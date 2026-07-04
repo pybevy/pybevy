@@ -1,7 +1,7 @@
 use bevy::ui::{
     AlignContent, AlignItems, AlignSelf, BoxSizing, Display, FlexDirection, FlexWrap, GridAutoFlow,
-    InterpolationColorSpace, JustifyContent, JustifyItems, JustifySelf, OverflowAxis,
-    OverflowClipBox, PositionType,
+    InlineDirection, InterpolationColorSpace, JustifyContent, JustifyItems, JustifySelf,
+    OverflowAxis, PositionType, VisualBox,
 };
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
@@ -130,6 +130,14 @@ pub enum PyFlexWrap {
     WrapReverse = 2,
 }
 
+#[pyenum(InlineDirection)]
+#[pyclass(name = "InlineDirection", eq, eq_int)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PyInlineDirection {
+    Ltr = 0,
+    Rtl = 1,
+}
+
 #[pyenum(OverflowAxis)]
 #[pyclass(name = "OverflowAxis", eq, eq_int)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,10 +189,10 @@ pub enum PyInterpolationColorSpace {
     HsvaLong,
 }
 
-#[pyenum(OverflowClipBox)]
-#[pyclass(name = "OverflowClipBox", eq, frozen)]
+#[pyenum(VisualBox)]
+#[pyclass(name = "VisualBox", eq, frozen)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PyOverflowClipBox {
+pub enum PyVisualBox {
     ContentBox,
     PaddingBox,
     BorderBox,

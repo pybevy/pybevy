@@ -1,4 +1,3 @@
-pub mod alpha_mode;
 pub mod color_grading;
 pub mod color_grading_component;
 pub mod face;
@@ -13,7 +12,6 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        alpha_mode::PyAlphaMode,
         color_grading::{PyColorGradingGlobal, PyColorGradingSection},
         color_grading_component::PyColorGrading,
         mip_bias::PyMipBias,
@@ -28,7 +26,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "render")?;
     m.add_class::<plugin::PyRenderPlugin>()?;
     m.add_class::<power_preference::PyPowerPreference>()?;
-    m.add_class::<alpha_mode::PyAlphaMode>()?;
     m.add_class::<face::PyFace>()?;
     m.add_class::<unit_markers::PyHdr>()?;
     m.add_class::<unit_markers::PyNoAutomaticBatching>()?;

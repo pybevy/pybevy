@@ -89,7 +89,7 @@ def setup(
 
     # A light
     commands.spawn(
-        PointLight(intensity=15_000_000.0, shadows_enabled=True),
+        PointLight(intensity=15_000_000.0, shadow_maps_enabled=True),
         Transform.from_xyz(4.0, 8.0, 4.0),
     )
 

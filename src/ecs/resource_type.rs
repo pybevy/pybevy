@@ -293,9 +293,9 @@ impl PyResourceType {
     /// Returns None if the resource hasn't been registered/inserted yet
     pub fn get_component_id(&self, world: &World) -> Option<ComponentId> {
         match self {
-            PyResourceType::AssetServer => {
-                world.components().resource_id::<bevy::asset::AssetServer>()
-            }
+            PyResourceType::AssetServer => world
+                .components()
+                .component_id::<bevy::asset::AssetServer>(),
             PyResourceType::Dynamic(type_ptr) => {
                 global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .and_then(|bridge| bridge.resource_id(world))

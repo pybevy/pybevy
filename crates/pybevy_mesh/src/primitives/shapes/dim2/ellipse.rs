@@ -29,10 +29,10 @@ impl From<Ellipse> for PyEllipse {
 #[pymethods]
 impl PyEllipse {
     #[new]
-    #[pyo3(signature = (half_size = PyVec2::ONE))]
+    #[pyo3(signature = (half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
     pub fn new(half_size: PyVec2) -> (Self, PyMeshable) {
-        let size: Vec2 = half_size.into();
-        (Self(Ellipse::from_size(size)), PyMeshable)
+        let half_size: Vec2 = half_size.into();
+        (Self(Ellipse::new(half_size.x, half_size.y)), PyMeshable)
     }
 
     #[getter]

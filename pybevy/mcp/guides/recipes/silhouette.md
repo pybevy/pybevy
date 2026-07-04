@@ -52,7 +52,7 @@ def setup(
 
     # --- Backlight for rim silhouettes ---
     commands.spawn(
-        DirectionalLight(illuminance=6000.0, color=Color.srgb(0.6, 0.7, 1.0), shadows_enabled=True),
+        DirectionalLight(illuminance=6000.0, color=Color.srgb(0.6, 0.7, 1.0), shadow_maps_enabled=True),
         VolumetricLight(),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.3, 3.14, 0.0)),
         Name("rim_sun"),
@@ -120,7 +120,7 @@ def setup(
     # --- Rim accent lights behind key silhouettes ---
     for lx, ly, lz in [(0, 3, -10), (0, 3, -24)]:
         commands.spawn(
-            PointLight(intensity=60000.0, color=Color.srgb(0.5, 0.6, 1.0), range=14.0, shadows_enabled=True),
+            PointLight(intensity=60000.0, color=Color.srgb(0.5, 0.6, 1.0), range=14.0, shadow_maps_enabled=True),
             VolumetricLight(),
             Transform.from_xyz(float(lx), float(ly), float(lz)),
         )

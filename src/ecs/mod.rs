@@ -83,7 +83,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<observer::PyAdd>()?;
     ecs.add_class::<observer::PyInsert>()?;
     ecs.add_class::<observer::PyRemove>()?;
-    ecs.add_class::<observer::PyReplace>()?;
+    ecs.add_class::<observer::PyDiscard>()?;
     ecs.add_class::<observer::PyDespawn>()?;
     ecs.add_class::<query::query_param::PyQueryParam>()?;
     ecs.add_class::<query::query_runtime::PyQueryIter>()?;

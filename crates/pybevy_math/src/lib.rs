@@ -102,6 +102,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<torus_kind::PyTorusKind>()?;
     m.add_class::<winding_order::PyWindingOrder>()?;
     // Primitives
+    m.add_class::<primitives::PyHalfSpace>()?;
+    m.add_class::<primitives::PyViewFrustum>()?;
     m.add_class::<primitives::PyLine2d>()?;
     m.add_class::<primitives::PyPlane2d>()?;
     m.add_class::<primitives::PyArc2d>()?;

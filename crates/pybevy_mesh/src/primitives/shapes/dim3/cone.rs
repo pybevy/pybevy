@@ -22,11 +22,6 @@ impl PyCone {
         (Self(Cone::new(radius, height)), PyMeshable)
     }
 
-    #[staticmethod]
-    pub fn from_dimensions(py: Python, radius: f32, height: f32) -> PyResult<Py<Self>> {
-        Py::new(py, (Self(Cone::new(radius, height)), PyMeshable))
-    }
-
     #[getter]
     pub fn radius(&self) -> f32 {
         self.0.radius

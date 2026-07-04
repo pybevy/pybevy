@@ -347,7 +347,7 @@ pub(crate) fn generate_asset_bridge_tokens(
             }
 
             fn resource_id(&self, world: &bevy::ecs::world::World) -> Option<bevy::ecs::component::ComponentId> {
-                world.components().resource_id::<bevy::asset::Assets<#bevy_type>>()
+                world.components().component_id::<bevy::asset::Assets<#bevy_type>>()
             }
 
             #is_loadable_impl
@@ -406,7 +406,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 let typed_handle = handle.clone().typed::<#bevy_type>();
                 match assets.get_mut(&typed_handle) {
                     Some(asset) => {
-                        let ptr = asset as *mut #bevy_type;
+                        let ptr = asset.into_inner() as *mut #bevy_type;
                         // SAFETY: `ptr` is derived from a valid Bevy `Assets` mutable borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                         let storage = unsafe {
                             pybevy_core::AssetStorage::borrowed_mut(

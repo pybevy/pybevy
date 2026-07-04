@@ -12,7 +12,7 @@ pub struct PyFocusPolicy(pub(crate) FocusPolicy);
 impl PyFocusPolicy {
     #[new]
     pub fn new() -> (Self, PyComponent) {
-        Self::from_owned(FocusPolicy::Block)
+        Self::from_owned(FocusPolicy::default())
     }
 
     #[staticmethod]

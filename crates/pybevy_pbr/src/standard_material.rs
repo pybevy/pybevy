@@ -9,14 +9,13 @@ use pybevy_core::{
     AssetInputConverter, AssetStorage, PyAsset, PyHandle, PyMaterializable, extract_handle_from_any,
 };
 use pybevy_macros::pyasset;
+use pybevy_material::{alpha_mode::PyAlphaMode, opaque_renderer_method::PyOpaqueRendererMethod};
 use pybevy_math::affine2::PyAffine2;
-use pybevy_render::{alpha_mode::PyAlphaMode, face::PyFace};
+use pybevy_mesh::uv_channel::PyUvChannel;
+use pybevy_render::face::PyFace;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-use crate::{
-    opaque_renderer_method::PyOpaqueRendererMethod,
-    parallax_mapping_method::PyParallaxMappingMethod, uv_channel::PyUvChannel,
-};
+use crate::parallax_mapping_method::PyParallaxMappingMethod;
 
 fn extract_linear_rgba(value: &Bound<'_, PyAny>) -> PyResult<LinearRgba> {
     if let Ok(color) = value.extract::<PyColor>() {

@@ -5,8 +5,8 @@ Complete scene with god rays, atmosphere, and a localized fog volume.
 ```python
 import math
 from pybevy.prelude import *
-from pybevy.pbr import ScatteringMedium, Atmosphere
 from pybevy.light import (
+    ScatteringMedium, Atmosphere,
     VolumetricFog, VolumetricLight, FogVolume,
     AtmosphereEnvironmentMapLight, SunDisk,
 )
@@ -24,14 +24,14 @@ def setup(
     materials: ResMut[Assets[StandardMaterial]],
     mediums: ResMut[Assets[ScatteringMedium]],
 ) -> None:
-    medium_handle = mediums.add(ScatteringMedium.earthlike())
+    medium_handle = mediums.add(ScatteringMedium.earth())
 
     # Camera with volumetric fog + atmosphere
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(8, 4, 8).looking_at(Vec3(0, 1, 0), Vec3.Y),
         Bloom(intensity=0.2, low_frequency_boost=0.5),
-        Atmosphere.earthlike(medium_handle),
+        Atmosphere.earth(medium_handle),
         AtmosphereEnvironmentMapLight(intensity=0.8),
         VolumetricFog(
             ambient_color=Color.srgb(0.05, 0.05, 0.08),
@@ -44,7 +44,7 @@ def setup(
 
     # Sun with god rays
     commands.spawn(
-        DirectionalLight(illuminance=12000.0, shadows_enabled=True),
+        DirectionalLight(illuminance=12000.0, shadow_maps_enabled=True),
         VolumetricLight(),
         SunDisk.EARTH,
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.6, 0.3, 0.0)),

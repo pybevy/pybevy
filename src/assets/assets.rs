@@ -273,6 +273,10 @@ pub struct PyAssetIter {
 
 #[pymethods]
 impl PyAssetIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
     fn __next__<'a>(&'a mut self, py: Python<'a>) -> PyResult<Py<PyAny>> {
         if let Some((handle, value)) = self.values.pop_front() {
             PyTuple::new(py, [Py::new(py, handle)?.into_any(), value])?.into_py_any(py)

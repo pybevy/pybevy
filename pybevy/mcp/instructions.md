@@ -89,7 +89,7 @@ See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, m
 - Use `GlobalAmbientLight` (Resource) not `AmbientLight` (Component) for global light
 - Changing `@component` or `@resource` field structure (add/remove fields, change storage mode) works with `reload` Full mode, but use `run_scene` if behavior is unexpected
 - Use `asset_server.load_image("path")` for images and `asset_server.load_audio("path")` for audio. The generic `asset_server.load(path)` requires an explicit asset type argument: `asset_server.load("path", Mesh)`.
-- For 3D models: `from pybevy.scene import SceneRoot, Scene` then `asset_server.load("model.glb#Scene0", Scene)`. Spawn with `commands.spawn(SceneRoot(handle), Transform.from_xyz(...))`. **GLB models often have origin at center** — a 1-unit-tall model spawned at Y=0 will be half-buried. Apply `y_offset = height / 2`. See `guide://3d-models`.
+- For 3D models: `from pybevy.world_serialization import WorldAssetRoot, WorldAsset` then `asset_server.load("model.glb#Scene0", WorldAsset)`. Spawn with `commands.spawn(WorldAssetRoot(handle), Transform.from_xyz(...))`. **GLB models often have origin at center** — a 1-unit-tall model spawned at Y=0 will be half-buried. Apply `y_offset = height / 2`. See `guide://3d-models`.
 - **Do NOT use `Text2d` in 3D scenes.** `Text2d` requires `Camera2d` and will not render with `Camera3d`. For text overlays, HUDs, or labels in 3D scenes, use UI `Text` (from `pybevy.ui`) with a `Node` component. See `guide://ui-text`.
 
 ## JSON Mutation Formats

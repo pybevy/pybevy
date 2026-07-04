@@ -237,7 +237,7 @@ class On(Generic[Unpack[OnTypes]]):
     - On[Add, ComponentType] - Observe component addition lifecycle events
     - On[Insert, ComponentType] - Observe component insertion lifecycle events
     - On[Remove, ComponentType] - Observe component removal lifecycle events
-    - On[Replace, ComponentType] - Observe component replacement lifecycle events
+    - On[Discard, ComponentType] - Observe component discard lifecycle events
     - On[Despawn, ComponentType] - Observe entity despawn lifecycle events
 
     Example:
@@ -303,11 +303,14 @@ class Remove:
     from entities via remove().
     """
 
-class Replace:
-    """Lifecycle event marker for component replacement.
+class Discard:
+    """Lifecycle event marker for component discard.
 
-    Use with On[Replace, ComponentType] to observe when components are replaced
-    (inserted when entity already has the component).
+    Use with On[Discard, ComponentType] to observe when a component value is
+    discarded (a new value is inserted while the entity already has the
+    component). Fires before the value is replaced, so observers can still
+    read the original component data. Named after bevy's Discard event
+    (formerly Replace).
     """
 
 class Despawn:

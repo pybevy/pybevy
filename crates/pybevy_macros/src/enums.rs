@@ -98,7 +98,10 @@ enum VariantKind {
     /// Empty tuple variant: `Variant()` - maps to Bevy's unit variant
     EmptyTuple,
     /// Single-field tuple variant: `Variant(T)` - passes through the value
-    DataTuple,
+    DataTuple {
+        /// Field is `Option<T>`; repr prints the inner value or `None`
+        is_option: bool,
+    },
 }
 
 pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -126,7 +129,11 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             syn::Fields::Unnamed(f) if f.unnamed.len() == 1 => {
                 // Auto-detect single-field tuple variants like Other(u16)
-                Some(VariantKind::DataTuple)
+                let is_option = matches!(
+                    &f.unnamed.first().expect("checked len").ty,
+                    Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Option")
+                );
+                Some(VariantKind::DataTuple { is_option })
             }
             _ => None,
         };
@@ -158,7 +165,7 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         match v.kind {
             VariantKind::Unit => quote! { #bevy_type::#name => #py_type::#name },
             VariantKind::EmptyTuple => quote! { #bevy_type::#name => #py_type::#name() },
-            VariantKind::DataTuple => quote! { #bevy_type::#name(v) => #py_type::#name(v) },
+            VariantKind::DataTuple { .. } => quote! { #bevy_type::#name(v) => #py_type::#name(v) },
         }
     });
 
@@ -168,7 +175,7 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         match v.kind {
             VariantKind::Unit => quote! { #py_type::#name => #bevy_type::#name },
             VariantKind::EmptyTuple => quote! { #py_type::#name() => #bevy_type::#name },
-            VariantKind::DataTuple => quote! { #py_type::#name(v) => #bevy_type::#name(v) },
+            VariantKind::DataTuple { .. } => quote! { #py_type::#name(v) => #bevy_type::#name(v) },
         }
     });
 
@@ -188,9 +195,16 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let repr_str = format!("{}.{}", type_repr_name, v.repr_name);
                 quote! { #py_type::#ident() => #repr_str.to_string() }
             }
-            VariantKind::DataTuple => {
+            VariantKind::DataTuple { is_option } => {
                 let repr_prefix = format!("{}.{}(", type_repr_name, v.repr_name);
-                quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, v) }
+                if is_option {
+                    quote! {
+                        #py_type::#ident(Some(v)) => format!("{}{})", #repr_prefix, v),
+                        #py_type::#ident(None) => format!("{}None)", #repr_prefix)
+                    }
+                } else {
+                    quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, v) }
+                }
             }
         }
     });

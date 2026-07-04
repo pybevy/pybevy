@@ -10,4 +10,6 @@ pub enum PyJustify {
     Center,
     Right,
     Justified,
+    Start,
+    End,
 }

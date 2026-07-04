@@ -41,7 +41,7 @@ def setup(
     commands.spawn(
         DirectionalLight(
             illuminance=8000.0,
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
             color=Color.srgb(1.0, 0.95, 0.85),
         ),
         Transform.IDENTITY.looking_to(Vec3(-1.0, -2.0, -1.5), Vec3.Y),

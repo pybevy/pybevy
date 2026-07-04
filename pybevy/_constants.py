@@ -30,6 +30,7 @@ def _apply() -> None:
     from .audio import PlaybackSettings, Volume
     from .camera import Exposure, Visibility
     from .color import Color, Laba, LinearRgba, Oklaba, Srgba, Xyza
+    from .image import RenderAssetUsages
     from .light import SunDisk
     from .math import Affine2, IVec2, Quat, Rot2, URect, UVec2, UVec3, Vec2, Vec3, Vec4
     from .post_process import Bloom
@@ -48,10 +49,12 @@ def _apply() -> None:
         (Xyza, ["BLACK", "WHITE"]),
         # camera
         (Visibility, ["INHERITED", "VISIBLE", "HIDDEN"]),
-        (Bloom, ["NATURAL", "ANAMORPHIC"]),
+        (Bloom, ["NATURAL", "ANAMORPHIC", "OLD_SCHOOL", "SCREEN_BLUR"]),
         (Exposure, ["SUNLIGHT", "OVERCAST", "INDOOR", "BLENDER"]),
+        # image
+        (RenderAssetUsages, ["MAIN_WORLD", "RENDER_WORLD"]),
         # light
-        (SunDisk, ["EARTH"]),
+        (SunDisk, ["EARTH", "OFF"]),
         # math
         (Vec2, [
             "ZERO", "ONE", "NEG_ONE", "MIN", "MAX",

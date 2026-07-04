@@ -54,7 +54,7 @@ def setup(
                 intensity=80000.0,
                 color=Color.srgb(1.0, 0.7, 0.3),
                 range=10.0,
-                shadows_enabled=True,
+                shadow_maps_enabled=True,
             ),
             Transform.from_xyz(x, 2.5, -4.0),
             Name(f"torch_{i}"),

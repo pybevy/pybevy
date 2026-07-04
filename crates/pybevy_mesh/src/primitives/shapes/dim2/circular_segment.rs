@@ -28,7 +28,7 @@ impl From<CircularSegment> for PyCircularSegment {
 #[pymethods]
 impl PyCircularSegment {
     #[new]
-    #[pyo3(signature = (radius = 1.0, half_angle = std::f32::consts::FRAC_PI_2, *, arc = None))]
+    #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * std::f32::consts::FRAC_PI_3, *, arc = None))]
     pub fn new(radius: f32, half_angle: f32, arc: Option<PyArc2d>) -> (Self, PyMeshable) {
         if let Some(a) = arc {
             return (Self(CircularSegment { arc: a.into() }), PyMeshable);

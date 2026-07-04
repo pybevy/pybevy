@@ -430,17 +430,6 @@ class Shader(Asset):
             New Shader instance
         """
 
-    def with_import_path(self, import_path: str) -> Shader:
-        """
-        Set the import path for this shader and return self for chaining.
-
-        Args:
-            import_path: The import path to set
-
-        Returns:
-            The same Shader instance for method chaining
-        """
-
     @property
     def path(self) -> str:
         """

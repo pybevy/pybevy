@@ -101,7 +101,7 @@ def setup(
         PointLight(
             intensity=100_000.0,
             color=Color.srgb(1.0, 0.0, 0.0),
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_xyz(1.0, 2.0, 0.0),
     )
@@ -123,7 +123,7 @@ def setup(
         SpotLight(
             intensity=100_000.0,
             color=Color.srgb(0.0, 1.0, 0.0),
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
             inner_angle=0.6,
             outer_angle=0.8,
         ),
@@ -147,7 +147,7 @@ def setup(
         PointLight(
             intensity=100_000.0,
             color=Color.srgb(0.0, 0.0, 1.0),
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_xyz(0.0, 4.0, 0.0),
     )
@@ -168,7 +168,7 @@ def setup(
     commands.spawn(
         DirectionalLight(
             illuminance=500.0,  # Roughly overcast day
-            shadows_enabled=True,
+            shadow_maps_enabled=True,
         ),
         Transform.from_xyz(0.0, 2.0, 0.0).with_rotation(
             Quat.from_rotation_x(-math.pi / 4.0)

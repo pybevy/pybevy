@@ -1,7 +1,4 @@
-use bevy::ecs::{
-    entity::Entity,
-    world::{EntityRef, World},
-};
+use bevy::ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World};
 use pybevy_reload::is_verbose;
 use pyo3::prelude::*;
 
@@ -75,11 +72,10 @@ pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
 /// - RenderDevice and render infrastructure
 /// - Plugin state
 pub fn clear_entities_and_resources(world: &mut World) {
-    // Despawn ALL entities (complete clean slate)
+    // Despawn ALL game entities (complete clean slate)
     let all_entities: Vec<Entity> = world
-        .query::<EntityRef>()
+        .query_filtered::<Entity, Without<IsResource>>()
         .iter(world)
-        .map(|e| e.id())
         .collect();
 
     if is_verbose() {

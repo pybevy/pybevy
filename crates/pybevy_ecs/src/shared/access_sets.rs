@@ -20,19 +20,19 @@ pub fn build_full_access_set(
     let mut access = FilteredAccess::default();
 
     for &id in components_to_write {
-        access.add_component_write(id);
+        access.add_write(id);
     }
     for &id in components_to_read {
-        access.add_component_read(id);
+        access.add_read(id);
     }
     for &id in with_filters {
         access.and_with(id);
     }
     for &id in resources_to_write {
-        access.add_resource_write(id);
+        access.add_write(id);
     }
     for &id in resources_to_read {
-        access.add_resource_read(id);
+        access.add_read(id);
     }
 
     set.add(access);
@@ -63,8 +63,8 @@ mod tests {
     #[test]
     fn empty_inputs_produces_empty_set() {
         let set = build_full_access_set(&[], &[], &[], &[], &[]);
-        assert!(!set.combined_access().has_any_component_read());
-        assert!(!set.combined_access().has_any_component_write());
+        assert!(!set.combined_access().has_any_read());
+        assert!(!set.combined_access().has_any_write());
     }
 
     #[test]
@@ -74,9 +74,9 @@ mod tests {
 
         let set = build_full_access_set(&[a, b], &[], &[], &[], &[]);
         let combined = set.combined_access();
-        assert!(combined.has_component_read(a));
-        assert!(combined.has_component_read(b));
-        assert!(!combined.has_component_write(a));
+        assert!(combined.has_read(a));
+        assert!(combined.has_read(b));
+        assert!(!combined.has_write(a));
     }
 
     #[test]
@@ -86,7 +86,7 @@ mod tests {
 
         let set = build_full_access_set(&[], &[a], &[], &[], &[]);
         let combined = set.combined_access();
-        assert!(combined.has_component_write(a));
+        assert!(combined.has_write(a));
     }
 
     #[test]
@@ -96,9 +96,9 @@ mod tests {
 
         let set = build_full_access_set(&[a], &[b], &[], &[], &[]);
         let combined = set.combined_access();
-        assert!(combined.has_component_read(a));
-        assert!(combined.has_component_write(b));
-        assert!(!combined.has_component_write(a));
+        assert!(combined.has_read(a));
+        assert!(combined.has_write(b));
+        assert!(!combined.has_write(a));
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod tests {
 
         let set = build_full_access_set(&[a], &[], &[], &[], &[]);
         let combined = set.combined_access();
-        assert!(!combined.has_component_read(b));
+        assert!(!combined.has_read(b));
     }
 
     #[test]
@@ -116,16 +116,16 @@ mod tests {
         let mut world = World::new();
         let (a, b, c) = ids(&mut world);
 
-        // a: component read, b: component write, c: resource read
-        // also register a as resource write to test resource tracking
+        // a: component read + resource write, b: component write, c: resource read.
+        // Resources are components, so reads/writes are tracked through the unified
+        // component-access API regardless of component vs resource origin.
         let set = build_full_access_set(&[a], &[b], &[], &[c], &[a]);
         let combined = set.combined_access();
-        assert!(combined.has_component_read(a));
-        assert!(combined.has_component_write(b));
-        assert!(!combined.has_component_read(c));
-        assert!(combined.has_resource_read(c));
-        assert!(combined.has_resource_write(a));
-        assert!(!combined.has_resource_read(b));
+        assert!(combined.has_read(a)); // a: component read
+        assert!(combined.has_write(a)); // a: resource write
+        assert!(combined.has_write(b)); // b: component write
+        assert!(combined.has_read(c)); // c: resource read
+        assert!(!combined.has_write(c)); // c is read-only (no write access)
     }
 
     #[test]
@@ -135,8 +135,8 @@ mod tests {
 
         let set = build_full_access_set(&[], &[], &[], &[a], &[]);
         let combined = set.combined_access();
-        assert!(combined.has_resource_read(a));
-        assert!(!combined.has_resource_write(a));
+        assert!(combined.has_read(a));
+        assert!(!combined.has_write(a));
     }
 
     #[test]
@@ -146,7 +146,7 @@ mod tests {
 
         let set = build_full_access_set(&[], &[], &[], &[], &[a]);
         let combined = set.combined_access();
-        assert!(combined.has_resource_write(a));
+        assert!(combined.has_write(a));
     }
 
     #[test]
@@ -156,8 +156,8 @@ mod tests {
 
         let set = build_full_access_set(&[a], &[], &[], &[], &[b]);
         let combined = set.combined_access();
-        assert!(combined.has_component_read(a));
-        assert!(combined.has_resource_write(b));
+        assert!(combined.has_read(a));
+        assert!(combined.has_write(b));
     }
 
     #[test]

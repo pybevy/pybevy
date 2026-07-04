@@ -17,8 +17,14 @@ impl PySunDisk {
         Py::new(py, Self::from_owned(SunDisk::EARTH))
     }
 
+    #[staticmethod]
+    #[pyo3(name = "OFF")]
+    pub fn off(py: Python<'_>) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(SunDisk::OFF))
+    }
+
     #[new]
-    #[pyo3(signature = (angular_size = 0.00935_f32, intensity = 1.0))]
+    #[pyo3(signature = (angular_size = SunDisk::EARTH.angular_size, intensity = SunDisk::EARTH.intensity))]
     pub fn new(angular_size: f32, intensity: f32) -> (Self, PyComponent) {
         Self::from_owned(SunDisk {
             angular_size,

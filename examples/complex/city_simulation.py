@@ -211,7 +211,7 @@ def setup_city(
                                     range=8.0,
                                     radius=0.1,
                                     color=Color.srgb(1.0, 0.0, 0.0),
-                                    shadows_enabled=False,
+                                    shadow_maps_enabled=False,
                                 ),
                                 Transform.from_xyz(
                                     center_x + corner_x,
@@ -268,7 +268,7 @@ def setup_city(
                         range=12.0,
                         radius=0.2,
                         color=Color.srgb(1.0, 0.9, 0.7),
-                        shadows_enabled=False,
+                        shadow_maps_enabled=False,
                     ),
                     Transform.from_xyz(light_x, light_height, z_pos),
                 )
@@ -308,7 +308,7 @@ def setup_city(
                         range=12.0,
                         radius=0.2,
                         color=Color.srgb(1.0, 0.9, 0.7),
-                        shadows_enabled=False,
+                        shadow_maps_enabled=False,
                     ),
                     Transform.from_xyz(x_pos, light_height, light_z),
                 )
@@ -385,14 +385,14 @@ def setup_scene(
     # Directional light (sun)
     """
     commands.spawn(
-        DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+        DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
         Transform.from_xyz(center, 50.0, center).looking_at(
             Vec3(center, 0, center), Vec3.Y
         ),
     )
 
     commands.spawn(
-        PointLight(shadows_enabled=True, intensity=2_000_000, range=1000),
+        PointLight(shadow_maps_enabled=True, intensity=2_000_000, range=1000),
         Transform.from_xyz(center, 50.0, center),
     )
     """

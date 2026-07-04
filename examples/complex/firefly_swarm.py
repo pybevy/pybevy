@@ -200,7 +200,7 @@ def setup_swarm(
                         intensity=initial_intensity,
                         color=Color.srgb(1.0, 0.9, 0.5) if is_alpha else Color.srgb(1.0, 0.95, 0.6),
                         range=50.0,
-                        shadows_enabled=False,
+                        shadow_maps_enabled=False,
                     )
                 )
                 total_lights += 1

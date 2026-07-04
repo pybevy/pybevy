@@ -195,7 +195,7 @@ def setup_crystals(
                 range=15.0,
                 radius=0.5,
                 color=Color.linear_rgb(color.red / 200.0, color.green / 200.0, color.blue / 200.0),
-                shadows_enabled=False,
+                shadow_maps_enabled=False,
             ),
             Transform.from_xyz(x, 1.5, z),
         )
@@ -217,7 +217,7 @@ def setup_volumetric_lights(commands: Commands) -> None:
                 range=30.0,
                 radius=0.3,
                 color=Color.srgb(r, g, b),
-                shadows_enabled=True,
+                shadow_maps_enabled=True,
                 inner_angle=0.3,
                 outer_angle=0.6,
             ),
@@ -234,7 +234,7 @@ def setup_volumetric_lights(commands: Commands) -> None:
         DirectionalLight(
             illuminance=500.0,
             color=Color.srgb(0.6, 0.7, 0.9),
-            shadows_enabled=False,
+            shadow_maps_enabled=False,
         ),
         Transform.IDENTITY.looking_at(Vec3(-0.3, -1.0, -0.5), Vec3.Y),
     )

@@ -12,14 +12,13 @@ pyo3 = { workspace = true, features = ["macros"] }
 pybevy_color = { workspace = true }
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
+pybevy_material = { workspace = true }
 pybevy_math = { workspace = true }
+pybevy_mesh = { workspace = true }
 pybevy_render = { workspace = true }
 numpy = { workspace = true }
 pybevy_shader_types = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = [
-    "bevy_pbr",
-    "bevy_render",
-]
+features = ["bevy_pbr", "bevy_render"]

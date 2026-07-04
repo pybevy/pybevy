@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(TextureDimension)]
-#[pyclass(name = "TextureDimension")]
+#[pyclass(name = "TextureDimension", eq)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTextureDimension {
     D1,

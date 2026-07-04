@@ -68,35 +68,6 @@ class RenderPlugin(Plugin):
 
     def build(self, app: App) -> None: ...
 
-class AlphaMode:
-    """Alpha blending mode for materials.
-
-    Can be used either as callable constructors (``AlphaMode.Blend()``) or
-    pre-built class attributes (``AlphaMode.BLEND``).
-    """
-
-    OPAQUE: AlphaMode
-    BLEND: AlphaMode
-    PREMULTIPLIED: AlphaMode
-    ADD: AlphaMode
-    MULTIPLY: AlphaMode
-    ALPHA_TO_COVERAGE: AlphaMode
-
-    @staticmethod
-    def Opaque() -> AlphaMode: ...
-    @staticmethod
-    def Mask(alpha: float) -> AlphaMode: ...
-    @staticmethod
-    def Blend() -> AlphaMode: ...
-    @staticmethod
-    def Premultiplied() -> AlphaMode: ...
-    @staticmethod
-    def Add() -> AlphaMode: ...
-    @staticmethod
-    def Multiply() -> AlphaMode: ...
-    @staticmethod
-    def AlphaToCoverage() -> AlphaMode: ...
-
 class ColorGradingSection:
     """Color grading values applied to a specific tonal range (shadows, midtones, or highlights).
 

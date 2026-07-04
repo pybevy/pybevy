@@ -11,10 +11,6 @@ pub enum PyGltfAssetLabel {
         mesh: usize,
         primitive: usize,
     },
-    MorphTarget {
-        mesh: usize,
-        primitive: usize,
-    },
     Texture(usize),
     Material {
         index: usize,
@@ -39,9 +35,6 @@ impl PyGltfAssetLabel {
             PyGltfAssetLabel::Mesh(index) => format!("Mesh{index}"),
             PyGltfAssetLabel::Primitive { mesh, primitive } => {
                 format!("Mesh{mesh}/Primitive{primitive}")
-            }
-            PyGltfAssetLabel::MorphTarget { mesh, primitive } => {
-                format!("Mesh{mesh}/Primitive{primitive}/MorphTargets")
             }
             PyGltfAssetLabel::Texture(index) => format!("Texture{index}"),
             PyGltfAssetLabel::Material {

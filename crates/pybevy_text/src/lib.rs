@@ -3,8 +3,13 @@ pub mod font_atlas;
 pub mod font_atlas_sets;
 pub mod font_feature_tag;
 pub mod font_features;
+pub mod font_hinting;
+pub mod font_size;
 pub mod font_smoothing;
+pub mod font_source;
+pub mod font_style;
 pub mod font_weight;
+pub mod font_width;
 pub mod justify;
 pub mod line_break;
 pub mod line_height;
@@ -23,10 +28,12 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        font::PyFont, font_weight::PyFontWeight, justify::PyJustify, line_break::PyLineBreak,
-        plugin::PyTextPlugin, text_background_color::PyTextBackgroundColor,
-        text_color::PyTextColor, text_font::PyTextFont, text_layout::PyTextLayout,
-        text_span::PyTextSpan, text2d::PyText2d, text2d_shadow::PyText2dShadow,
+        font::PyFont, font_hinting::PyFontHinting, font_size::PyFontSize,
+        font_source::PyFontSource, font_style::PyFontStyle, font_weight::PyFontWeight,
+        font_width::PyFontWidth, justify::PyJustify, line_break::PyLineBreak, plugin::PyTextPlugin,
+        text_background_color::PyTextBackgroundColor, text_color::PyTextColor,
+        text_font::PyTextFont, text_layout::PyTextLayout, text_span::PyTextSpan, text2d::PyText2d,
+        text2d_shadow::PyText2dShadow,
     };
 }
 
@@ -50,8 +57,13 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<font_atlas_sets::PyFontAtlasSet>()?;
 
     m.add_class::<font_features::PyFontFeatures>()?;
+    m.add_class::<font_size::PyFontSize>()?;
+    m.add_class::<font_source::PyFontSource>()?;
     m.add_class::<font_smoothing::PyFontSmoothing>()?;
+    m.add_class::<font_style::PyFontStyle>()?;
     m.add_class::<font_weight::PyFontWeight>()?;
+    m.add_class::<font_width::PyFontWidth>()?;
+    m.add_class::<font_hinting::PyFontHinting>()?;
     m.add_class::<justify::PyJustify>()?;
     m.add_class::<line_break::PyLineBreak>()?;
     m.add_class::<line_height::PyLineHeight>()?;

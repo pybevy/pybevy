@@ -28,7 +28,7 @@ impl From<RegularPolygon> for PyRegularPolygon {
 #[pymethods]
 impl PyRegularPolygon {
     #[new]
-    #[pyo3(signature = (circumradius = 1.0, sides = 6))]
+    #[pyo3(signature = (circumradius = 0.5, sides = 6))]
     pub fn new(circumradius: f32, sides: u32) -> (Self, PyMeshable) {
         (Self(RegularPolygon::new(circumradius, sides)), PyMeshable)
     }

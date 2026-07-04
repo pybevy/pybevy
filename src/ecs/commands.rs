@@ -135,6 +135,8 @@ impl PyCommands {
         self.validity.clone()
     }
 
+    // validity-checked raw pointer access, see docs/safety.md
+    #[allow(clippy::mut_from_ref)]
     fn commands_mut(&self) -> PyResult<&mut Commands<'_, '_>> {
         self.validity.check()?;
         if self.is_world {
@@ -145,6 +147,8 @@ impl PyCommands {
         Ok(unsafe { &mut *(self.commands_ptr as *mut Commands) })
     }
 
+    // validity-checked raw pointer access, see docs/safety.md
+    #[allow(clippy::mut_from_ref)]
     fn world_mut(&self) -> PyResult<&mut World> {
         self.validity.check()?;
         if !self.is_world {
@@ -156,6 +160,8 @@ impl PyCommands {
     }
 
     /// Get world access if this is world-backed, otherwise return None
+    // validity-checked raw pointer access, see docs/safety.md
+    #[allow(clippy::mut_from_ref)]
     pub(crate) fn try_world_mut(&self) -> PyResult<Option<&mut World>> {
         self.validity.check()?;
         if self.is_world {
@@ -217,7 +223,7 @@ pub(crate) fn insert_components_to_entity_helper(
             // Immediate execution path
             let world_ptr = commands.commands_ptr as *mut World;
 
-            // Check which components already exist (for Replace)
+            // Check which components already exist (for Discard)
             let existing_components = {
                 let world = unsafe { &*(commands.commands_ptr as *const World) };
                 component_types
@@ -229,9 +235,9 @@ pub(crate) fn insert_components_to_entity_helper(
                     .collect::<Vec<_>>()
             };
 
-            // Fire Replace BEFORE the insert (so observers can read old value)
+            // Fire Discard BEFORE the insert (so observers can read old value)
             if !existing_components.is_empty() {
-                PyWorld::trigger_lifecycle_events_for_replace(
+                PyWorld::trigger_lifecycle_events_for_discard(
                     world_ptr,
                     entity_id,
                     &existing_components,
@@ -245,10 +251,10 @@ pub(crate) fn insert_components_to_entity_helper(
             PyWorld::trigger_lifecycle_events_for_insert(world_ptr, entity_id, &component_types);
         } else {
             // Deferred execution path
-            // Queue Replace check+trigger BEFORE the inserts (at apply time)
-            let component_types_for_replace = component_types.clone();
+            // Queue Discard check+trigger BEFORE the inserts (at apply time)
+            let component_types_for_discard = component_types.clone();
             commands.execute_or_queue(move |world| {
-                let existing: Vec<_> = component_types_for_replace
+                let existing: Vec<_> = component_types_for_discard
                     .iter()
                     .filter(|comp_type| {
                         crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
@@ -257,7 +263,7 @@ pub(crate) fn insert_components_to_entity_helper(
                     .collect();
 
                 if !existing.is_empty() {
-                    PyWorld::trigger_lifecycle_events_for_replace(
+                    PyWorld::trigger_lifecycle_events_for_discard(
                         world as *mut World,
                         entity_id,
                         &existing,

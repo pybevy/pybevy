@@ -9,13 +9,13 @@ Every 3D scene should start with a warm key light + cool fill light. Single-ligh
 ```python
 # Key light: warm, strong, shadows
 commands.spawn(
-    DirectionalLight(illuminance=7000.0, shadows_enabled=True,
+    DirectionalLight(illuminance=7000.0, shadow_maps_enabled=True,
                      color=Color.srgb(1.0, 0.95, 0.85)),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.6, 0.4, 0.0)),
 )
 # Fill light: cool, ~40% of key, no shadows, opposite direction
 commands.spawn(
-    DirectionalLight(illuminance=3000.0, shadows_enabled=False,
+    DirectionalLight(illuminance=3000.0, shadow_maps_enabled=False,
                      color=Color.srgb(0.6, 0.7, 0.9)),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.3, -1.2, 0.0)),
 )
@@ -36,7 +36,7 @@ commands.spawn(
     DirectionalLight(
         illuminance=10000.0,       # Bright sunny day
         color=Color.srgb(1.0, 0.95, 0.85),
-        shadows_enabled=True,
+        shadow_maps_enabled=True,
     ),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
 )
@@ -64,7 +64,7 @@ commands.spawn(
         intensity=80000.0,
         color=Color.srgb(1.0, 0.7, 0.3),  # Warm torch color
         range=8.0,
-        shadows_enabled=True,
+        shadow_maps_enabled=True,
     ),
     Transform.from_xyz(2.0, 3.0, 0.0),
 )
@@ -88,7 +88,7 @@ commands.spawn(
     SpotLight(
         intensity=100000.0,
         color=Color.srgb(0.0, 1.0, 0.0),
-        shadows_enabled=True,
+        shadow_maps_enabled=True,
         inner_angle=0.6,  # Full-brightness cone (radians)
         outer_angle=0.8,  # Falloff cone edge
     ),
@@ -187,14 +187,14 @@ commands.spawn(
 `Atmosphere` renders a physically-based sky dome with scattering. Requires a `ScatteringMedium` asset.
 
 ```python
-from pybevy.pbr import ScatteringMedium, Atmosphere
+from pybevy.light import ScatteringMedium, Atmosphere
 
-medium_handle = mediums.add(ScatteringMedium.earthlike())
+medium_handle = mediums.add(ScatteringMedium.earth())
 
 commands.spawn(
     Camera3d(),
     Transform.from_xyz(5, 5, 5).looking_at(Vec3.ZERO, Vec3.Y),
-    Atmosphere.earthlike(medium_handle),
+    Atmosphere.earth(medium_handle),
 )
 ```
 
@@ -346,12 +346,12 @@ A single directional light leaves one side of every object black. Always add a *
 ```python
 # Key light (warm, shadows)
 commands.spawn(
-    DirectionalLight(illuminance=10000.0, color=Color.srgb(1.0, 0.95, 0.85), shadows_enabled=True),
+    DirectionalLight(illuminance=10000.0, color=Color.srgb(1.0, 0.95, 0.85), shadow_maps_enabled=True),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
 )
 # Fill light (cool, no shadows, ~50% of key)
 commands.spawn(
-    DirectionalLight(illuminance=5000.0, color=Color.srgb(0.7, 0.75, 0.9), shadows_enabled=False),
+    DirectionalLight(illuminance=5000.0, color=Color.srgb(0.7, 0.75, 0.9), shadow_maps_enabled=False),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.5, -1.2, 0.0)),
 )
 ```
@@ -367,7 +367,7 @@ commands.spawn(
 ### Bright Outdoor Scene
 ```python
 commands.spawn(
-    DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+    DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
 )
 commands.insert_resource(GlobalAmbientLight(brightness=300.0))
@@ -377,7 +377,7 @@ commands.insert_resource(GlobalAmbientLight(brightness=300.0))
 ```python
 commands.insert_resource(GlobalAmbientLight(brightness=500.0, color=Color.srgb(0.35, 0.3, 0.4)))
 commands.spawn(
-    PointLight(intensity=200000.0, color=Color.srgb(1.0, 0.7, 0.3), range=12.0, shadows_enabled=True),
+    PointLight(intensity=200000.0, color=Color.srgb(1.0, 0.7, 0.3), range=12.0, shadow_maps_enabled=True),
     Transform.from_xyz(0, 3, 0),
 )
 # Use 4+ PointLights to eliminate dark corners. Add fill lights at 100k+ in corners.
@@ -390,13 +390,13 @@ commands.insert_resource(GlobalAmbientLight(brightness=500.0, color=Color.srgb(0
 commands.insert_resource(ClearColor(Color.srgb(0.04, 0.03, 0.05)))
 # Weak directional for general fill
 commands.spawn(
-    DirectionalLight(illuminance=8000.0, shadows_enabled=True),
+    DirectionalLight(illuminance=8000.0, shadow_maps_enabled=True),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -1.2, 0.3, 0.0)),
 )
 # Harsh overhead spots (repeat for each light position)
 commands.spawn(
     SpotLight(intensity=800000.0, color=Color.srgb(1.0, 0.85, 0.55),
-              shadows_enabled=True, inner_angle=0.3, outer_angle=0.7, range=15.0),
+              shadow_maps_enabled=True, inner_angle=0.3, outer_angle=0.7, range=15.0),
     Transform.from_xyz(0.0, 7.0, 0.0).looking_at(Vec3(0.0, 0.0, 0.0), Vec3.Z),
 )
 # On camera: interior fog (keep density low for enclosed spaces)
@@ -439,7 +439,7 @@ commands.spawn(
 
 # Sun that creates god rays
 commands.spawn(
-    DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+    DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
     VolumetricLight(),      # This light affects fog
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
 )
@@ -525,7 +525,7 @@ from pybevy.light import DirectionalLightTexture, SpotLightTexture, PointLightTe
 
 # Directional light with a projected pattern (e.g., window frame shadow)
 commands.spawn(
-    DirectionalLight(illuminance=10000.0, shadows_enabled=True),
+    DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
     DirectionalLightTexture(
         image=asset_server.load("textures/window_cookie.png"),
         tiled=False,
@@ -535,7 +535,7 @@ commands.spawn(
 
 # Spot light with gobo texture
 commands.spawn(
-    SpotLight(intensity=100000.0, shadows_enabled=True, outer_angle=0.6),
+    SpotLight(intensity=100000.0, shadow_maps_enabled=True, outer_angle=0.6),
     SpotLightTexture(image=asset_server.load("textures/gobo.png")),
     Transform.from_xyz(0, 5, 0).looking_at(Vec3.ZERO, Vec3.Z),
 )
@@ -574,7 +574,7 @@ from pybevy.light import AtmosphereEnvironmentMapLight
 
 commands.spawn(
     Camera3d(),
-    Atmosphere.earthlike(medium_handle),
+    Atmosphere.earth(medium_handle),
     AtmosphereEnvironmentMapLight(intensity=1.0),
 )
 ```
@@ -630,9 +630,9 @@ The `Transform` scale defines the volume the probes cover.
      - Does range affect shadow cost?
      - SpotLight vs PointLight shadow cost comparison?
      Current rough guidance: shadow-casting point lights are the most expensive.
-     Disable shadows_enabled on decorative/fill lights. -->
+     Disable shadow_maps_enabled on decorative/fill lights. -->
 
-**General rule:** Shadow-casting lights are expensive. For scenes with many lights (10+), set `shadows_enabled=False` on decorative and fill lights, and reserve `shadows_enabled=True` for key lights (sun, main spot, 1–2 hero point lights).
+**General rule:** Shadow-casting lights are expensive. For scenes with many lights (10+), set `shadow_maps_enabled=False` on decorative and fill lights, and reserve `shadow_maps_enabled=True` for key lights (sun, main spot, 1–2 hero point lights).
 
 ## Related Guides
 

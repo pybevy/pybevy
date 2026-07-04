@@ -85,8 +85,12 @@ impl PyAssetServer {
         py_handle.into_py_any(py)
     }
 
-    pub fn load_scene<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        self.load_by_name(py, path, "Scene")
+    pub fn load_world_asset<'py>(
+        &self,
+        py: Python,
+        path: Bound<'py, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.load_by_name(py, path, "WorldAsset")
     }
 
     pub fn load_image<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
@@ -118,9 +122,11 @@ impl PyAssetServer {
                 let image_settings: PyImageLoaderSettings = settings.extract()?;
                 let bevy_settings: bevy::image::ImageLoaderSettings = image_settings.into();
                 asset_server
-                    .load_with_settings::<Image, _>(asset_path, move |s| {
+                    .load_builder()
+                    .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
                         *s = bevy_settings.clone();
                     })
+                    .load::<Image>(asset_path)
                     .untyped()
             }
             name => {
@@ -150,9 +156,11 @@ impl PyAssetServer {
         let asset_path = extract_asset_path(&path)?;
         let bevy_settings: bevy::image::ImageLoaderSettings = settings.into();
         let untyped_handle = asset_server
-            .load_with_settings::<Image, _>(asset_path, move |s| {
+            .load_builder()
+            .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
                 *s = bevy_settings.clone();
             })
+            .load::<Image>(asset_path)
             .untyped();
         let py_handle = PyHandle::from_untyped(untyped_handle, bridge.py_type_ptr());
         py_handle.into_py_any(py)

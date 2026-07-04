@@ -45,7 +45,7 @@ def setup(
 
     # Light
     commands.spawn(
-        PointLight(shadows_enabled=True),
+        PointLight(shadow_maps_enabled=True),
         Transform.from_xyz(4.0, 8.0, 4.0),
     )
 

@@ -11,7 +11,7 @@ homepage = "https://pybevy.com"
 pyo3 = { workspace = true, features = ["macros"] }
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
-accesskit = { version = "0.21", default-features = false }
+accesskit = { version = "0.24", default-features = false }
 
 [dependencies.bevy]
 workspace = true

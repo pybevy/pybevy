@@ -4,10 +4,11 @@ use bevy::{
 };
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pybevy_math::{affine3a::PyAffine3A, mat3a::PyMat3A, vec3::PyVec3, vec3a::PyVec3A};
+use pybevy_math::{
+    affine3a::PyAffine3A, mat3a::PyMat3A, primitives::half_space::PyHalfSpace, vec3::PyVec3,
+    vec3a::PyVec3A,
+};
 use pyo3::prelude::*;
-
-use crate::half_space::PyHalfSpace;
 
 #[pycomponent(Aabb, bridge)]
 #[pyclass(name = "Aabb", extends = PyComponent)]

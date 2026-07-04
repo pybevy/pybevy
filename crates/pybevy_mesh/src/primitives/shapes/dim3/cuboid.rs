@@ -38,8 +38,8 @@ impl PyCuboid {
     }
 
     #[staticmethod]
-    pub fn from_corners(py: Python, min: PyVec3, max: PyVec3) -> PyResult<Py<Self>> {
-        let cuboid = Cuboid::from_corners(min.into(), max.into());
+    pub fn from_corners(py: Python, point1: PyVec3, point2: PyVec3) -> PyResult<Py<Self>> {
+        let cuboid = Cuboid::from_corners(point1.into(), point2.into());
         Py::new(py, (Self(cuboid), PyMeshable))
     }
 

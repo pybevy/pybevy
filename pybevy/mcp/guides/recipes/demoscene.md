@@ -161,7 +161,7 @@ def setup(
 
     commands.spawn(
         DirectionalLight(illuminance=5000.0, color=Color.srgb(1.0, 0.95, 0.9),
-                         shadows_enabled=True),
+                         shadow_maps_enabled=True),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.9, 0.5, 0.0)),
     )
     commands.insert_resource(GlobalAmbientLight(brightness=200.0, color=Color.srgb(0.4, 0.4, 0.7)))

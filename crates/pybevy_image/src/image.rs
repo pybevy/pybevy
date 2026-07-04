@@ -2,8 +2,8 @@ use std::io::Cursor;
 
 use bevy::{
     asset::RenderAssetUsages,
-    image::{BevyDefault, Image},
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+    image::{Image, TextureFormatPixelInfo},
+    render::render_resource::{Extent3d, TextureFormat, TextureUsages},
 };
 use image::{ImageFormat as RustImageFormat, codecs::jpeg::JpegEncoder};
 use numpy::{
@@ -17,7 +17,10 @@ use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_wgpu::{
     extent3d::PyExtent3d, texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
 };
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 use crate::{image_format::PyImageFormat, loader_settings::PyImageSampler};
 
@@ -60,16 +63,49 @@ impl From<PyRenderAssetUsages> for RenderAssetUsages {
     }
 }
 
+impl Default for PyRenderAssetUsages {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[pymethods]
 impl PyRenderAssetUsages {
-    #[getter]
-    pub fn main_world(&self) -> bool {
-        self.inner.contains(RenderAssetUsages::MAIN_WORLD)
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: RenderAssetUsages::default(),
+        }
     }
 
-    #[getter]
-    pub fn render_world(&self) -> bool {
-        self.inner.contains(RenderAssetUsages::RENDER_WORLD)
+    #[staticmethod]
+    #[pyo3(name = "MAIN_WORLD")]
+    pub fn main_world_flag() -> Self {
+        Self {
+            inner: RenderAssetUsages::MAIN_WORLD,
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "RENDER_WORLD")]
+    pub fn render_world_flag() -> Self {
+        Self {
+            inner: RenderAssetUsages::RENDER_WORLD,
+        }
+    }
+
+    fn __or__(&self, other: &Self) -> Self {
+        Self {
+            inner: self.inner | other.inner,
+        }
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    pub fn contains(&self, other: &Self) -> bool {
+        self.inner.contains(other.inner)
     }
 
     pub fn __repr__(&self) -> String {
@@ -175,27 +211,52 @@ impl PyImage {
         width: 1,
         height: 1,
         depth_or_array_layers: 1
-    }, data=None))]
-    pub fn new(size: PyExtent3d, data: Option<Vec<u8>>) -> PyResult<(Self, PyAsset)> {
+    }, dimension=None, data=None, format=None, asset_usage=None))]
+    pub fn new(
+        size: PyExtent3d,
+        dimension: Option<PyTextureDimension>,
+        data: Option<Vec<u8>>,
+        format: Option<PyTextureFormat>,
+        asset_usage: Option<PyRenderAssetUsages>,
+    ) -> PyResult<(Self, PyAsset)> {
         let extent: Extent3d = size.into();
+        let format: TextureFormat = format.unwrap_or(PyTextureFormat::Rgba8UnormSrgb).into();
         let pixel_count = (extent.width * extent.height * extent.depth_or_array_layers) as usize;
-        let data = data.unwrap_or_else(|| {
-            // Default to white pixels (RGBA8: 255, 255, 255, 255)
-            let pixel = [255u8, 255u8, 255u8, 255u8];
-            pixel
-                .iter()
-                .copied()
-                .cycle()
-                .take(pixel_count * 4)
-                .collect()
-        });
+        let data = match data {
+            Some(data) => {
+                if let Ok(pixel_size) = format.pixel_size() {
+                    let expected = pixel_count * pixel_size;
+                    if data.len() != expected {
+                        return Err(PyValueError::new_err(format!(
+                            "data length {} does not match {}x{}x{} with format {:?} (expected {})",
+                            data.len(),
+                            extent.width,
+                            extent.height,
+                            extent.depth_or_array_layers,
+                            format,
+                            expected
+                        )));
+                    }
+                }
+                data
+            }
+            // Default to max-value bytes: white for 8-bit unorm formats
+            None => {
+                let pixel_size = format.pixel_size().map_err(|_| {
+                    PyValueError::new_err(format!(
+                        "cannot default-fill data for format {format:?}; pass data explicitly"
+                    ))
+                })?;
+                vec![255u8; pixel_count * pixel_size]
+            }
+        };
 
         Ok(Self::from_owned(Image::new(
             extent,
-            TextureDimension::D2,
+            dimension.unwrap_or(PyTextureDimension::D2).into(),
             data,
-            TextureFormat::bevy_default(),
-            RenderAssetUsages::default(),
+            format,
+            asset_usage.map(Into::into).unwrap_or_default(),
         )))
     }
 
@@ -243,7 +304,7 @@ impl PyImage {
     #[staticmethod]
     pub fn new_render_target(py: Python<'_>, width: u32, height: u32) -> PyResult<Py<PyImage>> {
         let mut image =
-            Image::new_target_texture(width, height, TextureFormat::bevy_default(), None);
+            Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
         image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
 
         Py::new(py, Self::from_owned(image))
@@ -366,13 +427,16 @@ impl PyImage {
 
     pub fn pixel_data_offset(&self, coords: PyUVec3) -> PyResult<Option<usize>> {
         image_with!(self, |image: &Image| {
-            Ok(image.pixel_data_offset(coords.into()))
+            Ok(image.pixel_data_offset(coords.into()).ok())
         })
     }
 
     pub fn pixel_bytes(&self, coords: PyUVec3) -> PyResult<Option<Vec<u8>>> {
         image_with!(self, |image: &Image| {
-            Ok(image.pixel_bytes(coords.into()).map(|bytes| bytes.to_vec()))
+            Ok(image
+                .pixel_bytes(coords.into())
+                .ok()
+                .map(|bytes| bytes.to_vec()))
         })
     }
 
@@ -383,7 +447,7 @@ impl PyImage {
     ) -> PyResult<Py<ImagePixelContextMut>> {
         image_with_mut!(self, |image: &mut Image| {
             let bevy_coords = coords.into();
-            let pixel_bytes = image.pixel_bytes_mut(bevy_coords).ok_or_else(|| {
+            let pixel_bytes = image.pixel_bytes_mut(bevy_coords).map_err(|_| {
                 PyRuntimeError::new_err("Invalid pixel coordinates or no image data")
             })?;
 

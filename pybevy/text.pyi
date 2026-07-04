@@ -1,11 +1,11 @@
+from collections.abc import Iterator
 from typing import ClassVar
-
-import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.color import Color
-from pybevy.ecs import Batchable, Component, Resource
+from pybevy.ecs import Component, Resource
+from pybevy.image import TextureAtlasLayout
 from pybevy.math import Vec2
 
 class Font(Asset):
@@ -64,12 +64,12 @@ class FontAtlas:
     """
 
     @property
-    def texture(self) -> Handle:
-        """Handle to the Image containing the rasterized glyphs."""
+    def texture_atlas(self) -> TextureAtlasLayout:
+        """The layout for the font atlas (a snapshot copy)."""
 
     @property
-    def texture_atlas(self) -> Handle:
-        """Handle to the TextureAtlasLayout describing glyph positions."""
+    def texture(self) -> Handle:
+        """Handle to the Image containing the rasterized glyphs."""
 
 class FontAtlasKey:
     """Key identifying a font atlas by size and smoothing method.
@@ -78,8 +78,24 @@ class FontAtlasKey:
     """
 
     @property
+    def id(self) -> int:
+        """Identifier of the font face this atlas belongs to."""
+
+    @property
+    def index(self) -> int:
+        """Index of the font within its source collection."""
+
+    @property
     def font_size_bits(self) -> int:
         """The font size encoded as bits (binary representation of f32)."""
+
+    @property
+    def variations_hash(self) -> int:
+        """Hash of the font variation axis settings."""
+
+    @property
+    def hinting(self) -> FontHinting:
+        """The font hinting strategy used for this atlas."""
 
     @property
     def font_smoothing(self) -> FontSmoothing:
@@ -98,32 +114,21 @@ class FontAtlasSet(Resource):
         >>> from pybevy.text import FontAtlasSet
         >>> from pybevy.ecs import Res
         >>>
-        >>> def debug_atlases(
-        >>>     font_atlas_set: Res[FontAtlasSet],
-        >>>     font_handle: Res[MyFontHandle]
-        >>> ) -> None:
-        >>>     entries = font_atlas_set.get_by_font(font_handle.0)
-        >>>     for key, atlases in entries:
+        >>> def debug_atlases(font_atlas_set: Res[FontAtlasSet]) -> None:
+        >>>     for key, atlases in font_atlas_set.items():
         >>>         print(f"Font size bits: {key.font_size_bits}")
         >>>         for atlas in atlases:
         >>>             print(f"  Texture: {atlas.texture}")
     """
 
-    def get_by_font(self, handle: Handle) -> list[tuple[FontAtlasKey, list[FontAtlas]]]:
-        """Get all atlas entries for a given font handle.
+    def items(self) -> list[tuple[FontAtlasKey, list[FontAtlas]]]:
+        """Return all (FontAtlasKey, list[FontAtlas]) entries in the set."""
 
-        Args:
-            handle: Handle/AssetId of a Font asset
+    def __iter__(self) -> Iterator[FontAtlasKey]:
+        """Iterate over the FontAtlasKey entries, like iterating a dict yields its keys."""
 
-        Returns:
-            List of (FontAtlasKey, list[FontAtlas]) tuples for the font
-        """
-
-    def len(self) -> int:
+    def __len__(self) -> int:
         """Return the total number of font atlas entries."""
-
-    def is_empty(self) -> bool:
-        """Return True if the set has no font atlases."""
 
 class LineHeight(Component):
     """Line height specification for text.
@@ -226,6 +231,74 @@ class FontWeight:
 
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
+
+class FontWidth:
+    """The width (stretch) of a font face as a float ratio (0.5-2.0).
+
+    Offers named presets matching bevy's `FontWidth` constants.
+
+    Example:
+        >>> from pybevy.text import TextFont, FontWidth
+        >>> TextFont(font_size=24.0, width=FontWidth.CONDENSED)
+        >>> TextFont(font_size=24.0, width=FontWidth(0.8))
+    """
+
+    ULTRA_CONDENSED: ClassVar[FontWidth]
+    EXTRA_CONDENSED: ClassVar[FontWidth]
+    CONDENSED: ClassVar[FontWidth]
+    SEMI_CONDENSED: ClassVar[FontWidth]
+    NORMAL: ClassVar[FontWidth]
+    """The default font width."""
+    SEMI_EXPANDED: ClassVar[FontWidth]
+    EXPANDED: ClassVar[FontWidth]
+    EXTRA_EXPANDED: ClassVar[FontWidth]
+    ULTRA_EXPANDED: ClassVar[FontWidth]
+
+    def __init__(self, value: float = 1.0) -> None:
+        """Create a FontWidth with the given ratio (default: 1.0 / NORMAL)."""
+
+    @property
+    def value(self) -> float:
+        """The width ratio (0.5-2.0)."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+class FontStyle:
+    """The slant style of a font face: normal, italic, or oblique.
+
+    Example:
+        >>> from pybevy.text import TextFont, FontStyle
+        >>> TextFont(font_size=24.0, style=FontStyle.Italic())
+        >>> TextFont(font_size=24.0, style=FontStyle.Oblique(14.0))
+    """
+
+    @staticmethod
+    def Normal() -> FontStyle:
+        """A face that is neither italic nor obliqued (default)."""
+
+    @staticmethod
+    def Italic() -> FontStyle:
+        """A form that is generally cursive in nature."""
+
+    @staticmethod
+    def Oblique(angle: float | None = None, /) -> FontStyle:
+        """A sloped version of the regular face, with an optional slant angle in degrees."""
+
+    @property
+    def _0(self) -> float | None:
+        """The Oblique slant angle in degrees (only present on Oblique)."""
+
+    def __eq__(self, other: object) -> bool: ...
+
+class FontHinting:
+    """Font hinting strategy controlling glyph rasterization."""
+
+    Disabled: FontHinting
+    """Glyphs are rasterized without hinting (default)."""
+
+    Enabled: FontHinting
+    """Glyphs are rasterized with hinting."""
 
 class FontFeatureTag:
     """A single OpenType feature tag (4 ASCII characters).
@@ -376,6 +449,12 @@ class Justify:
     Justified: Justify
     """Fully justified text"""
 
+    Start: Justify
+    """Aligned to the start of the line (left for LTR, right for RTL)"""
+
+    End: Justify
+    """Aligned to the end of the line (right for LTR, left for RTL)"""
+
     def __eq__(self, other: object) -> bool: ...
 
 class LineBreak:
@@ -434,17 +513,132 @@ class TextColor(Component):
 
     def __eq__(self, other: object) -> bool: ...
 
+class FontSize:
+    """The vertical height of rasterized glyphs, in one of several units.
+
+    Wherever a FontSize is accepted, a plain float is also accepted and
+    treated as `FontSize.Px` (mirrors bevy's `From<f32> for FontSize`).
+    """
+
+    value: float
+    """The numeric payload of the variant."""
+
+    @staticmethod
+    def Px(value: float) -> FontSize:
+        """Font size in logical pixels."""
+
+    @staticmethod
+    def Vw(value: float) -> FontSize:
+        """Font size as a percentage of the viewport width."""
+
+    @staticmethod
+    def Vh(value: float) -> FontSize:
+        """Font size as a percentage of the viewport height."""
+
+    @staticmethod
+    def VMin(value: float) -> FontSize:
+        """Font size as a percentage of the smaller viewport dimension."""
+
+    @staticmethod
+    def VMax(value: float) -> FontSize:
+        """Font size as a percentage of the larger viewport dimension."""
+
+    @staticmethod
+    def Rem(value: float) -> FontSize:
+        """Font size relative to the RemSize resource."""
+
+    def __eq__(self, other: object) -> bool: ...
+
+class FontSource:
+    """Where a TextFont resolves its font face from.
+
+    A specific Font asset handle, a font family name resolved through the
+    font database, or a generic font category (serif, monospace, ...).
+    Wherever a FontSource is accepted, a Handle is treated as
+    `FontSource.Handle` and a str as `FontSource.Family` (mirrors bevy's
+    `From` impls).
+    """
+
+    @staticmethod
+    def Handle(value: Handle) -> FontSource:
+        """A specific font face referenced by a Font asset handle."""
+
+    @staticmethod
+    def Family(value: str) -> FontSource:
+        """Resolve the font by family name using the font database."""
+
+    @staticmethod
+    def Serif() -> FontSource:
+        """Fonts with serifs."""
+
+    @staticmethod
+    def SansSerif() -> FontSource:
+        """Fonts without serifs."""
+
+    @staticmethod
+    def Cursive() -> FontSource:
+        """Fonts with a cursive or handwritten style."""
+
+    @staticmethod
+    def Fantasy() -> FontSource:
+        """Decorative or expressive fonts."""
+
+    @staticmethod
+    def Monospace() -> FontSource:
+        """Fonts with a fixed advance width."""
+
+    @staticmethod
+    def SystemUi() -> FontSource:
+        """The default user interface system font."""
+
+    @staticmethod
+    def UiSerif() -> FontSource:
+        """Alternative serif font for user interfaces."""
+
+    @staticmethod
+    def UiSansSerif() -> FontSource:
+        """Alternative sans-serif font for user interfaces."""
+
+    @staticmethod
+    def UiMonospace() -> FontSource:
+        """Alternative monospace font for user interfaces."""
+
+    @staticmethod
+    def UiRounded() -> FontSource:
+        """Fonts with rounded features."""
+
+    @staticmethod
+    def Emoji() -> FontSource:
+        """Fonts designed to render emoji."""
+
+    @staticmethod
+    def Math() -> FontSource:
+        """Fonts for mathematical notation."""
+
+    @staticmethod
+    def FangSong() -> FontSource:
+        """Chinese characters between Song and Kai forms."""
+
+    def __eq__(self, other: object) -> bool: ...
+
 class TextFont(Component):
     """Font styling for text spans.
 
     Determines font face, size, and antialiasing.
     """
 
-    font: Handle
-    """Font asset handle"""
+    @property
+    def font(self) -> FontSource:
+        """The font source (default: the default font handle)."""
 
-    font_size: float
-    """Vertical height of glyphs in pixels (default: 20.0)"""
+    @font.setter
+    def font(self, value: FontSource | Handle | str) -> None: ...
+    @property
+    def font_size(self) -> FontSize:
+        """Vertical height of glyphs (default: FontSize.Px(20.0))."""
+
+    @font_size.setter
+    def font_size(self, value: FontSize | float) -> None: ...
 
     font_smoothing: FontSmoothing
     """Antialiasing method (default: AntiAliased)"""
@@ -452,27 +646,38 @@ class TextFont(Component):
     weight: FontWeight
     """Font weight / boldness (default: FontWeight.NORMAL)"""
 
+    width: FontWidth
+    """Font width / stretch (default: FontWidth.NORMAL)"""
+
+    style: FontStyle
+    """Font slant style (default: FontStyle.Normal())"""
+
     font_features: FontFeatures
     """OpenType font features (default: none)"""
 
     def __init__(
         self,
-        font: Handle | None = None,
-        font_size: float = 20.0,
+        font: FontSource | Handle | str | None = None,
+        font_size: FontSize | float | None = None,
         font_smoothing: FontSmoothing = FontSmoothing.AntiAliased,
         weight: FontWeight = FontWeight.NORMAL,
+        width: FontWidth = FontWidth.NORMAL,
+        style: FontStyle = FontStyle.Normal(),
         font_features: FontFeatures = ...,
     ) -> None:
-        """Create a text font component."""
+        """Create a text font component. Defaults: the default font, FontSize.Px(20.0)."""
 
     @staticmethod
-    def from_font_size(font_size: float) -> TextFont:
+    def from_font_size(font_size: FontSize | float) -> TextFont:
         """Create TextFont with specified font size and defaults."""
 
     def with_font(self, font: Handle) -> TextFont:
         """Return a new TextFont with the specified font handle."""
 
-    def with_font_size(self, font_size: float) -> TextFont:
+    def with_family(self, family: str) -> TextFont:
+        """Return a new TextFont with the font resolved by family name."""
+
+    def with_font_size(self, font_size: FontSize | float) -> TextFont:
         """Return a new TextFont with the specified font size."""
 
     def with_font_smoothing(self, font_smoothing: FontSmoothing) -> TextFont:
@@ -483,12 +688,6 @@ class TextFont(Component):
 
     def with_font_features(self, font_features: FontFeatures) -> TextFont:
         """Return a new TextFont with the specified font features."""
-
-    @staticmethod
-    def from_numpy(  # type: ignore[override]
-        *,
-        font_size: np.ndarray | None = None,
-    ) -> Batchable: ...
 
     def __eq__(self, other: object) -> bool: ...
 

@@ -8,14 +8,14 @@ PyBevy loads assets from `./assets/` relative to the current working directory (
 
 ```python
 # File at: ./assets/models/character.glb
-handle = asset_server.load("models/character.glb#Scene0", Scene)
+handle = asset_server.load("models/character.glb#Scene0", WorldAsset)
 ```
 
 ## Loading GLB Models
 
 ```python
 from pybevy.prelude import *
-from pybevy.scene import SceneRoot, Scene
+from pybevy.world_serialization import WorldAsset, WorldAssetRoot
 
 @entrypoint
 def main(app):
@@ -24,20 +24,20 @@ def main(app):
     @app.main_system
     def setup(commands: Commands, asset_server: Res[AssetServer]):
         # Load model — note the #Scene0 suffix
-        model_handle = asset_server.load("models/rabbit.glb#Scene0", Scene)
+        model_handle = asset_server.load("models/rabbit.glb#Scene0", WorldAsset)
         commands.spawn(
-            SceneRoot(model_handle),
+            WorldAssetRoot(model_handle),
             Transform.from_xyz(0.0, 0.0, 0.0),
             Name("rabbit"),
         )
 ```
 
-## SceneRoot Hierarchy Structure
+## WorldAssetRoot Hierarchy Structure
 
-After spawning, a SceneRoot entity becomes a **parent** with auto-generated mesh children:
+After spawning, a WorldAssetRoot entity becomes a **parent** with auto-generated mesh children:
 
 ```
-"rabbit" (SceneRoot, Transform, Name)      ← your named entity
+"rabbit" (WorldAssetRoot, Transform, Name)      ← your named entity
   └─ "geometry_0.PBRMaterial" (Mesh3d, Aabb, GlobalTransform)  ← auto-generated
   └─ "geometry_1.PBRMaterial" (Mesh3d, Aabb, GlobalTransform)  ← auto-generated
 ```
@@ -56,7 +56,7 @@ Most 3D modeling tools export models with the origin at the geometric center. A 
 # height = 1.0, so y_offset = height / 2 = 0.5
 
 commands.spawn(
-    SceneRoot(model_handle),
+    WorldAssetRoot(model_handle),
     Transform.from_xyz(0.0, 0.5, 0.0),  # Lift by half height
     Name("rabbit"),
 )
@@ -73,7 +73,7 @@ GLB model scale varies wildly between models. A fox might need `Vec3.splat(0.02)
 # get_bounding_box(name="model") → check dimensions
 # Adjust scale to fit your scene (common range: 0.01–10.0)
 commands.spawn(
-    SceneRoot(model_handle),
+    WorldAssetRoot(model_handle),
     Transform.from_xyz(0.0, 0.0, 0.0).with_scale(Vec3.splat(0.02)),
     Name("model"),
 )
@@ -118,13 +118,13 @@ AI-generated models (Ludo, Meshy, Tripo) commonly face +Z.
 | Error | Cause | Fix |
 |-------|-------|-----|
 | "expected value at line 1 column 1" | File is gzip-compressed | Run `file model.glb` to check, `gunzip` if needed |
-| "no default scene" | Missing scene suffix | Use `asset_server.load("model.glb#Scene0", Scene)` |
+| "no default scene" | Missing scene suffix | Use `asset_server.load("model.glb#Scene0", WorldAsset)` |
 | Model loads but invisible | Wrong scale, buried in ground, or dark material | See troubleshooting below |
 
 ## Troubleshooting: Model Not Visible After Spawn
 
 1. `capture_depth` at expected position — check if entity name appears in samples
-2. `query_entities` with `["SceneRoot"]` — confirm entity exists
+2. `query_entities` with `["WorldAssetRoot"]` — confirm entity exists
 3. `get_component(name="...", component="Transform")` — verify position/scale
 4. Check mesh children: `query_entities` with `["Mesh3d", "Aabb"]`
 5. If model is dark: temporarily increase `GlobalAmbientLight(brightness=1000.0)`

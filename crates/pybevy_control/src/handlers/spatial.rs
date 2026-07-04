@@ -83,14 +83,14 @@ fn collect_descendant_aabbs(world: &World, entity: Entity) -> Vec<WorldAabb> {
 }
 
 /// Compute world-space AABB by transforming local Aabb corners via GlobalTransform.
-/// Falls back to merging descendant AABBs for SceneRoot/hierarchy entities.
+/// Falls back to merging descendant AABBs for WorldAssetRoot/hierarchy entities.
 pub fn compute_world_aabb(world: &World, entity: Entity) -> Result<WorldAabb, ControlError> {
     // Fast path: entity has its own Aabb
     if let Some(aabb) = compute_entity_aabb(world, entity) {
         return Ok(aabb);
     }
 
-    // Fallback: merge AABBs from descendants (handles SceneRoot/GLB hierarchies)
+    // Fallback: merge AABBs from descendants (handles WorldAssetRoot/GLB hierarchies)
     let descendant_aabbs = collect_descendant_aabbs(world, entity);
     if descendant_aabbs.is_empty() {
         return Err(ControlError::not_found(

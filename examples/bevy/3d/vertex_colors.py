@@ -53,7 +53,7 @@ def setup(
 
     # Light with shadows
     commands.spawn(
-        PointLight(shadows_enabled=True),
+        PointLight(shadow_maps_enabled=True),
         Transform.from_xyz(4.0, 5.0, 4.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
 

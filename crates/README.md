@@ -37,7 +37,6 @@ PyBevy is split into modular feature crates.
 | [`pybevy_mesh`](pybevy_mesh/) | Mesh, mesh builders, primitives with Meshable |
 | [`pybevy_pbr`](pybevy_pbr/) | PBR materials, wireframe, fog, decals |
 | [`pybevy_render`](pybevy_render/) | Render pipeline, shaders, visibility |
-| [`pybevy_scene`](pybevy_scene/) | Scene management |
 | [`pybevy_shader`](pybevy_shader/) | Shader type wrappers (Shader, ShaderRef, ShaderImport, etc.) |
 | [`pybevy_shader_types`](pybevy_shader_types/) | Shared ShaderMaterial types (PyO3-free, for plugin/WASM) |
 | [`pybevy_sprite`](pybevy_sprite/) | Sprite, SpriteSheet |
@@ -47,3 +46,4 @@ PyBevy is split into modular feature crates.
 | [`pybevy_ui`](pybevy_ui/) | UI nodes, styles, interaction |
 | [`pybevy_wgpu`](pybevy_wgpu/) | wgpu type wrappers (Extent3d, TextureDimension, TextureFormat) |
 | [`pybevy_window`](pybevy_window/) | Window management, cursor, events |
+| [`pybevy_world_serialization`](pybevy_world_serialization/) | World serialization (WorldAsset, DynamicWorld, spawning) |

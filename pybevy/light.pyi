@@ -4,7 +4,7 @@ from typing import ClassVar
 import numpy as np
 
 from pybevy.app import App, Plugin
-from pybevy.assets import Handle
+from pybevy.assets import Asset, Handle
 from pybevy.camera import CubemapLayout
 from pybevy.color import Color
 from pybevy.ecs import Batchable, Component, F32List, Resource
@@ -162,7 +162,7 @@ class PointLight(Component):
         intensity: float = 1_000_000.0,
         range: float = 20.0,
         radius: float = 0.0,
-        shadows_enabled: bool = False,
+        shadow_maps_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.08,
         shadow_normal_bias: float = 0.6,
@@ -173,7 +173,7 @@ class PointLight(Component):
     intensity: float
     range: float
     radius: float
-    shadows_enabled: bool
+    shadow_maps_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
     shadow_depth_bias: float
     shadow_normal_bias: float
@@ -188,7 +188,7 @@ class PointLight(Component):
         shadow_depth_bias: np.ndarray | None = None,
         shadow_normal_bias: np.ndarray | None = None,
         shadow_map_near_z: np.ndarray | None = None,
-        shadows_enabled: np.ndarray | None = None,
+        shadow_maps_enabled: np.ndarray | None = None,
         affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
         color: np.ndarray | None = None,
     ) -> Batchable: ...
@@ -200,7 +200,7 @@ class SpotLight(Component):
         intensity: float = 1_000_000.0,
         range: float = 20.0,
         radius: float = 0.0,
-        shadows_enabled: bool = False,
+        shadow_maps_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.02,
         shadow_normal_bias: float = 1.8,
@@ -213,7 +213,7 @@ class SpotLight(Component):
     intensity: float
     range: float
     radius: float
-    shadows_enabled: bool
+    shadow_maps_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
     shadow_depth_bias: float
     shadow_normal_bias: float
@@ -232,7 +232,7 @@ class SpotLight(Component):
         shadow_map_near_z: np.ndarray | None = None,
         outer_angle: np.ndarray | None = None,
         inner_angle: np.ndarray | None = None,
-        shadows_enabled: np.ndarray | None = None,
+        shadow_maps_enabled: np.ndarray | None = None,
         affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
         color: np.ndarray | None = None,
     ) -> Batchable: ...
@@ -242,7 +242,7 @@ class DirectionalLight(Component):
         self,
         color: Color = Color.WHITE,
         illuminance: float = 10_000.0,
-        shadows_enabled: bool = False,
+        shadow_maps_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.02,
         shadow_normal_bias: float = 1.8,
@@ -250,7 +250,7 @@ class DirectionalLight(Component):
 
     color: Color
     illuminance: float
-    shadows_enabled: bool
+    shadow_maps_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
     shadow_depth_bias: float
     shadow_normal_bias: float
@@ -261,7 +261,7 @@ class DirectionalLight(Component):
         illuminance: np.ndarray | None = None,
         shadow_depth_bias: np.ndarray | None = None,
         shadow_normal_bias: np.ndarray | None = None,
-        shadows_enabled: np.ndarray | None = None,
+        shadow_maps_enabled: np.ndarray | None = None,
         affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
         color: np.ndarray | None = None,
     ) -> Batchable: ...
@@ -358,14 +358,20 @@ class Cascades(Component):
     def cascades(self) -> dict[int, list[Cascade]]: ...
 
 class LightProbe(Component):
-    """A marker component for a light probe.
+    """A component for a light probe.
 
     A light probe is a cuboid region that provides global illumination to all
     fragments inside it. Requires Transform and Visibility components.
 
     Has no effect unless paired with EnvironmentMapLight or IrradianceVolume.
     """
-    def __init__(self) -> None: ...
+    def __init__(self, falloff: Vec3 = ...) -> None: ...
+
+    @property
+    def falloff(self) -> Vec3:
+        """Falloff applied at the edges of the light probe's region."""
+    @falloff.setter
+    def falloff(self, value: Vec3) -> None: ...
     def __eq__(self, other: LightProbe) -> bool: ...  # type: ignore[override]
 
 class IrradianceVolume(Component):
@@ -412,12 +418,15 @@ class SunDisk(Component):
     """
     def __init__(
         self,
-        angular_size: float = 0.00935,
+        angular_size: float = 0.00930842,
         intensity: float = 1.0,
     ) -> None: ...
 
     EARTH: ClassVar[SunDisk]
     """Earth's sun disk with realistic angular size."""
+
+    OFF: ClassVar[SunDisk]
+    """Disabled sun disk (zero size and intensity)."""
 
     angular_size: float
     intensity: float
@@ -575,4 +584,224 @@ class ClusteredDecal(Component):
     def from_numpy(  # type: ignore[override]
         *,
         tag: np.ndarray | None = None,
+    ) -> Batchable: ...
+
+class ScatteringMedium(Asset):
+    """Asset defining how a material scatters light.
+
+    Atmospheric scattering parameters (rayleigh, mie, ozone) live in
+    ScatteringMedium assets; Atmosphere references a Handle[ScatteringMedium].
+
+    Example:
+        >>> from pybevy.light import ScatteringMedium
+        >>> medium = ScatteringMedium()  # default (earth-like) medium
+        >>> earth_medium = ScatteringMedium.earth()
+        >>> custom = ScatteringMedium(terms=[ScatteringTerm()])
+    """
+
+    def __init__(
+        self,
+        falloff_resolution: int = 256,
+        phase_resolution: int = 256,
+        terms: list[ScatteringTerm] | None = None,
+    ) -> None:
+        """Create a medium from scattering terms (mirrors ScatteringMedium::new).
+
+        When terms is None, returns bevy's default earth-like medium.
+        """
+
+    @property
+    def label(self) -> str | None:
+        """Optional label used when creating the LUTs on the GPU."""
+    @label.setter
+    def label(self, value: str | None) -> None: ...
+
+    @property
+    def falloff_resolution(self) -> int:
+        """Resolution at which to sample each term's falloff distribution."""
+    @falloff_resolution.setter
+    def falloff_resolution(self, value: int) -> None: ...
+
+    @property
+    def phase_resolution(self) -> int:
+        """Resolution at which to sample each term's phase function."""
+    @phase_resolution.setter
+    def phase_resolution(self, value: int) -> None: ...
+
+    @property
+    def terms(self) -> list[ScatteringTerm]:
+        """Snapshot list of the medium's scattering terms."""
+
+    @terms.setter
+    def terms(self, value: list[ScatteringTerm]) -> None: ...
+
+    @staticmethod
+    def earth(
+        falloff_resolution: int = 256,
+        phase_resolution: int = 256,
+    ) -> ScatteringMedium:
+        """Create an earth-like scattering medium preset."""
+
+    @staticmethod
+    def mars(
+        falloff_resolution: int = 256,
+        phase_resolution: int = 256,
+        *,
+        dust_phase: Handle[Image],
+    ) -> ScatteringMedium:
+        """Create a mars-like scattering medium preset (requires a dust-phase image)."""
+
+class Atmosphere(Component):
+    """Atmospheric scattering component for realistic sky rendering.
+
+    When added to a camera, enables procedural atmospheric scattering that
+    simulates realistic sky colors, sunsets, and aerial perspective. Based on
+    Hillaire's 2020 paper on real-time atmospheric scattering.
+
+    Scattering parameters (rayleigh, mie, ozone) live in ScatteringMedium
+    assets; Atmosphere references a Handle to a ScatteringMedium.
+
+    Example:
+        >>> from pybevy.light import Atmosphere
+        >>> # Use the earth preset with a ScatteringMedium handle
+        >>> atmo = Atmosphere.earth(medium_handle)
+    """
+
+    def __init__(
+        self,
+        inner_radius: float,
+        outer_radius: float,
+        ground_albedo: Vec3,
+        medium: Handle[ScatteringMedium],
+    ) -> None: ...
+
+    @staticmethod
+    def earth(medium: Handle[ScatteringMedium]) -> Atmosphere:
+        """Create an earth-like atmosphere with the given ScatteringMedium handle."""
+
+    @staticmethod
+    def mars(medium: Handle[ScatteringMedium]) -> Atmosphere:
+        """Create a mars-like atmosphere with the given ScatteringMedium handle."""
+
+    @property
+    def medium(self) -> Handle[ScatteringMedium]:
+        """Handle to the ScatteringMedium asset."""
+    @medium.setter
+    def medium(self, value: Handle[ScatteringMedium]) -> None: ...
+
+    @property
+    def inner_radius(self) -> float:
+        """Radius of the planet in meters."""
+    @inner_radius.setter
+    def inner_radius(self, value: float) -> None: ...
+
+    @property
+    def outer_radius(self) -> float:
+        """Radius at which atmosphere ends in meters (from planet center)."""
+    @outer_radius.setter
+    def outer_radius(self, value: float) -> None: ...
+
+    @property
+    def ground_albedo(self) -> Vec3:
+        """Average surface albedo for multiscattering calculations."""
+    @ground_albedo.setter
+    def ground_albedo(self, value: Vec3) -> None: ...
+
+class Falloff:
+    """Falloff mode controlling intensity decay over distance."""
+
+    @staticmethod
+    def linear() -> Falloff:
+        """Linear falloff."""
+
+    @staticmethod
+    def exponential(scale: float) -> Falloff:
+        """Exponential falloff with given scale."""
+
+    @staticmethod
+    def tent(center: float, width: float) -> Falloff:
+        """Tent-shaped falloff with given center and width."""
+
+class PhaseFunction:
+    """Phase function describing how a ScatteringTerm scatters light in different directions.
+
+    Bevy's Curve and ChromaticCurve variants hold Rust closures and cannot be
+    constructed from Python.
+    """
+
+    @staticmethod
+    def Isotropic() -> PhaseFunction:
+        """Scatters light evenly in all directions."""
+
+    @staticmethod
+    def Rayleigh() -> PhaseFunction:
+        """Rayleigh scattering (particles much smaller than visible wavelengths)."""
+
+    @staticmethod
+    def Mie(asymmetry: float) -> PhaseFunction:
+        """Henyey-Greenstein approximation of Mie scattering."""
+
+    @staticmethod
+    def ChromaticTexture(image: Handle[Image]) -> PhaseFunction:
+        """Chromatic phase function sampled from an Nx1 Rgba32Float texture."""
+
+    def __eq__(self, other: PhaseFunction) -> bool: ...  # type: ignore[override]
+
+class ScatteringTerm:
+    """An individual element of a ScatteringMedium."""
+
+    def __init__(
+        self,
+        absorption: Vec3 = ...,
+        scattering: Vec3 = ...,
+        falloff: Falloff = ...,
+        phase: PhaseFunction = ...,
+    ) -> None:
+        """Defaults mirror bevy: zero densities, linear falloff, Mie(asymmetry=0.8)."""
+
+    @property
+    def absorption(self) -> Vec3:
+        """Optical absorption density per meter."""
+    @absorption.setter
+    def absorption(self, value: Vec3) -> None: ...
+
+    @property
+    def scattering(self) -> Vec3:
+        """Optical scattering density per meter."""
+    @scattering.setter
+    def scattering(self, value: Vec3) -> None: ...
+
+    @property
+    def falloff(self) -> Falloff:
+        """Falloff distribution of this term."""
+    @falloff.setter
+    def falloff(self, value: Falloff) -> None: ...
+
+    @property
+    def phase(self) -> PhaseFunction:
+        """Phase function of this term."""
+    @phase.setter
+    def phase(self, value: PhaseFunction) -> None: ...
+
+class Skybox(Component):
+    """Skybox component that displays an environment map as the background.
+
+    When ``image`` is None (the default), the skybox is not rendered.
+    """
+
+    image: Handle[Image] | None
+    brightness: float
+    rotation: Quat
+
+    def __init__(
+        self,
+        image: Handle[Image] | None = None,
+        brightness: float = 0.0,
+        rotation: Quat = ...,
+    ) -> None: ...
+
+    @staticmethod
+    def from_numpy(  # type: ignore[override]
+        *,
+        brightness: np.ndarray | None = None,
     ) -> Batchable: ...

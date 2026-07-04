@@ -408,23 +408,23 @@ def setup(
     # Lights
     # Key light (warm sun with volumetric god rays)
     commands.spawn(
-        DirectionalLight(illuminance=10000.0, color=Color.srgb(1.0, 0.92, 0.8), shadows_enabled=True),
+        DirectionalLight(illuminance=10000.0, color=Color.srgb(1.0, 0.92, 0.8), shadow_maps_enabled=True),
         VolumetricLight(),
         Transform.from_xyz(10.0, 25.0, 15.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
     # Fill light (cool, no shadows)
     commands.spawn(
-        DirectionalLight(illuminance=4000.0, color=Color.srgb(0.6, 0.65, 0.9), shadows_enabled=False),
+        DirectionalLight(illuminance=4000.0, color=Color.srgb(0.6, 0.65, 0.9), shadow_maps_enabled=False),
         Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.4, -1.5, 0.0)),
     )
     # Warm point light near meteor start (fire glow on surroundings)
     commands.spawn(
-        PointLight(intensity=1200000.0, color=Color.srgb(1.0, 0.5, 0.15), range=50.0, shadows_enabled=False),
+        PointLight(intensity=1200000.0, color=Color.srgb(1.0, 0.5, 0.15), range=50.0, shadow_maps_enabled=False),
         Transform.from_xyz(-20.0, 8.0, 0.0),
     )
     # Cool accent from the other side
     commands.spawn(
-        PointLight(intensity=300000.0, color=Color.srgb(0.3, 0.4, 1.0), range=30.0, shadows_enabled=False),
+        PointLight(intensity=300000.0, color=Color.srgb(0.3, 0.4, 1.0), range=30.0, shadow_maps_enabled=False),
         Transform.from_xyz(15.0, 10.0, 0.0),
     )
 

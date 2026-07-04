@@ -467,6 +467,25 @@ class FlexWrap:
     """Wrap in reverse order."""
 
 
+class InlineDirection:
+    """Inline (reading) direction for Node layout.
+
+    Example:
+        ```python
+        from pybevy.ui import Node, InlineDirection
+
+        node = Node()
+        node.direction = InlineDirection.Rtl  # Right-to-left
+        ```
+    """
+
+    Ltr: InlineDirection
+    """Left-to-right (default)."""
+
+    Rtl: InlineDirection
+    """Right-to-left."""
+
+
 class AlignContent:
     """Align content enum for Node flexbox layout.
 
@@ -689,40 +708,40 @@ class BoxSizing:
         """Create ContentBox sizing."""
 
 
-class OverflowClipBox:
+class VisualBox:
     """Defines which box is used as the clipping boundary for overflow.
 
     Controls where content is clipped when overflow is set to clip/hidden.
 
     Example:
         ```python
-        from pybevy.ui import OverflowClipBox
+        from pybevy.ui import VisualBox
 
-        clip_box = OverflowClipBox.ContentBox
-        clip_box = OverflowClipBox.PaddingBox
-        clip_box = OverflowClipBox.BorderBox
+        clip_box = VisualBox.ContentBox
+        clip_box = VisualBox.PaddingBox
+        clip_box = VisualBox.BorderBox
         ```
     """
 
-    ContentBox: OverflowClipBox
+    ContentBox: VisualBox
     """Clip content outside the content box."""
 
-    PaddingBox: OverflowClipBox
+    PaddingBox: VisualBox
     """Clip content outside the padding box."""
 
-    BorderBox: OverflowClipBox
+    BorderBox: VisualBox
     """Clip content outside the border box."""
 
     @staticmethod
-    def content_box() -> OverflowClipBox:
+    def content_box() -> VisualBox:
         """Create ContentBox clipping."""
 
     @staticmethod
-    def padding_box() -> OverflowClipBox:
+    def padding_box() -> VisualBox:
         """Create PaddingBox clipping."""
 
     @staticmethod
-    def border_box() -> OverflowClipBox:
+    def border_box() -> VisualBox:
         """Create BorderBox clipping."""
 
 
@@ -733,7 +752,7 @@ class OverflowClipMargin:
 
     Example:
         ```python
-        from pybevy.ui import OverflowClipMargin, OverflowClipBox
+        from pybevy.ui import OverflowClipMargin, VisualBox
 
         # Default (content box, 0 margin)
         margin = OverflowClipMargin()
@@ -747,7 +766,7 @@ class OverflowClipMargin:
     """
 
     def __init__(
-        self, visual_box: OverflowClipBox | None = None, margin: float = 0.0
+        self, visual_box: VisualBox | None = None, margin: float = 0.0
     ) -> None:
         """Create an overflow clip margin.
 
@@ -772,7 +791,7 @@ class OverflowClipMargin:
         """Add a margin on each edge of the visual box in logical pixels."""
 
     @property
-    def visual_box(self) -> OverflowClipBox:
+    def visual_box(self) -> VisualBox:
         """The visible unclipped area box."""
 
     @property
@@ -1114,6 +1133,13 @@ class Node(Component):
 
     @flex_direction.setter
     def flex_direction(self, value: FlexDirection) -> None: ...
+
+    @property
+    def direction(self) -> InlineDirection:
+        """The inline (text/reading) direction for layout."""
+
+    @direction.setter
+    def direction(self, value: InlineDirection) -> None: ...
 
     @property
     def display(self) -> Display:
@@ -1753,7 +1779,7 @@ class ImageNode(Component):
         def update_image(query: Query[Mut[ImageNode]], asset_server: Res[AssetServer]) -> None:
             for image_node in query:
                 new_texture = asset_server.load("bevy/textures/new_icon.png")
-                image_node.texture = new_texture
+                image_node.image = new_texture
         ```
 
     Args:
@@ -1766,11 +1792,11 @@ class ImageNode(Component):
         """Create a solid color ImageNode (useful for debugging layout)."""
 
     @property
-    def texture(self) -> Handle[Image]:
+    def image(self) -> Handle[Image]:
         """The image texture handle."""
 
-    @texture.setter
-    def texture(self, value: Handle[Image]) -> None: ...
+    @image.setter
+    def image(self, value: Handle[Image]) -> None: ...
 
     @property
     def color(self) -> Color:
@@ -1806,6 +1832,13 @@ class ImageNode(Component):
 
     @image_mode.setter
     def image_mode(self, value: NodeImageMode) -> None: ...
+
+    @property
+    def visual_box(self) -> VisualBox:
+        """Which box (content/padding/border) the image is clipped/laid out against."""
+
+    @visual_box.setter
+    def visual_box(self, value: VisualBox) -> None: ...
 
 
 class FocusPolicy(Component):
@@ -2569,6 +2602,18 @@ class ScrollPosition(Component):
     def offset(self, value: Vec2) -> None: ...
 
 
+class ComputedStackIndex(Component):
+    """The draw order of a UI node, computed by the UI stacking system.
+
+    Nodes with a higher stack index are drawn on top of and receive
+    interactions before nodes with lower stack indices. Automatically added
+    and updated by the UI system - you cannot create it manually.
+    """
+
+    @property
+    def value(self) -> int:
+        """The node's position in the UI stack (higher is drawn on top)."""
+
 class ComputedNode(Component):
     """Read-only computed layout information for a UI node.
 
@@ -2587,7 +2632,6 @@ class ComputedNode(Component):
         def debug_layout(query: Query[tuple[Node, ComputedNode]]) -> None:
             for node, computed in query:
                 print(f"Node size: {computed.size}")
-                print(f"Stack index: {computed.stack_index}")
         ```
     """
 
@@ -2598,10 +2642,6 @@ class ComputedNode(Component):
     @property
     def content_size(self) -> Vec2:
         """The size of the node's content area (excluding padding)."""
-
-    @property
-    def stack_index(self) -> int:
-        """The stack index of this node for rendering order."""
 
     @property
     def unrounded_size(self) -> Vec2:
@@ -3423,6 +3463,7 @@ __all__ = [
     "GridPlacement",
     "GridTrack",
     "ImageNode",
+    "InlineDirection",
     "Interaction",
     "InteractionDisabled",
     "InterpolationColorSpace",
@@ -3437,7 +3478,6 @@ __all__ = [
     "Outline",
     "Overflow",
     "OverflowAxis",
-    "OverflowClipBox",
     "OverflowClipMargin",
     "PositionType",
     "Pressed",
@@ -3457,5 +3497,6 @@ __all__ = [
     "UiTransform",
     "Val",
     "Val2",
+    "VisualBox",
     "ZIndex",
 ]

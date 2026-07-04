@@ -27,7 +27,7 @@ impl From<PyConicGradient> for ConicGradient {
 #[pymethods]
 impl PyConicGradient {
     #[new]
-    #[pyo3(signature = (position = PyUiPosition::center(PyVal::new(), PyVal::new()), stops = vec![]))]
+    #[pyo3(signature = (position = PyUiPosition::center(PyVal::zero(), PyVal::zero()), stops = vec![]))]
     pub fn new(position: PyUiPosition, stops: Vec<PyAngularColorStop>) -> Self {
         PyConicGradient {
             inner: ConicGradient::new(

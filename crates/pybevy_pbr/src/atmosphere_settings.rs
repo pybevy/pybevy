@@ -13,7 +13,6 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     sky_view_lut_samples,
     aerial_view_lut_samples,
     aerial_view_lut_max_distance,
-    scene_units_to_m,
     sky_max_samples
 ])]
 #[pyclass(name = "AtmosphereSettings", extends = PyComponent)]
@@ -36,7 +35,6 @@ impl PyAtmosphereSettings {
         sky_view_lut_samples = 16,
         aerial_view_lut_samples = 10,
         aerial_view_lut_max_distance = 3.2e4,
-        scene_units_to_m = 1.0,
         sky_max_samples = 16,
         rendering_method = PyAtmosphereMode::LookupTexture,
     ))]
@@ -51,7 +49,6 @@ impl PyAtmosphereSettings {
         sky_view_lut_samples: u32,
         aerial_view_lut_samples: u32,
         aerial_view_lut_max_distance: f32,
-        scene_units_to_m: f32,
         sky_max_samples: u32,
         rendering_method: PyAtmosphereMode,
     ) -> (Self, PyComponent) {
@@ -66,7 +63,6 @@ impl PyAtmosphereSettings {
             sky_view_lut_samples,
             aerial_view_lut_samples,
             aerial_view_lut_max_distance,
-            scene_units_to_m,
             sky_max_samples,
             rendering_method: rendering_method.into(),
         })
@@ -183,17 +179,6 @@ impl PyAtmosphereSettings {
     #[setter]
     pub fn set_aerial_view_lut_max_distance(&mut self, value: f32) -> PyResult<()> {
         self.as_mut()?.aerial_view_lut_max_distance = value;
-        Ok(())
-    }
-
-    #[getter]
-    pub fn scene_units_to_m(&self) -> PyResult<f32> {
-        Ok(self.as_ref()?.scene_units_to_m)
-    }
-
-    #[setter]
-    pub fn set_scene_units_to_m(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.scene_units_to_m = value;
         Ok(())
     }
 

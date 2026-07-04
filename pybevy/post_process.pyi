@@ -27,6 +27,8 @@ class Bloom(Component):
 
     NATURAL: ClassVar[Bloom]
     ANAMORPHIC: ClassVar[Bloom]
+    OLD_SCHOOL: ClassVar[Bloom]
+    SCREEN_BLUR: ClassVar[Bloom]
 
     def __init__(
         self,

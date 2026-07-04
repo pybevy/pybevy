@@ -456,7 +456,7 @@ pub fn process_active_schedules(world: &mut World) {
 
     // Remove runtime from World to use for dispatch (same scope as old Python::attach)
     let mut runtime = world
-        .remove_non_send_resource::<Box<dyn crate::runtime::ControlRuntime>>()
+        .remove_non_send::<Box<dyn crate::runtime::ControlRuntime>>()
         .expect("ControlRuntime resource missing");
 
     {
@@ -494,7 +494,7 @@ pub fn process_active_schedules(world: &mut World) {
         }
     }
 
-    world.insert_non_send_resource(runtime);
+    world.insert_non_send(runtime);
 
     world.insert_resource(schedules);
 }

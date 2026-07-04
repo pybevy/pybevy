@@ -33,10 +33,10 @@ impl PyShadowStyle {
     #[new]
     #[pyo3(signature = (
         color = None,
-        x_offset = PyVal::zero(),
-        y_offset = PyVal::zero(),
+        x_offset = PyVal::percent(20.0),
+        y_offset = PyVal::percent(20.0),
         spread_radius = PyVal::zero(),
-        blur_radius = PyVal::zero()
+        blur_radius = PyVal::percent(10.0)
     ))]
     pub fn new(
         color: Option<PyColor>,
@@ -45,7 +45,7 @@ impl PyShadowStyle {
         spread_radius: PyVal,
         blur_radius: PyVal,
     ) -> Self {
-        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::NONE);
+        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::BLACK);
         PyShadowStyle {
             inner: ShadowStyle {
                 color: bevy_color,

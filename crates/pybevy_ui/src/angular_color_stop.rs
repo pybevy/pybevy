@@ -25,7 +25,7 @@ impl PyAngularColorStop {
     #[new]
     #[pyo3(signature = (color = None, angle = None, *, hint = 0.5))]
     pub fn new(color: Option<PyColor>, angle: Option<f32>, hint: f32) -> Self {
-        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::NONE);
+        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::WHITE);
         PyAngularColorStop {
             inner: AngularColorStop {
                 color: bevy_color,

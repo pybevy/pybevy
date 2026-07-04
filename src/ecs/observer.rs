@@ -64,11 +64,13 @@ pub struct PyInsert;
 #[derive(Debug, Clone)]
 pub struct PyRemove;
 
-/// Marker class for component replacement lifecycle events.
-/// Use with On[Replace, ComponentType] to observe when components are replaced.
-#[pyclass(name = "Replace")]
+/// Marker class for component discard lifecycle events.
+/// Use with On[Discard, ComponentType] to observe when a component value is
+/// discarded because a new value is inserted over it. Fires before the value
+/// is replaced, so observers can still read the original component data.
+#[pyclass(name = "Discard")]
 #[derive(Debug, Clone)]
-pub struct PyReplace;
+pub struct PyDiscard;
 
 /// Marker class for entity despawn lifecycle events.
 /// Use with On[Despawn, ComponentType] to observe when entities with the component are despawned.
@@ -178,18 +180,18 @@ impl PyOn {
                     },
                 )
                 .map(|obj| obj.into_any());
-            } else if first_type_obj.is(PyReplace::type_object(py)) {
+            } else if first_type_obj.is(PyDiscard::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
                 } else {
                     return Err(PyTypeError::new_err(
-                        "Second parameter to On[Replace, ...] must be a Component type",
+                        "Second parameter to On[Discard, ...] must be a Component type",
                     ));
                 };
                 return Py::new(
                     py,
                     PyOnTypeParam {
-                        event_type: EventType::Replace(comp_type),
+                        event_type: EventType::Discard(comp_type),
                         bundle_filter: None,
                     },
                 )
@@ -289,7 +291,7 @@ impl PyOn {
         } else {
             // On[E] - event type only, no bundle filter
             let event_type = if let Ok(event_type_obj) = key.cast_exact::<PyType>() {
-                // Lifecycle markers (Add, Insert, Remove, Replace, Despawn) require
+                // Lifecycle markers (Add, Insert, Remove, Discard, Despawn) require
                 // a component filter. The bare On[Add] / On[Despawn] form would
                 // otherwise fall through to from_py_type and produce a confusing
                 // "Expected Event subclass, got Despawn" error. Catch them with
@@ -300,8 +302,8 @@ impl PyOn {
                     Some("Insert")
                 } else if event_type_obj.is(PyRemove::type_object(py)) {
                     Some("Remove")
-                } else if event_type_obj.is(PyReplace::type_object(py)) {
-                    Some("Replace")
+                } else if event_type_obj.is(PyDiscard::type_object(py)) {
+                    Some("Discard")
                 } else if event_type_obj.is(PyDespawn::type_object(py)) {
                     Some("Despawn")
                 } else {
@@ -351,7 +353,7 @@ pub enum EventType {
     Add(PyComponentType),
     Insert(PyComponentType),
     Remove(PyComponentType),
-    Replace(PyComponentType),
+    Discard(PyComponentType),
     Despawn(PyComponentType),
 
     /// Custom user-defined events (up to 20 supported)
@@ -364,7 +366,7 @@ impl Clone for EventType {
             EventType::Add(c) => EventType::Add(c.clone()),
             EventType::Insert(c) => EventType::Insert(c.clone()),
             EventType::Remove(c) => EventType::Remove(c.clone()),
-            EventType::Replace(c) => EventType::Replace(c.clone()),
+            EventType::Discard(c) => EventType::Discard(c.clone()),
             EventType::Despawn(c) => EventType::Despawn(c.clone()),
             EventType::Custom(ty) => Python::attach(|py| EventType::Custom(ty.clone_ref(py))),
         }
@@ -377,7 +379,7 @@ impl PartialEq for EventType {
             (EventType::Add(a), EventType::Add(b)) => a == b,
             (EventType::Insert(a), EventType::Insert(b)) => a == b,
             (EventType::Remove(a), EventType::Remove(b)) => a == b,
-            (EventType::Replace(a), EventType::Replace(b)) => a == b,
+            (EventType::Discard(a), EventType::Discard(b)) => a == b,
             (EventType::Despawn(a), EventType::Despawn(b)) => a == b,
             (EventType::Custom(a), EventType::Custom(b)) => a.is(b),
             _ => false,

@@ -1,0 +1,13 @@
+[package]
+name = "pybevy_material"
+version = "0.2.1"
+edition = "2024"
+description = "Material types for PyBevy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+bevy = { workspace = true, features = ["bevy_material"] }
+pybevy_macros = { workspace = true }
