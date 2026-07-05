@@ -115,7 +115,7 @@ Start with `guide://patterns` + one matching recipe. Read topic guides (lighting
 ## Scene-Type Checklists
 
 ### Outdoor / Nature
-- [ ] `Atmosphere.earth()` for sky (no flat gray)
+- [ ] `Atmosphere.earth(medium_handle)` on its own entity + `AtmosphereSettings()` on the camera for sky (no flat gray)
 - [ ] Ground plane large enough that edges aren't visible (>= 40x40)
 - [ ] Trees/rocks at perimeter with scale variation (0.7x–1.5x)
 - [ ] At least one water feature if pastoral

@@ -87,9 +87,9 @@ Bloom(intensity=0.3, prefilter=BloomPrefilter(threshold=1.5, threshold_softness=
 
 ### Fog & Atmosphere
 
-Both are camera components. See `guide://lighting` for full details:
-- `DistanceFog(color=..., falloff=FogFalloff.Exponential(0.002))` — distance-based fog
-- `Atmosphere.earth(medium_handle)` — physically-based sky (requires `ScatteringMedium` asset)
+See `guide://lighting` for full details:
+- `DistanceFog(color=..., falloff=FogFalloff.Exponential(0.002))`: camera component, distance-based fog
+- `Atmosphere.earth(medium_handle)`: physically-based sky. Spawn on its own entity (it is the planet); the camera opts in with `AtmosphereSettings()`, without which the sky silently does not render
 - `Atmosphere.mars(medium_handle)` — Mars variant (use with `ScatteringMedium.mars(...)` for dusty red sky)
 
 ### Tonemapping
@@ -265,12 +265,13 @@ The overlap range (40–50) allows crossfade if dithering is enabled.
 A cinematic camera combines all effects on one entity:
 
 ```python
+commands.spawn(Atmosphere.earth(medium_handle))  # planet entity (once per scene)
 commands.spawn(
     Camera3d(),
     Transform.from_xyz(10, 8, 10).looking_at(Vec3(0, 2, 0), Vec3.Y),
     Bloom(intensity=0.2, low_frequency_boost=0.6),
     DistanceFog(color=Color.srgb(0.6, 0.65, 0.75), falloff=FogFalloff.Exponential(0.002)),
-    Atmosphere.earth(medium_handle),
+    AtmosphereSettings(),  # opts this camera into the atmosphere sky
 )
 ```
 

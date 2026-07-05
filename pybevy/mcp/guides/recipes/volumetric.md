@@ -10,6 +10,7 @@ from pybevy.light import (
     VolumetricFog, VolumetricLight, FogVolume,
     AtmosphereEnvironmentMapLight, SunDisk,
 )
+from pybevy.pbr import AtmosphereSettings
 
 @entrypoint
 def main(app: App) -> App:
@@ -26,12 +27,15 @@ def setup(
 ) -> None:
     medium_handle = mediums.add(ScatteringMedium.earth())
 
-    # Camera with volumetric fog + atmosphere
+    # The atmosphere (planet) lives on its own entity
+    commands.spawn(Atmosphere.earth(medium_handle))
+
+    # Camera with volumetric fog; AtmosphereSettings opts it into the sky
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(8, 4, 8).looking_at(Vec3(0, 1, 0), Vec3.Y),
         Bloom(intensity=0.2, low_frequency_boost=0.5),
-        Atmosphere.earth(medium_handle),
+        AtmosphereSettings(),  # sky won't render for this camera without it
         AtmosphereEnvironmentMapLight(intensity=0.8),
         VolumetricFog(
             ambient_color=Color.srgb(0.05, 0.05, 0.08),

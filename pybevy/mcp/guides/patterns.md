@@ -27,17 +27,17 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    # Camera — default to eye-level, NOT overhead
+    # Camera: default to eye-level, NOT overhead.
+    # DistanceFog is a camera component; it does nothing on its own entity.
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(8, 3, 8).looking_at(Vec3(0, 1.5, 0), Vec3.Y),
         Bloom(intensity=0.15),
+        DistanceFog(  # mandatory for 3D scenes
+            color=Color.srgb(0.7, 0.8, 0.95),
+            falloff=FogFalloff.Exponential(0.005),  # or FogFalloff.Linear(start, end)
+        ),
     )
-    # Distance fog (mandatory for 3D scenes)
-    commands.spawn(DistanceFog(
-        color=Color.srgb(0.7, 0.8, 0.95),
-        falloff=FogFalloff.Exponential(0.005),  # or FogFalloff.Linear(start, end)
-    ))
     # WARNING: Ambient 300+ for outdoor, 500+ for indoor/cave.
     # Material base_color >= 0.20 for large surfaces. Start bright, dim later.
     # See guide://scene-quality for minimum lighting floors.

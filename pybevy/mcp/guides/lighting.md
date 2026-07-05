@@ -184,21 +184,29 @@ commands.spawn(
 
 ## Atmosphere & Sky
 
-`Atmosphere` renders a physically-based sky dome with scattering. Requires a `ScatteringMedium` asset.
+`Atmosphere` renders a physically-based sky dome with scattering. It describes a planet: spawn it on its **own entity** (its `GlobalTransform` is the planet center; left at default it lands `inner_radius` below the origin, putting your scene on the surface). Cameras opt in with **`AtmosphereSettings()`**; the nearest Atmosphere is used. Without `AtmosphereSettings` on the camera the sky silently does not render (gray clear color, no errors, no warnings).
 
 ```python
 from pybevy.light import ScatteringMedium, Atmosphere
+from pybevy.pbr import AtmosphereSettings
 
 medium_handle = mediums.add(ScatteringMedium.earth())
+commands.spawn(Atmosphere.earth(medium_handle))  # the planet: its own entity
 
 commands.spawn(
     Camera3d(),
     Transform.from_xyz(5, 5, 5).looking_at(Vec3.ZERO, Vec3.Y),
-    Atmosphere.earth(medium_handle),
+    AtmosphereSettings(),
 )
 ```
 
+Putting `Atmosphere` on the camera entity also renders, but then the planet center follows the camera (altitude never changes); prefer the separate entity, as in Bevy's own examples.
+
 Atmosphere responds to the DirectionalLight direction — the sky color changes as the "sun" moves.
+
+**Exposure:** physically plausible sun values (85,000 to 130,000 lux, as in Bevy's own atmosphere examples) blow out to white at default exposure. Pair them with `Exposure` from `pybevy.camera` on the camera: `Exposure(ev100=13.0)` to `Exposure(ev100=15.0)`, or the `Exposure.OVERCAST` / `Exposure.SUNLIGHT` presets. The 3,000 to 15,000 lux values used elsewhere in this guide are tuned for default exposure instead.
+
+**One sun only:** every `DirectionalLight` feeds the sky, so a high-elevation "fill" light turns a sunset sky midday-blue. In Atmosphere scenes use a single sun and add `AtmosphereEnvironmentMapLight()` on the camera for fill instead (see Environment Lighting below).
 
 ## Materials
 
@@ -545,7 +553,7 @@ commands.spawn(
 
 ## SunDisk
 
-Renders a visible sun disc on directional lights. Requires `Atmosphere` on the camera.
+Renders a visible sun disc on directional lights. Requires an `Atmosphere` entity in the scene and `AtmosphereSettings` on the camera.
 
 ```python
 from pybevy.light import SunDisk
@@ -571,10 +579,12 @@ Derives environment lighting from the atmosphere sky. Just add to camera — no 
 
 ```python
 from pybevy.light import AtmosphereEnvironmentMapLight
+from pybevy.pbr import AtmosphereSettings
 
+commands.spawn(Atmosphere.earth(medium_handle))  # planet entity (once per scene)
 commands.spawn(
     Camera3d(),
-    Atmosphere.earth(medium_handle),
+    AtmosphereSettings(),
     AtmosphereEnvironmentMapLight(intensity=1.0),
 )
 ```
