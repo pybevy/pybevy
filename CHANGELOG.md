@@ -63,6 +63,7 @@ so upstream renames, module moves, and default changes flow through to Python.
 - `WireframePlugin` (`pybevy.pbr`): registers Bevy's wireframe render systems; previously the `Wireframe`/`WireframeConfig` wrappers existed but nothing rendered them
 - `ScatteringMedium.terms` is now writable (mirrors the public field; e.g. appending a haze term to the earth defaults)
 - New example `examples/bevy/large_scenes/bevy_city.py`: port of Bevy 0.19's procedurally generated city stress test (auto-downloads the CC0 Kenney kits on first run)
+- Bevy 0.19 lighting features: `RectLight` area light (with the engine's `area_light_luts` feature enabled so it renders), screen-space `ContactShadows` camera component + `contact_shadows_enabled` flag on the three light types, and `ParallaxCorrection` for reflection probes; lighting/shadows guides cover all three
 
 ### Bug fixes
 

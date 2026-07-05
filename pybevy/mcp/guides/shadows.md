@@ -50,6 +50,32 @@ commands.spawn(
 | `GAUSSIAN` | Soft edges, good general-purpose (default) |
 | `TEMPORAL` | Softest, randomized. Best with TAA enabled. |
 
+## Contact Shadows (Screen-Space)
+
+Shadow maps miss the small contact points where objects meet surfaces (feet on ground, cup on table); contact shadows ray-march the depth buffer to darken exactly those spots. Two parts: a `ContactShadows` component on the camera (which needs a `DepthPrepass`), and `contact_shadows_enabled=True` on each participating light.
+
+```python
+from pybevy.camera import DepthPrepass
+from pybevy.pbr import ContactShadows
+
+commands.spawn(
+    Camera3d(),
+    DepthPrepass(),       # required: contact shadows read the depth buffer
+    ContactShadows(
+        linear_steps=16,  # ray-march steps: more = smoother, slower
+        thickness=0.1,    # assumed surface thickness (world units)
+        length=0.3,       # max contact-shadow reach (world units)
+    ),
+)
+
+commands.spawn(
+    DirectionalLight(shadow_maps_enabled=True, contact_shadows_enabled=True),
+    Transform.from_xyz(4.0, 8.0, 4.0).looking_at(Vec3(0.0, 0.0, 0.0), Vec3.Y),
+)
+```
+
+`PointLight`, `SpotLight`, and `DirectionalLight` all have the `contact_shadows_enabled` flag (default `False`). Keep `length` short: this is a small-scale grounding effect layered on top of shadow maps, not a replacement for them.
+
 ## Bias Tuning
 
 Two bias values prevent shadow artifacts. Each light type has its own defaults:

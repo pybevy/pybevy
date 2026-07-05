@@ -1,5 +1,6 @@
 pub mod atmosphere_mode;
 pub mod atmosphere_settings;
+pub mod contact_shadows;
 pub mod default_opaque_renderer_method;
 pub mod distance_fog;
 pub mod fog_falloff;
@@ -43,6 +44,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<screen_space_reflections::PyScreenSpaceReflections>()?;
     m.add_class::<screen_space_transmission::PyScreenSpaceTransmission>()?;
     m.add_class::<screen_space_transmission_quality::PyScreenSpaceTransmissionQuality>()?;
+    m.add_class::<contact_shadows::PyContactShadows>()?;
     m.add_class::<atmosphere_settings::PyAtmosphereSettings>()?;
     m.add_class::<parallax_mapping_method::PyParallaxMappingMethod>()?;
     m.add_class::<standard_material::PyStandardMaterial>()?;

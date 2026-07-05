@@ -21,4 +21,8 @@ workspace = true
 features = [
     "bevy_pbr",
     "bevy_light",
+    # Embeds the LTC lookup textures RectLight needs to render; the LUTs are
+    # zstd-compressed KTX2, so a zstd backend must be chosen (pure-Rust one)
+    "area_light_luts",
+    "zstd_rust",
 ]

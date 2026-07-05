@@ -103,6 +103,28 @@ commands.spawn(
 Transform.from_xyz(x, 7.0, z).looking_at(Vec3(x, 0.0, z), Vec3.Z)
 ```
 
+### RectLight (Area Light)
+
+Soft light emitted from a rectangular surface: window panes, softboxes, glowing ceiling panels, neon signs. The rectangle lies in the entity's local XY plane (sized by `width`/`height`) and shines along local -Z, so aim it with `looking_at` exactly like a spotlight.
+
+```python
+from pybevy.light import RectLight
+
+# Warm 2x1 ceiling panel shining straight down
+commands.spawn(
+    RectLight(
+        color=Color.srgb(1.0, 0.9, 0.8),
+        intensity=100_000.0,  # luminous power in lumens, spread over the rect
+        range=20.0,           # hard cutoff; tune together with intensity
+        width=2.0,
+        height=1.0,
+    ),
+    Transform.from_xyz(0.0, 4.0, 0.0).looking_at(Vec3(0.0, 0.0, 0.0), Vec3.Z),
+)
+```
+
+**No shadow maps:** objects lit by a RectLight do not cast shadows from it (upstream limitation). Pair it with a dim shadow-casting light if you need grounding shadows.
+
 ### Ambient Light
 
 Flat light applied everywhere — prevents pure-black shadows.
@@ -611,6 +633,23 @@ commands.spawn(
 ```
 
 Pair with `Skybox` for a visible background: see `guide://camera` (Skybox section).
+
+**Reflection probes and parallax correction:** an `EnvironmentMapLight` can also ride on a `LightProbe` entity to light just one region (a room, a courtyard). Probe reflections default to `ParallaxCorrection.AUTO`: they are box-projected against the probe's bounds (its `Transform` scale), which anchors reflections to nearby walls instead of smearing them at infinity. Use `ParallaxCorrection.NONE` when the cubemap depicts distant scenery (sky, horizon), or `ParallaxCorrection.custom(half_extents)` when the projection box should differ from the probe volume:
+
+```python
+from pybevy.light import LightProbe, EnvironmentMapLight, ParallaxCorrection
+
+commands.spawn(
+    LightProbe(),
+    EnvironmentMapLight(
+        diffuse_map=asset_server.load("environment/diffuse.ktx2"),
+        specular_map=asset_server.load("environment/specular.ktx2"),
+        intensity=1000.0,
+    ),
+    ParallaxCorrection.custom(Vec3(4.0, 2.5, 4.0)),  # half-extents of the room
+    Transform.from_xyz(0.0, 2.5, 0.0).with_scale(Vec3(8.0, 5.0, 8.0)),
+)
+```
 
 ### 3. IrradianceVolume + LightProbe (Baked GI)
 

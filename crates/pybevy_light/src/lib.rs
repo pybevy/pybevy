@@ -12,9 +12,11 @@ pub mod fog_volume;
 pub mod generated_environment_map_light;
 pub mod irradiance_volume;
 pub mod light_texture;
+pub mod parallax_correction;
 pub mod phase_function;
 pub mod plugin;
 pub mod point_light;
+pub mod rect_light;
 pub mod scattering_medium;
 pub mod scattering_term;
 pub mod shadow_filtering_method;
@@ -33,8 +35,10 @@ pub mod prelude {
         directional_light::PyDirectionalLight,
         environment_map_light::PyEnvironmentMapLight,
         generated_environment_map_light::PyGeneratedEnvironmentMapLight,
+        parallax_correction::PyParallaxCorrection,
         plugin::PyLightPlugin,
         point_light::PyPointLight,
+        rect_light::PyRectLight,
         skybox::PySkybox,
         spot_light::PySpotLight,
     };
@@ -46,6 +50,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<point_light::PyPointLight>()?;
     m.add_class::<directional_light::PyDirectionalLight>()?;
     m.add_class::<spot_light::PySpotLight>()?;
+    m.add_class::<rect_light::PyRectLight>()?;
+    m.add_class::<parallax_correction::PyParallaxCorrection>()?;
     m.add_class::<shadow_markers::PyNotShadowCaster>()?;
     m.add_class::<shadow_markers::PyNotShadowReceiver>()?;
     m.add_class::<shadow_markers::PyTransmittedShadowReceiver>()?;

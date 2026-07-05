@@ -135,6 +135,7 @@ from .light import (
     GlobalAmbientLight,
     LightProbe,
     PointLight,
+    RectLight,
     Skybox,
     SpotLight,
 )
@@ -564,6 +565,7 @@ __all__ = [
     "GlobalAmbientLight",
     "LightProbe",
     "PointLight",
+    "RectLight",
     "SpotLight",
     # Math
     "Annulus",

@@ -163,6 +163,7 @@ class PointLight(Component):
         range: float = 20.0,
         radius: float = 0.0,
         shadow_maps_enabled: bool = False,
+        contact_shadows_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.08,
         shadow_normal_bias: float = 0.6,
@@ -174,6 +175,7 @@ class PointLight(Component):
     range: float
     radius: float
     shadow_maps_enabled: bool
+    contact_shadows_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
     shadow_depth_bias: float
     shadow_normal_bias: float
@@ -189,6 +191,7 @@ class PointLight(Component):
         shadow_normal_bias: np.ndarray | None = None,
         shadow_map_near_z: np.ndarray | None = None,
         shadow_maps_enabled: np.ndarray | None = None,
+        contact_shadows_enabled: np.ndarray | None = None,
         affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
         color: np.ndarray | None = None,
     ) -> Batchable: ...
@@ -201,6 +204,7 @@ class SpotLight(Component):
         range: float = 20.0,
         radius: float = 0.0,
         shadow_maps_enabled: bool = False,
+        contact_shadows_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.02,
         shadow_normal_bias: float = 1.8,
@@ -214,6 +218,7 @@ class SpotLight(Component):
     range: float
     radius: float
     shadow_maps_enabled: bool
+    contact_shadows_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
     shadow_depth_bias: float
     shadow_normal_bias: float
@@ -233,6 +238,7 @@ class SpotLight(Component):
         outer_angle: np.ndarray | None = None,
         inner_angle: np.ndarray | None = None,
         shadow_maps_enabled: np.ndarray | None = None,
+        contact_shadows_enabled: np.ndarray | None = None,
         affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
         color: np.ndarray | None = None,
     ) -> Batchable: ...
@@ -243,6 +249,7 @@ class DirectionalLight(Component):
         color: Color = Color.WHITE,
         illuminance: float = 10_000.0,
         shadow_maps_enabled: bool = False,
+        contact_shadows_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.02,
         shadow_normal_bias: float = 1.8,
@@ -251,6 +258,7 @@ class DirectionalLight(Component):
     color: Color
     illuminance: float
     shadow_maps_enabled: bool
+    contact_shadows_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
     shadow_depth_bias: float
     shadow_normal_bias: float
@@ -262,9 +270,58 @@ class DirectionalLight(Component):
         shadow_depth_bias: np.ndarray | None = None,
         shadow_normal_bias: np.ndarray | None = None,
         shadow_maps_enabled: np.ndarray | None = None,
+        contact_shadows_enabled: np.ndarray | None = None,
         affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
         color: np.ndarray | None = None,
     ) -> Batchable: ...
+
+class RectLight(Component):
+    """Rectangular area light.
+
+    The rectangle lies in the entity's local XY plane (sized by ``width`` and
+    ``height``) and emits along local -Z, so aim it with ``looking_at`` like a
+    spotlight. Objects it illuminates do not cast shadows (no shadow-map
+    support upstream yet). Rendering uses the engine's ``area_light_luts``
+    feature, which pybevy builds enable.
+    """
+
+    def __init__(
+        self,
+        color: Color = Color.WHITE,
+        intensity: float = 1_000_000.0,
+        range: float = 20.0,
+        width: float = 1.0,
+        height: float = 1.0,
+    ) -> None: ...
+
+    color: Color
+    intensity: float
+    range: float
+    width: float
+    height: float
+
+    @staticmethod
+    def from_numpy(  # type: ignore[override]
+        *,
+        intensity: np.ndarray | None = None,
+        range: np.ndarray | None = None,
+        width: np.ndarray | None = None,
+        height: np.ndarray | None = None,
+        color: np.ndarray | None = None,
+    ) -> Batchable: ...
+
+class ParallaxCorrection(Component):
+    """Parallax correction mode for reflection (light) probes."""
+
+    NONE: ClassVar[ParallaxCorrection]
+    AUTO: ClassVar[ParallaxCorrection]
+
+    def __init__(self) -> None: ...
+    @staticmethod
+    def custom(half_extents: Vec3) -> ParallaxCorrection: ...
+    @property
+    def custom_half_extents(self) -> Vec3 | None: ...
+    def __eq__(self, other: object) -> bool: ...
 
 class EnvironmentMapLight(Component):
     def __init__(

@@ -9,6 +9,7 @@ use pyo3::prelude::*;
     shadow_depth_bias,
     shadow_normal_bias,
     shadow_maps_enabled,
+    contact_shadows_enabled,
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
 #[pyclass(name = "DirectionalLight", extends = PyComponent)]
@@ -28,6 +29,10 @@ impl PyDirectionalLight {
 
     fn default_shadow_maps_enabled() -> bool {
         DirectionalLight::default().shadow_maps_enabled
+    }
+
+    fn default_contact_shadows_enabled() -> bool {
+        DirectionalLight::default().contact_shadows_enabled
     }
 
     fn default_affects_lightmapped_mesh_diffuse() -> bool {
@@ -50,6 +55,7 @@ impl PyDirectionalLight {
         color = Self::default_color(),
         illuminance = Self::default_illuminance(),
         shadow_maps_enabled = Self::default_shadow_maps_enabled(),
+        contact_shadows_enabled = Self::default_contact_shadows_enabled(),
         affects_lightmapped_mesh_diffuse = Self::default_affects_lightmapped_mesh_diffuse(),
         shadow_depth_bias = Self::default_shadow_depth_bias(),
         shadow_normal_bias = Self::default_shadow_normal_bias()
@@ -58,6 +64,7 @@ impl PyDirectionalLight {
         color: PyColor,
         illuminance: f32,
         shadow_maps_enabled: bool,
+        contact_shadows_enabled: bool,
         affects_lightmapped_mesh_diffuse: bool,
         shadow_depth_bias: f32,
         shadow_normal_bias: f32,
@@ -66,11 +73,10 @@ impl PyDirectionalLight {
             color: color.into(),
             illuminance,
             shadow_maps_enabled,
+            contact_shadows_enabled,
             affects_lightmapped_mesh_diffuse,
             shadow_depth_bias,
             shadow_normal_bias,
-            // `contact_shadows_enabled` is not exposed; it takes its default (off).
-            ..Default::default()
         })
         .into()
     }
@@ -105,6 +111,17 @@ impl PyDirectionalLight {
     #[setter]
     pub fn set_shadow_maps_enabled(&mut self, value: bool) -> PyResult<()> {
         self.as_mut()?.shadow_maps_enabled = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn contact_shadows_enabled(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.contact_shadows_enabled)
+    }
+
+    #[setter]
+    pub fn set_contact_shadows_enabled(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.contact_shadows_enabled = value;
         Ok(())
     }
 

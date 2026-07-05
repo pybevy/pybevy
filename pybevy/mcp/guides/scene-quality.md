@@ -298,7 +298,6 @@ These genuinely don't exist in PyBevy:
 
 | Feature | Best workaround |
 |---------|----------------|
-| Area / rect lights | Multiple PointLights in a line |
 | Trail / ribbon renderer | Chain of small meshes updated per frame |
 | 3D billboard component | Orient quads toward camera in Update system |
 | Gizmos / debug lines | Use MCP `capture_screenshot {"gizmos": true}` for labels |

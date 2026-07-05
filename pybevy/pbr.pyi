@@ -538,6 +538,39 @@ class ScreenSpaceReflections(Component):
         use_secant: np.ndarray | None = None,
     ) -> Batchable: ...
 
+class ContactShadows(Component):
+    """Screen-space contact shadows. Add to a camera; requires a depth prepass."""
+
+    def __init__(
+        self,
+        linear_steps: int = 16,
+        thickness: float = 0.1,
+        length: float = 0.3,
+    ) -> None: ...
+
+    @property
+    def linear_steps(self) -> int: ...
+    @linear_steps.setter
+    def linear_steps(self, value: int) -> None: ...
+
+    @property
+    def thickness(self) -> float: ...
+    @thickness.setter
+    def thickness(self, value: float) -> None: ...
+
+    @property
+    def length(self) -> float: ...
+    @length.setter
+    def length(self, value: float) -> None: ...
+
+    @staticmethod
+    def from_numpy(  # type: ignore[override]
+        *,
+        linear_steps: np.ndarray | None = None,
+        thickness: np.ndarray | None = None,
+        length: np.ndarray | None = None,
+    ) -> Batchable: ...
+
 class Lightmap(Component):
     """Lightmap component for pre-baked lighting.
 
