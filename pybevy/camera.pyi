@@ -1207,9 +1207,9 @@ class Exposure(Component):
 
     Examples:
         >>> # Use preset exposure values
-        >>> exposure = Exposure.SUNLIGHT()  # Bright outdoor (EV100=15.0)
-        >>> exposure = Exposure.INDOOR()    # Indoor lighting (EV100=7.0)
-        >>> exposure = Exposure.BLENDER()   # Default Blender (EV100=9.7)
+        >>> exposure = Exposure.SUNLIGHT   # Bright outdoor (EV100=15.0)
+        >>> exposure = Exposure.INDOOR     # Indoor lighting (EV100=7.0)
+        >>> exposure = Exposure.BLENDER    # Default Blender (EV100=9.7)
         >>>
         >>> # Create custom exposure
         >>> exposure = Exposure(ev100=12.0)

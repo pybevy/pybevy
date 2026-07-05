@@ -414,7 +414,7 @@ class SunDisk(Component):
         intensity: Brightness multiplier (0.0 disables, 1.0 is physical default).
 
     Example:
-        commands.spawn(DirectionalLight(), SunDisk.EARTH())
+        commands.spawn(DirectionalLight(), SunDisk.EARTH)
     """
     def __init__(
         self,
@@ -652,19 +652,23 @@ class ScatteringMedium(Asset):
         """Create a mars-like scattering medium preset (requires a dust-phase image)."""
 
 class Atmosphere(Component):
-    """Atmospheric scattering component for realistic sky rendering.
+    """Atmosphere of a planet, for physically-based sky rendering.
 
-    When added to a camera, enables procedural atmospheric scattering that
-    simulates realistic sky colors, sunsets, and aerial perspective. Based on
-    Hillaire's 2020 paper on real-time atmospheric scattering.
+    Spawn it on its OWN entity: the entity's GlobalTransform is the planet
+    center, and left at default it is placed inner_radius below the origin so
+    the scene sits on the planet surface (mirroring Bevy's examples). Cameras
+    opt in by adding pybevy.pbr.AtmosphereSettings; the nearest Atmosphere is
+    used. Without AtmosphereSettings the sky silently does not render.
 
     Scattering parameters (rayleigh, mie, ozone) live in ScatteringMedium
-    assets; Atmosphere references a Handle to a ScatteringMedium.
+    assets; Atmosphere references a Handle to a ScatteringMedium. Based on
+    Hillaire's 2020 paper on real-time atmospheric scattering.
 
     Example:
         >>> from pybevy.light import Atmosphere
-        >>> # Use the earth preset with a ScatteringMedium handle
-        >>> atmo = Atmosphere.earth(medium_handle)
+        >>> from pybevy.pbr import AtmosphereSettings
+        >>> commands.spawn(Atmosphere.earth(medium_handle))  # planet entity
+        >>> commands.spawn(Camera3d(), AtmosphereSettings())
     """
 
     def __init__(

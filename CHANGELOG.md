@@ -67,6 +67,7 @@ so upstream renames, module moves, and default changes flow through to Python.
 ### Bug fixes
 
 - `Quat(x, y, z, w)` now raises a TypeError pointing at `Quat.from_xyzw`/`from_axis_angle`/`from_euler`/`Quat.IDENTITY` (was PyO3's bare "cannot create instances")
+- Guides/docs: `Atmosphere` snippets now include the required `AtmosphereSettings()` camera component (not auto-inserted; the sky is silently absent without it); the lighting guide covers `Exposure` for physical sun illuminance and the one-sun rule for Atmosphere scenes; `guide://patterns` puts `DistanceFog` on the camera (it did nothing as a standalone entity); `SunDisk.EARTH` and `Exposure.SUNLIGHT`/`INDOOR`/`BLENDER` docstring examples use the bare class attributes (the called form raises `TypeError`)
 
 ## 0.2.1
 
