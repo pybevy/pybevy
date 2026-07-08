@@ -27,10 +27,10 @@ pub unsafe fn mark_component_changed_explicit(
     // - Entity and ComponentId are valid (came from query extraction)
     unsafe {
         let world = &mut *world_ptr;
-        if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
-            if let Ok(mut comp) = entity_mut.get_mut_by_id(component_id) {
-                comp.set_changed();
-            }
+        if let Ok(mut entity_mut) = world.get_entity_mut(entity)
+            && let Ok(mut comp) = entity_mut.get_mut_by_id(component_id)
+        {
+            comp.set_changed();
         }
     }
 }

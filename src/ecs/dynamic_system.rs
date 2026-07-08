@@ -9,7 +9,7 @@ use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
         component::ComponentId,
-        query::FilteredAccessSet,
+        query::{FilteredAccess, FilteredAccessSet},
         system::{RunSystemError, System, SystemIn, SystemParamValidationError, SystemStateFlags},
         world::{CommandQueue, DeferredWorld, World, unsafe_world_cell::UnsafeWorldCell},
     },
@@ -17,7 +17,7 @@ use bevy::{
 };
 use pybevy_core::registry::global_registry;
 use pybevy_ecs::shared::{
-    access_sets::build_full_access_set,
+    access_sets::{QueryParamAccess, build_resource_access},
     access_validation::{self as shared_validation, ComponentAccess, ParamAccess, QueryFilters},
 };
 use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
@@ -114,9 +114,6 @@ pub fn clear_system_param_cache() {
 }
 
 pub struct DynamicSystem {
-    components_to_write: Vec<ComponentId>,
-    components_to_read: Vec<ComponentId>,
-    with_filters: Vec<ComponentId>,
     resources_to_read: Vec<ComponentId>,
     resources_to_write: Vec<ComponentId>,
     /// Maps custom component type pointers to their registered ComponentIds
@@ -290,9 +287,6 @@ impl DynamicSystem {
         }));
 
         let system = Self {
-            components_to_write: Vec::new(),
-            components_to_read: Vec::new(),
-            with_filters: Vec::new(),
             resources_to_read: Vec::new(),
             resources_to_write: Vec::new(),
             custom_component_ids: HashMap::new(),
@@ -964,110 +958,82 @@ impl System for DynamicSystem {
             inner.system_func.as_ref().unwrap().params.clone()
         };
 
-        // Collect component IDs and filters first to avoid borrow conflicts
-        let mut read_ids: Vec<ComponentId> = Vec::new();
-        let mut write_ids = Vec::new();
-        let mut with_ids = Vec::new();
+        // One `FilteredAccess` per Query/View parameter, so a filter on one query
+        // never narrows the declared access of another (that would fabricate
+        // disjointness). Resource-like access is gathered separately into a single
+        // shared `FilteredAccess` built at the end.
+        let mut param_accesses: Vec<FilteredAccess> = Vec::new();
 
         // Parse system parameters from the SystemFunction and register component accesses
         for param in &params {
             match &param.ty {
                 SystemParamType::Query { param: query_param } => {
-                    // For queries, we need to register component accesses
+                    let mut access = QueryParamAccess::default();
+
                     for param_type in &query_param.data {
                         if let QueryData::Component {
                             ty: comp_type,
                             mutable,
-                            ..
+                            optional,
                         } = param_type
                         {
-                            let id = match comp_type {
-                                PyComponentType::Custom(type_ptr) => {
-                                    // Check if we've already registered this custom component
-                                    if let Some(&id) = self.custom_component_ids.get(type_ptr) {
-                                        id
-                                    } else {
-                                        // Get the component name from the Python type
-                                        let name = Python::attach(|py| {
-                                            get_python_type_name(py, *type_ptr)
-                                        });
-
-                                        // Register the custom component and store its ID
-                                        let id = register_custom_component(world, *type_ptr, name);
-                                        self.custom_component_ids.insert(*type_ptr, id);
-                                        id
-                                    }
-                                }
-                                // All built-in component types
-                                _ => register_component_id(
-                                    world,
-                                    comp_type,
-                                    &self.custom_component_ids,
-                                ),
-                            };
-
-                            // Register read or write access based on mutability
-                            if *mutable {
-                                write_ids.push(id);
-                            } else {
-                                // Read-only access - enables parallel execution of multiple read-only queries
-                                read_ids.push(id);
+                            let id = self.resolve_component_id(world, comp_type);
+                            // A required component's presence gates the access, so it
+                            // also contributes a `With` filter (added by `build`). An
+                            // optional component may be absent while the query still
+                            // matches, so it contributes access without a `With`.
+                            match (*mutable, *optional) {
+                                (true, false) => access.writes.push(id),
+                                (false, false) => access.reads.push(id),
+                                (true, true) => access.optional_writes.push(id),
+                                (false, true) => access.optional_reads.push(id),
                             }
                         }
                     }
 
-                    // Handle filters
                     for filter in &query_param.filters {
-                        let component_types_opt: Option<&[PyComponentType]> = match filter {
-                            QueryFilter::With(with) => Some(&with.values),
-                            QueryFilter::Without(without) => Some(&without.values),
+                        match filter {
+                            QueryFilter::With(with) => {
+                                for comp_type in &with.values {
+                                    let id = self.resolve_component_id(world, comp_type);
+                                    access.with.push(id);
+                                }
+                            }
+                            QueryFilter::Without(without) => {
+                                for comp_type in &without.values {
+                                    let id = self.resolve_component_id(world, comp_type);
+                                    access.without.push(id);
+                                }
+                            }
                             QueryFilter::Changed(changed) => {
-                                Some(std::slice::from_ref(&changed.component_type))
+                                // Changed archetypally implies the component is present,
+                                // and the tick check reads its change ticks.
+                                let id = self.resolve_component_id(world, &changed.component_type);
+                                access.reads.push(id);
                             }
                             QueryFilter::Added(added) => {
-                                Some(std::slice::from_ref(&added.component_type))
+                                let id = self.resolve_component_id(world, &added.component_type);
+                                access.reads.push(id);
                             }
                             QueryFilter::Has(has) => {
-                                Some(std::slice::from_ref(&has.component_type))
+                                // Has matches regardless of the component's presence, so
+                                // it contributes no access and no filter. The id is still
+                                // registered because the runtime query builder needs it.
+                                self.resolve_component_id(world, &has.component_type);
                             }
-                            QueryFilter::AnyOf(any_of) => Some(&any_of.values),
-                        };
-
-                        if let Some(component_types) = component_types_opt {
-                            for comp_type in component_types {
-                                let id = match comp_type {
-                                    PyComponentType::Custom(type_ptr) => {
-                                        // Check if we've already registered this custom component
-                                        if let Some(&id) = self.custom_component_ids.get(type_ptr) {
-                                            id
-                                        } else {
-                                            // Get the component name from the Python type
-                                            let name = Python::attach(|py| {
-                                                let type_obj = unsafe {
-                                                    Bound::from_borrowed_ptr(
-                                                        py,
-                                                        *type_ptr as *mut PyObject,
-                                                    )
-                                                };
-                                                let type_bound = type_obj.cast::<PyType>()?;
-                                                Ok::<String, PyErr>(type_bound.name()?.to_string())
-                                            })
-                                            .unwrap_or_else(|_| "Unknown".to_string());
-
-                                            // Register the custom component and store its ID
-                                            let id =
-                                                register_custom_component(world, *type_ptr, name);
-                                            self.custom_component_ids.insert(*type_ptr, id);
-                                            id
-                                        }
-                                    }
-                                    // For built-in components, use the generated register_simple method
-                                    _ => comp_type.register_simple(world),
-                                };
-                                with_ids.push(id);
+                            QueryFilter::AnyOf(any_of) => {
+                                // AnyOf has OR semantics; a conjunctive `and_with` cannot
+                                // express OR, so no filter is contributed. Omitting it is
+                                // conservative: it only costs parallelism, never soundness.
+                                // Ids are still registered for the runtime query builder.
+                                for comp_type in &any_of.values {
+                                    self.resolve_component_id(world, comp_type);
+                                }
                             }
                         }
                     }
+
+                    param_accesses.push(access.build());
                 }
                 SystemParamType::Resource { type_obj, mutable } => {
                     let resource_type = Python::attach(|py| {
@@ -1101,55 +1067,39 @@ impl System for DynamicSystem {
                     }
                 }
                 SystemParamType::View { param } => {
-                    // Extract component types and mutability from PyViewParam
-                    let mut component_types = Vec::new();
-                    let mut mutable_components = HashSet::new();
+                    let mut access = QueryParamAccess::default();
 
+                    // View components are all required (no optional flag), so each
+                    // contributes access and a `With` filter (added by `build`).
                     for view_param_type in &param.parameters {
                         let ViewParamType::Component { comp_type, mutable } = view_param_type;
-                        component_types.push(comp_type.clone());
+                        let id = self.resolve_component_id(world, comp_type);
                         if *mutable {
-                            mutable_components.insert(comp_type.clone());
-                        }
-                    }
-
-                    // Register components with correct access modes
-                    for comp_type in &component_types {
-                        let id = match comp_type {
-                            PyComponentType::Custom(type_ptr) => {
-                                // Check if already registered
-                                if let Some(&id) = self.custom_component_ids.get(type_ptr) {
-                                    id
-                                } else {
-                                    // Get the component name from the Python type
-                                    let name = Python::attach(|py| {
-                                        let type_obj = unsafe {
-                                            Bound::from_borrowed_ptr(py, *type_ptr as *mut PyObject)
-                                        };
-                                        let type_bound = type_obj.cast::<PyType>()?;
-                                        Ok::<String, PyErr>(type_bound.name()?.to_string())
-                                    })
-                                    .unwrap_or_else(|_| "Unknown".to_string());
-
-                                    // Register the custom component
-                                    let id = register_custom_component(world, *type_ptr, name);
-                                    self.custom_component_ids.insert(*type_ptr, id);
-                                    id
-                                }
-                            }
-                            // All built-in components (Transform, PointLight, etc.) use Dynamic dispatch
-                            PyComponentType::Dynamic(_) => {
-                                register_component_id(world, comp_type, &self.custom_component_ids)
-                            }
-                        };
-
-                        // Add to appropriate access list based on mutability
-                        if mutable_components.contains(comp_type) {
-                            write_ids.push(id);
+                            access.writes.push(id);
                         } else {
-                            read_ids.push(id);
+                            access.reads.push(id);
                         }
                     }
+
+                    for comp_type in &param.with_filters {
+                        let id = self.resolve_component_id(world, comp_type);
+                        access.with.push(id);
+                    }
+                    for comp_type in &param.without_filters {
+                        let id = self.resolve_component_id(world, comp_type);
+                        access.without.push(id);
+                    }
+                    // Changed/Added imply presence and read the component's change ticks.
+                    for comp_type in &param.changed_filters {
+                        let id = self.resolve_component_id(world, comp_type);
+                        access.reads.push(id);
+                    }
+                    for comp_type in &param.added_filters {
+                        let id = self.resolve_component_id(world, comp_type);
+                        access.reads.push(id);
+                    }
+
+                    param_accesses.push(access.build());
                 }
                 SystemParamType::Local(_) => {
                     // Local state doesn't affect world access
@@ -1161,13 +1111,14 @@ impl System for DynamicSystem {
                     // Commands don't require specific component access
                 }
                 SystemParamType::MessageWriter { message_type } => {
+                    // Message buffers are resources; declare them in the shared access.
                     if let Some(id) = message_type.resource_id(world) {
-                        write_ids.push(id);
+                        self.resources_to_write.push(id);
                     }
                 }
                 SystemParamType::MessageReader { message_type } => {
                     if let Some(id) = message_type.resource_id(world) {
-                        read_ids.push(id);
+                        self.resources_to_read.push(id);
                     }
                 }
                 SystemParamType::On { .. } => {
@@ -1175,17 +1126,6 @@ impl System for DynamicSystem {
                     // They're triggered via World.trigger() and have separate execution paths
                 }
             }
-        }
-
-        // Apply the collected IDs to self for tracking
-        for id in read_ids {
-            self.add_read(id);
-        }
-        for id in write_ids {
-            self.add_write(id);
-        }
-        for id in with_ids {
-            self.add_with(id);
         }
 
         // run_unsafe's generation guard reads HotReloadGeneration
@@ -1234,13 +1174,19 @@ impl System for DynamicSystem {
                     )
                 });
 
-        build_full_access_set(
-            &self.components_to_read,
-            &self.components_to_write,
-            &self.with_filters,
+        // One FilteredAccess per Query/View parameter, plus one shared access for
+        // all resource-like reads/writes. `FilteredAccessSet::is_compatible` does
+        // the pairwise filter checks that keep genuinely conflicting systems from
+        // being scheduled in parallel.
+        let mut set = FilteredAccessSet::default();
+        for access in param_accesses {
+            set.add(access);
+        }
+        set.add(build_resource_access(
             &self.resources_to_read,
             &self.resources_to_write,
-        )
+        ));
+        set
     }
 
     fn check_change_tick(&mut self, _check: CheckChangeTicks) {}
@@ -1300,21 +1246,28 @@ impl DynamicSystem {
         })
     }
 
-    fn add_read(&mut self, id: ComponentId) {
-        if !self.components_to_read.contains(&id) {
-            self.components_to_read.push(id);
-        }
-    }
-
-    fn add_write(&mut self, id: ComponentId) {
-        if !self.components_to_write.contains(&id) {
-            self.components_to_write.push(id);
-        }
-    }
-
-    fn add_with(&mut self, id: ComponentId) {
-        if !self.with_filters.contains(&id) {
-            self.with_filters.push(id);
+    /// Resolve a `PyComponentType` to its `ComponentId`, registering it if needed.
+    ///
+    /// Custom components are registered on first sight and cached in
+    /// `custom_component_ids` (the runtime `PyQueryIter::new` reads this cache);
+    /// built-in components resolve through their registered bridge.
+    fn resolve_component_id(
+        &mut self,
+        world: &mut World,
+        comp_type: &PyComponentType,
+    ) -> ComponentId {
+        match comp_type {
+            PyComponentType::Custom(type_ptr) => {
+                if let Some(&id) = self.custom_component_ids.get(type_ptr) {
+                    id
+                } else {
+                    let name = Python::attach(|py| get_python_type_name(py, *type_ptr));
+                    let id = register_custom_component(world, *type_ptr, name);
+                    self.custom_component_ids.insert(*type_ptr, id);
+                    id
+                }
+            }
+            _ => register_component_id(world, comp_type, &self.custom_component_ids),
         }
     }
 
