@@ -74,12 +74,19 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         // Python info
         result.insert("gil_enabled".into(), serde_json::json!(snap.gil_enabled));
 
-        // System profiling
+        // System profiling. `max_ms` is the rolling-window peak; useful
+        // because `avg_ms` smooths away single-frame spikes.
         if !snap.update_profiles.is_empty() {
             let profiles: Vec<_> = snap
                 .update_profiles
                 .iter()
-                .map(|(name, ms)| serde_json::json!({"name": name, "avg_ms": format!("{:.2}", ms)}))
+                .map(|p| {
+                    serde_json::json!({
+                        "name": p.name,
+                        "avg_ms": format!("{:.2}", p.avg_ms),
+                        "max_ms": format!("{:.2}", p.max_ms),
+                    })
+                })
                 .collect();
             result.insert("system_profiles".into(), serde_json::json!(profiles));
         }
@@ -87,7 +94,13 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
             let profiles: Vec<_> = snap
                 .startup_profiles
                 .iter()
-                .map(|(name, ms)| serde_json::json!({"name": name, "avg_ms": format!("{:.2}", ms)}))
+                .map(|p| {
+                    serde_json::json!({
+                        "name": p.name,
+                        "avg_ms": format!("{:.2}", p.avg_ms),
+                        "max_ms": format!("{:.2}", p.max_ms),
+                    })
+                })
                 .collect();
             result.insert("startup_profiles".into(), serde_json::json!(profiles));
         }
@@ -275,8 +288,16 @@ mod tests {
         snap.reload_failed = true;
         snap.reload_failure_reason = Some("syntax error".to_string());
         snap.asset_counts = vec![("Mesh".to_string(), 5), ("Material".to_string(), 3)];
-        snap.update_profiles = vec![("my_system".to_string(), 1.5)];
-        snap.startup_profiles = vec![("setup".to_string(), 10.0)];
+        snap.update_profiles = vec![pybevy_core::SystemProfile {
+            name: "my_system".to_string(),
+            avg_ms: 1.5,
+            max_ms: 4.2,
+        }];
+        snap.startup_profiles = vec![pybevy_core::SystemProfile {
+            name: "setup".to_string(),
+            avg_ms: 10.0,
+            max_ms: 12.5,
+        }];
         snap.total_schedule_systems = 12;
         snap.python_gc_objects = 5000;
         snap.memory_growth_mb = 8.5;
@@ -303,6 +324,11 @@ mod tests {
         assert!(result["assets"].is_object());
         assert!(result["system_profiles"].is_array());
         assert!(result["startup_profiles"].is_array());
+        // System profile entries carry both avg and max (rolling-window peak).
+        assert_eq!(result["system_profiles"][0]["name"], "my_system");
+        assert_eq!(result["system_profiles"][0]["avg_ms"], "1.50");
+        assert_eq!(result["system_profiles"][0]["max_ms"], "4.20");
+        assert_eq!(result["startup_profiles"][0]["max_ms"], "12.50");
         assert_eq!(result["total_schedule_systems"], 12);
         assert_eq!(result["python_gc_objects"], 5000);
         assert!(result["memory_growth_mb"].is_string());

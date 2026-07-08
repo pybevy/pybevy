@@ -33,10 +33,10 @@ pub struct DebugSnapshot {
 
     pub gil_enabled: bool,
 
-    /// Top update/last systems: (name, avg_ms)
-    pub update_profiles: Vec<(String, f64)>,
-    /// Startup systems: (name, avg_ms)
-    pub startup_profiles: Vec<(String, f64)>,
+    /// Top update/last systems with rolling-window timing.
+    pub update_profiles: Vec<SystemProfile>,
+    /// Startup systems with rolling-window timing.
+    pub startup_profiles: Vec<SystemProfile>,
 
     /// Total number of systems across all schedules
     pub total_schedule_systems: usize,
@@ -50,6 +50,16 @@ pub struct DebugSnapshot {
     pub memory_warning: bool,
     /// Per-reload memory snapshots (most recent last, capped at 20)
     pub reload_memory_snapshots: Vec<ReloadMemorySnapshotInfo>,
+}
+
+/// Per-system timing record. `avg_ms` and `max_ms` are computed over the
+/// same rolling window in `pybevy_reload::SystemProfiler` (default 60 frames).
+/// `max_ms` lets consumers see spike behavior that the average smooths out.
+#[derive(Clone, Default, Debug)]
+pub struct SystemProfile {
+    pub name: String,
+    pub avg_ms: f64,
+    pub max_ms: f64,
 }
 
 /// Per-reload memory snapshot exposed via DebugSnapshot for MCP diagnostics
