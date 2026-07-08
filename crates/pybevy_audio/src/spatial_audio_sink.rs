@@ -12,7 +12,7 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::volume::PyVolume;
 
-#[pycomponent(SpatialAudioSink, no_clone, bridge)]
+#[pycomponent(SpatialAudioSink, no_clone, bridge, no_reflect)]
 #[pyclass(name = "SpatialAudioSink", extends = PyComponent)]
 pub struct PySpatialAudioSink {
     pub(crate) storage: ComponentStorage<SpatialAudioSink>,

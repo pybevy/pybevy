@@ -8,7 +8,14 @@ use pyo3::prelude::*;
 
 use crate::instance_id::PyInstanceId;
 
-#[pyresource(WorldInstanceSpawner, no_clone, bridge, no_insert, no_remove)]
+#[pyresource(
+    WorldInstanceSpawner,
+    no_clone,
+    bridge,
+    no_insert,
+    no_remove,
+    no_reflect
+)]
 #[pyclass(name = "WorldInstanceSpawner", extends = PyResource)]
 pub struct PyWorldInstanceSpawner {
     pub(crate) storage: ResourceStorage<WorldInstanceSpawner>,

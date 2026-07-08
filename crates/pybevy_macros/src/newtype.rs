@@ -6,6 +6,8 @@ use syn::{
     parse_macro_input,
 };
 
+use crate::util::reflect_registration_tokens;
+
 /// Generates storage boilerplate for newtype component wrappers in feature crates.
 ///
 /// Unlike `native_component(X, newtype)`, this macro does NOT generate `NativeComponent` impl,
@@ -38,6 +40,7 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
         bridge: bool,
         bridge_name: Option<String>,
         is_copy: bool,
+        no_reflect: bool,
     }
 
     impl Parse for NewtypeStorageArgs {
@@ -46,6 +49,7 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut bridge = false;
             let mut bridge_name = None;
             let mut is_copy = false;
+            let mut no_reflect = false;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -59,11 +63,12 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
                     match ident.to_string().as_str() {
                         "bridge" => bridge = true,
                         "copy" => is_copy = true,
+                        "no_reflect" => no_reflect = true,
                         other => {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: bridge, copy",
+                                    "unknown option '{}', expected one of: bridge, copy, no_reflect",
                                     other
                                 ),
                             ));
@@ -77,6 +82,7 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
                 bridge,
                 bridge_name,
                 is_copy,
+                no_reflect,
             })
         }
     }
@@ -92,6 +98,7 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
             py_type,
             args.bridge_name.as_deref(),
             args.is_copy,
+            args.no_reflect,
         )
     } else {
         quote! {}
@@ -141,6 +148,7 @@ pub(crate) fn generate_newtype_bridge_tokens(
     py_type: &Ident,
     bridge_name_override: Option<&str>,
     is_copy: bool,
+    no_reflect: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -288,10 +296,12 @@ pub(crate) fn generate_newtype_bridge_tokens(
         }
     };
 
+    let reflect_submit = reflect_registration_tokens(bevy_type, no_reflect);
     let inventory_submit = quote! {
         pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
             create: || std::sync::Arc::new(#bridge_name),
         });
+        #reflect_submit
     };
 
     quote! {
