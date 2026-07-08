@@ -496,6 +496,10 @@ pub(crate) fn generate_resource_bridge_tokens(
                 world.components().component_id::<#bevy_type>()
             }
 
+            fn register_resource_id(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
+                world.register_component::<#bevy_type>()
+            }
+
             #reset_to_default_impl
         }
     };

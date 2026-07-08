@@ -110,6 +110,14 @@ pub trait ResourceBridge: Send + Sync + 'static {
     /// Returns None if the resource hasn't been registered yet.
     fn resource_id(&self, world: &World) -> Option<ComponentId>;
 
+    /// Register (get-or-create) the ComponentId for this resource type.
+    ///
+    /// Unlike `resource_id`, this never returns None: it creates the id when the
+    /// resource is absent so `DynamicSystem::initialize` can declare access even
+    /// when the resource is inserted later (e.g. from a startup Commands). The
+    /// created id is TypeId-keyed and equals the one a later insertion resolves to.
+    fn register_resource_id(&self, world: &mut World) -> ComponentId;
+
     /// Reset resource to its default value (T::default()).
     ///
     /// Returns `true` if the resource was reset, `false` if the type has no Default impl

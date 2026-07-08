@@ -24,9 +24,11 @@ use bevy::{
         world::World,
     },
     log::LogPlugin,
+    time::Time,
 };
 use pybevy_core::{
-    PyMessage, PyPlugin as PyPluginBase, plugin::plugin_registry, register_wrapped_reflect_types,
+    LastSystemError, PyMessage, PyPlugin as PyPluginBase, plugin::plugin_registry,
+    register_wrapped_reflect_types,
 };
 use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
@@ -53,8 +55,10 @@ use crate::{
     },
     ecs::{
         conditional_system::{PyConditionalSystem, build_conditional_system_config},
-        dynamic_system::{DynamicSystem, clear_system_param_cache},
-        messages::MessageRegistry,
+        dynamic_system::{
+            DynamicSystem, LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache,
+        },
+        messages::{MessageRegistry, ensure_builtin_message_resources},
         observer_registry::ObserverRegistry,
         state::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
@@ -154,6 +158,32 @@ fn check_system_errors_and_exit(
     }
 }
 
+/// Move the most recent buffered Python system error into `LastSystemError` for
+/// MCP. Runs in `Last`. The timestamp is read here at drain time, not when the
+/// error occurred, so it can lag one frame; acceptable for MCP display and it
+/// keeps `run_unsafe`'s parallel error path free of any world access.
+fn drain_last_system_error(world: &mut World) {
+    let buffered = {
+        let Some(buf) = world.get_resource::<LastErrorBuffer>() else {
+            return;
+        };
+        let mut guard = buf.buffer.lock().unwrap_or_else(|p| p.into_inner());
+        guard.take()
+    };
+    let Some(err) = buffered else {
+        return;
+    };
+    let timestamp = world
+        .get_resource::<Time>()
+        .map(|t| t.elapsed_secs_f64())
+        .unwrap_or(0.0);
+    if let Some(mut last_error) = world.get_resource_mut::<LastSystemError>() {
+        last_error.error = Some(err.error);
+        last_error.traceback = err.traceback;
+        last_error.timestamp_secs = timestamp;
+    }
+}
+
 /// Tracks which plugins have been added, using both pointer (fast path) and
 /// qualified name (hot-reload resilience). On hot reload, Python classes get new
 /// PyTypeObject pointers, so pointer-only checks would miss already-added plugins.
@@ -221,6 +251,11 @@ pub struct PyApp {
     /// Shared error state for collecting system errors (parameter + execution)
     /// Arc allows sharing with DynamicSystem instances, Mutex for thread-safe access
     system_error: Arc<Mutex<Vec<PyErr>>>,
+
+    /// Shared slot holding the most recent Python system error's message/traceback.
+    /// Cloned into every DynamicSystem and into the world's `LastErrorBuffer`
+    /// resource; the `Last`-schedule drain moves it into `LastSystemError`.
+    system_error_buffer: SystemErrorBuffer,
 
     /// Hot reload state for development mode
     /// Allows CLI watcher to trigger reloads
@@ -323,6 +358,7 @@ impl PyApp {
             is_consumed: Cell::new(false),
             plugin_registry: RefCell::new(PluginRegistry::default()),
             system_error: Arc::new(Mutex::new(Vec::new())),
+            system_error_buffer: Arc::new(Mutex::new(None)),
             hot_reload_state: temp_state,
             is_reload_temp: Cell::new(true),
             pending_systems: RefCell::new(Vec::new()),
@@ -444,6 +480,19 @@ impl PyApp {
         // resolve them by name even without bevy's reflect_auto_register
         register_wrapped_reflect_types(app.world());
 
+        // Pre-insert the MCP error resource and its off-world buffer, then register
+        // the drain that moves buffered errors into it each frame. Pre-inserting
+        // keeps the parallel error path in run_unsafe free of structural inserts.
+        let system_error_buffer: SystemErrorBuffer = Arc::new(Mutex::new(None));
+        app.insert_resource(LastSystemError::default());
+        app.insert_resource(LastErrorBuffer {
+            buffer: system_error_buffer.clone(),
+        });
+        app.add_systems(Last, drain_last_system_error);
+
+        // Fill any absent built-in message buffers after plugins have built.
+        app.add_systems(PreStartup, ensure_builtin_message_resources);
+
         // Store the app in thread-local HashMap indexed by app_id
         BEVY_APPS.with(|apps_cell| {
             apps_cell.borrow_mut().insert(app_id, app);
@@ -455,6 +504,7 @@ impl PyApp {
             is_consumed: Cell::new(false),
             plugin_registry: RefCell::new(PluginRegistry::default()),
             system_error: Arc::new(Mutex::new(Vec::new())),
+            system_error_buffer,
             hot_reload_state: HotReloadState::new(),
             is_reload_temp: Cell::new(false),
             pending_systems: RefCell::new(Vec::new()),
@@ -500,6 +550,7 @@ impl PyApp {
         };
 
         let error_state = pyself.system_error.clone();
+        let error_buffer = pyself.system_error_buffer.clone();
         let current_generation = pyself.hot_reload_state.current_generation();
 
         // Handle state schedules separately (OnEnter/OnExit/OnTransition)
@@ -546,6 +597,7 @@ impl PyApp {
                             system.unbind(),
                             current_generation,
                             error_state.clone(),
+                            error_buffer.clone(),
                             SystemStage::UpdateOrLast, // State systems treated like Update
                         )?;
 
@@ -708,6 +760,7 @@ impl PyApp {
                                     sys.unbind(),
                                     current_generation,
                                     error_state.clone(),
+                                    error_buffer.clone(),
                                     system_stage,
                                 )?;
                                 dynamic_systems.push(dynamic_system);
@@ -769,6 +822,7 @@ impl PyApp {
                                     system_func.unbind(),
                                     current_generation,
                                     error_state.clone(),
+                                    error_buffer.clone(),
                                     system_stage,
                                 )?;
 

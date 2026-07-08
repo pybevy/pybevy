@@ -114,4 +114,12 @@ pub trait MessageBridge: Send + Sync + 'static {
     ///
     /// Used by system access declaration to register read/write access.
     fn resource_id(&self, world: &World) -> Option<ComponentId>;
+
+    /// Register (get-or-create) the ComponentId for the `Messages<T>` resource.
+    ///
+    /// Unlike `resource_id`, this never returns None: it creates the id when the
+    /// `Messages<T>` resource is absent so `DynamicSystem::initialize` can declare
+    /// access even before the message type's first write. The created id is
+    /// TypeId-keyed and equals the one a later insertion resolves to.
+    fn register_resource_id(&self, world: &mut World) -> ComponentId;
 }

@@ -350,6 +350,10 @@ pub(crate) fn generate_asset_bridge_tokens(
                 world.components().component_id::<bevy::asset::Assets<#bevy_type>>()
             }
 
+            fn register_resource_id(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
+                world.register_component::<bevy::asset::Assets<#bevy_type>>()
+            }
+
             #is_loadable_impl
 
             #try_convert_input_impl

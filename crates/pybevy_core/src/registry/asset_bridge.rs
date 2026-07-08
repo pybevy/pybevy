@@ -51,6 +51,14 @@ pub trait AssetBridge: Send + Sync + 'static {
     /// Used by FilteredAccessSet to track cross-system asset access.
     fn resource_id(&self, world: &World) -> Option<ComponentId>;
 
+    /// Register (get-or-create) the ComponentId of the `Assets<T>` resource.
+    ///
+    /// Unlike `resource_id`, this never returns None: it creates the id when the
+    /// `Assets<T>` resource is absent so `DynamicSystem::initialize` can declare
+    /// access even before the asset collection exists. The created id is
+    /// TypeId-keyed and equals the one a later insertion resolves to.
+    fn register_resource_id(&self, world: &mut World) -> ComponentId;
+
     /// Get asset from Assets resource and convert to Python object (read-only)
     ///
     /// # Arguments

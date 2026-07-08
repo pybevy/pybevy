@@ -102,7 +102,16 @@ fn generate_message_bridge_tokens(
                 let py_message = message.extract::<pyo3::PyRef<#py_type>>()?;
                 let native: #bevy_type = #bevy_type::try_from(&*py_message)?;
 
-                let mut messages = world.get_resource_or_insert_with(|| Messages::<#bevy_type>::default());
+                // Writers never insert: a structural world mutation from a
+                // possibly-parallel system is unsound. The owning plugin's
+                // add_message inserts the buffer, so a missing one means the
+                // message is not initialized.
+                let Some(mut messages) = world.get_resource_mut::<Messages<#bevy_type>>() else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Messages resource not initialized for this message type. \
+                         Ensure the plugin providing this message is added before writing.",
+                    ));
+                };
                 let id = messages.write(native);
                 Ok(Box::new(id))
             }
@@ -156,7 +165,11 @@ fn generate_message_bridge_tokens(
             ) -> pyo3::PyResult<Vec<pyo3::Py<pyo3::PyAny>>> {
                 use bevy::ecs::message::{MessageCursor, Messages};
 
-                let messages = world.get_resource_or_insert_with(|| Messages::<#bevy_type>::default());
+                // A missing buffer reads as empty; never insert (no structural
+                // world mutation from a possibly-parallel system).
+                let Some(messages) = world.get_resource::<Messages<#bevy_type>>() else {
+                    return Ok(Vec::new());
+                };
                 let mut cursor = cursor_storage
                     .as_ref()
                     .and_then(|s| s.downcast_ref::<MessageCursor<#bevy_type>>())
@@ -175,32 +188,43 @@ fn generate_message_bridge_tokens(
 
             #write_message_impl
 
+            // Maintenance paths treat a missing buffer as empty; never insert
+            // (no structural world mutation from a possibly-parallel system).
             fn clear(&self, world: &mut bevy::ecs::world::World) -> pyo3::PyResult<()> {
                 use bevy::ecs::message::Messages;
 
-                let mut messages = world.get_resource_or_insert_with(|| Messages::<#bevy_type>::default());
-                messages.clear();
+                if let Some(mut messages) = world.get_resource_mut::<Messages<#bevy_type>>() {
+                    messages.clear();
+                }
                 Ok(())
             }
 
             fn is_empty(&self, world: &mut bevy::ecs::world::World) -> pyo3::PyResult<bool> {
                 use bevy::ecs::message::Messages;
 
-                let messages = world.get_resource_or_insert_with(|| Messages::<#bevy_type>::default());
-                Ok(messages.is_empty())
+                Ok(world
+                    .get_resource::<Messages<#bevy_type>>()
+                    .is_none_or(|messages| messages.is_empty()))
             }
 
             fn len(&self, world: &mut bevy::ecs::world::World) -> pyo3::PyResult<usize> {
                 use bevy::ecs::message::Messages;
 
-                let messages = world.get_resource_or_insert_with(|| Messages::<#bevy_type>::default());
-                Ok(messages.len())
+                Ok(world
+                    .get_resource::<Messages<#bevy_type>>()
+                    .map_or(0, |messages| messages.len()))
             }
 
             fn resource_id(&self, world: &bevy::ecs::world::World) -> Option<bevy::ecs::component::ComponentId> {
                 use bevy::ecs::message::Messages;
 
                 world.components().component_id::<Messages<#bevy_type>>()
+            }
+
+            fn register_resource_id(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
+                use bevy::ecs::message::Messages;
+
+                world.register_component::<Messages<#bevy_type>>()
             }
         }
     };

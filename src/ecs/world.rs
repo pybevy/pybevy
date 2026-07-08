@@ -984,10 +984,13 @@ impl PyWorld {
 
         // Create a DynamicSystem from the Python function
         // Use SystemStage::UpdateOrLast as a default since this is a one-shot execution
+        // One-shot exclusive execution; errors return directly to the caller, so a
+        // throwaway error buffer (no LastSystemError drain) is sufficient.
         let mut system = DynamicSystem::new(
             func.unbind(),
             generation,
             error_state.clone(),
+            Arc::new(Mutex::new(None)),
             SystemStage::UpdateOrLast,
         )?;
 
