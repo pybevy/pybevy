@@ -91,6 +91,7 @@ mod tests {
     use super::*;
 
     #[derive(Component)]
+    #[allow(dead_code)] // field accessed only by component id in tests, never by name
     struct Health(f32);
 
     #[test]

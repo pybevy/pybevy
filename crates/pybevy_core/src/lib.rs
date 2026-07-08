@@ -313,7 +313,7 @@ pub use bridge_inventory::{
     MessageBridgeRegistration, PluginBridgeRegistration, ResourceBridgeRegistration,
 };
 pub use component::PyComponent;
-pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo};
+pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
 pub use entity::PyEntity;
 pub use filtered_entity_access::FilteredEntityAccess;
 pub use handle::{PyHandle, extract_handle_from_any};

@@ -251,4 +251,4 @@ path = "benches/paper/rendering_fps_native.rs"
 [[example]]
 name = "native_plugin_example"
 path = "examples/native/native_plugin_example.rs"
-required-features = []
+required-features = ["native-plugin"]

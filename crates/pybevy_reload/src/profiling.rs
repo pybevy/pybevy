@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use bevy::prelude::Resource;
 
@@ -41,7 +45,7 @@ pub struct HotReloadStats {
     /// Total number of entities
     pub entity_count: usize,
     /// Asset counts by type
-    pub asset_counts: std::collections::HashMap<String, usize>,
+    pub asset_counts: HashMap<String, usize>,
     /// Timestamp of last error displayed in overlay (to detect new errors)
     pub last_error_timestamp: f64,
     /// Frame number of last reload (for frame-based cooldown)
@@ -56,7 +60,7 @@ pub struct SystemMonitor {
     pub process_pid: Option<sysinfo::Pid>,
     pub last_update: f64,
     /// Last 60 FPS values for rolling average
-    pub fps_history: std::collections::VecDeque<f32>,
+    pub fps_history: VecDeque<f32>,
     /// Last time the overlay text was updated (for throttling)
     pub last_render_update: f64,
 }
@@ -74,18 +78,21 @@ pub struct SystemProfiler {
 
 struct ProfilerData {
     /// Update/Last stage systems
-    update_systems: std::collections::HashMap<String, SystemTimingStats>,
+    update_systems: HashMap<String, SystemTimingStats>,
     /// Startup stage systems
-    startup_systems: std::collections::HashMap<String, SystemTimingStats>,
+    startup_systems: HashMap<String, SystemTimingStats>,
     /// Time when startup systems should stop being displayed (5 seconds after first startup)
     startup_visible_until: Option<f64>,
 }
 
 struct SystemTimingStats {
     /// Circular buffer of recent execution times
-    recent_times: std::collections::VecDeque<std::time::Duration>,
+    recent_times: VecDeque<Duration>,
     /// Cached rolling average (updated each frame)
-    average_time: std::time::Duration,
+    average_time: Duration,
+    /// Cached rolling max over the same window — preserves spike visibility
+    /// that the average smooths away.
+    max_time: Duration,
 }
 
 impl SystemProfiler {
@@ -93,8 +100,8 @@ impl SystemProfiler {
     pub fn new(window_size: usize) -> Self {
         Self {
             stats: Arc::new(Mutex::new(ProfilerData {
-                update_systems: std::collections::HashMap::new(),
-                startup_systems: std::collections::HashMap::new(),
+                update_systems: HashMap::new(),
+                startup_systems: HashMap::new(),
                 startup_visible_until: None,
             })),
             window_size,
@@ -105,7 +112,7 @@ impl SystemProfiler {
     pub fn record_timing(
         &self,
         system_name: &str,
-        duration: std::time::Duration,
+        duration: Duration,
         stage: SystemStage,
         current_time: f64,
     ) {
@@ -124,8 +131,9 @@ impl SystemProfiler {
         let entry = systems
             .entry(system_name.to_string())
             .or_insert_with(|| SystemTimingStats {
-                recent_times: std::collections::VecDeque::with_capacity(self.window_size),
-                average_time: std::time::Duration::ZERO,
+                recent_times: VecDeque::with_capacity(self.window_size),
+                average_time: Duration::ZERO,
+                max_time: Duration::ZERO,
             });
 
         // Add new timing to circular buffer
@@ -136,20 +144,28 @@ impl SystemProfiler {
             entry.recent_times.pop_front();
         }
 
-        // Recalculate rolling average
+        // Recalculate rolling average + max. Window is bounded (default 60),
+        // so a full scan per record is cheap.
         if !entry.recent_times.is_empty() {
-            let sum: std::time::Duration = entry.recent_times.iter().sum();
+            let sum: Duration = entry.recent_times.iter().sum();
             entry.average_time = sum / entry.recent_times.len() as u32;
+            entry.max_time = entry
+                .recent_times
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(Duration::ZERO);
         }
     }
 
-    /// Get the top N Update/Last systems by average execution time (concurrent-safe)
-    pub fn get_top_n_update(&self, n: usize) -> Vec<(String, std::time::Duration)> {
+    /// Get the top N Update/Last systems by average execution time (concurrent-safe).
+    /// Returns `(name, avg, max)` per entry, both timings over the same rolling window.
+    pub fn get_top_n_update(&self, n: usize) -> Vec<(String, Duration, Duration)> {
         let data = lock_or_recover(&self.stats);
-        let mut systems: Vec<(String, std::time::Duration)> = data
+        let mut systems: Vec<_> = data
             .update_systems
             .iter()
-            .map(|(name, stats)| (name.clone(), stats.average_time))
+            .map(|(name, stats)| (name.clone(), stats.average_time, stats.max_time))
             .collect();
 
         // Sort by average time (descending)
@@ -159,13 +175,14 @@ impl SystemProfiler {
         systems.into_iter().take(n).collect()
     }
 
-    /// Get the top N Startup systems by average execution time (concurrent-safe)
-    pub fn get_top_n_startup(&self, n: usize) -> Vec<(String, std::time::Duration)> {
+    /// Get the top N Startup systems by average execution time (concurrent-safe).
+    /// Returns `(name, avg, max)` per entry.
+    pub fn get_top_n_startup(&self, n: usize) -> Vec<(String, Duration, Duration)> {
         let data = lock_or_recover(&self.stats);
-        let mut systems: Vec<(String, std::time::Duration)> = data
+        let mut systems: Vec<_> = data
             .startup_systems
             .iter()
-            .map(|(name, stats)| (name.clone(), stats.average_time))
+            .map(|(name, stats)| (name.clone(), stats.average_time, stats.max_time))
             .collect();
 
         // Sort by average time (descending)

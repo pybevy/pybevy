@@ -30,7 +30,7 @@ impl PyLensDistortion {
         multiplier: Option<PyVec2>,
         center: Option<PyVec2>,
         edge_curvature: f32,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let lens_distortion = LensDistortion {
             intensity,
             scale,
@@ -39,7 +39,7 @@ impl PyLensDistortion {
             edge_curvature,
         };
 
-        Ok(Self::from_owned(lens_distortion))
+        Ok(Self::from_owned(lens_distortion).into())
     }
 
     #[getter]

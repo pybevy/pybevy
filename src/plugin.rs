@@ -28,9 +28,10 @@
 //!         transform.rotation *= Quat.from_rotation_y(time.delta_secs())
 //! ```
 
+use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "native-hot-reload")]
 use std::{
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 

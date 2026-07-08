@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::{
     animation::{AnimationClip, graph::AnimationGraph},
     asset::Assets,
@@ -287,15 +289,17 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
     let (update_profiles, startup_profiles) = world
         .get_resource::<SystemProfiler>()
         .map(|p| {
-            let up: Vec<_> = p
-                .get_top_n_update(10)
-                .into_iter()
-                .map(|(n, d)| (n, d.as_secs_f64() * 1000.0))
-                .collect();
+            let to_profile =
+                |(name, avg, max): (String, Duration, Duration)| pybevy_core::SystemProfile {
+                    name,
+                    avg_ms: avg.as_secs_f64() * 1000.0,
+                    max_ms: max.as_secs_f64() * 1000.0,
+                };
+            let up: Vec<_> = p.get_top_n_update(10).into_iter().map(to_profile).collect();
             let sp: Vec<_> = p
                 .get_top_n_startup(10)
                 .into_iter()
-                .map(|(n, d)| (n, d.as_secs_f64() * 1000.0))
+                .map(to_profile)
                 .collect();
             (up, sp)
         })
@@ -483,7 +487,7 @@ pub fn render_hot_reload_overlay(
             if !top5.is_empty() {
                 let systems = top5
                     .into_iter()
-                    .map(|(n, d)| format!("{}({:.2}ms)", n, d.as_secs_f64() * 1000.0))
+                    .map(|(n, avg, _max)| format!("{}({:.2}ms)", n, avg.as_secs_f64() * 1000.0))
                     .collect::<Vec<_>>()
                     .join(" ");
                 format!("Profile: {}", systems)
@@ -501,7 +505,7 @@ pub fn render_hot_reload_overlay(
                 if !top5.is_empty() {
                     let systems = top5
                         .into_iter()
-                        .map(|(n, d)| format!("{}({:.2}ms)", n, d.as_secs_f64() * 1000.0))
+                        .map(|(n, avg, _max)| format!("{}({:.2}ms)", n, avg.as_secs_f64() * 1000.0))
                         .collect::<Vec<_>>()
                         .join(" ");
                     format!("Startup: {}", systems)

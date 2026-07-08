@@ -37,7 +37,7 @@ impl PyVignette {
         center: Option<PyVec2>,
         edge_compensation: f32,
         color: Option<PyColor>,
-    ) -> PyResult<(Self, PyComponent)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let vignette = Vignette {
             intensity,
             radius,
@@ -48,7 +48,7 @@ impl PyVignette {
             color: color.map(Into::into).unwrap_or(Color::BLACK),
         };
 
-        Ok(Self::from_owned(vignette))
+        Ok(Self::from_owned(vignette).into())
     }
 
     #[getter]
