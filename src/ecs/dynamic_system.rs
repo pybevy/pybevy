@@ -73,6 +73,25 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Used by DynamicSystemRegistry to release Python references from old-generation systems.
 pub(crate) type DynamicSystemHandle = Arc<Mutex<DynamicSystemInner>>;
 
+/// One buffered Python system error awaiting transfer into `LastSystemError`.
+/// Kept off the world so `run_unsafe`'s parallel error path performs no
+/// structural world mutation; the `Last`-schedule drain moves it into the resource.
+pub(crate) struct BufferedSystemError {
+    pub(crate) error: String,
+    pub(crate) traceback: Option<String>,
+}
+
+/// Shared slot holding the most recent buffered system error. Cloned into every
+/// DynamicSystem and into the `LastErrorBuffer` resource the drain system reads.
+pub(crate) type SystemErrorBuffer = Arc<Mutex<Option<BufferedSystemError>>>;
+
+/// Resource wrapper so the `Last`-schedule drain can reach the shared error
+/// buffer through the world without `run_unsafe` ever touching the world on error.
+#[derive(Resource)]
+pub(crate) struct LastErrorBuffer {
+    pub(crate) buffer: SystemErrorBuffer,
+}
+
 /// Inner state holding Python references that can be released on demand.
 /// When `gut()` is called, all Python references are dropped to allow GC.
 pub(crate) struct DynamicSystemInner {
@@ -129,6 +148,10 @@ pub struct DynamicSystem {
     args_buffer: SmallVec<[Py<PyAny>; 8]>,
     /// Shared error state for collecting system errors (parameter + execution)
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    /// Shared slot for the last error's message/traceback. Written on the Python
+    /// exception path in place of a structural `LastSystemError` world insert; the
+    /// `Last`-schedule drain system moves it into the resource.
+    error_buffer: SystemErrorBuffer,
     /// Hot reload support: module and function names for dynamic lookup
     module_name: String,
     function_name: String,
@@ -224,6 +247,7 @@ impl DynamicSystem {
         func: Py<PyAny>,
         generation: u32,
         error_state: Arc<Mutex<Vec<PyErr>>>,
+        error_buffer: SystemErrorBuffer,
         stage: SystemStage,
     ) -> PyResult<Self> {
         let (system_func, func_name, module_name, function_name) = Python::attach(|py| {
@@ -296,6 +320,7 @@ impl DynamicSystem {
             needs_commands,
             args_buffer: SmallVec::new(),
             error_state,
+            error_buffer,
             module_name,
             function_name,
             expected_generation: generation,
@@ -848,17 +873,16 @@ impl System for DynamicSystem {
                             .unwrap_or_else(|_| "(traceback format failed)".into())
                     });
 
-                    // Store error for MCP get_last_error (always)
-                    let world_ref = unsafe { world.world_mut() };
-                    let current_time = world_ref
-                        .get_resource::<Time>()
-                        .map(|t| t.elapsed_secs_f64())
-                        .unwrap_or(0.0);
-                    let mut last_error = world_ref
-                        .get_resource_or_insert_with(pybevy_core::LastSystemError::default);
-                    last_error.error = Some(error_str.clone());
-                    last_error.traceback = traceback_str;
-                    last_error.timestamp_secs = current_time;
+                    // Buffer the error for MCP get_last_error without touching the
+                    // world. A `Last`-schedule drain moves this into `LastSystemError`,
+                    // keeping the parallel error path free of structural world mutation.
+                    {
+                        let mut buffered = lock_or_recover(&self.error_buffer);
+                        *buffered = Some(BufferedSystemError {
+                            error: error_str.clone(),
+                            traceback: traceback_str,
+                        });
+                    }
 
                     // When hot reload is NOT active, store the error for propagation
                     // to the caller (app.update() / app.run()). This makes assert/raise
@@ -1041,7 +1065,10 @@ impl System for DynamicSystem {
                         PyResourceType::try_from((type_bound, py)).ok()
                     });
                     if let Some(rt) = resource_type {
-                        if let Some(id) = rt.get_component_id(world) {
+                        // Register (not just look up) so access is declared even when
+                        // the resource is inserted after schedule init; an undeclared
+                        // access would let conflicting systems race (UB).
+                        if let Some(id) = rt.register_component_id(world) {
                             if *mutable {
                                 self.resources_to_write.push(id);
                             } else {
@@ -1057,12 +1084,13 @@ impl System for DynamicSystem {
                 } => {
                     let key = wrapper_class.unwrap_or(*type_ptr).0;
                     if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(key) {
-                        if let Some(id) = bridge.resource_id(world) {
-                            if *mutable {
-                                self.resources_to_write.push(id);
-                            } else {
-                                self.resources_to_read.push(id);
-                            }
+                        // Register the Assets<T> id up front; a bridge that exists
+                        // always yields an id, so access is never silently dropped.
+                        let id = bridge.register_resource_id(world);
+                        if *mutable {
+                            self.resources_to_write.push(id);
+                        } else {
+                            self.resources_to_read.push(id);
                         }
                     }
                 }
@@ -1111,14 +1139,21 @@ impl System for DynamicSystem {
                     // Commands don't require specific component access
                 }
                 SystemParamType::MessageWriter { message_type } => {
-                    // Message buffers are resources; declare them in the shared access.
-                    if let Some(id) = message_type.resource_id(world) {
+                    // Message buffers are resources; register (not just look up) the
+                    // id so access is declared even before the first write. Custom
+                    // messages are the one residual lookup-only case (see
+                    // MessageType::register_resource_id).
+                    if let Some(id) = message_type.register_resource_id(world) {
                         self.resources_to_write.push(id);
                     }
                 }
                 SystemParamType::MessageReader { message_type } => {
-                    if let Some(id) = message_type.resource_id(world) {
-                        self.resources_to_read.push(id);
+                    // reader_resource_ids returns the primary Messages<T> id plus any
+                    // auxiliary read (KeyboardInput also reads ButtonInput<KeyCode>).
+                    for id in message_type.reader_resource_ids(world) {
+                        if !self.resources_to_read.contains(&id) {
+                            self.resources_to_read.push(id);
+                        }
                     }
                 }
                 SystemParamType::On { .. } => {
@@ -1132,6 +1167,18 @@ impl System for DynamicSystem {
         let generation_id = world.register_component::<HotReloadGeneration>();
         if !self.resources_to_read.contains(&generation_id) {
             self.resources_to_read.push(generation_id);
+        }
+
+        // run_unsafe's profiling epilogue reads Time and SystemProfiler via shared
+        // world access every run; declare both so the parallel executor accounts
+        // for the reads and never schedules a conflicting writer alongside.
+        let time_id = world.register_component::<Time>();
+        if !self.resources_to_read.contains(&time_id) {
+            self.resources_to_read.push(time_id);
+        }
+        let profiler_id = world.register_component::<SystemProfiler>();
+        if !self.resources_to_read.contains(&profiler_id) {
+            self.resources_to_read.push(profiler_id);
         }
 
         // Conflict validation needs `&mut World` for ComponentId lookups, so it

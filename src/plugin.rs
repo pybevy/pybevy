@@ -182,8 +182,15 @@ impl PySystemBuilder {
                 _ => SystemStage::UpdateOrLast,
             };
 
-            let dynamic_system =
-                DynamicSystem::new(func.unbind(), generation, error_state, system_stage)?;
+            // Native-plugin systems run on a separate mini-app with no LastSystemError
+            // drain; a throwaway buffer keeps the error path off the world.
+            let dynamic_system = DynamicSystem::new(
+                func.unbind(),
+                generation,
+                error_state,
+                Arc::new(Mutex::new(None)),
+                system_stage,
+            )?;
 
             Ok((dynamic_system, self.stage))
         })

@@ -305,6 +305,37 @@ impl PyResourceType {
                 .and_then(|registry| registry.registry.get(type_ptr).copied()),
         }
     }
+
+    /// Register (get-or-create) the ComponentId for this resource type.
+    ///
+    /// `get_component_id` is lookup-only and returns None until the resource is
+    /// inserted; that silently drops access for resources inserted after schedule
+    /// init (e.g. via startup Commands), leaving conflicting systems to race.
+    /// This variant creates the id up front so `DynamicSystem::initialize` always
+    /// declares it. `initialize` holds `&mut World`, so registration is sound, and
+    /// the created id is TypeId-keyed to the one a later insertion resolves to.
+    ///
+    /// Returns None only when a Dynamic resource has no registered bridge, matching
+    /// `get_component_id`'s behavior for that unreachable-at-runtime case.
+    pub fn register_component_id(&self, world: &mut World) -> Option<ComponentId> {
+        match self {
+            PyResourceType::AssetServer => {
+                Some(world.register_component::<bevy::asset::AssetServer>())
+            }
+            PyResourceType::Dynamic(type_ptr) => {
+                global_registry::get_resource_bridge_by_py_type(*type_ptr)
+                    .map(|bridge| bridge.register_resource_id(world))
+            }
+            PyResourceType::Custom(type_ptr) => {
+                // The custom-resource ComponentId comes from a descriptor built
+                // from the Python type name alone (no value needed), so it can be
+                // created here. register_custom_resource is get-or-reuse and stores
+                // the id in ResourceRegistry, so a later insert_resource reuses it.
+                let name = Python::attach(|py| get_python_type_name(py, *type_ptr));
+                Some(register_custom_resource(world, *type_ptr, name))
+            }
+        }
+    }
 }
 
 /// Extract the fully qualified Python name (`module.qualname`) for a type pointer.

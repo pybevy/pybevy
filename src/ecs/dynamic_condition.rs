@@ -15,9 +15,14 @@ use bevy::{
     prelude::*,
 };
 use pybevy_reload::{HotReloadGeneration, SystemStage};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::ecs::dynamic_system::DynamicSystem;
+use crate::ecs::{
+    dynamic_system::DynamicSystem,
+    query::query_param::QueryData,
+    system::{SystemParam, SystemParamType},
+    view::view_param::ViewParamType,
+};
 
 /// A condition system that wraps a Python function returning bool
 /// Unlike DynamicSystem which returns (), this extracts and returns the bool result
@@ -75,7 +80,31 @@ def create_wrapper(original_func, result_container, functools):
             Ok(wrapper.unbind())
         })?;
 
-        let inner = DynamicSystem::new(wrapped_func, generation, error_state, stage)?;
+        // Conditions surface failures through error_state, not LastSystemError, so a
+        // throwaway error buffer (no drain wired up) is sufficient here.
+        let inner = DynamicSystem::new(
+            wrapped_func,
+            generation,
+            error_state,
+            Arc::new(Mutex::new(None)),
+            stage,
+        )?;
+
+        // Run conditions are evaluated under Bevy's read-only system contract
+        // (see the `unsafe impl ReadOnlySystem` below). Reject any parameter kind
+        // that would mutate the world during evaluation before the condition
+        // reaches Bevy.
+        let name = inner.name().to_string();
+        let params = {
+            let handle = inner.handle();
+            let guard = handle.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .system_func
+                .as_ref()
+                .map(|sf| sf.params.clone())
+                .unwrap_or_default()
+        };
+        validate_condition_params(&name, &params)?;
 
         Ok(Self {
             inner,
@@ -96,6 +125,63 @@ def create_wrapper(original_func, result_container, functools):
         }
         false
     }
+}
+
+/// Describe why a parameter is rejected in a run condition, or `None` if the
+/// parameter is read-only and therefore allowed. A run condition may only read
+/// the world: it is evaluated under Bevy's read-only system contract and its
+/// deferred operations (e.g. `Commands`) are never applied.
+fn condition_param_rejection(ty: &SystemParamType) -> Option<&'static str> {
+    match ty {
+        SystemParamType::World => Some("World (exclusive world access)"),
+        SystemParamType::Commands => {
+            Some("Commands (queued mutations are never applied to conditions)")
+        }
+        SystemParamType::MessageWriter { .. } => {
+            Some("MessageWriter (writing messages mutates the world)")
+        }
+        SystemParamType::MessageReader { .. } => Some(
+            "MessageReader (reading messages mutates the world; read messages in a regular system instead)",
+        ),
+        SystemParamType::Resource { mutable: true, .. } => Some("ResMut (mutable resource access)"),
+        SystemParamType::Assets { mutable: true, .. } => {
+            Some("mutable Assets (mutable asset access)")
+        }
+        SystemParamType::Query { param }
+            if param
+                .data
+                .iter()
+                .any(|d| matches!(d, QueryData::Component { mutable: true, .. })) =>
+        {
+            Some("Query with a Mut component (mutable component access)")
+        }
+        SystemParamType::View { param }
+            if param.parameters.iter().any(|p| {
+                let ViewParamType::Component { mutable, .. } = p;
+                *mutable
+            }) =>
+        {
+            Some("View with a Mut component (mutable component access)")
+        }
+        _ => None,
+    }
+}
+
+/// Reject any parameter that would mutate the world during condition evaluation.
+/// Mirrors the parameter-index/type reporting of `DynamicSystem::validate_parameters`.
+fn validate_condition_params(name: &str, params: &[SystemParam]) -> PyResult<()> {
+    for (idx, param) in params.iter().enumerate() {
+        if let Some(kind) = condition_param_rejection(&param.ty) {
+            return Err(PyRuntimeError::new_err(format!(
+                "Run condition '{name}' parameter {idx} is {kind}. \
+                 Run conditions require read-only world access: they are evaluated under \
+                 Bevy's read-only system contract and any deferred operations are never \
+                 applied. Use read-only parameters such as Res, read-only Query/View, \
+                 Local, or read-only Assets."
+            )));
+        }
+    }
+    Ok(())
 }
 
 // Forward SystemParams to inner DynamicSystem
@@ -168,5 +254,13 @@ impl System for DynamicCondition {
     }
 }
 
-// Conditions must be ReadOnlySystem (they don't mutate world state)
+// SAFETY: `ReadOnlySystem` must only be implemented for systems that do not
+// mutate the `World` when `run_unsafe` is called (bevy_ecs/src/system/system.rs).
+// `DynamicCondition::new` enforces the user-visible part of that contract by
+// rejecting every parameter kind that mutates the world (World, Commands,
+// ResMut, mutable Assets, Mut queries/views, MessageWriter, MessageReader), so a
+// condition function cannot request write access. A remaining internal gap
+// exists: parameter construction in `DynamicSystem::run_unsafe` still calls
+// `world.world_mut()` while building read-only parameters. That gap is tracked
+// separately and is not reachable through any accepted condition parameter.
 unsafe impl ReadOnlySystem for DynamicCondition {}

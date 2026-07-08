@@ -25,7 +25,7 @@ use crate::{
     app::{PyStage, SimTick, app::PyApp, chained_systems::PyChainedSystems},
     ecs::{
         conditional_system::{PyConditionalSystem, build_conditional_system_config},
-        dynamic_system::{DynamicSystem, DynamicSystemHandle},
+        dynamic_system::{DynamicSystem, DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
         messages::MessageRegistry,
         observer_registry::ObserverRegistry,
         world::PyWorld,
@@ -43,11 +43,13 @@ pub(crate) struct PendingDefinitions {
 
 /// Add a batch of Python system functions to a Bevy schedule.
 /// Handles both regular systems and chained systems (pipes).
+#[allow(clippy::too_many_arguments)]
 fn add_systems_to_schedule(
     schedule: &mut Schedule,
     systems: Vec<Py<PyAny>>,
     generation: u32,
     error_state: &Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: &SystemErrorBuffer,
     system_stage: SystemStage,
     stage: PyStage,
     system_handles: &mut Vec<DynamicSystemHandle>,
@@ -66,6 +68,7 @@ fn add_systems_to_schedule(
                     system_inner,
                     generation,
                     error_state.clone(),
+                    error_buffer.clone(),
                     system_stage,
                 )?;
                 system_handles.push(dynamic_system.handle());
@@ -88,6 +91,7 @@ fn add_systems_to_schedule(
                         sys.unbind(),
                         generation,
                         error_state.clone(),
+                        error_buffer.clone(),
                         system_stage,
                     )?;
                     system_handles.push(dynamic_system.handle());
@@ -117,8 +121,13 @@ fn add_systems_to_schedule(
 
                 schedule.add_systems(chained);
             } else {
-                let dynamic_system =
-                    DynamicSystem::new(system_func, generation, error_state.clone(), system_stage)?;
+                let dynamic_system = DynamicSystem::new(
+                    system_func,
+                    generation,
+                    error_state.clone(),
+                    error_buffer.clone(),
+                    system_stage,
+                )?;
                 system_handles.push(dynamic_system.handle());
                 if is_startup {
                     schedule.add_systems(dynamic_system.run_if(startup_or_reload(generation)));
@@ -249,6 +258,21 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             error_lock.clear();
         }
 
+        // Reloaded systems write buffered errors into the same off-world slot the
+        // Last-schedule drain reads. It lives on the world as `LastErrorBuffer`,
+        // inserted at app construction; fall back to a throwaway if somehow absent.
+        let error_buffer: SystemErrorBuffer = world
+            .get_resource::<LastErrorBuffer>()
+            .map(|r| r.buffer.clone())
+            .unwrap_or_else(|| {
+                debug_assert!(false, "LastErrorBuffer inserted at app construction");
+                let buffer = SystemErrorBuffer::default();
+                world.insert_resource(LastErrorBuffer {
+                    buffer: buffer.clone(),
+                });
+                buffer
+            });
+
         for (stage, systems) in defs.systems {
             if systems.is_empty() {
                 continue;
@@ -287,6 +311,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                             systems,
                             generation,
                             &self.error_state,
+                            &error_buffer,
                             system_stage,
                             stage,
                             &mut system_handles,
