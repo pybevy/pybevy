@@ -1,11 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
-
-use bevy::ecs::{change_detection::Tick, component::ComponentId};
-use pyo3::{exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*};
+use bevy::ecs::{change_detection::Tick, world::unsafe_world_cell::UnsafeWorldCell};
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::ecs::{
     helpers::validity_guard::ValidityFlag,
-    query::{query_param::PyQueryParam, query_runtime::PyQueryIter},
+    query::query_runtime::{CachedQuery, PyQueryIter},
 };
 
 /// Runtime wrapper for Single<T> queries that enforces exactly one entity matches.
@@ -26,17 +24,19 @@ impl PySingleQuery {
     /// Creates a new Single query wrapper
     ///
     /// # Safety
-    /// The world pointer must remain valid for the lifetime of this object
+    /// `cached` must remain valid and `world_cell` must reference the World it was
+    /// built from, for the lifetime of this object (fenced by `validity`).
     pub unsafe fn new(
-        param: Arc<PyQueryParam>,
-        world: &mut bevy::prelude::World,
-        custom_component_ids: Arc<HashMap<*const PyTypeObject, ComponentId>>,
+        cached: &CachedQuery,
+        world_cell: UnsafeWorldCell,
         validity: ValidityFlag,
         last_run: Tick,
+        this_run: Tick,
     ) -> Self {
-        // SAFETY: Caller guarantees world pointer is valid during system execution
+        // SAFETY: Caller guarantees the cached state and world cell are valid during
+        // system execution (see PyQueryIter::new safety contract).
         let query_iter =
-            unsafe { PyQueryIter::new(param, world, custom_component_ids, validity, last_run) };
+            unsafe { PyQueryIter::new(cached, world_cell, validity, last_run, this_run) };
 
         Python::attach(|py| {
             let query_iter_py = Py::new(py, query_iter).expect("Failed to create PyQueryIter");

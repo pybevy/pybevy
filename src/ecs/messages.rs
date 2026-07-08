@@ -10,7 +10,7 @@ use bevy::{
         component::ComponentId,
         message::{Message, MessageCursor, Messages},
         resource::Resource,
-        world::World,
+        world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
     image::Image,
     input::{
@@ -31,7 +31,52 @@ use pyo3::{
 pub(crate) type CursorStorage = Arc<Mutex<Option<Box<dyn Any + Send + Sync>>>>;
 
 use super::message::{PyMessage, PyMessageId};
-use crate::ecs::{resource::PyResource, world::PyWorld};
+use crate::ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource};
+
+/// Narrow world access for message wrappers.
+///
+/// Holds the lifetime-erased [`UnsafeWorldCell`] (fenced by the same `ValidityFlag`
+/// as `PyQueryIter`) and derives a momentary `&mut World` per operation. The
+/// message macros/bridges only reach their `Messages<T>` resource (plus
+/// `MessageRegistry` and, for KeyboardInput readers, `ButtonInput<KeyCode>`), all
+/// of which `DynamicSystem::initialize` declares. This is the same
+/// residual-pointer class as `query_runtime::world_ptr`.
+#[derive(Clone)]
+pub(crate) struct MessageWorld {
+    cell: UnsafeWorldCell<'static>,
+    validity: ValidityFlag,
+}
+
+// SAFETY: mirrors PyQueryIter's discipline. The cell is only touched while the
+// owning system runs on a single thread, fenced by `validity`.
+unsafe impl Send for MessageWorld {}
+unsafe impl Sync for MessageWorld {}
+
+impl MessageWorld {
+    /// # Safety
+    /// `cell` must reference the world holding the message buffers and stay valid
+    /// for as long as `validity` is active.
+    pub(crate) unsafe fn new(cell: UnsafeWorldCell, validity: ValidityFlag) -> Self {
+        // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the
+        // cell is only touched while `validity` is active.
+        let cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(cell) };
+        Self { cell, validity }
+    }
+
+    /// Momentary `&mut World` for the message macros/bridges (they take `&mut World`
+    /// but only touch the declared `Messages<T>` resource).
+    ///
+    /// SAFETY of the returned reference: `initialize` declares reads for
+    /// reader resource ids and writes for writer ids; the executor prevents a
+    /// conflicting system running concurrently, so the actual message access is
+    /// unique. Same residual-pointer class as `query_runtime::world_ptr`.
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn world_mut(&self) -> PyResult<&mut World> {
+        self.validity.check()?;
+        // SAFETY: momentary derivation; see method docs.
+        Ok(unsafe { self.cell.world_mut() })
+    }
+}
 
 // Macro to generate CustomMessage types
 macro_rules! define_custom_messages {
@@ -119,7 +164,7 @@ macro_rules! with_messages_arms {
 #[pyclass(name = "Messages", extends = PyResource, frozen)]
 pub struct PyMessages {
     pub(crate) message_type: MessageType,
-    pub(crate) world: PyWorld,
+    pub(crate) world: MessageWorld,
     /// Persistent cursor for MessageReader iteration.
     /// When Some, iter_to_python uses the stored cursor to avoid re-reading messages.
     /// When None, creates a fresh cursor each time (legacy behavior).

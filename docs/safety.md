@@ -40,14 +40,19 @@ stored_query[0]  # Would be use-after-free without protection!
 PyBevy uses **runtime validity flags** with RAII guards to automatically invalidate all system parameters when execution completes:
 
 ```rust
-// In DynamicSystem::run_unsafe() - src/dynamic_system.rs
+// In DynamicSystem::run_unsafe() - src/ecs/dynamic_system.rs
 let validity = ValidityFlag::new();
 let _guard = ValidityGuard::new(validity.clone());
 
 // All parameters share the same validity flag
 let py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
-let py_commands = unsafe { PyCommands::new(&mut commands, validity.clone()) };
-let py_query = PyQuery::new(query_state, validity.clone());
+let py_commands = unsafe { PyCommands::new(commands, validity.clone()) };
+// Query parameters borrow a QueryState cached in `initialize` and fetch through
+// this run's UnsafeWorldCell (no &mut World). See "Query Parameters and the
+// World Cell" below.
+let py_query = unsafe {
+    PyQueryIter::new(cached, world, validity.clone(), last_run, this_run)
+};
 
 // Execute Python system...
 python_function.call()?;
@@ -88,6 +93,50 @@ stored_query[0]  # RuntimeError: Component access is no longer valid
 - **Impact**: ~4-8% of Query iteration cost (negligible compared to Python overhead)
 - **Benefit**: Complete prevention of use-after-free bugs
 
+### Query Parameters and the World Cell
+
+Query and View data are not rebuilt on every run from a fresh `&mut World`.
+Instead:
+
+- `DynamicSystem::initialize` builds one `QueryState` per Query parameter and
+  stores it in a `CachedQuery` on the `DynamicSystem` (which the schedule owns and
+  which outlives every run). See `CachedQuery::build` in
+  `src/ecs/query/query_runtime.rs` and the `query_caches` field in
+  `src/ecs/dynamic_system.rs`.
+- At run time the Query arm hands `PyQueryIter` the run's `UnsafeWorldCell` plus a
+  raw pointer to the cached state. Iteration fetches through
+  the unchecked `QueryState::query_unchecked_with_ticks` API. The uniqueness
+  obligation of that unchecked call is discharged by the access this parameter
+  declared in `initialize` (see Section 4, "How the Scheduler Learns Each System's
+  Access"): the executor never schedules a system with conflicting declared access
+  alongside it, so the query has unique access to the components it touches.
+- Both the cached-state pointer and the world cell are fenced by the same
+  `ValidityFlag`, so a leaked `PyQueryIter` (or an iterator derived from it) fails
+  the validity check rather than dereferencing a stale cell.
+
+All parameter arms build from the world cell; no shared `&mut World` is
+materialized across the parameter loop. The arms differ in shape:
+
+- **Resource** arms use narrow cell accessors (`UnsafeWorldCell::get_resource` /
+  `get_resource_mut`, or the `ResourceRegistry`/`PyResourceStorage` reads for
+  custom Python resources), touching only the declared resource.
+- **World** arms derive a genuine `&mut World`, which is sound because a `World`
+  parameter makes `flags()` mark the system EXCLUSIVE, and the multithreaded
+  executor never runs an exclusive system while anything else is in flight.
+  `initialize` returns an EMPTY access set for such systems, exactly like Bevy's
+  `ExclusiveFunctionSystem`: exclusivity is enforced by the flag, not by
+  declared access, and declaring whole-world read+write instead creates an
+  asymmetric conflict graph next to Bevy's empty-access exclusive systems that
+  wedges the executor's ready-queue accounting (its `ready_systems.is_clear()`
+  assertion fires with three or more exclusives of mixed shape in one schedule).
+- **View, message, and asset** wrappers hold the cell and derive a momentary
+  world pointer per operation, because their internals (`QueryBuilder`, the
+  message macros, the `AssetBridge`) take `&mut World`. The declared access from
+  `initialize` bounds the data those operations actually touch. This is the same
+  residual-pointer class as the custom-component write-back path inside
+  `PyQueryIter` (`world_ptr`), which still stamps change ticks through a
+  `*mut World`; narrowing these internals is planned follow-up work.
+
 ---
 
 ## 2. Parameter Validation (Borrowing Rules)
@@ -117,32 +166,20 @@ PyBevy validates **all** system parameters when the system is **added** to the a
 3. **Asset Access** (Assets[T] parameters)
 4. **World Exclusivity** (World parameter)
 
-**Implementation**: `src/ecs/dynamic_system.rs:1142-1209` (`validate_parameters()`)
+**Implementation**: `src/ecs/dynamic_system.rs` (`validate_access` in the shared
+validation module, invoked from `DynamicSystem::initialize`)
 
-The validation tracks three separate access maps:
-- `component_access` - Query/View component conflicts
-- `resource_access` - Res/ResMut resource conflicts
-- `asset_access` - Assets[T] asset type conflicts
+The validation checks three kinds of access for conflicts:
+- Query/View component conflicts
+- Res/ResMut resource conflicts
+- Assets[T] asset type conflicts
 
 Plus special handling for World's exclusive access requirement.
 
-**Called from**: `DynamicSystem::initialize()` when system is added to the app
-
-### Validation Coverage
-
-| Parameter Type | Validates | Test Coverage |
-|----------------|-----------|---------------|
-| **Query** | Component access conflicts | 10+ tests |
-| **View** | Component access conflicts | 8 tests |
-| **Resource** | Resource borrow conflicts | 9 tests |
-| **Assets** | Asset type borrow conflicts | 8 tests |
-| **Time** | Treated as resource conflict | 5 tests |
-| **World** | Exclusive access enforcement | 14 tests |
-| Commands | No validation (buffers only) | - |
-| Local | No validation (isolated state) | - |
-| AssetServer | No validation (read-only) | - |
-
-**Total**: 58 safety tests (100% passing)
+**When it runs**: `DynamicSystem::initialize` computes the conflict once (it holds
+`&mut World` there for the ComponentId lookups) and stores the result in
+`precomputed_validation`; `validate_params` (called on every run) just returns the
+stored error, so the app's error handler surfaces the conflict.
 
 ### Examples: Query Conflicts
 
@@ -533,10 +570,13 @@ Most of PyBevy's safety comes from **Bevy's ECS scheduler** and **parameter vali
        pass  # RuntimeError - conflicting access
    ```
 
-3. **Bevy's scheduler** - Ensures systems with conflicting access never run in parallel
-   - `Query[Mut[T]]` + `Query[Mut[T]]` → Never concurrent
-   - `ResMut[R]` + `ResMut[R]` → Rejected by validation
-   - Each entity accessed by at most one system at a time
+3. **Bevy's scheduler** - Keeps systems with conflicting access off the same
+   thread, but only because PyBevy tells it what each system touches. A Python
+   system is opaque to Bevy, so `DynamicSystem::initialize` returns a
+   `FilteredAccessSet` describing every component and resource the system reads or
+   writes. The parallel executor then treats a pybevy system exactly like a native
+   one: two systems whose declared access is incompatible never run concurrently.
+   The next subsection describes how that access is declared.
 
 4. **Wrapper storage components** - Mutations go through Rust memory
    ```python
@@ -555,6 +595,52 @@ Most of PyBevy's safety comes from **Bevy's ECS scheduler** and **parameter vali
        for t in query:
            t.translation.x = 100.0  # Safe - Bevy prevents conflicts
    ```
+
+### How the Scheduler Learns Each System's Access
+
+The scheduler can only keep conflicting systems apart if it knows what each system
+accesses, and a Python function tells it nothing. `DynamicSystem::initialize`
+(`src/ecs/dynamic_system.rs`) therefore translates the system's parameters into a
+`FilteredAccessSet` of resolved `ComponentId`s. The building blocks live in
+`crates/pybevy_ecs/src/shared/access_sets.rs`:
+
+- **One `FilteredAccess` per Query/View parameter** (`QueryParamAccess::build`),
+  plus one shared `FilteredAccess` for all resource-like access
+  (`build_resource_access`). Filters are per-parameter on purpose: a `With` on one
+  query must not narrow another query's access, or the scheduler would think two
+  genuinely conflicting systems are disjoint.
+- **Required components** declare read or write access and, because their presence
+  gates the access, also contribute a `With` filter. **Optional components** declare
+  access with no `With` filter, since the query still matches archetypes that lack
+  them.
+- **`Without[T]`** declares an `and_without` filter. Declaring it as `With`
+  (an earlier defect) would fabricate disjointness and let conflicting systems run
+  in parallel.
+- **`Changed[T]` / `Added[T]`** read the filtered component's change ticks, so they
+  declare *read* access on that component (a native writer of T also writes T's
+  ticks, so it must conflict).
+- **`Has[T]` and `AnyOf[...]`** deliberately declare no filter narrowing. `Has`
+  matches regardless of the component's presence, and `AnyOf`'s OR semantics cannot
+  be expressed by a conjunctive `With`. Omitting the filter is conservative: it can
+  only cost parallelism, never soundness. Their ids are still registered so the
+  runtime query builder can see them.
+- **Resource, message, and asset `ComponentId`s are registered (not merely looked
+  up) at `initialize`.** A resource inserted after schedule build would otherwise
+  have no id yet, leaving the access undeclared and letting the scheduler run a
+  conflicting system in parallel (UB). Registering up front means late-inserted
+  resources are never invisible to the scheduler. (The one residual lookup-only
+  case is custom message types; see `MessageType::register_resource_id`.)
+
+Two test suites guard this translation:
+
+- `tests/bevy_invariants.rs` pins the upstream Bevy semantics PyBevy depends on
+  (for example that `Without` disjointness is real, that `Changed`/`Added` declare
+  read access, that `Has` and OR filters narrow nothing, that `Option` does not
+  narrow access, and that resources are components in the access set). If a Bevy
+  upgrade changes any of these, these tests fail first.
+- The differential tests in `access_sets.rs` build each pybevy access and compare
+  it against the access a native `QueryState` reports for the equivalent
+  `Query<..., ...>`, asserting the two agree on compatibility.
 
 ### What Requires Caution
 
@@ -613,7 +699,25 @@ def system(state: ResMut[GameState]) -> None:
 
 **CAUTION: Spawning threads inside systems**:
 
-Passing component references to threads spawned within a system bypasses PyBevy's safety guarantees. Without the GIL, two threads calling `as_mut()` on the same component simultaneously would create a data race on the underlying Rust memory. In practice the effect is limited to corrupted field values (torn writes on non-atomic types). A thread-id check in the validity flag could detect this, but would add a branch to every component access on the hot path.
+Passing a component reference (or a Query/View parameter, or anything derived from
+one) to a thread spawned inside a system bypasses PyBevy's safety guarantees.
+
+Under the GIL this is contained: the spawned thread cannot run Python concurrently
+with the system, so by the time it touches the parameter the ValidityFlag has
+already been invalidated and the access raises. Without the GIL, that containment
+is gone, and the ValidityFlag check is **check-then-act**. Two threads writing the
+same component concurrently can tear a non-atomic field, but the more serious
+problem is timing: a leaked thread can pass the validity check while the system is
+still running, then dereference the pointer *after* the system ends and its
+commands apply. Those commands move entities between archetypes and free component
+storage, so the pointer the thread holds can dangle. That is a genuine
+use-after-free, not merely a torn write.
+
+This is a known limitation of the check-then-act design. The considered future
+mitigation is a thread-affinity check in the validity flag (record the system's
+thread id and reject access from any other thread), which would turn the leak into
+a clean error at the cost of a branch on every component access on the hot path.
+Until then, the rule stands: do not hand system parameters to other threads.
 
 ### Safe Patterns
 
@@ -701,6 +805,33 @@ def system(commands: Commands, loader: ResMut[AssetLoader]) -> None:
     loader.queue_load("texture.png", on_complete=lambda tex: ...)
 ```
 
+### Explicitly Prevented: Mutating Run Conditions
+
+**Run conditions must be read-only.** A run condition (a function passed to
+`run_if`) is evaluated under Bevy's read-only system contract:
+`DynamicCondition` is declared `unsafe impl ReadOnlySystem`, the executor runs it
+with only read permission to the world, and any deferred operations it queues are
+**never applied**. A condition that mutated the world (or queued commands expecting
+them to take effect) would either violate that contract or silently do nothing.
+
+PyBevy therefore rejects any parameter kind that could mutate the world when a
+condition is registered, before the condition ever reaches Bevy
+(`condition_param_rejection` / `validate_condition_params` in
+`src/ecs/dynamic_condition.rs`):
+
+- `World` (exclusive world access)
+- `Commands` (its queued mutations are never applied to conditions)
+- `ResMut` (mutable resource access)
+- mutable `Assets` (mutable asset access)
+- `Query` / `View` with a `Mut` component (mutable component access)
+- `MessageWriter` (writing messages mutates the world)
+- `MessageReader` (advancing the read cursor mutates the world; read messages in a
+  regular system instead)
+
+Read-only parameters (`Res`, read-only `Query`/`View`, `Local`, read-only `Assets`)
+are allowed. The error names the offending parameter index and explains the
+read-only requirement. Coverage lives in `tests/safety/test_condition_readonly.py`.
+
 ### Unsafe Patterns (Free-Threaded Mode)
 
 **UNSAFE:Global mutable state**:
@@ -769,7 +900,7 @@ Used for diagnostics/logging. The extension module declares `gil_used = false` v
 
 | Component | GIL Mode | Free-Threaded | Notes |
 |-----------|----------|---------------|-------|
-| ValidityFlag | Safe | Safe | Uses atomics |
+| ValidityFlag | Safe | Check-then-act gap* | Atomic flag. *Safe under the GIL; without the GIL a parameter leaked to another thread can pass the check then dereference after teardown (use-after-free) |
 | Parameter validation | Safe | Safe | Registration-time |
 | Wrapper components | Safe | Safe | Rust storage |
 | PyObject components | Safe | Safe | Bevy prevents conflicts |
@@ -796,8 +927,10 @@ Used for diagnostics/logging. The extension module declares `gil_used = false` v
 PyBevy's safety architecture was designed around **Bevy's guarantees**, not Python's:
 
 1. **Bevy's scheduler** prevents concurrent mutable access to components/resources
+   (using the per-system `FilteredAccessSet` that `initialize` declares)
 2. **Parameter validation** enforces borrowing rules at registration time
-3. **ValidityFlag** uses atomics (works without GIL)
+3. **ValidityFlag** uses atomics (works without GIL, with the check-then-act caveat
+   above for parameters leaked to other threads)
 4. **Borrowed fields** point to Bevy-managed memory (not Python objects)
 
 The GIL was **defensive redundancy** - an extra layer of protection against user code doing unsafe things (global state). The core safety mechanisms work regardless of GIL status.
@@ -826,7 +959,7 @@ The issue: `transform.translation` returns a copy of the Vec3. Modifying `copy.x
 PyBevy implements an enum-based storage pattern where property getters return **borrowed** references pointing directly to component fields:
 
 ```rust
-// Vec3 can be either owned or borrowed - src/math/vec3.rs
+// Vec3 can be either owned or borrowed - crates/pybevy_math/src/vec3.rs
 enum Vec3Storage {
     Owned(Vec3),  // Created via Vec3(1.0, 2.0, 3.0)
     Borrowed {
@@ -872,7 +1005,7 @@ impl PyVec3 {
 
 **Transform property returns borrowed Vec3**:
 ```rust
-// In Transform::translation() - src/transform/transform.rs
+// In Transform::translation() - crates/pybevy_transform/src/transform.rs
 #[getter]
 pub fn translation(&self) -> PyResult<PyVec3> {
     self.check_valid()?;
@@ -912,11 +1045,11 @@ for transform in Query[Mut[Transform]]:
 
 Types with borrowed field access:
 
-- **Vec2** (`src/math/vec2.rs`) - 2D vectors with `.x`, `.y` setters
-- **Vec3** (`src/math/vec3.rs`) - 3D vectors with `.x`, `.y`, `.z` setters
-- **Quat** (`src/math/quat.rs`) - Quaternions with `.x`, `.y`, `.z`, `.w` setters
-- **Transform** (`src/transform/transform.rs`) - Uses borrowed Vec3/Quat for properties
-- **PointLight** (`src/light/point_light.rs`) - Direct field mutations
+- **Vec2** (`crates/pybevy_math/src/vec2.rs`) - 2D vectors with `.x`, `.y` setters
+- **Vec3** (`crates/pybevy_math/src/vec3.rs`) - 3D vectors with `.x`, `.y`, `.z` setters
+- **Quat** (`crates/pybevy_math/src/quat.rs`) - Quaternions with `.x`, `.y`, `.z`, `.w` setters
+- **Transform** (`crates/pybevy_transform/src/transform.rs`) - Uses borrowed Vec3/Quat for properties
+- **PointLight** (`crates/pybevy_light/src/point_light.rs`) - Direct field mutations
 
 ### Safety Guarantees
 
@@ -1026,6 +1159,56 @@ RuntimeError: Cannot write to component - query does not have mutable access
 
 ---
 
+## Error Reporting and Message Resources
+
+### System Errors Are Buffered Off-World
+
+When a Python system raises, `run_unsafe` is on the parallel execution path and
+must not perform a structural world mutation (inserting or mutating a resource
+there would be unsound while other systems may be running). So the error path
+touches no world state: it writes the message and traceback into a shared
+off-world buffer (`SystemErrorBuffer`, an `Arc<Mutex<Option<BufferedSystemError>>>`
+in `src/ecs/dynamic_system.rs`).
+
+An exclusive system registered in the `Last` schedule, `drain_last_system_error`
+(`src/app/app.rs`), then moves the most recent buffered error into the
+`LastSystemError` resource that MCP reads. Two consequences follow from draining in
+`Last` rather than at the moment of failure:
+
+- The `LastSystemError` timestamp is read at **drain time** (from `Time`), not when
+  the error occurred, so it can lag up to one frame. This is acceptable for MCP
+  display and keeps the error path free of world access.
+- `LastSystemError` (and the `LastErrorBuffer` that wraps the shared buffer) are
+  **pre-inserted** when the app is built, so the drain always has a resource to
+  write into and never has to insert one.
+
+### Message Resources
+
+Message access is designed so that a system in the parallel path never has to
+insert a `Messages<T>` resource (again, a structural world mutation would be
+unsound there):
+
+- **Readers of a missing `Messages` resource see an empty read.** A
+  `MessageReader` whose buffer does not exist yields no messages rather than
+  creating the resource (`iter_messages` returns an empty vector; the
+  clear/len/`is_empty` helpers fall back to an `EmptyMessages` stand-in). See
+  `src/ecs/messages.rs`.
+- **Writers raise instead of creating the resource.** A `MessageWriter` to a
+  missing buffer returns an error telling you to register the message type with
+  `app.add_message(T)` first (`src/ecs/message.rs`), rather than silently inserting
+  the buffer from a possibly-parallel system.
+- **Built-in message resources are pre-inserted at `PreStartup`.** Buffers whose
+  owning plugin may be absent (keyboard input, window events, world-instance-ready,
+  and image/mesh asset events) are filled in by `ensure_builtin_message_resources`
+  (`src/ecs/messages.rs`), registered in `PreStartup` so any plugin that owns a
+  buffer has already inserted it first; only genuinely missing ones are filled.
+
+This is also why message resource, asset, and `Res`/`ResMut` `ComponentId`s are
+**registered** (not just looked up) in `initialize`: see Section 4, "How the
+Scheduler Learns Each System's Access."
+
+---
+
 ## Performance Impact
 
 | Safety Mechanism | Overhead | Impact |
@@ -1042,18 +1225,26 @@ RuntimeError: Cannot write to component - query does not have mutable access
 
 ### Key Files
 
-- **Core Storage Layer** (`crates/pybevy_core/src/`):
-  - `validity_guard.rs` - ValidityFlag, ValidityGuard (RAII), AccessMode
+- **Core Storage Layer** (`crates/pybevy_storage/src/`, re-exported by
+  `pybevy_core` and, for the main crate, by `src/ecs/helpers/validity_guard.rs`):
+  - `validity_guard.rs` - ValidityFlag, ValidityFlagWithMode, ValidityGuard (RAII), AccessMode
   - `pycomponent.rs` - Owned/Borrowed component storage
   - `value_storage.rs` - Copy-type field storage (Vec3, Quat, f32, etc.)
   - `field_storage.rs` - Non-Copy field storage (TextureAtlas, WindowResolution, etc.)
   - `list_storage.rs` - Vec<T> field storage with Python list interface
-  - `storage/pyasset.rs` - Asset storage (read-only vs mutable variants)
-- **Parameter Validation**: `src/ecs/dynamic_system.rs` (`validate_parameters()`, `validate_component_access_internal()`)
-- **Borrowed Fields**: `src/math/vec2.rs`, `src/math/vec3.rs`, `src/math/quat.rs`
-- **Component Pattern**: `src/transform/transform.rs`, `src/light/point_light.rs`
-- **Python Safety Tests**: `tests/safety/` (15 test files)
-- **Rust Unit Tests**: `cargo test -p pybevy_core` (63 tests covering all storage types)
+  - `pyasset.rs` - Asset storage (read-only vs mutable variants)
+  - `pyresource.rs` - Resource storage
+- **Access Declaration**: `crates/pybevy_ecs/src/shared/access_sets.rs`
+  (`QueryParamAccess`, `build_resource_access`)
+- **Parameter Validation and Access Declaration**: `src/ecs/dynamic_system.rs`
+  (`initialize` builds the `FilteredAccessSet` and precomputes conflict validation)
+- **Run-Condition Validation**: `src/ecs/dynamic_condition.rs`
+- **Borrowed Fields**: `crates/pybevy_math/src/vec2.rs`, `crates/pybevy_math/src/vec3.rs`, `crates/pybevy_math/src/quat.rs`
+- **Component Pattern**: `crates/pybevy_transform/src/transform.rs`, `crates/pybevy_light/src/point_light.rs`
+- **Python Safety Tests**: `tests/safety/` (Python safety test suite)
+- **Rust Unit Tests**: storage-layer tests live in `pybevy_storage`
+  (`cargo test -p pybevy_storage`); registry and handle tests live in `pybevy_core`
+  (`cargo test -p pybevy_core`)
 
 ### Related Documentation
 
@@ -1067,25 +1258,29 @@ RuntimeError: Cannot write to component - query does not have mutable access
 
 ### Overview
 
-The `pybevy_core` crate contains all the unsafe pointer logic (owned/borrowed storage, validity flags, field borrowing). These are tested with pure Rust unit tests that can run without the Python interpreter.
+The `pybevy_storage` crate contains the unsafe pointer logic (owned/borrowed
+storage, validity flags, field borrowing), re-exported by `pybevy_core`. These are
+tested with pure Rust unit tests that can run without the Python interpreter. The
+registry and handle logic is tested in `pybevy_core`.
 
 ```bash
-cargo test -p pybevy_core    # 63 tests, ~0s runtime
+cargo test -p pybevy_storage   # storage-layer unit tests
+cargo test -p pybevy_core      # registry + handle unit tests
 ```
 
 ### Coverage
 
-| Module | Tests | What's Tested |
+| Module | Crate | What's Tested |
 |--------|-------|---------------|
-| `validity_guard` | 10 | Flag lifecycle, read/write/invalid modes, RAII guard drop, clone propagation, ValidityFlagWithMode |
-| `pycomponent` | 9 | Owned/borrowed modes, mutation persistence, validity enforcement, write permissions, into_owned |
-| `value_storage` | 8 | Same as pycomponent for Copy types (Vec3, f32, etc.) |
-| `field_storage` | 12 | Owned/borrowed, borrow_field chains (owned→field, borrowed→field), mutation persistence through nested borrows, Drop invalidation, clone independence |
-| `list_storage` | 11 | Vec storage, mutation persistence, validity/write enforcement, normalize_index edge cases |
-| `pyasset` | 8 | Read-only vs mutable variants, take/consume, validity enforcement |
-| `handle` | 2 | UUID handling |
-| `global_registry` | 2 | Registry basics |
-| **Total** | **63** | |
+| `validity_guard` | pybevy_storage | Flag lifecycle, read/write/invalid modes, RAII guard drop, clone propagation, ValidityFlagWithMode |
+| `pycomponent` | pybevy_storage | Owned/borrowed modes, mutation persistence, validity enforcement, write permissions, into_owned |
+| `value_storage` | pybevy_storage | Same as pycomponent for Copy types (Vec3, f32, etc.) |
+| `field_storage` | pybevy_storage | Owned/borrowed, borrow_field chains (owned→field, borrowed→field), mutation persistence through nested borrows, Drop invalidation, clone independence |
+| `list_storage` | pybevy_storage | Vec storage, mutation persistence, validity/write enforcement, normalize_index edge cases |
+| `pyasset` | pybevy_storage | Read-only vs mutable variants, take/consume, validity enforcement |
+| `pyresource` | pybevy_storage | Resource storage variants (owned/borrowed, validity enforcement) |
+| `handle` | pybevy_core | UUID handling |
+| `global_registry` | pybevy_core | Registry basics |
 
 ### Key Safety Properties Tested
 
@@ -1120,8 +1315,8 @@ sudo apt install libasan8    # only needed for --full (Phase 2)
 
 ### What It Does
 
-1. **Phase 1** (default): Runs `cargo +nightly test -p pybevy_core` with `-Z sanitizer=address` — validates the Rust storage layer under ASan. Always works because `pybevy_core` has minimal dependencies.
-2. **Phase 2** (`--full`): Builds the full PyO3 `.so` with ASan instrumentation via `maturin develop`, then runs `pytest` with `LD_PRELOAD=libasan.so` — catches memory errors during actual Python-to-Rust interaction.
+1. **Phase 1** (default): Runs `cargo +nightly test -p pybevy_core` with `-Z sanitizer=address`, exercising the core Rust unit tests under ASan. Always works because `pybevy_core` has minimal dependencies. The storage primitives themselves now live in `pybevy_storage`; run `cargo +nightly test -p pybevy_storage` under ASan to cover them directly.
+2. **Phase 2** (`--full`): Builds the full PyO3 `.so` with ASan instrumentation via `maturin develop`, then runs `pytest` with `LD_PRELOAD=libasan.so`, catching memory errors during actual Python-to-Rust interaction.
 3. **Cleanup** (Phase 2 only): Rebuilds without ASan to restore the normal dev environment.
 
 ### What ASan Detects
@@ -1129,7 +1324,7 @@ sudo apt install libasan8    # only needed for --full (Phase 2)
 - Use-after-free (dangling pointer dereference)
 - Heap/stack buffer overflow
 - Stack use after return
-- Memory leaks (disabled by default — Python's GC makes this noisy)
+- Memory leaks (disabled by default: Python's GC makes this noisy)
 
 ### Limitations
 
@@ -1151,18 +1346,19 @@ PyBevy achieves production-ready safety through:
    - Assets[T] asset access
    - World exclusive access
 3. **Standard Python reference semantics** - Within parameters, follows normal Python behavior
-4. **Free-threading compatible** - Works with Python 3.13+ without GIL
+4. **Free-threading compatible** - Works with Python 3.13+ without GIL (with a
+   check-then-act gap for parameters leaked to other threads; see Section 4)
 5. **Async system detection** - Blocks async functions at registration (would break ValidityFlag)
 6. **Borrowed field access** - Direct mutations persist safely (zero overhead)
-7. **Rust unit tests** - 63 tests covering all storage types in `pybevy_core`
+7. **Rust unit tests** - Pure-Rust unit tests covering all storage types in `pybevy_storage`
 8. **AddressSanitizer support** - `scripts/check_asan.sh` for runtime memory error detection
 
 ### Test Coverage
 
-| Layer | What's Tested | Count |
+| Layer | What's Tested | Scope |
 |-------|---------------|-------|
-| Rust storage (pybevy_core) | Validity flags, owned/borrowed storage, field borrows, Drop safety | 63 tests |
-| Python safety (tests/safety/) | Parameter conflicts, aliasing, async detection, field mutations | 15 test files |
+| Rust storage (pybevy_storage) | Validity flags, owned/borrowed storage, field borrows, Drop safety | pure-Rust unit tests |
+| Python safety (tests/safety/) | Parameter conflicts, aliasing, async detection, run-condition read-only, field mutations | Python safety suite |
 | ASan (scripts/check_asan.sh) | Runtime memory errors across Rust + Python boundary | On-demand |
 
 These mechanisms ensure that PyBevy maintains Rust's safety guarantees at runtime, making it safe for production use while keeping performance impact minimal.

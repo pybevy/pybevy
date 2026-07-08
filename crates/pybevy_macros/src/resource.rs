@@ -407,6 +407,89 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    // Cell-based read accessor: narrow access to just this resource through an
+    // UnsafeWorldCell, so run_unsafe never conjures `&World`.
+    let get_from_cell_impl = quote! {
+        unsafe fn get_from_cell(
+            &self,
+            cell: bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell,
+            validity: pybevy_core::ValidityFlagWithMode,
+            py: pyo3::Python,
+        ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+            // SAFETY: initialize declared read access to this resource and the
+            // executor prevents a concurrent writer, so this unchecked resource
+            // read is unique.
+            let resource = unsafe { cell.get_resource::<#bevy_type>() }.ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+            })?;
+
+            // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
+            let ptr = resource as *const #bevy_type as *mut #bevy_type;
+            // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
+            let storage = unsafe {
+                pybevy_core::ResourceStorage::borrowed(ptr, validity)
+            };
+
+            let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
+            Ok(obj.into_any())
+        }
+    };
+
+    // Cell-based mutable accessor (or read-only override for no_mut resources).
+    let get_mut_from_cell_impl = if no_mut {
+        quote! {
+            unsafe fn get_mut_from_cell(
+                &self,
+                cell: bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell,
+                validity: pybevy_core::ValidityFlagWithMode,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                // SAFETY: initialize declared read access; the executor prevents a
+                // concurrent writer, so this unchecked resource read is unique.
+                let resource = unsafe { cell.get_resource::<#bevy_type>() }.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+
+                // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
+                let ptr = resource as *const #bevy_type as *mut #bevy_type;
+                // Override to read mode even though caller requested write
+                let read_validity = validity.flag.with_access_mode(pybevy_core::AccessMode::Read);
+                // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
+                let storage = unsafe {
+                    pybevy_core::ResourceStorage::borrowed(ptr, read_validity)
+                };
+
+                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
+                Ok(obj.into_any())
+            }
+        }
+    } else {
+        quote! {
+            unsafe fn get_mut_from_cell(
+                &self,
+                cell: bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell,
+                validity: pybevy_core::ValidityFlagWithMode,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                // SAFETY: initialize declared write access to this resource and the
+                // executor prevents any concurrent access, so this unchecked
+                // resource borrow is unique.
+                let resource = unsafe { cell.get_resource_mut::<#bevy_type>() }.ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+
+                let ptr = resource.into_inner() as *mut #bevy_type;
+                // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag invalidates storage when borrow expires.
+                let storage = unsafe {
+                    pybevy_core::ResourceStorage::borrowed(ptr, validity)
+                };
+
+                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
+                Ok(obj.into_any())
+            }
+        }
+    };
+
     // Generate remove method based on no_remove flag
     let remove_impl = if no_remove {
         quote! {
@@ -483,6 +566,10 @@ pub(crate) fn generate_resource_bridge_tokens(
             }
 
             #get_mut_impl
+
+            #get_from_cell_impl
+
+            #get_mut_from_cell_impl
 
             #insert_impl
 

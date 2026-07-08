@@ -1,7 +1,7 @@
 use bevy::{
     asset::{AssetPath, AssetServer, UntypedAssetId},
+    ecs::world::unsafe_world_cell::UnsafeWorldCell,
     image::Image,
-    prelude::World,
 };
 use pybevy_core::{handle::PyHandle, registry::global_registry};
 use pybevy_image::loader_settings::PyImageLoaderSettings;
@@ -36,7 +36,9 @@ fn extract_asset_path(path: &Bound<'_, PyAny>) -> PyResult<AssetPath<'static>> {
 #[pyclass(name = "AssetServer", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyAssetServer {
-    world: *const World,
+    /// World cell (lifetime-erased), valid only while `validity` is active. Only
+    /// ever used to read the declared `AssetServer` resource, never `&World`.
+    cell: UnsafeWorldCell<'static>,
     validity: ValidityFlag,
 }
 
@@ -44,13 +46,25 @@ unsafe impl Send for PyAssetServer {}
 unsafe impl Sync for PyAssetServer {}
 
 impl PyAssetServer {
-    pub(crate) unsafe fn new(world: *const World, validity: ValidityFlag) -> Self {
-        Self { world, validity }
+    /// # Safety
+    /// `cell` must reference the World this AssetServer belongs to and must stay
+    /// valid for as long as `validity` is active.
+    pub(crate) unsafe fn new(cell: UnsafeWorldCell, validity: ValidityFlag) -> Self {
+        // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the
+        // cell is only touched while `validity` is active.
+        let cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(cell) };
+        Self { cell, validity }
     }
 
-    fn world_ref(&self) -> PyResult<&World> {
+    /// Borrow the `AssetServer` resource through the cell.
+    fn asset_server(&self) -> PyResult<&AssetServer> {
         self.validity.check()?;
-        Ok(unsafe { &*self.world })
+        // SAFETY: `Res`/`ResMut[AssetServer]` registers AssetServer's ComponentId in
+        // DynamicSystem::initialize, so read access is declared; the executor prevents a
+        // concurrent writer, so this unchecked resource read is unique. AssetServer's own
+        // methods use interior mutability, so shared access suffices for load/query.
+        unsafe { self.cell.get_resource::<AssetServer>() }
+            .ok_or_else(|| PyRuntimeError::new_err("AssetServer resource not found"))
     }
 }
 
@@ -77,8 +91,7 @@ impl PyAssetServer {
             )));
         }
 
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let untyped_handle = bridge.load(asset_server, asset_path);
         let py_handle = PyHandle::from_untyped(untyped_handle, type_ptr);
@@ -113,8 +126,7 @@ impl PyAssetServer {
             ))
         })?;
 
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
 
         let untyped_handle = match bridge.name() {
@@ -151,8 +163,7 @@ impl PyAssetServer {
         let bridge = global_registry::get_asset_bridge_by_name("Image")
             .ok_or_else(|| PyRuntimeError::new_err("Asset bridge for 'Image' not found"))?;
 
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let bevy_settings: bevy::image::ImageLoaderSettings = settings.into();
         let untyped_handle = asset_server
@@ -179,22 +190,19 @@ impl PyAssetServer {
     }
 
     pub fn load_state(&self, id: &PyHandle) -> PyResult<PyLoadState> {
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let untyped_id: UntypedAssetId = id.clone().into();
         Ok(PyLoadState::from(asset_server.load_state(untyped_id)))
     }
 
     pub fn is_loaded(&self, id: &PyHandle) -> PyResult<bool> {
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let untyped_id: UntypedAssetId = id.clone().into();
         Ok(asset_server.is_loaded(untyped_id))
     }
 
     pub fn is_loaded_with_dependencies(&self, id: &PyHandle) -> PyResult<bool> {
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let untyped_id: UntypedAssetId = id.clone().into();
         Ok(asset_server.is_loaded_with_dependencies(untyped_id))
     }
@@ -213,8 +221,7 @@ impl PyAssetServer {
             ))
         })?;
 
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
 
         match bridge.get_handle(asset_server, asset_path) {
@@ -239,8 +246,7 @@ impl PyAssetServer {
             PyRuntimeError::new_err(format!("Asset bridge for '{}' not found", name))
         })?;
 
-        let world = self.world_ref()?;
-        let asset_server = world.resource::<AssetServer>();
+        let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let untyped_handle = bridge.load(asset_server, asset_path);
         let py_handle = PyHandle::from_untyped(untyped_handle, bridge.py_type_ptr());

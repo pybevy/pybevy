@@ -846,3 +846,46 @@ fn test_resources_are_components() {
         "register_component and resource lookup must share one ComponentId space"
     );
 }
+
+#[test]
+fn test_exclusive_function_systems_declare_empty_access_and_non_send() {
+    //! INVARIANT: Bevy's ExclusiveFunctionSystem (a `fn(&mut World)` system)
+    //! returns an EMPTY FilteredAccessSet from initialize and its flags are
+    //! NON_SEND | EXCLUSIVE. Exclusivity is enforced through the flags, not
+    //! through declared access, and the NON_SEND half is load-bearing:
+    //! MultiThreadedExecutor sets `local_thread_running` unconditionally when
+    //! it spawns an exclusive system but clears it on completion only for
+    //! non-Send systems. A Send exclusive system (unreachable in vanilla Bevy,
+    //! constructible via a custom System impl) leaks the flag and permanently
+    //! blocks every non-Send system still queued, ending the schedule scope on
+    //! the debug assertion `state.ready_systems.is_clear()`.
+    //!
+    //! Relied on by: DynamicSystem's World-parameter systems return an empty
+    //! access set from initialize and NON_SEND | EXCLUSIVE from flags() to
+    //! match this shape; pybevy's built-in exclusive systems (e.g. the
+    //! Last-schedule error drain) are plain fn(&mut World) systems.
+    //!
+    //! Reevaluate if it fails: Bevy changed the exclusive-system contract;
+    //! DynamicSystem's World arm and compute_system_flags must mirror whatever
+    //! ExclusiveFunctionSystem now declares.
+
+    let mut world = World::new();
+    let mut system = IntoSystem::into_system(|_world: &mut World| {});
+    let access_set = system.initialize(&mut world);
+
+    let combined = access_set.combined_access();
+    assert!(
+        !combined.has_any_read(),
+        "exclusive fn systems must declare no reads"
+    );
+    assert!(
+        !combined.has_any_write(),
+        "exclusive fn systems must declare no writes"
+    );
+    assert!(system.is_exclusive(), "fn(&mut World) must be exclusive");
+    assert!(
+        !system.is_send(),
+        "exclusive fn systems must be non-Send; the executor's local-thread \
+         accounting assumes the pairing"
+    );
+}

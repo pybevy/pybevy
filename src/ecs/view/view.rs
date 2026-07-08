@@ -20,7 +20,6 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    ptr::NonNull,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -33,7 +32,7 @@ use bevy::{
         component::ComponentId,
         query::QueryBuilder,
         storage::TableId,
-        world::{FilteredEntityMut, World},
+        world::{FilteredEntityMut, World, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
 };
@@ -93,8 +92,10 @@ pub struct PyView {
     /// This prevents getting multiple mutable column proxies for the same component
     borrowed_mut: RefCell<HashSet<PyComponentType>>,
 
-    /// Raw pointer to the World (only valid during system execution)
-    world_ptr: Option<NonNull<World>>,
+    /// World cell (lifetime-erased), valid only during system execution. The View's
+    /// batch ops (QueryBuilder / par_iter_mut) fundamentally need `&mut World`, so a
+    /// `*mut World` is derived per-operation from this cell (see `world_ptr`).
+    world_cell: Option<UnsafeWorldCell<'static>>,
 
     /// Master validity flag - invalidated when system exits
     validity: ValidityFlag,
@@ -164,7 +165,9 @@ impl Drop for PyView {
 impl PyView {
     /// Create a new View with filter components
     ///
-    /// SAFETY: The world pointer must remain valid for the lifetime of this object
+    /// # Safety
+    /// `world` must reference the World the view operates on and must remain valid
+    /// for as long as `validity` is active.
     #[allow(clippy::too_many_arguments)]
     pub unsafe fn new_with_filters(
         component_types: Vec<PyComponentType>,
@@ -174,10 +177,15 @@ impl PyView {
         changed_filter_types: Vec<PyComponentType>,
         added_filter_types: Vec<PyComponentType>,
         last_run: Tick,
-        world: &mut World,
+        world: UnsafeWorldCell,
         validity: ValidityFlag,
     ) -> Self {
+        // Stamp this_run from the cell (safe read) so batch write-backs and the
+        // system's last_run end-read observe the same tick (5a semantics).
         let this_run = world.change_tick();
+        // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the cell
+        // is only used while `validity` is active.
+        let world_cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(world) };
         Self {
             component_types,
             filter_types,
@@ -188,12 +196,30 @@ impl PyView {
             this_run,
             mutable_components,
             borrowed_mut: RefCell::new(HashSet::new()),
-            world_ptr: Some(NonNull::from(world)),
+            world_cell: Some(world_cell),
             validity,
             bytecode_cache: RefCell::new(view_engine::BytecodeCache::new()),
             component_ids: RefCell::new(HashMap::new()),
             batch_validity_tokens: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Derive a raw `*mut World` from the stored cell for a single batch operation.
+    ///
+    /// The View's batch machinery (`QueryBuilder`, `par_iter_mut`) fundamentally
+    /// requires `&mut World`, so a pointer is derived per-operation rather than a
+    /// long-lived borrow. This is the same residual-pointer pattern as
+    /// `query_runtime::world_ptr`.
+    ///
+    /// SAFETY of dereferencing the returned pointer: `initialize` declares this
+    /// view's component read/write access; the executor prevents a conflicting
+    /// system from running concurrently, so the data the batch ops touch is unique.
+    fn world_ptr(&self) -> PyResult<*mut World> {
+        let cell = self
+            .world_cell
+            .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?;
+        // SAFETY: momentary derivation of a Copy pointer; see method docs.
+        Ok(unsafe { cell.world_mut() as *mut World })
     }
 
     /// Build a `ViewFilter` from this view's filter types for use with `view_engine` functions.
@@ -231,11 +257,8 @@ impl PyView {
         }
 
         // Register component
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?
-                .as_mut()
-        };
+        // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
+        let world = unsafe { &mut *self.world_ptr()? };
 
         let id = register_component_id_simple(world, comp_type);
 
@@ -344,11 +367,8 @@ impl PyView {
         let bytecode = Arc::new(compiler.finalize());
 
         // Get world pointer
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?
-                .as_mut()
-        };
+        // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
+        let world = unsafe { &mut *self.world_ptr()? };
 
         // Determine which component type to query based on the compiled expression.
         // The bytecode's field_map contains the ComponentId for each field reference,
@@ -703,11 +723,8 @@ impl PyView {
             .push(validity_token.clone());
 
         // Discover matching archetype tables (same pattern as expression path)
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?
-                .as_ref()
-        };
+        // SAFETY: momentary &World for archetype discovery; see PyView::world_ptr.
+        let world = unsafe { &*self.world_ptr()? };
 
         // Register all component IDs
         let component_ids: Vec<ComponentId> = self
@@ -783,7 +800,7 @@ impl PyView {
         let iterator = PyBatchIterator {
             component_types: self.component_types.clone(),
             mutable_components: self.mutable_components.clone(),
-            world_ptr: self.world_ptr,
+            world_cell: self.world_cell,
             validity_token,
             validity: self.validity.clone(),
             table_ids,
@@ -816,11 +833,8 @@ impl PyView {
             Ok(sum as usize)
         } else {
             // Count all entities - simpler path without expression evaluation
-            let world = unsafe {
-                self.world_ptr
-                    .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?
-                    .as_mut()
-            };
+            // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
+            let world = unsafe { &mut *self.world_ptr()? };
 
             // Build a query using the first component type's ID
             let component_type = self
@@ -1238,11 +1252,8 @@ impl PyViewColMut {
 
         // Get world reference
         let view = unsafe { &*self.view_ptr };
-        let world = unsafe {
-            view.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?
-                .as_mut()
-        };
+        // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
+        let world = unsafe { &mut *view.world_ptr()? };
 
         // If all fields are from the same component, use the optimized single-component path
         if component_ids.len() == 1 && component_ids.contains(&self.component_id) {
@@ -1389,15 +1400,16 @@ pub struct PyBatch {
     /// Mutable component types (same as parent View)
     mutable_components: HashSet<PyComponentType>,
 
-    /// Raw pointer to the World
-    world_ptr: Option<NonNull<World>>,
+    /// World cell (lifetime-erased), valid only during system execution. A
+    /// `*mut World` is derived per-operation (see `world_ptr`).
+    world_cell: Option<UnsafeWorldCell<'static>>,
 
     /// Validity token shared with ViewColumn instances
     /// When this is poisoned, all ViewColumns become invalid
     validity_token: Arc<std::sync::atomic::AtomicBool>,
 
     /// Master validity flag from parent View
-    /// Must be checked before dereferencing world_ptr to prevent use-after-free
+    /// Must be checked before dereferencing the world cell to prevent use-after-free
     validity: ValidityFlag,
 
     /// Specific archetype table for this batch
@@ -1412,7 +1424,7 @@ impl PyBatch {
     pub(crate) fn new(
         component_types: Vec<PyComponentType>,
         mutable_components: HashSet<PyComponentType>,
-        world_ptr: Option<NonNull<World>>,
+        world_cell: Option<UnsafeWorldCell<'static>>,
         validity_token: Arc<std::sync::atomic::AtomicBool>,
         validity: ValidityFlag,
         table_id: TableId,
@@ -1420,21 +1432,31 @@ impl PyBatch {
         Self {
             component_types,
             mutable_components,
-            world_ptr,
+            world_cell,
             validity_token,
             validity,
             table_id,
         }
     }
 
+    /// Derive a raw `*mut World` from the stored cell for a single batch operation.
+    ///
+    /// Same residual-pointer pattern as `PyView::world_ptr`: the batch column and
+    /// change-tick machinery need `&mut World`; the parent view's declared
+    /// component access bounds the data actually touched.
+    fn world_ptr(&self) -> PyResult<*mut World> {
+        let cell = self
+            .world_cell
+            .ok_or_else(|| PyRuntimeError::new_err("Batch not properly initialized"))?;
+        // SAFETY: momentary derivation of a Copy pointer; see method docs.
+        Ok(unsafe { cell.world_mut() as *mut World })
+    }
+
     /// Get component ID for a component type
     fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
         self.validity.check()?;
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("Batch not properly initialized"))?
-                .as_mut()
-        };
+        // SAFETY: momentary &mut World for component registration; see world_ptr.
+        let world = unsafe { &mut *self.world_ptr()? };
 
         Ok(register_component_id_simple(world, comp_type))
     }
@@ -1465,11 +1487,8 @@ impl PyBatch {
         let component_id = self.get_component_id(&comp_type)?;
 
         // Access the table directly via stored table_id (archetype filtering already done in iter_batches)
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("Batch used outside system execution"))?
-                .as_ref()
-        };
+        // SAFETY: momentary &World for table access; see PyBatch::world_ptr.
+        let world = unsafe { &*self.world_ptr()? };
 
         let storages = world.storages();
         let tables = &storages.tables;
@@ -1592,11 +1611,8 @@ impl PyBatch {
 
         // Access the table directly via stored table_id (archetype filtering already done in iter_batches)
         // Mutable access needed for change tick marking
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("Batch used outside system execution"))?
-                .as_mut()
-        };
+        // SAFETY: momentary &mut World for change-tick marking; see PyBatch::world_ptr.
+        let world = unsafe { &mut *self.world_ptr()? };
 
         // Get change tick before immutable borrows
         let change_tick = world.change_tick();
@@ -1701,11 +1717,8 @@ impl PyBatch {
     /// ```
     fn entities(&self, py: Python) -> PyResult<Vec<Py<PyEntity>>> {
         self.validity.check()?;
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("Batch used outside system execution"))?
-                .as_ref()
-        };
+        // SAFETY: momentary &World for table access; see PyBatch::world_ptr.
+        let world = unsafe { &*self.world_ptr()? };
 
         let table = world
             .storages()
@@ -1722,11 +1735,8 @@ impl PyBatch {
 
     fn __len__(&self) -> PyResult<usize> {
         self.validity.check()?;
-        let world = unsafe {
-            self.world_ptr
-                .ok_or_else(|| PyRuntimeError::new_err("Batch used outside system execution"))?
-                .as_ref()
-        };
+        // SAFETY: momentary &World for table access; see PyBatch::world_ptr.
+        let world = unsafe { &*self.world_ptr()? };
 
         let table = world
             .storages()
@@ -1756,8 +1766,8 @@ pub struct PyBatchIterator {
     /// Mutable components
     mutable_components: HashSet<PyComponentType>,
 
-    /// World pointer
-    world_ptr: Option<NonNull<World>>,
+    /// World cell (lifetime-erased), passed to each PyBatch it yields
+    world_cell: Option<UnsafeWorldCell<'static>>,
 
     /// Validity token for all batches
     validity_token: Arc<std::sync::atomic::AtomicBool>,
@@ -1797,7 +1807,7 @@ impl PyBatchIterator {
         let batch = PyBatch::new(
             self.component_types.clone(),
             self.mutable_components.clone(),
-            self.world_ptr,
+            self.world_cell,
             self.validity_token.clone(),
             self.validity.clone(),
             table_id,
