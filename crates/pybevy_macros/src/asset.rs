@@ -6,7 +6,7 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::{AssetArgs, find_storage_field_type};
+use crate::util::{AssetArgs, find_storage_field_type, reflect_registration_tokens};
 
 /// Generates boilerplate implementations for PyBevy asset wrapper types.
 ///
@@ -653,6 +653,7 @@ pub(crate) fn generate_handle_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
     bridge_name_override: Option<&str>,
+    no_reflect: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -789,10 +790,12 @@ pub(crate) fn generate_handle_bridge_tokens(
         }
     };
 
+    let reflect_submit = reflect_registration_tokens(bevy_type, no_reflect);
     let inventory_submit = quote! {
         pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
             create: || std::sync::Arc::new(#bridge_name),
         });
+        #reflect_submit
     };
 
     quote! {
@@ -824,25 +827,39 @@ pub fn pyhandle(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct HandleStorageArgs {
         bevy_type: Type,
         bridge_name: Option<String>,
+        no_reflect: bool,
     }
 
     impl Parse for HandleStorageArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             let bevy_type: Type = input.parse()?;
-            let bridge_name = if input.peek(Token![,]) {
+            let mut bridge_name = None;
+            let mut no_reflect = false;
+
+            while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
                 if input.peek(syn::LitStr) {
-                    Some(input.parse::<syn::LitStr>()?.value())
+                    bridge_name = Some(input.parse::<syn::LitStr>()?.value());
+                } else if input.peek(syn::Ident) {
+                    let ident: Ident = input.parse()?;
+                    match ident.to_string().as_str() {
+                        "no_reflect" => no_reflect = true,
+                        other => {
+                            return Err(syn::Error::new_spanned(
+                                ident,
+                                format!("unknown option '{}', expected no_reflect", other),
+                            ));
+                        }
+                    }
                 } else {
-                    None
+                    break;
                 }
-            } else {
-                None
-            };
+            }
 
             Ok(HandleStorageArgs {
                 bevy_type,
                 bridge_name,
+                no_reflect,
             })
         }
     }
@@ -851,8 +868,12 @@ pub fn pyhandle(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
 
-    let bridge_tokens =
-        generate_handle_bridge_tokens(&args.bevy_type, py_type, args.bridge_name.as_deref());
+    let bridge_tokens = generate_handle_bridge_tokens(
+        &args.bevy_type,
+        py_type,
+        args.bridge_name.as_deref(),
+        args.no_reflect,
+    );
 
     let expanded = quote! {
         #input

@@ -43,7 +43,7 @@ use bevy::{
 };
 #[cfg(feature = "native-hot-reload")]
 use notify::{EventKind, RecursiveMode, Watcher};
-use pybevy_core::{ComponentBridge, registry::global_registry};
+use pybevy_core::{ComponentBridge, register_wrapped_reflect_types, registry::global_registry};
 use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     exceptions::{PyAttributeError, PyImportError},
@@ -491,6 +491,10 @@ impl PyBevyPlugin {
 impl Plugin for PyBevyPlugin {
     fn build(&self, app: &mut App) {
         ensure_python_initialized();
+
+        // Reflect-register all bridged bevy types so MCP/editor tooling can
+        // resolve them by name even without bevy's reflect_auto_register
+        register_wrapped_reflect_types(app.world());
 
         // Register component bridges in the global registry and inject their
         // Python types into the _pybevy module so Python can import them

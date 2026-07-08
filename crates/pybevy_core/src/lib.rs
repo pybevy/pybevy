@@ -36,6 +36,7 @@ pub mod bridge_inventory;
 pub mod materializable;
 pub mod message;
 pub mod plugin;
+pub mod reflect_registration;
 pub mod registry;
 pub mod reload_request;
 pub mod resource;
@@ -327,6 +328,7 @@ pub use pybevy_storage::{
     ValidityFlagWithMode, ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge,
     ViewFieldAccess, normalize_index,
 };
+pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{
     AssetBridge, AssetInputConverter, BatchComponent, BatchFieldMeta, BatchableField,
     ComponentBatchInsertFn, ComponentBatchMeta, ComponentBridge, ExtractFn, MessageBridge,

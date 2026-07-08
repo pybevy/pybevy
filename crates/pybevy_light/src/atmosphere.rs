@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
-#[pycomponent(Atmosphere, bridge, view_only_fields = [inner_radius: f32, outer_radius: f32])]
+#[pycomponent(Atmosphere, bridge, no_reflect, view_only_fields = [inner_radius: f32, outer_radius: f32])]
 #[pyclass(name = "Atmosphere", extends = PyComponent)]
 pub struct PyAtmosphere {
     pub(crate) storage: ComponentStorage<Atmosphere>,

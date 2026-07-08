@@ -1,11 +1,14 @@
 use quote::quote;
 use syn::{Ident, Type};
 
+use crate::util::reflect_registration_tokens;
+
 /// Shared unit bridge code generation used by `#[pycomponent(..., unit, bridge)]`.
 pub(crate) fn generate_unit_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
     bridge_name_override: Option<&str>,
+    no_reflect: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -144,10 +147,12 @@ pub(crate) fn generate_unit_bridge_tokens(
         }
     };
 
+    let reflect_submit = reflect_registration_tokens(bevy_type, no_reflect);
     let inventory_submit = quote! {
         pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
             create: || std::sync::Arc::new(#bridge_name),
         });
+        #reflect_submit
     };
 
     quote! {

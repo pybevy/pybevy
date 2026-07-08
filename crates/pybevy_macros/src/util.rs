@@ -33,6 +33,27 @@ pub(crate) fn pybevy_crate_paths() -> (proc_macro2::TokenStream, proc_macro2::To
     }
 }
 
+/// Inventory submission registering `bevy_type` into the app's TypeRegistry,
+/// so bridged types stay reflect-reachable without bevy's
+/// `reflect_auto_register`. Suppressed by the macros' `no_reflect` option
+/// (for bevy types without a `Reflect` derive).
+pub(crate) fn reflect_registration_tokens(
+    bevy_type: &Type,
+    no_reflect: bool,
+) -> proc_macro2::TokenStream {
+    if no_reflect {
+        quote! {}
+    } else {
+        quote! {
+            pybevy_core::inventory::submit!(pybevy_core::ReflectTypeRegistration {
+                register: |registry| {
+                    registry.register::<#bevy_type>();
+                },
+            });
+        }
+    }
+}
+
 /// Arguments for native_asset attribute macro (unchanged)
 /// The variant is parsed for validation but the actual type is extracted from the storage field.
 #[allow(dead_code)]

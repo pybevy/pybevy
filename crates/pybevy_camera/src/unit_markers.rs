@@ -9,7 +9,7 @@ use pybevy_core::PyComponent;
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(NoCpuCulling, unit, bridge)]
+#[pycomponent(NoCpuCulling, unit, bridge, no_reflect)]
 #[pyclass(name = "NoCpuCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoCpuCulling;

@@ -4,7 +4,7 @@ use pybevy_macros::pyresource;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pyresource(Touches, no_clone, bridge, no_mut, default_insert)]
+#[pyresource(Touches, no_clone, bridge, no_mut, default_insert, no_reflect)]
 #[pyclass(name = "Touches", extends = PyResource)]
 pub struct PyTouches {
     pub(crate) storage: ResourceStorage<Touches>,

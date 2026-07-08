@@ -52,7 +52,7 @@ impl PyHdr {
 ///
 /// Prevents the entity from being automatically batched with similar
 /// entities during rendering.
-#[pycomponent(NoAutomaticBatching, unit, bridge)]
+#[pycomponent(NoAutomaticBatching, unit, bridge, no_reflect)]
 #[pyclass(name = "NoAutomaticBatching", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoAutomaticBatching;
@@ -92,7 +92,7 @@ impl PyNoAutomaticBatching {
 /// Marker component that disables indirect drawing for an entity.
 ///
 /// Prevents the entity from using indirect draw calls during rendering.
-#[pycomponent(NoIndirectDrawing, unit, bridge)]
+#[pycomponent(NoIndirectDrawing, unit, bridge, no_reflect)]
 #[pyclass(name = "NoIndirectDrawing", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoIndirectDrawing;

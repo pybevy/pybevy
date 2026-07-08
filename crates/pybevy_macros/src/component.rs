@@ -8,7 +8,7 @@ use syn::{
 
 use crate::{
     unit::generate_unit_bridge_tokens,
-    util::{find_storage_field_type, to_snake_case},
+    util::{find_storage_field_type, reflect_registration_tokens, to_snake_case},
 };
 
 /// A single field in view_fields/batch_only_fields.
@@ -238,6 +238,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_insert: bool,
         unit: bool,
         bridge: bool,
+        no_reflect: bool,
         bridge_name: Option<String>,
         view_fields: Option<Vec<BridgeField>>,
         batch_only_fields: Option<Vec<BridgeField>>,
@@ -251,6 +252,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_insert = false;
             let mut unit = false;
             let mut bridge = false;
+            let mut no_reflect = false;
             let bridge_name = None;
             let mut view_fields = None;
             let mut batch_only_fields = None;
@@ -267,6 +269,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                     "no_insert" => no_insert = true,
                     "unit" => unit = true,
                     "bridge" => bridge = true,
+                    "no_reflect" => no_reflect = true,
                     "view_fields" => {
                         bridge = true;
                         input.parse::<Token![=]>()?;
@@ -295,7 +298,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, view_fields, batch_only_fields, view_only_fields",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, view_fields, batch_only_fields, view_only_fields",
                                 other
                             ),
                         ));
@@ -309,6 +312,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 no_insert,
                 unit,
                 bridge,
+                no_reflect,
                 bridge_name,
                 view_fields,
                 batch_only_fields,
@@ -325,7 +329,12 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Unit component: no storage field, just the struct + optional bridge
     if args.unit {
         let bridge_tokens = if args.bridge {
-            generate_unit_bridge_tokens(bevy_type, py_type, args.bridge_name.as_deref())
+            generate_unit_bridge_tokens(
+                bevy_type,
+                py_type,
+                args.bridge_name.as_deref(),
+                args.no_reflect,
+            )
         } else {
             quote! {}
         };
@@ -344,6 +353,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             py_type,
             args.bridge_name.as_deref(),
             args.no_clone || args.no_insert, // no_clone or no_insert both disable insert_from_python
+            args.no_reflect,
             args.view_fields.as_ref(),
             args.batch_only_fields.as_ref(),
             args.view_only_fields.as_ref(),
@@ -456,6 +466,7 @@ fn generate_bridge_tokens(
     py_type: &Ident,
     bridge_name_override: Option<&str>,
     no_insert: bool,
+    no_reflect: bool,
     view_fields: Option<&Vec<BridgeField>>,
     batch_only_fields: Option<&Vec<BridgeField>>,
     view_only_fields: Option<&Vec<ViewOnlyField>>,
@@ -1054,10 +1065,13 @@ fn generate_bridge_tokens(
             quote! {}
         };
 
+        let reflect_submit = reflect_registration_tokens(bevy_type, no_reflect);
+
         quote! {
             pybevy_core::inventory::submit!(pybevy_core::ComponentBridgeRegistration {
                 create: || std::sync::Arc::new(#bridge_name),
             });
+            #reflect_submit
             #batch_submit
         }
     } else {

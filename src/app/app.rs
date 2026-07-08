@@ -25,7 +25,9 @@ use bevy::{
     },
     log::LogPlugin,
 };
-use pybevy_core::{PyMessage, PyPlugin as PyPluginBase, plugin::plugin_registry};
+use pybevy_core::{
+    PyMessage, PyPlugin as PyPluginBase, plugin::plugin_registry, register_wrapped_reflect_types,
+};
 use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     IntoPyObjectExt,
@@ -437,6 +439,10 @@ impl PyApp {
         app.world_mut()
             .resource_mut::<MainScheduleOrder>()
             .insert_after(PreUpdate, SimTick);
+
+        // Reflect-register all bridged bevy types so MCP/editor tooling can
+        // resolve them by name even without bevy's reflect_auto_register
+        register_wrapped_reflect_types(app.world());
 
         // Store the app in thread-local HashMap indexed by app_id
         BEVY_APPS.with(|apps_cell| {

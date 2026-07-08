@@ -6,7 +6,7 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::find_storage_field_type;
+use crate::util::{find_storage_field_type, reflect_registration_tokens};
 
 /// Generates boilerplate implementations for PyBevy resource wrapper types.
 ///
@@ -139,6 +139,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_remove: bool,
         default_insert: bool,
         no_default: bool,
+        no_reflect: bool,
     }
 
     impl Parse for ResourceStorageArgs {
@@ -152,6 +153,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_remove = false;
             let mut default_insert = false;
             let mut no_default = false;
+            let mut no_reflect = false;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -170,11 +172,12 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "no_remove" => no_remove = true,
                         "default_insert" => default_insert = true,
                         "no_default" => no_default = true,
+                        "no_reflect" => no_reflect = true,
                         other => {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert, no_default",
+                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert, no_default, no_reflect",
                                     other
                                 ),
                             ));
@@ -193,6 +196,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                 no_remove,
                 default_insert,
                 no_default,
+                no_reflect,
             })
         }
     }
@@ -213,6 +217,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.no_remove,
             args.default_insert,
             args.no_default,
+            args.no_reflect,
         )
     } else {
         quote! {}
@@ -303,6 +308,7 @@ pub(crate) fn generate_resource_bridge_tokens(
     no_remove: bool,
     default_insert: bool,
     no_default: bool,
+    no_reflect: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -494,10 +500,12 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    let reflect_submit = reflect_registration_tokens(bevy_type, no_reflect);
     let inventory_submit = quote! {
         pybevy_core::inventory::submit!(pybevy_core::ResourceBridgeRegistration {
             create: || std::sync::Arc::new(#bridge_name),
         });
+        #reflect_submit
     };
 
     quote! {

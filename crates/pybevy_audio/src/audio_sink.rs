@@ -7,7 +7,7 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::volume::PyVolume;
 
-#[pycomponent(AudioSink, no_clone, bridge)]
+#[pycomponent(AudioSink, no_clone, bridge, no_reflect)]
 #[pyclass(name = "AudioSink", extends = PyComponent)]
 pub struct PyAudioSink {
     pub(crate) storage: ComponentStorage<AudioSink>,
