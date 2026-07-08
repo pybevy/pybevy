@@ -22,7 +22,7 @@
 //!   - Both `get()` and `get_mut()` allowed
 use std::{collections::VecDeque, sync::Arc};
 
-use bevy::prelude::World;
+use bevy::{ecs::world::unsafe_world_cell::UnsafeWorldCell, prelude::World};
 use pybevy_core::{
     handle::PyHandle,
     registry::{AssetBridge, global_registry},
@@ -48,8 +48,9 @@ pub struct PyAssets {
     type_ptr: *const PyTypeObject,
     /// If set, the `@material`-decorated class for auto-wrapping `get_mut()` results.
     wrapper_class: Option<*const PyTypeObject>,
-    // Raw pointer to World - SAFETY: Only valid when validity flag is true
-    world: *mut World,
+    /// World cell (lifetime-erased), valid only while the validity flag is active.
+    /// Used only to reach the declared `Assets<T>` resource through the AssetBridge.
+    cell: UnsafeWorldCell<'static>,
     // Runtime validity check with read/write mode - prevents use after system execution
     // and enforces Res[Assets[T]] (read-only) vs ResMut[Assets[T]] (mutable) semantics
     validity: ValidityFlagWithMode,
@@ -72,11 +73,12 @@ impl PyAssets {
     /// Create a new PyAssets wrapper
     ///
     /// # Safety
-    /// The provided world pointer must be valid for the lifetime of the ValidityFlag.
+    /// The provided world cell must reference the world holding the `Assets<T>`
+    /// resource and stay valid for as long as the ValidityFlag is active.
     pub(crate) unsafe fn new(
         type_ptr: *const PyTypeObject,
         wrapper_class: Option<*const PyTypeObject>,
-        world: *mut World,
+        cell: UnsafeWorldCell,
         validity: ValidityFlag,
         is_mutable: bool,
     ) -> Self {
@@ -86,10 +88,14 @@ impl PyAssets {
             AccessMode::Read
         };
 
+        // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the
+        // cell is only touched while `validity` is active.
+        let cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(cell) };
+
         Self {
             type_ptr,
             wrapper_class,
-            world,
+            cell,
             validity: validity.with_access_mode(access_mode),
         }
     }
@@ -116,7 +122,11 @@ impl PyAssets {
     /// Get a reference to the world (read-only access)
     fn world_ref(&self) -> PyResult<&World> {
         self.validity.check_read()?;
-        Ok(unsafe { &*self.world })
+        // SAFETY: momentary derivation of a shared world reference, used only to reach
+        // the declared `Assets<T>` resource through the AssetBridge. `initialize`
+        // declares `Assets<T>` read access; the executor prevents a concurrent writer.
+        // This is the same residual-pointer class as query_runtime::world_ptr.
+        Ok(unsafe { self.cell.world() })
     }
 
     /// Get a mutable reference to the world
@@ -131,7 +141,11 @@ impl PyAssets {
             ));
         }
 
-        Ok(unsafe { &mut *self.world })
+        // SAFETY: momentary derivation of a mutable world reference, used only to reach
+        // the declared `Assets<T>` resource through the AssetBridge. `initialize`
+        // declares `Assets<T>` write access; the executor prevents a concurrent access.
+        // This is the same residual-pointer class as query_runtime::world_ptr.
+        Ok(unsafe { self.cell.world_mut() })
     }
 }
 

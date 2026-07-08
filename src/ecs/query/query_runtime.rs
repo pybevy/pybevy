@@ -5,7 +5,7 @@ use bevy::{
         change_detection::{ComponentTicks, Tick},
         component::ComponentId,
         query::{QueryIter, QueryState},
-        world::{FilteredEntityMut, FilteredEntityRef},
+        world::{FilteredEntityMut, FilteredEntityRef, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
 };
@@ -65,42 +65,43 @@ impl ErasedQueryState {
     }
 
     /// Count matching entities (O(n) - iterates all).
-    fn count(&self, world: &World) -> usize {
+    ///
+    /// SAFETY: declared access from `initialize` covers this state's access and the
+    /// executor prevents conflicting systems from running concurrently, so the
+    /// unchecked query has unique access to the components it reads.
+    fn count(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> usize {
         let (read_only, p) = self.parts();
         unsafe {
             if read_only {
-                (&*(p as *const QueryState<FilteredEntityRef>))
-                    .iter_manual(world)
+                let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
+                qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                    .iter_inner()
                     .count()
             } else {
-                (&*(p as *const QueryState<FilteredEntityMut>))
-                    .iter_manual(world)
+                let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
+                qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                    .iter_inner()
                     .count()
             }
         }
     }
 
     /// Check if no entities match.
-    fn is_empty_check(
-        &self,
-        world: &World,
-        last_tick: bevy::ecs::change_detection::Tick,
-        current_tick: bevy::ecs::change_detection::Tick,
-    ) -> bool {
+    ///
+    /// SAFETY: declared access from `initialize` covers this state's access and the
+    /// executor prevents conflicting systems from running concurrently, so the
+    /// unchecked query has unique access to the components it reads.
+    fn is_empty_check(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> bool {
         let (read_only, p) = self.parts();
         unsafe {
             if read_only {
-                (&*(p as *const QueryState<FilteredEntityRef>)).is_empty(
-                    world,
-                    last_tick,
-                    current_tick,
-                )
+                let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
+                qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                    .is_empty()
             } else {
-                (&*(p as *const QueryState<FilteredEntityMut>)).is_empty(
-                    world,
-                    last_tick,
-                    current_tick,
-                )
+                let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
+                qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                    .is_empty()
             }
         }
     }
@@ -108,42 +109,58 @@ impl ErasedQueryState {
 
 /// Create a new lazy iterator. Freestanding to avoid borrowing ErasedQueryState.
 ///
-/// SAFETY: `qs_ptr` must point to a valid QueryState of the type indicated by `read_only`.
-/// `world_ptr` must point to a valid World for the duration of iteration.
+/// Uses `query_unchecked_with_ticks`, which calls `update_archetypes_unsafe_world_cell`
+/// internally, so the cached state picks up archetypes created since `initialize`.
+/// Ticks flow explicitly so per-entity Changed/Added checks stay consistent.
+///
+/// SAFETY: `qs_ptr` must point to a valid QueryState of the type indicated by
+/// `read_only`. `cell` must point to the World this state was initialized from.
+/// The declared access from `initialize` covers this state and the executor
+/// prevents conflicting systems from running concurrently, so the unchecked
+/// query has unique access to the components it touches.
 unsafe fn erased_create_iter(
     read_only: bool,
     qs_ptr: *mut (),
-    mut world_ptr: NonNull<World>,
+    cell: UnsafeWorldCell,
+    last_run: Tick,
+    this_run: Tick,
 ) -> ErasedQueryIter {
     if read_only {
         let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>) };
-        let iter = qs.iter(unsafe { world_ptr.as_ref() });
+        let iter = unsafe { qs.query_unchecked_with_ticks(cell, last_run, this_run) }.iter_inner();
         ErasedQueryIter::ReadOnly(Box::into_raw(Box::new(iter)) as *mut ())
     } else {
         let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>) };
-        let iter = qs.iter_mut(unsafe { world_ptr.as_mut() });
+        let iter = unsafe { qs.query_unchecked_with_ticks(cell, last_run, this_run) }.iter_inner();
         ErasedQueryIter::Mutable(Box::into_raw(Box::new(iter)) as *mut ())
     }
 }
 
 /// Look up a single entity by ID. Freestanding to avoid borrowing ErasedQueryState.
 ///
-/// SAFETY: `qs_ptr` must point to a valid QueryState of the type indicated by `read_only`.
-/// `world_ptr` must point to a valid World.
+/// SAFETY: `qs_ptr` must point to a valid QueryState of the type indicated by
+/// `read_only`. `cell` must point to the World this state was initialized from.
+/// The declared access from `initialize` covers this state and the executor
+/// prevents conflicting systems from running concurrently, so the unchecked
+/// query has unique access to the components it touches.
 unsafe fn erased_get_entity<'a>(
     read_only: bool,
     qs_ptr: *mut (),
-    mut world_ptr: NonNull<World>,
+    cell: UnsafeWorldCell<'a>,
+    last_run: Tick,
+    this_run: Tick,
     entity: Entity,
 ) -> Option<FilteredEntityAccess<'a, 'a>> {
     if read_only {
         let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>) };
-        qs.get(unsafe { world_ptr.as_ref() }, entity)
+        unsafe { qs.query_unchecked_with_ticks(cell, last_run, this_run) }
+            .get_inner(entity)
             .ok()
             .map(FilteredEntityAccess::Ref)
     } else {
         let qs = unsafe { &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>) };
-        qs.get_mut(unsafe { world_ptr.as_mut() }, entity)
+        unsafe { qs.query_unchecked_with_ticks(cell, last_run, this_run) }
+            .get_inner(entity)
             .ok()
             .map(FilteredEntityAccess::Mut)
     }
@@ -217,105 +234,62 @@ impl Drop for ErasedQueryIter {
     }
 }
 
-/// Runtime query iterator that can be passed to Python systems.
-/// Uses Bevy's QueryState for efficient cached iteration.
+/// Static, per-Query-parameter state built once in `DynamicSystem::initialize` and
+/// reused across every run. Owns the heavy `ErasedQueryState` plus the resolved
+/// component-id caches, extraction function pointers, access modes and tick-filter
+/// ids that would otherwise be recomputed on every `PyQueryIter::new`.
 ///
-/// SAFETY: This struct uses unsafe transmute to erase the lifetime from QueryState.
-/// It must only be used within the scope of a system execution and must not escape
-/// the Python GIL callback. Python code must not store references to this object
-/// or any iterators derived from it beyond the system function scope.
-///
-/// # Performance Notes
-/// For benchmarking, the main bottlenecks are typically:
-/// 1. Bevy's `iter.next()` - iterating entities and fetching components
-/// 2. `Py::new()` - creating Python wrapper objects (PyTransformMut, etc.)
-/// 3. `clone_ref(py)` - Python reference counting overhead
-/// 4. `PyTuple::new()` - allocating tuples for multi-component returns
-/// 5. GIL acquisition/release (handled by PyO3 automatically)
-#[pyclass(name = "QueryIter")]
-pub struct PyQueryIter {
-    /// The query parameter information (shared via Arc to avoid clones)
-    param: Arc<PyQueryParam>,
+/// Stored on `DynamicSystem` (which the schedule owns and which outlives every run),
+/// so `PyQueryIter` can borrow it via a raw pointer fenced by the same `ValidityFlag`
+/// that fences the world cell.
+pub struct CachedQuery {
+    /// The query parameter information (shared via Arc to avoid clones).
+    pub param: Arc<PyQueryParam>,
 
     /// The Bevy QueryState (type-erased, owns the heap allocation).
     query_state: ErasedQueryState,
 
-    /// Current lazy iterator state (created on first `__next__` call).
-    query_iter: Option<ErasedQueryIter>,
-
-    /// Raw pointer to the World (only valid during system execution)
-    /// SAFETY: This pointer is only valid within the scope of the system execution
-    world_ptr: Option<NonNull<World>>,
-
-    /// Maps PyComponentType to their registered ComponentIds (cached for fast access)
-    /// Stores component IDs for all queried components for efficient lookup
+    /// Maps PyComponentType to their registered ComponentIds (cached for fast access).
     component_id_cache: HashMap<PyComponentType, ComponentId>,
 
-    /// Maps custom component type pointers to their registered ComponentIds (shared via Arc)
+    /// Maps custom component type pointers to their registered ComponentIds (shared via Arc).
     custom_component_ids: Arc<HashMap<*const PyTypeObject, ComponentId>>,
 
-    /// Reusable buffer for return values - avoids allocation on every __next__ call
-    /// SmallVec[8] keeps up to 8 items on stack (most queries have 1-4 params)
-    values_buffer: SmallVec<[Py<PyAny>; 8]>,
-
-    /// Master validity flag - invalidated when system exits (RAII via ValidityGuard)
-    /// All component proxies check this to ensure they're only used during system execution
-    validity: ValidityFlag,
-
-    /// Per-parameter access modes (Read or Write)
-    /// Indexed by parameter position, determines if a component can be read-only or mutated
+    /// Per-parameter access modes (Read or Write), indexed by parameter position.
     param_access_modes: SmallVec<[AccessMode; 8]>,
 
     /// Extraction function pointers for Dynamic components, indexed by parameter position.
-    /// None for non-Dynamic parameters, Some(fn) for Dynamic components.
-    /// This eliminates HashMap lookup overhead during per-entity iteration.
     extract_fns: SmallVec<[Option<ExtractFn>; 8]>,
-
-    /// True while iteration is in progress (__next__ has been called but not yet exhausted).
-    /// Used to detect and reject nested iteration (which would silently corrupt state),
-    /// matching Bevy's borrow-checker prevention of nested query.iter() calls.
-    iterating: bool,
-
-    /// Cached ComponentLayouts and storage types for custom wrapper components, keyed by type pointer.
-    /// Avoids re-parsing Python __annotations__ and __pybevy_storage__ on every entity iteration.
-    layout_cache: RefCell<
-        HashMap<
-            *const PyTypeObject,
-            (
-                crate::ecs::component_layout::ComponentStorageType,
-                Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
-            ),
-        >,
-    >,
 
     /// ComponentIds for Changed[T] tick filters - entities must pass per-entity tick check.
     changed_filter_ids: Vec<ComponentId>,
     /// ComponentIds for Added[T] tick filters - entities must pass per-entity tick check.
     added_filter_ids: Vec<ComponentId>,
-    /// System's last_run tick (from DynamicSystem::get_last_run()).
-    last_run: Tick,
-    /// Current world change tick (captured during new()).
-    this_run: Tick,
+
+    /// Whether this query was declared as `Single<T>` (enforces exactly one match).
+    pub single_entity_enforced: bool,
 }
 
-// SAFETY: PyQueryIter is only used during system execution on a single thread.
-// The world pointer and query state are only accessed during system execution and never across threads.
-// Arc<PyQueryParam> and Arc<HashMap> are already Send/Sync.
-unsafe impl Send for PyQueryIter {}
-unsafe impl Sync for PyQueryIter {}
+// SAFETY: CachedQuery mirrors the Send/Sync discipline of the old PyQueryIter: the
+// raw QueryState pointer and the Arc<HashMap> of type pointers are only ever touched
+// while the owning DynamicSystem runs on a single thread. DynamicSystem is already
+// declared Send + Sync; this makes the intent explicit for the standalone type.
+unsafe impl Send for CachedQuery {}
+unsafe impl Sync for CachedQuery {}
 
-impl PyQueryIter {
-    /// Creates a new runtime query from a Bevy world
+impl CachedQuery {
+    /// Build the cached query state for a single Query parameter.
     ///
-    /// SAFETY: The world pointer must remain valid for the lifetime of this object
-    pub unsafe fn new(
-        param: Arc<PyQueryParam>,
+    /// This performs all the static, per-system work (component-id registration,
+    /// filter-id collection, QueryState construction, extraction fn/access-mode
+    /// arrays) that would otherwise run on every `PyQueryIter::new`. `initialize` legitimately
+    /// holds `&mut World`, so building here is sound and happens once per parameter.
+    pub fn build(
         world: &mut World,
+        param: Arc<PyQueryParam>,
         custom_component_ids: Arc<HashMap<*const PyTypeObject, ComponentId>>,
-        validity: ValidityFlag,
-        last_run: Tick,
     ) -> Self {
-        // First, collect and register all component IDs (tracking optional and mutable status)
+        // Collect and register all component IDs (tracking optional and mutable status)
         let mut component_ids = Vec::new();
         for param_type in &param.data {
             if let QueryData::Component {
@@ -387,7 +361,6 @@ impl PyQueryIter {
         // Retain filter IDs for per-entity tick checking (they get moved into QueryBuildSpec)
         let tick_changed_ids = changed_filter_ids.clone();
         let tick_added_ids = added_filter_ids.clone();
-        let this_run = world.change_tick();
 
         // Build the QueryState once
         let spec = QueryBuildSpec {
@@ -399,8 +372,6 @@ impl PyQueryIter {
             anyof_filters: anyof_filter_ids,
         };
         // Build the correct QueryState variant.
-        // SAFETY: Lifetime is erased — the caller guarantees this is only used
-        // within the system execution scope where the World reference is valid.
         // Use FilteredEntityRef for all-read-only queries to enable parallel scheduling.
         let query_state = if spec.is_read_only() {
             ErasedQueryState::from_ref(build_query_state_ref(world, &spec))
@@ -413,14 +384,12 @@ impl PyQueryIter {
         let mut component_idx = 0; // Track index in component_ids vec
         for param_type in param.data.iter() {
             if let QueryData::Component { ty, .. } = param_type {
-                // Get the corresponding ComponentId from the component_ids vec
                 if let Some(&QueryComponent { id: comp_id, .. }) = component_ids.get(component_idx)
                 {
                     // For built-in components, verify by TypeId
                     let type_id = ty.type_id();
 
                     if let Some(type_id) = type_id {
-                        // Verify this is the right component by checking TypeId
                         if world
                             .components()
                             .get_info(comp_id)
@@ -438,11 +407,7 @@ impl PyQueryIter {
             }
         }
 
-        // Use the provided validity flag - shared with other system parameters
-        // This will be automatically invalidated when the system completes
-
         // Build parallel array of extraction function pointers for Dynamic components
-        // This eliminates HashMap lookup overhead during per-entity iteration
         let extract_fns: SmallVec<[Option<ExtractFn>; 8]> = param
             .data
             .iter()
@@ -464,38 +429,161 @@ impl PyQueryIter {
         let param_access_modes: SmallVec<[AccessMode; 8]> = param
             .data
             .iter()
-            .map(|param_type| {
-                match param_type {
-                    QueryData::Component { mutable, .. } => {
-                        if *mutable {
-                            AccessMode::Write
-                        } else {
-                            AccessMode::Read
-                        }
+            .map(|param_type| match param_type {
+                QueryData::Component { mutable, .. } => {
+                    if *mutable {
+                        AccessMode::Write
+                    } else {
+                        AccessMode::Read
                     }
-                    _ => AccessMode::Read, // Default to read for non-component params
                 }
+                _ => AccessMode::Read,
             })
             .collect();
+
+        let single_entity_enforced = param.single_entity_enforced;
 
         Self {
             param,
             query_state,
-            query_iter: None,
-            world_ptr: Some(NonNull::from(world)),
             component_id_cache,
             custom_component_ids,
-            values_buffer: SmallVec::new(),
-            validity,
             param_access_modes,
             extract_fns,
-            iterating: false,
-            layout_cache: RefCell::new(HashMap::new()),
             changed_filter_ids: tick_changed_ids,
             added_filter_ids: tick_added_ids,
+            single_entity_enforced,
+        }
+    }
+}
+
+/// Runtime query iterator that can be passed to Python systems.
+/// Uses Bevy's cached [`CachedQuery`] state for efficient iteration.
+///
+/// SAFETY: This struct erases the lifetimes of both the `UnsafeWorldCell` and the
+/// borrowed `CachedQuery`. It must only be used within the scope of a system
+/// execution and must not escape the Python GIL callback. Python code must not
+/// store references to this object or any iterators derived from it beyond the
+/// system function scope; the shared `ValidityFlag` fences any that leak.
+///
+/// # Performance Notes
+/// For benchmarking, the main bottlenecks are typically:
+/// 1. Bevy's `iter.next()` - iterating entities and fetching components
+/// 2. `Py::new()` - creating Python wrapper objects (PyTransformMut, etc.)
+/// 3. `clone_ref(py)` - Python reference counting overhead
+/// 4. `PyTuple::new()` - allocating tuples for multi-component returns
+/// 5. GIL acquisition/release (handled by PyO3 automatically)
+#[pyclass(name = "QueryIter")]
+pub struct PyQueryIter {
+    /// The query parameter information (Arc-shared clone of the cache's copy).
+    /// Kept as its own field so per-entity extraction can iterate `param.data`
+    /// while mutating `values_buffer` (disjoint-field borrows).
+    param: Arc<PyQueryParam>,
+
+    /// Raw pointer to the static per-parameter state owned by the DynamicSystem.
+    /// SAFETY: valid while the ValidityFlag is active; the DynamicSystem outlives the run.
+    cached: NonNull<CachedQuery>,
+
+    /// Current lazy iterator state (created on first `__next__` call).
+    query_iter: Option<ErasedQueryIter>,
+
+    /// The world cell (lifetime-erased). Copy, valid only during system execution.
+    /// SAFETY: fenced by the ValidityFlag.
+    world_cell: Option<UnsafeWorldCell<'static>>,
+
+    /// Reusable buffer for return values - avoids allocation on every __next__ call
+    /// SmallVec[8] keeps up to 8 items on stack (most queries have 1-4 params)
+    values_buffer: SmallVec<[Py<PyAny>; 8]>,
+
+    /// Master validity flag - invalidated when system exits (RAII via ValidityGuard)
+    /// All component proxies check this to ensure they're only used during system execution
+    validity: ValidityFlag,
+
+    /// True while iteration is in progress (__next__ has been called but not yet exhausted).
+    /// Used to detect and reject nested iteration (which would silently corrupt state),
+    /// matching Bevy's borrow-checker prevention of nested query.iter() calls.
+    iterating: bool,
+
+    /// Cached ComponentLayouts and storage types for custom wrapper components, keyed by type pointer.
+    /// Avoids re-parsing Python __annotations__ and __pybevy_storage__ on every entity iteration.
+    layout_cache: RefCell<
+        HashMap<
+            *const PyTypeObject,
+            (
+                crate::ecs::component_layout::ComponentStorageType,
+                Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
+            ),
+        >,
+    >,
+
+    /// System's last_run tick (from DynamicSystem::get_last_run()).
+    last_run: Tick,
+    /// Current world change tick for this run (the incremented tick from run_unsafe).
+    this_run: Tick,
+}
+
+// SAFETY: PyQueryIter is only used during system execution on a single thread.
+// The world cell and cached state are only accessed during system execution and never across threads.
+// Arc<PyQueryParam> and NonNull<CachedQuery> are fenced by the ValidityFlag.
+unsafe impl Send for PyQueryIter {}
+unsafe impl Sync for PyQueryIter {}
+
+impl PyQueryIter {
+    /// Creates a new runtime query bound to a cached query state and world cell.
+    ///
+    /// The heavy per-system work (component-id registration, QueryState
+    /// construction) lives in `cached`, built once in `DynamicSystem::initialize`.
+    ///
+    /// SAFETY: `cached` must remain valid for the lifetime of this object (it is
+    /// owned by the DynamicSystem, which outlives every run), and `world_cell` must
+    /// reference the World that `cached` was built from. Both are fenced by
+    /// `validity`, which is invalidated when the system finishes.
+    pub unsafe fn new(
+        cached: &CachedQuery,
+        world_cell: UnsafeWorldCell,
+        validity: ValidityFlag,
+        last_run: Tick,
+        this_run: Tick,
+    ) -> Self {
+        // Erase the cell lifetime for storage; it is only ever used while the
+        // system runs, fenced by `validity`.
+        // SAFETY: size- and layout-preserving lifetime erasure of a Copy pointer type.
+        let world_cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(world_cell) };
+
+        Self {
+            param: cached.param.clone(),
+            cached: NonNull::from(cached),
+            query_iter: None,
+            world_cell: Some(world_cell),
+            values_buffer: SmallVec::new(),
+            validity,
+            iterating: false,
+            layout_cache: RefCell::new(HashMap::new()),
             last_run,
             this_run,
         }
+    }
+
+    /// Borrow the static cached query state.
+    ///
+    /// SAFETY: `cached` points into a CachedQuery owned by the DynamicSystem, which
+    /// outlives every run; access is fenced by the same ValidityFlag as `world_cell`.
+    #[inline]
+    fn cached(&self) -> &CachedQuery {
+        unsafe { self.cached.as_ref() }
+    }
+
+    /// Raw `*mut World` for the legacy custom-component write-back path.
+    ///
+    /// SAFETY: the custom-component mutation write-back still needs a `&mut World`
+    /// to stamp change ticks (not yet migrated off the raw pointer, slated for a
+    /// later stage). The cell is valid while the ValidityFlag is active.
+    #[inline]
+    fn world_ptr(&self) -> *mut World {
+        let cell = self
+            .world_cell
+            .expect("Query used outside system execution");
+        unsafe { cell.world_mut() as *mut World }
     }
 
     /// Get extraction function pointer for a parameter by index.
@@ -504,7 +592,7 @@ impl PyQueryIter {
     /// Uses direct array indexing - O(1) with no HashMap overhead.
     #[inline(always)]
     pub(crate) fn get_extract_fn(&self, param_idx: usize) -> Option<ExtractFn> {
-        self.extract_fns.get(param_idx).copied().flatten()
+        self.cached().extract_fns.get(param_idx).copied().flatten()
     }
 
     /// Extract a custom component from an entity and return as PyObject
@@ -570,13 +658,10 @@ impl PyQueryIter {
 
                 // Create lazy wrapper proxy
                 let entity_id = entity.id();
-                let access_mode = self.param_access_modes[param_idx];
+                let access_mode = self.cached().param_access_modes[param_idx];
                 let validity = self.validity.with_access_mode(access_mode);
                 let mutable = access_mode == AccessMode::Write;
-                let world_ptr = self
-                    .world_ptr
-                    .expect("Query used outside system execution")
-                    .as_ptr();
+                let world_ptr = self.world_ptr();
                 let proxy = unsafe {
                     PyLazyWrapperProxy::new(
                         data_ptr,
@@ -614,12 +699,9 @@ impl PyQueryIter {
                 };
 
                 // Create borrowed reference with validity tracking and entity context
-                let access_mode = self.param_access_modes[param_idx];
+                let access_mode = self.cached().param_access_modes[param_idx];
                 let validity = self.validity.with_access_mode(access_mode);
-                let world_ptr = self
-                    .world_ptr
-                    .expect("Query used outside system execution")
-                    .as_ptr();
+                let world_ptr = self.world_ptr();
 
                 let custom_comp = PyCustomComponent::from_borrowed(
                     py_obj_ptr,
@@ -662,10 +744,12 @@ impl PyQueryIter {
                     // Get component ID from cache (handles both built-in and custom components)
                     let component_id = match ty {
                         PyComponentType::Custom(type_ptr) => *self
+                            .cached()
                             .custom_component_ids
                             .get(type_ptr)
                             .expect("Custom component ID should be registered"),
                         _ => *self
+                            .cached()
                             .component_id_cache
                             .get(ty)
                             .expect("Component ID should be cached"),
@@ -678,7 +762,7 @@ impl PyQueryIter {
                     }
 
                     // Create validity flag with correct access mode
-                    let access_mode = self.param_access_modes[param_idx];
+                    let access_mode = self.cached().param_access_modes[param_idx];
                     let validity = self.validity.with_access_mode(access_mode);
 
                     // Use macro-generated dispatch method (handles all component types)
@@ -702,10 +786,11 @@ impl PyQueryIter {
     /// Fast path: returns true immediately when no tick filters exist.
     #[inline]
     fn entity_passes_tick_filters(&self, entity: &FilteredEntityAccess) -> bool {
+        let cached = self.cached();
         passes_tick_filters(
             |id| entity.get_change_ticks_by_id(id),
-            &self.changed_filter_ids,
-            &self.added_filter_ids,
+            &cached.changed_filter_ids,
+            &cached.added_filter_ids,
             self.last_run,
             self.this_run,
         )
@@ -714,7 +799,8 @@ impl PyQueryIter {
     /// Returns true if there are any tick filters (Added/Changed) on this query.
     #[inline]
     fn has_tick_filters(&self) -> bool {
-        !self.changed_filter_ids.is_empty() || !self.added_filter_ids.is_empty()
+        let cached = self.cached();
+        !cached.changed_filter_ids.is_empty() || !cached.added_filter_ids.is_empty()
     }
 }
 
@@ -785,10 +871,16 @@ impl PyQueryIter {
 
         // Create iterator on first call
         if self.query_iter.is_none() {
-            let world_ptr = self.world_ptr.expect("Query used outside system execution");
-            let (read_only, qs_ptr) = self.query_state.parts();
-            // SAFETY: world_ptr and qs_ptr are valid during system execution
-            self.query_iter = Some(unsafe { erased_create_iter(read_only, qs_ptr, world_ptr) });
+            let cell = self
+                .world_cell
+                .expect("Query used outside system execution");
+            let (read_only, qs_ptr) = self.cached().query_state.parts();
+            // SAFETY: declared access from initialize covers this state; the executor
+            // prevents conflicting systems from running concurrently, so the unchecked
+            // access is unique. Ticks flow explicitly for per-entity change detection.
+            self.query_iter = Some(unsafe {
+                erased_create_iter(read_only, qs_ptr, cell, self.last_run, self.this_run)
+            });
         }
 
         // Advance iterator — get raw pointer to avoid borrow conflict with self.
@@ -833,65 +925,53 @@ impl PyQueryIter {
     /// Python users calling `len(query)` may expect O(1) but Bevy's
     /// `QueryState` does not cache entity counts.
     fn __len__(&self) -> usize {
-        let world = match self.world_ptr {
-            Some(ptr) => unsafe { ptr.as_ref() },
-            None => return 0,
+        let Some(cell) = self.world_cell else {
+            return 0;
         };
 
+        let cached = self.cached();
         if !self.has_tick_filters() {
-            return self.query_state.count(world);
+            return cached.query_state.count(cell, self.last_run, self.this_run);
         }
 
-        // Count with tick filtering using iter_manual (&World - safe with &self)
-        let (read_only, qs_ptr) = self.query_state.parts();
-        let changed = &self.changed_filter_ids;
-        let added = &self.added_filter_ids;
-        let (lr, tr) = (self.last_run, self.this_run);
-        unsafe {
-            if read_only {
-                let qs = &*(qs_ptr as *const QueryState<FilteredEntityRef>);
-                qs.iter_manual(world)
-                    .filter(|e| {
-                        passes_tick_filters(
-                            |id| e.get_change_ticks_by_id(id),
-                            changed,
-                            added,
-                            lr,
-                            tr,
-                        )
-                    })
-                    .count()
-            } else {
-                let qs = &*(qs_ptr as *const QueryState<FilteredEntityMut>);
-                qs.iter_manual(world)
-                    .filter(|e| {
-                        passes_tick_filters(
-                            |id| e.get_change_ticks_by_id(id),
-                            changed,
-                            added,
-                            lr,
-                            tr,
-                        )
-                    })
-                    .count()
+        // Count with tick filtering: iterate the cell-based unchecked iterator and
+        // apply the per-entity Changed/Added checks.
+        let (read_only, qs_ptr) = cached.query_state.parts();
+        // SAFETY: declared access from initialize covers this state; the executor
+        // prevents conflicting systems from running concurrently, so the unchecked
+        // access is unique.
+        let mut iter =
+            unsafe { erased_create_iter(read_only, qs_ptr, cell, self.last_run, self.this_run) };
+        let mut n = 0usize;
+        while let Some(access) = iter.next() {
+            if self.entity_passes_tick_filters(&access) {
+                n += 1;
             }
         }
+        n
     }
 
     /// Get exactly one entity from the query.
     /// Returns an error if there are 0 or 2+ entities matching the query.
     fn single(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        let mut world_ptr = self.world_ptr.expect("Query used outside system execution");
-        let (read_only, qs_ptr) = self.query_state.parts();
+        let cell = self
+            .world_cell
+            .expect("Query used outside system execution");
+        let last_run = self.last_run;
+        let this_run = self.this_run;
+        let (read_only, qs_ptr) = self.cached().query_state.parts();
 
         // Validate exactly one entity exists and get it for extraction.
         // Loop through entities to find those passing tick filters.
-        // SAFETY: world_ptr and qs_ptr are valid during system execution.
-        // We use raw pointer casts to avoid holding borrows across extraction.
+        // SAFETY: declared access from initialize covers this state; the executor
+        // prevents conflicting systems from running concurrently, so the unchecked
+        // access is unique. Raw pointer casts avoid holding borrows across extraction.
         let mut entity_access: FilteredEntityAccess = unsafe {
             if read_only {
                 let qs = &mut *(qs_ptr as *mut QueryState<FilteredEntityRef>);
-                let mut iter = qs.iter(world_ptr.as_ref());
+                let mut iter = qs
+                    .query_unchecked_with_ticks(cell, last_run, this_run)
+                    .iter_inner();
                 // Find first entity passing tick filters
                 let first = loop {
                     match iter.next() {
@@ -930,7 +1010,9 @@ impl PyQueryIter {
                 }
             } else {
                 let qs = &mut *(qs_ptr as *mut QueryState<FilteredEntityMut>);
-                let mut iter = qs.iter_mut(world_ptr.as_mut());
+                let mut iter = qs
+                    .query_unchecked_with_ticks(cell, last_run, this_run)
+                    .iter_inner();
                 // Find first entity passing tick filters
                 let first = loop {
                     match iter.next() {
@@ -983,50 +1065,54 @@ impl PyQueryIter {
     /// Check if the query has no matching entities.
     /// Returns true if there are no entities matching the query filters.
     fn is_empty(&self) -> PyResult<bool> {
-        // SAFETY: world_ptr is guaranteed to be valid during system execution.
-        // Only shared access needed - last_change_tick/read_change_tick/is_empty all take &World.
-        let world = unsafe {
-            self.world_ptr
-                .expect("Query used outside system execution")
-                .as_ref()
-        };
+        let cell = self
+            .world_cell
+            .expect("Query used outside system execution");
+        let cached = self.cached();
 
         if !self.has_tick_filters() {
-            let last_tick = world.last_change_tick();
-            let current_tick = world.read_change_tick();
-            return Ok(self
+            return Ok(cached
                 .query_state
-                .is_empty_check(world, last_tick, current_tick));
+                .is_empty_check(cell, self.last_run, self.this_run));
         }
 
-        // Check with tick filtering using iter_manual (&World - safe with &self)
-        let (read_only, qs_ptr) = self.query_state.parts();
-        let changed = &self.changed_filter_ids;
-        let added = &self.added_filter_ids;
-        let (lr, tr) = (self.last_run, self.this_run);
-        unsafe {
-            Ok(if read_only {
-                let qs = &*(qs_ptr as *const QueryState<FilteredEntityRef>);
-                !qs.iter_manual(world).any(|e| {
-                    passes_tick_filters(|id| e.get_change_ticks_by_id(id), changed, added, lr, tr)
-                })
-            } else {
-                let qs = &*(qs_ptr as *const QueryState<FilteredEntityMut>);
-                !qs.iter_manual(world).any(|e| {
-                    passes_tick_filters(|id| e.get_change_ticks_by_id(id), changed, added, lr, tr)
-                })
-            })
+        // Check with tick filtering: iterate the cell-based unchecked iterator and
+        // stop at the first entity that passes the per-entity Changed/Added checks.
+        let (read_only, qs_ptr) = cached.query_state.parts();
+        // SAFETY: declared access from initialize covers this state; the executor
+        // prevents conflicting systems from running concurrently, so the unchecked
+        // access is unique.
+        let mut iter =
+            unsafe { erased_create_iter(read_only, qs_ptr, cell, self.last_run, self.this_run) };
+        while let Some(access) = iter.next() {
+            if self.entity_passes_tick_filters(&access) {
+                return Ok(false);
+            }
         }
+        Ok(true)
     }
 
     /// Get components for a specific entity by ID.
     /// Returns None if the entity doesn't match the query filters.
     /// Returns an error if the entity doesn't have the queried components.
     fn get(&mut self, entity: PyEntity, py: Python) -> PyResult<Option<Py<PyAny>>> {
-        let world_ptr = self.world_ptr.expect("Query used outside system execution");
-        let (read_only, qs_ptr) = self.query_state.parts();
-        // SAFETY: world_ptr and qs_ptr are valid during system execution
-        let result = unsafe { erased_get_entity(read_only, qs_ptr, world_ptr, entity.0) };
+        let cell = self
+            .world_cell
+            .expect("Query used outside system execution");
+        let (read_only, qs_ptr) = self.cached().query_state.parts();
+        // SAFETY: declared access from initialize covers this state; the executor
+        // prevents conflicting systems from running concurrently, so the unchecked
+        // access is unique.
+        let result = unsafe {
+            erased_get_entity(
+                read_only,
+                qs_ptr,
+                cell,
+                self.last_run,
+                self.this_run,
+                entity.0,
+            )
+        };
 
         match result {
             Some(mut entity_access) => {
@@ -1067,16 +1153,21 @@ impl PyQueryIter {
     /// ```
     fn iter_many(&mut self, entities: &Bound<'_, PyAny>, py: Python) -> PyResult<Vec<Py<PyAny>>> {
         let mut results = Vec::new();
-        let world_ptr = self.world_ptr.expect("Query used outside system execution");
-        let (read_only, qs_ptr) = self.query_state.parts();
+        let cell = self
+            .world_cell
+            .expect("Query used outside system execution");
+        let (read_only, qs_ptr) = self.cached().query_state.parts();
+        let (last_run, this_run) = (self.last_run, self.this_run);
 
         for entity_obj in entities.try_iter()? {
             let entity_id: PyEntity = entity_obj?.extract()?;
 
-            // SAFETY: world_ptr and qs_ptr are valid during system execution
-            if let Some(mut access) =
-                unsafe { erased_get_entity(read_only, qs_ptr, world_ptr, entity_id.0) }
-            {
+            // SAFETY: declared access from initialize covers this state; the executor
+            // prevents conflicting systems from running concurrently, so the unchecked
+            // access is unique.
+            if let Some(mut access) = unsafe {
+                erased_get_entity(read_only, qs_ptr, cell, last_run, this_run, entity_id.0)
+            } {
                 // Check tick filters before extracting
                 if !self.entity_passes_tick_filters(&access) {
                     continue;

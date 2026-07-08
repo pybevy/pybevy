@@ -9,7 +9,10 @@
 
 use std::any::TypeId;
 
-use bevy::ecs::{component::ComponentId, world::World};
+use bevy::ecs::{
+    component::ComponentId,
+    world::{World, unsafe_world_cell::UnsafeWorldCell},
+};
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::ValidityFlagWithMode;
@@ -71,6 +74,37 @@ pub trait ResourceBridge: Send + Sync + 'static {
     fn get_mut(
         &self,
         world: &mut World,
+        validity: ValidityFlagWithMode,
+        py: Python,
+    ) -> PyResult<Py<PyAny>>;
+
+    /// Get resource through an [`UnsafeWorldCell`] (read-only), touching only this
+    /// bridge's `Resource` type instead of borrowing the whole `World`.
+    ///
+    /// Used by `DynamicSystem::run_unsafe`, which holds a non-exclusive
+    /// `UnsafeWorldCell` and must not conjure `&World`/`&mut World`.
+    ///
+    /// # Safety
+    /// The caller must guarantee that `DynamicSystem::initialize` declared read
+    /// access to this resource and that Bevy's executor prevents any concurrent
+    /// writer, so the cell's unchecked resource read is unique.
+    unsafe fn get_from_cell(
+        &self,
+        cell: UnsafeWorldCell,
+        validity: ValidityFlagWithMode,
+        py: Python,
+    ) -> PyResult<Py<PyAny>>;
+
+    /// Get resource through an [`UnsafeWorldCell`] (mutable), touching only this
+    /// bridge's `Resource` type. Read-only bridges (`no_mut`) return read access.
+    ///
+    /// # Safety
+    /// The caller must guarantee that `DynamicSystem::initialize` declared write
+    /// access to this resource and that Bevy's executor prevents any concurrent
+    /// access, so the cell's unchecked resource borrow is unique.
+    unsafe fn get_mut_from_cell(
+        &self,
+        cell: UnsafeWorldCell,
         validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Py<PyAny>>;

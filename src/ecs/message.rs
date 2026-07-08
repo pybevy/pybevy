@@ -17,7 +17,7 @@ use super::{
         CustomMessage6, CustomMessage7, CustomMessage8, CustomMessage9, CustomMessage10,
         CustomMessage11, CustomMessage12, CustomMessage13, CustomMessage14, CustomMessage15,
         CustomMessage16, CustomMessage17, CustomMessage18, CustomMessage19, CustomMessage20,
-        MessageRegistry, MessageType, PyMessages,
+        MessageRegistry, MessageType, MessageWorld, PyMessages,
     },
     world::PyWorld,
 };
@@ -71,7 +71,7 @@ pub struct MessageTypeParam {
 #[pyclass(name = "MessageWriter", frozen)]
 pub struct PyMessageWriter {
     pub(crate) message_type: MessageType,
-    pub(crate) world: PyWorld,
+    pub(crate) world: MessageWorld,
 }
 
 impl PyMessageWriter {
@@ -239,7 +239,7 @@ impl PyMessageWriter {
 #[pyclass(name = "MessageReader", frozen)]
 pub struct PyMessageReader {
     #[allow(dead_code)] // retained for potential future direct-world access
-    pub(crate) world: PyWorld,
+    pub(crate) world: MessageWorld,
     pub(crate) messages: PyMessages,
 }
 

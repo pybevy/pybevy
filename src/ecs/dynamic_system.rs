@@ -40,14 +40,16 @@ use crate::{
             validity_guard::{ValidityFlag, ValidityGuard},
         },
         message::{PyMessageReader, PyMessageWriter},
-        messages::PyMessages,
+        messages::{MessageRegistry, MessageType, MessageWorld, PyMessages},
         mutable::PyMut,
         observer::PyOn,
         query::{
-            query_param::QueryData, query_runtime::PyQueryIter, single_runtime::PySingleQuery,
+            query_param::QueryData,
+            query_runtime::{CachedQuery, PyQueryIter},
+            single_runtime::PySingleQuery,
         },
         resource::PyResource,
-        resource_type::PyResourceType,
+        resource_type::{PyResourceStorage, PyResourceType, ResourceRegistry},
         system::{SystemFunction, SystemParamType},
         view::{view::PyView, view_param::ViewParamType},
         world::PyWorld,
@@ -169,6 +171,13 @@ pub struct DynamicSystem {
     suppressed_error_count: u32,
     /// Parameter-conflict error precomputed in `initialize` (`None` = no conflict)
     precomputed_validation: Option<SystemParamValidationError>,
+    /// One cached QueryState per Query parameter, built once in `initialize` and
+    /// reused across every run. Stored here (not inside the Arc<Mutex<inner>>) so it
+    /// lives as long as the DynamicSystem the schedule owns; `PyQueryIter` borrows
+    /// entries via raw pointer fenced by the per-run ValidityFlag. Indexed in the
+    /// order Query parameters appear in the system signature. Never touched by
+    /// `gut()`, which only releases Python refs held in the inner state.
+    query_caches: Vec<CachedQuery>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -330,6 +339,7 @@ impl DynamicSystem {
             last_error_print_time: None,
             suppressed_error_count: 0,
             precomputed_validation: None,
+            query_caches: Vec::new(),
         };
 
         // Validate parameters immediately to catch conflicts early
@@ -507,6 +517,16 @@ impl System for DynamicSystem {
 
         self.validate_params()?;
 
+        // Advance the world change tick once per run, matching FunctionSystem so change
+        // detection windows advance even in an all-DynamicSystem schedule. We read
+        // change_tick() AFTER incrementing (not the value increment_change_tick returns)
+        // so `this_run` equals the tick pybevy's mutation write-backs stamp (both observe
+        // world.change_tick()); using the pre-increment value would make a system
+        // re-detect its own writes on the next frame. See stage-1 report.
+        world.increment_change_tick();
+        let this_run = world.change_tick();
+        let last_run = self.get_last_run();
+
         // Start timing for profiler (captures entire system execution)
         Python::attach(|py| {
             let start_time = Instant::now();
@@ -546,8 +566,12 @@ impl System for DynamicSystem {
                 None
             };
 
-            // Get world_mut for other parameters (unsafe: we know Commands won't conflict)
-            let world_mut = unsafe { world.world_mut() };
+            // No shared `&mut World` is materialized here: each parameter arm below
+            // reaches the world through the `UnsafeWorldCell` (narrow resource
+            // accessors, or per-operation pointer derivation inside the wrappers),
+            // so a non-exclusive system never conjures whole-world access. The one
+            // exception is the World arm, which derives its own `world.world_mut()`
+            // under the EXCLUSIVE-scheduling guarantee.
 
             // Lock the inner state to access system_func and message_cursor_storage
             let mut inner_guard = lock_or_recover(&self.inner);
@@ -563,6 +587,7 @@ impl System for DynamicSystem {
             };
 
             let mut message_reader_idx = 0usize;
+            let mut query_cache_idx = 0usize;
             for param in &system_func.params {
                 match &param.ty {
                     SystemParamType::Local(local) => {
@@ -579,12 +604,18 @@ impl System for DynamicSystem {
                             }
                         };
 
-                        // Use appropriate extraction method based on mutability
+                        // Use appropriate extraction method based on mutability.
+                        // Both paths go through narrow cell accessors so no `&World`
+                        // or `&mut World` is ever materialized for a resource read.
                         let resource = if *mutable {
-                            // Mutable access - get borrowed mutable reference
-                            let world_mut = unsafe { world.world_mut() };
-                            match resource_type.get_from_world_mut(world_mut, py, validity.clone())
-                            {
+                            // SAFETY: `initialize` declared write access to this
+                            // resource (AssetServer/Dynamic bridge id, or the
+                            // ResourceRegistry/PyResourceStorage reads for Custom);
+                            // the executor prevents a conflicting system from running
+                            // concurrently, so the cell's unchecked borrow is unique.
+                            match unsafe {
+                                resource_type.get_from_cell_mut(world, py, validity.clone())
+                            } {
                                 Ok(r) => r,
                                 Err(_e) => {
                                     let type_name = type_bound
@@ -600,9 +631,12 @@ impl System for DynamicSystem {
                                 }
                             }
                         } else {
-                            // Read-only access - get borrowed const reference
-                            let world_ref = unsafe { world.world() };
-                            match resource_type.get_from_world(world_ref, py, validity.clone()) {
+                            // SAFETY: `initialize` declared read access to this
+                            // resource; the executor prevents a concurrent writer, so
+                            // the cell's unchecked read is unique.
+                            match unsafe {
+                                resource_type.get_from_cell(world, py, validity.clone())
+                            } {
                                 Ok(r) => r,
                                 Err(_e) => {
                                     let type_name = type_bound
@@ -621,16 +655,25 @@ impl System for DynamicSystem {
 
                         Self::wrap_resource_in_res(py, resource, *mutable, &mut self.args_buffer);
                     }
-                    SystemParamType::Query { param: query_param } => {
-                        if query_param.single_entity_enforced {
-                            // Use PySingleQuery for Single<T> queries
+                    SystemParamType::Query { .. } => {
+                        // Static per-parameter state was built once in `initialize`;
+                        // borrow the cached QueryState by raw pointer (fenced by the
+                        // ValidityFlag) instead of rebuilding and conjuring `&mut World`.
+                        let cached = &self.query_caches[query_cache_idx];
+                        query_cache_idx += 1;
+                        if cached.single_entity_enforced {
+                            // SAFETY: `world` is this run's UnsafeWorldCell; the declared
+                            // access from `initialize` covers this cached state and the
+                            // executor prevents conflicting systems from running
+                            // concurrently, so the query's access is unique. `cached`
+                            // lives on the DynamicSystem, which outlives the run.
                             let single_query = unsafe {
                                 PySingleQuery::new(
-                                    query_param.clone(),
-                                    world_mut,
-                                    Arc::new(self.custom_component_ids.clone()),
+                                    cached,
+                                    world,
                                     validity.clone(),
-                                    self.get_last_run(),
+                                    last_run,
+                                    this_run,
                                 )
                             };
 
@@ -638,14 +681,15 @@ impl System for DynamicSystem {
                                 Py::new(py, single_query).expect("Failed to create PySingleQuery");
                             self.args_buffer.push(obj.into_any());
                         } else {
-                            // Use PyQueryIter for normal Query<T> queries
+                            // SAFETY: as above — unique access to the cached state's
+                            // components is guaranteed by the declared-access scheduling.
                             let query_runtime = unsafe {
                                 PyQueryIter::new(
-                                    query_param.clone(),
-                                    world_mut,
-                                    Arc::new(self.custom_component_ids.clone()),
+                                    cached,
+                                    world,
                                     validity.clone(),
-                                    self.get_last_run(),
+                                    last_run,
+                                    this_run,
                                 )
                             };
 
@@ -673,6 +717,10 @@ impl System for DynamicSystem {
                         let added_filter_types = param.added_filters.to_vec();
                         let last_run = self.get_last_run();
 
+                        // SAFETY: `world` is this run's UnsafeWorldCell; PyView reads
+                        // this_run via cell.change_tick() and derives per-operation
+                        // world pointers internally, bounded by the view's declared
+                        // component read/write access from `initialize`.
                         let py_view = unsafe {
                             PyView::new_with_filters(
                                 component_types,
@@ -682,7 +730,7 @@ impl System for DynamicSystem {
                                 changed_filter_types,
                                 added_filter_types,
                                 last_run,
-                                world_mut,
+                                world,
                                 validity.clone(),
                             )
                         };
@@ -690,7 +738,13 @@ impl System for DynamicSystem {
                         self.args_buffer.push(obj.into_any());
                     }
                     SystemParamType::World => {
-                        // Create PyWorld wrapper for exclusive world access
+                        // A World param requests exclusive access: `flags()` marks this
+                        // system EXCLUSIVE, so the executor runs it with no other
+                        // system in flight (initialize declares an empty access set,
+                        // matching Bevy's ExclusiveFunctionSystem).
+                        // SAFETY: exclusive scheduling guarantees this `&mut World` is
+                        // the only borrow of the world for the duration of the run.
+                        let world_mut = unsafe { world.world_mut() };
                         let py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
                         let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
                         self.args_buffer.push(obj.into_any());
@@ -705,21 +759,24 @@ impl System for DynamicSystem {
                         self.args_buffer.push(obj.into_any());
                     }
                     SystemParamType::MessageWriter { message_type } => {
-                        // Create PyMessageWriter wrapper with world access
-
-                        let py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
+                        // Create PyMessageWriter with narrow cell-based world access.
+                        // SAFETY: `initialize` declares write access for this
+                        // writer's Messages<T> id; the writer only reaches that buffer.
+                        let mw = unsafe { MessageWorld::new(world, validity.clone()) };
                         let py_writer = PyMessageWriter {
                             message_type: message_type.clone(),
-                            world: py_world,
+                            world: mw,
                         };
                         let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
                         self.args_buffer.push(obj.into_any());
                     }
                     SystemParamType::MessageReader { message_type } => {
-                        // Create PyMessageReader wrapper with world access and persistent cursor
-
-                        let py_world_1 = unsafe { PyWorld::new(world_mut, validity.clone()) };
-                        let py_world_2 = unsafe { PyWorld::new(world_mut, validity.clone()) };
+                        // Create PyMessageReader with narrow cell-based world access.
+                        // SAFETY: `initialize` declares reads for this reader's
+                        // resource ids (Messages<T>, plus ButtonInput<KeyCode> for
+                        // KeyboardInput); the reader only reaches those.
+                        let mw_1 = unsafe { MessageWorld::new(world, validity.clone()) };
+                        let mw_2 = unsafe { MessageWorld::new(world, validity.clone()) };
                         let cursor = inner_guard
                             .message_cursor_storage
                             .get(message_reader_idx)
@@ -727,11 +784,11 @@ impl System for DynamicSystem {
                         message_reader_idx += 1;
                         let py_messages = PyMessages {
                             message_type: message_type.clone(),
-                            world: py_world_1,
+                            world: mw_1,
                             cursor_storage: cursor,
                         };
                         let py_reader = PyMessageReader {
-                            world: py_world_2,
+                            world: mw_2,
                             messages: py_messages,
                         };
                         let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
@@ -749,12 +806,15 @@ impl System for DynamicSystem {
                         wrapper_class,
                         mutable,
                     } => {
-                        // Create PyAssets wrapper with world access
+                        // Create PyAssets wrapper with cell-based world access.
+                        // SAFETY: `world` is this run's UnsafeWorldCell; `initialize`
+                        // declares this Assets<T> resource's access, which
+                        // bounds the data PyAssets reaches via the AssetBridge.
                         let py_assets = unsafe {
                             PyAssets::new(
                                 type_ptr.0,
                                 wrapper_class.map(|w| w.0),
-                                world_mut,
+                                world,
                                 validity.clone(),
                                 *mutable,
                             )
@@ -959,7 +1019,14 @@ impl System for DynamicSystem {
             }
         });
 
-        // Update last_run tick for change detection (same as FunctionSystem::run_unsafe)
+        // Record last_run as the world change tick read AFTER the run's writes, not the
+        // `this_run` captured at the top. Unlike a Bevy FunctionSystem (whose writes flow
+        // through params stamped with `this_run`), pybevy's writes stamp `world.change_tick()`
+        // live at write time (View batch writes, custom-component write-back). If the tick
+        // advances between `this_run`'s capture and those writes, storing `this_run` would
+        // leave last_run < the write tick and the same system would re-detect its own writes
+        // as changes on the next frame. Reading the tick here guarantees last_run covers
+        // every write this run made, matching the pre-existing (pre-increment) behavior.
         self.last_run = Some(world.change_tick());
 
         Ok(())
@@ -1075,6 +1142,21 @@ impl System for DynamicSystem {
                                 self.resources_to_read.push(id);
                             }
                         }
+                        // Custom Python resources live inside `PyResourceStorage`,
+                        // keyed through `ResourceRegistry`; `run_unsafe`'s cell read
+                        // path touches both (see PyResourceType::get_custom_from_cell),
+                        // so declare those reads to keep declared >= actual access.
+                        // Both read and write params only READ these two resources
+                        // (the write path returns the same stored Python object).
+                        if matches!(rt, PyResourceType::Custom(_)) {
+                            let registry_id = world.register_component::<ResourceRegistry>();
+                            let storage_id = world.register_component::<PyResourceStorage>();
+                            for id in [registry_id, storage_id] {
+                                if !self.resources_to_read.contains(&id) {
+                                    self.resources_to_read.push(id);
+                                }
+                            }
+                        }
                     }
                 }
                 SystemParamType::Assets {
@@ -1133,7 +1215,10 @@ impl System for DynamicSystem {
                     // Local state doesn't affect world access
                 }
                 SystemParamType::World => {
-                    // World access requires exclusive access - no filtering needed
+                    // A World param means the system wants exclusive access. `flags()`
+                    // marks it EXCLUSIVE and initialize returns an EMPTY access set for
+                    // it (see the exclusive early-return below), exactly like Bevy's
+                    // ExclusiveFunctionSystem.
                 }
                 SystemParamType::Commands => {
                     // Commands don't require specific component access
@@ -1146,6 +1231,15 @@ impl System for DynamicSystem {
                     if let Some(id) = message_type.register_resource_id(world) {
                         self.resources_to_write.push(id);
                     }
+                    // Custom message paths resolve their message number through the
+                    // MessageRegistry resource at run time; declare that read so
+                    // declared access covers the actual access.
+                    if matches!(message_type, MessageType::Custom(_)) {
+                        let registry_id = world.register_component::<MessageRegistry>();
+                        if !self.resources_to_read.contains(&registry_id) {
+                            self.resources_to_read.push(registry_id);
+                        }
+                    }
                 }
                 SystemParamType::MessageReader { message_type } => {
                     // reader_resource_ids returns the primary Messages<T> id plus any
@@ -1155,6 +1249,15 @@ impl System for DynamicSystem {
                             self.resources_to_read.push(id);
                         }
                     }
+                    // Custom message paths resolve their message number through the
+                    // MessageRegistry resource at run time; declare that read so
+                    // declared access covers the actual access.
+                    if matches!(message_type, MessageType::Custom(_)) {
+                        let registry_id = world.register_component::<MessageRegistry>();
+                        if !self.resources_to_read.contains(&registry_id) {
+                            self.resources_to_read.push(registry_id);
+                        }
+                    }
                 }
                 SystemParamType::On { .. } => {
                     // Observers don't require component access registration
@@ -1162,6 +1265,26 @@ impl System for DynamicSystem {
                 }
             }
         }
+
+        // Build (or rebuild) the per-Query-parameter cached QueryState now that all
+        // component ids are resolved. `initialize` legitimately holds `&mut World`, so
+        // this heavy work (id registration, QueryState construction, extraction/access
+        // arrays) happens once per parameter instead of on every run. The snapshot of
+        // custom_component_ids is complete because the loop above already registered
+        // every custom component this system's queries reference. Iterating `params`
+        // in signature order keeps `query_caches` aligned with `run_unsafe`'s counter.
+        let cc_snapshot = Arc::new(self.custom_component_ids.clone());
+        let mut query_caches = Vec::new();
+        for param in &params {
+            if let SystemParamType::Query { param: query_param } = &param.ty {
+                query_caches.push(CachedQuery::build(
+                    world,
+                    query_param.clone(),
+                    cc_snapshot.clone(),
+                ));
+            }
+        }
+        self.query_caches = query_caches;
 
         // run_unsafe's generation guard reads HotReloadGeneration
         let generation_id = world.register_component::<HotReloadGeneration>();
@@ -1221,6 +1344,23 @@ impl System for DynamicSystem {
                     )
                 });
 
+        // Exclusive systems declare NO access, exactly like Bevy's
+        // ExclusiveFunctionSystem (its initialize returns FilteredAccessSet::new()).
+        // The EXCLUSIVE flag alone makes the executor run them with nothing else in
+        // flight, which is what soundly covers run_unsafe's `world.world_mut()`.
+        // Declaring read_all+write_all here instead gives the schedule an asymmetric
+        // conflict graph next to Bevy's empty-access exclusive systems and wedges
+        // MultiThreadedExecutor's ready-queue accounting: three or more exclusive
+        // systems mixing both shapes in one schedule die on its
+        // `ready_systems.is_clear()` assertion. Registrations above still ran, so
+        // ids and query caches are ready for run time.
+        if params
+            .iter()
+            .any(|p| matches!(p.ty, SystemParamType::World))
+        {
+            return FilteredAccessSet::default();
+        }
+
         // One FilteredAccess per Query/View parameter, plus one shared access for
         // all resource-like reads/writes. `FilteredAccessSet::is_compatible` does
         // the pairwise filter checks that keep genuinely conflicting systems from
@@ -1236,7 +1376,16 @@ impl System for DynamicSystem {
         set
     }
 
-    fn check_change_tick(&mut self, _check: CheckChangeTicks) {}
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        // Clamp our stored last_run so it never ages past the change-detection
+        // window, mirroring FunctionSystem's check_system_change_tick. Bevy's
+        // QueryState exposes no tick-check method (it caches archetype/access data,
+        // not change ticks), so clamping last_run is the whole job; every cached
+        // query reads this last_run at the start of each run.
+        if let Some(last_run) = self.last_run.as_mut() {
+            last_run.check_tick(check);
+        }
+    }
 
     fn get_last_run(&self) -> Tick {
         self.last_run.unwrap_or(Tick::new(0))
@@ -1369,6 +1518,14 @@ pub(crate) fn execute_system_func(
     world: &mut World,
     on_param: Py<PyOn>,
 ) -> PyResult<()> {
+    // Transient per-Query cached states for this observer dispatch. Observers have no
+    // DynamicSystem cache (they run outside the schedule), but they hold an exclusive
+    // `&mut World`, so building a CachedQuery here is sound. Boxed so each state has a
+    // stable heap address while a PyQueryIter holds a raw pointer to it. Declared before
+    // the validity guard so it drops LAST: the guard invalidates the shared flag before
+    // these caches are freed, so any leaked PyQueryIter sees "invalid" before use.
+    let mut transient_caches: Vec<Box<CachedQuery>> = Vec::new();
+
     let validity = ValidityFlag::new();
     let _validity_guard = ValidityGuard::new(validity.clone());
 
@@ -1397,27 +1554,38 @@ pub(crate) fn execute_system_func(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::Query { param: query_param } => {
+                // Build a transient cached state; the exclusive &mut World makes this
+                // sound in the observer context (no parallel systems here).
+                transient_caches.push(Box::new(CachedQuery::build(
+                    world,
+                    query_param.clone(),
+                    custom_component_ids.clone(),
+                )));
+                let this_run = world.change_tick();
+                let cell = world.as_unsafe_world_cell();
+                // The box's heap address is stable across later pushes, so this
+                // reference (used only to hand a pointer to the query) stays valid.
+                let cached_ref: &CachedQuery = transient_caches.last().unwrap();
                 if query_param.single_entity_enforced {
+                    // SAFETY: exclusive &mut World during observer dispatch; the cached
+                    // state and cell reference this same World. `transient_caches` keeps
+                    // the box alive until after the Python call. No prior run for
+                    // observers, so last_run = Tick(0).
                     let single_query = unsafe {
                         PySingleQuery::new(
-                            query_param.clone(),
-                            world,
-                            custom_component_ids.clone(),
+                            cached_ref,
+                            cell,
                             validity.clone(),
-                            Tick::new(0), // No prior run for observers
+                            Tick::new(0),
+                            this_run,
                         )
                     };
                     let obj = Py::new(py, single_query).expect("Failed to create PySingleQuery");
                     args_buffer.push(obj.into_any());
                 } else {
+                    // SAFETY: see above.
                     let query_runtime = unsafe {
-                        PyQueryIter::new(
-                            query_param.clone(),
-                            world,
-                            custom_component_ids.clone(),
-                            validity.clone(),
-                            Tick::new(0), // No prior run for observers
-                        )
+                        PyQueryIter::new(cached_ref, cell, validity.clone(), Tick::new(0), this_run)
                     };
                     let obj = Py::new(py, query_runtime).expect("Failed to create PyQueryIter");
                     args_buffer.push(obj.into_any());
@@ -1455,11 +1623,13 @@ pub(crate) fn execute_system_func(
                 wrapper_class,
                 mutable,
             } => {
+                // SAFETY: observer dispatch holds an exclusive `&mut World`; the cell
+                // derived from it is fenced by `validity`.
                 let py_assets = unsafe {
                     PyAssets::new(
                         type_ptr.0,
                         wrapper_class.map(|w| w.0),
-                        world,
+                        world.as_unsafe_world_cell(),
                         validity.clone(),
                         *mutable,
                     )
@@ -1491,6 +1661,8 @@ pub(crate) fn execute_system_func(
                 let without_filter_types = param.without_filters.to_vec();
                 let changed_filter_types = param.changed_filters.to_vec();
                 let added_filter_types = param.added_filters.to_vec();
+                // SAFETY: observer dispatch holds an exclusive `&mut World`; the cell
+                // derived from it is fenced by `validity`.
                 let py_view = unsafe {
                     PyView::new_with_filters(
                         component_types,
@@ -1500,7 +1672,7 @@ pub(crate) fn execute_system_func(
                         changed_filter_types,
                         added_filter_types,
                         Tick::new(0), // No prior run for observers
-                        world,
+                        world.as_unsafe_world_cell(),
                         validity.clone(),
                     )
                 };
@@ -1508,24 +1680,31 @@ pub(crate) fn execute_system_func(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::MessageWriter { message_type } => {
-                let py_world = unsafe { PyWorld::new(world, validity.clone()) };
+                // SAFETY: observer dispatch holds an exclusive `&mut World`; the cell
+                // derived from it is fenced by `validity`.
+                let mw =
+                    unsafe { MessageWorld::new(world.as_unsafe_world_cell(), validity.clone()) };
                 let py_writer = PyMessageWriter {
                     message_type: message_type.clone(),
-                    world: py_world,
+                    world: mw,
                 };
                 let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::MessageReader { message_type } => {
-                let py_world_1 = unsafe { PyWorld::new(world, validity.clone()) };
-                let py_world_2 = unsafe { PyWorld::new(world, validity.clone()) };
+                // SAFETY: observer dispatch holds an exclusive `&mut World`; the cells
+                // derived from it are fenced by `validity`.
+                let mw_1 =
+                    unsafe { MessageWorld::new(world.as_unsafe_world_cell(), validity.clone()) };
+                let mw_2 =
+                    unsafe { MessageWorld::new(world.as_unsafe_world_cell(), validity.clone()) };
                 let py_messages = PyMessages {
                     message_type: message_type.clone(),
-                    world: py_world_1,
+                    world: mw_1,
                     cursor_storage: None,
                 };
                 let py_reader = PyMessageReader {
-                    world: py_world_2,
+                    world: mw_2,
                     messages: py_messages,
                 };
                 let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");

@@ -206,11 +206,14 @@ impl PyWorld {
 
         // Create PyAssets wrapper for the specified asset type
         // When called from World.resource(), assume mutable access (for backwards compatibility)
+        // SAFETY: `world_ptr` is valid while this PyWorld is valid; the derived cell is
+        // fenced by the same `validity` flag. PyAssets only reaches the `Assets<T>` resource.
+        let cell = unsafe { (*world_ptr).as_unsafe_world_cell() };
         let py_assets = unsafe {
             Py::new(
                 py,
                 (
-                    PyAssets::new(type_ptr, None, world_ptr, validity, true),
+                    PyAssets::new(type_ptr, None, cell, validity, true),
                     super::resource::PyResource,
                 ),
             )?

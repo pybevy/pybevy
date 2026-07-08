@@ -1,7 +1,10 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use bevy::{ecs::component::ComponentId, prelude::*};
+use bevy::{
+    ecs::{component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell},
+    prelude::*,
+};
 use pybevy_core::registry::global_registry;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
@@ -53,10 +56,7 @@ unsafe impl Sync for PyResourceType {}
 impl PyResourceType {
     /// Get AssetServer resource from world (read-only)
     fn get_asset_server(world: &World, py: Python, validity: ValidityFlag) -> PyResult<Py<PyAny>> {
-        let world_ptr = world as *const World as *mut World;
-        let py_asset_server = unsafe { PyAssetServer::new(world_ptr, validity) };
-        let asset_server_obj = Py::new(py, (py_asset_server, PyResource))?;
-        Ok(asset_server_obj.into_any())
+        Self::get_asset_server_cell(world.as_unsafe_world_cell_readonly(), py, validity)
     }
 
     /// Get AssetServer resource from world (mutable)
@@ -65,10 +65,141 @@ impl PyResourceType {
         py: Python,
         validity: ValidityFlag,
     ) -> PyResult<Py<PyAny>> {
-        let world_ptr = world as *mut World;
-        let py_asset_server = unsafe { PyAssetServer::new(world_ptr, validity) };
+        Self::get_asset_server_cell(world.as_unsafe_world_cell(), py, validity)
+    }
+
+    /// Wrap the AssetServer resource from a world cell.
+    fn get_asset_server_cell(
+        cell: UnsafeWorldCell,
+        py: Python,
+        validity: ValidityFlag,
+    ) -> PyResult<Py<PyAny>> {
+        // SAFETY: `cell` references the world the AssetServer belongs to and stays
+        // valid while `validity` is active; PyAssetServer reads only the declared
+        // AssetServer resource through it.
+        let py_asset_server = unsafe { PyAssetServer::new(cell, validity) };
         let asset_server_obj = Py::new(py, (py_asset_server, PyResource))?;
         Ok(asset_server_obj.into_any())
+    }
+
+    /// Read a custom Python resource through a world cell, touching only the
+    /// `ResourceRegistry` and `PyResourceStorage` resources (both declared by
+    /// `DynamicSystem::initialize` for Custom resource params).
+    ///
+    /// # Safety
+    /// The caller must guarantee those two reads are declared and that the executor
+    /// prevents a concurrent structural writer, so the unchecked reads are unique.
+    unsafe fn get_custom_from_cell(
+        cell: UnsafeWorldCell,
+        type_ptr: *const PyTypeObject,
+        py: Python,
+    ) -> PyResult<Py<PyAny>> {
+        // SAFETY: read access to ResourceRegistry is declared for Custom params.
+        let registry = unsafe { cell.get_resource::<ResourceRegistry>() }.ok_or_else(|| {
+            let type_name = get_python_type_name(py, type_ptr);
+            PyTypeError::new_err(format!(
+                "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
+                type_name
+            ))
+        })?;
+
+        let component_id = registry.registry.get(&type_ptr).ok_or_else(|| {
+            let type_name = get_python_type_name(py, type_ptr);
+            PyTypeError::new_err(format!(
+                "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
+                type_name
+            ))
+        })?;
+
+        // SAFETY: read access to PyResourceStorage is declared for Custom params.
+        let storage = unsafe { cell.get_resource::<PyResourceStorage>() }.ok_or_else(|| {
+            let type_name = get_python_type_name(py, type_ptr);
+            PyTypeError::new_err(format!(
+                "Resource type `{}` not present in the world",
+                type_name
+            ))
+        })?;
+
+        let resource = storage.resources.get(component_id).ok_or_else(|| {
+            let type_name = get_python_type_name(py, type_ptr);
+            PyTypeError::new_err(format!(
+                "Resource type `{}` not present in the world",
+                type_name
+            ))
+        })?;
+
+        Ok(resource.clone_ref(py))
+    }
+
+    /// Read a resource through an `UnsafeWorldCell`, touching only this resource's
+    /// declared data instead of borrowing the whole world (as `get_from_world` does).
+    ///
+    /// # Safety
+    /// The caller must guarantee `DynamicSystem::initialize` declared read access to
+    /// this resource (and, for Custom resources, to `ResourceRegistry` /
+    /// `PyResourceStorage`) and that the executor prevents a concurrent writer, so
+    /// the cell's unchecked reads are unique.
+    pub unsafe fn get_from_cell(
+        &self,
+        cell: UnsafeWorldCell,
+        py: Python,
+        validity: ValidityFlag,
+    ) -> PyResult<Py<PyAny>> {
+        match self {
+            PyResourceType::AssetServer => Self::get_asset_server_cell(cell, py, validity),
+            PyResourceType::Dynamic(type_ptr) => {
+                let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| {
+                        PyTypeError::new_err("Resource bridge not found for dynamic type")
+                    })?;
+                // SAFETY: read access to this resource is declared; the executor
+                // prevents a concurrent writer, so the cell read is unique.
+                unsafe {
+                    bridge.get_from_cell(cell, validity.with_access_mode(AccessMode::Read), py)
+                }
+            }
+            PyResourceType::Custom(type_ptr) => {
+                // SAFETY: forwarded obligation, see get_custom_from_cell.
+                unsafe { Self::get_custom_from_cell(cell, *type_ptr, py) }
+            }
+        }
+    }
+
+    /// Mutable counterpart of `get_from_cell`. Custom resources return the same
+    /// stored Python object (Python objects are inherently mutable), matching
+    /// `get_from_world_mut`.
+    ///
+    /// # Safety
+    /// The caller must guarantee `DynamicSystem::initialize` declared write access
+    /// to this resource (Custom resources only require the declared storage reads)
+    /// and that the executor prevents a concurrent access, so the cell's unchecked
+    /// borrow is unique.
+    pub unsafe fn get_from_cell_mut(
+        &self,
+        cell: UnsafeWorldCell,
+        py: Python,
+        validity: ValidityFlag,
+    ) -> PyResult<Py<PyAny>> {
+        match self {
+            PyResourceType::AssetServer => Self::get_asset_server_cell(cell, py, validity),
+            PyResourceType::Dynamic(type_ptr) => {
+                let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| {
+                        PyTypeError::new_err("Resource bridge not found for dynamic type")
+                    })?;
+                // SAFETY: write access to this resource is declared; the executor
+                // prevents any concurrent access, so the cell borrow is unique.
+                unsafe {
+                    bridge.get_mut_from_cell(cell, validity.with_access_mode(AccessMode::Write), py)
+                }
+            }
+            PyResourceType::Custom(type_ptr) => {
+                // Custom mutable access returns the same Python object as the read
+                // path (Python objects are inherently mutable).
+                // SAFETY: forwarded obligation, see get_custom_from_cell.
+                unsafe { Self::get_custom_from_cell(cell, *type_ptr, py) }
+            }
+        }
     }
 
     /// Get the resource from the world and convert it to a Python object (read-only access)
