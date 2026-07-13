@@ -9,9 +9,10 @@
 //! - ComponentStorage stores larger types in Box (Owned(Box<T>))
 
 use crate::{
+    borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
-    validity_guard::ValidityFlagWithMode,
+    validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
 /// Generic storage for PyBevy value types (Copy types like Vec3, Quat, etc.)
@@ -42,46 +43,23 @@ pub enum ValueStorageInner<T: Copy> {
     /// Reads succeed; writes return `StorageError::OwnedFieldReadOnly`.
     OwnedReadOnly(T),
 
-    /// Borrowed reference to field in a component
-    Borrowed {
-        /// Pointer to value in component field
-        ptr: *mut T,
+    /// Read-only borrow into a component field
+    BorrowedRef(BorrowedRef<T>),
 
-        /// Validity tracking with read/write mode
-        /// Prevents use after system execution and tracks mutability
-        validity: ValidityFlagWithMode,
-    },
+    /// Mutable borrow into a component field
+    BorrowedMut(BorrowedMut<T>),
 }
-
-// SAFETY: ValueStorage is Send because:
-// - T is Copy, which implies Send for most numeric/simple types
-// - Raw pointer is just an address
-// - ValidityFlagWithMode (Arc<AtomicBool> + mode tracking) is Send + Sync
-// - Validity checking prevents unsafe access
-unsafe impl<T: Copy + Send> Send for ValueStorage<T> {}
-
-// SAFETY: ValueStorage is Sync because:
-// - Access is controlled by validity checking
-// - ValidityFlagWithMode uses atomic operations
-// - We only allow access when validity flag is true
-unsafe impl<T: Copy + Sync> Sync for ValueStorage<T> {}
 
 impl<T: Copy> Clone for ValueStorage<T> {
     fn clone(&self) -> Self {
-        match &self.inner {
-            ValueStorageInner::Owned(value) => Self {
-                inner: ValueStorageInner::Owned(*value),
-            },
-            ValueStorageInner::OwnedReadOnly(value) => Self {
-                inner: ValueStorageInner::OwnedReadOnly(*value),
-            },
-            ValueStorageInner::Borrowed { ptr, validity } => Self {
-                inner: ValueStorageInner::Borrowed {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                },
-            },
-        }
+        let inner = match &self.inner {
+            ValueStorageInner::Owned(value) => ValueStorageInner::Owned(*value),
+            ValueStorageInner::OwnedReadOnly(value) => ValueStorageInner::OwnedReadOnly(*value),
+            ValueStorageInner::BorrowedRef(b) => ValueStorageInner::BorrowedRef(b.clone()),
+            // A cloned mutable borrow downgrades to read-only to avoid aliasing.
+            ValueStorageInner::BorrowedMut(b) => ValueStorageInner::BorrowedRef(b.clone_as_ref()),
+        };
+        Self { inner }
     }
 }
 
@@ -93,19 +71,29 @@ where
         match (&self.inner, &other.inner) {
             (ValueStorageInner::Owned(a), ValueStorageInner::Owned(b)) => a == b,
             (ValueStorageInner::OwnedReadOnly(a), ValueStorageInner::OwnedReadOnly(b)) => a == b,
-            (
-                ValueStorageInner::Borrowed { ptr: a, .. },
-                ValueStorageInner::Borrowed { ptr: b, .. },
-            ) => a == b,
+            (ValueStorageInner::BorrowedRef(a), ValueStorageInner::BorrowedRef(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
+            (ValueStorageInner::BorrowedMut(a), ValueStorageInner::BorrowedMut(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
             _ => false,
         }
     }
 }
 
 impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
-    unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+    unsafe fn borrowed_ref(ptr: *const T, validity: ValidityFlag) -> Self {
         Self {
-            inner: ValueStorageInner::Borrowed { ptr, validity },
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ValueStorageInner::BorrowedRef(unsafe { BorrowedRef::new(ptr, validity) }),
+        }
+    }
+
+    unsafe fn borrowed_mut(ptr: *mut T, validity: ValidityFlag) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ValueStorageInner::BorrowedMut(unsafe { BorrowedMut::new(ptr, validity) }),
         }
     }
 
@@ -124,6 +112,28 @@ impl<T: Copy> ValueStorage<T> {
         }
     }
 
+    /// Create borrowed value storage, choosing read vs write from the transport mode.
+    ///
+    /// This is the bridge boundary constructor: `ValidityFlagWithMode` still carries
+    /// the mode across the FFI layer, and is resolved here into a typed borrowed
+    /// variant that no longer stores the mode.
+    ///
+    /// # Safety
+    /// - `ptr` must point to valid `T` for as long as `validity` is non-Invalid
+    /// - `ptr` must be safe to write through when `validity.access_mode()` is `Write`
+    pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+        match validity.access_mode() {
+            // SAFETY: mode Write means ptr was obtained from a mutable borrow
+            AccessMode::Write => unsafe {
+                <Self as BorrowableStorage<T>>::borrowed_mut(ptr, validity.flag)
+            },
+            // SAFETY: read-only view of the same pointer
+            _ => unsafe {
+                <Self as BorrowableStorage<T>>::borrowed_ref(ptr as *const T, validity.flag)
+            },
+        }
+    }
+
     /// Get immutable reference to the value, checking validity
     ///
     /// # Errors
@@ -131,8 +141,11 @@ impl<T: Copy> ValueStorage<T> {
     /// (i.e., accessed outside of system execution context)
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
-        self.check_valid()?;
-        Ok(unsafe { &*self.as_ptr() })
+        match &self.inner {
+            ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => Ok(value),
+            ValueStorageInner::BorrowedRef(b) => b.get(),
+            ValueStorageInner::BorrowedMut(b) => b.get(),
+        }
     }
 
     /// Get mutable reference to the value, checking validity and write permission
@@ -140,64 +153,14 @@ impl<T: Copy> ValueStorage<T> {
     /// # Errors
     /// Returns `StorageError` if:
     /// - The borrowed reference is no longer valid
-    /// - The value was borrowed immutably (Ref) but mutable access is attempted
+    /// - The value was borrowed immutably (`BorrowedRef`) but mutable access is attempted
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
-        self.check_valid_mut()?;
-        Ok(unsafe { &mut *self.as_mut_ptr() })
-    }
-
-    /// Get raw const pointer to the value
-    ///
-    /// # Safety
-    /// Caller must ensure validity before dereferencing
-    #[inline(always)]
-    fn as_ptr(&self) -> *const T {
-        match &self.inner {
-            ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => {
-                value as *const T
-            }
-            ValueStorageInner::Borrowed { ptr, .. } => *ptr as *const T,
-        }
-    }
-
-    /// Get raw mutable pointer to the value
-    ///
-    /// # Safety
-    /// Caller must ensure validity and write permission before dereferencing
-    #[inline(always)]
-    fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
-            ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => {
-                value as *mut T
-            }
-            ValueStorageInner::Borrowed { ptr, .. } => *ptr,
-        }
-    }
-
-    /// Check if this value reference is still valid for reading
-    ///
-    /// For owned values (including read-only snapshots), always returns `Ok(())`.
-    /// For borrowed values, checks the validity flag.
-    #[inline(always)]
-    fn check_valid(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ValueStorageInner::Owned(_) | ValueStorageInner::OwnedReadOnly(_) => Ok(()),
-            ValueStorageInner::Borrowed { validity, .. } => validity.check(),
-        }
-    }
-
-    /// Check if this value reference is still valid for writing
-    ///
-    /// For owned values, always returns `Ok(())`.
-    /// For read-only snapshots, returns `OwnedFieldReadOnly`.
-    /// For borrowed values, checks both validity and write permission.
-    #[inline(always)]
-    fn check_valid_mut(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ValueStorageInner::Owned(_) => Ok(()),
+            ValueStorageInner::Owned(value) => Ok(value),
             ValueStorageInner::OwnedReadOnly(_) => Err(StorageError::OwnedFieldReadOnly),
-            ValueStorageInner::Borrowed { validity, .. } => validity.check_write(),
+            ValueStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ValueStorageInner::BorrowedMut(b) => b.get_mut(),
         }
     }
 
@@ -213,7 +176,10 @@ impl<T: Copy> ValueStorage<T> {
     /// Check if this storage contains a borrowed value
     #[cfg(test)]
     pub fn is_borrowed(&self) -> bool {
-        matches!(self.inner, ValueStorageInner::Borrowed { .. })
+        matches!(
+            self.inner,
+            ValueStorageInner::BorrowedRef(_) | ValueStorageInner::BorrowedMut(_)
+        )
     }
 
     /// Check if this storage is a read-only snapshot
@@ -234,18 +200,6 @@ impl<T: Copy> ValueStorage<T> {
         Ok(*self.as_ref()?)
     }
 
-    /// Get the validity flag for this storage
-    ///
-    /// Returns None for owned storage (always valid).
-    /// Returns Some for borrowed storage.
-    #[allow(dead_code)]
-    fn validity(&self) -> Option<&ValidityFlagWithMode> {
-        match &self.inner {
-            ValueStorageInner::Owned(_) | ValueStorageInner::OwnedReadOnly(_) => None,
-            ValueStorageInner::Borrowed { validity, .. } => Some(validity),
-        }
-    }
-
     /// Helper to borrow a field from the value storage
     ///
     /// This reduces boilerplate in field getters by unifying the owned/borrowed cases.
@@ -253,7 +207,7 @@ impl<T: Copy> ValueStorage<T> {
     ///
     /// For owned storage (including read-only snapshots), returns a read-only snapshot
     /// of the field. For borrowed storage, returns a borrowed pointer into the
-    /// underlying data.
+    /// underlying data, inheriting the parent's read/write access.
     pub fn borrow_field<F: Clone, S>(
         &self,
         field_accessor: impl Fn(&T) -> &F,
@@ -265,17 +219,8 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => {
                 Ok(S::snapshot(field_accessor(value)))
             }
-            ValueStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-
-                // SAFETY: We just checked validity above
-                let value_ref = unsafe { &**ptr };
-                let field_ref = field_accessor(value_ref);
-                let field_ptr = field_ref as *const F as *mut F;
-
-                // Share the validity flag with the field borrow
-                Ok(unsafe { S::borrowed(field_ptr, validity.clone()) })
-            }
+            ValueStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
+            ValueStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
         }
     }
 

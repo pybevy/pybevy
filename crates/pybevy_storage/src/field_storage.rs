@@ -24,9 +24,10 @@
 //! - Inherits validity from parent (invalidated when parent's system exits)
 
 use crate::{
+    borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
-    validity_guard::{ValidityFlag, ValidityFlagWithMode},
+    validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
 /// Generic storage for PyBevy field types (non-Copy types like TextureAtlas)
@@ -69,53 +70,32 @@ pub enum FieldStorageInner<T: Clone> {
         data: Box<T>,
     },
 
-    /// Borrowed reference to field in a component
-    Borrowed {
-        /// Pointer to value in component field
-        ptr: *mut T,
+    /// Read-only borrow into a component field
+    BorrowedRef(BorrowedRef<T>),
 
-        /// Validity tracking with read/write mode
-        validity: ValidityFlagWithMode,
-    },
+    /// Mutable borrow into a component field
+    BorrowedMut(BorrowedMut<T>),
 }
-
-// SAFETY: FieldStorage is Send because:
-// - Box<T> is Send when T is Send
-// - Raw pointer is just an address
-// - ValidityFlagWithMode is Send + Sync
-// - Validity checking prevents unsafe access
-unsafe impl<T: Clone + Send> Send for FieldStorage<T> {}
-
-// SAFETY: FieldStorage is Sync because:
-// - Access is controlled by validity checking
-// - ValidityFlagWithMode uses atomic operations
-unsafe impl<T: Clone + Sync> Sync for FieldStorage<T> {}
 
 impl<T: Clone> Clone for FieldStorage<T> {
     fn clone(&self) -> Self {
-        match &self.inner {
+        let inner = match &self.inner {
             FieldStorageInner::Owned { data, validity: _ } => {
                 // CRITICAL: Create a NEW validity flag for the clone.
                 // Each owned instance needs independent validity tracking.
-                Self {
-                    inner: FieldStorageInner::Owned {
-                        data: Box::new((**data).clone()),
-                        validity: ValidityFlag::new_write(),
-                    },
+                FieldStorageInner::Owned {
+                    data: Box::new((**data).clone()),
+                    validity: ValidityFlag::new_write(),
                 }
             }
-            FieldStorageInner::OwnedReadOnly { data } => Self {
-                inner: FieldStorageInner::OwnedReadOnly {
-                    data: Box::new((**data).clone()),
-                },
+            FieldStorageInner::OwnedReadOnly { data } => FieldStorageInner::OwnedReadOnly {
+                data: Box::new((**data).clone()),
             },
-            FieldStorageInner::Borrowed { ptr, validity } => Self {
-                inner: FieldStorageInner::Borrowed {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                },
-            },
-        }
+            FieldStorageInner::BorrowedRef(b) => FieldStorageInner::BorrowedRef(b.clone()),
+            // A cloned mutable borrow downgrades to read-only to avoid aliasing.
+            FieldStorageInner::BorrowedMut(b) => FieldStorageInner::BorrowedRef(b.clone_as_ref()),
+        };
+        Self { inner }
     }
 }
 
@@ -130,10 +110,12 @@ impl<T: Clone + PartialEq> PartialEq for FieldStorage<T> {
                 FieldStorageInner::OwnedReadOnly { data: a },
                 FieldStorageInner::OwnedReadOnly { data: b },
             ) => **a == **b,
-            (
-                FieldStorageInner::Borrowed { ptr: a, .. },
-                FieldStorageInner::Borrowed { ptr: b, .. },
-            ) => a == b,
+            (FieldStorageInner::BorrowedRef(a), FieldStorageInner::BorrowedRef(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
+            (FieldStorageInner::BorrowedMut(a), FieldStorageInner::BorrowedMut(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
             _ => false,
         }
     }
@@ -153,9 +135,17 @@ impl<T: Clone> Drop for FieldStorage<T> {
 }
 
 impl<T: Clone> BorrowableStorage<T> for FieldStorage<T> {
-    unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+    unsafe fn borrowed_ref(ptr: *const T, validity: ValidityFlag) -> Self {
         Self {
-            inner: FieldStorageInner::Borrowed { ptr, validity },
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: FieldStorageInner::BorrowedRef(unsafe { BorrowedRef::new(ptr, validity) }),
+        }
+    }
+
+    unsafe fn borrowed_mut(ptr: *mut T, validity: ValidityFlag) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: FieldStorageInner::BorrowedMut(unsafe { BorrowedMut::new(ptr, validity) }),
         }
     }
 
@@ -179,58 +169,44 @@ impl<T: Clone> FieldStorage<T> {
         }
     }
 
+    /// Create borrowed field storage, choosing read vs write from the transport mode.
+    ///
+    /// # Safety
+    /// - `ptr` must point to valid `T` for as long as `validity` is non-Invalid
+    /// - `ptr` must be safe to write through when `validity.access_mode()` is `Write`
+    pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+        match validity.access_mode() {
+            // SAFETY: mode Write means ptr was obtained from a mutable borrow
+            AccessMode::Write => unsafe {
+                <Self as BorrowableStorage<T>>::borrowed_mut(ptr, validity.flag)
+            },
+            // SAFETY: read-only view of the same pointer
+            _ => unsafe {
+                <Self as BorrowableStorage<T>>::borrowed_ref(ptr as *const T, validity.flag)
+            },
+        }
+    }
+
     /// Get immutable reference to the value, checking validity
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
-        self.check_valid()?;
-        Ok(unsafe { &*self.as_ptr() })
+        match &self.inner {
+            FieldStorageInner::Owned { data, .. } | FieldStorageInner::OwnedReadOnly { data } => {
+                Ok(&**data)
+            }
+            FieldStorageInner::BorrowedRef(b) => b.get(),
+            FieldStorageInner::BorrowedMut(b) => b.get(),
+        }
     }
 
     /// Get mutable reference to the value, checking validity and write permission
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
-        self.check_valid_mut()?;
-        Ok(unsafe { &mut *self.as_mut_ptr() })
-    }
-
-    /// Get raw const pointer to the value
-    #[inline(always)]
-    fn as_ptr(&self) -> *const T {
-        match &self.inner {
-            FieldStorageInner::Owned { data, .. } | FieldStorageInner::OwnedReadOnly { data } => {
-                &**data as *const T
-            }
-            FieldStorageInner::Borrowed { ptr, .. } => *ptr as *const T,
-        }
-    }
-
-    /// Get raw mutable pointer to the value
-    #[inline(always)]
-    fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
-            FieldStorageInner::Owned { data, .. } | FieldStorageInner::OwnedReadOnly { data } => {
-                &mut **data as *mut T
-            }
-            FieldStorageInner::Borrowed { ptr, .. } => *ptr,
-        }
-    }
-
-    /// Check if this value reference is still valid for reading
-    #[inline(always)]
-    fn check_valid(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            FieldStorageInner::Owned { .. } | FieldStorageInner::OwnedReadOnly { .. } => Ok(()),
-            FieldStorageInner::Borrowed { validity, .. } => validity.check(),
-        }
-    }
-
-    /// Check if this value reference is still valid for writing
-    #[inline(always)]
-    fn check_valid_mut(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            FieldStorageInner::Owned { .. } => Ok(()),
+            FieldStorageInner::Owned { data, .. } => Ok(&mut **data),
             FieldStorageInner::OwnedReadOnly { .. } => Err(StorageError::OwnedFieldReadOnly),
-            FieldStorageInner::Borrowed { validity, .. } => validity.check_write(),
+            FieldStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            FieldStorageInner::BorrowedMut(b) => b.get_mut(),
         }
     }
 
@@ -272,17 +248,8 @@ impl<T: Clone> FieldStorage<T> {
             | FieldStorageInner::OwnedReadOnly { data, .. } => {
                 Ok(S::snapshot(field_accessor(&**data)))
             }
-            FieldStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-                // SAFETY: We just checked validity above. The ptr points to valid storage
-                // that remains stable during system execution.
-                let value_ref = unsafe { &**ptr };
-                let field_ref = field_accessor(value_ref);
-                let field_ptr = field_ref as *const F as *mut F;
-                // SAFETY: field_ptr points into the parent storage at a stable offset.
-                // The validity flag from the parent ensures this remains valid.
-                Ok(unsafe { S::borrowed(field_ptr, validity.clone()) })
-            }
+            FieldStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
+            FieldStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
         }
     }
 
@@ -319,7 +286,10 @@ impl<T: Clone> FieldStorage<T> {
 
     #[cfg(test)]
     pub fn is_borrowed(&self) -> bool {
-        matches!(self.inner, FieldStorageInner::Borrowed { .. })
+        matches!(
+            self.inner,
+            FieldStorageInner::BorrowedRef(_) | FieldStorageInner::BorrowedMut(_)
+        )
     }
 
     /// Check if this storage is a read-only snapshot
