@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, ptr::NonNull, sync::Arc};
 
 use bevy::{
     ecs::{
-        change_detection::{ComponentTicks, Tick},
+        change_detection::Tick,
         component::ComponentId,
         query::{QueryIter, QueryState},
         world::{FilteredEntityMut, FilteredEntityRef, unsafe_world_cell::UnsafeWorldCell},
@@ -10,8 +10,9 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{ExtractFn, FilteredEntityAccess, registry::global_registry};
-use pybevy_ecs::shared::query_builder_ext::{
-    QueryBuildSpec, QueryComponent, build_query_state, build_query_state_ref,
+use pybevy_ecs::shared::{
+    cached_query::{CachedQueryCore, passes_tick_filters},
+    query_builder_ext::{QueryBuildSpec, QueryComponent},
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyStopIteration},
@@ -31,83 +32,8 @@ use crate::ecs::{
     query::query_param::{PyQueryParam, QueryData},
 };
 
-/// Type-erased Bevy QueryState. Owns a heap-allocated QueryState behind a raw pointer.
-///
-/// SAFETY: The caller must guarantee the erased lifetimes (tied to system execution scope).
-/// Drop reconstructs the correct Box type to deallocate.
-///
-/// Methods that produce borrows (`create_iter`, `get_entity`) are intentionally designed
-/// to not borrow `self`, so that PyQueryIter can call them without conflicting with
-/// borrows of other fields (e.g. `extract_components_from_entity`).
-enum ErasedQueryState {
-    /// `QueryState<FilteredEntityRef>` - all components read-only.
-    ReadOnly(*mut ()),
-    /// `QueryState<FilteredEntityMut>` - at least one `Mut[T]` component.
-    Mutable(*mut ()),
-}
-
-impl ErasedQueryState {
-    fn from_ref(qs: QueryState<FilteredEntityRef>) -> Self {
-        Self::ReadOnly(Box::into_raw(Box::new(qs)) as *mut ())
-    }
-
-    fn from_mut(qs: QueryState<FilteredEntityMut>) -> Self {
-        Self::Mutable(Box::into_raw(Box::new(qs)) as *mut ())
-    }
-
-    /// Returns (is_read_only, raw_pointer) for use in methods that need to avoid
-    /// borrowing self (to prevent conflicts with other field borrows on PyQueryIter).
-    fn parts(&self) -> (bool, *mut ()) {
-        match self {
-            Self::ReadOnly(p) => (true, *p),
-            Self::Mutable(p) => (false, *p),
-        }
-    }
-
-    /// Count matching entities (O(n) - iterates all).
-    ///
-    /// SAFETY: declared access from `initialize` covers this state's access and the
-    /// executor prevents conflicting systems from running concurrently, so the
-    /// unchecked query has unique access to the components it reads.
-    fn count(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> usize {
-        let (read_only, p) = self.parts();
-        unsafe {
-            if read_only {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .iter_inner()
-                    .count()
-            } else {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .iter_inner()
-                    .count()
-            }
-        }
-    }
-
-    /// Check if no entities match.
-    ///
-    /// SAFETY: declared access from `initialize` covers this state's access and the
-    /// executor prevents conflicting systems from running concurrently, so the
-    /// unchecked query has unique access to the components it reads.
-    fn is_empty_check(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> bool {
-        let (read_only, p) = self.parts();
-        unsafe {
-            if read_only {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .is_empty()
-            } else {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .is_empty()
-            }
-        }
-    }
-}
-
-/// Create a new lazy iterator. Freestanding to avoid borrowing ErasedQueryState.
+/// Create a new lazy iterator. Freestanding to avoid borrowing the shared
+/// `ErasedQueryState` (see `pybevy_ecs::shared::cached_query`).
 ///
 /// Uses `query_unchecked_with_ticks`, which calls `update_archetypes_unsafe_world_cell`
 /// internally, so the cached state picks up archetypes created since `initialize`.
@@ -163,27 +89,6 @@ unsafe fn erased_get_entity<'a>(
             .get_inner(entity)
             .ok()
             .map(FilteredEntityAccess::Mut)
-    }
-}
-
-impl Drop for ErasedQueryState {
-    fn drop(&mut self) {
-        let p = match self {
-            Self::ReadOnly(p) | Self::Mutable(p) => *p,
-        };
-        if p.is_null() {
-            return;
-        }
-        unsafe {
-            match self {
-                Self::ReadOnly(_) => {
-                    let _ = Box::from_raw(p as *mut QueryState<FilteredEntityRef>);
-                }
-                Self::Mutable(_) => {
-                    let _ = Box::from_raw(p as *mut QueryState<FilteredEntityMut>);
-                }
-            }
-        }
     }
 }
 
@@ -246,8 +151,9 @@ pub struct CachedQuery {
     /// The query parameter information (shared via Arc to avoid clones).
     pub param: Arc<PyQueryParam>,
 
-    /// The Bevy QueryState (type-erased, owns the heap allocation).
-    query_state: ErasedQueryState,
+    /// The shared half: type-erased QueryState plus tick-filter ids
+    /// (see `pybevy_ecs::shared::cached_query`).
+    core: CachedQueryCore,
 
     /// Maps PyComponentType to their registered ComponentIds (cached for fast access).
     component_id_cache: HashMap<PyComponentType, ComponentId>,
@@ -260,11 +166,6 @@ pub struct CachedQuery {
 
     /// Extraction function pointers for Dynamic components, indexed by parameter position.
     extract_fns: SmallVec<[Option<ExtractFn>; 8]>,
-
-    /// ComponentIds for Changed[T] tick filters - entities must pass per-entity tick check.
-    changed_filter_ids: Vec<ComponentId>,
-    /// ComponentIds for Added[T] tick filters - entities must pass per-entity tick check.
-    added_filter_ids: Vec<ComponentId>,
 
     /// Whether this query was declared as `Single<T>` (enforces exactly one match).
     pub single_entity_enforced: bool,
@@ -358,11 +259,9 @@ impl CachedQuery {
             }
         }
 
-        // Retain filter IDs for per-entity tick checking (they get moved into QueryBuildSpec)
-        let tick_changed_ids = changed_filter_ids.clone();
-        let tick_added_ids = added_filter_ids.clone();
-
-        // Build the QueryState once
+        // Build the QueryState once. `build_auto` picks FilteredEntityRef for
+        // all-read-only queries and retains the tick-filter ids for the
+        // per-entity Changed/Added check.
         let spec = QueryBuildSpec {
             components: component_ids.clone(),
             with_filters: with_filter_ids,
@@ -371,13 +270,7 @@ impl CachedQuery {
             added_filters: added_filter_ids,
             anyof_filters: anyof_filter_ids,
         };
-        // Build the correct QueryState variant.
-        // Use FilteredEntityRef for all-read-only queries to enable parallel scheduling.
-        let query_state = if spec.is_read_only() {
-            ErasedQueryState::from_ref(build_query_state_ref(world, &spec))
-        } else {
-            ErasedQueryState::from_mut(build_query_state(world, &spec))
-        };
+        let core = CachedQueryCore::build_auto(world, &spec);
 
         // Build component ID cache by mapping TypeId back to PyComponentType
         let mut component_id_cache = HashMap::new();
@@ -445,13 +338,11 @@ impl CachedQuery {
 
         Self {
             param,
-            query_state,
+            core,
             component_id_cache,
             custom_component_ids,
             param_access_modes,
             extract_fns,
-            changed_filter_ids: tick_changed_ids,
-            added_filter_ids: tick_added_ids,
             single_entity_enforced,
         }
     }
@@ -784,13 +675,13 @@ impl PyQueryIter {
 
     /// Returns true if the entity passes all Added/Changed tick filters.
     /// Fast path: returns true immediately when no tick filters exist.
+    /// The check itself is shared (`pybevy_ecs::shared::cached_query`).
     #[inline]
     fn entity_passes_tick_filters(&self, entity: &FilteredEntityAccess) -> bool {
-        let cached = self.cached();
         passes_tick_filters(
             |id| entity.get_change_ticks_by_id(id),
-            &cached.changed_filter_ids,
-            &cached.added_filter_ids,
+            &self.cached().core.changed_filter_ids,
+            &self.cached().core.added_filter_ids,
             self.last_run,
             self.this_run,
         )
@@ -799,45 +690,8 @@ impl PyQueryIter {
     /// Returns true if there are any tick filters (Added/Changed) on this query.
     #[inline]
     fn has_tick_filters(&self) -> bool {
-        let cached = self.cached();
-        !cached.changed_filter_ids.is_empty() || !cached.added_filter_ids.is_empty()
+        self.cached().core.has_tick_filters()
     }
-}
-
-/// Check whether an entity passes Added/Changed tick filters.
-///
-/// Generic over the entity type via a closure that provides `get_change_ticks_by_id`.
-/// Used by both `FilteredEntityAccess` (for __next__/get/single/iter_many) and
-/// raw `FilteredEntityRef`/`FilteredEntityMut` (for __len__/is_empty via iter_manual).
-#[inline]
-fn passes_tick_filters(
-    get_ticks: impl Fn(ComponentId) -> Option<ComponentTicks>,
-    changed_ids: &[ComponentId],
-    added_ids: &[ComponentId],
-    last_run: Tick,
-    this_run: Tick,
-) -> bool {
-    if changed_ids.is_empty() && added_ids.is_empty() {
-        return true;
-    }
-
-    for &id in changed_ids {
-        if let Some(ticks) = get_ticks(id) {
-            if !ticks.is_changed(last_run, this_run) {
-                return false;
-            }
-        }
-    }
-
-    for &id in added_ids {
-        if let Some(ticks) = get_ticks(id) {
-            if !ticks.is_added(last_run, this_run) {
-                return false;
-            }
-        }
-    }
-
-    true
 }
 
 #[pymethods]
@@ -874,7 +728,7 @@ impl PyQueryIter {
             let cell = self
                 .world_cell
                 .expect("Query used outside system execution");
-            let (read_only, qs_ptr) = self.cached().query_state.parts();
+            let (read_only, qs_ptr) = self.cached().core.state.parts();
             // SAFETY: declared access from initialize covers this state; the executor
             // prevents conflicting systems from running concurrently, so the unchecked
             // access is unique. Ticks flow explicitly for per-entity change detection.
@@ -931,12 +785,12 @@ impl PyQueryIter {
 
         let cached = self.cached();
         if !self.has_tick_filters() {
-            return cached.query_state.count(cell, self.last_run, self.this_run);
+            return cached.core.state.count(cell, self.last_run, self.this_run);
         }
 
         // Count with tick filtering: iterate the cell-based unchecked iterator and
         // apply the per-entity Changed/Added checks.
-        let (read_only, qs_ptr) = cached.query_state.parts();
+        let (read_only, qs_ptr) = cached.core.state.parts();
         // SAFETY: declared access from initialize covers this state; the executor
         // prevents conflicting systems from running concurrently, so the unchecked
         // access is unique.
@@ -959,7 +813,7 @@ impl PyQueryIter {
             .expect("Query used outside system execution");
         let last_run = self.last_run;
         let this_run = self.this_run;
-        let (read_only, qs_ptr) = self.cached().query_state.parts();
+        let (read_only, qs_ptr) = self.cached().core.state.parts();
 
         // Validate exactly one entity exists and get it for extraction.
         // Loop through entities to find those passing tick filters.
@@ -1072,13 +926,14 @@ impl PyQueryIter {
 
         if !self.has_tick_filters() {
             return Ok(cached
-                .query_state
+                .core
+                .state
                 .is_empty_check(cell, self.last_run, self.this_run));
         }
 
         // Check with tick filtering: iterate the cell-based unchecked iterator and
         // stop at the first entity that passes the per-entity Changed/Added checks.
-        let (read_only, qs_ptr) = cached.query_state.parts();
+        let (read_only, qs_ptr) = cached.core.state.parts();
         // SAFETY: declared access from initialize covers this state; the executor
         // prevents conflicting systems from running concurrently, so the unchecked
         // access is unique.
@@ -1099,7 +954,7 @@ impl PyQueryIter {
         let cell = self
             .world_cell
             .expect("Query used outside system execution");
-        let (read_only, qs_ptr) = self.cached().query_state.parts();
+        let (read_only, qs_ptr) = self.cached().core.state.parts();
         // SAFETY: declared access from initialize covers this state; the executor
         // prevents conflicting systems from running concurrently, so the unchecked
         // access is unique.
@@ -1156,7 +1011,7 @@ impl PyQueryIter {
         let cell = self
             .world_cell
             .expect("Query used outside system execution");
-        let (read_only, qs_ptr) = self.cached().query_state.parts();
+        let (read_only, qs_ptr) = self.cached().core.state.parts();
         let (last_run, this_run) = (self.last_run, self.this_run);
 
         for entity_obj in entities.try_iter()? {
