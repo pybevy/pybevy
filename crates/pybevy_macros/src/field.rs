@@ -16,7 +16,7 @@ use crate::util::find_storage_field_type;
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyfield]  // Bevy type inferred from storage field
 /// #[pyclass(name = "BloomPrefilter")]
 /// pub struct PyBloomPrefilter {
@@ -26,7 +26,7 @@ use crate::util::find_storage_field_type;
 ///
 /// For explicit type specification (e.g., complex generics):
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyfield(SomeComplexType<T>)]
 /// #[pyclass(name = "MyType")]
 /// pub struct PyMyType {

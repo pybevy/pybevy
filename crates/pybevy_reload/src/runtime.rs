@@ -1,6 +1,36 @@
 use std::{any::TypeId, collections::HashSet};
 
-use bevy::ecs::world::World;
+use bevy::{ecs::world::World, prelude::Resource};
+
+/// Fingerprint of the reload-relevant parts of loaded definitions.
+///
+/// Partial reloads swap system code in place but do not re-run Startup,
+/// re-insert resources, or re-register observers; those only happen on Full.
+/// Comparing fingerprints across reloads tells the orchestrator whether a
+/// Partial reload would silently drop such changes and must escalate.
+///
+/// Code hashes cover the function bodies (including nested functions and
+/// literals), not module-level globals they reference; a Startup system that
+/// only changes behavior through an edited global constant still needs a
+/// manual Full reload (F5).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DefsFingerprint {
+    /// Hash over Startup-stage system names and code objects.
+    pub startup_code: u64,
+    /// Hash over resource type names.
+    pub resource_types: u64,
+    /// Hash over observer names and code objects.
+    pub observer_code: u64,
+    pub has_startup: bool,
+    pub has_resources: bool,
+    pub has_observers: bool,
+}
+
+/// Stores the previous generation's [`DefsFingerprint`] between reloads.
+#[derive(Resource, Default)]
+pub struct EscalationTracker {
+    pub last: Option<DefsFingerprint>,
+}
 
 /// Error type for reload operations.
 /// Wraps the error message and whether it's a load failure (old systems keep running).
@@ -36,9 +66,10 @@ pub trait ReloadRuntime {
     /// Called BEFORE generation increment — on failure, old systems keep running.
     fn load_definitions(&mut self, generation: u32) -> Result<Self::Defs, ReloadError>;
 
-    /// Check if pending definitions require escalation from Partial to Full.
-    /// Returns the reason string if escalation is needed.
-    fn requires_escalation(&self, defs: &Self::Defs) -> Option<&'static str>;
+    /// Compute a [`DefsFingerprint`] of the pending definitions.
+    /// The orchestrator compares it against the previous generation's to
+    /// decide whether a Partial reload must escalate to Full.
+    fn defs_fingerprint(&self, defs: &Self::Defs) -> DefsFingerprint;
 
     /// Extract plugin names from pending definitions (for delta detection).
     fn plugin_names(&self, defs: &Self::Defs) -> Vec<String>;

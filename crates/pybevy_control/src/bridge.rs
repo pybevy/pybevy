@@ -24,6 +24,14 @@ const MAX_REQUESTS_PER_FRAME: usize = 32;
 #[derive(bevy::prelude::Component)]
 pub struct InternalOverlayUi;
 
+/// Refcount of in-flight captures (screenshots, timelines, turnarounds) that
+/// want the internal overlay off-screen. Captures only increment/decrement;
+/// the overlay's render system drives `Visibility` from this every frame, so
+/// restoration is automatic once the count returns to zero (and survives the
+/// overlay entities being respawned mid-capture by a Full hot reload).
+#[derive(Resource, Default)]
+pub struct OverlaySuppression(pub u32);
+
 /// Entity can be addressed by numeric ID or Name string
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -61,6 +69,15 @@ pub struct GetComponentParams {
     pub component: String,
 }
 
+/// schemars `schema_with` helper emitting `{"type": "object"}` for a
+/// `serde_json::Value` field that must be a JSON object. Without an explicit
+/// type, schemars renders `serde_json::Value` as an untyped (any) schema, and
+/// MCP clients then serialize the argument as a JSON string, which the handlers
+/// reject ("must be a JSON object").
+fn json_object_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "object" })
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetComponentParams {
     /// Entity ID or Name
@@ -68,6 +85,7 @@ pub struct SetComponentParams {
     /// Component name
     pub component: String,
     /// Fields to update
+    #[schemars(schema_with = "json_object_schema")]
     pub fields: serde_json::Value,
 }
 
@@ -84,6 +102,7 @@ pub struct SetResourceParams {
     /// Resource type name
     pub resource_type: String,
     /// Resource value as JSON
+    #[schemars(schema_with = "json_object_schema")]
     pub value: serde_json::Value,
 }
 
@@ -280,6 +299,7 @@ pub struct SetAssetParams {
     /// Asset type: StandardMaterial, Mesh, ColorMaterial, AudioSource
     pub asset_type: String,
     /// Fields to update on the asset
+    #[schemars(schema_with = "json_object_schema")]
     pub fields: serde_json::Value,
 }
 
@@ -354,6 +374,7 @@ pub enum ControlOperation {
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SpawnEntity {
         /// Component name -> field values (e.g. {"Transform": {"translation": [0, 5, 0]}})
+        #[schemars(schema_with = "json_object_schema")]
         components: serde_json::Value,
     },
     /// Remove an entity by ID or Name.
@@ -688,6 +709,7 @@ pub fn push_pending_timeline(
             total_captures: params.capture_count,
             next_capture_index: 0,
             collected: Vec::new(),
+            overlay_suppressed: false,
         },
     );
 }
@@ -789,6 +811,7 @@ pub fn push_pending_turnaround(
         frames_remaining: 0,
         hide_ui: params.hide_ui.unwrap_or(true),
         ui_restore: None,
+        overlay_suppressed: false,
         debug_cleanup: None,
         look_at: final_look_at,
         pending_screenshot_entity: None,

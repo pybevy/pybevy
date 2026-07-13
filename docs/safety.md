@@ -131,8 +131,12 @@ materialized across the parameter loop. The arms differ in shape:
   assertion fires with three or more exclusives of mixed shape in one schedule).
 - **View, message, and asset** wrappers hold the cell and derive a momentary
   world pointer per operation, because their internals (`QueryBuilder`, the
-  message macros, the `AssetBridge`) take `&mut World`. The declared access from
-  `initialize` bounds the data those operations actually touch. This is the same
+  message macros, the `AssetBridge`) take `&mut World`. `initialize` declares the
+  access these operations are expected to touch, but the `&mut World` they derive
+  is not itself narrowed to that declaration: at the aliasing level these paths
+  still reach the whole world, and soundness rests on the executor not scheduling
+  a conflicting system plus the `ValidityFlag` fence, not on the pointer being
+  bounded. This is the same
   residual-pointer class as the custom-component write-back path inside
   `PyQueryIter` (`world_ptr`), which still stamps change ticks through a
   `*mut World`; narrowing these internals is planned follow-up work.

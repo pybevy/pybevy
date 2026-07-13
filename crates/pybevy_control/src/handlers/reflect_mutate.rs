@@ -972,7 +972,7 @@ mod tests {
 
     #[test]
     fn convert_number_error_includes_type_info() {
-        let n = serde_json::Number::from_f64(3.14).unwrap();
+        let n = serde_json::Number::from_f64(std::f64::consts::PI).unwrap();
         let result = super::convert_number(&n, TypeId::of::<i32>());
         assert!(result.is_err());
         let err = result.unwrap_err();

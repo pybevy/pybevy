@@ -11,7 +11,7 @@ use super::{
     screenshot::{DebugCameraCleanup, setup_debug_camera},
     spatial::compute_world_aabb,
 };
-use crate::bridge::{ControlError, DebugCameraRequest};
+use crate::bridge::{ControlError, DebugCameraRequest, InternalOverlayUi};
 
 /// A single viewpoint in a turnaround capture.
 pub struct TurnaroundView {
@@ -35,6 +35,9 @@ pub struct ActiveTurnaround {
     pub frames_remaining: u32,
     pub hide_ui: bool,
     pub ui_restore: Option<Vec<(Entity, Visibility)>>,
+    /// Whether this turnaround holds an `OverlaySuppression` refcount
+    /// (taken at the first viewpoint, released on completion).
+    pub overlay_suppressed: bool,
     pub debug_cleanup: Option<DebugCameraCleanup>,
     pub look_at: [f32; 3],
     /// Entity of pending Screenshot component, if any
@@ -117,7 +120,8 @@ pub fn compute_scene_bounds(world: &mut World) -> Option<(Vec3A, Vec3A)> {
 /// Returns a list of (entity, original_visibility) for restoration.
 fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
     let mut ui_entities: Vec<(Entity, Visibility)> = Vec::new();
-    let mut query = world.query::<(Entity, &Visibility, &bevy::ui::Node)>();
+    let mut query = world
+        .query_filtered::<(Entity, &Visibility, &bevy::ui::Node), Without<InternalOverlayUi>>();
     for (entity, vis, _) in query.iter(world) {
         ui_entities.push((entity, *vis));
     }
@@ -200,6 +204,12 @@ pub fn process_pending_turnarounds(world: &mut World) {
                 }
             }
 
+            // Release the overlay suppression held by this turnaround
+            if turnaround.overlay_suppressed {
+                turnaround.overlay_suppressed = false;
+                super::screenshot::release_internal_overlay(world);
+            }
+
             // Composite and send response
             let result = composite_turnaround(&mut turnaround);
             if let Some(tx) = turnaround.response_tx.take() {
@@ -208,7 +218,14 @@ pub fn process_pending_turnarounds(world: &mut World) {
             continue;
         }
 
-        // Hide UI on first viewpoint
+        // Suppress the internal overlay for the duration of the turnaround
+        // (the overlay is capture noise regardless of hide_ui)
+        if turnaround.current_index == 0 && !turnaround.overlay_suppressed {
+            super::screenshot::suppress_internal_overlay(world);
+            turnaround.overlay_suppressed = true;
+        }
+
+        // Hide authored UI on first viewpoint
         if turnaround.current_index == 0 && turnaround.hide_ui && turnaround.ui_restore.is_none() {
             turnaround.ui_restore = Some(hide_ui_nodes(world));
         }
@@ -682,6 +699,7 @@ mod tests {
             frames_remaining: 0,
             hide_ui: false,
             ui_restore: None,
+            overlay_suppressed: false,
             debug_cleanup: None,
             look_at: [0.0, 0.0, 0.0],
             pending_screenshot_entity: None,

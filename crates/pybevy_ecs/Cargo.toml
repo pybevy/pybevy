@@ -11,6 +11,7 @@ homepage = "https://pybevy.com"
 pyo3 = { workspace = true, features = ["macros"] }
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
+pybevy_storage = { path = "../pybevy_storage", version = "=0.2.1" }
 
 [dependencies.bevy]
 workspace = true

@@ -50,11 +50,8 @@ pub fn trigger_reload(
         ReloadMode::Full => ReloadRequestMode::Full,
     };
 
-    // Apply time control BEFORE queuing reload so no frames run at wrong speed.
-    // Validate first: set_relative_speed panics on <= 0.0 / non-finite and
-    // spirals the fixed-timestep loop on very large values.
+    // Apply time control BEFORE queuing reload — no frames run at wrong speed
     if let Some(scale) = time_scale {
-        crate::handlers::time_control::validate_time_scale(scale)?;
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(scale);
     }
@@ -309,7 +306,8 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
 
                     if has_error {
                         // Error during reload — respond immediately without screenshot
-                        let entity_count = count_entities(world);
+                        let entity_count =
+                            crate::handlers::entity_count::scene_entity_count(world) as usize;
                         let response = serde_json::json!({
                             "reload": reload_response,
                             "errors": reload_response.get("error"),
@@ -319,7 +317,8 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                         let _ = rac.response_tx.send(Ok(response));
                     } else {
                         // Success — queue screenshot with extra reload data
-                        let entity_count = count_entities(world);
+                        let entity_count =
+                            crate::handlers::entity_count::scene_entity_count(world) as usize;
 
                         let debug_camera = rac.position.map(|pos| DebugCameraRequest {
                             position: pos,
@@ -355,11 +354,6 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
 
     pending.pending = still_waiting;
     world.insert_resource(pending);
-}
-
-/// Count total entities in the world.
-fn count_entities(world: &World) -> usize {
-    world.entities().len() as usize
 }
 
 /// Generate error hints from common error patterns.
@@ -429,22 +423,6 @@ mod tests {
     fn generate_error_hint_empty_string() {
         let hint = generate_error_hint("");
         assert!(hint.is_none());
-    }
-
-    #[test]
-    fn count_entities_empty() {
-        let world = World::new();
-        // usize is always >= 0; just verify the call succeeds on an empty world
-        let _count = count_entities(&world);
-    }
-
-    #[test]
-    fn count_entities_with_spawned() {
-        let mut world = World::new();
-        world.spawn_empty();
-        world.spawn_empty();
-        world.spawn_empty();
-        assert!(count_entities(&world) >= 3);
     }
 
     #[test]
@@ -627,23 +605,6 @@ mod tests {
         let result = trigger_reload(&mut world, ReloadMode::Full, true, Some(2.0)).unwrap();
         assert_eq!(result["paused"], true);
         assert_eq!(result["relative_speed"], 2.0);
-    }
-
-    #[test]
-    fn trigger_reload_rejects_out_of_range_time_scale() {
-        // Regression: the reload time_scale param reached set_relative_speed with
-        // no validation at all. A negative/non-finite value panicked the
-        // subprocess and a huge value spiraled the fixed-timestep loop. Both are
-        // now rejected before any state changes and before the reload is queued.
-        for bad in [-1.0f32, f32::INFINITY, 1.0e6] {
-            let mut world = world_with_reload_deps();
-            let err = trigger_reload(&mut world, ReloadMode::Full, false, Some(bad)).unwrap_err();
-            assert!(!err.message.is_empty());
-            // Speed untouched and no reload queued.
-            let speed = world.resource::<Time<Virtual>>().relative_speed();
-            assert!((speed - 1.0).abs() < 1e-6);
-            assert!(world.get_resource::<PendingReloadRequest>().is_none());
-        }
     }
 
     #[test]

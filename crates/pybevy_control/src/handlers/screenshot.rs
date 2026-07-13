@@ -14,7 +14,9 @@ use bevy::{
 use image::{ImageFormat, Rgb, RgbImage};
 use tokio::sync::oneshot;
 
-use crate::bridge::{ControlError, DebugCameraRequest, InternalOverlayUi, PendingScreenshots};
+use crate::bridge::{
+    ControlError, DebugCameraRequest, InternalOverlayUi, OverlaySuppression, PendingScreenshots,
+};
 
 /// Resource storing the latest GPU readback frame for headless screenshots.
 ///
@@ -86,6 +88,9 @@ pub struct ActiveTimeline {
     pub total_captures: u32,
     pub next_capture_index: u32,
     pub collected: Vec<(u32, RgbImage)>,
+    /// Whether this timeline holds an `OverlaySuppression` refcount
+    /// (taken at first capture, released on completion).
+    pub overlay_suppressed: bool,
 }
 
 /// Resource mapping screenshot Entity → (timeline_id, capture_index).
@@ -150,16 +155,12 @@ pub fn process_pending_screenshots(world: &mut World) {
 
     // Process ready screenshots
     for mut screenshot in ready {
-        // Always hide internal overlay entities (hot reload UI)
-        let mut overlay_restore = hide_internal_overlay(world);
+        // Always suppress the internal overlay (hot reload UI); released when
+        // the screenshot completes
+        suppress_internal_overlay(world);
         // Additionally hide all authored UI if requested
         let ui_restore = if screenshot.hide_ui {
-            let mut all = hide_ui_nodes(world);
-            // Merge overlay restores (avoid duplicates)
-            all.append(&mut overlay_restore);
-            Some(all)
-        } else if !overlay_restore.is_empty() {
-            Some(overlay_restore)
+            Some(hide_ui_nodes(world))
         } else {
             None
         };
@@ -213,6 +214,10 @@ pub fn process_pending_screenshots(world: &mut World) {
                 let result = capture_headless_frame(world, screenshot.max_width);
                 let result = merge_extra_response(result, screenshot.extra_response);
                 let _ = screenshot.response_tx.send(result);
+                release_internal_overlay(world);
+                if let Some(restore) = ui_restore {
+                    restore_ui_nodes(world, restore);
+                }
             }
         }
     }
@@ -260,6 +265,10 @@ pub fn process_pending_screenshots(world: &mut World) {
                     let result = capture_headless_frame(world, s.max_width);
                     let result = merge_extra_response(result, s.extra_response);
                     let _ = s.response_tx.send(result);
+                    release_internal_overlay(world);
+                    if let Some(restore) = s.ui_restore {
+                        restore_ui_nodes(world, restore);
+                    }
                 }
             }
         }
@@ -312,6 +321,22 @@ pub fn process_pending_timelines(world: &mut World) {
         timelines.active.remove(&id);
     }
 
+    // Suppress the internal hot-reload overlay for the duration of any
+    // timeline that is about to capture; released when the timeline
+    // completes. The refcount makes overlapping timelines compose.
+    for (id, _) in &captures_to_spawn {
+        let needs_suppress = timelines
+            .active
+            .get(id)
+            .is_some_and(|t| !t.overlay_suppressed);
+        if needs_suppress {
+            suppress_internal_overlay(world);
+            if let Some(timeline) = timelines.active.get_mut(id) {
+                timeline.overlay_suppressed = true;
+            }
+        }
+    }
+
     world.insert_resource(timelines);
 
     let has_window = world
@@ -334,17 +359,27 @@ pub fn process_pending_timelines(world: &mut World) {
     } else {
         // Headless fallback: read from HeadlessFrameBuffer
         if let Ok(rgb) = read_headless_frame(world) {
-            let mut timelines = world.resource_mut::<PendingTimelines>();
-            for (timeline_id, capture_index) in captures_to_spawn {
-                if let Some(timeline) = timelines.active.get_mut(&timeline_id) {
-                    timeline.collected.push((capture_index, rgb.clone()));
-                    if timeline.collected.len() as u32 == timeline.total_captures {
-                        let result = composite_contact_sheet(timeline);
-                        if let Some(tx) = timeline.response_tx.take() {
-                            let _ = tx.send(result);
+            let mut overlay_releases: u32 = 0;
+            {
+                let mut timelines = world.resource_mut::<PendingTimelines>();
+                for (timeline_id, capture_index) in captures_to_spawn {
+                    if let Some(timeline) = timelines.active.get_mut(&timeline_id) {
+                        timeline.collected.push((capture_index, rgb.clone()));
+                        if timeline.collected.len() as u32 == timeline.total_captures {
+                            let result = composite_contact_sheet(timeline);
+                            if let Some(tx) = timeline.response_tx.take() {
+                                let _ = tx.send(result);
+                            }
+                            if timeline.overlay_suppressed {
+                                timeline.overlay_suppressed = false;
+                                overlay_releases += 1;
+                            }
                         }
                     }
                 }
+            }
+            for _ in 0..overlay_releases {
+                release_internal_overlay(world);
             }
         }
     }
@@ -363,11 +398,13 @@ fn set_gizmos_enabled(world: &mut World, enabled: bool) -> Option<bool> {
     }
 }
 
-/// Hide all UI Node entities by setting their visibility to Hidden.
-/// Returns a list of (entity, original_visibility) for restoration.
+/// Hide authored UI Node entities by setting their visibility to Hidden.
+/// Returns a list of (entity, original_visibility) for restoration. Internal
+/// overlay entities are excluded: they are owned by `OverlaySuppression`.
 fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
     let mut ui_entities: Vec<(Entity, Visibility)> = Vec::new();
-    let mut query = world.query::<(Entity, &Visibility, &bevy::ui::Node)>();
+    let mut query = world
+        .query_filtered::<(Entity, &Visibility, &bevy::ui::Node), Without<InternalOverlayUi>>();
     for (entity, vis, _) in query.iter(world) {
         ui_entities.push((entity, *vis));
     }
@@ -387,27 +424,51 @@ fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
     ui_entities
 }
 
-/// Hide internal overlay UI entities (hot reload status, error text) unconditionally.
-fn hide_internal_overlay(world: &mut World) -> Vec<(Entity, Visibility)> {
-    let mut overlay_entities: Vec<(Entity, Visibility)> = Vec::new();
-    let mut query = world.query::<(Entity, &Visibility, &InternalOverlayUi)>();
-    for (entity, vis, _) in query.iter(world) {
-        overlay_entities.push((entity, *vis));
+/// Restore UI nodes hidden by `hide_ui_nodes` to their recorded visibility.
+fn restore_ui_nodes(world: &mut World, restore: Vec<(Entity, Visibility)>) {
+    for (entity, original_vis) in restore {
+        if let Some(mut vis) = world.get_mut::<Visibility>(entity) {
+            *vis = original_vis;
+        }
     }
-    for (entity, _) in &overlay_entities {
-        if let Some(mut vis) = world.get_mut::<Visibility>(*entity) {
+}
+
+/// Suppress the internal overlay (hot reload status, error text): bump the
+/// `OverlaySuppression` refcount and force-hide the overlay entities so a
+/// capture triggered later this same frame is already clean (visibility
+/// propagation has run by now). The overlay's own render system re-applies
+/// visibility from the refcount every frame afterwards, and restores the
+/// overlay once `release_internal_overlay` brings the count back to zero.
+pub(crate) fn suppress_internal_overlay(world: &mut World) {
+    world
+        .get_resource_or_insert_with(OverlaySuppression::default)
+        .0 += 1;
+
+    let mut overlay_entities: Vec<Entity> = Vec::new();
+    let mut query = world.query_filtered::<Entity, With<InternalOverlayUi>>();
+    for entity in query.iter(world) {
+        overlay_entities.push(entity);
+    }
+    for entity in overlay_entities {
+        if let Some(mut vis) = world.get_mut::<Visibility>(entity) {
             *vis = Visibility::Hidden;
         }
         // Force immediate render-pipeline visibility update
         // (bypass PostUpdate VisibilityPropagate which has already run)
-        if let Some(mut inherited) = world.get_mut::<InheritedVisibility>(*entity) {
+        if let Some(mut inherited) = world.get_mut::<InheritedVisibility>(entity) {
             *inherited = InheritedVisibility::HIDDEN;
         }
-        if let Some(mut view_vis) = world.get_mut::<ViewVisibility>(*entity) {
+        if let Some(mut view_vis) = world.get_mut::<ViewVisibility>(entity) {
             *view_vis = ViewVisibility::HIDDEN;
         }
     }
-    overlay_entities
+}
+
+/// Release one `suppress_internal_overlay` hold.
+pub(crate) fn release_internal_overlay(world: &mut World) {
+    if let Some(mut suppression) = world.get_resource_mut::<OverlaySuppression>() {
+        suppression.0 = suppression.0.saturating_sub(1);
+    }
 }
 
 /// Set up a debug camera for a screenshot.
@@ -557,6 +618,7 @@ pub fn screenshot_captured_observer(
     mut turnarounds: ResMut<super::turnaround::PendingTurnarounds>,
     mut turnaround_captures: ResMut<super::turnaround::TurnaroundCaptures>,
     gizmo_store: Option<ResMut<GizmoConfigStore>>,
+    mut overlay_suppression: Option<ResMut<OverlaySuppression>>,
     mut commands: Commands,
     mut cameras: Query<&mut Camera>,
     mut transforms: Query<&mut Transform>,
@@ -597,6 +659,14 @@ pub fn screenshot_captured_observer(
                     let _ = tx.send(result);
                 }
 
+                // Release the overlay suppression held by this timeline
+                if timeline.overlay_suppressed {
+                    timeline.overlay_suppressed = false;
+                    if let Some(suppression) = overlay_suppression.as_deref_mut() {
+                        suppression.0 = suppression.0.saturating_sub(1);
+                    }
+                }
+
                 // Clean up debug camera if present
                 if let Some(cleanup) = timeline.debug_cleanup.take() {
                     cleanup_debug_camera(
@@ -622,6 +692,11 @@ pub fn screenshot_captured_observer(
     let result = encode_screenshot(img, responder.max_width);
     let result = merge_extra_response(result, responder.extra_response);
     let _ = responder.response_tx.send(result);
+
+    // Release this screenshot's overlay suppression
+    if let Some(suppression) = overlay_suppression.as_deref_mut() {
+        suppression.0 = suppression.0.saturating_sub(1);
+    }
 
     // Restore hidden UI nodes
     if let Some(restore) = responder.ui_restore {
@@ -1443,6 +1518,7 @@ mod tests {
             total_captures: 1,
             next_capture_index: 0,
             collected: vec![(0, img)],
+            overlay_suppressed: false,
         };
 
         let result = composite_contact_sheet(&mut timeline);
@@ -1471,6 +1547,7 @@ mod tests {
             total_captures: 4,
             next_capture_index: 0,
             collected,
+            overlay_suppressed: false,
         };
 
         let result = composite_contact_sheet(&mut timeline).unwrap();
@@ -1492,6 +1569,7 @@ mod tests {
             total_captures: 0,
             next_capture_index: 0,
             collected: vec![],
+            overlay_suppressed: false,
         };
 
         let result = composite_contact_sheet(&mut timeline);
@@ -1511,6 +1589,7 @@ mod tests {
             total_captures: 1,
             next_capture_index: 0,
             collected: vec![(0, img)],
+            overlay_suppressed: false,
         };
 
         let result = composite_contact_sheet(&mut timeline).unwrap();
@@ -1539,33 +1618,95 @@ mod tests {
     }
 
     #[test]
-    fn hide_internal_overlay_empty_world() {
+    fn suppress_internal_overlay_counts_without_entities() {
         let mut world = World::new();
-        let result = hide_internal_overlay(&mut world);
-        assert!(result.is_empty());
+        suppress_internal_overlay(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 1);
+        release_internal_overlay(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+        // Releasing below zero saturates instead of underflowing
+        release_internal_overlay(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
     }
 
     #[test]
-    fn hide_internal_overlay_hides_overlay_entities() {
+    fn suppress_internal_overlay_force_hides_and_refcounts() {
         let mut world = World::new();
         let entity = world.spawn((Visibility::Visible, InternalOverlayUi)).id();
 
-        let hidden = hide_internal_overlay(&mut world);
-        assert_eq!(hidden.len(), 1);
-        assert_eq!(hidden[0].0, entity);
-        assert_eq!(hidden[0].1, Visibility::Visible);
+        // Two overlapping captures compose via the refcount
+        suppress_internal_overlay(&mut world);
+        suppress_internal_overlay(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 2);
+        assert_eq!(
+            *world.get::<Visibility>(entity).unwrap(),
+            Visibility::Hidden
+        );
 
-        let vis = world.get::<Visibility>(entity).unwrap();
-        assert_eq!(*vis, Visibility::Hidden);
+        release_internal_overlay(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 1);
+        release_internal_overlay(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+    }
+
+    /// The internal overlay must be suppressed when a timeline capture fires.
+    /// Previously only capture_screenshot hid it; capture_timeline burned
+    /// the debug overlay into every contact-sheet frame.
+    #[test]
+    fn timeline_capture_suppresses_internal_overlay() {
+        let mut world = World::new();
+        let overlay = world.spawn((Visibility::Visible, InternalOverlayUi)).id();
+
+        let (tx, _rx) = oneshot::channel();
+        let mut pending = PendingTimelines::default();
+        pending.active.insert(
+            0,
+            ActiveTimeline {
+                response_tx: Some(tx),
+                max_width: None,
+                columns: 2,
+                debug_cleanup: None,
+                schedule: VecDeque::from([0]), // capture on this frame
+                total_captures: 1,
+                next_capture_index: 0,
+                collected: vec![],
+                overlay_suppressed: false,
+            },
+        );
+        world.insert_resource(pending);
+
+        process_pending_timelines(&mut world);
+
+        assert_eq!(
+            *world.get::<Visibility>(overlay).unwrap(),
+            Visibility::Hidden,
+            "overlay must be hidden while the timeline captures"
+        );
+        assert_eq!(
+            world.resource::<OverlaySuppression>().0,
+            1,
+            "timeline must hold one suppression refcount"
+        );
+        assert!(
+            world.resource::<PendingTimelines>().active[&0].overlay_suppressed,
+            "timeline must record its hold so completion releases exactly once"
+        );
+
+        // A second tick of the same timeline must not double-count
+        process_pending_timelines(&mut world);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 1);
     }
 
     #[test]
-    fn hide_internal_overlay_ignores_non_overlay() {
+    fn suppress_internal_overlay_ignores_non_overlay() {
         let mut world = World::new();
-        world.spawn(Visibility::Visible);
+        let plain = world.spawn(Visibility::Visible).id();
 
-        let hidden = hide_internal_overlay(&mut world);
-        assert!(hidden.is_empty());
+        suppress_internal_overlay(&mut world);
+        assert_eq!(
+            *world.get::<Visibility>(plain).unwrap(),
+            Visibility::Visible
+        );
     }
 
     #[test]
@@ -1602,6 +1743,7 @@ mod tests {
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
+                overlay_suppressed: false,
             },
         );
         timelines.next_id = 1;
@@ -1729,6 +1871,7 @@ mod tests {
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
+                overlay_suppressed: false,
             },
         );
         timelines.next_id = 1;
@@ -1763,6 +1906,7 @@ mod tests {
                 total_captures: 3,
                 next_capture_index: 0,
                 collected: vec![],
+                overlay_suppressed: false,
             },
         );
         timelines.next_id = 1;

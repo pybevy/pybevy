@@ -12,7 +12,7 @@ For existing Rust Bevy projects that want to add Python scripting — modding, r
 ## Running
 
 ```bash
-cargo run --example native_plugin_example --release
+cargo run --example native_plugin_example --features native-plugin --release
 ```
 
 ## Hot Reload

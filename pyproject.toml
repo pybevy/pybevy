@@ -83,6 +83,9 @@ module-name = "pybevy._pybevy"
 include = ["pybevy", "LICENSE-APACHE", "LICENSE-MIT"]
 exclude = ["target"]
 python-packages = []
+# extension-module lives here instead of pybevy_python's Cargo.toml so that
+# `cargo test --workspace` links libpython (see crates/pybevy_python/Cargo.toml).
+features = ["pyo3/extension-module"]
 
 [tool.ruff]
 lint.select = ["ANN", "F", "B", "UP", "PLC0415", "I", "PIE", "C4", "RET", "RUF", "T20", "SIM", "A", "PT"]

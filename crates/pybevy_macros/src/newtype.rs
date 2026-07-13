@@ -21,7 +21,7 @@ use crate::util::reflect_registration_tokens;
 ///
 /// # Usage in feature crates
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pywrap(Tonemapping)]
 /// #[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
 /// #[derive(Clone, Debug)]

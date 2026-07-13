@@ -372,7 +372,7 @@ This uses the `notify` crate to watch directories specified via `with_python_pat
 See `examples/native/native_plugin_example.rs` and `examples/native/example_systems.py` for a complete working example:
 
 ```bash
-cargo run --example native_plugin_example
+cargo run --example native_plugin_example --features native-plugin
 ```
 
 ## Troubleshooting
@@ -390,7 +390,7 @@ Or set `PYTHONPATH`:
 
 ```bash
 export PYTHONPATH=/path/to/python/modules:$PYTHONPATH
-cargo run --example native_plugin_example
+cargo run --example native_plugin_example --features native-plugin
 ```
 
 ### "Unsupported system parameter"

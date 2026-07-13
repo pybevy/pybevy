@@ -18,7 +18,7 @@ use crate::util::{AssetArgs, find_storage_field_type, reflect_registration_token
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[native_asset(Shader)]  // PyAssetType variant name
 /// #[pyclass(name = "Shader", extends = PyAsset)]
 /// #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Usage in feature crates (e.g., pybevy_audio)
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyasset(AudioSource)]
 /// #[pyclass(name = "AudioSource", extends = PyAsset)]
 /// pub struct PyAudioSource {
@@ -117,7 +117,7 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// For assets where Clone is not implemented, use `no_clone`:
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyasset(SomeAsset, no_clone)]
 /// #[pyclass(name = "SomeAsset", extends = PyAsset)]
 /// pub struct PySomeAsset {
@@ -815,14 +815,14 @@ pub(crate) fn generate_handle_bridge_tokens(
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyhandle(Mesh3d)]
 /// #[pyclass(name = "Mesh3d", extends = PyComponent, frozen)]
 /// pub struct PyMesh3d(pub PyHandle);
 /// ```
 ///
 /// For generic Bevy types:
-/// ```rust
+/// ```rust,ignore
 /// #[pyhandle(MeshMaterial3d<StandardMaterial>, "MeshMaterial3d")]
 /// #[pyclass(name = "MeshMaterial3d", extends = PyComponent, frozen)]
 /// pub struct PyMeshMaterial3d(pub PyHandle);

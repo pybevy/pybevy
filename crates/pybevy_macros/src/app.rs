@@ -6,7 +6,7 @@ use syn::parse_macro_input;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use pybevy::pybevy_app;
 ///
 /// #[pybevy_app]

@@ -1,31 +1,12 @@
-use bevy::{
-    ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World},
-    time::Time,
-};
+use bevy::{ecs::world::World, time::Time};
 
 use crate::bridge::ControlError;
-
-/// Live count of all ECS entities in the world.
-///
-/// Matches the count produced by `list_entities` and `scene_summary` so that
-/// `get_performance.entity_count`, `scene://entities.entity_count`, and
-/// `get_scene_summary.total_entities` agree on a single canonical value.
-///
-/// Computed live each call (cheap: a single archetype walk). The previous
-/// snapshot-based implementation could be up to 1 second stale because the
-/// overlay system updates it on a 1 Hz tick.
-fn live_entity_count(world: &mut World) -> u64 {
-    // Exclude resource-entities (resources are stored as entities) so the count
-    // reflects only real game entities, matching list_entities / scene_summary.
-    let mut q = world.query_filtered::<Entity, Without<IsResource>>();
-    q.iter(world).count() as u64
-}
 
 /// Get performance metrics from the debug overlay snapshot.
 /// Falls back to basic Time-based metrics if DebugSnapshot is not populated.
 pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlError> {
-    // entity_count is always live (cheap and consistent with other endpoints).
-    let entity_count = live_entity_count(world);
+    // Live each call, not from the 1 Hz snapshot, so it never lags spawns.
+    let entity_count = super::entity_count::scene_entity_count(world);
 
     // Try rich snapshot first (populated by hot reload overlay system)
     if let Some(snap) = world.get_resource::<pybevy_core::DebugSnapshot>()
@@ -111,6 +92,13 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
                 "total_schedule_systems".into(),
                 serde_json::json!(snap.total_schedule_systems),
             );
+            // Live scene systems for the current generation. Reported alongside
+            // the total so a rising total across reloads reads as expected
+            // generation accumulation (inert prior-generation systems), not a leak.
+            result.insert(
+                "current_generation_systems".into(),
+                serde_json::json!(snap.current_generation_systems),
+            );
         }
         if snap.python_gc_objects > 0 {
             result.insert(
@@ -144,6 +132,7 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
                         "delta_mb": format!("{:.1}", s.delta_mb),
                         "gc_objects": s.gc_objects,
                         "schedule_systems": s.schedule_systems,
+                        "current_generation_systems": s.current_generation_systems,
                     })
                 })
                 .collect();
@@ -299,6 +288,7 @@ mod tests {
             max_ms: 12.5,
         }];
         snap.total_schedule_systems = 12;
+        snap.current_generation_systems = 6;
         snap.python_gc_objects = 5000;
         snap.memory_growth_mb = 8.5;
         snap.memory_peak_mb = 300.0;
@@ -309,6 +299,7 @@ mod tests {
             delta_mb: 10.0,
             gc_objects: 4000,
             schedule_systems: 10,
+            current_generation_systems: 6,
         }];
         world.insert_resource(snap);
 
@@ -330,6 +321,11 @@ mod tests {
         assert_eq!(result["system_profiles"][0]["max_ms"], "4.20");
         assert_eq!(result["startup_profiles"][0]["max_ms"], "12.50");
         assert_eq!(result["total_schedule_systems"], 12);
+        assert_eq!(result["current_generation_systems"], 6);
+        assert_eq!(
+            result["reload_memory_snapshots"][0]["current_generation_systems"],
+            6
+        );
         assert_eq!(result["python_gc_objects"], 5000);
         assert!(result["memory_growth_mb"].is_string());
         assert!(result["memory_peak_mb"].is_string());

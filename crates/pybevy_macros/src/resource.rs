@@ -17,7 +17,7 @@ use crate::util::{find_storage_field_type, reflect_registration_tokens};
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[native_resource]
 /// #[pyclass(name = "Time", extends = PyResource)]
 /// pub struct PyTime {
@@ -27,7 +27,7 @@ use crate::util::{find_storage_field_type, reflect_registration_tokens};
 ///
 /// For generic Bevy types (e.g., `Time<Fixed>`), specify the full type:
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[native_resource(Time<Fixed>)]
 /// #[pyclass(name = "TimeFixed", extends = PyResource)]
 /// pub struct PyTimeFixed {
@@ -111,7 +111,7 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Usage in feature crates (e.g., pybevy_audio)
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyresource(GlobalVolume)]
 /// #[pyclass(name = "GlobalVolume", extends = PyResource)]
 /// pub struct PyGlobalVolume {
