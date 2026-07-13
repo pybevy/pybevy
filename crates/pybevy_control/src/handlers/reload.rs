@@ -50,8 +50,11 @@ pub fn trigger_reload(
         ReloadMode::Full => ReloadRequestMode::Full,
     };
 
-    // Apply time control BEFORE queuing reload — no frames run at wrong speed
+    // Apply time control BEFORE queuing reload so no frames run at wrong speed.
+    // Validate first: set_relative_speed panics on <= 0.0 / non-finite and
+    // spirals the fixed-timestep loop on very large values.
     if let Some(scale) = time_scale {
+        crate::handlers::time_control::validate_time_scale(scale)?;
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(scale);
     }
@@ -624,6 +627,23 @@ mod tests {
         let result = trigger_reload(&mut world, ReloadMode::Full, true, Some(2.0)).unwrap();
         assert_eq!(result["paused"], true);
         assert_eq!(result["relative_speed"], 2.0);
+    }
+
+    #[test]
+    fn trigger_reload_rejects_out_of_range_time_scale() {
+        // Regression: the reload time_scale param reached set_relative_speed with
+        // no validation at all. A negative/non-finite value panicked the
+        // subprocess and a huge value spiraled the fixed-timestep loop. Both are
+        // now rejected before any state changes and before the reload is queued.
+        for bad in [-1.0f32, f32::INFINITY, 1.0e6] {
+            let mut world = world_with_reload_deps();
+            let err = trigger_reload(&mut world, ReloadMode::Full, false, Some(bad)).unwrap_err();
+            assert!(!err.message.is_empty());
+            // Speed untouched and no reload queued.
+            let speed = world.resource::<Time<Virtual>>().relative_speed();
+            assert!((speed - 1.0).abs() < 1e-6);
+            assert!(world.get_resource::<PendingReloadRequest>().is_none());
+        }
     }
 
     #[test]
