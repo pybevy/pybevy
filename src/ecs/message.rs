@@ -139,7 +139,11 @@ impl PyMessageWriter {
                 let world = self.world.world_mut()?;
                 let type_ptr = expected_type.as_type_ptr();
                 let message_num = {
-                    let registry = world.resource::<MessageRegistry>();
+                    let registry = world.get_resource::<MessageRegistry>().ok_or_else(|| {
+                        PyTypeError::new_err(
+                            "MessageRegistry not initialized. Call app.add_message(T) to register message types.",
+                        )
+                    })?;
                     registry
                         .get(type_ptr)
                         .ok_or_else(|| PyTypeError::new_err("Message type not registered"))?
