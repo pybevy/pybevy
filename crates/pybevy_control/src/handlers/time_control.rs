@@ -71,13 +71,31 @@ pub fn resume_time(world: &mut World) -> Result<serde_json::Value, ControlError>
     }))
 }
 
-pub fn set_time_scale(world: &mut World, scale: f32) -> Result<serde_json::Value, ControlError> {
-    // Bevy's Time<Virtual>::set_relative_speed panics on values <= 0.0 and on
-    // non-finite values. Reject before reaching that invariant so a single
-    // tool call doesn't kill the engine subprocess.
+/// Largest accepted time scale. Larger finite values are rejected because a
+/// huge relative_speed makes each frame advance virtual time by
+/// min(raw_delta, max_delta) * scale, which drives Bevy's fixed-timestep
+/// accumulator into a runaway catch-up loop (spiral of death) that stalls the
+/// frame loop for seconds and times out the control channel. 1000x is already
+/// far beyond any authoring need (a 24s cycle runs in 24ms).
+pub const MAX_TIME_SCALE: f32 = 1000.0;
+
+/// Validate a requested time scale before it reaches Bevy's
+/// Time<Virtual>::set_relative_speed, which panics on <= 0.0 and non-finite
+/// values and spirals the fixed-timestep loop on very large values.
+pub fn validate_time_scale(scale: f32) -> Result<(), ControlError> {
     if !scale.is_finite() || scale <= 0.0 {
         return Err(ControlError::invalid_params("scale must be > 0 and finite"));
     }
+    if scale > MAX_TIME_SCALE {
+        return Err(ControlError::invalid_params(format!(
+            "scale must be <= {MAX_TIME_SCALE} (larger values stall the engine's fixed-timestep loop)"
+        )));
+    }
+    Ok(())
+}
+
+pub fn set_time_scale(world: &mut World, scale: f32) -> Result<serde_json::Value, ControlError> {
+    validate_time_scale(scale)?;
     let mut time = world.resource_mut::<Time<Virtual>>();
     time.set_relative_speed(scale);
     let paused = time.is_paused();
@@ -232,6 +250,27 @@ mod tests {
         let mut world = world_with_virtual_time();
         let err = set_time_scale(&mut world, f32::INFINITY).unwrap_err();
         assert!(err.message.contains("finite"));
+    }
+
+    #[test]
+    fn test_set_time_scale_rejects_too_large() {
+        // Regression: a huge finite scale passes the > 0 / finite guard but then
+        // drives Bevy's fixed-timestep accumulator into a spiral of death,
+        // freezing the frame loop for seconds and timing out the control channel.
+        let mut world = world_with_virtual_time();
+        let err = set_time_scale(&mut world, 1.0e6).unwrap_err();
+        assert!(err.message.contains("1000"));
+        // World still alive at the prior speed (no mutation, no panic).
+        let speed = world.resource::<Time<Virtual>>().relative_speed();
+        assert!((speed - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_set_time_scale_accepts_max() {
+        // The boundary itself is allowed; only values above it are rejected.
+        let mut world = world_with_virtual_time();
+        let result = set_time_scale(&mut world, MAX_TIME_SCALE).unwrap();
+        assert_eq!(result["relative_speed"], MAX_TIME_SCALE);
     }
 
     #[test]
