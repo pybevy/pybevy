@@ -232,9 +232,13 @@ impl PyWorld {
         let world = self.world_mut()?;
 
         let component_id = {
-            let registry = world
-                .get_resource::<ComponentRegistry>()
-                .ok_or_else(|| PyRuntimeError::new_err("ComponentRegistry not found"))?;
+            // No ComponentRegistry resource => no custom components registered in
+            // this world, so the entity cannot have this one. Match Bevy's
+            // `World::get`, which returns `None` (not an error) for a missing or
+            // unregistered component type.
+            let Some(registry) = world.get_resource::<ComponentRegistry>() else {
+                return Ok(None);
+            };
             match registry.get(type_ptr) {
                 Some(id) => id,
                 None => return Ok(None),
@@ -849,12 +853,12 @@ impl PyWorld {
 
         match comp_type {
             PyComponentType::Dynamic(type_ptr) => {
-                let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Dynamic component type {:?} not registered",
-                        comp_type
-                    ))
-                })?;
+                // Unregistered dynamic component type => the entity can't have it.
+                // Match Bevy's `World::get`, which returns `None` for a missing or
+                // unregistered component type.
+                let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) else {
+                    return Ok(None);
+                };
 
                 let entity_ref = world.entity(entity.0);
                 bridge.extract_from_entity_ref(&entity_ref, validity, py)
@@ -892,12 +896,12 @@ impl PyWorld {
 
         match comp_type {
             PyComponentType::Dynamic(type_ptr) => {
-                let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Dynamic component type {:?} not registered",
-                        comp_type
-                    ))
-                })?;
+                // Unregistered dynamic component type => the entity can't have it.
+                // Match Bevy's `World::get`, which returns `None` for a missing or
+                // unregistered component type.
+                let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) else {
+                    return Ok(None);
+                };
 
                 let mut entity_mut = world.entity_mut(entity.0);
                 bridge.extract_from_entity_mut(&mut entity_mut, validity, py)
