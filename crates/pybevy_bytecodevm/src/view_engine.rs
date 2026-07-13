@@ -70,6 +70,23 @@ pub struct ViewFilter {
 pub enum ViewEngineError {
     /// A required component was not found in the World's component registry.
     ComponentNotFound(ComponentId),
+    /// A field offset (+ type size) falls outside the component's allocated
+    /// layout. This is raised before any raw-pointer arithmetic to prevent
+    /// out-of-bounds reads/writes from attacker-controlled `Expr("field", ...)`
+    /// nodes constructed on the Python side.
+    FieldOffsetOutOfBounds {
+        component_id: ComponentId,
+        offset: usize,
+        type_size: usize,
+        layout_size: usize,
+    },
+    /// A bytecode field references a component the view did not declare.
+    /// Reachable when a `field` expression (e.g. a proxy captured from a
+    /// different View) names a component absent from this view's filter, whose
+    /// column is therefore never gathered. Rejected before execution: the
+    /// scheduler was never told about the access (undeclared-read race) and the
+    /// stride/base maps lack the id (would otherwise panic on lookup).
+    FieldComponentNotDeclared(ComponentId),
 }
 
 impl std::fmt::Display for ViewEngineError {
@@ -78,11 +95,103 @@ impl std::fmt::Display for ViewEngineError {
             ViewEngineError::ComponentNotFound(id) => {
                 write!(f, "Component {:?} not found in World", id)
             }
+            ViewEngineError::FieldOffsetOutOfBounds {
+                component_id,
+                offset,
+                type_size,
+                layout_size,
+            } => {
+                write!(
+                    f,
+                    "Field access at offset {offset} (type size {type_size}) is out of bounds \
+                     for component {component_id:?} (layout size {layout_size})"
+                )
+            }
+            ViewEngineError::FieldComponentNotDeclared(id) => {
+                write!(
+                    f,
+                    "Field expression references component {:?}, which is not \
+                     declared in this view",
+                    id
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for ViewEngineError {}
+
+/// Validate that every field referenced by `bytecode` (including the
+/// destination field of an assignment) lies entirely within its
+/// component's registered `Layout`.
+///
+/// This is the safety gate for the raw-pointer arithmetic in
+/// `execute_on_ptr` / `build_entity_field_ptrs` / `execute_batch_assignment`,
+/// which compute `base.add(field_id.offset)`. Without this check, a
+/// Python-constructed `Expr("field", [cid, name, offset, field_type])` with
+/// an arbitrary `offset` could read/write out of bounds of the component
+/// column allocation.
+///
+/// Returns `Err` if any field is out of bounds or references a component
+/// not present in the World's registry.
+pub fn validate_bytecode_offsets(
+    world: &World,
+    bytecode: &CompiledBytecode,
+) -> Result<(), ViewEngineError> {
+    let components = world.components();
+    for field_id in &bytecode.field_map {
+        let info = components
+            .get_info(field_id.component_id)
+            .ok_or(ViewEngineError::ComponentNotFound(field_id.component_id))?;
+        let layout_size = info.layout().size();
+        let type_size = field_id.field_type.size_bytes();
+        // `offset` and `type_size` are attacker-controlled (from Python).
+        // Guard against overflow before the addition, then require the full
+        // field span to fit within the component layout.
+        let span = field_id.offset.checked_add(type_size).ok_or(
+            ViewEngineError::FieldOffsetOutOfBounds {
+                component_id: field_id.component_id,
+                offset: field_id.offset,
+                type_size,
+                layout_size,
+            },
+        )?;
+        if span > layout_size {
+            return Err(ViewEngineError::FieldOffsetOutOfBounds {
+                component_id: field_id.component_id,
+                offset: field_id.offset,
+                type_size,
+                layout_size,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate that every component referenced by `bytecode` is present in the
+/// view's declared component set (`allowed`).
+///
+/// This is the safety gate paired with `validate_bytecode_offsets`: offsets
+/// guard against out-of-bounds within a component, this guards against
+/// referencing a component the view never declared. A `field` expression can
+/// carry any `ComponentId` (component ids are small enumerable integers, and a
+/// field proxy captured from another View can be spliced into an assignment
+/// through this one). Without this check the source column is read with access
+/// the scheduler was never told about (a data race under the multi-threaded
+/// executor) and the stride/base maps miss the id (a panic on lookup).
+pub fn validate_bytecode_components(
+    bytecode: &CompiledBytecode,
+    allowed: &HashSet<ComponentId>,
+) -> Result<(), ViewEngineError> {
+    for field_id in &bytecode.field_map {
+        if !allowed.contains(&field_id.component_id) {
+            return Err(ViewEngineError::FieldComponentNotDeclared(
+                field_id.component_id,
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Resolve component strides (layout sizes) from the World's component metadata.
 pub fn resolve_component_strides(
@@ -314,6 +423,18 @@ pub unsafe fn execute_batch_assignment(
 ) {
     const CHUNK_SIZE: usize = 32768;
 
+    // Fail-safe: skip rather than panic if a field references a component that
+    // was not gathered (its id is absent from the stride/base maps). Callers
+    // should reject such bytecode up front via `validate_bytecode_components`;
+    // this guards the raw-pointer sink even if they do not.
+    if bytecode
+        .field_map
+        .iter()
+        .any(|f| !component_strides.contains_key(&f.component_id))
+    {
+        return;
+    }
+
     struct ChunkInfo {
         field_bases: Vec<SendPtr>,
         field_strides: Vec<usize>,
@@ -391,6 +512,16 @@ pub unsafe fn execute_filtered_assignment(
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
 ) {
+    // Fail-safe: skip rather than panic if a field references a component that
+    // was not gathered (see `execute_batch_assignment`).
+    if bytecode
+        .field_map
+        .iter()
+        .any(|f| !component_strides.contains_key(&f.component_id))
+    {
+        return;
+    }
+
     let field_strides: Vec<usize> = bytecode
         .field_map
         .iter()
@@ -874,10 +1005,37 @@ impl ViewExecutionContext {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use bevy_ecs::component::ComponentId;
+    use bevy_ecs::{component::ComponentId, prelude::Component};
 
     use super::*;
     use crate::bytecode::{Compiler, FieldId, FieldType, Op};
+
+    /// Fixed-layout probe component: three f32 fields, so `Layout::size() == 12`
+    /// and `align == 4`. Used to exercise the offset validator against a real
+    /// registered component layout.
+    #[derive(Component)]
+    #[allow(dead_code)]
+    struct Probe {
+        a: f32,
+        b: f32,
+        c: f32,
+    }
+
+    /// Helper: bytecode that reads a single field of the given type at `offset`.
+    fn make_typed_read_bytecode(
+        component_id: ComponentId,
+        offset: usize,
+        field_type: FieldType,
+    ) -> CompiledBytecode {
+        let mut compiler = Compiler::new();
+        let field_idx = compiler.add_field(FieldId {
+            component_id,
+            offset,
+            field_type,
+        });
+        compiler.emit(Op::PushField(field_idx));
+        compiler.finalize()
+    }
 
     /// Helper: compile `field[0] = field[0] + constant`
     fn make_add_bytecode(
@@ -1192,5 +1350,126 @@ mod tests {
         let ptr = &mut value as *mut f32 as *mut u8;
         unsafe { execute_on_ptr(ptr, &bytecode) };
         assert_eq!(value, 10.0);
+    }
+
+    #[test]
+    fn offset_validator_accepts_field_within_layout() {
+        let mut world = World::new();
+        let cid = world.register_component::<Probe>();
+        // Probe is 12 bytes; an F32 at offset 8 spans [8, 12) — the last valid slot.
+        let bytecode = make_typed_read_bytecode(cid, 8, FieldType::F32);
+        assert!(validate_bytecode_offsets(&world, &bytecode).is_ok());
+    }
+
+    #[test]
+    fn offset_validator_rejects_offset_past_layout() {
+        let mut world = World::new();
+        let cid = world.register_component::<Probe>();
+        // offset 12 + 4-byte F32 = span 16 > 12 -> out of bounds.
+        let bytecode = make_typed_read_bytecode(cid, 12, FieldType::F32);
+        assert!(matches!(
+            validate_bytecode_offsets(&world, &bytecode),
+            Err(ViewEngineError::FieldOffsetOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn offset_validator_rejects_wide_type_overrunning_last_byte() {
+        let mut world = World::new();
+        let cid = world.register_component::<Probe>();
+        // A Bool (1 byte) at the final byte (offset 11) fits (span 12); an F64
+        // (8 bytes) at the same offset overruns the 12-byte layout.
+        assert!(
+            validate_bytecode_offsets(&world, &make_typed_read_bytecode(cid, 11, FieldType::Bool))
+                .is_ok()
+        );
+        assert!(matches!(
+            validate_bytecode_offsets(&world, &make_typed_read_bytecode(cid, 11, FieldType::F64)),
+            Err(ViewEngineError::FieldOffsetOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn offset_validator_rejects_overflowing_offset() {
+        let mut world = World::new();
+        let cid = world.register_component::<Probe>();
+        // offset + type_size would overflow usize -> caught before the addition.
+        let bytecode = make_typed_read_bytecode(cid, usize::MAX, FieldType::F64);
+        assert!(matches!(
+            validate_bytecode_offsets(&world, &bytecode),
+            Err(ViewEngineError::FieldOffsetOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn offset_validator_rejects_unregistered_component() {
+        let world = World::new();
+        let bytecode = make_typed_read_bytecode(ComponentId::new(9999), 0, FieldType::F32);
+        assert!(matches!(
+            validate_bytecode_offsets(&world, &bytecode),
+            Err(ViewEngineError::ComponentNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn component_validator_accepts_declared_component() {
+        let cid = ComponentId::new(3);
+        let allowed: HashSet<ComponentId> = [cid].into_iter().collect();
+        let bytecode = make_typed_read_bytecode(cid, 0, FieldType::F32);
+        assert!(validate_bytecode_components(&bytecode, &allowed).is_ok());
+    }
+
+    #[test]
+    fn component_validator_rejects_undeclared_component() {
+        let declared = ComponentId::new(3);
+        let forged = ComponentId::new(7);
+        let allowed: HashSet<ComponentId> = [declared].into_iter().collect();
+        let bytecode = make_typed_read_bytecode(forged, 0, FieldType::F32);
+        assert!(matches!(
+            validate_bytecode_components(&bytecode, &allowed),
+            Err(ViewEngineError::FieldComponentNotDeclared(id)) if id == forged
+        ));
+    }
+
+    #[test]
+    fn component_validator_checks_store_dest_not_just_reads() {
+        // An assignment that reads a declared component but writes an undeclared
+        // one must be rejected: both PushField and StoreField dests live in
+        // field_map, so the validator has to scan every entry.
+        let declared = ComponentId::new(1);
+        let forged = ComponentId::new(2);
+        let allowed: HashSet<ComponentId> = [declared].into_iter().collect();
+
+        let mut compiler = Compiler::new();
+        let read_idx = compiler.add_field(FieldId {
+            component_id: declared,
+            offset: 0,
+            field_type: FieldType::F32,
+        });
+        let write_idx = compiler.add_field(FieldId {
+            component_id: forged,
+            offset: 0,
+            field_type: FieldType::F32,
+        });
+        compiler.emit(Op::PushField(read_idx));
+        compiler.emit(Op::StoreField(write_idx));
+        let bytecode = compiler.finalize();
+
+        assert!(matches!(
+            validate_bytecode_components(&bytecode, &allowed),
+            Err(ViewEngineError::FieldComponentNotDeclared(id)) if id == forged
+        ));
+    }
+
+    #[test]
+    fn component_validator_accepts_empty_field_map() {
+        // A constant-only expression references no fields — nothing to reject.
+        let allowed: HashSet<ComponentId> = HashSet::new();
+        let bytecode = CompiledBytecode {
+            bytecode: vec![],
+            constants: vec![],
+            field_map: vec![],
+        };
+        assert!(validate_bytecode_components(&bytecode, &allowed).is_ok());
     }
 }

@@ -43,7 +43,7 @@ use pybevy_bytecodevm::{
 };
 use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
-    exceptions::{PyAttributeError, PyRuntimeError, PyTypeError},
+    exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyType},
 };
@@ -249,6 +249,17 @@ impl PyView {
         })
     }
 
+    /// The set of component ids this view declares as data. Used as the
+    /// `allowed` set for `validate_bytecode_components`: a `field` expression
+    /// naming a component outside this set (e.g. a proxy captured from another
+    /// View) is rejected before its column is read.
+    fn declared_component_ids(&self) -> HashSet<ComponentId> {
+        self.component_types
+            .iter()
+            .filter_map(|ct| self.get_component_id(ct).ok())
+            .collect()
+    }
+
     /// Get or register a component ID
     fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
         // Check cache first
@@ -369,6 +380,15 @@ impl PyView {
         // Get world pointer
         // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
         let world = unsafe { &mut *self.world_ptr()? };
+
+        // SECURITY: validate field offsets before raw-pointer evaluation
+        // (reduction path uses `evaluate_on_ptr` -> `base.add(offset)`).
+        view_engine::validate_bytecode_offsets(world, &bytecode)
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        // SECURITY: reject fields naming a component this view did not declare
+        // (undeclared-read race + would panic on the stride/base lookup).
+        view_engine::validate_bytecode_components(&bytecode, &self.declared_component_ids())
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
         // Determine which component type to query based on the compiled expression.
         // The bytecode's field_map contains the ComponentId for each field reference,
@@ -1254,6 +1274,20 @@ impl PyViewColMut {
         let view = unsafe { &*self.view_ptr };
         // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
         let world = unsafe { &mut *view.world_ptr()? };
+
+        // SECURITY: validate every field offset (source fields AND the
+        // assignment destination, which `compile_assignment` appends to
+        // `field_map`) against each component's registered layout before any
+        // raw-pointer arithmetic. A Python-constructed `Expr("field", ...)`
+        // can supply an arbitrary `offset`; without this check the VM would
+        // compute `base.add(offset)` and read/write out of bounds of the
+        // component column allocation.
+        view_engine::validate_bytecode_offsets(world, bytecode)
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        // SECURITY: reject fields naming a component this view did not declare
+        // (undeclared-read race on assignment sources + stride/base lookup panic).
+        view_engine::validate_bytecode_components(bytecode, &view.declared_component_ids())
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
         // If all fields are from the same component, use the optimized single-component path
         if component_ids.len() == 1 && component_ids.contains(&self.component_id) {
