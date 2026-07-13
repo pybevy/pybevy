@@ -12,6 +12,7 @@
 //! - `ListStorage<T>` - Generic storage for Vec<T> fields
 //! - `BorrowableStorage` / `FromBorrowedStorage` - Traits for borrowed field access
 
+pub mod borrowed;
 pub mod field_storage;
 pub mod list_storage;
 pub mod pyasset;
@@ -23,6 +24,7 @@ pub mod validity_guard;
 pub mod value_storage;
 pub mod view_bridge;
 
+pub use borrowed::{BorrowedMut, BorrowedRef};
 pub use field_storage::{FieldStorage, FieldStorageInner};
 pub use list_storage::{ListStorage, ListStorageInner, normalize_index};
 pub use pyasset::AssetStorage;

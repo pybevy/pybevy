@@ -26,14 +26,16 @@
 //!
 //! Assets support two borrowing modes with **compile-time pointer provenance**:
 //!
-//! - **`BorrowedReadOnly`**: Created from `Res[Assets[T]].get()`, stores `*const T`
-//! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, stores `*mut T`
-
-use std::ptr;
+//! - **`BorrowedRef`**: Created from `Res[Assets[T]].get()`, wraps a `BorrowedRef<T>` (`*const T`)
+//! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, wraps a `BorrowedMut<T>` (`*mut T`)
 
 use bevy::asset::{Asset, UntypedHandle};
 
-use crate::{ValidityFlagWithMode, storage_error::StorageError};
+use crate::{
+    ValidityFlagWithMode,
+    borrowed::{BorrowedMut, BorrowedRef},
+    storage_error::StorageError,
+};
 
 /// Generic storage for PyBevy assets
 ///
@@ -61,12 +63,9 @@ pub(crate) enum AssetStorageInner<T: Asset> {
 
     /// Read-only borrowed reference to asset in Assets<T> storage
     /// Created from `&T` - mutation through this pointer is UB
-    BorrowedReadOnly {
-        /// Const pointer to asset - obtained from `&T`
-        ptr: *const T,
-
-        /// Validity tracking - prevents use after system execution
-        validity: ValidityFlagWithMode,
+    BorrowedRef {
+        /// Typed read-only borrow into the asset
+        borrow: BorrowedRef<T>,
 
         /// Handle to the asset (for debugging and future use)
         #[allow(dead_code)]
@@ -76,11 +75,8 @@ pub(crate) enum AssetStorageInner<T: Asset> {
     /// Mutable borrowed reference to asset in Assets<T> storage
     /// Created from `&mut T` - mutation is sound
     BorrowedMut {
-        /// Mutable pointer to asset - obtained from `&mut T`
-        ptr: *mut T,
-
-        /// Validity tracking with write access mode
-        validity: ValidityFlagWithMode,
+        /// Typed mutable borrow into the asset
+        borrow: BorrowedMut<T>,
 
         /// Handle to the asset (for debugging and future use)
         #[allow(dead_code)]
@@ -88,52 +84,24 @@ pub(crate) enum AssetStorageInner<T: Asset> {
     },
 }
 
-// SAFETY: AssetStorage is Send because:
-// - Box<T> is Send when T is Send
-// - Raw pointer is just an address
-// - ValidityFlag (Arc<AtomicBool>) is Send + Sync
-// - UntypedHandle is Send
-// - Validity checking prevents unsafe access
-unsafe impl<T: Asset + Send> Send for AssetStorage<T> {}
-
-// SAFETY: AssetStorage is Sync because:
-// - Access is controlled by validity checking
-// - ValidityFlag uses atomic operations
-// - We only allow access when validity flag is true
-unsafe impl<T: Asset + Sync> Sync for AssetStorage<T> {}
-
 impl<T: Asset + Clone> Clone for AssetStorage<T> {
     fn clone(&self) -> Self {
-        match &self.inner {
-            AssetStorageInner::Owned(Some(asset)) => Self {
-                inner: AssetStorageInner::Owned(Some(Box::new((**asset).clone()))),
+        let inner = match &self.inner {
+            AssetStorageInner::Owned(Some(asset)) => {
+                AssetStorageInner::Owned(Some(Box::new((**asset).clone())))
+            }
+            AssetStorageInner::Owned(None) => AssetStorageInner::Owned(None),
+            AssetStorageInner::BorrowedRef { borrow, handle } => AssetStorageInner::BorrowedRef {
+                borrow: borrow.clone(),
+                handle: handle.clone(),
             },
-            AssetStorageInner::Owned(None) => Self {
-                inner: AssetStorageInner::Owned(None),
+            // A cloned mutable borrow downgrades to read-only to avoid aliasing.
+            AssetStorageInner::BorrowedMut { borrow, handle } => AssetStorageInner::BorrowedRef {
+                borrow: borrow.clone_as_ref(),
+                handle: handle.clone(),
             },
-            AssetStorageInner::BorrowedReadOnly {
-                ptr,
-                validity,
-                handle,
-            } => Self {
-                inner: AssetStorageInner::BorrowedReadOnly {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                    handle: handle.clone(),
-                },
-            },
-            AssetStorageInner::BorrowedMut {
-                ptr,
-                validity,
-                handle,
-            } => Self {
-                inner: AssetStorageInner::BorrowedMut {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                    handle: handle.clone(),
-                },
-            },
-        }
+        };
+        Self { inner }
     }
 }
 
@@ -143,13 +111,13 @@ impl<T: Asset + PartialEq> PartialEq for AssetStorage<T> {
             (AssetStorageInner::Owned(Some(a)), AssetStorageInner::Owned(Some(b))) => **a == **b,
             (AssetStorageInner::Owned(None), AssetStorageInner::Owned(None)) => true,
             (
-                AssetStorageInner::BorrowedReadOnly { ptr: a, .. },
-                AssetStorageInner::BorrowedReadOnly { ptr: b, .. },
-            ) => a == b,
+                AssetStorageInner::BorrowedRef { borrow: a, .. },
+                AssetStorageInner::BorrowedRef { borrow: b, .. },
+            ) => a.as_ptr() == b.as_ptr(),
             (
-                AssetStorageInner::BorrowedMut { ptr: a, .. },
-                AssetStorageInner::BorrowedMut { ptr: b, .. },
-            ) => a == b,
+                AssetStorageInner::BorrowedMut { borrow: a, .. },
+                AssetStorageInner::BorrowedMut { borrow: b, .. },
+            ) => a.as_ptr() == b.as_ptr(),
             _ => false,
         }
     }
@@ -178,7 +146,7 @@ impl<T: Asset> AssetStorage<T> {
                 .take()
                 .map(|boxed| *boxed)
                 .ok_or(StorageError::AssetConsumed),
-            AssetStorageInner::BorrowedReadOnly { .. } | AssetStorageInner::BorrowedMut { .. } => {
+            AssetStorageInner::BorrowedRef { .. } | AssetStorageInner::BorrowedMut { .. } => {
                 Err(StorageError::AssetBorrowed)
             }
         }
@@ -186,9 +154,12 @@ impl<T: Asset> AssetStorage<T> {
 
     /// Create read-only borrowed asset storage from `&T`
     ///
+    /// The `ValidityFlagWithMode` mode is transport-only: this constructor always
+    /// produces a read-only borrow regardless of the transported mode.
+    ///
     /// # Safety
     /// - `ptr` must point to a valid `T` in `Assets<T>` storage
-    /// - The pointer must remain valid while `validity` flag is true
+    /// - The pointer must remain valid while `validity` is non-Invalid
     /// - The returned storage MUST NOT be used for mutable access
     pub unsafe fn borrowed_readonly(
         ptr: *const T,
@@ -196,9 +167,9 @@ impl<T: Asset> AssetStorage<T> {
         handle: UntypedHandle,
     ) -> Self {
         Self {
-            inner: AssetStorageInner::BorrowedReadOnly {
-                ptr,
-                validity,
+            inner: AssetStorageInner::BorrowedRef {
+                // SAFETY: forwards this constructor's contract unchanged
+                borrow: unsafe { BorrowedRef::new(ptr, validity.flag) },
                 handle,
             },
         }
@@ -207,9 +178,8 @@ impl<T: Asset> AssetStorage<T> {
     /// Create mutable borrowed asset storage from `&mut T`
     ///
     /// # Safety
-    /// - `ptr` must point to a valid `T` in `Assets<T>` storage
-    /// - The pointer must have been obtained from `&mut T`
-    /// - The pointer must remain valid while `validity` flag is true
+    /// - `ptr` must point to a valid `T` in `Assets<T>` storage, from `&mut T`
+    /// - The pointer must remain valid while `validity` is non-Invalid
     pub unsafe fn borrowed_mut(
         ptr: *mut T,
         validity: ValidityFlagWithMode,
@@ -217,8 +187,8 @@ impl<T: Asset> AssetStorage<T> {
     ) -> Self {
         Self {
             inner: AssetStorageInner::BorrowedMut {
-                ptr,
-                validity,
+                // SAFETY: forwards this constructor's contract unchanged
+                borrow: unsafe { BorrowedMut::new(ptr, validity.flag) },
                 handle,
             },
         }
@@ -231,77 +201,26 @@ impl<T: Asset> AssetStorage<T> {
     /// (i.e., accessed outside of system execution context)
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
-        self.check_valid()?;
-        Ok(unsafe { &*self.as_ptr() })
+        match &self.inner {
+            AssetStorageInner::Owned(Some(asset)) => Ok(&**asset),
+            AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
+            AssetStorageInner::BorrowedRef { borrow, .. } => borrow.get(),
+            AssetStorageInner::BorrowedMut { borrow, .. } => borrow.get(),
+        }
     }
 
     /// Get mutable reference to the asset, checking validity
     ///
     /// # Errors
-    /// Returns `StorageError` if the borrowed reference is no longer valid
+    /// Returns `StorageError` if the borrowed reference is no longer valid, or
+    /// `AssetReadOnly` if the asset was borrowed read-only.
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
-        self.check_write()?;
-        Ok(unsafe { &mut *self.as_mut_ptr() })
-    }
-
-    /// Get raw const pointer to the asset
-    ///
-    /// # Safety
-    /// Caller must ensure validity before dereferencing
-    /// Returns null pointer if asset was consumed
-    #[inline(always)]
-    fn as_ptr(&self) -> *const T {
-        match &self.inner {
-            AssetStorageInner::Owned(Some(asset)) => &**asset as *const T,
-            AssetStorageInner::Owned(None) => ptr::null(),
-            AssetStorageInner::BorrowedReadOnly { ptr, .. } => *ptr,
-            AssetStorageInner::BorrowedMut { ptr, .. } => *ptr as *const T,
-        }
-    }
-
-    /// Get raw mutable pointer to the asset
-    ///
-    /// # Safety
-    /// Caller must ensure validity before dereferencing
-    /// Returns null pointer if asset was consumed or is read-only borrowed
-    #[inline(always)]
-    fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
-            AssetStorageInner::Owned(Some(asset)) => &mut **asset as *mut T,
-            AssetStorageInner::Owned(None) => ptr::null_mut(),
-            // Read-only borrowed cannot be mutated - return null
-            // check_write() will catch this before we get here
-            AssetStorageInner::BorrowedReadOnly { .. } => ptr::null_mut(),
-            AssetStorageInner::BorrowedMut { ptr, .. } => *ptr,
-        }
-    }
-
-    /// Check if this asset reference is still valid
-    ///
-    /// For owned assets, checks if not consumed.
-    /// For borrowed assets, checks the validity flag.
-    fn check_valid(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            AssetStorageInner::Owned(Some(_)) => Ok(()),
+            AssetStorageInner::Owned(Some(asset)) => Ok(&mut **asset),
             AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
-            AssetStorageInner::BorrowedReadOnly { validity, .. } => validity.check(),
-            AssetStorageInner::BorrowedMut { validity, .. } => validity.check(),
-        }
-    }
-
-    /// Check if the asset can be mutated (write permission)
-    ///
-    /// For owned assets, checks if not consumed.
-    /// For borrowed assets, checks if they were obtained via ResMut and get_mut().
-    fn check_write(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            AssetStorageInner::Owned(Some(_)) => Ok(()),
-            AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
-            // Read-only borrowed - always fails
-            AssetStorageInner::BorrowedReadOnly { .. } => Err(StorageError::AssetReadOnly),
-            // Mutable borrowed - check validity flag allows write
-            AssetStorageInner::BorrowedMut { validity, .. } => validity.check_write(),
+            AssetStorageInner::BorrowedRef { .. } => Err(StorageError::AssetReadOnly),
+            AssetStorageInner::BorrowedMut { borrow, .. } => borrow.get_mut(),
         }
     }
 
@@ -316,7 +235,7 @@ impl<T: Asset> AssetStorage<T> {
     pub fn is_borrowed(&self) -> bool {
         matches!(
             self.inner,
-            AssetStorageInner::BorrowedReadOnly { .. } | AssetStorageInner::BorrowedMut { .. }
+            AssetStorageInner::BorrowedRef { .. } | AssetStorageInner::BorrowedMut { .. }
         )
     }
 }

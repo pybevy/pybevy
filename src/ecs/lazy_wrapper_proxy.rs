@@ -21,10 +21,7 @@ use bevy::{
     ecs::{component::ComponentId, entity::Entity, world::World},
     math::{Vec2, Vec3},
 };
-use pybevy_core::{
-    ValueStorage,
-    storage_traits::{BorrowableStorage, FromBorrowedStorage},
-};
+use pybevy_core::{ValueStorage, storage_traits::FromBorrowedStorage};
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError},

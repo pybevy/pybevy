@@ -158,9 +158,12 @@ impl ComponentBridge for ChildOfBridge {
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
         if let Some(component) = entity.get::<ChildOf>() {
-            // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
-            let ptr = component as *const ChildOf as *mut ChildOf;
-            let storage = unsafe { ComponentStorage::borrowed(ptr, validity) };
+            // SAFETY: the pointer aliases a live ChildOf in ECS storage for as
+            // long as the validity flag is set; ChildOf is immutable in Bevy,
+            // so the read-only typed borrow matches its contract
+            let storage = unsafe {
+                ComponentStorage::borrowed_ref(component as *const ChildOf, validity.flag)
+            };
             let obj = Py::new(py, hierarchy::PyChildOf::from_borrowed(storage))?;
             Ok(Some(obj.into_any()))
         } else {

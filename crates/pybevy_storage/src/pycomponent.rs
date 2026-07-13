@@ -6,9 +6,10 @@
 use bevy::ecs::component::Component;
 
 use crate::{
+    borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
     storage_traits::BorrowableStorage,
-    validity_guard::{ValidityFlag, ValidityFlagWithMode},
+    validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
 /// Generic storage for PyBevy components
@@ -29,16 +30,12 @@ pub enum ComponentStorageInner<T: Component> {
         validity: ValidityFlag,
     },
 
-    /// Borrowed reference to component in ECS storage
-    Borrowed {
-        ptr: *mut T,
-        validity: ValidityFlagWithMode,
-    },
-}
+    /// Read-only borrow into ECS storage
+    BorrowedRef(BorrowedRef<T>),
 
-// SAFETY: See main crate's pycomponent.rs for detailed safety analysis
-unsafe impl<T: Component + Send> Send for ComponentStorage<T> {}
-unsafe impl<T: Component + Sync> Sync for ComponentStorage<T> {}
+    /// Mutable borrow into ECS storage
+    BorrowedMut(BorrowedMut<T>),
+}
 
 impl<T: Component> Drop for ComponentStorage<T> {
     fn drop(&mut self) {
@@ -55,10 +52,12 @@ impl<T: Component + PartialEq> PartialEq for ComponentStorage<T> {
                 ComponentStorageInner::Owned { data: a, .. },
                 ComponentStorageInner::Owned { data: b, .. },
             ) => **a == **b,
-            (
-                ComponentStorageInner::Borrowed { ptr: a, .. },
-                ComponentStorageInner::Borrowed { ptr: b, .. },
-            ) => a == b,
+            (ComponentStorageInner::BorrowedRef(a), ComponentStorageInner::BorrowedRef(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
+            (ComponentStorageInner::BorrowedMut(a), ComponentStorageInner::BorrowedMut(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
             _ => false,
         }
     }
@@ -75,89 +74,92 @@ impl<T: Component> ComponentStorage<T> {
         }
     }
 
-    /// Create borrowed component storage with direct pointer to component
+    /// Create a read-only borrowed component storage from a const pointer.
     ///
     /// # Safety
     /// - `ptr` must point to a valid `T` in ECS component storage
-    /// - The pointer must remain valid while `validity` flag is true
-    pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+    /// - The pointer must remain valid while `validity` is non-Invalid
+    /// - No `&mut T` aliasing the same component may exist while the flag is valid
+    pub unsafe fn borrowed_ref(ptr: *const T, validity: ValidityFlag) -> Self {
         Self {
-            inner: ComponentStorageInner::Borrowed { ptr, validity },
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ComponentStorageInner::BorrowedRef(unsafe { BorrowedRef::new(ptr, validity) }),
+        }
+    }
+
+    /// Create a mutable borrowed component storage from a mut pointer.
+    ///
+    /// # Safety
+    /// - `ptr` must point to a valid `T` in ECS component storage, from `&mut T`
+    /// - The pointer must remain valid while `validity` is non-Invalid
+    /// - No other reference may alias the same component while the flag is valid
+    pub unsafe fn borrowed_mut(ptr: *mut T, validity: ValidityFlag) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ComponentStorageInner::BorrowedMut(unsafe { BorrowedMut::new(ptr, validity) }),
+        }
+    }
+
+    /// Create borrowed component storage, choosing read vs write from the transport mode.
+    ///
+    /// This is the bridge boundary constructor: `ValidityFlagWithMode` still carries
+    /// the mode across the FFI layer, and is resolved here into a typed borrowed
+    /// variant that no longer stores the mode.
+    ///
+    /// # Safety
+    /// - `ptr` must point to a valid `T` in ECS component storage
+    /// - `ptr` must be safe to write through when `validity.access_mode()` is `Write`
+    pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+        match validity.access_mode() {
+            // SAFETY: mode Write means ptr was obtained from a mutable borrow
+            AccessMode::Write => unsafe { Self::borrowed_mut(ptr, validity.flag) },
+            // SAFETY: read-only view of the same pointer
+            _ => unsafe { Self::borrowed_ref(ptr as *const T, validity.flag) },
         }
     }
 
     /// Get immutable reference to the component, checking validity
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
-        self.check_valid()?;
-        Ok(unsafe { &*self.as_ptr() })
+        match &self.inner {
+            ComponentStorageInner::Owned { data, .. } => Ok(&**data),
+            ComponentStorageInner::BorrowedRef(b) => b.get(),
+            ComponentStorageInner::BorrowedMut(b) => b.get(),
+        }
     }
 
     /// Get mutable reference to the component, checking validity and write permission
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
-        self.check_valid_mut()?;
-        Ok(unsafe { &mut *self.as_mut_ptr() })
-    }
-
-    #[inline(always)]
-    fn as_ptr(&self) -> *const T {
-        match &self.inner {
-            ComponentStorageInner::Owned { data, .. } => &**data as *const T,
-            ComponentStorageInner::Borrowed { ptr, .. } => *ptr as *const T,
-        }
-    }
-
-    #[inline(always)]
-    fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
-            ComponentStorageInner::Owned { data, .. } => &mut **data as *mut T,
-            ComponentStorageInner::Borrowed { ptr, .. } => *ptr,
-        }
-    }
-
-    #[inline(always)]
-    fn check_valid(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ComponentStorageInner::Owned { .. } => Ok(()),
-            ComponentStorageInner::Borrowed { validity, .. } => validity.check(),
-        }
-    }
-
-    #[inline(always)]
-    fn check_valid_mut(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ComponentStorageInner::Owned { .. } => Ok(()),
-            ComponentStorageInner::Borrowed { validity, .. } => validity.check_write(),
+            ComponentStorageInner::Owned { data, .. } => Ok(&mut **data),
+            ComponentStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ComponentStorageInner::BorrowedMut(b) => b.get_mut(),
         }
     }
 
     /// Create a second handle to the same component data.
     ///
-    /// For borrowed storage, shares the same pointer and validity flag.
-    /// For owned storage, creates a new borrowed pointer into the owned data.
+    /// Borrowed storage shares the same pointer and validity flag, preserving its
+    /// read/write access (a `BorrowedRef` stays read-only, a `BorrowedMut` stays
+    /// mutable). Owned storage yields a mutable borrow into the owned data.
     ///
     /// Used when a sub-object (e.g., ActiveAnimation) needs to access
     /// the same component through its own storage handle.
     pub fn share_borrow(&self) -> Self {
-        match &self.inner {
-            ComponentStorageInner::Borrowed { ptr, validity } => Self {
-                inner: ComponentStorageInner::Borrowed {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                },
-            },
+        let inner = match &self.inner {
+            ComponentStorageInner::BorrowedRef(b) => ComponentStorageInner::BorrowedRef(b.clone()),
+            ComponentStorageInner::BorrowedMut(b) => ComponentStorageInner::BorrowedMut(b.share()),
             ComponentStorageInner::Owned { data, validity } => {
                 let ptr = &**data as *const T as *mut T;
-                Self {
-                    inner: ComponentStorageInner::Borrowed {
-                        ptr,
-                        validity: validity
-                            .with_access_mode(crate::validity_guard::AccessMode::Write),
-                    },
-                }
+                // SAFETY: ptr points into our own Box, valid while this storage lives;
+                // the shared flag is invalidated by Drop before the Box is freed.
+                ComponentStorageInner::BorrowedMut(unsafe {
+                    BorrowedMut::new(ptr, validity.clone())
+                })
             }
-        }
+        };
+        Self { inner }
     }
 
     #[allow(dead_code)]
@@ -167,7 +169,10 @@ impl<T: Component> ComponentStorage<T> {
 
     #[allow(dead_code)]
     pub fn is_borrowed(&self) -> bool {
-        matches!(self.inner, ComponentStorageInner::Borrowed { .. })
+        matches!(
+            self.inner,
+            ComponentStorageInner::BorrowedRef(_) | ComponentStorageInner::BorrowedMut(_)
+        )
     }
 
     /// Borrow a field from the component storage
@@ -183,13 +188,8 @@ impl<T: Component> ComponentStorage<T> {
     {
         match &self.inner {
             ComponentStorageInner::Owned { data, .. } => Ok(S::snapshot(field_accessor(&**data))),
-            ComponentStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-                let component_ref = unsafe { &**ptr };
-                let field_ref = field_accessor(component_ref);
-                let field_ptr = field_ref as *const F as *mut F;
-                Ok(unsafe { S::borrowed(field_ptr, validity.clone()) })
-            }
+            ComponentStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
+            ComponentStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
         }
     }
 
@@ -221,17 +221,8 @@ impl<T: Component> ComponentStorage<T> {
                 Some(field_ref) => Ok(Some(S::snapshot(field_ref))),
                 None => Ok(None),
             },
-            ComponentStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-                let component_ref = unsafe { &**ptr };
-                match field_accessor(component_ref) {
-                    Some(field_ref) => {
-                        let field_ptr = field_ref as *const F as *mut F;
-                        Ok(Some(unsafe { S::borrowed(field_ptr, validity.clone()) }))
-                    }
-                    None => Ok(None),
-                }
-            }
+            ComponentStorageInner::BorrowedRef(b) => b.borrow_optional_field(field_accessor),
+            ComponentStorageInner::BorrowedMut(b) => b.borrow_optional_field(field_accessor),
         }
     }
 }
@@ -239,13 +230,7 @@ impl<T: Component> ComponentStorage<T> {
 impl<T: Component + Clone> ComponentStorage<T> {
     /// Convert storage to owned component, consuming self
     pub fn into_owned(self) -> Result<T, StorageError> {
-        match &self.inner {
-            ComponentStorageInner::Owned { data, .. } => Ok((**data).clone()),
-            ComponentStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-                Ok(unsafe { (**ptr).clone() })
-            }
-        }
+        Ok(self.as_ref()?.clone())
     }
 }
 
@@ -438,5 +423,85 @@ mod tests {
         let field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
         // Borrowed storage still returns borrowed sub-fields
         assert!(field.is_borrowed());
+    }
+
+    #[test]
+    fn test_borrowed_ref_rejects_writes() {
+        let component = TestComponent { value: 7 };
+        let validity = ValidityFlag::new_read();
+        let mut storage =
+            unsafe { ComponentStorage::borrowed_ref(&component as *const TestComponent, validity) };
+        assert!(storage.as_ref().is_ok());
+        assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
+    }
+
+    #[test]
+    fn test_borrowed_mut_allows_writes() {
+        let mut component = TestComponent { value: 7 };
+        let validity = ValidityFlag::new_write();
+        let mut storage = unsafe {
+            ComponentStorage::borrowed_mut(&mut component as *mut TestComponent, validity)
+        };
+        *storage.as_mut().unwrap() = TestComponent { value: 99 };
+        assert_eq!(component.value, 99);
+    }
+
+    #[test]
+    fn test_share_borrow_from_owned_is_writable() {
+        // An owned parent hands out a mutable borrow that persists back to it.
+        let owner = ComponentStorage::owned(TestComponent { value: 1 });
+        let mut shared = owner.share_borrow();
+        assert!(shared.is_borrowed());
+        shared.as_mut().unwrap().value = 42;
+        assert_eq!(owner.as_ref().unwrap().value, 42);
+    }
+
+    #[test]
+    fn test_share_borrow_preserves_read_only_mode() {
+        // Sharing a read-only borrow keeps it read-only.
+        let component = TestComponent { value: 3 };
+        let validity = ValidityFlag::new_read();
+        let storage =
+            unsafe { ComponentStorage::borrowed_ref(&component as *const TestComponent, validity) };
+        let mut shared = storage.share_borrow();
+        assert!(shared.as_ref().is_ok());
+        assert!(matches!(shared.as_mut(), Err(StorageError::ReadOnly)));
+    }
+
+    #[test]
+    fn test_share_borrow_preserves_write_mode() {
+        // Sharing a mutable borrow keeps it mutable.
+        let mut component = TestComponent { value: 3 };
+        let validity = ValidityFlag::new_write();
+        let storage = unsafe {
+            ComponentStorage::borrowed_mut(&mut component as *mut TestComponent, validity)
+        };
+        let mut shared = storage.share_borrow();
+        shared.as_mut().unwrap().value = 55;
+        assert_eq!(component.value, 55);
+    }
+
+    #[test]
+    fn test_borrow_field_inherits_mutability() {
+        use crate::value_storage::ValueStorage;
+
+        // Mutable parent -> mutable child field.
+        let mut component = NestedComponent { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_write();
+        let storage = unsafe {
+            ComponentStorage::borrowed_mut(&mut component as *mut NestedComponent, validity)
+        };
+        let mut field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
+        *field.as_mut().unwrap() = 9.0;
+        assert_eq!(component.x, 9.0);
+
+        // Read-only parent -> read-only child field.
+        let component = NestedComponent { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_read();
+        let storage = unsafe {
+            ComponentStorage::borrowed_ref(&component as *const NestedComponent, validity)
+        };
+        let mut field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
+        assert!(matches!(field.as_mut(), Err(StorageError::ReadOnly)));
     }
 }

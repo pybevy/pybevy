@@ -29,13 +29,12 @@ impl PartialEq for PyGlobalAmbientLight {
                     && a.brightness == b.brightness
                     && a.affects_lightmapped_meshes == b.affects_lightmapped_meshes
             }
-            (
-                ResourceStorageInner::Borrowed { ptr: a, .. },
-                ResourceStorageInner::Borrowed { ptr: b, .. },
-            ) => ptr::eq(
-                *a as *const GlobalAmbientLight,
-                *b as *const GlobalAmbientLight,
-            ),
+            (ResourceStorageInner::BorrowedRef(a), ResourceStorageInner::BorrowedRef(b)) => {
+                ptr::eq(a.as_ptr(), b.as_ptr())
+            }
+            (ResourceStorageInner::BorrowedMut(a), ResourceStorageInner::BorrowedMut(b)) => {
+                ptr::eq(a.as_ptr(), b.as_ptr())
+            }
             _ => false,
         }
     }

@@ -4,8 +4,10 @@
 //! component fields, enabling mutations to persist back to ECS.
 
 use crate::{
-    storage_error::StorageError, storage_traits::BorrowableStorage,
-    validity_guard::ValidityFlagWithMode,
+    borrowed::{BorrowedMut, BorrowedRef},
+    storage_error::StorageError,
+    storage_traits::BorrowableStorage,
+    validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
 /// Generic storage for Vec<T> fields
@@ -23,39 +25,37 @@ pub enum ListStorageInner<T: Clone> {
     /// Python-created Vec, stored in Box
     Owned(Box<Vec<T>>),
 
-    /// Borrowed reference to Vec field in a component
-    Borrowed {
-        /// Pointer to Vec in component field
-        ptr: *mut Vec<T>,
+    /// Read-only borrow into a Vec field in a component
+    BorrowedRef(BorrowedRef<Vec<T>>),
 
-        /// Validity tracking with read/write mode
-        validity: ValidityFlagWithMode,
-    },
+    /// Mutable borrow into a Vec field in a component
+    BorrowedMut(BorrowedMut<Vec<T>>),
 }
-
-unsafe impl<T: Clone + Send> Send for ListStorage<T> {}
-unsafe impl<T: Clone + Sync> Sync for ListStorage<T> {}
 
 impl<T: Clone> Clone for ListStorage<T> {
     fn clone(&self) -> Self {
-        match &self.inner {
-            ListStorageInner::Owned(boxed) => Self {
-                inner: ListStorageInner::Owned(Box::new((**boxed).clone())),
-            },
-            ListStorageInner::Borrowed { ptr, validity } => Self {
-                inner: ListStorageInner::Borrowed {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                },
-            },
-        }
+        let inner = match &self.inner {
+            ListStorageInner::Owned(boxed) => ListStorageInner::Owned(Box::new((**boxed).clone())),
+            ListStorageInner::BorrowedRef(b) => ListStorageInner::BorrowedRef(b.clone()),
+            // A cloned mutable borrow downgrades to read-only to avoid aliasing.
+            ListStorageInner::BorrowedMut(b) => ListStorageInner::BorrowedRef(b.clone_as_ref()),
+        };
+        Self { inner }
     }
 }
 
 impl<T: Clone> BorrowableStorage<Vec<T>> for ListStorage<T> {
-    unsafe fn borrowed(ptr: *mut Vec<T>, validity: ValidityFlagWithMode) -> Self {
+    unsafe fn borrowed_ref(ptr: *const Vec<T>, validity: ValidityFlag) -> Self {
         Self {
-            inner: ListStorageInner::Borrowed { ptr, validity },
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ListStorageInner::BorrowedRef(unsafe { BorrowedRef::new(ptr, validity) }),
+        }
+    }
+
+    unsafe fn borrowed_mut(ptr: *mut Vec<T>, validity: ValidityFlag) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ListStorageInner::BorrowedMut(unsafe { BorrowedMut::new(ptr, validity) }),
         }
     }
 
@@ -74,58 +74,44 @@ impl<T: Clone> ListStorage<T> {
         }
     }
 
-    /// Create borrowed list storage with direct pointer to Vec
+    /// Create borrowed list storage, choosing read vs write from the transport mode.
     ///
     /// # Safety
     /// - `ptr` must point to a valid `Vec<T>` in a component field
-    /// - The pointer must remain valid while `validity` flag is true
+    /// - `ptr` must be safe to write through when `validity.access_mode()` is `Write`
     pub unsafe fn borrowed(ptr: *mut Vec<T>, validity: ValidityFlagWithMode) -> Self {
-        unsafe { <Self as BorrowableStorage<Vec<T>>>::borrowed(ptr, validity) }
+        match validity.access_mode() {
+            // SAFETY: mode Write means ptr was obtained from a mutable borrow
+            AccessMode::Write => unsafe {
+                <Self as BorrowableStorage<Vec<T>>>::borrowed_mut(ptr, validity.flag)
+            },
+            // SAFETY: read-only view of the same pointer
+            _ => unsafe {
+                <Self as BorrowableStorage<Vec<T>>>::borrowed_ref(
+                    ptr as *const Vec<T>,
+                    validity.flag,
+                )
+            },
+        }
     }
 
     /// Get immutable reference to the Vec, checking validity
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&Vec<T>, StorageError> {
-        self.check_valid()?;
-        Ok(unsafe { &*self.as_ptr() })
+        match &self.inner {
+            ListStorageInner::Owned(boxed) => Ok(&**boxed),
+            ListStorageInner::BorrowedRef(b) => b.get(),
+            ListStorageInner::BorrowedMut(b) => b.get(),
+        }
     }
 
     /// Get mutable reference to the Vec, checking validity and write permission
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut Vec<T>, StorageError> {
-        self.check_valid_mut()?;
-        Ok(unsafe { &mut *self.as_mut_ptr() })
-    }
-
-    #[inline(always)]
-    fn as_ptr(&self) -> *const Vec<T> {
-        match &self.inner {
-            ListStorageInner::Owned(boxed) => &**boxed as *const Vec<T>,
-            ListStorageInner::Borrowed { ptr, .. } => *ptr as *const Vec<T>,
-        }
-    }
-
-    #[inline(always)]
-    fn as_mut_ptr(&mut self) -> *mut Vec<T> {
         match &mut self.inner {
-            ListStorageInner::Owned(boxed) => &mut **boxed as *mut Vec<T>,
-            ListStorageInner::Borrowed { ptr, .. } => *ptr,
-        }
-    }
-
-    #[inline(always)]
-    fn check_valid(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ListStorageInner::Owned(_) => Ok(()),
-            ListStorageInner::Borrowed { validity, .. } => validity.check(),
-        }
-    }
-
-    #[inline(always)]
-    fn check_valid_mut(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ListStorageInner::Owned(_) => Ok(()),
-            ListStorageInner::Borrowed { validity, .. } => validity.check_write(),
+            ListStorageInner::Owned(boxed) => Ok(&mut **boxed),
+            ListStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ListStorageInner::BorrowedMut(b) => b.get_mut(),
         }
     }
 

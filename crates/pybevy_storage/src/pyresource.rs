@@ -6,6 +6,7 @@
 use bevy::ecs::prelude::Resource;
 
 use crate::{
+    borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
@@ -28,42 +29,27 @@ pub enum ResourceStorageInner<T: Resource> {
         validity: ValidityFlag,
     },
 
-    /// Borrowed reference to resource in World storage
-    Borrowed {
-        ptr: *mut T,
-        validity: ValidityFlagWithMode,
-    },
+    /// Read-only borrow into World storage
+    BorrowedRef(BorrowedRef<T>),
+
+    /// Mutable borrow into World storage
+    BorrowedMut(BorrowedMut<T>),
 }
-
-// SAFETY: ResourceStorage is Send because:
-// - Box<T> is Send when T is Send
-// - Raw pointer is just an address
-// - ValidityFlag (Arc<AtomicU8>) is Send + Sync
-// - Validity checking prevents unsafe access
-unsafe impl<T: Resource + Send> Send for ResourceStorage<T> {}
-
-// SAFETY: ResourceStorage is Sync because:
-// - Access is controlled by validity checking
-// - ValidityFlag uses atomic operations
-// - We only allow access when validity flag is true
-unsafe impl<T: Resource + Sync> Sync for ResourceStorage<T> {}
 
 impl<T: Resource + Clone> Clone for ResourceStorage<T> {
     fn clone(&self) -> Self {
-        match &self.inner {
-            ResourceStorageInner::Owned { data, validity: _ } => Self {
-                inner: ResourceStorageInner::Owned {
-                    data: Box::new((**data).clone()),
-                    validity: ValidityFlag::new_write(),
-                },
+        let inner = match &self.inner {
+            ResourceStorageInner::Owned { data, validity: _ } => ResourceStorageInner::Owned {
+                data: Box::new((**data).clone()),
+                validity: ValidityFlag::new_write(),
             },
-            ResourceStorageInner::Borrowed { ptr, validity } => Self {
-                inner: ResourceStorageInner::Borrowed {
-                    ptr: *ptr,
-                    validity: validity.clone(),
-                },
-            },
-        }
+            ResourceStorageInner::BorrowedRef(b) => ResourceStorageInner::BorrowedRef(b.clone()),
+            // A cloned mutable borrow downgrades to read-only to avoid aliasing.
+            ResourceStorageInner::BorrowedMut(b) => {
+                ResourceStorageInner::BorrowedRef(b.clone_as_ref())
+            }
+        };
+        Self { inner }
     }
 }
 
@@ -82,10 +68,12 @@ impl<T: Resource + PartialEq> PartialEq for ResourceStorage<T> {
                 ResourceStorageInner::Owned { data: a, .. },
                 ResourceStorageInner::Owned { data: b, .. },
             ) => **a == **b,
-            (
-                ResourceStorageInner::Borrowed { ptr: a, .. },
-                ResourceStorageInner::Borrowed { ptr: b, .. },
-            ) => a == b,
+            (ResourceStorageInner::BorrowedRef(a), ResourceStorageInner::BorrowedRef(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
+            (ResourceStorageInner::BorrowedMut(a), ResourceStorageInner::BorrowedMut(b)) => {
+                a.as_ptr() == b.as_ptr()
+            }
             _ => false,
         }
     }
@@ -102,94 +90,89 @@ impl<T: Resource> ResourceStorage<T> {
         }
     }
 
-    /// Create borrowed resource storage with direct pointer and validity mode
+    /// Create a read-only borrowed resource storage from a const pointer.
     ///
     /// # Safety
     /// - `ptr` must point to a valid `T` in World resource storage
-    /// - The pointer must remain valid while `validity` flag is true
-    pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+    /// - The pointer must remain valid while `validity` is non-Invalid
+    /// - No `&mut T` aliasing the same resource may exist while the flag is valid
+    pub unsafe fn borrowed_ref(ptr: *const T, validity: ValidityFlag) -> Self {
         Self {
-            inner: ResourceStorageInner::Borrowed { ptr, validity },
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ResourceStorageInner::BorrowedRef(unsafe { BorrowedRef::new(ptr, validity) }),
+        }
+    }
+
+    /// Create a mutable borrowed resource storage from a mut pointer.
+    ///
+    /// # Safety
+    /// - `ptr` must point to a valid `T` in World resource storage, from `&mut T`
+    /// - The pointer must remain valid while `validity` is non-Invalid
+    /// - No other reference may alias the same resource while the flag is valid
+    pub unsafe fn borrowed_mut(ptr: *mut T, validity: ValidityFlag) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ResourceStorageInner::BorrowedMut(unsafe { BorrowedMut::new(ptr, validity) }),
+        }
+    }
+
+    /// Create borrowed resource storage, choosing read vs write from the transport mode.
+    ///
+    /// This is the bridge boundary constructor: `ValidityFlagWithMode` still carries
+    /// the mode across the FFI layer, and is resolved here into a typed borrowed
+    /// variant that no longer stores the mode.
+    ///
+    /// # Safety
+    /// - `ptr` must point to a valid `T` in World resource storage
+    /// - `ptr` must be safe to write through when `validity.access_mode()` is `Write`
+    pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+        match validity.access_mode() {
+            // SAFETY: mode Write means ptr was obtained from a mutable borrow
+            AccessMode::Write => unsafe { Self::borrowed_mut(ptr, validity.flag) },
+            // SAFETY: read-only view of the same pointer
+            _ => unsafe { Self::borrowed_ref(ptr as *const T, validity.flag) },
         }
     }
 
     /// Create read-only borrowed resource storage (for Res[T])
     ///
-    /// Convenience method that creates borrowed storage with Read access mode.
-    ///
     /// # Safety
     /// - `ptr` must point to a valid `T` in World resource storage
-    /// - The pointer must remain valid while `validity` flag is true
+    /// - The pointer must remain valid while `validity` is non-Invalid
     /// - Caller must ensure no mutable references exist
     pub unsafe fn borrowed_read(ptr: *const T, validity: ValidityFlag) -> Self {
-        Self {
-            inner: ResourceStorageInner::Borrowed {
-                ptr: ptr as *mut T,
-                validity: validity.with_access_mode(AccessMode::Read),
-            },
-        }
+        // SAFETY: forwards this constructor's contract unchanged
+        unsafe { Self::borrowed_ref(ptr, validity) }
     }
 
     /// Create mutable borrowed resource storage (for ResMut[T])
     ///
-    /// Convenience method that creates borrowed storage with Write access mode.
-    ///
     /// # Safety
     /// - `ptr` must point to a valid `T` in World resource storage
-    /// - The pointer must remain valid while `validity` flag is true
+    /// - The pointer must remain valid while `validity` is non-Invalid
     /// - Caller must ensure exclusive mutable access
     pub unsafe fn borrowed_write(ptr: *mut T, validity: ValidityFlag) -> Self {
-        Self {
-            inner: ResourceStorageInner::Borrowed {
-                ptr,
-                validity: validity.with_access_mode(AccessMode::Write),
-            },
-        }
+        // SAFETY: forwards this constructor's contract unchanged
+        unsafe { Self::borrowed_mut(ptr, validity) }
     }
 
     /// Get immutable reference to the resource, checking validity
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
-        self.check_valid()?;
-        Ok(unsafe { &*self.as_ptr() })
+        match &self.inner {
+            ResourceStorageInner::Owned { data, .. } => Ok(&**data),
+            ResourceStorageInner::BorrowedRef(b) => b.get(),
+            ResourceStorageInner::BorrowedMut(b) => b.get(),
+        }
     }
 
     /// Get mutable reference to the resource, checking validity and write permission
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
-        self.check_valid_mut()?;
-        Ok(unsafe { &mut *self.as_mut_ptr() })
-    }
-
-    #[inline(always)]
-    fn as_ptr(&self) -> *const T {
-        match &self.inner {
-            ResourceStorageInner::Owned { data, .. } => &**data as *const T,
-            ResourceStorageInner::Borrowed { ptr, .. } => *ptr as *const T,
-        }
-    }
-
-    #[inline(always)]
-    fn as_mut_ptr(&mut self) -> *mut T {
         match &mut self.inner {
-            ResourceStorageInner::Owned { data, .. } => &mut **data as *mut T,
-            ResourceStorageInner::Borrowed { ptr, .. } => *ptr,
-        }
-    }
-
-    #[inline(always)]
-    fn check_valid(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ResourceStorageInner::Owned { .. } => Ok(()),
-            ResourceStorageInner::Borrowed { validity, .. } => validity.check(),
-        }
-    }
-
-    #[inline(always)]
-    fn check_valid_mut(&self) -> Result<(), StorageError> {
-        match &self.inner {
-            ResourceStorageInner::Owned { .. } => Ok(()),
-            ResourceStorageInner::Borrowed { validity, .. } => validity.check_write(),
+            ResourceStorageInner::Owned { data, .. } => Ok(&mut **data),
+            ResourceStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ResourceStorageInner::BorrowedMut(b) => b.get_mut(),
         }
     }
 
@@ -206,13 +189,8 @@ impl<T: Resource> ResourceStorage<T> {
     {
         match &self.inner {
             ResourceStorageInner::Owned { data, .. } => Ok(S::snapshot(field_accessor(&**data))),
-            ResourceStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-                let resource_ref = unsafe { &**ptr };
-                let field_ref = field_accessor(resource_ref);
-                let field_ptr = field_ref as *const F as *mut F;
-                Ok(unsafe { S::borrowed(field_ptr, validity.clone()) })
-            }
+            ResourceStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
+            ResourceStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
         }
     }
 
@@ -235,20 +213,17 @@ impl<T: Resource> ResourceStorage<T> {
 
     #[allow(dead_code)]
     pub fn is_borrowed(&self) -> bool {
-        matches!(self.inner, ResourceStorageInner::Borrowed { .. })
+        matches!(
+            self.inner,
+            ResourceStorageInner::BorrowedRef(_) | ResourceStorageInner::BorrowedMut(_)
+        )
     }
 }
 
 impl<T: Resource + Clone> ResourceStorage<T> {
     /// Convert storage to owned resource, consuming self
     pub fn into_owned(self) -> Result<T, StorageError> {
-        match &self.inner {
-            ResourceStorageInner::Owned { data, .. } => Ok((**data).clone()),
-            ResourceStorageInner::Borrowed { ptr, validity } => {
-                validity.check()?;
-                Ok(unsafe { (**ptr).clone() })
-            }
-        }
+        Ok(self.as_ref()?.clone())
     }
 }
 

@@ -178,3 +178,31 @@ impl PyChildrenIterator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::world::World;
+
+    use super::*;
+    use crate::{storage_error::StorageError, validity_guard::ValidityFlag};
+
+    /// Regression test: a ChildOf extracted as a read-only typed borrow must
+    /// reject mutation even while the validity flag itself allows writes.
+    #[test]
+    fn borrowed_ref_child_of_rejects_mutation() {
+        let mut world = World::new();
+        let parent = world.spawn_empty().id();
+        let component = ChildOf(parent);
+        let flag = ValidityFlag::new_write();
+
+        // SAFETY: component outlives the storage within this test scope
+        let storage = unsafe { ComponentStorage::borrowed_ref(&component as *const ChildOf, flag) };
+        let (mut py_child_of, _) = PyChildOf::from_borrowed(storage);
+
+        assert_eq!(py_child_of.as_ref().unwrap().0, parent);
+        assert!(matches!(
+            py_child_of.storage.as_mut(),
+            Err(StorageError::ReadOnly)
+        ));
+    }
+}
