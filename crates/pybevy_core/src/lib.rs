@@ -27,6 +27,7 @@ pub mod asset_cleanup;
 pub mod asset_path;
 pub mod component;
 pub mod debug_snapshot;
+pub mod duration;
 pub mod entity;
 pub mod filtered_entity_access;
 pub mod handle;
@@ -314,6 +315,7 @@ pub use bridge_inventory::{
 };
 pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
+pub use duration::duration_from_py;
 pub use entity::PyEntity;
 pub use filtered_entity_access::FilteredEntityAccess;
 pub use handle::{PyHandle, extract_handle_from_any};

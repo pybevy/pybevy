@@ -1,3 +1,4 @@
+pub mod editable_text;
 pub mod font;
 pub mod font_atlas;
 pub mod font_atlas_sets;
@@ -11,6 +12,7 @@ pub mod font_style;
 pub mod font_weight;
 pub mod font_width;
 pub mod justify;
+pub mod letter_spacing;
 pub mod line_break;
 pub mod line_height;
 pub mod plugin;
@@ -28,9 +30,10 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        font::PyFont, font_hinting::PyFontHinting, font_size::PyFontSize,
-        font_source::PyFontSource, font_style::PyFontStyle, font_weight::PyFontWeight,
-        font_width::PyFontWidth, justify::PyJustify, line_break::PyLineBreak, plugin::PyTextPlugin,
+        editable_text::PyEditableText, font::PyFont, font_hinting::PyFontHinting,
+        font_size::PyFontSize, font_source::PyFontSource, font_style::PyFontStyle,
+        font_weight::PyFontWeight, font_width::PyFontWidth, justify::PyJustify,
+        letter_spacing::PyLetterSpacing, line_break::PyLineBreak, plugin::PyTextPlugin,
         text_background_color::PyTextBackgroundColor, text_color::PyTextColor,
         text_font::PyTextFont, text_layout::PyTextLayout, text_span::PyTextSpan, text2d::PyText2d,
         text2d_shadow::PyText2dShadow,
@@ -49,6 +52,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<text_layout::PyTextLayout>()?;
     m.add_class::<text_span::PyTextSpan>()?;
     m.add_class::<text_bounds::PyTextBounds>()?;
+    m.add_class::<editable_text::PyEditableText>()?;
+    m.add_class::<letter_spacing::PyLetterSpacing>()?;
 
     m.add_class::<font::PyFont>()?;
 
