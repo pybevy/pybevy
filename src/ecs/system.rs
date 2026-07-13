@@ -355,7 +355,6 @@ impl SystemFunction {
 #[derive(Debug, Clone)]
 pub struct SystemParam {
     /// The name of the system parameter
-    #[allow(dead_code)]
     pub name: String,
     /// The type of the system parameter
     pub ty: SystemParamType,
