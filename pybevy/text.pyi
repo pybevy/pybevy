@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import ClassVar
 
 from pybevy.app import App, Plugin
@@ -909,6 +910,73 @@ class UnderlineColor(Component):
     color: Color
 
     def __init__(self, color: Color = ...) -> None: ...
+
+class LetterSpacing(Component):
+    """Spacing between characters. Construct via :meth:`px` or :meth:`rem`.
+
+    The default constructor yields ``Px(0.0)``.
+    """
+
+    def __init__(self) -> None: ...
+    @staticmethod
+    def Px(value: float) -> LetterSpacing: ...
+    @staticmethod
+    def Rem(value: float) -> LetterSpacing: ...
+    @property
+    def value(self) -> float: ...
+    def __eq__(self, other: object) -> bool: ...
+
+class EditableText(Component):
+    """An editable text input field.
+
+    Spawning this component creates an editable text widget; typing, cursor
+    movement, selection, and clipboard are handled by Bevy's systems at runtime.
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        cursor_width: float = 0.2,
+        cursor_blink_period: timedelta | float | int | None = None,
+        max_characters: int | None = None,
+        visible_lines: float | None = 1.0,
+        visible_width: float | None = None,
+        allow_newlines: bool = False,
+    ) -> None: ...
+
+    @property
+    def value(self) -> str:
+        """The current text content."""
+
+    @property
+    def max_characters(self) -> int | None: ...
+    @max_characters.setter
+    def max_characters(self, value: int | None) -> None: ...
+
+    @property
+    def allow_newlines(self) -> bool: ...
+    @allow_newlines.setter
+    def allow_newlines(self, value: bool) -> None: ...
+
+    @property
+    def cursor_width(self) -> float: ...
+    @cursor_width.setter
+    def cursor_width(self, value: float) -> None: ...
+
+    @property
+    def cursor_blink_period(self) -> timedelta: ...
+    @cursor_blink_period.setter
+    def cursor_blink_period(self, value: timedelta | float | int) -> None: ...
+
+    @property
+    def visible_lines(self) -> float | None: ...
+    @visible_lines.setter
+    def visible_lines(self, value: float | None) -> None: ...
+
+    @property
+    def visible_width(self) -> float | None: ...
+    @visible_width.setter
+    def visible_width(self, value: float | None) -> None: ...
 
 class TextPlugin(Plugin):
     """Plugin that adds text rendering support to the app.
