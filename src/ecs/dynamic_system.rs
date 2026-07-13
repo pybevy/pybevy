@@ -9,7 +9,7 @@ use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
         component::ComponentId,
-        query::{FilteredAccess, FilteredAccessSet},
+        query::FilteredAccessSet,
         system::{RunSystemError, System, SystemIn, SystemParamValidationError, SystemStateFlags},
         world::{CommandQueue, DeferredWorld, World, unsafe_world_cell::UnsafeWorldCell},
     },
@@ -17,8 +17,11 @@ use bevy::{
 };
 use pybevy_core::registry::global_registry;
 use pybevy_ecs::shared::{
-    access_sets::{QueryParamAccess, build_resource_access},
-    access_validation::{self as shared_validation, ComponentAccess, ParamAccess, QueryFilters},
+    access_validation::{self as shared_validation},
+    param_spec::{
+        BackendKeys, ComponentSpec, FilterSpec, KeyResolver, ParamSpec, QuerySpec, ResolvedMessage,
+        ResolvedResource, build_declared_access, conflict_error_message, to_param_accesses,
+    },
 };
 use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
 use pyo3::{
@@ -50,7 +53,7 @@ use crate::{
         },
         resource::PyResource,
         resource_type::{PyResourceStorage, PyResourceType, ResourceRegistry},
-        system::{SystemFunction, SystemParamType},
+        system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType},
         view::{view::PyView, view_param::ViewParamType},
         world::PyWorld,
     },
@@ -185,70 +188,256 @@ pub struct DynamicSystem {
 unsafe impl Send for DynamicSystem {}
 unsafe impl Sync for DynamicSystem {}
 
-/// Extract QueryFilters from a PyQueryParam for disjointness checking.
-///
-/// Includes implicit With for all queried component types, matching Bevy's
-/// behavior where `Query<&T>` implies `With<T>` for access checking.
-fn query_filters_from_query_param(
-    query_param: &crate::ecs::query::query_param::PyQueryParam,
-) -> QueryFilters {
-    let mut filters = QueryFilters::default();
+/// Backend key types for the pyo3 backend (see `pybevy_ecs::shared::param_spec`).
+pub(crate) struct MainKeys;
 
-    for data in &query_param.data {
-        if let QueryData::Component { ty, .. } = data {
-            filters.with.insert(ty.to_string());
-        }
-    }
-
-    for filter in &query_param.filters {
-        match filter {
-            QueryFilter::With(with) => {
-                for comp in &with.values {
-                    filters.with.insert(comp.to_string());
-                }
-            }
-            QueryFilter::Without(without) => {
-                for comp in &without.values {
-                    filters.without.insert(comp.to_string());
-                }
-            }
-            QueryFilter::Changed(_)
-            | QueryFilter::Added(_)
-            | QueryFilter::Has(_)
-            | QueryFilter::AnyOf(_) => {}
-        }
-    }
-    filters
+impl BackendKeys for MainKeys {
+    type ComponentKey = PyComponentType;
+    type ResourceKey = Py<PyType>;
+    type AssetKey = AssetTypePtr;
+    type MessageKey = MessageType;
 }
 
-/// Extract QueryFilters from a PyViewParam for disjointness checking.
+fn component_spec(
+    comp_type: &PyComponentType,
+    mutable: bool,
+    optional: bool,
+) -> ComponentSpec<MainKeys> {
+    let name = comp_type.to_string();
+    ComponentSpec {
+        key: comp_type.clone(),
+        label: name.clone(),
+        name,
+        mutable,
+        optional,
+    }
+}
+
+fn filter_spec(comp_type: &PyComponentType) -> FilterSpec<MainKeys> {
+    FilterSpec {
+        key: comp_type.clone(),
+        label: comp_type.to_string(),
+    }
+}
+
+/// Lower one parsed parameter into the shared backend-neutral IR.
 ///
-/// Includes implicit With for all viewed component types, matching Bevy's
-/// behavior where accessing a component implies `With<T>`.
-fn query_filters_from_view_param(
-    view_param: &crate::ecs::view::view_param::PyViewParam,
-) -> QueryFilters {
-    let mut filters = QueryFilters::default();
+/// Component names and disjointness labels are class-name strings (see
+/// `PyComponentType`'s `Display`); resource validation keys are type-object
+/// pointers. Both match the pre-IR validation semantics.
+pub(crate) fn lower_param_type(ty: &SystemParamType) -> ParamSpec<MainKeys> {
+    match ty {
+        SystemParamType::Query { param: query_param } => {
+            let mut spec = QuerySpec::default();
+            for data in &query_param.data {
+                if let QueryData::Component {
+                    ty: comp_type,
+                    mutable,
+                    optional,
+                } = data
+                {
+                    spec.components
+                        .push(component_spec(comp_type, *mutable, *optional));
+                }
+            }
+            for filter in &query_param.filters {
+                match filter {
+                    QueryFilter::With(with) => {
+                        for comp_type in &with.values {
+                            spec.with.push(filter_spec(comp_type));
+                        }
+                    }
+                    QueryFilter::Without(without) => {
+                        for comp_type in &without.values {
+                            spec.without.push(filter_spec(comp_type));
+                        }
+                    }
+                    QueryFilter::Changed(changed) => {
+                        spec.changed.push(filter_spec(&changed.component_type));
+                    }
+                    QueryFilter::Added(added) => {
+                        spec.added.push(filter_spec(&added.component_type));
+                    }
+                    QueryFilter::Has(has) => {
+                        spec.resolve_only.push(has.component_type.clone());
+                    }
+                    QueryFilter::AnyOf(any_of) => {
+                        for comp_type in &any_of.values {
+                            spec.resolve_only.push(comp_type.clone());
+                        }
+                    }
+                }
+            }
+            ParamSpec::Query(spec)
+        }
+        SystemParamType::View { param: view_param } => {
+            let mut spec = QuerySpec::default();
+            for param_type in &view_param.parameters {
+                let ViewParamType::Component { comp_type, mutable } = param_type;
+                spec.components
+                    .push(component_spec(comp_type, *mutable, false));
+            }
+            for comp_type in &view_param.with_filters {
+                spec.with.push(filter_spec(comp_type));
+            }
+            for comp_type in &view_param.without_filters {
+                spec.without.push(filter_spec(comp_type));
+            }
+            for comp_type in &view_param.changed_filters {
+                spec.changed.push(filter_spec(comp_type));
+            }
+            for comp_type in &view_param.added_filters {
+                spec.added.push(filter_spec(comp_type));
+            }
+            ParamSpec::View(spec)
+        }
+        SystemParamType::Resource { type_obj, mutable } => {
+            let type_ptr = type_obj.as_ptr() as usize;
+            ParamSpec::Res {
+                key: Python::attach(|py| type_obj.clone_ref(py)),
+                vkey: Some(type_ptr),
+                name: format!("Resource@{:x}", type_ptr),
+                mutable: *mutable,
+            }
+        }
+        SystemParamType::Assets {
+            type_ptr,
+            wrapper_class,
+            mutable,
+        } => {
+            // wrapper_class (e.g. GroundMaterial) keys the conflict check when
+            // present, falling back to type_ptr (e.g. ShaderMaterial): Bevy
+            // treats Assets<MaterialA> and Assets<MaterialB> as separate
+            // resources even when both are backed by the same underlying type.
+            let key = wrapper_class.unwrap_or(*type_ptr);
+            let name = format!("{:p}", key.0);
+            ParamSpec::Assets {
+                key,
+                vkey: name.clone(),
+                name,
+                mutable: *mutable,
+            }
+        }
+        SystemParamType::World => ParamSpec::World,
+        SystemParamType::Commands => ParamSpec::Commands,
+        SystemParamType::Local(_) => ParamSpec::Local,
+        SystemParamType::MessageWriter { message_type } => ParamSpec::MessageWriter {
+            key: message_type.clone(),
+        },
+        SystemParamType::MessageReader { message_type } => ParamSpec::MessageReader {
+            key: message_type.clone(),
+        },
+        SystemParamType::On { .. } => ParamSpec::Observer,
+    }
+}
 
-    for param_type in &view_param.parameters {
-        let ViewParamType::Component { comp_type, .. } = param_type;
-        filters.with.insert(comp_type.to_string());
+/// Lower a whole signature into the shared IR, in signature order.
+pub(crate) fn lower_params(params: &[SystemParam]) -> Vec<ParamSpec<MainKeys>> {
+    params.iter().map(|p| lower_param_type(&p.ty)).collect()
+}
+
+/// Resolves pyo3 backend keys against the world during the shared access walk.
+///
+/// Borrows the system's custom-component cache so custom components are
+/// registered on first sight and reused by the runtime (`PyQueryIter::new`
+/// reads this cache).
+struct MainResolver<'a> {
+    custom_component_ids: &'a mut HashMap<*const PyTypeObject, ComponentId>,
+}
+
+impl KeyResolver<MainKeys> for MainResolver<'_> {
+    fn component_id(&mut self, world: &mut World, key: &PyComponentType) -> Option<ComponentId> {
+        Some(match key {
+            PyComponentType::Custom(type_ptr) => {
+                if let Some(&id) = self.custom_component_ids.get(type_ptr) {
+                    id
+                } else {
+                    let name = Python::attach(|py| get_python_type_name(py, *type_ptr));
+                    let id = register_custom_component(world, *type_ptr, name);
+                    self.custom_component_ids.insert(*type_ptr, id);
+                    id
+                }
+            }
+            _ => register_component_id(world, key, self.custom_component_ids),
+        })
     }
 
-    for comp in &view_param.with_filters {
-        filters.with.insert(comp.to_string());
+    fn resource_ids(&mut self, world: &mut World, key: &Py<PyType>) -> ResolvedResource {
+        let resource_type = Python::attach(|py| {
+            let type_bound = key.bind(py);
+            PyResourceType::try_from((type_bound, py)).ok()
+        });
+        let Some(rt) = resource_type else {
+            return ResolvedResource::default();
+        };
+        // Register (not just look up) so access is declared even when the
+        // resource is inserted after schedule init; an undeclared access
+        // would let conflicting systems race (UB).
+        let primary = rt.register_component_id(world);
+        let mut aux_reads = Vec::new();
+        // Custom Python resources live inside `PyResourceStorage`, keyed
+        // through `ResourceRegistry`; `run_unsafe`'s cell read path touches
+        // both (see PyResourceType::get_custom_from_cell), so declare those
+        // reads to keep declared >= actual access. Both read and write params
+        // only READ these two resources (the write path returns the same
+        // stored Python object).
+        if matches!(rt, PyResourceType::Custom(_)) {
+            aux_reads.push(world.register_component::<ResourceRegistry>());
+            aux_reads.push(world.register_component::<PyResourceStorage>());
+        }
+        ResolvedResource { primary, aux_reads }
     }
-    for comp in &view_param.without_filters {
-        filters.without.insert(comp.to_string());
+
+    fn asset_id(&mut self, world: &mut World, key: &AssetTypePtr) -> Option<ComponentId> {
+        // Register the Assets<T> id up front; a bridge that exists always
+        // yields an id, so access is never silently dropped.
+        global_registry::get_asset_bridge_by_py_type(key.0)
+            .map(|bridge| bridge.register_resource_id(world))
     }
-    // Changed/Added filters imply With (component must be present)
-    for comp in &view_param.changed_filters {
-        filters.with.insert(comp.to_string());
+
+    fn message_ids(
+        &mut self,
+        world: &mut World,
+        key: &MessageType,
+        write: bool,
+    ) -> ResolvedMessage {
+        let mut resolved = ResolvedMessage::default();
+        if write {
+            // Message buffers are resources; register (not just look up) the
+            // id so access is declared even before the first write. Custom
+            // messages are the one residual lookup-only case (see
+            // MessageType::register_resource_id).
+            if let Some(id) = key.register_resource_id(world) {
+                resolved.writes.push(id);
+            }
+        } else {
+            // reader_resource_ids returns the primary Messages<T> id plus any
+            // auxiliary read (KeyboardInput also reads ButtonInput<KeyCode>).
+            resolved.reads.extend(key.reader_resource_ids(world));
+        }
+        // Custom message paths resolve their message number through the
+        // MessageRegistry resource at run time; declare that read so declared
+        // access covers the actual access.
+        if matches!(key, MessageType::Custom(_)) {
+            resolved
+                .reads
+                .push(world.register_component::<MessageRegistry>());
+        }
+        resolved
     }
-    for comp in &view_param.added_filters {
-        filters.with.insert(comp.to_string());
+
+    fn infrastructure_reads(&mut self, world: &mut World) -> Vec<ComponentId> {
+        vec![
+            // run_unsafe's generation guard reads HotReloadGeneration.
+            world.register_component::<HotReloadGeneration>(),
+            // run_unsafe's profiling epilogue reads Time and SystemProfiler
+            // via shared world access every run; declaring both lets the
+            // parallel executor account for the reads and never schedule a
+            // conflicting writer alongside.
+            world.register_component::<Time>(),
+            world.register_component::<SystemProfiler>(),
+        ]
     }
-    filters
 }
 
 impl DynamicSystem {
@@ -368,89 +557,6 @@ impl DynamicSystem {
                 .expect("Failed to create PyRes");
             args_buffer.push(res_wrapper.into_any());
         }
-    }
-
-    /// Convert system parameters to ParamAccess for validation.
-    fn to_param_accesses<K: std::hash::Hash + Eq + Clone>(
-        params: &[crate::ecs::system::SystemParam],
-        mut get_key: impl FnMut(&PyComponentType) -> K,
-    ) -> Vec<ParamAccess<K>> {
-        params
-            .iter()
-            .map(|param| match &param.ty {
-                SystemParamType::Query { param: query_param } => {
-                    let filters = query_filters_from_query_param(query_param);
-                    let accesses = query_param
-                        .data
-                        .iter()
-                        .filter_map(|d| {
-                            if let QueryData::Component {
-                                ty: comp_type,
-                                mutable,
-                                ..
-                            } = d
-                            {
-                                Some(ComponentAccess {
-                                    key: get_key(comp_type),
-                                    name: comp_type.to_string(),
-                                    mutable: *mutable,
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    ParamAccess::Components { accesses, filters }
-                }
-                SystemParamType::View { param: view_param } => {
-                    let filters = query_filters_from_view_param(view_param);
-                    let accesses = view_param
-                        .parameters
-                        .iter()
-                        .map(|vpt| {
-                            let ViewParamType::Component { comp_type, mutable } = vpt;
-                            ComponentAccess {
-                                key: get_key(comp_type),
-                                name: comp_type.to_string(),
-                                mutable: *mutable,
-                            }
-                        })
-                        .collect();
-                    ParamAccess::Components { accesses, filters }
-                }
-                SystemParamType::Resource { type_obj, mutable } => {
-                    let type_ptr = type_obj.as_ptr() as usize;
-                    let type_name = format!("Resource@{:x}", type_ptr);
-                    ParamAccess::Resource {
-                        key: type_ptr,
-                        name: type_name,
-                        mutable: *mutable,
-                    }
-                }
-                SystemParamType::Assets {
-                    type_ptr,
-                    wrapper_class,
-                    mutable,
-                } => {
-                    // Use wrapper_class (e.g. GroundMaterial) as conflict key when present,
-                    // falling back to type_ptr (e.g. ShaderMaterial). This matches Bevy
-                    // semantics where Assets<MaterialA> and Assets<MaterialB> are separate
-                    // resources even when both are backed by the same underlying type.
-                    let asset_type_name = if let Some(wrapper) = wrapper_class {
-                        format!("{:p}", wrapper.0)
-                    } else {
-                        format!("{:p}", type_ptr.0)
-                    };
-                    ParamAccess::Assets {
-                        key: asset_type_name.clone(),
-                        name: asset_type_name,
-                        mutable: *mutable,
-                    }
-                }
-                SystemParamType::World => ParamAccess::World,
-                _ => ParamAccess::None,
-            })
-            .collect()
     }
 
     /// Get the cached function (for DynamicCondition)
@@ -1049,222 +1155,21 @@ impl System for DynamicSystem {
             inner.system_func.as_ref().unwrap().params.clone()
         };
 
-        // One `FilteredAccess` per Query/View parameter, so a filter on one query
-        // never narrows the declared access of another (that would fabricate
-        // disjointness). Resource-like access is gathered separately into a single
-        // shared `FilteredAccess` built at the end.
-        let mut param_accesses: Vec<FilteredAccess> = Vec::new();
-
-        // Parse system parameters from the SystemFunction and register component accesses
-        for param in &params {
-            match &param.ty {
-                SystemParamType::Query { param: query_param } => {
-                    let mut access = QueryParamAccess::default();
-
-                    for param_type in &query_param.data {
-                        if let QueryData::Component {
-                            ty: comp_type,
-                            mutable,
-                            optional,
-                        } = param_type
-                        {
-                            let id = self.resolve_component_id(world, comp_type);
-                            // A required component's presence gates the access, so it
-                            // also contributes a `With` filter (added by `build`). An
-                            // optional component may be absent while the query still
-                            // matches, so it contributes access without a `With`.
-                            match (*mutable, *optional) {
-                                (true, false) => access.writes.push(id),
-                                (false, false) => access.reads.push(id),
-                                (true, true) => access.optional_writes.push(id),
-                                (false, true) => access.optional_reads.push(id),
-                            }
-                        }
-                    }
-
-                    for filter in &query_param.filters {
-                        match filter {
-                            QueryFilter::With(with) => {
-                                for comp_type in &with.values {
-                                    let id = self.resolve_component_id(world, comp_type);
-                                    access.with.push(id);
-                                }
-                            }
-                            QueryFilter::Without(without) => {
-                                for comp_type in &without.values {
-                                    let id = self.resolve_component_id(world, comp_type);
-                                    access.without.push(id);
-                                }
-                            }
-                            QueryFilter::Changed(changed) => {
-                                // Changed archetypally implies the component is present,
-                                // and the tick check reads its change ticks.
-                                let id = self.resolve_component_id(world, &changed.component_type);
-                                access.reads.push(id);
-                            }
-                            QueryFilter::Added(added) => {
-                                let id = self.resolve_component_id(world, &added.component_type);
-                                access.reads.push(id);
-                            }
-                            QueryFilter::Has(has) => {
-                                // Has matches regardless of the component's presence, so
-                                // it contributes no access and no filter. The id is still
-                                // registered because the runtime query builder needs it.
-                                self.resolve_component_id(world, &has.component_type);
-                            }
-                            QueryFilter::AnyOf(any_of) => {
-                                // AnyOf has OR semantics; a conjunctive `and_with` cannot
-                                // express OR, so no filter is contributed. Omitting it is
-                                // conservative: it only costs parallelism, never soundness.
-                                // Ids are still registered for the runtime query builder.
-                                for comp_type in &any_of.values {
-                                    self.resolve_component_id(world, comp_type);
-                                }
-                            }
-                        }
-                    }
-
-                    param_accesses.push(access.build());
-                }
-                SystemParamType::Resource { type_obj, mutable } => {
-                    let resource_type = Python::attach(|py| {
-                        let type_bound = type_obj.bind(py);
-                        PyResourceType::try_from((type_bound, py)).ok()
-                    });
-                    if let Some(rt) = resource_type {
-                        // Register (not just look up) so access is declared even when
-                        // the resource is inserted after schedule init; an undeclared
-                        // access would let conflicting systems race (UB).
-                        if let Some(id) = rt.register_component_id(world) {
-                            if *mutable {
-                                self.resources_to_write.push(id);
-                            } else {
-                                self.resources_to_read.push(id);
-                            }
-                        }
-                        // Custom Python resources live inside `PyResourceStorage`,
-                        // keyed through `ResourceRegistry`; `run_unsafe`'s cell read
-                        // path touches both (see PyResourceType::get_custom_from_cell),
-                        // so declare those reads to keep declared >= actual access.
-                        // Both read and write params only READ these two resources
-                        // (the write path returns the same stored Python object).
-                        if matches!(rt, PyResourceType::Custom(_)) {
-                            let registry_id = world.register_component::<ResourceRegistry>();
-                            let storage_id = world.register_component::<PyResourceStorage>();
-                            for id in [registry_id, storage_id] {
-                                if !self.resources_to_read.contains(&id) {
-                                    self.resources_to_read.push(id);
-                                }
-                            }
-                        }
-                    }
-                }
-                SystemParamType::Assets {
-                    type_ptr,
-                    wrapper_class,
-                    mutable,
-                } => {
-                    let key = wrapper_class.unwrap_or(*type_ptr).0;
-                    if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(key) {
-                        // Register the Assets<T> id up front; a bridge that exists
-                        // always yields an id, so access is never silently dropped.
-                        let id = bridge.register_resource_id(world);
-                        if *mutable {
-                            self.resources_to_write.push(id);
-                        } else {
-                            self.resources_to_read.push(id);
-                        }
-                    }
-                }
-                SystemParamType::View { param } => {
-                    let mut access = QueryParamAccess::default();
-
-                    // View components are all required (no optional flag), so each
-                    // contributes access and a `With` filter (added by `build`).
-                    for view_param_type in &param.parameters {
-                        let ViewParamType::Component { comp_type, mutable } = view_param_type;
-                        let id = self.resolve_component_id(world, comp_type);
-                        if *mutable {
-                            access.writes.push(id);
-                        } else {
-                            access.reads.push(id);
-                        }
-                    }
-
-                    for comp_type in &param.with_filters {
-                        let id = self.resolve_component_id(world, comp_type);
-                        access.with.push(id);
-                    }
-                    for comp_type in &param.without_filters {
-                        let id = self.resolve_component_id(world, comp_type);
-                        access.without.push(id);
-                    }
-                    // Changed/Added imply presence and read the component's change ticks.
-                    for comp_type in &param.changed_filters {
-                        let id = self.resolve_component_id(world, comp_type);
-                        access.reads.push(id);
-                    }
-                    for comp_type in &param.added_filters {
-                        let id = self.resolve_component_id(world, comp_type);
-                        access.reads.push(id);
-                    }
-
-                    param_accesses.push(access.build());
-                }
-                SystemParamType::Local(_) => {
-                    // Local state doesn't affect world access
-                }
-                SystemParamType::World => {
-                    // A World param means the system wants exclusive access. `flags()`
-                    // marks it EXCLUSIVE and initialize returns an EMPTY access set for
-                    // it (see the exclusive early-return below), exactly like Bevy's
-                    // ExclusiveFunctionSystem.
-                }
-                SystemParamType::Commands => {
-                    // Commands don't require specific component access
-                }
-                SystemParamType::MessageWriter { message_type } => {
-                    // Message buffers are resources; register (not just look up) the
-                    // id so access is declared even before the first write. Custom
-                    // messages are the one residual lookup-only case (see
-                    // MessageType::register_resource_id).
-                    if let Some(id) = message_type.register_resource_id(world) {
-                        self.resources_to_write.push(id);
-                    }
-                    // Custom message paths resolve their message number through the
-                    // MessageRegistry resource at run time; declare that read so
-                    // declared access covers the actual access.
-                    if matches!(message_type, MessageType::Custom(_)) {
-                        let registry_id = world.register_component::<MessageRegistry>();
-                        if !self.resources_to_read.contains(&registry_id) {
-                            self.resources_to_read.push(registry_id);
-                        }
-                    }
-                }
-                SystemParamType::MessageReader { message_type } => {
-                    // reader_resource_ids returns the primary Messages<T> id plus any
-                    // auxiliary read (KeyboardInput also reads ButtonInput<KeyCode>).
-                    for id in message_type.reader_resource_ids(world) {
-                        if !self.resources_to_read.contains(&id) {
-                            self.resources_to_read.push(id);
-                        }
-                    }
-                    // Custom message paths resolve their message number through the
-                    // MessageRegistry resource at run time; declare that read so
-                    // declared access covers the actual access.
-                    if matches!(message_type, MessageType::Custom(_)) {
-                        let registry_id = world.register_component::<MessageRegistry>();
-                        if !self.resources_to_read.contains(&registry_id) {
-                            self.resources_to_read.push(registry_id);
-                        }
-                    }
-                }
-                SystemParamType::On { .. } => {
-                    // Observers don't require component access registration
-                    // They're triggered via World.trigger() and have separate execution paths
-                }
-            }
-        }
+        // The shared walk declares one `FilteredAccess` per Query/View
+        // parameter plus a single resource-like access, appends the
+        // infrastructure reads, and returns the empty set for exclusive
+        // systems (see `build_declared_access` for the full rationale).
+        // Component ids resolve through `MainResolver`, which registers
+        // custom components into the same cache the runtime reads.
+        let specs = lower_params(&params);
+        let declared = {
+            let mut resolver = MainResolver {
+                custom_component_ids: &mut self.custom_component_ids,
+            };
+            build_declared_access(world, &specs, &mut resolver)
+        };
+        self.resources_to_read = declared.resources_to_read;
+        self.resources_to_write = declared.resources_to_write;
 
         // Build (or rebuild) the per-Query-parameter cached QueryState now that all
         // component ids are resolved. `initialize` legitimately holds `&mut World`, so
@@ -1286,94 +1191,25 @@ impl System for DynamicSystem {
         }
         self.query_caches = query_caches;
 
-        // run_unsafe's generation guard reads HotReloadGeneration
-        let generation_id = world.register_component::<HotReloadGeneration>();
-        if !self.resources_to_read.contains(&generation_id) {
-            self.resources_to_read.push(generation_id);
-        }
-
-        // run_unsafe's profiling epilogue reads Time and SystemProfiler via shared
-        // world access every run; declare both so the parallel executor accounts
-        // for the reads and never schedules a conflicting writer alongside.
-        let time_id = world.register_component::<Time>();
-        if !self.resources_to_read.contains(&time_id) {
-            self.resources_to_read.push(time_id);
-        }
-        let profiler_id = world.register_component::<SystemProfiler>();
-        if !self.resources_to_read.contains(&profiler_id) {
-            self.resources_to_read.push(profiler_id);
-        }
-
         // Conflict validation needs `&mut World` for ComponentId lookups, so it
         // runs here; run_unsafe only reads the stored result.
-        let accesses = Self::to_param_accesses(&params, |comp_type| {
+        let accesses = to_param_accesses(&specs, |comp_type| {
             self.get_component_id_for_validation(world, comp_type)
         });
         self.precomputed_validation =
             shared_validation::validate_access(&accesses)
                 .err()
                 .map(|conflict| {
-                    let error_msg = format!(
-                        "System '{}' has conflicting component access:\n\
-                     - Parameter {} requests {} access to {}\n\
-                     - Parameter {} already has {} access to {}\n\
-                     Rust's borrowing rules forbid multiple mutable references or \
-                     mixing mutable and immutable references to the same data.",
-                        self.func_name,
-                        conflict.param_idx,
-                        if conflict.mutable {
-                            "mutable"
-                        } else {
-                            "immutable"
-                        },
-                        conflict.comp_name,
-                        conflict.existing_idx,
-                        if conflict.existing_mut {
-                            "mutable"
-                        } else {
-                            "immutable"
-                        },
-                        conflict.existing_name
-                    );
                     // skipped=false: a conflict is an error and must reach the app's
                     // error handler; skipped errors are dropped silently by executors.
                     SystemParamValidationError::new::<Self>(
                         false,
-                        error_msg,
+                        conflict_error_message(&self.func_name, &conflict),
                         format!("parameter_{}", conflict.param_idx),
                     )
                 });
 
-        // Exclusive systems declare NO access, exactly like Bevy's
-        // ExclusiveFunctionSystem (its initialize returns FilteredAccessSet::new()).
-        // The EXCLUSIVE flag alone makes the executor run them with nothing else in
-        // flight, which is what soundly covers run_unsafe's `world.world_mut()`.
-        // Declaring read_all+write_all here instead gives the schedule an asymmetric
-        // conflict graph next to Bevy's empty-access exclusive systems and wedges
-        // MultiThreadedExecutor's ready-queue accounting: three or more exclusive
-        // systems mixing both shapes in one schedule die on its
-        // `ready_systems.is_clear()` assertion. Registrations above still ran, so
-        // ids and query caches are ready for run time.
-        if params
-            .iter()
-            .any(|p| matches!(p.ty, SystemParamType::World))
-        {
-            return FilteredAccessSet::default();
-        }
-
-        // One FilteredAccess per Query/View parameter, plus one shared access for
-        // all resource-like reads/writes. `FilteredAccessSet::is_compatible` does
-        // the pairwise filter checks that keep genuinely conflicting systems from
-        // being scheduled in parallel.
-        let mut set = FilteredAccessSet::default();
-        for access in param_accesses {
-            set.add(access);
-        }
-        set.add(build_resource_access(
-            &self.resources_to_read,
-            &self.resources_to_write,
-        ));
-        set
+        declared.set
     }
 
     fn check_change_tick(&mut self, check: CheckChangeTicks) {
@@ -1415,56 +1251,11 @@ impl DynamicSystem {
             }
             inner.system_func.as_ref().unwrap().params.clone()
         };
-        let accesses = Self::to_param_accesses(&params, |comp_type| comp_type.to_string());
+        let specs = lower_params(&params);
+        let accesses = to_param_accesses(&specs, |comp_type| comp_type.to_string());
         shared_validation::validate_access(&accesses).map_err(|conflict| {
-            PyRuntimeError::new_err(format!(
-                "System '{}' has conflicting component access:\n\
-                 - Parameter {} requests {} access to {}\n\
-                 - Parameter {} already has {} access to {}\n\
-                 Rust's borrowing rules forbid multiple mutable references or \
-                 mixing mutable and immutable references to the same data.",
-                self.func_name,
-                conflict.param_idx,
-                if conflict.mutable {
-                    "mutable"
-                } else {
-                    "immutable"
-                },
-                conflict.comp_name,
-                conflict.existing_idx,
-                if conflict.existing_mut {
-                    "mutable"
-                } else {
-                    "immutable"
-                },
-                conflict.existing_name
-            ))
+            PyRuntimeError::new_err(conflict_error_message(&self.func_name, &conflict))
         })
-    }
-
-    /// Resolve a `PyComponentType` to its `ComponentId`, registering it if needed.
-    ///
-    /// Custom components are registered on first sight and cached in
-    /// `custom_component_ids` (the runtime `PyQueryIter::new` reads this cache);
-    /// built-in components resolve through their registered bridge.
-    fn resolve_component_id(
-        &mut self,
-        world: &mut World,
-        comp_type: &PyComponentType,
-    ) -> ComponentId {
-        match comp_type {
-            PyComponentType::Custom(type_ptr) => {
-                if let Some(&id) = self.custom_component_ids.get(type_ptr) {
-                    id
-                } else {
-                    let name = Python::attach(|py| get_python_type_name(py, *type_ptr));
-                    let id = register_custom_component(world, *type_ptr, name);
-                    self.custom_component_ids.insert(*type_ptr, id);
-                    id
-                }
-            }
-            _ => register_component_id(world, comp_type, &self.custom_component_ids),
-        }
     }
 
     /// Get the ComponentId for a given component type during validation.

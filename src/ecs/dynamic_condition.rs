@@ -14,14 +14,15 @@ use bevy::{
     },
     prelude::*,
 };
+use pybevy_ecs::shared::param_spec::{
+    condition_param_rejection as shared_condition_param_rejection, condition_rejection_message,
+};
 use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::ecs::{
-    dynamic_system::DynamicSystem,
-    query::query_param::QueryData,
+    dynamic_system::{DynamicSystem, lower_param_type},
     system::{SystemParam, SystemParamType},
-    view::view_param::ViewParamType,
 };
 
 /// A condition system that wraps a Python function returning bool
@@ -128,43 +129,11 @@ def create_wrapper(original_func, result_container, functools):
 }
 
 /// Describe why a parameter is rejected in a run condition, or `None` if the
-/// parameter is read-only and therefore allowed. A run condition may only read
-/// the world: it is evaluated under Bevy's read-only system contract and its
-/// deferred operations (e.g. `Commands`) are never applied.
+/// parameter is read-only and therefore allowed. The table lives in the shared
+/// crate (`pybevy_ecs::shared::param_spec`); this wrapper lowers the pyo3
+/// parameter into the shared IR first.
 fn condition_param_rejection(ty: &SystemParamType) -> Option<&'static str> {
-    match ty {
-        SystemParamType::World => Some("World (exclusive world access)"),
-        SystemParamType::Commands => {
-            Some("Commands (queued mutations are never applied to conditions)")
-        }
-        SystemParamType::MessageWriter { .. } => {
-            Some("MessageWriter (writing messages mutates the world)")
-        }
-        SystemParamType::MessageReader { .. } => Some(
-            "MessageReader (reading messages mutates the world; read messages in a regular system instead)",
-        ),
-        SystemParamType::Resource { mutable: true, .. } => Some("ResMut (mutable resource access)"),
-        SystemParamType::Assets { mutable: true, .. } => {
-            Some("mutable Assets (mutable asset access)")
-        }
-        SystemParamType::Query { param }
-            if param
-                .data
-                .iter()
-                .any(|d| matches!(d, QueryData::Component { mutable: true, .. })) =>
-        {
-            Some("Query with a Mut component (mutable component access)")
-        }
-        SystemParamType::View { param }
-            if param.parameters.iter().any(|p| {
-                let ViewParamType::Component { mutable, .. } = p;
-                *mutable
-            }) =>
-        {
-            Some("View with a Mut component (mutable component access)")
-        }
-        _ => None,
-    }
+    shared_condition_param_rejection(&lower_param_type(ty))
 }
 
 /// Reject any parameter that would mutate the world during condition evaluation.
@@ -172,12 +141,11 @@ fn condition_param_rejection(ty: &SystemParamType) -> Option<&'static str> {
 fn validate_condition_params(name: &str, params: &[SystemParam]) -> PyResult<()> {
     for (idx, param) in params.iter().enumerate() {
         if let Some(kind) = condition_param_rejection(&param.ty) {
-            return Err(PyRuntimeError::new_err(format!(
-                "Run condition '{name}' parameter {idx} is {kind}. \
-                 Run conditions require read-only world access: they are evaluated under \
-                 Bevy's read-only system contract and any deferred operations are never \
-                 applied. Use read-only parameters such as Res, read-only Query/View, \
-                 Local, or read-only Assets."
+            return Err(PyRuntimeError::new_err(condition_rejection_message(
+                name,
+                idx,
+                &param.name,
+                kind,
             )));
         }
     }
