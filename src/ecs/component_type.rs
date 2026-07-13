@@ -379,10 +379,54 @@ pub(crate) fn register_custom_component(
         world.insert_resource(pybevy_core::CustomComponentInfo::default());
     }
 
-    // Fast path: already registered by this exact pointer
-    let registry = world.resource::<ComponentRegistry>();
-    if let Some(component_id) = registry.registry.get(&type_ptr).copied() {
-        return component_id;
+    // Fast path: already registered by this exact pointer AND its storage type is
+    // unchanged. The storage type is recomputed from the live class on every spawn,
+    // so untrusted Python can mutate `__pybevy_storage__` / `__annotations__` on the
+    // same class object between spawns. Blindly reusing the cached ComponentId across
+    // a PyObject<->Wrapper flip (or a wrapper-size change) would write data shaped for
+    // the new layout into a column laid out — and dropped — as the old one: type
+    // confusion (a forged `Py<PyAny>` cloned/dropped from attacker bytes -> RCE) or an
+    // out-of-bounds copy. On a mismatch, fall through to a fresh registration with the
+    // correct descriptor (mirrors the name-based branch below and the RustPython guard).
+    let cached = world
+        .resource::<ComponentRegistry>()
+        .registry
+        .get(&type_ptr)
+        .copied();
+    if let Some(component_id) = cached {
+        let requested_storage = Python::attach(|py| {
+            let py_type =
+                unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
+            match py_type.cast::<pyo3::types::PyType>() {
+                Ok(cls) => ComponentStorageType::from_python_class(cls)
+                    .unwrap_or(ComponentStorageType::PyObject),
+                Err(_) => ComponentStorageType::PyObject,
+            }
+        });
+        let registered_is_pyobject = world
+            .resource::<pybevy_core::CustomComponentInfo>()
+            .get(component_id)
+            .map(|e| e.is_pyobject_storage);
+        // Bevy's own column layout is the source of truth for the registered size.
+        let registered_size = world
+            .components()
+            .get_info(component_id)
+            .map(|info| info.layout().size());
+
+        let storage_unchanged = match requested_storage {
+            // PyObject columns have a uniform layout, so matching kind is sufficient.
+            ComponentStorageType::PyObject => registered_is_pyobject == Some(true),
+            // Wrapper columns must match kind AND byte size.
+            ComponentStorageType::Wrapper(ws) => {
+                registered_is_pyobject == Some(false) && registered_size == Some(ws.size_bytes())
+            }
+        };
+
+        if storage_unchanged {
+            return component_id;
+        }
+        // else: storage type changed on this class object -> fall through and
+        // register a fresh ComponentId with the correct descriptor.
     }
 
     // Hot-reload path: check if a previous generation registered the same class by name.
