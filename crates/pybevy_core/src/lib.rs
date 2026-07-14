@@ -57,12 +57,51 @@ pybevy_storage::impl_py_list!(PyF32List, "F32List", f32);
 use std::any::TypeId;
 
 use bevy::ecs::{
-    component::ComponentId,
+    component::{Component, ComponentId},
     entity::Entity,
     hierarchy::{ChildOf, Children},
     world::{EntityRef, EntityWorldMut, World},
 };
 use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
+
+/// Build a re-resolving [`ComponentStorage<B>`] for a native/bridge component reached
+/// from `world.get`/`world.get_mut`, or `None` if the entity or component is absent.
+///
+/// Shared by the revalidating `ComponentBridge` extractors so the world-pointer
+/// dereference and presence check live in one place.
+///
+/// # Safety
+/// `world_ptr` must be valid for a shared borrow and free of a competing mutable borrow
+/// for this call, and must stay valid while `validity` is active.
+pub unsafe fn resolve_revalidating_component<B: Component>(
+    entity_id: Entity,
+    world_ptr: *mut World,
+    validity: ValidityFlagWithMode,
+) -> Option<ComponentStorage<B>> {
+    // SAFETY: forwarded from this function's contract.
+    let world = unsafe { &*world_ptr };
+    let component_id = world.component_id::<B>()?;
+    let entity_ref = world.get_entity(entity_id).ok()?;
+    entity_ref.get_by_id(component_id).ok()?;
+    // SAFETY: identity verified above; the handle re-resolves the address per access.
+    Some(unsafe { ComponentStorage::revalidating(world_ptr, entity_id, component_id, validity) })
+}
+
+/// Resolve an [`EntityRef`] from a raw world pointer, or `None` if the entity is gone.
+///
+/// Shared by the owned-copy bridge extractors so the world-pointer dereference lives in
+/// one place.
+///
+/// # Safety
+/// `world_ptr` must be valid for a shared borrow for the returned reference's lifetime.
+pub unsafe fn entity_ref_from_ptr<'w>(
+    entity_id: Entity,
+    world_ptr: *mut World,
+) -> Option<EntityRef<'w>> {
+    // SAFETY: forwarded from this function's contract.
+    let world = unsafe { &*world_ptr };
+    world.get_entity(entity_id).ok()
+}
 
 // Manual implementation of ChildOfBridge because #[pycomponent(..., bridge)]
 // uses pybevy_core:: paths which don't work inside pybevy_core itself.
@@ -155,35 +194,40 @@ impl ComponentBridge for ChildOfBridge {
         entity.contains::<ChildOf>()
     }
 
-    fn extract_from_entity_ref(
+    unsafe fn extract_from_entity_ref(
         &self,
-        entity: &EntityRef,
-        validity: ValidityFlagWithMode,
+        entity_id: Entity,
+        world_ptr: *mut World,
+        _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
-        if let Some(component) = entity.get::<ChildOf>() {
-            // SAFETY: the pointer aliases a live ChildOf in ECS storage for as
-            // long as the validity flag is set; ChildOf is immutable in Bevy,
-            // so the read-only typed borrow matches its contract
-            let storage = unsafe {
-                ComponentStorage::borrowed_ref(component as *const ChildOf, validity.flag)
-            };
-            let obj = Py::new(py, hierarchy::PyChildOf::from_borrowed(storage))?;
+        // ChildOf is an immutable relation; return an owned copy (no borrow to dangle).
+        // SAFETY: world_ptr is valid for a shared borrow here (caller contract).
+        let Some(entity_ref) = (unsafe { entity_ref_from_ptr(entity_id, world_ptr) }) else {
+            return Ok(None);
+        };
+        if let Some(component) = entity_ref.get::<ChildOf>() {
+            let py_component = hierarchy::PyChildOf::try_from(component)?;
+            let obj = Py::new(py, (py_component, PyComponent))?;
             Ok(Some(obj.into_any()))
         } else {
             Ok(None)
         }
     }
 
-    fn extract_from_entity_mut(
+    unsafe fn extract_from_entity_mut(
         &self,
-        entity: &mut EntityWorldMut,
+        entity_id: Entity,
+        world_ptr: *mut World,
         _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
-        // ChildOf is an immutable component (relation), so we can only read it.
-        // Return an owned copy instead of a borrowed reference.
-        if let Some(component) = entity.get::<ChildOf>() {
+        // ChildOf is an immutable relation; return an owned copy instead of a borrow.
+        // SAFETY: world_ptr is valid for a shared borrow here (caller contract).
+        let Some(entity_ref) = (unsafe { entity_ref_from_ptr(entity_id, world_ptr) }) else {
+            return Ok(None);
+        };
+        if let Some(component) = entity_ref.get::<ChildOf>() {
             let py_component = hierarchy::PyChildOf::try_from(component)?;
             let obj = Py::new(py, (py_component, PyComponent))?;
             Ok(Some(obj.into_any()))
@@ -280,13 +324,19 @@ impl ComponentBridge for ChildrenBridge {
         entity.contains::<Children>()
     }
 
-    fn extract_from_entity_ref(
+    unsafe fn extract_from_entity_ref(
         &self,
-        entity: &EntityRef,
+        entity_id: Entity,
+        world_ptr: *mut World,
         _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
-        if let Some(component) = entity.get::<Children>() {
+        // Children is read-only; return an owned copy.
+        // SAFETY: world_ptr is valid for a shared borrow here (caller contract).
+        let Some(entity_ref) = (unsafe { entity_ref_from_ptr(entity_id, world_ptr) }) else {
+            return Ok(None);
+        };
+        if let Some(component) = entity_ref.get::<Children>() {
             let py_component = hierarchy::PyChildren::try_from(component)?;
             let obj = Py::new(py, (py_component, PyComponent))?;
             Ok(Some(obj.into_any()))
@@ -295,14 +345,19 @@ impl ComponentBridge for ChildrenBridge {
         }
     }
 
-    fn extract_from_entity_mut(
+    unsafe fn extract_from_entity_mut(
         &self,
-        entity: &mut EntityWorldMut,
+        entity_id: Entity,
+        world_ptr: *mut World,
         _validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>> {
-        // Children is read-only, return owned copy
-        if let Some(component) = entity.get::<Children>() {
+        // Children is read-only; return an owned copy.
+        // SAFETY: world_ptr is valid for a shared borrow here (caller contract).
+        let Some(entity_ref) = (unsafe { entity_ref_from_ptr(entity_id, world_ptr) }) else {
+            return Ok(None);
+        };
+        if let Some(component) = entity_ref.get::<Children>() {
             let py_component = hierarchy::PyChildren::try_from(component)?;
             let obj = Py::new(py, (py_component, PyComponent))?;
             Ok(Some(obj.into_any()))

@@ -121,34 +121,39 @@ pub trait ComponentBridge: Send + Sync + 'static {
     /// Check if entity has this component type
     fn entity_contains(&self, entity: &EntityRef) -> bool;
 
-    /// Extract component from an EntityRef (read-only access)
+    /// Extract a component as a re-resolving Python handle (read-only access).
     ///
-    /// Used by `world.get()` for read-only component access.
-    /// Returns `None` if the entity doesn't have this component.
+    /// Used by `world.get()`. The returned wrapper caches no pointer: it re-derives
+    /// the component's address from `(world_ptr, entity_id)` on each access, so it stays
+    /// valid across structural mutations that relocate the component and errors after the
+    /// entity is despawned. Returns `None` if the entity lacks this component.
     ///
     /// # Safety
     ///
-    /// The returned Python object holds a borrowed reference to component data.
-    /// The validity flag must be checked before dereferencing.
-    fn extract_from_entity_ref(
+    /// `world_ptr` must be valid while `validity` is non-Invalid, and must not have a
+    /// competing mutable borrow for the duration of this call.
+    unsafe fn extract_from_entity_ref(
         &self,
-        entity: &EntityRef,
+        entity_id: Entity,
+        world_ptr: *mut World,
         validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>>;
 
-    /// Extract component from an EntityWorldMut (mutable access)
+    /// Extract a component as a re-resolving Python handle (mutable access).
     ///
-    /// Used by `world.get_mut()` for mutable component access.
-    /// Returns `None` if the entity doesn't have this component.
+    /// Used by `world.get_mut()`. Like [`extract_from_entity_ref`](Self::extract_from_entity_ref)
+    /// but `validity` carries write access, so mutations land on the live component.
+    /// Returns `None` if the entity lacks this component.
     ///
     /// # Safety
     ///
-    /// The returned Python object holds a borrowed reference to component data.
-    /// The validity flag must be checked before dereferencing.
-    fn extract_from_entity_mut(
+    /// `world_ptr` must be valid while `validity` is non-Invalid, and must not have a
+    /// competing mutable borrow for the duration of this call.
+    unsafe fn extract_from_entity_mut(
         &self,
-        entity: &mut EntityWorldMut,
+        entity_id: Entity,
+        world_ptr: *mut World,
         validity: ValidityFlagWithMode,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>>;

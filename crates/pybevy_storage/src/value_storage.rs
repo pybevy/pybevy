@@ -11,30 +11,11 @@
 use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
 
 use crate::{
-    borrowed::{BorrowedMut, BorrowedRef},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
-
-/// Re-derive the address of a wrapper-component field: the component's current base
-/// pointer (matching construction's immutable `get_by_id`) plus the field's byte
-/// offset. `None` if the entity was despawned or the component removed.
-///
-/// # Safety
-/// `world_ptr` must be valid and free of a competing mutable borrow for the call.
-#[inline]
-unsafe fn revalidate_field_ptr(
-    world_ptr: *mut World,
-    entity: Entity,
-    component_id: ComponentId,
-    offset: usize,
-) -> Option<*mut u8> {
-    let world = unsafe { &*world_ptr };
-    let entity_ref = world.get_entity(entity).ok()?;
-    let base = entity_ref.get_by_id(component_id).ok()?.as_ptr();
-    Some(unsafe { base.add(offset) })
-}
 
 /// Generic storage for PyBevy value types (Copy types like Vec3, Quat, etc.)
 ///
@@ -80,29 +61,6 @@ pub enum ValueStorageInner<T: Copy> {
     Revalidating(Box<RevalidatingField>),
 }
 
-/// Identity of a wrapper-component field, used by a re-resolving [`ValueStorage`] handle
-/// to re-derive the field's address on each access.
-///
-/// Public (like `BorrowedRef`/`BorrowedMut`) only because it appears in the `pub`
-/// `ValueStorageInner::Revalidating` variant; all fields stay private.
-#[derive(Debug, Clone)]
-pub struct RevalidatingField {
-    world_ptr: *mut World,
-    entity: Entity,
-    component_id: ComponentId,
-    offset: usize,
-    /// Validity + read/write mode. `check_write` still enforces read-only access
-    /// (a `world.get` field handle rejects mutation), same as `BorrowedRef`.
-    validity: ValidityFlagWithMode,
-}
-
-// SAFETY: the `*mut World` is just an address; it is only dereferenced through a fresh
-// re-resolve gated by `validity` (Arc<AtomicU8>, itself Send + Sync), which is
-// invalidated when the owning system exits. The other fields are plain Copy data.
-unsafe impl Send for RevalidatingField {}
-// SAFETY: same argument as the impl above
-unsafe impl Sync for RevalidatingField {}
-
 impl<T: Copy> Clone for ValueStorage<T> {
     fn clone(&self) -> Self {
         let inner = match &self.inner {
@@ -132,7 +90,7 @@ where
                 a.as_ptr() == b.as_ptr()
             }
             (ValueStorageInner::Revalidating(a), ValueStorageInner::Revalidating(b)) => {
-                a.entity == b.entity && a.component_id == b.component_id && a.offset == b.offset
+                a.same_identity(b)
             }
             _ => false,
         }
@@ -158,6 +116,17 @@ impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
         Self {
             inner: ValueStorageInner::OwnedReadOnly(*value),
         }
+    }
+
+    unsafe fn revalidating_field(
+        world_ptr: *mut World,
+        entity: Entity,
+        component_id: ComponentId,
+        offset: usize,
+        validity: ValidityFlagWithMode,
+    ) -> Self {
+        // SAFETY: forwards this constructor's contract unchanged
+        unsafe { Self::revalidating(world_ptr, entity, component_id, offset, validity) }
     }
 }
 
@@ -211,12 +180,9 @@ impl<T: Copy> ValueStorage<T> {
         validity: ValidityFlagWithMode,
     ) -> Self {
         Self {
-            inner: ValueStorageInner::Revalidating(Box::new(RevalidatingField {
-                world_ptr,
-                entity,
-                component_id,
-                offset,
-                validity,
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ValueStorageInner::Revalidating(Box::new(unsafe {
+                RevalidatingField::new(world_ptr, entity, component_id, offset, validity)
             })),
         }
     }
@@ -232,15 +198,7 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => Ok(value),
             ValueStorageInner::BorrowedRef(b) => b.get(),
             ValueStorageInner::BorrowedMut(b) => b.get(),
-            ValueStorageInner::Revalidating(f) => {
-                f.validity.check_read()?;
-                let ptr = unsafe {
-                    revalidate_field_ptr(f.world_ptr, f.entity, f.component_id, f.offset)
-                }
-                .ok_or(StorageError::EntityUnavailable)?;
-                // SAFETY: validity checked; ptr re-resolved to the live component field
-                Ok(unsafe { &*(ptr as *const T) })
-            }
+            ValueStorageInner::Revalidating(f) => f.get::<T>(),
         }
     }
 
@@ -257,15 +215,7 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::OwnedReadOnly(_) => Err(StorageError::OwnedFieldReadOnly),
             ValueStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
             ValueStorageInner::BorrowedMut(b) => b.get_mut(),
-            ValueStorageInner::Revalidating(f) => {
-                f.validity.check_write()?;
-                let ptr = unsafe {
-                    revalidate_field_ptr(f.world_ptr, f.entity, f.component_id, f.offset)
-                }
-                .ok_or(StorageError::EntityUnavailable)?;
-                // SAFETY: validity + write permission checked; ptr re-resolved to the live field
-                Ok(unsafe { &mut *(ptr as *mut T) })
-            }
+            ValueStorageInner::Revalidating(f) => f.get_mut::<T>(),
         }
     }
 
@@ -328,18 +278,9 @@ impl<T: Copy> ValueStorage<T> {
             }
             ValueStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
             ValueStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
-            ValueStorageInner::Revalidating(f) => {
-                f.validity.check_read()?;
-                // A sub-field of a re-resolving handle would itself dangle across a
-                // move, so return a read-only snapshot rather than a deeper borrow.
-                let ptr = unsafe {
-                    revalidate_field_ptr(f.world_ptr, f.entity, f.component_id, f.offset)
-                }
-                .ok_or(StorageError::EntityUnavailable)?;
-                // SAFETY: validity checked; ptr re-resolved to the live component field
-                let value_ref = unsafe { &*(ptr as *const T) };
-                Ok(S::snapshot(field_accessor(value_ref)))
-            }
+            // A sub-field of a re-resolving handle re-resolves too (composing offsets),
+            // so it stays valid across the same structural moves rather than dangling.
+            ValueStorageInner::Revalidating(f) => f.child_of::<T, F, S>(field_accessor),
         }
     }
 

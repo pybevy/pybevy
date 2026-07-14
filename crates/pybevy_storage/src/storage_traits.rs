@@ -3,12 +3,14 @@
 //! These traits define the interface for storage types that support borrowed references
 //! with validity tracking.
 
-use crate::validity_guard::ValidityFlag;
+use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+
+use crate::validity_guard::{ValidityFlag, ValidityFlagWithMode};
 
 /// Trait for storage types that can borrow field pointers with validity tracking
 ///
-/// This is implemented by ValueStorage and FieldStorage to provide a unified
-/// interface for creating borrowed field references. Read vs write access is
+/// This is implemented by ValueStorage, FieldStorage and ListStorage to provide a
+/// unified interface for creating borrowed field references. Read vs write access is
 /// encoded by which constructor is used rather than by a runtime access mode.
 pub trait BorrowableStorage<T>: Sized {
     /// Create a read-only borrowed storage from a const pointer and validity flag
@@ -37,6 +39,26 @@ pub trait BorrowableStorage<T>: Sized {
     fn snapshot(value: &T) -> Self
     where
         T: Clone;
+
+    /// Create a re-resolving field handle keyed by ECS identity rather than a cached
+    /// pointer.
+    ///
+    /// Each access re-derives the field's address from
+    /// `(world_ptr, entity, component_id, offset)`, so the handle survives structural
+    /// mutations that relocate the component and errors after the entity is despawned.
+    /// Used for fields that escape a long-lived `world.get`/`world.get_mut` handle,
+    /// where a cached borrow would dangle. `validity` still carries the read/write mode.
+    ///
+    /// # Safety
+    /// - `world_ptr` must be valid while `validity` is non-Invalid
+    /// - `(entity, component_id, offset)` must identify a live field of type `T`
+    unsafe fn revalidating_field(
+        world_ptr: *mut World,
+        entity: Entity,
+        component_id: ComponentId,
+        offset: usize,
+        validity: ValidityFlagWithMode,
+    ) -> Self;
 }
 
 /// Trait for Python wrapper types that can be created from borrowed storage

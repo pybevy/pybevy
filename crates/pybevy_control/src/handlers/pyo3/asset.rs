@@ -37,11 +37,13 @@ pub fn mutate_asset(
         let validity_flag = pybevy_core::ValidityFlag::new_read();
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
-        let handle_obj = if let Ok(entity_ref) = world.get_entity(entity) {
-            comp_bridge
-                .extract_from_entity_ref(&entity_ref, validity, py)
-                .ok()
-                .flatten()
+        let handle_obj = if world.get_entity(entity).is_ok() {
+            // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
+            unsafe {
+                comp_bridge.extract_from_entity_ref(entity, world as *mut World, validity, py)
+            }
+            .ok()
+            .flatten()
         } else {
             errors.push(format!("Entity {entity_id} not found"));
             validity_flag.set_invalid();

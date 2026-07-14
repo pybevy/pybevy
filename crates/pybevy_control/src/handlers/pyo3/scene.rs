@@ -494,19 +494,28 @@ pub fn get_entity(
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
         for bridge in all_component_bridges() {
-            if let Ok(entity_ref) = world.get_entity(entity)
-                && bridge.entity_contains(&entity_ref)
-            {
+            let contains = world
+                .get_entity(entity)
+                .map(|entity_ref| bridge.entity_contains(&entity_ref))
+                .unwrap_or(false);
+            if contains {
                 let name = bridge.name().to_string();
-                let value = bridge
-                    .extract_from_entity_ref(&entity_ref, validity.clone(), py)
-                    .ok()
-                    .flatten()
-                    .and_then(|py_obj| {
-                        let bound = py_obj.bind(py);
-                        bound.repr().ok().map(|r| r.to_string())
-                    })
-                    .unwrap_or_else(|| "<opaque>".to_string());
+                // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
+                let value = unsafe {
+                    bridge.extract_from_entity_ref(
+                        entity,
+                        world as *mut World,
+                        validity.clone(),
+                        py,
+                    )
+                }
+                .ok()
+                .flatten()
+                .and_then(|py_obj| {
+                    let bound = py_obj.bind(py);
+                    bound.repr().ok().map(|r| r.to_string())
+                })
+                .unwrap_or_else(|| "<opaque>".to_string());
 
                 components.insert(name, serde_json::Value::String(value));
             }
@@ -613,21 +622,24 @@ pub fn get_component(
             if bridge.name() != component {
                 continue;
             }
-            let Ok(eref) = world.get_entity(entity) else {
-                return None;
+            let contains = match world.get_entity(entity) {
+                Ok(eref) => bridge.entity_contains(&eref),
+                Err(_) => return None,
             };
-            if !bridge.entity_contains(&eref) {
+            if !contains {
                 validity_flag.set_invalid();
                 return None;
             }
-            let fields = bridge
-                .extract_from_entity_ref(&eref, validity.clone(), py)
-                .ok()
-                .flatten()
-                .map(|py_obj| {
-                    let bound = py_obj.bind(py);
-                    extract_bridge_fields(py, bound)
-                });
+            // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
+            let fields = unsafe {
+                bridge.extract_from_entity_ref(entity, world as *mut World, validity.clone(), py)
+            }
+            .ok()
+            .flatten()
+            .map(|py_obj| {
+                let bound = py_obj.bind(py);
+                extract_bridge_fields(py, bound)
+            });
 
             validity_flag.set_invalid();
             return Some(serde_json::json!({
@@ -2298,10 +2310,15 @@ mod tests {
                 if bridge.name() != "Transform" {
                     continue;
                 }
-                let eref = world.get_entity(entity).unwrap();
-                if let Ok(Some(py_obj)) =
-                    bridge.extract_from_entity_ref(&eref, validity.clone(), py)
-                {
+                // SAFETY: `world` is a live World in this test; pointer valid for the call.
+                if let Ok(Some(py_obj)) = unsafe {
+                    bridge.extract_from_entity_ref(
+                        entity,
+                        &mut world as *mut World,
+                        validity.clone(),
+                        py,
+                    )
+                } {
                     let bound = py_obj.bind(py);
                     let fields = extract_bridge_fields(py, bound);
 
@@ -2350,10 +2367,15 @@ mod tests {
                 if bridge.name() != "Transform" {
                     continue;
                 }
-                let eref = world.get_entity(entity).unwrap();
-                if let Ok(Some(py_obj)) =
-                    bridge.extract_from_entity_ref(&eref, validity.clone(), py)
-                {
+                // SAFETY: `world` is a live World in this test; pointer valid for the call.
+                if let Ok(Some(py_obj)) = unsafe {
+                    bridge.extract_from_entity_ref(
+                        entity,
+                        &mut world as *mut World,
+                        validity.clone(),
+                        py,
+                    )
+                } {
                     let bound = py_obj.bind(py);
                     let fields = extract_bridge_fields(py, bound);
 

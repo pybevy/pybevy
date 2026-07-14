@@ -341,8 +341,11 @@ fn set_component_python(
         let validity_flag = pybevy_core::ValidityFlag::new_write();
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Write);
 
-        if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
-            match bridge.extract_from_entity_mut(&mut entity_mut, validity, py) {
+        if world.get_entity(entity).is_ok() {
+            // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
+            match unsafe {
+                bridge.extract_from_entity_mut(entity, world as *mut World, validity, py)
+            } {
                 Ok(Some(py_obj)) => {
                     let bound = py_obj.bind(py);
                     for (field_name, field_value) in field_obj {
