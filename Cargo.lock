@@ -4558,7 +4558,6 @@ dependencies = [
  "sysinfo",
  "thiserror 2.0.17",
  "uuid",
- "wgpu",
  "wgpu-types",
 ]
 
@@ -4867,6 +4866,8 @@ dependencies = [
  "pybevy_shader",
  "pybevy_wgpu",
  "pyo3",
+ "tracing",
+ "wgpu",
  "wgpu-types",
 ]
 

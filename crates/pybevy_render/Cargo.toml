@@ -22,3 +22,5 @@ pybevy_image = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_math = { workspace = true }
 wgpu-types = "29"
+wgpu = { version = "29", default-features = false }
+tracing = "0.1"

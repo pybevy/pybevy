@@ -17,7 +17,7 @@ use bevy::{
     winit::{WinitPlugin, WinitSettings},
 };
 use pybevy_core::PyPlugin;
-use pybevy_render::plugin::PyRenderPlugin;
+use pybevy_render::{plugin::PyRenderPlugin, wgpu_error_handler::WgpuErrorHandlerPlugin};
 use pybevy_window::{prelude::PyWindowPlugin, window::DEFAULT_APP_TITLE};
 use pybevy_winit::plugin::PyWinitPlugin;
 use pyo3::{
@@ -28,7 +28,7 @@ use pyo3::{
 };
 
 use super::{app::PyApp, plugin::PyPluginGroup, plugin_config::PluginConfigType};
-use crate::{assets::configured_asset_plugin, render::wgpu_error_handler::WgpuErrorHandlerPlugin};
+use crate::assets::configured_asset_plugin;
 
 fn default_window_plugin() -> WindowPlugin {
     WindowPlugin {
