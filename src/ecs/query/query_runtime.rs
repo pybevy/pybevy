@@ -30,7 +30,7 @@ use crate::ecs::{
     component_type::{PyComponentType, register_component_id},
     filter::QueryFilter,
     helpers::validity_guard::{AccessMode, ValidityFlag},
-    lazy_wrapper_proxy::PyLazyWrapperProxy,
+    lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
     query::query_param::{PyQueryParam, QueryData},
 };
 
@@ -572,6 +572,9 @@ impl PyQueryIter {
                         component_id,
                         entity_id,
                         world_ptr,
+                        // Query iteration: the cached data_ptr is kept valid by the
+                        // ValidityFlag for the duration of the access (fast path).
+                        ProxyKind::QueryItem,
                     )
                 };
 

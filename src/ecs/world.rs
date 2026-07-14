@@ -64,7 +64,7 @@ use crate::{
         dynamic_system::{DynamicSystem, execute_system_func},
         entity_commands::PyEntityCommands,
         helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard},
-        lazy_wrapper_proxy::PyLazyWrapperProxy,
+        lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
         observer::{BundleFilter, EventType, PyEvent, PyOn},
         observer_registry::ObserverRegistry,
         resource_type::{
@@ -296,6 +296,9 @@ impl PyWorld {
                         component_id,
                         entity_id,
                         world_ptr,
+                        // Long-lived proxy: the caller may hold it across structural
+                        // mutations, so re-resolve on every access.
+                        ProxyKind::WorldGet,
                     )
                 };
 
