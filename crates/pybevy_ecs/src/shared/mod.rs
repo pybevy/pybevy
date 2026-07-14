@@ -12,6 +12,7 @@ pub mod query_builder_ext;
 pub mod query_runtime;
 pub mod run_scaffold;
 pub mod schedule;
+pub mod state_machine_registry;
 pub mod state_transition;
 pub mod system_flags;
 pub mod system_runtime;
