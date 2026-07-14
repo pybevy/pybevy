@@ -11,7 +11,10 @@ use numpy::{
     ndarray::{ArrayView1, ArrayViewMut1},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{AssetStorage, PyAsset};
+use pybevy_core::{
+    AssetStorage, PyAsset,
+    numpy_view_guard::{PyNumpyViewGuard, release_array_guard},
+};
 use pybevy_macros::pyasset;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_wgpu::{
@@ -20,6 +23,7 @@ use pybevy_wgpu::{
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
+    types::IntoPyDict,
 };
 
 use crate::{image_format::PyImageFormat, loader_settings::PyImageSampler};
@@ -137,11 +141,14 @@ impl ImageDataContext {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        // Do nothing - array remains valid as long as Image is alive
+        // The with-block is the safety scope: release the view count now; the
+        // guard's Drop is only the backstop for arrays used without a context.
+        release_array_guard(self.array.bind(py));
         Ok(false) // Don't suppress exceptions
     }
 }
@@ -159,12 +166,17 @@ impl ImageDataContextMut {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        // Do nothing - array remains valid as long as Image is alive
-        Ok(false) // Don't suppress exceptions
+        let array = self.array.bind(py);
+        // A reference kept past the with-block must not stay writable
+        let kwargs = [("write", false)].into_py_dict(py)?;
+        let _ = array.call_method("setflags", (), Some(&kwargs));
+        release_array_guard(array);
+        Ok(false)
     }
 }
 
@@ -181,10 +193,16 @@ impl ImagePixelContextMut {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
+        let array = self.array.bind(py);
+        // A reference kept past the with-block must not stay writable
+        let kwargs = [("write", false)].into_py_dict(py)?;
+        let _ = array.call_method("setflags", (), Some(&kwargs));
+        release_array_guard(array);
         Ok(false)
     }
 }
@@ -361,46 +379,57 @@ impl PyImage {
         Ok(self.as_ref()?.data.as_ref().map(|d| d.len()).unwrap_or(0))
     }
 
-    pub fn data(&self, py: Python<'_>) -> PyResult<Py<ImageDataContext>> {
-        image_with!(self, |image: &Image| {
-            let image_data = image
-                .data
-                .as_ref()
-                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+    pub fn data(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<ImageDataContext>> {
+        let this = slf.borrow();
+        let guard = PyNumpyViewGuard::acquire(
+            this.storage.view_counters().reads.clone(),
+            slf.clone().unbind().into_any(),
+        );
+        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
+        let image = this.storage.as_ref()?;
+        let image_data = image
+            .data
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
 
-            let view = ArrayView1::from(&image_data[..]);
-            let np_array = unsafe {
-                PyArray1::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-            }
+        let view = ArrayView1::from(&image_data[..]);
+        // SAFETY: borrows image.data behind as_ref(); the guard base object
+        // blocks image mutation (and thus reallocation) while the array lives
+        let np_array = unsafe { PyArray1::borrow_from_array(&view, guard_obj) }
             .readwrite()
             .make_nonwriteable();
 
-            let context = ImageDataContext {
-                array: Bound::clone(&np_array).unbind(),
-            };
+        let context = ImageDataContext {
+            array: Bound::clone(&np_array).unbind(),
+        };
 
-            Py::new(py, context)
-        })
+        Py::new(py, context)
     }
 
-    pub fn data_mut(&mut self, py: Python<'_>) -> PyResult<Py<ImageDataContextMut>> {
-        image_with_mut!(self, |image: &mut Image| {
-            let image_data = image
-                .data
-                .as_mut()
-                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+    pub fn data_mut(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<ImageDataContextMut>> {
+        let mut this = slf.borrow_mut();
+        // as_mut() below requires zero live views, so acquire the write count
+        // only after it succeeds.
+        let counters = this.storage.view_counters().clone();
+        let image = this.storage.as_mut()?;
+        let image_data = image
+            .data
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
 
-            let view = ArrayViewMut1::from(&mut image_data[..]);
-            let np_array = unsafe {
-                PyArray1::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-            };
+        let view = ArrayViewMut1::from(&mut image_data[..]);
+        let guard =
+            PyNumpyViewGuard::acquire(counters.writes.clone(), slf.clone().unbind().into_any());
+        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
+        // SAFETY: writable alias of image.data behind as_mut(); the guard base
+        // object blocks any other image access while this view lives
+        let np_array = unsafe { PyArray1::borrow_from_array(&view, guard_obj) };
 
-            let context = ImageDataContextMut {
-                array: np_array.clone().unbind(),
-            };
+        let context = ImageDataContextMut {
+            array: np_array.clone().unbind(),
+        };
 
-            Py::new(py, context)
-        })
+        Py::new(py, context)
     }
 
     pub fn data_copy(&self, py: Python<'_>) -> PyResult<Py<PyArray1<u8>>> {
@@ -442,27 +471,33 @@ impl PyImage {
     }
 
     pub fn pixel_bytes_mut(
-        &mut self,
+        slf: &Bound<'_, Self>,
         py: Python<'_>,
         coords: PyUVec3,
     ) -> PyResult<Py<ImagePixelContextMut>> {
-        image_with_mut!(self, |image: &mut Image| {
-            let bevy_coords = coords.into();
-            let pixel_bytes = image.pixel_bytes_mut(bevy_coords).map_err(|_| {
-                PyRuntimeError::new_err("Invalid pixel coordinates or no image data")
-            })?;
+        let mut this = slf.borrow_mut();
+        // as_mut() below requires zero live views, so acquire the write count
+        // only after it succeeds.
+        let counters = this.storage.view_counters().clone();
+        let image = this.storage.as_mut()?;
+        let bevy_coords = coords.into();
+        let pixel_bytes = image
+            .pixel_bytes_mut(bevy_coords)
+            .map_err(|_| PyRuntimeError::new_err("Invalid pixel coordinates or no image data"))?;
 
-            let view = ArrayViewMut1::from(&mut pixel_bytes[..]);
-            let np_array = unsafe {
-                PyArray1::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-            };
+        let view = ArrayViewMut1::from(&mut pixel_bytes[..]);
+        let guard =
+            PyNumpyViewGuard::acquire(counters.writes.clone(), slf.clone().unbind().into_any());
+        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
+        // SAFETY: writable alias of one pixel's bytes behind as_mut(); the guard
+        // base object blocks any other image access while this view lives
+        let np_array = unsafe { PyArray1::borrow_from_array(&view, guard_obj) };
 
-            let context = ImagePixelContextMut {
-                array: np_array.clone().unbind(),
-            };
+        let context = ImagePixelContextMut {
+            array: np_array.clone().unbind(),
+        };
 
-            Py::new(py, context)
-        })
+        Py::new(py, context)
     }
 
     #[getter]
