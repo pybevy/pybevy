@@ -1,7 +1,8 @@
 """MCP tool, resource, and prompt definitions.
 
-Engine tool definitions come from Rust (pybevy_control.tools::list_tools).
-Bridge-local tools and resources/prompts are defined here.
+Engine tool and resource definitions come from Rust
+(pybevy_control.tools::list_tools and pybevy_control.resources::list_resources).
+Bridge-local tools and prompts are defined here.
 """
 
 from __future__ import annotations
@@ -93,65 +94,16 @@ def builtin_tools() -> list[JsonDict]:
 
 
 def builtin_resources() -> list[JsonDict]:
-    """Built-in MCP resource definitions."""
-    return [
-        {
-            "uri": "guide://index",
-            "name": "Guide Index",
-            "description": "List of available guides with names and descriptions",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-        {
-            "uri": "api://index",
-            "name": "API Index",
-            "description": "Module names with class/function lists (lightweight, no content)",
-            "mimeType": "application/json",
-            "feature_gate": "api_discovery",
-        },
-        {
-            "uri": "scene://entities",
-            "name": "Entity List",
-            "description": "All entities with their component types and Names",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-        {
-            "uri": "scene://resources",
-            "name": "Resource List",
-            "description": "All resources and their values",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-        {
-            "uri": "scene://systems",
-            "name": "System List",
-            "description": "Registered systems by stage",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-        {
-            "uri": "scene://debug",
-            "name": "Debug Info",
-            "description": "FPS, CPU, GPU, RAM, VRAM, entity/asset counts, system profiling",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-        {
-            "uri": "scene://components",
-            "name": "Component Registry",
-            "description": "Registered component bridges and resource bridges; sample of named entities with detected component types.",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-        {
-            "uri": "scene://entity/{name_or_id}",
-            "name": "Entity Detail (templated)",
-            "description": "Inspect a single entity by Name or numeric ID. Example: scene://entity/MainCamera or scene://entity/4294967296.",
-            "mimeType": "application/json",
-            "feature_gate": None,
-        },
-    ]
+    """Built-in MCP resource definitions, sourced from Rust.
+
+    The engine (pybevy_control::resources) is the single source of truth for the
+    list of advertised MCP resources. This function loads those definitions via
+    the `rust_resource_definitions` PyO3 binding so adding/renaming a resource
+    only requires a Rust-side change.
+    """
+    from .._pybevy import mcp as rust_mcp  # type: ignore[import-not-found]  # noqa: PLC0415, I001
+
+    return rust_mcp.rust_resource_definitions()  # type: ignore[no-any-return]
 
 
 def builtin_prompts(instructions: str) -> list[JsonDict]:

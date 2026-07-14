@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod handlers;
 pub mod plugin;
 pub mod protocol;
+pub mod resources;
 pub mod runtime;
 pub mod runtime_pyo3;
 pub mod server;
@@ -25,10 +26,22 @@ fn rust_tool_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
     Ok(result.into())
 }
 
+/// Return MCP resource definitions advertised by the engine.
+#[pyfunction]
+fn rust_resource_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let res = resources::list_resources();
+    let json_str = serde_json::to_string(&res)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize resources: {e}")))?;
+    let json_mod = py.import("json")?;
+    let result = json_mod.call_method1("loads", (json_str,))?;
+    Ok(result.into())
+}
+
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "mcp")?;
     m.add_class::<PyControlPlugin>()?;
     m.add_class::<api_index::PyApiIndex>()?;
     m.add_function(wrap_pyfunction!(rust_tool_definitions, &m)?)?;
+    m.add_function(wrap_pyfunction!(rust_resource_definitions, &m)?)?;
     parent.add_submodule(&m)
 }
