@@ -5,10 +5,7 @@ use std::{
 
 use bevy::{
     app::{App, Last, MainScheduleOrder, PreStartup},
-    ecs::{
-        component::ComponentId,
-        schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
-    },
+    ecs::schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
 };
 use pybevy_core::PyPlugin;
 use pybevy_reload::{
@@ -29,7 +26,7 @@ use crate::{
     app::app::PyApp,
     ecs::{
         resource::PyResource,
-        resource_type::{PyResourceStorage, ResourceRegistry},
+        resource_type::{PyResourceStorage, register_custom_resource},
     },
 };
 
@@ -343,26 +340,22 @@ pub fn add_hot_reload_system(
         let type_obj: Bound<'_, pyo3::types::PyType> = py_control.bind(py).get_type();
         let type_ptr = type_obj.as_type_ptr();
 
-        // Ensure ResourceRegistry exists
-        if !app.world().contains_resource::<ResourceRegistry>() {
-            app.insert_resource(ResourceRegistry::default());
-        }
-
         // Ensure PyResourceStorage exists
         if !app.world().contains_resource::<PyResourceStorage>() {
             app.insert_resource(PyResourceStorage::default());
         }
 
-        // Register a ComponentId for this resource type
-        let component_id = {
-            let mut registry = app.world_mut().resource_mut::<ResourceRegistry>();
-            // Get current registry size before the mutable borrow in or_insert_with
-            let next_id = registry.registry.len();
-            *registry.registry.entry(type_ptr).or_insert_with(|| {
-                // Create a unique ComponentId for this resource
-                ComponentId::new(next_id)
-            })
-        };
+        // Use the same stable, qualified-name-aware identity path as all other
+        // custom resources. Ad-hoc numeric ComponentIds can collide with Bevy's
+        // own component registry.
+        let component_id = register_custom_resource(
+            app.world_mut(),
+            type_ptr,
+            type_obj
+                .name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|_| "HotReloadControl".to_string()),
+        );
 
         // Store the Python object in PyResourceStorage
         let mut storage = app.world_mut().resource_mut::<PyResourceStorage>();

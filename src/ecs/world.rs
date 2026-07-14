@@ -554,7 +554,7 @@ impl PyWorld {
             PyResourceType::Custom(type_ptr) => {
                 // Check if the registry exists and contains this type
                 if let Some(registry) = world.get_resource::<ResourceRegistry>()
-                    && let Some(&component_id) = registry.registry.get(&type_ptr)
+                    && let Some(component_id) = registry.get(type_ptr as usize)
                 {
                     // Check if the storage exists and contains this resource
                     if let Some(storage) = world.get_resource::<PyResourceStorage>() {

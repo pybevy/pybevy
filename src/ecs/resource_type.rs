@@ -1,18 +1,24 @@
 use core::fmt;
-use std::collections::HashMap;
 
 use bevy::{
     ecs::{component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell},
     prelude::*,
 };
-use pybevy_core::registry::global_registry;
+/// Re-export from pybevy_core for cross-crate access
+pub use pybevy_core::PyResourceStorage;
+/// Main/PyO3 name for the backend-neutral custom-resource identity registry.
+pub use pybevy_core::custom_resource::CustomResourceRegistry as ResourceRegistry;
+use pybevy_core::{
+    custom_resource::{ResourceRegisterOutcome, register_custom_resource_guarded},
+    registry::global_registry,
+};
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::{
     app::hot_reload::bindings::PyHotReloadControl,
     assets::{asset_server::PyAssetServer, assets::PyAssets},
     ecs::{
-        component_type::create_python_object_descriptor,
+        component_type::Pyo3ObjectDescriptor,
         helpers::{
             type_utils::get_python_type_name,
             validity_guard::{AccessMode, ValidityFlag},
@@ -22,23 +28,6 @@ use crate::{
         state::{PyNextState, PyState},
     },
 };
-
-/// Resource registry stored as a Bevy resource
-/// Maps Python type pointers to their ComponentIds
-#[derive(Default, Resource)]
-pub struct ResourceRegistry {
-    pub(crate) registry: HashMap<*const PyTypeObject, ComponentId>,
-    /// Maps qualified names (`module.qualname`) to ComponentIds for alias-based
-    /// lookup during hot reload, matching the pattern in ComponentRegistry.
-    pub(crate) by_name: HashMap<String, ComponentId>,
-}
-
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
-unsafe impl Send for ResourceRegistry {}
-unsafe impl Sync for ResourceRegistry {}
-
-/// Re-export from pybevy_core for cross-crate access
-pub use pybevy_core::PyResourceStorage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PyResourceType {
@@ -103,7 +92,7 @@ impl PyResourceType {
             ))
         })?;
 
-        let component_id = registry.registry.get(&type_ptr).ok_or_else(|| {
+        let component_id = registry.get(type_ptr as usize).ok_or_else(|| {
             let type_name = get_python_type_name(py, type_ptr);
             PyTypeError::new_err(format!(
                 "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
@@ -120,7 +109,7 @@ impl PyResourceType {
             ))
         })?;
 
-        let resource = storage.resources.get(component_id).ok_or_else(|| {
+        let resource = storage.resources.get(&component_id).ok_or_else(|| {
             let type_name = get_python_type_name(py, type_ptr);
             PyTypeError::new_err(format!(
                 "Resource type `{}` not present in the world",
@@ -231,17 +220,14 @@ impl PyResourceType {
                         ))
                     })?;
 
-                let component_id = registry
-                    .registry
-                    .get(type_ptr)
-                    .ok_or_else(|| {
-                        // Get the type name for a better error message
-                        let type_name = get_python_type_name(py, *type_ptr);
-                        PyTypeError::new_err(format!(
-                            "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
-                            type_name
-                        ))
-                    })?;
+                let component_id = registry.get(*type_ptr as usize).ok_or_else(|| {
+                    // Get the type name for a better error message
+                    let type_name = get_python_type_name(py, *type_ptr);
+                    PyTypeError::new_err(format!(
+                        "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
+                        type_name
+                    ))
+                })?;
 
                 // Get the resource from the storage
                 let storage = world.get_resource::<PyResourceStorage>().ok_or_else(|| {
@@ -253,7 +239,7 @@ impl PyResourceType {
                     ))
                 })?;
 
-                let resource = storage.resources.get(component_id).ok_or_else(|| {
+                let resource = storage.resources.get(&component_id).ok_or_else(|| {
                     // Get the type name for a better error message
                     let type_name = get_python_type_name(py, *type_ptr);
                     PyTypeError::new_err(format!(
@@ -313,34 +299,14 @@ impl PyResourceType {
                 bridge.insert(world, resource_instance.bind(py))
             }
             PyResourceType::Custom(type_ptr) => {
-                // Register the custom resource if not already registered
-                let component_id = {
-                    // Ensure the registry exists and check if already registered
-                    if !world.contains_resource::<ResourceRegistry>() {
-                        world.insert_resource(ResourceRegistry::default());
-                    }
-
-                    let existing_id = {
-                        let registry = world.resource::<ResourceRegistry>();
-                        registry.registry.get(type_ptr).copied()
-                    }; // registry is dropped here
-
-                    if let Some(id) = existing_id {
-                        id
-                    } else {
-                        // Get the resource name from the Python type
-                        let name = {
-                            let type_obj = unsafe {
-                                Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
-                            };
-                            let type_bound = type_obj.cast::<PyType>()?;
-                            type_bound.name()?.to_string()
-                        };
-
-                        // Register the custom resource
-                        register_custom_resource(world, *type_ptr, name)
-                    }
-                };
+                // Get the resource name from the Python type. The neutral
+                // registration path is idempotent and handles reload aliases.
+                // SAFETY: registered type pointers live for the interpreter lifetime.
+                let type_obj =
+                    unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject) };
+                let type_bound = type_obj.cast::<PyType>()?;
+                let component_id =
+                    register_custom_resource(world, *type_ptr, type_bound.name()?.to_string());
 
                 // Ensure PyResourceStorage exists
                 if !world.contains_resource::<PyResourceStorage>() {
@@ -376,6 +342,7 @@ impl PyResourceType {
                 // Look up the ComponentId from the registry
                 let component_id = {
                     let registry = world.get_resource::<ResourceRegistry>().ok_or_else(|| {
+                        // SAFETY: registered type pointers live for the interpreter lifetime
                         let type_name = unsafe {
                             let type_obj =
                                 Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject);
@@ -392,7 +359,8 @@ impl PyResourceType {
                         ))
                     })?;
 
-                    registry.registry.get(type_ptr).copied().ok_or_else(|| {
+                    registry.get(*type_ptr as usize).ok_or_else(|| {
+                        // SAFETY: registered type pointers live for the interpreter lifetime
                         let type_name = unsafe {
                             let type_obj =
                                 Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject);
@@ -433,7 +401,7 @@ impl PyResourceType {
             }
             PyResourceType::Custom(type_ptr) => world
                 .get_resource::<ResourceRegistry>()
-                .and_then(|registry| registry.registry.get(type_ptr).copied()),
+                .and_then(|registry| registry.get(*type_ptr as usize)),
         }
     }
 
@@ -474,6 +442,7 @@ impl PyResourceType {
 /// This matches the format used by `pybevy/decorators.py`:
 ///   `f"{cls.__module__}.{cls.__qualname__}"`
 fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Option<String> {
+    // SAFETY: registered type pointers live for the interpreter lifetime
     let type_obj =
         unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
     let cls = type_obj.cast::<pyo3::types::PyType>().ok()?;
@@ -485,10 +454,12 @@ fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Optio
 /// Helper function to register a custom Python resource with Bevy's ECS.
 ///
 /// This creates a ComponentDescriptor with the layout of a `Py<PyAny>` and registers
-/// it with the world as a resource. Custom resources are stored as Python objects in the ECS.
+/// its identity with the world. Concrete custom resource values remain in
+/// `PyResourceStorage`; this descriptor supplies the stable `ComponentId` used by
+/// scheduler access and backend side tables.
 ///
-/// The resource registry is stored as a resource in the World to ensure proper scoping
-/// per-app instance. The registry uses PyTypeObject pointers as keys for type identity.
+/// The neutral resource registry is App-local and uses integer type keys, keeping
+/// interpreter objects out of shared bookkeeping.
 ///
 /// During hot reload, Python re-executes resource classes creating new PyTypeObject pointers.
 /// This function detects that case via a name-based lookup and adds the new pointer as an
@@ -506,95 +477,45 @@ pub(crate) fn register_custom_resource(
     type_ptr: *const PyTypeObject,
     name: String,
 ) -> ComponentId {
-    // Ensure the registry resource exists
-    if !world.contains_resource::<ResourceRegistry>() {
-        world.insert_resource(ResourceRegistry::default());
-    }
-
-    // Fast path: already registered by this exact pointer
-    let existing_id = world
-        .resource::<ResourceRegistry>()
-        .registry
-        .get(&type_ptr)
-        .copied();
-
-    if let Some(component_id) = existing_id {
-        return component_id;
-    }
-
-    // Hot-reload path: check if a previous generation registered the same class by name.
     let qualified_name = Python::attach(|py| get_python_qualified_name(py, type_ptr));
+    let outcome = register_custom_resource_guarded::<Pyo3ObjectDescriptor>(
+        world,
+        type_ptr as usize,
+        &name,
+        qualified_name.as_deref(),
+    );
 
-    if let Some(ref qname) = qualified_name {
-        let existing_id = world
-            .resource::<ResourceRegistry>()
-            .by_name
-            .get(qname)
-            .copied();
-
-        if let Some(existing_id) = existing_id {
-            // Add pointer alias for the existing ComponentId
-            world
-                .resource_mut::<ResourceRegistry>()
-                .registry
-                .insert(type_ptr, existing_id);
-
-            // Update CustomResourceInfo type pointer for MCP access
+    // Synchronize the PyO3/MCP class table only after the neutral registry's
+    // World-resource borrow has ended.
+    match outcome {
+        ResourceRegisterOutcome::Reused(_) => {}
+        ResourceRegisterOutcome::Aliased(id) => {
             if let Some(mut custom_info) =
                 world.get_resource_mut::<pybevy_core::CustomResourceInfo>()
             {
-                custom_info.update_type_ptr(existing_id, type_ptr);
+                custom_info.update_type_ptr(id, type_ptr);
             }
 
-            bevy::log::debug!(
-                "Hot reload: aliased resource '{}' (new ptr {:p}) to existing ComponentId {:?}",
-                qname,
-                type_ptr,
-                existing_id,
-            );
-
-            return existing_id;
+            if let Some(qualified_name) = qualified_name {
+                bevy::log::debug!(
+                    "Hot reload: aliased resource '{}' (new ptr {:p}) to existing ComponentId {:?}",
+                    qualified_name,
+                    type_ptr,
+                    id,
+                );
+            }
+        }
+        ResourceRegisterOutcome::Registered(id) => {
+            if !world.contains_resource::<pybevy_core::CustomResourceInfo>() {
+                world.insert_resource(pybevy_core::CustomResourceInfo::default());
+            }
+            world
+                .resource_mut::<pybevy_core::CustomResourceInfo>()
+                .insert(id, pybevy_core::CustomResourceEntry { type_ptr, name });
         }
     }
 
-    // Resource not in registry, register it with Bevy
-    let descriptor = create_python_object_descriptor(name);
-    let component_id = world.register_component_with_descriptor(descriptor);
-
-    // Store in registry resource (both by pointer and by name)
-    {
-        let mut registry = world.resource_mut::<ResourceRegistry>();
-        registry.registry.insert(type_ptr, component_id);
-        if let Some(qname) = qualified_name {
-            registry.by_name.insert(qname, component_id);
-        }
-    }
-
-    // Store in cross-crate custom resource info (readable by MCP)
-    let resource_name = Python::attach(|py| {
-        let py_type =
-            unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-        py_type
-            .cast::<pyo3::types::PyType>()
-            .ok()
-            .and_then(|cls| cls.name().ok().map(|n| n.to_string()))
-            .unwrap_or_else(|| format!("CustomResource_{:?}", component_id))
-    });
-
-    if !world.contains_resource::<pybevy_core::CustomResourceInfo>() {
-        world.insert_resource(pybevy_core::CustomResourceInfo::default());
-    }
-    world
-        .resource_mut::<pybevy_core::CustomResourceInfo>()
-        .insert(
-            component_id,
-            pybevy_core::CustomResourceEntry {
-                type_ptr,
-                name: resource_name,
-            },
-        );
-
-    component_id
+    outcome.id()
 }
 
 impl fmt::Display for PyResourceType {
