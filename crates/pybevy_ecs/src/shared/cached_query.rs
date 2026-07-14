@@ -6,8 +6,8 @@
 //! own extraction plan (how entities become Python objects) next to the core;
 //! everything below is interpreter-free.
 //!
-//! Iterator erasure stays backend-side: producing items requires the
-//! backend's entity-access wrapper types, which live outside this crate.
+//! Per-run iterator erasure and lookup orchestration live in the sibling
+//! `query_runtime` module; each backend keeps only its row materializer.
 
 use bevy::ecs::{
     change_detection::{ComponentTicks, Tick},
@@ -55,12 +55,10 @@ impl ErasedQueryState {
 
     /// Count matching entities (O(n) - iterates all).
     ///
-    /// SAFETY comment discipline: declared access from `initialize` covers
-    /// this state's access and the executor prevents conflicting systems from
-    /// running concurrently, so the unchecked query has unique access to the
-    /// components it reads.
     pub fn count(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> usize {
         let (read_only, p) = self.parts();
+        // SAFETY: declared access from `initialize` covers this state and the
+        // executor prevents conflicting systems from running concurrently.
         unsafe {
             if read_only {
                 let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
@@ -81,6 +79,7 @@ impl ErasedQueryState {
     /// SAFETY: same discipline as [`Self::count`].
     pub fn is_empty_check(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> bool {
         let (read_only, p) = self.parts();
+        // SAFETY: the same declared-access and executor discipline as `count`.
         unsafe {
             if read_only {
                 let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
@@ -105,6 +104,8 @@ impl ErasedQueryState {
     #[cfg(debug_assertions)]
     pub fn component_access(&self) -> FilteredAccess {
         let (read_only, p) = self.parts();
+        // SAFETY: this reads precomputed metadata through a pointer owned by
+        // the live cache and does not access the world.
         unsafe {
             if read_only {
                 (*(p as *const QueryState<FilteredEntityRef>))
@@ -123,7 +124,6 @@ impl ErasedQueryState {
 // system runs on a single thread; the owning DynamicSystem types are already
 // declared Send + Sync under the same discipline.
 unsafe impl Send for ErasedQueryState {}
-unsafe impl Sync for ErasedQueryState {}
 
 impl Drop for ErasedQueryState {
     fn drop(&mut self) {
@@ -133,6 +133,8 @@ impl Drop for ErasedQueryState {
         if p.is_null() {
             return;
         }
+        // SAFETY: this state uniquely owns the allocation and the enum variant
+        // records the concrete type used to create it.
         unsafe {
             match self {
                 Self::ReadOnly(_) => {
@@ -151,7 +153,7 @@ impl Drop for ErasedQueryState {
 /// Changed/Added check ([`passes_tick_filters`]). Built once in `initialize`
 /// from the resolved [`QueryBuildSpec`].
 pub struct CachedQueryCore {
-    pub state: ErasedQueryState,
+    pub(crate) state: ErasedQueryState,
     /// ComponentIds for Changed\[T\] filters - entities must pass the
     /// per-entity tick check.
     pub changed_filter_ids: Vec<ComponentId>,
@@ -213,6 +215,12 @@ impl CachedQueryCore {
             this_run,
         )
     }
+
+    /// Return the Bevy-computed component access for debug access auditing.
+    #[cfg(debug_assertions)]
+    pub fn component_access(&self) -> FilteredAccess {
+        self.state.component_access()
+    }
 }
 
 /// Check whether an entity passes Added/Changed tick filters.
@@ -234,18 +242,18 @@ pub fn passes_tick_filters(
     }
 
     for &id in changed_ids {
-        if let Some(ticks) = get_ticks(id) {
-            if !ticks.is_changed(last_run, this_run) {
-                return false;
-            }
+        if let Some(ticks) = get_ticks(id)
+            && !ticks.is_changed(last_run, this_run)
+        {
+            return false;
         }
     }
 
     for &id in added_ids {
-        if let Some(ticks) = get_ticks(id) {
-            if !ticks.is_added(last_run, this_run) {
-                return false;
-            }
+        if let Some(ticks) = get_ticks(id)
+            && !ticks.is_added(last_run, this_run)
+        {
+            return false;
         }
     }
 
@@ -254,7 +262,7 @@ pub fn passes_tick_filters(
 
 #[cfg(test)]
 mod tests {
-    use bevy::ecs::component::Component;
+    use bevy::ecs::{change_detection::ComponentTicks, component::Component};
 
     use super::{super::query_builder_ext::QueryComponent, *};
 
@@ -262,6 +270,14 @@ mod tests {
     struct A;
     #[derive(Component)]
     struct B;
+
+    /// Helper: build ComponentTicks with explicit added/changed ticks.
+    fn ticks(added: u32, changed: u32) -> ComponentTicks {
+        ComponentTicks {
+            added: Tick::new(added),
+            changed: Tick::new(changed),
+        }
+    }
 
     fn spec(world: &mut World, mutable: bool, changed: bool) -> QueryBuildSpec {
         let a = world.register_component::<A>();
@@ -404,6 +420,142 @@ mod tests {
             &[],
             spawn_tick,
             this_run
+        ));
+    }
+
+    #[test]
+    fn no_filters_always_passes() {
+        assert!(passes_tick_filters(
+            |_| None,
+            &[],
+            &[],
+            Tick::new(0),
+            Tick::new(1)
+        ));
+    }
+
+    #[test]
+    fn changed_filter_passes_when_changed_after_last_run() {
+        let id = ComponentId::new(0);
+        // changed tick 5 > last_run 3 - should pass
+        assert!(passes_tick_filters(
+            |_| Some(ticks(1, 5)),
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn changed_filter_fails_when_not_changed_since_last_run() {
+        let id = ComponentId::new(0);
+        // changed tick 2 <= last_run 3 - should fail
+        assert!(!passes_tick_filters(
+            |_| Some(ticks(1, 2)),
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn added_filter_passes_when_added_after_last_run() {
+        let id = ComponentId::new(0);
+        // added tick 5 > last_run 3 - should pass
+        assert!(passes_tick_filters(
+            |_| Some(ticks(5, 5)),
+            &[],
+            &[id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn added_filter_fails_when_not_added_since_last_run() {
+        let id = ComponentId::new(0);
+        // added tick 1 <= last_run 3 - should fail
+        assert!(!passes_tick_filters(
+            |_| Some(ticks(1, 5)),
+            &[],
+            &[id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn multiple_changed_all_pass() {
+        let ids = [ComponentId::new(0), ComponentId::new(1)];
+        // Both changed after last_run
+        let data = [ticks(1, 5), ticks(1, 4)];
+        assert!(passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &ids,
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn multiple_changed_one_stale_fails() {
+        let ids = [ComponentId::new(0), ComponentId::new(1)];
+        // id 0 changed at 5 (passes), id 1 changed at 2 (stale - fails)
+        let data = [ticks(1, 5), ticks(1, 2)];
+        assert!(!passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &ids,
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn missing_ticks_passes_filter() {
+        // Component not present in entity (None) - filter is skipped for that component
+        let id = ComponentId::new(0);
+        assert!(passes_tick_filters(
+            |_| None,
+            &[id],
+            &[],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn both_added_and_changed_must_pass() {
+        let changed_id = ComponentId::new(0);
+        let added_id = ComponentId::new(1);
+        // changed: tick 5 > last_run 3 - passes
+        // added: tick 5 > last_run 3 - passes
+        let data = [ticks(1, 5), ticks(5, 5)];
+        assert!(passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &[changed_id],
+            &[added_id],
+            Tick::new(3),
+            Tick::new(6),
+        ));
+    }
+
+    #[test]
+    fn changed_passes_but_added_fails() {
+        let changed_id = ComponentId::new(0);
+        let added_id = ComponentId::new(1);
+        // changed: tick 5 > last_run 3 - passes
+        // added: tick 1 <= last_run 3 - fails
+        let data = [ticks(1, 5), ticks(1, 5)];
+        assert!(!passes_tick_filters(
+            |id| Some(data[id.index()]),
+            &[changed_id],
+            &[added_id],
+            Tick::new(3),
+            Tick::new(6),
         ));
     }
 }
