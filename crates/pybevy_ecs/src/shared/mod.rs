@@ -4,6 +4,7 @@ pub mod access_validation;
 pub mod cached_query;
 pub mod change_tracking;
 pub mod command_queue_helpers;
+pub mod observer_registry;
 pub mod param_spec;
 pub mod query_builder_ext;
 pub mod query_runtime;
