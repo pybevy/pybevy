@@ -44,6 +44,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{AssetBorrowCounter, registry::global_registry};
+use pybevy_ecs::shared::observer_registry::LifecycleKind;
 use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     PyTypeInfo,
@@ -66,7 +67,7 @@ use crate::{
         entity_commands::PyEntityCommands,
         helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard},
         lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
-        observer::{BundleFilter, EventType, PyEvent, PyOn},
+        observer::{PyEvent, PyOn},
         observer_registry::ObserverRegistry,
         resource_type::{
             PyResourceStorage, PyResourceType, ResourceRegistry, register_custom_resource,
@@ -743,71 +744,29 @@ impl PyWorld {
             None
         };
 
-        // Get the observer registry
         let world = self.world_mut()?;
-        let registry = world.get_resource::<ObserverRegistry>();
+        let observers = world
+            .get_resource::<ObserverRegistry>()
+            .map(|registry| registry.snapshot_user_event(&event, target_entity))
+            .unwrap_or_default();
 
-        if let Some(registry) = registry {
-            // Look up observers for this event type
-            if let Some(observers) = registry.get_observers_for_event(py, &event)? {
-                // Clone the observers list to avoid borrow conflicts
-                let observers = observers.clone();
-
-                // Get world reference for bundle filter checking
-                let world_ref = unsafe { &*self.world_ptr() };
-
-                // Execute each observer
-                for observer_entry in observers {
-                    // Check entity filter if present (per-entity observers)
-                    if let Some(filter_entity) = observer_entry.entity_filter {
-                        // This observer only triggers for a specific entity
-                        if let Some(entity) = target_entity {
-                            if entity != filter_entity {
-                                // Event targets different entity, skip this observer
-                                continue;
-                            }
-                        } else {
-                            // Entity-specific observer on global event - skip
-                            continue;
-                        }
-                    }
-
-                    // Check bundle filter if present
-                    if let Some(ref bundle_filter) = observer_entry.bundle_filter {
-                        // Bundle filter requires an entity-targeted event
-                        if let Some(entity) = target_entity {
-                            // Create bundle filter and check if entity matches
-                            let filter = BundleFilter {
-                                components: bundle_filter.clone(),
-                            };
-
-                            if !filter.matches(world_ref, entity) {
-                                // Entity doesn't have required components, skip this observer
-                                continue;
-                            }
-                        } else {
-                            // Bundle filter on global event - skip this observer
-                            continue;
-                        }
-                    }
-
-                    // Create the On parameter
-                    let on_param = Py::new(
-                        py,
-                        PyOn {
-                            event_data: event.clone().unbind(),
-                            entity: target_entity,
-                        },
-                    )?;
-
-                    // Execute the observer with full parameter injection
-                    let world = self.world_mut()?;
-                    execute_system_func(py, &observer_entry.system_func, world, on_param)
-                        .inspect_err(|e| {
-                            e.print(py);
-                        })?;
-                }
+        for observer_entry in observers {
+            if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity) {
+                continue;
             }
+
+            let on_param = Py::new(
+                py,
+                PyOn {
+                    event_data: event.clone().unbind(),
+                    entity: target_entity,
+                },
+            )?;
+
+            execute_system_func(py, &observer_entry.prepared.system_func, world, on_param)
+                .inspect_err(|e| {
+                    e.print(py);
+                })?;
         }
 
         Ok(())
@@ -1103,61 +1062,47 @@ impl PyWorld {
         world_ptr: *mut World,
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
-        event_type_fn: fn(PyComponentType) -> EventType,
+        lifecycle: LifecycleKind,
     ) {
         Python::attach(|py| {
-            let world_ref = unsafe { &*world_ptr };
-
-            // Get observer registry
-            let registry = match world_ref.get_resource::<ObserverRegistry>() {
-                Some(r) => r,
-                None => return, // No observers registered
-            };
-
             // For each component, trigger the lifecycle event
             for comp_type in component_types {
-                let event_type = event_type_fn(comp_type.clone());
+                // SAFETY: the caller provides exclusive World access for the
+                // complete lifecycle dispatch. This shared borrow ends before
+                // any callback obtains the mutable World below.
+                let world_ref = unsafe { &*world_ptr };
+                let Some(component_id) = ObserverRegistry::component_id(world_ref, comp_type)
+                else {
+                    continue;
+                };
+                let observers = world_ref
+                    .get_resource::<ObserverRegistry>()
+                    .map(|registry| {
+                        registry.snapshot_lifecycle(lifecycle, comp_type, component_id, entity)
+                    })
+                    .unwrap_or_default();
 
-                // Get observers for this event type
-                if let Some(observers) = registry.get_observers(&event_type) {
-                    let observers = observers.clone();
-
-                    for observer_entry in observers {
-                        // Check entity filter if present (per-entity observers)
-                        if let Some(filter_entity) = observer_entry.entity_filter
-                            && entity != filter_entity
-                        {
-                            continue; // Event targets different entity
-                        }
-
-                        // Check bundle filter if present
-                        if let Some(ref bundle_filter) = observer_entry.bundle_filter {
-                            let filter = BundleFilter {
-                                components: bundle_filter.clone(),
-                            };
-                            if !filter.matches(world_ref, entity) {
-                                continue; // Entity doesn't have required components
-                            }
-                        }
-
-                        // Create the On parameter
-                        // For lifecycle events, there's no event data - just the entity
-                        if let Ok(on_param) = Py::new(
+                for observer_entry in observers {
+                    // For lifecycle events, there is no event payload.
+                    if let Ok(on_param) = Py::new(
+                        py,
+                        PyOn {
+                            event_data: py.None(),
+                            entity: Some(entity),
+                        },
+                    ) {
+                        // SAFETY: the registry snapshot and shared World borrow
+                        // above have ended. The caller still owns exclusive
+                        // access, and execute_system_func invalidates borrowed
+                        // parameters before applying deferred commands.
+                        let world = unsafe { &mut *world_ptr };
+                        if let Err(error) = execute_system_func(
                             py,
-                            PyOn {
-                                event_data: py.None(),
-                                entity: Some(entity),
-                            },
+                            &observer_entry.prepared.system_func,
+                            world,
+                            on_param,
                         ) {
-                            let world = unsafe { &mut *world_ptr };
-                            if let Err(e) = execute_system_func(
-                                py,
-                                &observer_entry.system_func,
-                                world,
-                                on_param,
-                            ) {
-                                e.print(py);
-                            }
+                            error.print(py);
                         }
                     }
                 }
@@ -1172,7 +1117,7 @@ impl PyWorld {
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
     ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Add);
+        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Add);
     }
 
     /// Trigger lifecycle events for components inserted to an entity.
@@ -1182,7 +1127,7 @@ impl PyWorld {
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
     ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Insert);
+        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Insert);
     }
 
     /// Trigger lifecycle events for components removed from an entity.
@@ -1191,7 +1136,7 @@ impl PyWorld {
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
     ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Remove);
+        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Remove);
     }
 
     /// Trigger lifecycle events for entity despawn.
@@ -1201,7 +1146,7 @@ impl PyWorld {
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
     ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Despawn);
+        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Despawn);
     }
 
     /// Trigger lifecycle events for component values discarded on an entity.
@@ -1212,6 +1157,6 @@ impl PyWorld {
         entity: bevy::ecs::entity::Entity,
         component_types: &[PyComponentType],
     ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, EventType::Discard);
+        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Discard);
     }
 }

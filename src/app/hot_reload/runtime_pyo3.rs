@@ -496,16 +496,19 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         }
         Python::attach(|py| -> PyResult<()> {
             // Clear old observers and despawn their entities
-            let old_entities = world
+            let old_entries = world
                 .get_resource_mut::<ObserverRegistry>()
                 .map(|mut registry| registry.clear_all());
 
-            if let Some(old_entities) = old_entities {
-                for entity in old_entities {
-                    if world.get_entity(entity).is_ok() {
-                        world.despawn(entity);
+            if let Some(old_entries) = old_entries {
+                for entry in &old_entries {
+                    if world.get_entity(entry.observer_entity).is_ok() {
+                        world.despawn(entry.observer_entity);
                     }
                 }
+                // Prepared Python handles drop only after the registry borrow
+                // and observer-entity despawns have both completed.
+                drop(old_entries);
             }
 
             // Register new observers

@@ -28,7 +28,7 @@ use crate::ecs::{
     component_type::ComponentRegistry,
     component_wrapper::*,
     dynamic_system::execute_system_func,
-    observer::{BundleFilter, PyEvent, PyOn},
+    observer::{PyEvent, PyOn},
     observer_registry::ObserverRegistry,
 };
 
@@ -1134,52 +1134,26 @@ impl PyCommands {
                 None
             };
 
-            let registry = world.get_resource::<ObserverRegistry>();
-            if let Some(registry) = registry
-                && let Some(observers) = registry.get_observers_for_event(py, &event)?
-            {
-                let observers = observers.clone();
-                for observer_entry in observers {
-                    // Check entity filter if present (per-entity observers)
-                    if let Some(filter_entity) = observer_entry.entity_filter {
-                        // This observer only triggers for a specific entity
-                        if let Some(entity) = target_entity {
-                            if entity != filter_entity {
-                                // Event targets different entity, skip this observer
-                                continue;
-                            }
-                        } else {
-                            // Entity-specific observer on global event - skip
-                            continue;
-                        }
-                    }
-
-                    // Check bundle filter if present
-                    if let Some(ref bundle_filter) = observer_entry.bundle_filter {
-                        if let Some(entity) = target_entity {
-                            let filter = BundleFilter {
-                                components: bundle_filter.clone(),
-                            };
-                            if !filter.matches(world, entity) {
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-
-                    let on_param = Py::new(
-                        py,
-                        PyOn {
-                            event_data: event_clone.clone_ref(py),
-                            entity: target_entity,
-                        },
-                    )?;
-                    execute_system_func(py, &observer_entry.system_func, world, on_param)
-                        .inspect_err(|e| {
-                            e.print(py);
-                        })?;
+            let observers = world
+                .get_resource::<ObserverRegistry>()
+                .map(|registry| registry.snapshot_user_event(&event, target_entity))
+                .unwrap_or_default();
+            for observer_entry in observers {
+                if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity) {
+                    continue;
                 }
+
+                let on_param = Py::new(
+                    py,
+                    PyOn {
+                        event_data: event_clone.clone_ref(py),
+                        entity: target_entity,
+                    },
+                )?;
+                execute_system_func(py, &observer_entry.prepared.system_func, world, on_param)
+                    .inspect_err(|e| {
+                        e.print(py);
+                    })?;
             }
         } else {
             // Commands - queue the trigger for later
@@ -1198,55 +1172,32 @@ impl PyCommands {
                         None
                     };
 
-                    let registry = world.get_resource::<ObserverRegistry>();
-                    if let Some(registry) = registry
-                        && let Ok(Some(observers)) =
-                            registry.get_observers_for_event(py, event_bound)
-                    {
-                        let observers = observers.clone();
-                        for observer_entry in observers {
-                            // Check entity filter if present (per-entity observers)
-                            if let Some(filter_entity) = observer_entry.entity_filter {
-                                // This observer only triggers for a specific entity
-                                if let Some(entity) = target_entity {
-                                    if entity != filter_entity {
-                                        // Event targets different entity, skip this observer
-                                        continue;
-                                    }
-                                } else {
-                                    // Entity-specific observer on global event - skip
-                                    continue;
-                                }
-                            }
+                    let observers = world
+                        .get_resource::<ObserverRegistry>()
+                        .map(|registry| registry.snapshot_user_event(event_bound, target_entity))
+                        .unwrap_or_default();
+                    for observer_entry in observers {
+                        if !ObserverRegistry::matches_user_filter(
+                            &observer_entry,
+                            world,
+                            target_entity,
+                        ) {
+                            continue;
+                        }
 
-                            // Check bundle filter if present
-                            if let Some(ref bundle_filter) = observer_entry.bundle_filter {
-                                if let Some(entity) = target_entity {
-                                    let filter = BundleFilter {
-                                        components: bundle_filter.clone(),
-                                    };
-                                    if !filter.matches(world, entity) {
-                                        continue;
-                                    }
-                                } else {
-                                    continue;
-                                }
-                            }
-
-                            if let Ok(on_param) = Py::new(
-                                py,
-                                PyOn {
-                                    event_data: event_clone.clone_ref(py),
-                                    entity: target_entity,
-                                },
-                            ) && let Err(e) = execute_system_func(
-                                py,
-                                &observer_entry.system_func,
-                                world,
-                                on_param,
-                            ) {
-                                e.print(py);
-                            }
+                        if let Ok(on_param) = Py::new(
+                            py,
+                            PyOn {
+                                event_data: event_clone.clone_ref(py),
+                                entity: target_entity,
+                            },
+                        ) && let Err(error) = execute_system_func(
+                            py,
+                            &observer_entry.prepared.system_func,
+                            world,
+                            on_param,
+                        ) {
+                            error.print(py);
                         }
                     }
                 });

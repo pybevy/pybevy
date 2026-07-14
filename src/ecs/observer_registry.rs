@@ -1,139 +1,114 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
-use bevy::{ecs::world::World, prelude::Resource};
-use pyo3::prelude::*;
+use bevy::{
+    ecs::{component::ComponentId, entity::Entity, world::World},
+    prelude::Resource,
+};
+use pybevy_core::registry::global_registry;
+use pybevy_ecs::shared::observer_registry::{
+    LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
+    ObserverRegistryCore, ObserverTypeKey, ResolvedObserverComponent,
+};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyTypeError},
+    ffi,
+    prelude::*,
+    types::PyType,
+};
 
-use super::{observer::EventType, system::SystemFunction};
+use super::{
+    component_type::{ComponentRegistry, PyComponentType},
+    observer::EventType,
+    system::{SystemFunction, SystemParamType},
+};
 
-/// Observer entry storing the function and its event type
-#[derive(Debug, Clone)]
-pub struct ObserverEntry {
-    /// The observer entity (can be used to despawn the observer)
-    pub(crate) observer_entity: bevy::ecs::entity::Entity,
-    /// The system function (with parsed parameters)
+/// Main-interpreter state retained by one observer registration.
+#[derive(Debug)]
+pub struct ObserverPayload {
     pub(crate) system_func: SystemFunction,
-    /// Optional bundle filter (observer only triggers if entity has these components)
-    pub(crate) bundle_filter: Option<Vec<crate::ecs::component_type::PyComponentType>>,
-    /// Optional entity filter (observer only triggers for this specific entity)
-    pub(crate) entity_filter: Option<bevy::ecs::entity::Entity>,
+    /// Keep every type object used as a registry key alive until removal.
+    /// This prevents CPython from recycling an address still present in the
+    /// interpreter-neutral registry.
+    _retained_types: Vec<Py<PyType>>,
 }
 
-/// Registry for observer functions
-/// Maps EventType -> Vec<ObserverEntry>
+pub type ObserverEntry = CoreObserverEntry<ObserverPayload>;
+
+/// PyO3 adapter around the interpreter-neutral observer registry.
 #[derive(Debug, Default, Resource)]
 pub struct ObserverRegistry {
-    /// Map from event type to list of observer functions
-    pub(crate) observers: HashMap<String, Vec<ObserverEntry>>,
+    core: ObserverRegistryCore<ObserverPayload>,
 }
 
 impl ObserverRegistry {
-    /// Register an observer function for an event type
-    /// Returns the observer entity ID which can be used to despawn the observer
+    /// Register a global observer and return its observer entity.
     pub fn register_observer(
         py: Python,
         func: &Bound<'_, PyAny>,
         world: &mut World,
-    ) -> PyResult<bevy::ecs::entity::Entity> {
-        // Parse the system function to extract parameters
-        let system_func = SystemFunction::new(py, func.clone())?;
-
-        // Find the On parameter to extract event type
-        let (event_type, bundle_filter) = Self::extract_event_type_from_params(&system_func)?;
-
-        // Observers skip the `add_systems` parameter-conflict gate; run it here
-        // so e.g. `World` + `Query[Mut[T]]` is rejected before the observer can
-        // alias the world mid-dispatch (parity with the rp2 backend).
-        crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer")?;
-
-        // Spawn an entity to represent this observer
-        let observer_entity = world.spawn_empty().id();
-
-        // Create observer entry (global observer - no entity filter)
-        let observer_entry = ObserverEntry {
-            observer_entity,
-            system_func,
-            bundle_filter,
-            entity_filter: None,
-        };
-
-        // Get or create the registry resource
-        if !world.contains_resource::<ObserverRegistry>() {
-            world.insert_resource(ObserverRegistry::default());
-        }
-
-        // Get the event type key (use Debug format for now)
-        let event_key = format!("{:?}", event_type);
-
-        // Add the observer to the registry
-        let mut registry = world.resource_mut::<ObserverRegistry>();
-        registry
-            .observers
-            .entry(event_key)
-            .or_default()
-            .push(observer_entry);
-
-        Ok(observer_entity)
+    ) -> PyResult<Entity> {
+        Self::register(py, func, None, world)
     }
 
-    /// Register an observer function for a specific entity
-    /// Returns the observer entity ID which can be used to despawn the observer
+    /// Register an observer scoped to one target entity.
     pub fn register_observer_for_entity(
         py: Python,
         func: &Bound<'_, PyAny>,
-        entity: bevy::ecs::entity::Entity,
+        entity: Entity,
         world: &mut World,
-    ) -> PyResult<bevy::ecs::entity::Entity> {
-        // Parse the system function to extract parameters
-        let system_func = SystemFunction::new(py, func.clone())?;
+    ) -> PyResult<Entity> {
+        Self::register(py, func, Some(entity), world)
+    }
 
-        // Find the On parameter to extract event type
+    fn register(
+        py: Python,
+        func: &Bound<'_, PyAny>,
+        target: Option<Entity>,
+        world: &mut World,
+    ) -> PyResult<Entity> {
+        let system_func = SystemFunction::new(py, func.clone())?;
         let (event_type, bundle_filter) = Self::extract_event_type_from_params(&system_func)?;
 
-        // Observers skip the `add_systems` parameter-conflict gate; run it here
-        // so e.g. `World` + `Query[Mut[T]]` is rejected before the observer can
-        // alias the world mid-dispatch (parity with the rp2 backend).
+        // Observers bypass add_systems' validation gate, so reject aliasing
+        // parameter combinations before mutating the World or registry.
         crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer")?;
 
-        // Spawn an entity to represent this observer
-        let observer_entity = world.spawn_empty().id();
+        // Resolve every filter before spawning the observer entity. This keeps
+        // registration fallibility ahead of the registry's infallible commit
+        // and prevents an unresolved filter from becoming less restrictive.
+        let (event, filter, retained_types) =
+            lower_registration(py, world, &event_type, bundle_filter.as_deref())?;
 
-        // Create observer entry (entity-specific observer)
-        let observer_entry = ObserverEntry {
-            observer_entity,
-            system_func,
-            bundle_filter,
-            entity_filter: Some(entity),
-        };
-
-        // Get or create the registry resource
         if !world.contains_resource::<ObserverRegistry>() {
             world.insert_resource(ObserverRegistry::default());
         }
 
-        // Get the event type key
-        let event_key = format!("{:?}", event_type);
+        let observer_entity = world.spawn_empty().id();
+        let entry = ObserverEntry {
+            observer_entity,
+            prepared: Arc::new(ObserverPayload {
+                system_func,
+                _retained_types: retained_types,
+            }),
+            event,
+            filter,
+            target,
+        };
 
-        // Add the observer to the registry
-        let mut registry = world.resource_mut::<ObserverRegistry>();
-        registry
-            .observers
-            .entry(event_key)
-            .or_default()
-            .push(observer_entry);
+        let insert_result = world.resource_mut::<ObserverRegistry>().core.insert(entry);
+        if let Err(error) = insert_result {
+            // A freshly spawned entity cannot already be registered. Fail
+            // closed if registry invariants are ever violated.
+            world.despawn(observer_entity);
+            return Err(PyRuntimeError::new_err(error.to_string()));
+        }
 
         Ok(observer_entity)
     }
 
-    /// Extract the event type from the On parameter in the system function
     fn extract_event_type_from_params(
         system_func: &SystemFunction,
-    ) -> PyResult<(
-        EventType,
-        Option<Vec<crate::ecs::component_type::PyComponentType>>,
-    )> {
-        use crate::ecs::system::SystemParamType;
-
-        // Find the On parameter
+    ) -> PyResult<(EventType, Option<Vec<PyComponentType>>)> {
         for param in &system_func.params {
             if let SystemParamType::On {
                 event_type,
@@ -144,122 +119,195 @@ impl ObserverRegistry {
             }
         }
 
-        Err(pyo3::exceptions::PyTypeError::new_err(
+        Err(PyTypeError::new_err(
             "Observer function must have an On[EventType] parameter",
         ))
     }
 
-    /// Remove all registered observers and return their entity IDs for despawning.
-    /// Used during hot reload to clean up before re-registration.
-    pub(crate) fn clear_all(&mut self) -> Vec<bevy::ecs::entity::Entity> {
-        let mut entities = Vec::new();
-        for entries in self.observers.values() {
-            for entry in entries {
-                entities.push(entry.observer_entity);
-            }
-        }
-        self.observers.clear();
-        entities
-    }
-
-    /// Get all observers for a given event type
-    pub fn get_observers(&self, event_type: &EventType) -> Option<&Vec<ObserverEntry>> {
-        let event_key = format!("{:?}", event_type);
-        self.observers.get(&event_key)
-    }
-
-    /// Get all observers for a Python event instance
-    pub fn get_observers_for_event(
+    /// Snapshot matching user-event observers in registration order.
+    ///
+    /// The returned entries own only cloned Arcs. Callers must perform the
+    /// component filter check immediately before each callback so mutations by
+    /// an earlier observer remain visible to later observers.
+    #[must_use]
+    pub fn snapshot_user_event(
         &self,
-        _py: Python,
         event: &Bound<'_, PyAny>,
-    ) -> PyResult<Option<&Vec<ObserverEntry>>> {
-        // Get the event's Python type
-        let event_py_type = event.get_type();
-
-        // Create an EventType::Custom from it
-        let event_type = EventType::Custom(event_py_type.unbind());
-
-        Ok(self.get_observers(&event_type))
+        target: Option<Entity>,
+    ) -> Vec<ObserverEntry> {
+        let key =
+            ObserverEventKey::User(ObserverTypeKey::new(event.get_type().as_type_ptr() as usize));
+        self.core.snapshot(key, target)
     }
 
-    /// Remove an observer from the registry by its entity ID
-    /// Returns true if the observer was found and removed
-    pub fn remove_observer(&mut self, observer_entity: bevy::ecs::entity::Entity) -> bool {
-        // Search through all event types to find and remove the observer
-        for observers in self.observers.values_mut() {
-            if let Some(index) = observers
-                .iter()
-                .position(|entry| entry.observer_entity == observer_entity)
-            {
-                observers.remove(index);
-                return true;
-            }
-        }
-        false
+    /// Snapshot observers for one exact component lifecycle transition.
+    #[must_use]
+    pub fn snapshot_lifecycle(
+        &self,
+        lifecycle: LifecycleKind,
+        component_type: &PyComponentType,
+        component_id: ComponentId,
+        target: Entity,
+    ) -> Vec<ObserverEntry> {
+        let type_key = component_type_key(component_type);
+        self.core
+            .snapshot(ObserverEventKey::Lifecycle(lifecycle), Some(target))
+            .into_iter()
+            .filter(|entry| {
+                entry
+                    .filter
+                    .matches_lifecycle_component(type_key, component_id)
+            })
+            .collect()
     }
 
-    /// Despawn an observer entity and remove it from the registry
-    pub fn despawn_observer(
-        observer_entity: bevy::ecs::entity::Entity,
-        world: &mut World,
-    ) -> PyResult<()> {
-        // Remove from registry
-        if let Some(mut registry) = world.get_resource_mut::<ObserverRegistry>() {
-            registry.remove_observer(observer_entity);
-        }
+    /// Apply a user-event component filter against the target's current state.
+    #[must_use]
+    pub fn matches_user_filter(
+        entry: &ObserverEntry,
+        world: &World,
+        target: Option<Entity>,
+    ) -> bool {
+        entry
+            .filter
+            .matches_user_target(target, |entity, component_id| {
+                world
+                    .get_entity(entity)
+                    .is_ok_and(|entity_ref| entity_ref.contains_id(component_id))
+            })
+    }
 
-        // Despawn the entity
+    /// Resolve an already-registered component without structurally mutating
+    /// the World. Lifecycle dispatch uses this to pair the backend type key
+    /// with the same ECS id captured during observer registration.
+    #[must_use]
+    pub fn component_id(world: &World, component_type: &PyComponentType) -> Option<ComponentId> {
+        match component_type {
+            PyComponentType::Dynamic(type_ptr) => global_registry::get_bridge_by_py_type(*type_ptr)
+                .and_then(|bridge| world.components().get_id(bridge.bevy_type_id())),
+            PyComponentType::Custom(type_ptr) => world
+                .get_resource::<ComponentRegistry>()
+                .and_then(|registry| registry.get(*type_ptr as usize)),
+        }
+    }
+
+    /// Remove one observer and return its complete entry for out-of-borrow drop.
+    pub fn remove_observer(&mut self, observer_entity: Entity) -> Option<ObserverEntry> {
+        self.core.remove(observer_entity)
+    }
+
+    /// Drain all observers for hot reload.
+    pub(crate) fn clear_all(&mut self) -> Vec<ObserverEntry> {
+        self.core.clear()
+    }
+
+    /// Remove every observer scoped to a despawning target.
+    fn remove_for_entity(&mut self, watched_entity: Entity) -> Vec<ObserverEntry> {
+        self.core.remove_for_target(watched_entity)
+    }
+
+    /// Despawn an observer entity and remove its prepared registration.
+    pub fn despawn_observer(observer_entity: Entity, world: &mut World) -> PyResult<()> {
+        let removed = world
+            .get_resource_mut::<ObserverRegistry>()
+            .and_then(|mut registry| registry.remove_observer(observer_entity));
+
         if let Ok(entity_mut) = world.get_entity_mut(observer_entity) {
             entity_mut.despawn();
         }
 
+        // `removed` drops here, after the registry resource borrow and entity
+        // mutation have both ended. A Python finalizer may safely re-enter.
+        drop(removed);
         Ok(())
     }
 
-    /// Remove all observers that are watching a specific entity
-    /// This is called when an entity is despawned to clean up per-entity observers
-    pub fn cleanup_observers_for_entity(
-        &mut self,
-        watched_entity: bevy::ecs::entity::Entity,
-    ) -> Vec<bevy::ecs::entity::Entity> {
-        let mut removed_observers = Vec::new();
+    /// Remove and despawn observers scoped to a despawning target entity.
+    pub fn cleanup_on_entity_despawn(watched_entity: Entity, world: &mut World) {
+        let removed = world
+            .get_resource_mut::<ObserverRegistry>()
+            .map(|mut registry| registry.remove_for_entity(watched_entity))
+            .unwrap_or_default();
 
-        // Search through all event types and remove observers watching this entity
-        for observers in self.observers.values_mut() {
-            let mut i = 0;
-            while i < observers.len() {
-                if let Some(filter_entity) = observers[i].entity_filter
-                    && filter_entity == watched_entity
-                {
-                    // This observer was watching the despawned entity
-                    let removed = observers.remove(i);
-                    removed_observers.push(removed.observer_entity);
-                    continue; // Don't increment i, check same index again
-                }
-                i += 1;
-            }
-        }
-
-        removed_observers
-    }
-
-    /// Clean up per-entity observers when an entity is despawned
-    /// This removes observers from the registry and despawns their entities
-    pub fn cleanup_on_entity_despawn(watched_entity: bevy::ecs::entity::Entity, world: &mut World) {
-        // Get the list of observer entities to despawn
-        let observer_entities =
-            if let Some(mut registry) = world.get_resource_mut::<ObserverRegistry>() {
-                registry.cleanup_observers_for_entity(watched_entity)
-            } else {
-                return; // No registry, nothing to clean up
-            };
-
-        // Despawn the observer entities
-        for observer_entity in observer_entities {
-            if let Ok(entity_mut) = world.get_entity_mut(observer_entity) {
+        for entry in &removed {
+            if let Ok(entity_mut) = world.get_entity_mut(entry.observer_entity) {
                 entity_mut.despawn();
             }
         }
+
+        // Drop prepared Python handles only after releasing the resource borrow.
+        drop(removed);
     }
+}
+
+fn lower_registration(
+    py: Python,
+    world: &mut World,
+    event_type: &EventType,
+    bundle_filter: Option<&[PyComponentType]>,
+) -> PyResult<(ObserverEventKey, ObserverFilter, Vec<Py<PyType>>)> {
+    let (event, components, mut retained_types) = match event_type {
+        EventType::Custom(event_type) => (
+            ObserverEventKey::User(ObserverTypeKey::new(
+                event_type.bind(py).as_type_ptr() as usize
+            )),
+            bundle_filter.unwrap_or_default(),
+            vec![event_type.clone_ref(py)],
+        ),
+        EventType::Add(component) => (
+            ObserverEventKey::Lifecycle(LifecycleKind::Add),
+            std::slice::from_ref(component),
+            Vec::new(),
+        ),
+        EventType::Insert(component) => (
+            ObserverEventKey::Lifecycle(LifecycleKind::Insert),
+            std::slice::from_ref(component),
+            Vec::new(),
+        ),
+        EventType::Remove(component) => (
+            ObserverEventKey::Lifecycle(LifecycleKind::Remove),
+            std::slice::from_ref(component),
+            Vec::new(),
+        ),
+        EventType::Discard(component) => (
+            ObserverEventKey::Lifecycle(LifecycleKind::Discard),
+            std::slice::from_ref(component),
+            Vec::new(),
+        ),
+        EventType::Despawn(component) => (
+            ObserverEventKey::Lifecycle(LifecycleKind::Despawn),
+            std::slice::from_ref(component),
+            Vec::new(),
+        ),
+    };
+
+    let mut resolved = Vec::with_capacity(components.len());
+    for component in components {
+        let component_id = component.register_simple(world);
+        retained_types.push(retain_component_type(py, component)?);
+        resolved.push(ResolvedObserverComponent {
+            type_key: component_type_key(component),
+            component_id,
+        });
+    }
+
+    Ok((event, ObserverFilter::new(resolved), retained_types))
+}
+
+fn component_type_key(component: &PyComponentType) -> ObserverTypeKey {
+    let type_ptr = match component {
+        PyComponentType::Dynamic(type_ptr) | PyComponentType::Custom(type_ptr) => *type_ptr,
+    };
+    ObserverTypeKey::new(type_ptr as usize)
+}
+
+fn retain_component_type(py: Python, component: &PyComponentType) -> PyResult<Py<PyType>> {
+    let type_ptr = match component {
+        PyComponentType::Dynamic(type_ptr) | PyComponentType::Custom(type_ptr) => *type_ptr,
+    };
+    // SAFETY: `PyComponentType` is created only from a live Python type object.
+    // We immediately create a new strong reference and retain it in the
+    // observer payload until the registry entry is removed.
+    let type_object = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut ffi::PyObject) };
+    Ok(type_object.cast::<PyType>()?.clone().unbind())
 }
