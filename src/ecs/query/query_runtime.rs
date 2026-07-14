@@ -26,7 +26,7 @@ use smallvec::SmallVec;
 
 use crate::ecs::{
     PyEntity,
-    component_layout::ComponentStorageType,
+    component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
     component_type::{PyComponentType, register_component_id},
     filter::QueryFilter,
     helpers::validity_guard::{AccessMode, ValidityFlag},

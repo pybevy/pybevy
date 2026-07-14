@@ -10,7 +10,10 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
+    component_layout::{
+        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
+        serialize_to_wrapper,
+    },
     component_type::{PyComponentType, register_custom_component},
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,
@@ -171,6 +174,7 @@ fn insert_uniform_bulk(
             let component_id = register_custom_component(world, type_ptr.as_ptr(), name);
 
             // Determine storage type and pre-serialize for wrapper storage
+            // SAFETY: registered type pointers live for the interpreter lifetime
             let py_type = unsafe {
                 Bound::from_borrowed_ptr(py, type_ptr.as_ptr() as *mut pyo3::ffi::PyObject)
             };

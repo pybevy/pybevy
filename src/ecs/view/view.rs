@@ -49,7 +49,10 @@ use pyo3::{
 };
 
 use crate::ecs::{
-    component_layout::{ComponentLayout, ComponentStorageType, PrimitiveType},
+    component_layout::{
+        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
+        PrimitiveType, PrimitiveTypeExt,
+    },
     component_type::{PyComponentType, register_component_id_simple},
     component_wrapper::*,
     helpers::validity_guard::ValidityFlag,
@@ -424,6 +427,7 @@ impl PyView {
 
                 // Get Python type and determine storage type
                 let storage_type = Python::attach(|py| {
+                    // SAFETY: registered type pointers live for the interpreter lifetime
                     let py_type = unsafe {
                         pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
                     };
@@ -899,6 +903,7 @@ pub(crate) fn get_component_field_info(
         PyComponentType::Custom(type_ptr) => {
             // Get Python type and ComponentLayout
             Python::attach(|py| {
+                // SAFETY: registered type pointers live for the interpreter lifetime
                 let py_type = unsafe {
                     pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
                 };
@@ -1316,6 +1321,7 @@ impl PyViewColMut {
             PyComponentType::Custom(type_ptr) => {
                 // Get Python type and determine storage type
                 let storage_type = Python::attach(|py| {
+                    // SAFETY: registered type pointers live for the interpreter lifetime
                     let py_type = unsafe {
                         pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
                     };
@@ -1547,6 +1553,7 @@ impl PyBatch {
         // Get pointer to column data - match on component type
         let ptr = match comp_type {
             PyComponentType::Custom(_type_ptr) => Python::attach(|py| {
+                // SAFETY: registered type pointers live for the interpreter lifetime
                 let py_type = unsafe {
                     pyo3::Bound::from_borrowed_ptr(py, _type_ptr as *mut pyo3::ffi::PyObject)
                 };
@@ -1682,6 +1689,7 @@ impl PyBatch {
         // Get pointer to column data
         let ptr = match comp_type {
             PyComponentType::Custom(_type_ptr) => Python::attach(|py| {
+                // SAFETY: registered type pointers live for the interpreter lifetime
                 let py_type = unsafe {
                     pyo3::Bound::from_borrowed_ptr(py, _type_ptr as *mut pyo3::ffi::PyObject)
                 };

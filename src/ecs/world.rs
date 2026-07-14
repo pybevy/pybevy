@@ -58,7 +58,7 @@ use crate::{
         PyEntity,
         commands::PyCommands,
         component::PyComponentId,
-        component_layout::ComponentStorageType,
+        component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
         component_type::{ComponentRegistry, PyComponentType, register_custom_component},
         custom_component::PyCustomComponent,
         dynamic_system::{DynamicSystem, execute_system_func},
@@ -251,6 +251,7 @@ impl PyWorld {
         }
 
         let storage_type = {
+            // SAFETY: registered type pointers live for the interpreter lifetime
             let py_type =
                 unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
             if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
@@ -271,6 +272,7 @@ impl PyWorld {
                     unsafe { wrapper_size.get_ref_ptr_as_mut(untyped) }
                 };
 
+                // SAFETY: registered type pointers live for the interpreter lifetime
                 let py_type = unsafe {
                     pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
                 };
