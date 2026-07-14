@@ -33,7 +33,6 @@ pub mod custom_component;
 pub mod debug_snapshot;
 pub mod duration;
 pub mod entity;
-pub mod filtered_entity_access;
 pub mod handle;
 pub mod hierarchy;
 pub extern crate inventory;
@@ -324,7 +323,6 @@ pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
 pub use duration::duration_from_py;
 pub use entity::PyEntity;
-pub use filtered_entity_access::FilteredEntityAccess;
 pub use handle::{PyHandle, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;
@@ -332,10 +330,10 @@ pub use message::{PyMessage, PyMessageId};
 pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
     AccessMode, AssetStorage, BorrowableStorage, ComponentStorage, ComponentStorageInner,
-    FieldOffset, FieldStorage, FieldStorageInner, FieldType, FromBorrowedStorage, ListStorage,
-    ListStorageInner, ResourceStorage, ResourceStorageInner, StorageError, ValidityFlag,
-    ValidityFlagWithMode, ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge,
-    ViewFieldAccess, normalize_index,
+    FieldOffset, FieldStorage, FieldStorageInner, FieldType, FilteredEntityAccess,
+    FromBorrowedStorage, ListStorage, ListStorageInner, ResourceStorage, ResourceStorageInner,
+    StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage,
+    ValueStorageInner, ViewBridge, ViewFieldAccess, normalize_index,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{

@@ -10,7 +10,7 @@ use std::{cell::Cell, fmt, ptr::NonNull};
 use bevy::ecs::{
     change_detection::Tick,
     entity::Entity,
-    query::{QueryIter, QueryState},
+    query::QueryIter,
     world::{FilteredEntityMut, FilteredEntityRef, World, unsafe_world_cell::UnsafeWorldCell},
 };
 use pybevy_storage::{FilteredEntityAccess, StorageError, ValidityFlag};
@@ -21,6 +21,8 @@ const NESTED_ITERATION_MESSAGE: &str = "Cannot nest iteration on the same Query 
      Collect into a list first: items = list(query)";
 const REENTRANT_OPERATION_MESSAGE: &str =
     "Cannot re-enter a Query operation while entity access is active";
+const ITERATION_IN_PROGRESS_MESSAGE: &str = "Cannot call len()/get()/single()/is_empty() on a Query while iterating it. \
+     Collect into a list first: items = list(query)";
 const NO_ENTITIES_MESSAGE: &str = "Query returned no entities. Expected exactly one.";
 const MULTIPLE_ENTITIES_MESSAGE: &str = "Query returned multiple entities. Expected exactly one.";
 
@@ -36,6 +38,9 @@ pub enum QueryRuntimeError {
     NestedIteration,
     /// A query operation was re-entered while another operation held entity access.
     ReentrantOperation,
+    /// A fresh-traversal operation (count/is_empty/get/single) was attempted
+    /// while a Python `for` loop was paused mid-iteration.
+    IterationInProgress,
     /// A single-result operation matched no entities.
     NoEntities,
     /// A single-result operation matched more than one entity.
@@ -48,6 +53,7 @@ impl fmt::Display for QueryRuntimeError {
             Self::Storage(error) => error.fmt(formatter),
             Self::NestedIteration => formatter.write_str(NESTED_ITERATION_MESSAGE),
             Self::ReentrantOperation => formatter.write_str(REENTRANT_OPERATION_MESSAGE),
+            Self::IterationInProgress => formatter.write_str(ITERATION_IN_PROGRESS_MESSAGE),
             Self::NoEntities => formatter.write_str(NO_ENTITIES_MESSAGE),
             Self::MultipleEntities => formatter.write_str(MULTIPLE_ENTITIES_MESSAGE),
         }
@@ -176,21 +182,25 @@ unsafe fn create_iter(
     last_run: Tick,
     this_run: Tick,
 ) -> ErasedQueryIter {
-    let (read_only, pointer) = state.parts();
-    if read_only {
-        // SAFETY: `parts` tags this pointer as the read-only state variant.
-        let state = unsafe { &mut *(pointer as *mut QueryState<FilteredEntityRef>) };
-        // SAFETY: the caller guarantees the world and scheduler-access contract.
-        let iterator =
-            unsafe { state.query_unchecked_with_ticks(cell, last_run, this_run) }.iter_inner();
-        ErasedQueryIter::ReadOnly(Box::into_raw(Box::new(iterator)) as *mut ())
-    } else {
-        // SAFETY: `parts` tags this pointer as the mutable state variant.
-        let state = unsafe { &mut *(pointer as *mut QueryState<FilteredEntityMut>) };
-        // SAFETY: the caller guarantees the world and scheduler-access contract.
-        let iterator =
-            unsafe { state.query_unchecked_with_ticks(cell, last_run, this_run) }.iter_inner();
-        ErasedQueryIter::Mutable(Box::into_raw(Box::new(iterator)) as *mut ())
+    // SAFETY: `with_state` selects the variant; the caller guarantees the world
+    // and scheduler-access contract and fences the returned iterator with the
+    // validity window. Erasing the boxed iterator to `*mut ()` drops the state
+    // borrow's lifetime, which the validity fence re-establishes at use.
+    unsafe {
+        state.with_state(
+            |qs| {
+                let iterator = qs
+                    .query_unchecked_with_ticks(cell, last_run, this_run)
+                    .iter_inner();
+                ErasedQueryIter::ReadOnly(Box::into_raw(Box::new(iterator)) as *mut ())
+            },
+            |qs| {
+                let iterator = qs
+                    .query_unchecked_with_ticks(cell, last_run, this_run)
+                    .iter_inner();
+                ErasedQueryIter::Mutable(Box::into_raw(Box::new(iterator)) as *mut ())
+            },
+        )
     }
 }
 
@@ -206,23 +216,24 @@ unsafe fn get_entity<'a>(
     this_run: Tick,
     entity: Entity,
 ) -> Option<FilteredEntityAccess<'a, 'a>> {
-    let (read_only, pointer) = state.parts();
-    if read_only {
-        // SAFETY: `parts` tags this pointer as the read-only state variant.
-        let state = unsafe { &mut *(pointer as *mut QueryState<FilteredEntityRef>) };
-        // SAFETY: the caller guarantees the world and scheduler-access contract.
-        unsafe { state.query_unchecked_with_ticks(cell, last_run, this_run) }
-            .get_inner(entity)
-            .ok()
-            .map(FilteredEntityAccess::Ref)
-    } else {
-        // SAFETY: `parts` tags this pointer as the mutable state variant.
-        let state = unsafe { &mut *(pointer as *mut QueryState<FilteredEntityMut>) };
-        // SAFETY: the caller guarantees the world and scheduler-access contract.
-        unsafe { state.query_unchecked_with_ticks(cell, last_run, this_run) }
-            .get_inner(entity)
-            .ok()
-            .map(FilteredEntityAccess::Mut)
+    // SAFETY: `with_state` selects the variant; the caller guarantees the world
+    // and scheduler-access contract. The looked-up item borrows only the world
+    // (`'a`), not the transient state borrow.
+    unsafe {
+        state.with_state(
+            |qs| {
+                qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                    .get_inner(entity)
+                    .ok()
+                    .map(FilteredEntityAccess::Ref)
+            },
+            |qs| {
+                qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                    .get_inner(entity)
+                    .ok()
+                    .map(FilteredEntityAccess::Mut)
+            },
+        )
     }
 }
 
@@ -336,18 +347,13 @@ impl QueryRuntimeCore {
         }
 
         let iterator = self.iterator.get().expect("iterator initialized above");
-        loop {
-            // SAFETY: the allocation is owned by `self.iterator`, validity was
-            // checked above, and the returned borrow remains within this run.
-            match unsafe { iterator.next() } {
-                Some(access) if self.passes_tick_filters(cached, &access) => {
-                    return Ok(Some(access));
-                }
-                Some(_) => {}
-                None => {
-                    self.iterating.set(false);
-                    return Ok(None);
-                }
+        // SAFETY: the allocation is owned by `self.iterator`, validity was
+        // checked above, and the returned borrow remains within this run.
+        match unsafe { self.next_passing(cached, iterator) } {
+            Some(access) => Ok(Some(access)),
+            None => {
+                self.iterating.set(false);
+                Ok(None)
             }
         }
     }
@@ -378,58 +384,57 @@ impl QueryRuntimeCore {
     pub fn count(&self) -> Result<usize, QueryRuntimeError> {
         self.check_valid()?;
         let _operation = self.enter_operation()?;
+        self.begin_isolated_operation()?;
         let Some(cached) = self.cached() else {
             return Ok(0);
         };
         if !cached.has_tick_filters() {
-            return Ok(cached
-                .state
-                .count(self.world_cell, self.last_run, self.this_run));
+            // SAFETY: constructor contract + validity check establish the world/
+            // access requirements; `begin_isolated_operation` guaranteed no stored
+            // iterator still borrows this state.
+            return Ok(unsafe {
+                cached
+                    .state
+                    .count(self.world_cell, self.last_run, self.this_run)
+            });
         }
 
-        let mut count = 0;
-        // SAFETY: the constructor contract and validity check establish the
-        // world/cache/access requirements for this temporary iterator.
+        // SAFETY: as above; the temporary iterator is the only live borrow of the state.
         let iterator =
             unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
         // The guard ensures the erased allocation is reclaimed on every return.
         let iterator = ErasedIterGuard(iterator);
-        loop {
-            // SAFETY: the guard owns the live iterator for this method scope.
-            match unsafe { iterator.0.next() } {
-                Some(access) if self.passes_tick_filters(cached, &access) => count += 1,
-                Some(_) => {}
-                None => return Ok(count),
-            }
+        let mut count = 0;
+        // SAFETY: the guard owns the live iterator for this method scope.
+        while unsafe { self.next_passing(cached, iterator.0) }.is_some() {
+            count += 1;
         }
+        Ok(count)
     }
 
     /// Return whether no entities match, including Added/Changed filtering.
     pub fn is_empty(&self) -> Result<bool, QueryRuntimeError> {
-        self.validity.check()?;
+        self.check_valid()?;
         let _operation = self.enter_operation()?;
+        self.begin_isolated_operation()?;
         let Some(cached) = self.cached() else {
             return Ok(true);
         };
         if !cached.has_tick_filters() {
-            return Ok(cached
-                .state
-                .is_empty_check(self.world_cell, self.last_run, self.this_run));
+            // SAFETY: as in `count`; no stored iterator still borrows this state.
+            return Ok(unsafe {
+                cached
+                    .state
+                    .is_empty_check(self.world_cell, self.last_run, self.this_run)
+            });
         }
 
-        // SAFETY: the constructor contract and validity check establish the
-        // world/cache/access requirements for this temporary iterator.
+        // SAFETY: as in `count`; the temporary iterator is the only live borrow.
         let iterator =
             unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
         let iterator = ErasedIterGuard(iterator);
-        loop {
-            // SAFETY: the guard owns the live iterator for this method scope.
-            match unsafe { iterator.0.next() } {
-                Some(access) if self.passes_tick_filters(cached, &access) => return Ok(false),
-                Some(_) => {}
-                None => return Ok(true),
-            }
-        }
+        // SAFETY: the guard owns the live iterator for this method scope.
+        Ok(unsafe { self.next_passing(cached, iterator.0) }.is_none())
     }
 
     /// Look up an entity and return it only when all query filters pass.
@@ -471,6 +476,7 @@ impl QueryRuntimeCore {
     {
         self.check_valid()?;
         let _operation = self.enter_operation()?;
+        self.begin_isolated_operation()?;
         // SAFETY: `_operation` prevents another operation from overlapping the
         // entity access, which is consumed by the materializer before it drops.
         let Some(mut entity) = (unsafe { self.get_entity_access(entity)? }) else {
@@ -494,28 +500,23 @@ impl QueryRuntimeCore {
         };
 
         // SAFETY: the constructor contract and validity check establish the
-        // world/cache/access requirements for this temporary iterator.
+        // world/cache/access requirements for this temporary iterator; the
+        // caller's `begin_isolated_operation` ensured no stored iterator borrows
+        // the state.
         let iterator =
             unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
         let iterator = ErasedIterGuard(iterator);
-        let first = loop {
-            // SAFETY: the guard owns the live iterator for this method scope.
-            match unsafe { iterator.0.next() } {
-                Some(access) if self.passes_tick_filters(cached, &access) => break access,
-                Some(_) => {}
-                None => return Err(QueryRuntimeError::NoEntities),
-            }
+        // SAFETY: the guard owns the live iterator for this method scope.
+        let first = match unsafe { self.next_passing(cached, iterator.0) } {
+            Some(access) => access,
+            None => return Err(QueryRuntimeError::NoEntities),
         };
-        loop {
-            // SAFETY: the guard owns the live iterator for this method scope.
-            match unsafe { iterator.0.next() } {
-                Some(access) if self.passes_tick_filters(cached, &access) => {
-                    return Err(QueryRuntimeError::MultipleEntities);
-                }
-                Some(_) => {}
-                None => return Ok(first),
-            }
+        // SAFETY: the guard still owns the live iterator; advancing again probes
+        // for a second match (a distinct entity from `first`).
+        if unsafe { self.next_passing(cached, iterator.0) }.is_some() {
+            return Err(QueryRuntimeError::MultipleEntities);
         }
+        Ok(first)
     }
 
     /// Enforce single-result cardinality and materialize the row.
@@ -529,6 +530,7 @@ impl QueryRuntimeCore {
     {
         self.check_valid()?;
         let _operation = self.enter_operation()?;
+        self.begin_isolated_operation()?;
         // SAFETY: `_operation` prevents another operation from overlapping the
         // entity access, which is consumed by the materializer before it drops.
         let mut entity = unsafe { self.single_entity()? };
@@ -551,6 +553,45 @@ impl QueryRuntimeCore {
             self.last_run,
             self.this_run,
         )
+    }
+
+    /// Advance `iterator` past entities failing this query's tick filters and
+    /// return the next passing entity (or `None` at exhaustion). This is the one
+    /// place that pairs `ErasedQueryIter::next` with the per-entity tick check,
+    /// so iteration, `count`, `is_empty`, and `single` cannot diverge on which
+    /// entities they consider matching.
+    ///
+    /// # Safety
+    ///
+    /// The `iterator` allocation must be live and owned by the caller for the
+    /// duration of the returned borrow, and validity must already be checked.
+    unsafe fn next_passing<'a>(
+        &self,
+        cached: &CachedQueryCore,
+        iterator: ErasedQueryIter,
+    ) -> Option<FilteredEntityAccess<'a, 'a>> {
+        loop {
+            // SAFETY: the caller owns the live allocation and the returned borrow
+            // stays within this run; validity was checked upstream.
+            match unsafe { iterator.next() } {
+                Some(access) if self.passes_tick_filters(cached, &access) => return Some(access),
+                Some(_) => {}
+                None => return None,
+            }
+        }
+    }
+
+    /// Guard a fresh-traversal operation (`count`/`is_empty`/`get`/`single`)
+    /// against a stored iterator: reject it while a Python `for` loop is paused
+    /// mid-iteration (its live iterator still borrows the `QueryState`), and
+    /// otherwise drop any exhausted leftover iterator so the fresh traversal
+    /// never mints a second `&mut QueryState` aliasing that borrow.
+    fn begin_isolated_operation(&self) -> Result<(), QueryRuntimeError> {
+        if self.iterating.get() {
+            return Err(QueryRuntimeError::IterationInProgress);
+        }
+        self.clear_iterator();
+        Ok(())
     }
 
     fn enter_operation(&self) -> Result<OperationGuard<'_>, QueryRuntimeError> {
@@ -772,6 +813,73 @@ mod tests {
     }
 
     #[test]
+    fn fresh_traversal_rejected_during_paused_iteration() {
+        let mut world = World::new();
+        let entity = world.spawn(A(0)).id();
+        world.spawn(A(0));
+        let cache = cache(&mut world, false, false);
+        // SAFETY: cache and world outlive `runtime` in this scope.
+        let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+
+        // Pause a `for` loop after the first entity (iteration is now in progress).
+        runtime.begin_iteration().unwrap();
+        assert!(
+            runtime
+                .next_with(&EntityMaterializer, ())
+                .unwrap()
+                .is_some()
+        );
+
+        // While paused, the fresh-traversal ops must refuse rather than mint a
+        // second `&mut QueryState` aliasing the live iterator.
+        assert!(matches!(
+            runtime.count(),
+            Err(QueryRuntimeError::IterationInProgress)
+        ));
+        assert!(matches!(
+            runtime.is_empty(),
+            Err(QueryRuntimeError::IterationInProgress)
+        ));
+        assert!(matches!(
+            runtime.get_with(entity, &EntityMaterializer, ()),
+            Err(QueryExecutionError::Runtime(
+                QueryRuntimeError::IterationInProgress
+            ))
+        ));
+        assert!(matches!(
+            runtime.single_with(&EntityMaterializer, ()),
+            Err(QueryExecutionError::Runtime(
+                QueryRuntimeError::IterationInProgress
+            ))
+        ));
+
+        // The paused iteration is untouched: it resumes and then exhausts.
+        assert!(
+            runtime
+                .next_with(&EntityMaterializer, ())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            runtime
+                .next_with(&EntityMaterializer, ())
+                .unwrap()
+                .is_none()
+        );
+
+        // After exhaustion the operations work again.
+        assert_eq!(runtime.count().unwrap(), 2);
+        assert!(!runtime.is_empty().unwrap());
+        assert_eq!(
+            runtime
+                .get_with(entity, &EntityMaterializer, ())
+                .unwrap()
+                .unwrap(),
+            entity
+        );
+    }
+
+    #[test]
     fn lazy_iteration_restarts_and_rejects_nesting() {
         let mut world = World::new();
         world.spawn(A(0));
@@ -905,15 +1013,17 @@ mod tests {
         // SAFETY: cache and world outlive `runtime` in this scope.
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
 
-        assert_eq!(
-            runtime.next_with(&EntityMaterializer, ()).unwrap().unwrap(),
-            entity
-        );
+        // A lookup and an iteration both materialize through the same leaf. Run
+        // the lookup first: probing `get_with` mid-iteration is now rejected.
         assert_eq!(
             runtime
                 .get_with(entity, &EntityMaterializer, ())
                 .unwrap()
                 .unwrap(),
+            entity
+        );
+        assert_eq!(
+            runtime.next_with(&EntityMaterializer, ()).unwrap().unwrap(),
             entity
         );
     }
@@ -931,6 +1041,14 @@ mod tests {
             runtime.next_with(&materializer, ()).unwrap().unwrap(),
             entity
         );
+        // Draining the open iteration proves the operation guard was released
+        // (no ReentrantOperation) and lets a fresh count run afterwards.
+        assert!(
+            runtime
+                .next_with(&EntityMaterializer, ())
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(runtime.count().unwrap(), 1);
     }
 
@@ -946,6 +1064,14 @@ mod tests {
             runtime.next_with(&FailingMaterializer, ()),
             Err(QueryExecutionError::Materialize(()))
         ));
+        // The operation guard released despite the error: the follow-up call is
+        // not rejected as re-entrant, and a fresh count then works.
+        assert!(
+            runtime
+                .next_with(&EntityMaterializer, ())
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(runtime.count().unwrap(), 1);
     }
 
@@ -961,6 +1087,14 @@ mod tests {
             let _ = runtime.next_with(&PanickingMaterializer, ());
         }));
         assert!(result.is_err());
+        // The operation guard released on unwind: the follow-up call is not
+        // rejected as re-entrant, and a fresh count then works.
+        assert!(
+            runtime
+                .next_with(&EntityMaterializer, ())
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(runtime.count().unwrap(), 1);
     }
 
