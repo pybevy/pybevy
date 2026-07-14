@@ -193,9 +193,15 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
     // Update uptime
     stats.uptime_secs = current_time;
 
+    // Real time for the refresh gate: the virtual clock resets on reload and freezes on pause
+    let real_now = world
+        .get_resource::<bevy::time::Time<bevy::time::Real>>()
+        .map(|t| t.elapsed_secs_f64())
+        .unwrap_or(current_time);
+
     // Update stats every 1 second (respects sysinfo's minimum interval while reducing overhead)
     const UPDATE_INTERVAL: f64 = 1.0;
-    if current_time - monitor.last_update >= UPDATE_INTERVAL {
+    if real_now - monitor.last_update >= UPDATE_INTERVAL {
         // Only update process stats if we have a valid PID
         if let Some(pid) = monitor.process_pid {
             // On Linux, must refresh global CPU state before process CPU for accurate measurements
@@ -286,7 +292,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
             }
         }
 
-        monitor.last_update = current_time;
+        monitor.last_update = real_now;
 
         // Capture memory baseline on first stats update (after Startup has run)
         if stats.memory_mb > 0.0
@@ -684,6 +690,78 @@ pub fn format_uptime(secs: f64) -> String {
         format!("{}m{}s", mins, secs)
     } else {
         format!("{}s", secs)
+    }
+}
+
+#[cfg(test)]
+mod stats_gate_tests {
+    use std::{
+        collections::{HashMap, VecDeque},
+        time::Duration,
+    };
+
+    use super::*;
+
+    fn stats_world(virtual_elapsed: f64, real_elapsed: f64, last_update: f64) -> World {
+        let mut world = World::new();
+
+        let mut time: bevy::time::Time = bevy::time::Time::default();
+        time.advance_by(Duration::from_secs_f64(virtual_elapsed));
+        world.insert_resource(time);
+
+        let mut real = bevy::time::Time::<bevy::time::Real>::default();
+        real.advance_by(Duration::from_secs_f64(real_elapsed));
+        world.insert_resource(real);
+
+        world.insert_resource(SystemMonitor {
+            system: sysinfo::System::new(),
+            process_pid: None,
+            last_update,
+            fps_history: VecDeque::new(),
+            last_render_update: -1.0,
+        });
+        world.insert_resource(HotReloadStats {
+            last_mode: None,
+            last_reload_time: 0.0,
+            reload_count: 0,
+            default_mode: ReloadMode::Partial,
+            memory_mb: 0.0,
+            cpu_percent: 0.0,
+            fps_average: 0.0,
+            fps_current: 0.0,
+            total_memory_mb: 0.0,
+            cpu_core_count: 0,
+            gil_enabled: false,
+            uptime_secs: 0.0,
+            entity_count: 0,
+            asset_counts: HashMap::new(),
+            last_error_timestamp: 0.0,
+            last_reload_frame: 0,
+        });
+        world
+    }
+
+    /// Regression: a full reload resets the virtual clock to zero, which used
+    /// to strand `last_update` above it and freeze the 1 Hz stats refresh
+    /// (cpu_percent, memory_mb, asset counts) for the rest of the session.
+    #[test]
+    fn stats_refresh_survives_virtual_clock_reset() {
+        // Virtual clock just reset (0.5s); real clock is 60s past last_update.
+        let mut world = stats_world(0.5, 120.0, 60.0);
+        update_system_stats(&mut world);
+        let monitor = world.resource::<SystemMonitor>();
+        assert!(
+            (monitor.last_update - 120.0).abs() < 1e-6,
+            "refresh should run and re-anchor last_update to real time, got {}",
+            monitor.last_update
+        );
+    }
+
+    #[test]
+    fn stats_refresh_still_throttled_within_interval() {
+        let mut world = stats_world(0.5, 60.5, 60.0);
+        update_system_stats(&mut world);
+        assert_eq!(world.resource::<SystemMonitor>().last_update, 60.0);
     }
 }
 
