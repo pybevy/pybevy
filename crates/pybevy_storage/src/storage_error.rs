@@ -50,6 +50,9 @@ pub enum StorageError {
     /// Can't modify read-only asset (`RuntimeError`)
     AssetReadOnly,
 
+    /// Operation would alias or invalidate a live NumPy view (`RuntimeError`)
+    AssetViewsLive,
+
     /// List index out of range (`IndexError`)
     IndexOutOfRange,
 
@@ -83,6 +86,11 @@ impl fmt::Display for StorageError {
             StorageError::AssetReadOnly => f.write_str(
                 "Cannot modify asset obtained from Res[Assets[T]].get(). \
                  Use ResMut[Assets[T]].get_mut() for mutable access.",
+            ),
+            StorageError::AssetViewsLive => f.write_str(
+                "A live NumPy view still aliases this asset's data. \
+                 Drop the array (del it or leave the with-block that created it) \
+                 before mutating or consuming the asset.",
             ),
             StorageError::OwnedFieldReadOnly => f.write_str(
                 "Cannot mutate a field extracted from an owned or temporary component. \
@@ -162,7 +170,8 @@ impl From<StorageError> for pyo3::PyErr {
             | StorageError::OwnedFieldReadOnly
             | StorageError::AssetConsumed
             | StorageError::AssetBorrowed
-            | StorageError::AssetReadOnly => PyRuntimeError::new_err(err.to_string()),
+            | StorageError::AssetReadOnly
+            | StorageError::AssetViewsLive => PyRuntimeError::new_err(err.to_string()),
             StorageError::IndexOutOfRange | StorageError::EmptyList => {
                 PyIndexError::new_err(err.to_string())
             }

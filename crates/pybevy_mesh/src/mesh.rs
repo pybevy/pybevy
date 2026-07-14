@@ -6,12 +6,16 @@ use numpy::{
     PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
     ndarray::{ArrayView2, ArrayViewMut2},
 };
-use pybevy_core::{AssetInputConverter, AssetStorage, PyAsset};
+use pybevy_core::{
+    AssetInputConverter, AssetStorage, PyAsset,
+    numpy_view_guard::{PyNumpyViewGuard, release_array_guard},
+};
 use pybevy_image::image::PyRenderAssetUsages;
 use pybevy_macros::pyasset;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
+    types::IntoPyDict,
 };
 
 use crate::{
@@ -231,66 +235,102 @@ impl PyMesh {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate tangents: {}", e)))
     }
 
-    pub fn positions(&self, py: Python<'_>) -> PyResult<Py<MeshAttributeContext>> {
-        self.attribute(py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_POSITION))
+    pub fn positions(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<MeshAttributeContext>> {
+        Self::attribute(
+            slf,
+            py,
+            &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_POSITION),
+        )
     }
 
-    pub fn positions_mut(&mut self, py: Python<'_>) -> PyResult<Py<MeshAttributeContextMut>> {
-        self.attribute_mut(py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_POSITION))
+    pub fn positions_mut(
+        slf: &Bound<'_, Self>,
+        py: Python<'_>,
+    ) -> PyResult<Py<MeshAttributeContextMut>> {
+        Self::attribute_mut(
+            slf,
+            py,
+            &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_POSITION),
+        )
     }
 
-    pub fn normals(&self, py: Python<'_>) -> PyResult<Py<MeshAttributeContext>> {
-        self.attribute(py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_NORMAL))
+    pub fn normals(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<MeshAttributeContext>> {
+        Self::attribute(
+            slf,
+            py,
+            &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_NORMAL),
+        )
     }
 
-    pub fn normals_mut(&mut self, py: Python<'_>) -> PyResult<Py<MeshAttributeContextMut>> {
-        self.attribute_mut(py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_NORMAL))
+    pub fn normals_mut(
+        slf: &Bound<'_, Self>,
+        py: Python<'_>,
+    ) -> PyResult<Py<MeshAttributeContextMut>> {
+        Self::attribute_mut(
+            slf,
+            py,
+            &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_NORMAL),
+        )
     }
 
-    pub fn uvs(&self, py: Python<'_>) -> PyResult<Py<MeshAttributeContext>> {
-        self.attribute(py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_UV_0))
+    pub fn uvs(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<MeshAttributeContext>> {
+        Self::attribute(slf, py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_UV_0))
     }
 
-    pub fn uvs_mut(&mut self, py: Python<'_>) -> PyResult<Py<MeshAttributeContextMut>> {
-        self.attribute_mut(py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_UV_0))
+    pub fn uvs_mut(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<MeshAttributeContextMut>> {
+        Self::attribute_mut(slf, py, &PyMeshVertexAttribute::from(Mesh::ATTRIBUTE_UV_0))
     }
 
     pub fn attribute(
-        &self,
+        slf: &Bound<'_, Self>,
         py: Python<'_>,
         id: &PyMeshVertexAttribute,
     ) -> PyResult<Py<MeshAttributeContext>> {
-        mesh_with!(self, |mesh: &Mesh| {
-            let Some(values) = mesh.attribute(id.0.id) else {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Mesh does not have attribute {:?}",
-                    id.0
-                )));
-            };
+        let this = slf.borrow();
+        // The guard's Drop decrements the counter when NumPy frees the array;
+        // it is created before the view so a failed view leaves no count via
+        // the guard object's own drop.
+        let guard = PyNumpyViewGuard::acquire(
+            this.storage.view_counters().reads.clone(),
+            slf.clone().unbind().into_any(),
+        );
+        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
+        let mesh = this.storage.as_ref()?;
+        let Some(values) = mesh.attribute(id.0.id) else {
+            return Err(PyRuntimeError::new_err(format!(
+                "Mesh does not have attribute {:?}",
+                id.0
+            )));
+        };
 
-            let np_array = Self::create_numpy_view_readonly(py, values)?;
-            let context = MeshAttributeContext { array: np_array };
-            Py::new(py, context)
-        })
+        let np_array = Self::create_numpy_view_readonly(values, guard_obj)?;
+        let context = MeshAttributeContext { array: np_array };
+        Py::new(py, context)
     }
 
     pub fn attribute_mut(
-        &mut self,
+        slf: &Bound<'_, Self>,
         py: Python<'_>,
         id: &PyMeshVertexAttribute,
     ) -> PyResult<Py<MeshAttributeContextMut>> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| {
-            let Some(values) = mesh.attribute_mut(id.0.id) else {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Mesh does not have attribute {:?}",
-                    id.0
-                )));
-            };
+        let mut this = slf.borrow_mut();
+        // as_mut() below requires zero live views, so acquire the write count
+        // only after it succeeds.
+        let counters = this.storage.view_counters().clone();
+        let mesh = this.storage.as_mut()?;
+        let Some(values) = mesh.attribute_mut(id.0.id) else {
+            return Err(PyRuntimeError::new_err(format!(
+                "Mesh does not have attribute {:?}",
+                id.0
+            )));
+        };
 
-            let np_array = PyMesh::create_numpy_view_mut(py, values)?;
-            let context = MeshAttributeContextMut { array: np_array };
-            Py::new(py, context)
-        })
+        let guard =
+            PyNumpyViewGuard::acquire(counters.writes.clone(), slf.clone().unbind().into_any());
+        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
+        let np_array = PyMesh::create_numpy_view_mut(values, guard_obj)?;
+        let context = MeshAttributeContextMut { array: np_array };
+        Py::new(py, context)
     }
 
     pub fn positions_copy(&self, py: Python<'_>) -> PyResult<Py<PyArray2<f32>>> {
@@ -375,44 +415,47 @@ impl PyMesh {
 // Helper methods for creating NumPy views (not exposed to Python)
 impl PyMesh {
     fn create_numpy_view_readonly(
-        py: Python<'_>,
         values: &VertexAttributeValues,
+        guard: Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         match values {
             VertexAttributeValues::Float32x2(v) => {
                 let n = v.len();
+                // SAFETY: [f32; 2] is contiguous with no padding, so n elements view as n*2 f32s
                 let flat: &[f32] =
                     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const f32, n * 2) };
                 let view = ArrayView2::from_shape((n, 2), flat).unwrap();
-                let np_array = unsafe {
-                    PyArray2::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-                }
-                .readwrite()
-                .make_nonwriteable();
+                // SAFETY: borrows the vec behind as_ref(); the guard base object
+                // blocks mesh mutation (and thus reallocation) while the array lives
+                let np_array = unsafe { PyArray2::borrow_from_array(&view, guard.clone()) }
+                    .readwrite()
+                    .make_nonwriteable();
                 Ok(Bound::clone(&np_array).unbind().into_any())
             }
             VertexAttributeValues::Float32x3(v) => {
                 let n = v.len();
+                // SAFETY: [f32; 3] is contiguous with no padding, so n elements view as n*3 f32s
                 let flat: &[f32] =
                     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const f32, n * 3) };
                 let view = ArrayView2::from_shape((n, 3), flat).unwrap();
-                let np_array = unsafe {
-                    PyArray2::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-                }
-                .readwrite()
-                .make_nonwriteable();
+                // SAFETY: borrows the vec behind as_ref(); the guard base object
+                // blocks mesh mutation (and thus reallocation) while the array lives
+                let np_array = unsafe { PyArray2::borrow_from_array(&view, guard.clone()) }
+                    .readwrite()
+                    .make_nonwriteable();
                 Ok(Bound::clone(&np_array).unbind().into_any())
             }
             VertexAttributeValues::Float32x4(v) => {
                 let n = v.len();
+                // SAFETY: [f32; 4] is contiguous with no padding, so n elements view as n*4 f32s
                 let flat: &[f32] =
                     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const f32, n * 4) };
                 let view = ArrayView2::from_shape((n, 4), flat).unwrap();
-                let np_array = unsafe {
-                    PyArray2::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-                }
-                .readwrite()
-                .make_nonwriteable();
+                // SAFETY: borrows the vec behind as_ref(); the guard base object
+                // blocks mesh mutation (and thus reallocation) while the array lives
+                let np_array = unsafe { PyArray2::borrow_from_array(&view, guard.clone()) }
+                    .readwrite()
+                    .make_nonwriteable();
                 Ok(Bound::clone(&np_array).unbind().into_any())
             }
             _ => Err(PyTypeError::new_err(
@@ -422,38 +465,41 @@ impl PyMesh {
     }
 
     fn create_numpy_view_mut(
-        py: Python<'_>,
         values: &mut VertexAttributeValues,
+        guard: Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         match values {
             VertexAttributeValues::Float32x2(v) => {
                 let n = v.len();
+                // SAFETY: [f32; 2] is contiguous with no padding, so n elements view as n*2 f32s
                 let flat: &mut [f32] =
                     unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr() as *mut f32, n * 2) };
                 let view = ArrayViewMut2::from_shape((n, 2), flat).unwrap();
-                let np = unsafe {
-                    PyArray2::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-                };
+                // SAFETY: writable alias of the vec behind as_mut(); the guard base
+                // object blocks any other mesh access while this view lives
+                let np = unsafe { PyArray2::borrow_from_array(&view, guard.clone()) };
                 Ok(np.to_owned().unbind().into_any())
             }
             VertexAttributeValues::Float32x3(v) => {
                 let n = v.len();
+                // SAFETY: [f32; 3] is contiguous with no padding, so n elements view as n*3 f32s
                 let flat: &mut [f32] =
                     unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr() as *mut f32, n * 3) };
                 let view = ArrayViewMut2::from_shape((n, 3), flat).unwrap();
-                let np = unsafe {
-                    PyArray2::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-                };
+                // SAFETY: writable alias of the vec behind as_mut(); the guard base
+                // object blocks any other mesh access while this view lives
+                let np = unsafe { PyArray2::borrow_from_array(&view, guard.clone()) };
                 Ok(np.to_owned().unbind().into_any())
             }
             VertexAttributeValues::Float32x4(v) => {
                 let n = v.len();
+                // SAFETY: [f32; 4] is contiguous with no padding, so n elements view as n*4 f32s
                 let flat: &mut [f32] =
                     unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr() as *mut f32, n * 4) };
                 let view = ArrayViewMut2::from_shape((n, 4), flat).unwrap();
-                let np = unsafe {
-                    PyArray2::borrow_from_array(&view, py.None().bind(py).clone().into_any())
-                };
+                // SAFETY: writable alias of the vec behind as_mut(); the guard base
+                // object blocks any other mesh access while this view lives
+                let np = unsafe { PyArray2::borrow_from_array(&view, guard.clone()) };
                 Ok(np.to_owned().unbind().into_any())
             }
             _ => Err(PyTypeError::new_err(
@@ -476,10 +522,14 @@ impl MeshAttributeContext {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
+        // The with-block is the safety scope: release the view count now; the
+        // guard's Drop is only the backstop for arrays used without a context.
+        release_array_guard(self.array.bind(py));
         Ok(false)
     }
 }
@@ -497,10 +547,16 @@ impl MeshAttributeContextMut {
 
     fn __exit__(
         &self,
+        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
+        let array = self.array.bind(py);
+        // A reference kept past the with-block must not stay writable
+        let kwargs = [("write", false)].into_py_dict(py)?;
+        let _ = array.call_method("setflags", (), Some(&kwargs));
+        release_array_guard(array);
         Ok(false)
     }
 }

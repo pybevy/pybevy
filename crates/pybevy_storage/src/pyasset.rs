@@ -29,6 +29,11 @@
 //! - **`BorrowedRef`**: Created from `Res[Assets[T]].get()`, wraps a `BorrowedRef<T>` (`*const T`)
 //! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, wraps a `BorrowedMut<T>` (`*mut T`)
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
 use bevy::asset::{Asset, UntypedHandle};
 
 use crate::{
@@ -36,6 +41,38 @@ use crate::{
     borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
 };
+
+/// Live zero-copy view counters for an asset's underlying data.
+///
+/// NumPy views handed to Python (mesh attributes, image data) alias the asset's
+/// memory directly; any mutation of the asset can reallocate that memory. Each
+/// view increments a counter on creation and decrements it when the array is
+/// garbage collected, and the storage accessors refuse operations that would
+/// alias or invalidate a live view.
+#[derive(Debug, Clone, Default)]
+pub struct ViewCounters {
+    pub reads: Arc<AtomicUsize>,
+    pub writes: Arc<AtomicUsize>,
+}
+
+impl ViewCounters {
+    /// Reads are allowed while read-only views are live, but not while a
+    /// writable view aliases the data.
+    pub fn check_no_write_views(&self) -> Result<(), StorageError> {
+        if self.writes.load(Ordering::Acquire) > 0 {
+            return Err(StorageError::AssetViewsLive);
+        }
+        Ok(())
+    }
+
+    /// Mutation (or consumption) requires that no view of any kind is live.
+    pub fn check_no_views(&self) -> Result<(), StorageError> {
+        if self.reads.load(Ordering::Acquire) > 0 || self.writes.load(Ordering::Acquire) > 0 {
+            return Err(StorageError::AssetViewsLive);
+        }
+        Ok(())
+    }
+}
 
 /// Generic storage for PyBevy assets
 ///
@@ -53,6 +90,7 @@ use crate::{
 #[derive(Debug)]
 pub struct AssetStorage<T: Asset> {
     pub(crate) inner: AssetStorageInner<T>,
+    views: ViewCounters,
 }
 
 #[derive(Debug)]
@@ -101,7 +139,13 @@ impl<T: Asset + Clone> Clone for AssetStorage<T> {
                 handle: handle.clone(),
             },
         };
-        Self { inner }
+        // Borrowed clones alias the same asset data, so they share counters;
+        // an owned clone copies the data and starts with none.
+        let views = match &self.inner {
+            AssetStorageInner::Owned(_) => ViewCounters::default(),
+            _ => self.views.clone(),
+        };
+        Self { inner, views }
     }
 }
 
@@ -128,6 +172,7 @@ impl<T: Asset> AssetStorage<T> {
     pub fn owned(asset: T) -> Self {
         Self {
             inner: AssetStorageInner::Owned(Some(Box::new(asset))),
+            views: ViewCounters::default(),
         }
     }
 
@@ -141,6 +186,7 @@ impl<T: Asset> AssetStorage<T> {
     /// Returns `StorageError::AssetConsumed` if asset was already taken
     /// Returns `StorageError::AssetBorrowed` if asset is a borrowed reference
     pub fn take(&mut self) -> Result<T, StorageError> {
+        self.views.check_no_views()?;
         match &mut self.inner {
             AssetStorageInner::Owned(opt) => opt
                 .take()
@@ -172,6 +218,7 @@ impl<T: Asset> AssetStorage<T> {
                 borrow: unsafe { BorrowedRef::new(ptr, validity.flag) },
                 handle,
             },
+            views: ViewCounters::default(),
         }
     }
 
@@ -191,6 +238,7 @@ impl<T: Asset> AssetStorage<T> {
                 borrow: unsafe { BorrowedMut::new(ptr, validity.flag) },
                 handle,
             },
+            views: ViewCounters::default(),
         }
     }
 
@@ -201,6 +249,7 @@ impl<T: Asset> AssetStorage<T> {
     /// (i.e., accessed outside of system execution context)
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
+        self.views.check_no_write_views()?;
         match &self.inner {
             AssetStorageInner::Owned(Some(asset)) => Ok(&**asset),
             AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
@@ -216,12 +265,18 @@ impl<T: Asset> AssetStorage<T> {
     /// `AssetReadOnly` if the asset was borrowed read-only.
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
+        self.views.check_no_views()?;
         match &mut self.inner {
             AssetStorageInner::Owned(Some(asset)) => Ok(&mut **asset),
             AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
             AssetStorageInner::BorrowedRef { .. } => Err(StorageError::AssetReadOnly),
             AssetStorageInner::BorrowedMut { borrow, .. } => borrow.get_mut(),
         }
+    }
+
+    /// Counters tracking live zero-copy NumPy views over this asset's data
+    pub fn view_counters(&self) -> &ViewCounters {
+        &self.views
     }
 
     /// Check if this storage contains an owned asset
@@ -455,5 +510,42 @@ mod tests {
         };
 
         assert!(matches!(storage.take(), Err(StorageError::AssetBorrowed)));
+    }
+
+    /// Live view counters gate reads against write views and gate mutation or
+    /// consumption against any view.
+    #[test]
+    fn view_counters_gate_access() {
+        let mut storage = AssetStorage::owned(TestAsset { value: 1 });
+
+        storage.view_counters().reads.fetch_add(1, Ordering::AcqRel);
+        assert!(storage.as_ref().is_ok());
+        assert!(matches!(
+            storage.as_mut(),
+            Err(StorageError::AssetViewsLive)
+        ));
+        assert!(matches!(storage.take(), Err(StorageError::AssetViewsLive)));
+        storage.view_counters().reads.fetch_sub(1, Ordering::AcqRel);
+
+        storage
+            .view_counters()
+            .writes
+            .fetch_add(1, Ordering::AcqRel);
+        assert!(matches!(
+            storage.as_ref(),
+            Err(StorageError::AssetViewsLive)
+        ));
+        assert!(matches!(
+            storage.as_mut(),
+            Err(StorageError::AssetViewsLive)
+        ));
+        storage
+            .view_counters()
+            .writes
+            .fetch_sub(1, Ordering::AcqRel);
+
+        assert!(storage.as_ref().is_ok());
+        assert!(storage.as_mut().is_ok());
+        assert!(storage.take().is_ok());
     }
 }

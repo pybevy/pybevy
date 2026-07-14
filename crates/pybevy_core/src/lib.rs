@@ -39,6 +39,7 @@ pub extern crate inventory;
 pub mod bridge_inventory;
 pub mod materializable;
 pub mod message;
+pub mod numpy_view_guard;
 pub mod plugin;
 pub mod reflect_registration;
 pub mod registry;
