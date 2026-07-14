@@ -75,9 +75,21 @@ impl CustomComponentInfo {
         self.entries.iter().map(|(&id, entry)| (id, entry))
     }
 
-    /// Clear all entries (used during full reload)
-    pub fn clear(&mut self) {
-        self.entries.clear();
+    /// Remove the entry for `id`, if any. Used during hot reload when a
+    /// custom component must be re-registered under a fresh `ComponentId`
+    /// (e.g. wrapper-storage components on name collision); without this
+    /// the registry leaks one stale entry per reload and the user-facing
+    /// "Available custom components: …" hint shows duplicates.
+    pub fn remove(&mut self, id: ComponentId) -> Option<CustomComponentEntry> {
+        self.entries.remove(&id)
+    }
+
+    /// Find the `ComponentId` of an entry by its registered name.
+    pub fn id_by_name(&self, name: &str) -> Option<ComponentId> {
+        self.entries
+            .iter()
+            .find(|(_, e)| e.name == name)
+            .map(|(id, _)| *id)
     }
 
     /// Update the type_ptr for an existing entry (used during hot reload aliasing).
@@ -260,13 +272,55 @@ mod tests {
     }
 
     #[test]
-    fn component_info_clear() {
+    fn component_info_remove_drops_entry() {
         let mut info = CustomComponentInfo::default();
-        info.insert(make_component_id(0), make_entry("A"));
-        info.insert(make_component_id(1), make_entry("B"));
-        info.clear();
-        assert!(info.get(make_component_id(0)).is_none());
-        assert_eq!(info.iter().count(), 0);
+        let id = make_component_id(0);
+        info.insert(id, make_entry("Bouncy"));
+        assert_eq!(info.iter().count(), 1);
+
+        let removed = info.remove(id);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().name, "Bouncy");
+        assert_eq!(info.iter().count(), 0, "entry must be gone after remove");
+        assert!(info.remove(id).is_none(), "second remove is a no-op");
+    }
+
+    #[test]
+    fn component_info_id_by_name_finds_existing() {
+        let mut info = CustomComponentInfo::default();
+        info.insert(make_component_id(7), make_entry("Bouncy"));
+        info.insert(make_component_id(8), make_entry("BounceCounter"));
+
+        assert_eq!(info.id_by_name("Bouncy"), Some(make_component_id(7)));
+        assert_eq!(info.id_by_name("BounceCounter"), Some(make_component_id(8)));
+        assert_eq!(info.id_by_name("NotThere"), None);
+    }
+
+    #[test]
+    fn component_info_dedup_via_remove_then_insert() {
+        // Simulates the wrapper-storage hot-reload path: drop the prior entry
+        // for `name` before inserting a fresh one with a new ComponentId, so
+        // `iter()` returns exactly one entry per logical component name even
+        // after many reloads.
+        let mut info = CustomComponentInfo::default();
+        let mut next_id = 0usize;
+
+        for _ in 0..10 {
+            if let Some(prev) = info.id_by_name("Bouncy") {
+                info.remove(prev);
+            }
+            info.insert(make_component_id(next_id), make_entry("Bouncy"));
+            next_id += 1;
+        }
+
+        let names: Vec<_> = info.iter().map(|(_, e)| e.name.clone()).collect();
+        assert_eq!(
+            names,
+            vec!["Bouncy".to_string()],
+            "registry must hold exactly one Bouncy entry after repeated reloads, \
+             got {:?}",
+            names
+        );
     }
 
     #[test]

@@ -434,6 +434,13 @@ pub(crate) fn register_custom_component(
     // for the same logical class.
     let qualified_name = Python::attach(|py| get_python_qualified_name(py, type_ptr));
 
+    // Track an old `CustomComponentInfo` entry that must be dropped before we
+    // register a fresh one. Set when the storage-compat check below fails on a
+    // name collision (typically the wrapper-storage hot-reload path). Without
+    // this cleanup the registry leaks one entry per reload, surfacing as
+    // "Available custom components: Bouncy, Bouncy, Bouncy, …" in errors.
+    let mut stale_entry_to_drop: Option<ComponentId> = None;
+
     if let Some(ref qname) = qualified_name {
         // Need to read by_name while not holding a mutable borrow
         let existing_id = world
@@ -506,9 +513,27 @@ pub(crate) fn register_custom_component(
                      entities with old ComponentId won't be queryable",
                     qname,
                 );
+                // Schedule removal of the prior CustomComponentInfo entry so
+                // the about-to-be-inserted fresh ComponentId doesn't sit next
+                // to the orphaned one. The old `by_name` entry is overwritten
+                // below when we re-insert with the new ComponentId.
+                stale_entry_to_drop = Some(existing_id);
                 // Fall through to fresh registration
             }
         }
+    }
+
+    // Drop the orphaned entry before inserting the fresh one so iter() reports
+    // exactly one entry per logical component name across any number of reloads.
+    if let Some(stale_id) = stale_entry_to_drop {
+        world
+            .resource_mut::<pybevy_core::CustomComponentInfo>()
+            .remove(stale_id);
+        // Also evict any pointer aliases targeting the orphaned ComponentId so
+        // the type_ptr→ComponentId map doesn't accumulate stale rows pointing
+        // at a column the new ComponentId no longer owns.
+        let mut registry = world.resource_mut::<ComponentRegistry>();
+        registry.registry.retain(|_, id| *id != stale_id);
     }
 
     // Determine storage type based on component layout
