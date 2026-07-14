@@ -2,7 +2,8 @@
 //!
 //! A [`ValidatedViewProgram`] is an unforgeable capability: it can only be
 //! created after the program's declared components, field identities, byte
-//! spans, and write effects have been checked against one resolved View.
+//! spans, write effects, and VM stack shape have been checked against one
+//! resolved View.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -18,6 +19,7 @@ use std::{
 use bevy_ecs::{
     change_detection::Tick,
     component::{ComponentId, Components, StorageType},
+    storage::TableId,
     world::{World, WorldId, unsafe_world_cell::UnsafeWorldCell},
 };
 use pybevy_storage::{StorageError, ValidityFlag};
@@ -338,7 +340,7 @@ impl ViewRuntimeCore {
     ///
     /// Validation is deliberately centralized and ordered: instruction-map
     /// integrity, declared components, real field identities, in-layout byte
-    /// spans, then operation-specific write effects.
+    /// spans, operation-specific write effects, then complete VM stack shape.
     pub fn validate_program(
         &self,
         bytecode: Arc<CompiledBytecode>,
@@ -350,6 +352,7 @@ impl ViewRuntimeCore {
         view_engine::validate_bytecode_field_types(&bytecode, &spec.allowed_fields)?;
         validate_bytecode_spans(&bytecode, &spec.component_strides)?;
         validate_write_effects(&bytecode, intent, &spec.mutable_components)?;
+        validate_stack_effects(&bytecode, intent)?;
 
         Ok(ValidatedViewProgram {
             bytecode,
@@ -440,6 +443,162 @@ impl BatchLease {
     pub fn is_empty(&self) -> Result<bool, ViewRuntimeError> {
         self.entity_count().map(|count| count == 0)
     }
+
+    /// Execute one validated assignment over this lease's exact selected rows.
+    ///
+    /// Destination change ticks are resolved and bounds-checked before the VM
+    /// can write. Once execution begins, an unwind-safe marker stamps exactly
+    /// those rows with this invocation's stable tick, including after a panic
+    /// that may have left a partially written batch.
+    pub fn execute_assignment(
+        &self,
+        program: &ValidatedViewProgram,
+        parallel: bool,
+    ) -> Result<(), ViewRuntimeError> {
+        self.execute_assignment_with(program, |batches, bytecode, strides| {
+            let has_tick_masks = batches.iter().any(|batch| batch.tick_mask.is_some());
+            // SAFETY: the capability validated every field identity, byte span,
+            // source component, and unique mutable destination against this
+            // runtime's exact spec. The lease owns live, nonoverlapping selected
+            // rows; the operation fence and scheduler access exclude aliases.
+            unsafe {
+                if has_tick_masks {
+                    view_engine::execute_filtered_assignment(batches, bytecode, strides, parallel);
+                } else {
+                    view_engine::execute_batch_assignment(batches, bytecode, strides, parallel);
+                }
+            }
+        })
+    }
+
+    fn execute_assignment_with(
+        &self,
+        program: &ValidatedViewProgram,
+        execute: impl FnOnce(
+            &[view_engine::TableBatch],
+            &CompiledBytecode,
+            &HashMap<ComponentId, usize>,
+        ),
+    ) -> Result<(), ViewRuntimeError> {
+        self.runtime.check_program(program)?;
+        let ProgramIntent::Assignment { destination } = program.intent() else {
+            return Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "assignment",
+                actual: "read-only",
+            });
+        };
+
+        let _operation = self.runtime.enter_operation()?;
+        self.runtime.validate_live_world_metadata()?;
+        let changed_ticks = self.resolve_change_ticks(destination.component_id)?;
+        let _change_marker = ChangeMarkGuard {
+            changed_ticks: &changed_ticks,
+            this_run: self.runtime.this_run,
+        };
+
+        execute(
+            &self.batches,
+            program.bytecode(),
+            self.runtime.spec().component_strides(),
+        );
+        Ok(())
+    }
+
+    fn resolve_change_ticks(
+        &self,
+        destination: ComponentId,
+    ) -> Result<Vec<*mut Tick>, ViewRuntimeError> {
+        // SAFETY: the runtime constructor binds the cell to this live lease and
+        // its scheduler access. The caller holds the shared operation fence and
+        // has just rechecked validity and live component metadata.
+        let storages = unsafe { self.runtime.world_cell.storages() };
+        let mut changed_ticks =
+            Vec::with_capacity(self.batches.iter().map(|batch| batch.entity_count).sum());
+
+        for batch in &self.batches {
+            let table = storages
+                .tables
+                .get(batch.table_id)
+                .ok_or(ViewRuntimeError::BatchTableMissing(batch.table_id))?;
+            let table_entity_count = table.entity_count() as usize;
+            let range_end = batch.start_row.checked_add(batch.entity_count).ok_or(
+                ViewRuntimeError::BatchRangeOutOfBounds {
+                    table_id: batch.table_id,
+                    start_row: batch.start_row,
+                    entity_count: batch.entity_count,
+                    table_entity_count,
+                },
+            )?;
+            if range_end > table_entity_count {
+                return Err(ViewRuntimeError::BatchRangeOutOfBounds {
+                    table_id: batch.table_id,
+                    start_row: batch.start_row,
+                    entity_count: batch.entity_count,
+                    table_entity_count,
+                });
+            }
+            let column = table.get_column(destination).ok_or(
+                ViewRuntimeError::BatchDestinationColumnMissing {
+                    table_id: batch.table_id,
+                    component_id: destination,
+                },
+            )?;
+            // SAFETY: the column belongs to this live table and the supplied
+            // length is its exact current row count. Every selected index is
+            // checked against that length before its pointer is retained.
+            let table_ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
+
+            match &batch.tick_mask {
+                Some(mask) => {
+                    if mask.len() != batch.entity_count {
+                        return Err(ViewRuntimeError::TickMaskLengthMismatch {
+                            table_id: batch.table_id,
+                            expected: batch.entity_count,
+                            actual: mask.len(),
+                        });
+                    }
+                    changed_ticks.extend(
+                        mask.iter()
+                            .enumerate()
+                            .filter(|&(_, passes)| *passes)
+                            .map(|(local_row, _)| table_ticks[batch.start_row + local_row].get()),
+                    );
+                }
+                None => {
+                    changed_ticks.extend(
+                        table_ticks[batch.start_row..range_end]
+                            .iter()
+                            .map(std::cell::UnsafeCell::get),
+                    );
+                }
+            }
+        }
+        Ok(changed_ticks)
+    }
+}
+
+/// Prevalidated destination ticks armed immediately before possible writes.
+///
+/// Drop deliberately performs only infallible pointer stores: no allocation,
+/// lookup, lock, World access, or backend operation is permitted here.
+struct ChangeMarkGuard<'ticks> {
+    changed_ticks: &'ticks [*mut Tick],
+    this_run: Tick,
+}
+
+impl Drop for ChangeMarkGuard<'_> {
+    fn drop(&mut self) {
+        for &changed_tick in self.changed_ticks {
+            // SAFETY: every pointer was obtained from the live destination
+            // column for an exact selected row while the runtime's validity and
+            // operation fences were active. The scheduler grants unique write
+            // access to that destination, and this guard drops before the
+            // operation guard releases the fence.
+            unsafe {
+                changed_tick.write(self.this_run);
+            }
+        }
+    }
 }
 
 impl ValidatedViewProgram {
@@ -529,6 +688,73 @@ pub enum ViewRuntimeError {
     AssignmentDestinationReadOnly(ComponentId),
     /// A valid capability was presented to a different View runtime.
     ProgramFromDifferentRuntime,
+    /// An operation received a capability validated for the wrong intent.
+    ProgramIntentMismatch {
+        /// Intent required by the operation.
+        expected: &'static str,
+        /// Intent carried by the capability.
+        actual: &'static str,
+    },
+    /// An instruction requires more stack values than are available.
+    StackUnderflow {
+        /// Zero-based instruction position.
+        instruction_index: usize,
+        /// Instruction name.
+        instruction: &'static str,
+        /// Number of values required by the instruction.
+        required: usize,
+        /// Number of values present before the instruction.
+        available: usize,
+    },
+    /// An instruction received a value of the wrong VM stack type.
+    StackTypeMismatch {
+        /// Zero-based instruction position.
+        instruction_index: usize,
+        /// Instruction name.
+        instruction: &'static str,
+        /// Stack type required by the instruction.
+        expected: &'static str,
+        /// Stack type actually present.
+        actual: &'static str,
+    },
+    /// A program leaves the wrong number of values after execution.
+    InvalidFinalStackDepth {
+        /// Program intent whose result shape was checked.
+        intent: &'static str,
+        /// Required final stack depth.
+        expected: usize,
+        /// Actual final stack depth.
+        actual: usize,
+    },
+    /// A gathered lease references a table that no longer exists.
+    BatchTableMissing(TableId),
+    /// A gathered range no longer fits its table.
+    BatchRangeOutOfBounds {
+        /// Table containing the gathered range.
+        table_id: TableId,
+        /// First selected row.
+        start_row: usize,
+        /// Number of selected rows.
+        entity_count: usize,
+        /// Current table row count.
+        table_entity_count: usize,
+    },
+    /// The destination column is absent from a gathered table.
+    BatchDestinationColumnMissing {
+        /// Table missing the column.
+        table_id: TableId,
+        /// Destination component.
+        component_id: ComponentId,
+    },
+    /// A gathered tick mask does not match its row range.
+    TickMaskLengthMismatch {
+        /// Table whose batch carries the invalid mask.
+        table_id: TableId,
+        /// Selected row count.
+        expected: usize,
+        /// Tick-mask length.
+        actual: usize,
+    },
     /// One of the existing component/field/layout engine checks failed.
     Engine(ViewEngineError),
 }
@@ -611,6 +837,68 @@ impl fmt::Display for ViewRuntimeError {
             Self::ProgramFromDifferentRuntime => {
                 write!(f, "Validated View program belongs to a different runtime")
             }
+            Self::ProgramIntentMismatch { expected, actual } => write!(
+                f,
+                "View operation requires a {expected} program, but received {actual}"
+            ),
+            Self::StackUnderflow {
+                instruction_index,
+                instruction,
+                required,
+                available,
+            } => write!(
+                f,
+                "View bytecode instruction {instruction_index} ({instruction}) needs {required} \
+                 stack values, but only {available} are available"
+            ),
+            Self::StackTypeMismatch {
+                instruction_index,
+                instruction,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "View bytecode instruction {instruction_index} ({instruction}) expects {expected}, \
+                 but found {actual}"
+            ),
+            Self::InvalidFinalStackDepth {
+                intent,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "View {intent} program must leave {expected} stack values, but leaves {actual}"
+            ),
+            Self::BatchTableMissing(table_id) => {
+                write!(f, "Gathered View table {table_id:?} is no longer present")
+            }
+            Self::BatchRangeOutOfBounds {
+                table_id,
+                start_row,
+                entity_count,
+                table_entity_count,
+            } => write!(
+                f,
+                "Gathered View range {start_row}..{} is outside table {table_id:?} with \
+                 {table_entity_count} rows",
+                start_row.saturating_add(*entity_count)
+            ),
+            Self::BatchDestinationColumnMissing {
+                table_id,
+                component_id,
+            } => write!(
+                f,
+                "View assignment destination {component_id:?} is absent from table {table_id:?}"
+            ),
+            Self::TickMaskLengthMismatch {
+                table_id,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "View batch for table {table_id:?} has {expected} rows but a tick mask of \
+                 length {actual}"
+            ),
             Self::Engine(error) => error.fmt(f),
         }
     }
@@ -797,11 +1085,209 @@ fn validate_write_effects(
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum StackKind {
+    Float,
+    Bool,
+}
+
+impl StackKind {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Float => "float",
+            Self::Bool => "bool",
+        }
+    }
+}
+
+fn validate_stack_effects(
+    bytecode: &CompiledBytecode,
+    intent: ProgramIntent,
+) -> Result<(), ViewRuntimeError> {
+    let mut stack = Vec::new();
+
+    for (instruction_index, op) in bytecode.bytecode.iter().enumerate() {
+        let (instruction, inputs, output): (&'static str, &[StackKind], Option<StackKind>) =
+            match op {
+                Op::PushField(_) => {
+                    stack.push(StackKind::Float);
+                    continue;
+                }
+                Op::PushConst(_) => {
+                    stack.push(StackKind::Float);
+                    continue;
+                }
+                Op::StoreField(_) => ("StoreField", &[StackKind::Float], None),
+                Op::Add => (
+                    "Add",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Sub => (
+                    "Sub",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Mul => (
+                    "Mul",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Div => (
+                    "Div",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Pow => (
+                    "Pow",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Mod => (
+                    "Mod",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Neg => ("Neg", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Sin => ("Sin", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Cos => ("Cos", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Tan => ("Tan", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Asin => ("Asin", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Acos => ("Acos", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Atan => ("Atan", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Sqrt => ("Sqrt", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Abs => ("Abs", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Floor => ("Floor", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Ceil => ("Ceil", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Round => ("Round", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Exp => ("Exp", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Ln => ("Ln", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Log10 => ("Log10", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Log2 => ("Log2", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Sign => ("Sign", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Fract => ("Fract", &[StackKind::Float], Some(StackKind::Float)),
+                Op::Min => (
+                    "Min",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Max => (
+                    "Max",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Clamp => (
+                    "Clamp",
+                    &[StackKind::Float, StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Eq => (
+                    "Eq",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Bool),
+                ),
+                Op::Ne => (
+                    "Ne",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Bool),
+                ),
+                Op::Lt => (
+                    "Lt",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Bool),
+                ),
+                Op::Le => (
+                    "Le",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Bool),
+                ),
+                Op::Gt => (
+                    "Gt",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Bool),
+                ),
+                Op::Ge => (
+                    "Ge",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Bool),
+                ),
+                Op::Where => (
+                    "Where",
+                    &[StackKind::Float, StackKind::Float, StackKind::Bool],
+                    Some(StackKind::Float),
+                ),
+                Op::And => (
+                    "And",
+                    &[StackKind::Bool, StackKind::Bool],
+                    Some(StackKind::Bool),
+                ),
+                Op::Or => (
+                    "Or",
+                    &[StackKind::Bool, StackKind::Bool],
+                    Some(StackKind::Bool),
+                ),
+                Op::Not => ("Not", &[StackKind::Bool], Some(StackKind::Bool)),
+                Op::Lerp => (
+                    "Lerp",
+                    &[StackKind::Float, StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+                Op::Random => {
+                    stack.push(StackKind::Float);
+                    continue;
+                }
+                Op::RandomRange => (
+                    "RandomRange",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
+            };
+
+        if stack.len() < inputs.len() {
+            return Err(ViewRuntimeError::StackUnderflow {
+                instruction_index,
+                instruction,
+                required: inputs.len(),
+                available: stack.len(),
+            });
+        }
+        for expected in inputs {
+            let actual = stack.pop().expect("length checked above");
+            if actual != *expected {
+                return Err(ViewRuntimeError::StackTypeMismatch {
+                    instruction_index,
+                    instruction,
+                    expected: expected.name(),
+                    actual: actual.name(),
+                });
+            }
+        }
+        if let Some(output) = output {
+            stack.push(output);
+        }
+    }
+
+    let (intent_name, expected) = match intent {
+        ProgramIntent::ReadOnly => ("read-only", 1),
+        ProgramIntent::Assignment { .. } => ("assignment", 0),
+    };
+    if stack.len() != expected {
+        return Err(ViewRuntimeError::InvalidFinalStackDepth {
+            intent: intent_name,
+            expected,
+            actual: stack.len(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Deref;
 
-    use bevy_ecs::{component::Component, world::World};
+    use bevy_ecs::{
+        change_detection::DetectChanges, component::Component, entity::Entity, world::World,
+    };
 
     use super::*;
 
@@ -908,6 +1394,12 @@ mod tests {
             constants: vec![42.0],
             field_map: vec![destination],
         })
+    }
+
+    fn dense_value_and_tick(world: &World, entity: Entity) -> (u32, Tick) {
+        let entity_ref = world.entity(entity);
+        let value = entity_ref.get_ref::<RuntimeDense>().unwrap();
+        (value.0, value.last_changed())
     }
 
     fn cache_for(
@@ -1307,6 +1799,82 @@ mod tests {
                 constant_count: 0,
             })
         ));
+    }
+
+    #[test]
+    fn validation_rejects_stack_underflow_type_mismatch_and_extra_results() {
+        let component_id = ComponentId::new(1);
+        let destination = field(component_id, 0, FieldType::F32);
+        let runtime = runtime(component_id, true);
+
+        let underflow = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::StoreField(0)],
+                constants: Vec::new(),
+                field_map: vec![destination],
+            }),
+            ProgramIntent::Assignment { destination },
+        );
+        assert!(matches!(
+            underflow,
+            Err(ViewRuntimeError::StackUnderflow {
+                instruction_index: 0,
+                instruction: "StoreField",
+                required: 1,
+                available: 0,
+            })
+        ));
+
+        let wrong_type = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::PushConst(0), Op::Not],
+                constants: vec![1.0],
+                field_map: Vec::new(),
+            }),
+            ProgramIntent::ReadOnly,
+        );
+        assert!(matches!(
+            wrong_type,
+            Err(ViewRuntimeError::StackTypeMismatch {
+                instruction_index: 1,
+                instruction: "Not",
+                expected: "bool",
+                actual: "float",
+            })
+        ));
+
+        let extra_result = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::PushConst(0), Op::StoreField(0), Op::PushConst(0)],
+                constants: vec![1.0],
+                field_map: vec![destination],
+            }),
+            ProgramIntent::Assignment { destination },
+        );
+        assert!(matches!(
+            extra_result,
+            Err(ViewRuntimeError::InvalidFinalStackDepth {
+                intent: "assignment",
+                expected: 0,
+                actual: 1,
+            })
+        ));
+    }
+
+    #[test]
+    fn validation_accepts_boolean_result_stack_shape() {
+        let component_id = ComponentId::new(1);
+        let runtime = runtime(component_id, false);
+        let result = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::PushConst(0), Op::PushConst(1), Op::Lt, Op::Not],
+                constants: vec![1.0, 2.0],
+                field_map: Vec::new(),
+            }),
+            ProgramIntent::ReadOnly,
+        );
+
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -1733,5 +2301,265 @@ mod tests {
         assert_eq!(world.get::<RuntimeDense>(selected_first).unwrap().0, 100);
         assert_eq!(world.get::<RuntimeDense>(selected_second).unwrap().0, 100);
         assert_eq!(world.get::<RuntimeDense>(plain_last).unwrap().0, 200);
+    }
+
+    #[test]
+    fn leased_assignment_writes_and_marks_only_sparse_selected_rows() {
+        let mut world = World::new();
+        let plain_first = world.spawn(RuntimeDense(1)).id();
+        let selected_first = world.spawn((RuntimeDense(2), RuntimeSparse)).id();
+        let selected_second = world.spawn((RuntimeDense(3), RuntimeSparse)).id();
+        let plain_last = world.spawn(RuntimeDense(4)).id();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let marker_id = world.components().component_id::<RuntimeSparse>().unwrap();
+        let view_filter = ViewFilter {
+            component_ids: HashSet::from([component_id]),
+            with_ids: vec![marker_id],
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        let this_run = Tick::new(77);
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), this_run) };
+        let destination = field(component_id, 0, FieldType::U32);
+        let program = runtime
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        lease.execute_assignment(&program, true).unwrap();
+        runtime.validity().set_invalid();
+        drop(lease);
+        drop(runtime);
+
+        let (plain_first_value, plain_first_tick) = dense_value_and_tick(&world, plain_first);
+        let (selected_first_value, selected_first_tick) =
+            dense_value_and_tick(&world, selected_first);
+        let (selected_second_value, selected_second_tick) =
+            dense_value_and_tick(&world, selected_second);
+        let (plain_last_value, plain_last_tick) = dense_value_and_tick(&world, plain_last);
+
+        assert_eq!((plain_first_value, plain_last_value), (1, 4));
+        assert_eq!((selected_first_value, selected_second_value), (42, 42));
+        assert_ne!(plain_first_tick, this_run);
+        assert_ne!(plain_last_tick, this_run);
+        assert_eq!(selected_first_tick, this_run);
+        assert_eq!(selected_second_tick, this_run);
+    }
+
+    #[test]
+    fn leased_assignment_respects_tick_mask_for_writes_and_change_marks() {
+        let mut world = World::new();
+        let old = world.spawn(RuntimeDense(1)).id();
+        world.clear_trackers();
+        let last_run = world.last_change_tick();
+        world.increment_change_tick();
+        let added = world.spawn(RuntimeDense(2)).id();
+        let this_run = world.change_tick();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let mut view_filter = filter(component_id);
+        view_filter.added_ids.push(component_id);
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, last_run, this_run) };
+        let destination = field(component_id, 0, FieldType::U32);
+        let program = runtime
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        lease.execute_assignment(&program, false).unwrap();
+        runtime.validity().set_invalid();
+        drop(lease);
+        drop(runtime);
+
+        assert_eq!(dense_value_and_tick(&world, old).0, 1);
+        assert_eq!(dense_value_and_tick(&world, added), (42, this_run));
+    }
+
+    #[test]
+    fn rejected_program_intent_writes_and_marks_nothing() {
+        let mut world = World::new();
+        let entity = world.spawn(RuntimeDense(5)).id();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        let this_run = Tick::new(88);
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), this_run) };
+        let read = runtime
+            .validate_program(
+                read_program(field(component_id, 0, FieldType::U32)),
+                ProgramIntent::ReadOnly,
+            )
+            .unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        assert!(matches!(
+            lease.execute_assignment(&read, false),
+            Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "assignment",
+                actual: "read-only",
+            })
+        ));
+        runtime.validity().set_invalid();
+        drop(lease);
+        drop(runtime);
+
+        let (value, tick) = dense_value_and_tick(&world, entity);
+        assert_eq!(value, 5);
+        assert_ne!(tick, this_run);
+    }
+
+    #[test]
+    fn cross_runtime_program_and_stale_lease_write_and_mark_nothing() {
+        let mut world = World::new();
+        let entity = world.spawn(RuntimeDense(5)).id();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        let this_run = Tick::new(89);
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let owner = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), this_run) };
+        let lease = owner.gather_batches().unwrap();
+        let foreign = runtime(component_id, true);
+        let destination = field(component_id, 0, FieldType::F32);
+        let foreign_program = foreign
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            lease.execute_assignment(&foreign_program, false),
+            Err(ViewRuntimeError::ProgramFromDifferentRuntime)
+        ));
+        owner.validity().set_invalid();
+        assert!(matches!(
+            lease.execute_assignment(&foreign_program, false),
+            Err(ViewRuntimeError::ProgramFromDifferentRuntime)
+        ));
+
+        drop(lease);
+        drop(owner);
+        let (value, tick) = dense_value_and_tick(&world, entity);
+        assert_eq!(value, 5);
+        assert_ne!(tick, this_run);
+    }
+
+    #[test]
+    fn stale_lease_rejects_own_assignment_before_change_tick_resolution() {
+        let mut world = World::new();
+        let entity = world.spawn(RuntimeDense(5)).id();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        let this_run = Tick::new(90);
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), this_run) };
+        let destination = field(component_id, 0, FieldType::U32);
+        let program = runtime
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
+        let lease = runtime.gather_batches().unwrap();
+        runtime.validity().set_invalid();
+
+        assert!(matches!(
+            lease.execute_assignment(&program, false),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
+
+        drop(lease);
+        drop(runtime);
+        let (value, tick) = dense_value_and_tick(&world, entity);
+        assert_eq!(value, 5);
+        assert_ne!(tick, this_run);
+    }
+
+    #[test]
+    fn partial_write_panic_marks_prevalidated_rows_before_releasing_fence() {
+        let mut world = World::new();
+        let first = world.spawn(RuntimeDense(1)).id();
+        let second = world.spawn(RuntimeDense(2)).id();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        let this_run = Tick::new(99);
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), this_run) };
+        let destination = field(component_id, 0, FieldType::U32);
+        let program = runtime
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = lease.execute_assignment_with(&program, |batches, _bytecode, _strides| {
+                let batch = &batches[0];
+                let base = batch.component_bases[&component_id];
+                // SAFETY: this is the first exact selected row of the live
+                // RuntimeDense column under the assignment operation fence.
+                unsafe {
+                    (*base.cast::<RuntimeDense>().add(batch.start_row)).0 = 123;
+                }
+                panic!("injected panic after first raw View write");
+            });
+        }));
+        assert!(result.is_err());
+        assert!(runtime.enter_operation().is_ok());
+
+        runtime.validity().set_invalid();
+        drop(lease);
+        drop(runtime);
+
+        assert_eq!(dense_value_and_tick(&world, first), (123, this_run));
+        assert_eq!(dense_value_and_tick(&world, second), (2, this_run));
     }
 }
