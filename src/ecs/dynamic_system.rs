@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env,
     sync::{Arc, Mutex},
 };
@@ -57,7 +57,7 @@ use crate::{
         resource::PyResource,
         resource_type::{PyResourceStorage, PyResourceType, ResourceRegistry},
         system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType},
-        view::{view::PyView, view_param::ViewParamType},
+        view::{cached_view::CachedPyView, view::PyView, view_param::ViewParamType},
         world::PyWorld,
     },
 };
@@ -184,6 +184,10 @@ pub struct DynamicSystem {
     /// order Query parameters appear in the system signature. Never touched by
     /// `gut()`, which only releases Python refs held in the inner state.
     query_caches: Vec<CachedQuery>,
+    /// One initialization-time View cache per View parameter, in signature
+    /// order. Resolution failures are retained and surfaced during argument
+    /// preparation without rebuilding or touching the World on the run path.
+    view_caches: Vec<Result<Arc<CachedPyView>, Arc<str>>>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -537,6 +541,7 @@ impl DynamicSystem {
             suppressed_error_count: 0,
             precomputed_validation: None,
             query_caches: Vec::new(),
+            view_caches: Vec::new(),
         };
 
         // Validate parameters immediately to catch conflicts early
@@ -603,6 +608,7 @@ impl DynamicSystem {
         py: Python<'_>,
         params: &[SystemParam],
         query_caches: &[CachedQuery],
+        view_caches: &[Result<Arc<CachedPyView>, Arc<str>>],
         message_cursor_storage: &[CursorStorage],
         commands_storage: &mut Option<Commands<'c1, 'c2>>,
         args_buffer: &mut SmallVec<[Py<PyAny>; 8]>,
@@ -614,6 +620,7 @@ impl DynamicSystem {
     ) -> Option<PyErr> {
         let mut message_reader_idx = 0usize;
         let mut query_cache_idx = 0usize;
+        let mut view_cache_idx = 0usize;
         for param in params {
             match &param.ty {
                 SystemParamType::Local(local) => {
@@ -706,40 +713,25 @@ impl DynamicSystem {
                         args_buffer.push(obj.into_any());
                     }
                 }
-                SystemParamType::View { param } => {
-                    // Extract component types and mutability from PyViewParam
-                    let mut component_types = Vec::new();
-                    let mut mutable_components = HashSet::new();
-
-                    for view_param_type in &param.parameters {
-                        let ViewParamType::Component { comp_type, mutable } = view_param_type;
-                        component_types.push(comp_type.clone());
-                        if *mutable {
-                            mutable_components.insert(comp_type.clone());
+                SystemParamType::View { .. } => {
+                    let cached = match &view_caches[view_cache_idx] {
+                        Ok(cached) => Arc::clone(cached),
+                        Err(message) => {
+                            return Some(PyRuntimeError::new_err(message.to_string()));
                         }
-                    }
-
-                    let filter_types = param.with_filters.to_vec();
-                    let without_filter_types = param.without_filters.to_vec();
-                    let changed_filter_types = param.changed_filters.to_vec();
-                    let added_filter_types = param.added_filters.to_vec();
-
-                    // SAFETY: `world` is this run's UnsafeWorldCell; PyView reads
-                    // this_run via cell.change_tick() and derives per-operation
-                    // world pointers internally, bounded by the view's declared
-                    // component read/write access from `initialize`.
-                    let py_view = unsafe {
-                        PyView::new_with_filters(
-                            component_types,
-                            mutable_components,
-                            filter_types,
-                            without_filter_types,
-                            changed_filter_types,
-                            added_filter_types,
-                            last_run,
-                            world,
-                            validity.clone(),
-                        )
+                    };
+                    view_cache_idx += 1;
+                    // SAFETY: this cache was built in `initialize` from the
+                    // exact parameter descriptor used for declared scheduler
+                    // access. The cell, ticks, and validity all belong to this
+                    // one scaffold run.
+                    let py_view = match unsafe {
+                        PyView::new_cached(cached, last_run, this_run, world, validity.clone())
+                    } {
+                        Ok(view) => view,
+                        Err(error) => {
+                            return Some(PyRuntimeError::new_err(error.to_string()));
+                        }
                     };
                     let obj = Py::new(py, py_view).expect("Failed to create PyView");
                     args_buffer.push(obj.into_any());
@@ -941,6 +933,7 @@ impl System for DynamicSystem {
                                 py,
                                 &system_func.params,
                                 &self.query_caches,
+                                &self.view_caches,
                                 &inner_guard.message_cursor_storage,
                                 &mut commands_storage,
                                 &mut self.args_buffer,
@@ -1201,6 +1194,30 @@ impl System for DynamicSystem {
         }
         self.query_caches = query_caches;
 
+        // Resolve the matching neutral View cache once per View parameter.
+        // The shared access walk above and this build both consume the same
+        // parsed descriptor and custom-component ID map, keeping scheduler
+        // declaration and raw runtime metadata in lockstep.
+        let mut view_caches = Vec::new();
+        for param in &params {
+            if let SystemParamType::View { param: view_param } = &param.ty {
+                // SAFETY: `view_param` is the exact descriptor lowered into
+                // `specs` above. `initialize` holds exclusive World access, and
+                // the resulting cache is used only with this system's declared
+                // scheduler access.
+                let cached =
+                    unsafe { CachedPyView::build(world, view_param, &self.custom_component_ids) }
+                        .map_err(|error| {
+                            Arc::<str>::from(format!(
+                                "System `{}` View parameter `{}` could not be initialized: {error}",
+                                self.func_name, param.name
+                            ))
+                        });
+                view_caches.push(cached);
+            }
+        }
+        self.view_caches = view_caches;
+
         // Conflict validation needs `&mut World` for ComponentId lookups, so it
         // runs here; run_unsafe only reads the stored result.
         let accesses = to_param_accesses(&specs, |comp_type| {
@@ -1303,6 +1320,7 @@ impl DynamicSystem {
                     // This shouldn't happen if initialize() ran first, but handle it gracefully
                     // Register it now (this will return the existing ID if already registered)
                     let name = Python::attach(|py| {
+                        // SAFETY: registered type pointers live for the interpreter lifetime
                         let type_obj =
                             unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut PyObject) };
                         let type_bound = type_obj.cast::<PyType>()?;
@@ -1475,34 +1493,27 @@ pub(crate) fn execute_system_func(
                 args_buffer.push(local.clone_ref(py));
             }
             SystemParamType::View { param } => {
-                let mut component_types = Vec::new();
-                let mut mutable_components = HashSet::new();
-                for view_param_type in &param.parameters {
-                    let ViewParamType::Component { comp_type, mutable } = view_param_type;
-                    component_types.push(comp_type.clone());
-                    if *mutable {
-                        mutable_components.insert(comp_type.clone());
-                    }
-                }
-                let filter_types = param.with_filters.to_vec();
-                let without_filter_types = param.without_filters.to_vec();
-                let changed_filter_types = param.changed_filters.to_vec();
-                let added_filter_types = param.added_filters.to_vec();
-                // SAFETY: observer dispatch holds an exclusive `&mut World`; the cell
-                // derived from it is fenced by `validity`.
+                // Observer dispatch owns an exclusive World, so it may build an
+                // ephemeral cache for this invocation without a scheduled
+                // DynamicSystem. The injected View owns the Arc after this arm.
+                // SAFETY: exclusive observer World access covers the complete
+                // cache/runtime lifetime; no parallel scheduler access is needed.
+                let cached =
+                    unsafe { CachedPyView::build(world, param, custom_component_ids.as_ref()) }
+                        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                let this_run = world.change_tick();
+                // SAFETY: the cache and cell name this exclusive live World,
+                // while validity remains active through the observer call.
                 let py_view = unsafe {
-                    PyView::new_with_filters(
-                        component_types,
-                        mutable_components,
-                        filter_types,
-                        without_filter_types,
-                        changed_filter_types,
-                        added_filter_types,
-                        Tick::new(0), // No prior run for observers
+                    PyView::new_cached(
+                        cached,
+                        Tick::new(0),
+                        this_run,
                         world.as_unsafe_world_cell(),
                         validity.clone(),
                     )
-                };
+                }
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
                 let obj = Py::new(py, py_view).expect("Failed to create PyView");
                 args_buffer.push(obj.into_any());
             }
