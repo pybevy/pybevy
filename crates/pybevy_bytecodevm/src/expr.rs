@@ -143,6 +143,75 @@ pub enum RustExpr {
 }
 
 impl RustExpr {
+    /// Exact structural equality for collision-safe program caching.
+    ///
+    /// Floating-point constants compare by bits so `0.0` and `-0.0`, and
+    /// distinct NaN payloads, can never alias one cached program.
+    pub(crate) fn canonical_eq(&self, other: &Self) -> bool {
+        use RustExpr::*;
+
+        match (self, other) {
+            (Add(a1, a2), Add(b1, b2))
+            | (Sub(a1, a2), Sub(b1, b2))
+            | (Mul(a1, a2), Mul(b1, b2))
+            | (Div(a1, a2), Div(b1, b2))
+            | (Pow(a1, a2), Pow(b1, b2))
+            | (Min(a1, a2), Min(b1, b2))
+            | (Max(a1, a2), Max(b1, b2))
+            | (Eq(a1, a2), Eq(b1, b2))
+            | (Ne(a1, a2), Ne(b1, b2))
+            | (Lt(a1, a2), Lt(b1, b2))
+            | (Le(a1, a2), Le(b1, b2))
+            | (Gt(a1, a2), Gt(b1, b2))
+            | (Ge(a1, a2), Ge(b1, b2))
+            | (And(a1, a2), And(b1, b2))
+            | (Or(a1, a2), Or(b1, b2))
+            | (Mod(a1, a2), Mod(b1, b2))
+            | (RandomRange(a1, a2), RandomRange(b1, b2)) => {
+                a1.canonical_eq(b1) && a2.canonical_eq(b2)
+            }
+            (Neg(a), Neg(b))
+            | (Sin(a), Sin(b))
+            | (Cos(a), Cos(b))
+            | (Tan(a), Tan(b))
+            | (Asin(a), Asin(b))
+            | (Acos(a), Acos(b))
+            | (Atan(a), Atan(b))
+            | (Sqrt(a), Sqrt(b))
+            | (Abs(a), Abs(b))
+            | (Floor(a), Floor(b))
+            | (Ceil(a), Ceil(b))
+            | (Round(a), Round(b))
+            | (Not(a), Not(b))
+            | (Exp(a), Exp(b))
+            | (Ln(a), Ln(b))
+            | (Log10(a), Log10(b))
+            | (Log2(a), Log2(b))
+            | (Sign(a), Sign(b))
+            | (Fract(a), Fract(b)) => a.canonical_eq(b),
+            (Clamp(a1, a2, a3), Clamp(b1, b2, b3))
+            | (Where(a1, a2, a3), Where(b1, b2, b3))
+            | (Lerp(a1, a2, a3), Lerp(b1, b2, b3)) => {
+                a1.canonical_eq(b1) && a2.canonical_eq(b2) && a3.canonical_eq(b3)
+            }
+            (Random, Random) => true,
+            (
+                Field {
+                    component_id: ac,
+                    offset: ao,
+                    field_type: at,
+                },
+                Field {
+                    component_id: bc,
+                    offset: bo,
+                    field_type: bt,
+                },
+            ) => ac == bc && ao == bo && at == bt,
+            (Const(a), Const(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
+
     /// Parse a Python expression object into a Rust AST
     ///
     /// The Python object should have:
@@ -929,6 +998,18 @@ mod tests {
 
     fn c(v: f64) -> Box<RustExpr> {
         Box::new(RustExpr::Const(v))
+    }
+
+    #[test]
+    fn canonical_equality_is_structural_and_float_bit_exact() {
+        assert!(RustExpr::Add(c(1.0), c(2.0)).canonical_eq(&RustExpr::Add(c(1.0), c(2.0))));
+        assert!(!RustExpr::Add(c(1.0), c(2.0)).canonical_eq(&RustExpr::Sub(c(1.0), c(2.0))));
+        assert!(!RustExpr::Const(0.0).canonical_eq(&RustExpr::Const(-0.0)));
+
+        let first_nan = f64::from_bits(0x7ff8_0000_0000_0001);
+        let second_nan = f64::from_bits(0x7ff8_0000_0000_0002);
+        assert!(RustExpr::Const(first_nan).canonical_eq(&RustExpr::Const(first_nan)));
+        assert!(!RustExpr::Const(first_nan).canonical_eq(&RustExpr::Const(second_nan)));
     }
 
     #[test]
