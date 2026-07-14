@@ -1363,8 +1363,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -1465,7 +1465,12 @@ mod tests {
             let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
             assert!(result.is_ok(), "reload {} should succeed", cycle);
 
-            let live = world.query::<Entity>().iter(&world).count();
+            // Count named entities only: resources are entity-backed, so a raw
+            // Entity query also sees reload-machinery internals.
+            let live = world
+                .query_filtered::<Entity, With<Name>>()
+                .iter(&world)
+                .count();
             // base + spawned-this-reload (previous reload entities are despawned by clear_world_state)
             assert_eq!(
                 live,
@@ -1503,7 +1508,11 @@ mod tests {
             let mut runtime = SpawningStartupRuntime { spawn_count: 2 };
             let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
             assert!(result.is_ok(), "cycle {} success reload should ok", cycle);
-            let live = world.query::<Entity>().iter(&world).count();
+            // Named entities only; see many_full_reloads_never_leave_empty_world
+            let live = world
+                .query_filtered::<Entity, With<Name>>()
+                .iter(&world)
+                .count();
             assert_eq!(
                 live, 3,
                 "cycle {}: expected base + 2 spawn (got {})",
