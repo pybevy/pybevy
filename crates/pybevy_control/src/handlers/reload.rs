@@ -50,8 +50,11 @@ pub fn trigger_reload(
         ReloadMode::Full => ReloadRequestMode::Full,
     };
 
-    // Apply time control BEFORE queuing reload — no frames run at wrong speed
+    // Apply time control BEFORE queuing reload so no frames run at wrong speed.
+    // Validate first: set_relative_speed panics on <= 0.0 / non-finite and
+    // spirals the fixed-timestep loop on very large values.
     if let Some(scale) = time_scale {
+        crate::handlers::time_control::validate_time_scale(scale)?;
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(scale);
     }
