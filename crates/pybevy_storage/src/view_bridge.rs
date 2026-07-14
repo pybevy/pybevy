@@ -162,3 +162,27 @@ impl std::fmt::Debug for ViewBridge {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_field_type_sizes_match_native_types() {
+        assert_eq!(FieldType::F32.size_bytes(), 4);
+        assert_eq!(FieldType::F64.size_bytes(), 8);
+        assert_eq!(FieldType::I32.size_bytes(), 4);
+        assert_eq!(FieldType::I64.size_bytes(), 8);
+        assert_eq!(FieldType::U32.size_bytes(), 4);
+        assert_eq!(FieldType::U64.size_bytes(), 8);
+        assert_eq!(FieldType::Bool.size_bytes(), 1);
+    }
+
+    #[test]
+    fn test_vec_field_type_sizes_match_layout() {
+        // Vec2 = 2 * f32 = 8 bytes, Vec3 = 3 * f32 = 12, Vec4 = 4 * f32 = 16
+        assert_eq!(FieldType::Vec2.size_bytes(), 8);
+        assert_eq!(FieldType::Vec3.size_bytes(), 12);
+        assert_eq!(FieldType::Vec4.size_bytes(), 16);
+    }
+}

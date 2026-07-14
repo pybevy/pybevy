@@ -83,6 +83,59 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_only_error_suggests_mut() {
+        let err = StorageError::ReadOnly;
+        assert!(err.to_string().contains("Mut["));
+    }
+
+    #[test]
+    fn test_invalid_access_says_outside_system() {
+        let err = StorageError::InvalidAccess;
+        assert!(err.to_string().contains("outside of system execution"));
+    }
+
+    #[test]
+    fn test_entity_unavailable_message() {
+        let err = StorageError::EntityUnavailable;
+        assert!(err.to_string().contains("despawned"));
+    }
+
+    #[test]
+    fn test_asset_consumed_suggests_new_instance() {
+        let err = StorageError::AssetConsumed;
+        assert!(err.to_string().contains("Create a new asset instance"));
+    }
+
+    #[test]
+    fn test_asset_read_only_suggests_get_mut() {
+        let err = StorageError::AssetReadOnly;
+        assert!(err.to_string().contains("get_mut()"));
+    }
+
+    #[test]
+    fn test_owned_field_read_only_suggests_assign_back() {
+        let err = StorageError::OwnedFieldReadOnly;
+        assert!(err.to_string().contains("Assign the field back"));
+    }
+
+    #[test]
+    fn test_index_out_of_range_message() {
+        let err = StorageError::IndexOutOfRange;
+        assert_eq!(err.to_string(), "list index out of range");
+    }
+
+    #[test]
+    fn test_empty_list_message() {
+        let err = StorageError::EmptyList;
+        assert_eq!(err.to_string(), "pop from empty list");
+    }
+}
+
 #[cfg(feature = "pyo3")]
 impl From<StorageError> for pyo3::PyErr {
     fn from(err: StorageError) -> Self {

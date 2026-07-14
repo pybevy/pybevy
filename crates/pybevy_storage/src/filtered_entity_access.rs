@@ -142,4 +142,58 @@ mod tests {
 
         let _ = access.get_mut_by_id(comp_id);
     }
+
+    #[test]
+    fn test_from_filtered_entity_ref_wraps_ref_variant() {
+        let mut world = World::new();
+        let entity = world.spawn(Health(100.0)).id();
+        let comp_id = world.components().component_id::<Health>().unwrap();
+
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        builder.ref_id(comp_id);
+        let mut qs = builder.build();
+        let entity_ref = qs.iter(&world).next().unwrap();
+
+        let access = FilteredEntityAccess::from(entity_ref);
+        assert_eq!(access.id(), entity);
+        assert!(access.get_by_id(comp_id).is_some());
+        assert!(access.get_change_ticks_by_id(comp_id).is_some());
+    }
+
+    #[test]
+    fn test_from_filtered_entity_mut_wraps_mut_variant() {
+        let mut world = World::new();
+        let entity = world.spawn(Health(100.0)).id();
+        let comp_id = world.components().component_id::<Health>().unwrap();
+
+        let mut builder = QueryBuilder::<FilteredEntityMut>::new(&mut world);
+        builder.mut_id(comp_id);
+        let mut qs = builder.build();
+        let entity_mut = qs.iter_mut(&mut world).next().unwrap();
+
+        let mut access = FilteredEntityAccess::from(entity_mut);
+        assert_eq!(access.id(), entity);
+        assert!(access.get_by_id(comp_id).is_some());
+        assert!(access.get_change_ticks_by_id(comp_id).is_some());
+        assert!(access.get_mut_by_id(comp_id).is_some());
+    }
+
+    #[test]
+    fn test_get_change_ticks_by_id_returns_none_for_missing_component() {
+        let mut world = World::new();
+        world.spawn(Health(100.0));
+        let comp_id = world.components().component_id::<Health>().unwrap();
+        // An unrelated component id that the entity does not have.
+        #[derive(Component)]
+        struct Mana;
+        let missing_id = world.register_component::<Mana>();
+
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        builder.ref_id(comp_id);
+        let mut qs = builder.build();
+        let entity_ref = qs.iter(&world).next().unwrap();
+        let access = FilteredEntityAccess::Ref(entity_ref);
+
+        assert!(access.get_change_ticks_by_id(missing_id).is_none());
+    }
 }

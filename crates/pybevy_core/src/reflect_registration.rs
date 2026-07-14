@@ -32,3 +32,27 @@ pub fn register_wrapped_reflect_types(world: &World) {
         (reg.register)(&mut registry);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::world::World;
+
+    use super::*;
+
+    #[test]
+    fn test_no_op_when_registry_absent() {
+        let world = World::new();
+        // World::new() has no AppTypeRegistry resource; must return early and
+        // not panic.
+        register_wrapped_reflect_types(&world);
+    }
+
+    #[test]
+    fn test_iterates_registrations_when_registry_present() {
+        let mut world = World::new();
+        world.insert_resource(AppTypeRegistry::default());
+        // Reaching the inventory loop must not panic even when the registry is
+        // present (the loop body runs for every submitted registration).
+        register_wrapped_reflect_types(&world);
+    }
+}
