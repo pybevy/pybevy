@@ -205,6 +205,29 @@ impl PyCommands {
     }
 }
 
+fn entity_not_found_error(entity_id: Entity) -> PyErr {
+    PyValueError::new_err(format!("Entity {entity_id:?} does not exist in the world"))
+}
+
+fn entity_exists(world: &World, entity_id: Entity) -> bool {
+    world.get_entity(entity_id).is_ok()
+}
+
+fn ensure_entity_exists(world: &World, entity_id: Entity) -> PyResult<()> {
+    if entity_exists(world, entity_id) {
+        Ok(())
+    } else {
+        Err(entity_not_found_error(entity_id))
+    }
+}
+
+fn ensure_entities_exist(world: &World, entity_ids: &[Entity]) -> PyResult<()> {
+    for entity_id in entity_ids {
+        ensure_entity_exists(world, *entity_id)?;
+    }
+    Ok(())
+}
+
 /// Helper function to insert components to an entity
 pub(crate) fn insert_components_to_entity_helper(
     commands: &PyCommands,
@@ -228,7 +251,8 @@ pub(crate) fn insert_components_to_entity_helper(
 
             // Check which components already exist (for Discard)
             let existing_components = {
-                let world = unsafe { &*(commands.commands_ptr as *const World) };
+                let world = commands.world_mut()?;
+                ensure_entity_exists(world, entity_id)?;
                 component_types
                     .iter()
                     .filter(|comp_type| {
@@ -280,11 +304,13 @@ pub(crate) fn insert_components_to_entity_helper(
             // Queue Insert trigger AFTER inserts
             let component_types_for_insert = component_types.clone();
             commands.execute_or_queue(move |world| {
-                PyWorld::trigger_lifecycle_events_for_insert(
-                    world as *mut World,
-                    entity_id,
-                    &component_types_for_insert,
-                );
+                if entity_exists(world, entity_id) {
+                    PyWorld::trigger_lifecycle_events_for_insert(
+                        world as *mut World,
+                        entity_id,
+                        &component_types_for_insert,
+                    );
+                }
             })?;
         }
     } else {
@@ -302,6 +328,11 @@ fn insert_components_to_entity(
     entity_id: Entity,
     components: &Bound<'_, PyTuple>,
 ) -> PyResult<()> {
+    if commands.is_world {
+        let world = commands.world_mut()?;
+        ensure_entity_exists(world, entity_id)?;
+    }
+
     for component in components.iter() {
         // Determine component type
         let component_type = PyComponentType::try_from((&component.get_type(), py))?;
@@ -328,6 +359,10 @@ fn insert_components_to_entity(
                     let bridge_name = bridge.name();
 
                     commands.execute_or_queue(move |world: &mut World| {
+                        if !entity_exists(world, entity_id) {
+                            return;
+                        }
+
                         // Re-acquire GIL and re-bind the component
                         Python::attach(|py| {
                             let component_bound = py_obj.bind(py);
@@ -485,6 +520,10 @@ fn insert_components_to_entity(
 
                     // Commands - queue the operation for later
                     commands.execute_or_queue(move |world: &mut World| {
+                        if !entity_exists(world, entity_id) {
+                            return;
+                        }
+
                         // Register the component when the command is applied
                         let component_id =
                             register_custom_component(world, type_ptr.as_ptr(), name);
@@ -543,15 +582,15 @@ pub(crate) fn add_child_helper(
     child_id: Entity,
 ) -> PyResult<()> {
     if commands.is_world {
-        commands
-            .world_mut()?
-            .entity_mut(parent_id)
-            .add_child(child_id);
+        let world = commands.world_mut()?;
+        ensure_entities_exist(world, &[parent_id, child_id])?;
+        world.entity_mut(parent_id).add_child(child_id);
     } else {
-        commands
-            .commands_mut()?
-            .entity(parent_id)
-            .add_child(child_id);
+        commands.execute_or_queue(move |world| {
+            if entity_exists(world, parent_id) && entity_exists(world, child_id) {
+                world.entity_mut(parent_id).add_child(child_id);
+            }
+        })?;
     }
     Ok(())
 }
@@ -563,15 +602,28 @@ pub(crate) fn remove_children_helper(
     child_ids: &[Entity],
 ) -> PyResult<()> {
     if commands.is_world {
-        commands
-            .world_mut()?
-            .entity_mut(parent_id)
-            .detach_children(child_ids);
+        let world = commands.world_mut()?;
+        ensure_entity_exists(world, parent_id)?;
+        ensure_entities_exist(world, child_ids)?;
+        world.entity_mut(parent_id).detach_children(child_ids);
     } else {
-        commands
-            .commands_mut()?
-            .entity(parent_id)
-            .detach_children(child_ids);
+        let child_ids = child_ids.to_vec();
+        commands.execute_or_queue(move |world| {
+            if !entity_exists(world, parent_id) {
+                return;
+            }
+
+            let existing_children = child_ids
+                .iter()
+                .copied()
+                .filter(|child_id| entity_exists(world, *child_id))
+                .collect::<Vec<_>>();
+            if !existing_children.is_empty() {
+                world
+                    .entity_mut(parent_id)
+                    .detach_children(&existing_children);
+            }
+        })?;
     }
     Ok(())
 }
@@ -579,15 +631,15 @@ pub(crate) fn remove_children_helper(
 /// Helper function to clear all children from an entity
 pub(crate) fn clear_children_helper(commands: &PyCommands, parent_id: Entity) -> PyResult<()> {
     if commands.is_world {
-        commands
-            .world_mut()?
-            .entity_mut(parent_id)
-            .detach_all_children();
+        let world = commands.world_mut()?;
+        ensure_entity_exists(world, parent_id)?;
+        world.entity_mut(parent_id).detach_all_children();
     } else {
-        commands
-            .commands_mut()?
-            .entity(parent_id)
-            .detach_all_children();
+        commands.execute_or_queue(move |world| {
+            if entity_exists(world, parent_id) {
+                world.entity_mut(parent_id).detach_all_children();
+            }
+        })?;
     }
     Ok(())
 }
@@ -599,15 +651,15 @@ pub(crate) fn set_parent_helper(
     parent_id: Entity,
 ) -> PyResult<()> {
     if commands.is_world {
-        commands
-            .world_mut()?
-            .entity_mut(child_id)
-            .insert(ChildOf(parent_id));
+        let world = commands.world_mut()?;
+        ensure_entities_exist(world, &[child_id, parent_id])?;
+        world.entity_mut(child_id).insert(ChildOf(parent_id));
     } else {
-        commands
-            .commands_mut()?
-            .entity(child_id)
-            .insert(ChildOf(parent_id));
+        commands.execute_or_queue(move |world| {
+            if entity_exists(world, child_id) && entity_exists(world, parent_id) {
+                world.entity_mut(child_id).insert(ChildOf(parent_id));
+            }
+        })?;
     }
     Ok(())
 }
@@ -615,15 +667,15 @@ pub(crate) fn set_parent_helper(
 /// Helper function to remove parent relationship from an entity
 pub(crate) fn remove_parent_helper(commands: &PyCommands, child_id: Entity) -> PyResult<()> {
     if commands.is_world {
-        commands
-            .world_mut()?
-            .entity_mut(child_id)
-            .remove::<ChildOf>();
+        let world = commands.world_mut()?;
+        ensure_entity_exists(world, child_id)?;
+        world.entity_mut(child_id).remove::<ChildOf>();
     } else {
-        commands
-            .commands_mut()?
-            .entity(child_id)
-            .remove::<ChildOf>();
+        commands.execute_or_queue(move |world| {
+            if entity_exists(world, child_id) {
+                world.entity_mut(child_id).remove::<ChildOf>();
+            }
+        })?;
     }
     Ok(())
 }
@@ -657,11 +709,13 @@ pub(crate) fn remove_components_from_entity_helper(
         } else {
             // Deferred execution - queue the trigger
             commands.execute_or_queue(move |world| {
-                PyWorld::trigger_lifecycle_events_for_remove(
-                    world as *mut World,
-                    entity_id,
-                    &component_types,
-                );
+                if entity_exists(world, entity_id) {
+                    PyWorld::trigger_lifecycle_events_for_remove(
+                        world as *mut World,
+                        entity_id,
+                        &component_types,
+                    );
+                }
             })?;
         }
     }
@@ -676,6 +730,11 @@ fn remove_components_from_entity(
     entity_id: Entity,
     components: &Bound<'_, PyTuple>,
 ) -> PyResult<()> {
+    if commands.is_world {
+        let world = commands.world_mut()?;
+        ensure_entity_exists(world, entity_id)?;
+    }
+
     for component in components.iter() {
         // Component should be a type (class), not an instance
         let component_type_obj = component.cast::<PyType>().map_err(|_| {
@@ -713,6 +772,10 @@ fn remove_components_from_entity(
                 } else {
                     // Commands - queue the operation for later
                     commands.execute_or_queue(move |world: &mut World| {
+                        if !entity_exists(world, entity_id) {
+                            return;
+                        }
+
                         if let Some(bridge) =
                             global_registry::get_bridge_by_py_type(type_ptr_copy.as_ptr())
                         {
@@ -738,6 +801,10 @@ fn remove_components_from_entity(
                 } else {
                     // Commands - queue the operation for later
                     commands.execute_or_queue(move |world: &mut World| {
+                        if !entity_exists(world, entity_id) {
+                            return;
+                        }
+
                         if let Some(registry) = world.get_resource::<ComponentRegistry>()
                             && let Some(component_id) = registry.get(type_ptr.as_ptr() as usize)
                         {
