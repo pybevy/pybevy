@@ -7,8 +7,9 @@ use bevy::{app::Plugin, render::renderer::RenderDevice};
 
 /// What the uncaptured-error handler should do with a given wgpu error.
 ///
-/// Pure extraction of the closure logic installed by `WgpuErrorHandlerPlugin`
-/// so the dedup/classification can be unit-tested without a render device.
+/// Pure extraction of the closure logic installed by [`WgpuErrorHandlerPlugin`]
+/// so the deduplication and classification can be unit-tested without a render
+/// device.
 #[derive(Debug, PartialEq, Eq)]
 enum WgpuErrorAction {
     /// Log the rendered error message once (first occurrence of a validation
@@ -16,15 +17,16 @@ enum WgpuErrorAction {
     Log(String),
     /// Drop the error: an identical validation message was already logged.
     Drop,
-    /// Fatal error (OutOfMemory/Internal): panic with the rendered message.
+    /// Fatal error (out of memory or internal): panic with the rendered message.
     Panic(String),
 }
 
-/// Classify a wgpu error and dedup validation messages against `seen`.
+/// Classify a wgpu error and deduplicate validation messages against `seen`.
 ///
-/// Validation errors are non-fatal and deduplicated by description: the first
-/// occurrence yields [`WgpuErrorAction::Log`], repeats yield [`WgpuErrorAction::Drop`].
-/// Every other error kind (OutOfMemory, Internal) yields [`WgpuErrorAction::Panic`].
+/// Validation errors invalidate the affected GPU operation, but do not poison
+/// the device. Keeping them non-fatal is important for hot reload: a broken
+/// scene can be replaced without terminating the app or Web Worker. Errors
+/// that indicate device instability remain fatal.
 fn classify_wgpu_error(error: &wgpu::Error, seen: &Mutex<HashSet<String>>) -> WgpuErrorAction {
     match error {
         wgpu::Error::Validation { description, .. } => {
@@ -42,14 +44,15 @@ fn classify_wgpu_error(error: &wgpu::Error, seen: &Mutex<HashSet<String>>) -> Wg
     }
 }
 
-/// Plugin that installs a non-panicking wgpu error handler for validation errors.
+/// Installs PyBevy's non-fatal handler for wgpu validation errors.
 ///
-/// By default, wgpu's uncaptured error handler panics, which kills the render
-/// thread on shader validation errors (e.g., binding mismatches). This plugin
-/// replaces it with a handler that logs validation errors instead, deduplicating
-/// repeated messages. OutOfMemory and Internal errors still panic.
-///
-/// This is needed for hot reload to work and not crash the pybevy renderer
+/// Bevy's default uncaptured-error callback forwards validation errors to its
+/// render error state machine, whose default policy exits the application.
+/// That is a poor fit for an interactive Python/hot-reload host: a bad asset or
+/// scene should fail that frame, while leaving the runtime available to load a
+/// corrected scene. This plugin replaces only the uncaptured-error callback.
+/// Validation errors are logged once and discarded; out-of-memory and internal
+/// errors still panic because continuing with an unstable device is unsafe.
 pub struct WgpuErrorHandlerPlugin;
 
 impl Plugin for WgpuErrorHandlerPlugin {
@@ -71,7 +74,7 @@ impl Plugin for WgpuErrorHandlerPlugin {
             .on_uncaptured_error(Arc::new(move |error| {
                 match classify_wgpu_error(&error, &seen) {
                     WgpuErrorAction::Log(msg) => {
-                        bevy::log::error!("wgpu validation error (non-fatal): {msg}");
+                        tracing::error!("wgpu validation error (non-fatal): {msg}");
                     }
                     WgpuErrorAction::Drop => {}
                     WgpuErrorAction::Panic(msg) => panic!("wgpu error: {msg}"),

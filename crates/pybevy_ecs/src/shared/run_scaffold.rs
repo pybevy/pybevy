@@ -18,11 +18,14 @@
 //! rustpython backend hands a raw queue pointer to its lazy `PyCommands`, so the
 //! queue is the shared unit and each backend wraps it its own way.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use bevy::ecs::{
-    change_detection::Tick,
-    world::{CommandQueue, unsafe_world_cell::UnsafeWorldCell},
+use bevy::{
+    ecs::{
+        change_detection::Tick,
+        world::{CommandQueue, unsafe_world_cell::UnsafeWorldCell},
+    },
+    platform::time::Instant,
 };
 use pybevy_storage::{ValidityFlag, ValidityGuard};
 

@@ -7,6 +7,7 @@ pub mod plugin;
 pub mod power_preference;
 pub mod temporal_jitter;
 pub mod unit_markers;
+pub mod wgpu_error_handler;
 
 use pyo3::prelude::*;
 
