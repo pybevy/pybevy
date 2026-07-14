@@ -5,9 +5,14 @@
 //! use these functions, providing their own implementations of the
 //! [`PythonObjectDescriptor`] trait for backend-specific Python object storage.
 
-use bevy::ecs::{
-    component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
-    world::World,
+use std::collections::HashMap;
+
+use bevy::{
+    ecs::{
+        component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
+        world::World,
+    },
+    prelude::Resource,
 };
 
 use super::{component_layout::ComponentStorageType, component_wrapper::WrapperSize};
@@ -73,6 +78,179 @@ pub fn register_custom_component_descriptor<D: PythonObjectDescriptor>(
         ComponentStorageType::PyObject => D::create(name),
     };
     world.register_component_with_descriptor(descriptor)
+}
+
+/// Neutral registry of custom Python components, shared by both backends.
+///
+/// Keyed by a backend-agnostic type identity: a `usize`. PyO3 passes
+/// `type_ptr as usize`; RustPython passes `PyObjectRef::get_id()`. Storing a
+/// `usize` (not a raw pointer) keeps this resource `Send`/`Sync` with no
+/// `unsafe impl`.
+///
+/// The `storage_types` map (keyed by [`ComponentId`]) is the **single source of
+/// truth** for the storage-flip guard: reuse of a cached `ComponentId` is
+/// allowed only when its recorded [`ComponentStorageType`] still matches the one
+/// requested this spawn. See [`register_custom_component_guarded`].
+#[derive(Resource, Default)]
+pub struct CustomComponentRegistry {
+    by_id: HashMap<usize, ComponentId>,
+    by_name: HashMap<String, ComponentId>,
+    storage_types: HashMap<ComponentId, ComponentStorageType>,
+}
+
+impl CustomComponentRegistry {
+    /// Get the `ComponentId` registered for a type-identity handle, if any
+    /// (includes hot-reload pointer aliases).
+    pub fn get(&self, type_id: usize) -> Option<ComponentId> {
+        self.by_id.get(&type_id).copied()
+    }
+
+    /// The full type-id -> `ComponentId` map (aliases included). Used by the
+    /// system executor to pre-build the lookup passed to `register_with_world`.
+    pub fn ids_by_type(&self) -> &HashMap<usize, ComponentId> {
+        &self.by_id
+    }
+
+    /// The storage type a `ComponentId` was registered with, if known.
+    pub fn storage_type(&self, id: ComponentId) -> Option<ComponentStorageType> {
+        self.storage_types.get(&id).copied()
+    }
+}
+
+/// What a call to [`register_custom_component_guarded`] did, so the caller can
+/// keep its backend-specific side-tables in sync (PyO3: `CustomComponentInfo`;
+/// RustPython: its `layouts`/`names` maps).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterOutcome {
+    /// The exact type-id was already registered with an unchanged storage type;
+    /// `id` is the cached `ComponentId` and nothing was mutated.
+    Reused(ComponentId),
+    /// Hot reload: a new type-id was aliased to an existing, name-matched,
+    /// storage-compatible `ComponentId`.
+    Aliased(ComponentId),
+    /// A fresh `ComponentId` was registered. `evicted` is a prior `ComponentId`
+    /// orphaned by a storage-incompatible name collision, whose backend
+    /// side-table entries the caller must drop.
+    Registered {
+        id: ComponentId,
+        evicted: Option<ComponentId>,
+    },
+}
+
+impl RegisterOutcome {
+    /// The `ComponentId` to use for this component, regardless of variant.
+    pub fn id(&self) -> ComponentId {
+        match *self {
+            RegisterOutcome::Reused(id)
+            | RegisterOutcome::Aliased(id)
+            | RegisterOutcome::Registered { id, .. } => id,
+        }
+    }
+}
+
+/// Register a custom Python component behind the shared storage-flip guard.
+///
+/// The caller (holding the interpreter handle) precomputes the backend-specific
+/// leaves - `type_id` (type-object identity), `qualified_name` (`module.qualname`,
+/// for hot-reload aliasing), and `storage_type` (wrapper vs PyObject, recomputed
+/// from the *live* class every spawn) - and passes them here. This function owns
+/// the interpreter-agnostic orchestration:
+///
+/// 1. **Fast path / RCE guard.** If this exact `type_id` is cached *and* its
+///    recorded storage type is unchanged, reuse the cached `ComponentId`.
+///    Otherwise fall through: reusing a cached id across a PyObject<->Wrapper
+///    flip (or a wrapper-size change) would write data shaped for the new layout
+///    into a column laid out - and dropped - as the old one (type confusion / an
+///    out-of-bounds copy).
+/// 2. **Hot-reload alias.** If a previous generation registered the same
+///    `qualified_name` with a compatible storage type, alias the new `type_id`
+///    to that `ComponentId` so entities from before the reload stay queryable.
+/// 3. **Fresh registration.** Otherwise allocate a new `ComponentId` (evicting a
+///    storage-incompatible name collision first) via
+///    [`register_custom_component_descriptor`].
+pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
+    world: &mut World,
+    type_id: usize,
+    name: &str,
+    qualified_name: Option<&str>,
+    storage_type: ComponentStorageType,
+) -> RegisterOutcome {
+    if !world.contains_resource::<CustomComponentRegistry>() {
+        world.insert_resource(CustomComponentRegistry::default());
+    }
+
+    // Fast path: same class object, storage type unchanged -> reuse. The storage
+    // type is recomputed from the live class on every spawn, so a mismatch here
+    // means untrusted Python flipped `__pybevy_storage__` / `__annotations__` on
+    // the same class between spawns; fall through to a fresh registration.
+    let cached = world
+        .resource::<CustomComponentRegistry>()
+        .by_id
+        .get(&type_id)
+        .copied();
+    if let Some(id) = cached {
+        let stored = world
+            .resource::<CustomComponentRegistry>()
+            .storage_types
+            .get(&id)
+            .copied();
+        if stored == Some(storage_type) {
+            return RegisterOutcome::Reused(id);
+        }
+        // Storage flipped on this class object: do NOT reuse `id`. The name-based
+        // branch below (qualified_name is stable for a given class) evicts it.
+    }
+
+    // Hot-reload path: a previous generation may have registered the same
+    // qualified name under a different `ComponentId` (Python re-executes
+    // `@component`, minting a new type object each time).
+    let mut evicted: Option<ComponentId> = None;
+    if let Some(qname) = qualified_name {
+        let existing = world
+            .resource::<CustomComponentRegistry>()
+            .by_name
+            .get(qname)
+            .copied();
+        if let Some(existing_id) = existing {
+            let existing_storage = world
+                .resource::<CustomComponentRegistry>()
+                .storage_types
+                .get(&existing_id)
+                .copied();
+            if existing_storage == Some(storage_type) {
+                // Storage-compatible (identical column layout): alias the new
+                // type-id onto the existing ComponentId.
+                world
+                    .resource_mut::<CustomComponentRegistry>()
+                    .by_id
+                    .insert(type_id, existing_id);
+                return RegisterOutcome::Aliased(existing_id);
+            }
+            // Storage changed across reload: the old column can't hold the new
+            // layout. Orphan the old id and register fresh.
+            evicted = Some(existing_id);
+        }
+    }
+
+    // Drop the orphaned entry from the neutral maps before inserting the fresh
+    // one so lookups don't resolve to a column the new id no longer owns. The
+    // `by_name` entry (if any) is overwritten below.
+    if let Some(stale) = evicted {
+        let mut reg = world.resource_mut::<CustomComponentRegistry>();
+        reg.storage_types.remove(&stale);
+        reg.by_id.retain(|_, id| *id != stale);
+    }
+
+    let id = register_custom_component_descriptor::<D>(world, name.to_string(), storage_type);
+
+    let mut reg = world.resource_mut::<CustomComponentRegistry>();
+    reg.by_id.insert(type_id, id);
+    reg.storage_types.insert(id, storage_type);
+    if let Some(qname) = qualified_name {
+        reg.by_name.insert(qname.to_string(), id);
+    }
+
+    RegisterOutcome::Registered { id, evicted }
 }
 
 #[cfg(test)]
@@ -155,5 +333,104 @@ mod tests {
         );
         // Same wrapper size but different names → different ComponentIds
         assert_ne!(id1, id2);
+    }
+
+    fn w8() -> ComponentStorageType {
+        ComponentStorageType::Wrapper(WrapperSize::W8)
+    }
+    fn w32() -> ComponentStorageType {
+        ComponentStorageType::Wrapper(WrapperSize::W32)
+    }
+    fn pyobj() -> ComponentStorageType {
+        ComponentStorageType::PyObject
+    }
+
+    fn guarded(
+        world: &mut World,
+        type_id: usize,
+        storage: ComponentStorageType,
+    ) -> RegisterOutcome {
+        register_custom_component_guarded::<TestObjectDescriptor>(
+            world,
+            type_id,
+            "Foo",
+            Some("m.Foo"),
+            storage,
+        )
+    }
+
+    #[test]
+    fn guarded_first_registration_is_fresh() {
+        let mut world = World::new();
+        let out = guarded(&mut world, 0x1000, w8());
+        assert!(matches!(
+            out,
+            RegisterOutcome::Registered { evicted: None, .. }
+        ));
+        let reg = world.resource::<CustomComponentRegistry>();
+        assert_eq!(reg.get(0x1000), Some(out.id()));
+        assert_eq!(reg.storage_type(out.id()), Some(w8()));
+    }
+
+    #[test]
+    fn guarded_same_ptr_same_storage_reuses() {
+        let mut world = World::new();
+        let a = guarded(&mut world, 0x1000, w8());
+        let b = guarded(&mut world, 0x1000, w8());
+        assert_eq!(b, RegisterOutcome::Reused(a.id()));
+    }
+
+    #[test]
+    fn guarded_storage_flip_rehomes_and_evicts() {
+        // Same class object (same type_id + qualified_name), storage flips
+        // wrapper -> pyobject: allocate a fresh id and report the old one
+        // evicted (the RCE guard). Reusing the cached id would be type confusion.
+        let mut world = World::new();
+        let a = guarded(&mut world, 0x1000, w8());
+        let b = guarded(&mut world, 0x1000, pyobj());
+        assert!(matches!(b, RegisterOutcome::Registered { evicted: Some(e), .. } if e == a.id()));
+        assert_ne!(a.id(), b.id());
+        let reg = world.resource::<CustomComponentRegistry>();
+        assert_eq!(reg.get(0x1000), Some(b.id()));
+        // The orphaned id's storage entry is dropped.
+        assert_eq!(reg.storage_type(a.id()), None);
+    }
+
+    #[test]
+    fn guarded_hot_reload_pyobject_aliases() {
+        // New type object (new type_id), same qualified_name + PyObject storage:
+        // alias so pre-reload entities stay queryable.
+        let mut world = World::new();
+        let a = guarded(&mut world, 0x1000, pyobj());
+        let b = guarded(&mut world, 0x2000, pyobj());
+        assert_eq!(b, RegisterOutcome::Aliased(a.id()));
+        let reg = world.resource::<CustomComponentRegistry>();
+        assert_eq!(reg.get(0x2000), Some(a.id()));
+        assert_eq!(reg.get(0x1000), Some(a.id()));
+    }
+
+    #[test]
+    fn guarded_hot_reload_same_wrapper_size_aliases() {
+        // A same-size wrapper name-collision aliases: the column layout is
+        // identical, so reusing the ComponentId is safe.
+        let mut world = World::new();
+        let a = guarded(&mut world, 0x1000, w8());
+        let b = guarded(&mut world, 0x2000, w8());
+        assert_eq!(b, RegisterOutcome::Aliased(a.id()));
+    }
+
+    #[test]
+    fn guarded_hot_reload_changed_storage_rehomes() {
+        // New type object, same qualified_name, storage changed (w8 -> w32):
+        // fresh id, evict the old one.
+        let mut world = World::new();
+        let a = guarded(&mut world, 0x1000, w8());
+        let b = guarded(&mut world, 0x2000, w32());
+        assert!(matches!(b, RegisterOutcome::Registered { evicted: Some(e), .. } if e == a.id()));
+        assert_ne!(a.id(), b.id());
+        assert_eq!(
+            world.resource::<CustomComponentRegistry>().get(0x2000),
+            Some(b.id())
+        );
     }
 }

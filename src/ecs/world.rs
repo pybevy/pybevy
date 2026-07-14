@@ -260,7 +260,7 @@ impl PyWorld {
             let Some(registry) = world.get_resource::<ComponentRegistry>() else {
                 return Ok(None);
             };
-            match registry.get(type_ptr) {
+            match registry.get(type_ptr as usize) {
                 Some(id) => id,
                 None => return Ok(None),
             }
@@ -722,7 +722,7 @@ impl PyWorld {
                 let world = unsafe { &*self.world_ptr() };
                 if let Some(registry) = world.get_resource::<ComponentRegistry>() {
                     // Look up the component ID in the registry
-                    if let Some(component_id) = registry.get(type_ptr) {
+                    if let Some(component_id) = registry.get(type_ptr as usize) {
                         return Ok(Some(PyComponentId(component_id)));
                     }
                 }

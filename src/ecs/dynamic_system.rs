@@ -1351,11 +1351,18 @@ pub(crate) fn execute_system_func(
 
     let mut args_buffer: Vec<Py<PyAny>> = Vec::with_capacity(system_func.params.len());
 
-    // Build custom_component_ids from the world's ComponentRegistry
+    // Build the executor's ptr-keyed custom_component_ids cache from the neutral
+    // (usize-keyed) registry, recovering each `*const PyTypeObject` from its
+    // stored `type_ptr as usize` identity.
     let custom_component_ids = {
         let registry = world.get_resource::<crate::ecs::component_type::ComponentRegistry>();
         if let Some(reg) = registry {
-            Arc::new(reg.registry.clone())
+            Arc::new(
+                reg.ids_by_type()
+                    .iter()
+                    .map(|(&type_id, &id)| (type_id as *const PyTypeObject, id))
+                    .collect::<HashMap<*const PyTypeObject, ComponentId>>(),
+            )
         } else {
             Arc::new(HashMap::new())
         }
