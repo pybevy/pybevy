@@ -40,6 +40,11 @@ impl ObserverRegistry {
         // Find the On parameter to extract event type
         let (event_type, bundle_filter) = Self::extract_event_type_from_params(&system_func)?;
 
+        // Observers skip the `add_systems` parameter-conflict gate; run it here
+        // so e.g. `World` + `Query[Mut[T]]` is rejected before the observer can
+        // alias the world mid-dispatch (parity with the rp2 backend).
+        crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer")?;
+
         // Spawn an entity to represent this observer
         let observer_entity = world.spawn_empty().id();
 
@@ -83,6 +88,11 @@ impl ObserverRegistry {
 
         // Find the On parameter to extract event type
         let (event_type, bundle_filter) = Self::extract_event_type_from_params(&system_func)?;
+
+        // Observers skip the `add_systems` parameter-conflict gate; run it here
+        // so e.g. `World` + `Query[Mut[T]]` is rejected before the observer can
+        // alias the world mid-dispatch (parity with the rp2 backend).
+        crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer")?;
 
         // Spawn an entity to represent this observer
         let observer_entity = world.spawn_empty().id();

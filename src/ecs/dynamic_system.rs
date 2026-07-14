@@ -348,6 +348,18 @@ pub(crate) fn lower_params(params: &[SystemParam]) -> Vec<ParamSpec<MainKeys>> {
     params.iter().map(|p| lower_param_type(&p.ty)).collect()
 }
 
+/// Validate a function's parameters for conflicting ECS access: double mutable
+/// access, mixing mutable and immutable, or a `World` parameter alongside
+/// anything else. Regular systems run this via
+/// [`DynamicSystem::validate_parameters`]; observer registration calls it
+/// directly, since observers skip the `add_systems` gate.
+pub(crate) fn validate_system_params(params: &[SystemParam], func_name: &str) -> PyResult<()> {
+    let specs = lower_params(params);
+    let accesses = to_param_accesses(&specs, |comp_type| comp_type.to_string());
+    shared_validation::validate_access(&accesses)
+        .map_err(|conflict| PyRuntimeError::new_err(conflict_error_message(func_name, &conflict)))
+}
+
 /// Resolves pyo3 backend keys against the world during the shared access walk.
 ///
 /// Borrows the system's custom-component cache so custom components are
@@ -1297,11 +1309,7 @@ impl DynamicSystem {
             }
             inner.system_func.as_ref().unwrap().params.clone()
         };
-        let specs = lower_params(&params);
-        let accesses = to_param_accesses(&specs, |comp_type| comp_type.to_string());
-        shared_validation::validate_access(&accesses).map_err(|conflict| {
-            PyRuntimeError::new_err(conflict_error_message(&self.func_name, &conflict))
-        })
+        validate_system_params(&params, &self.func_name)
     }
 
     /// Get the ComponentId for a given component type during validation.
