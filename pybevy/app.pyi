@@ -596,9 +596,6 @@ class App:
         self, loader: Callable[[], Callable[[], App]]
     ) -> App: ...
 
-    # Internal method for hot reload - creates temporary app that skips plugins
-    @staticmethod
-    def _create_reload_temp() -> App: ...
 
 class Schedule:
     def run_stage(self, stage: Stage) -> None: ...

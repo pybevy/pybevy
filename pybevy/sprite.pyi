@@ -175,13 +175,6 @@ class SpriteImageMode:
     """Automatic mode - default sprite rendering. The texture is rendered
     directly without special scaling or tiling behavior."""
 
-    @staticmethod
-    def default() -> SpriteImageMode:
-        """Create a default SpriteImageMode (Auto).
-
-        Returns:
-            SpriteImageMode.AUTO
-        """
 
     @staticmethod
     def scaled(mode: SpriteScalingMode) -> SpriteImageMode:
@@ -596,13 +589,6 @@ class SliceScaleMode:
     """Stretch mode - scale the slice uniformly to fill its designated area.
     Good for borders and corners that should scale smoothly."""
 
-    @staticmethod
-    def default() -> SliceScaleMode:
-        """Create a default SliceScaleMode (Stretch).
-
-        Returns:
-            SliceScaleMode.STRETCH
-        """
 
     @staticmethod
     def tile(stretch_value: float = 1.0) -> SliceScaleMode:
