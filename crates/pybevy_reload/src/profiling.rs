@@ -52,6 +52,29 @@ pub struct HotReloadStats {
     pub last_reload_frame: u32,
 }
 
+impl Default for HotReloadStats {
+    fn default() -> Self {
+        Self {
+            last_mode: None,
+            last_reload_time: 0.0,
+            reload_count: 0,
+            default_mode: ReloadMode::Full,
+            memory_mb: 0.0,
+            cpu_percent: 0.0,
+            fps_average: 0.0,
+            fps_current: 0.0,
+            total_memory_mb: 0.0,
+            cpu_core_count: 1,
+            gil_enabled: false,
+            uptime_secs: 0.0,
+            entity_count: 0,
+            asset_counts: HashMap::new(),
+            last_error_timestamp: 0.0,
+            last_reload_frame: 0,
+        }
+    }
+}
+
 /// Resource for tracking system information
 #[derive(Resource)]
 pub struct SystemMonitor {
