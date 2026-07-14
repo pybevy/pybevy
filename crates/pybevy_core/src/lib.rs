@@ -30,6 +30,7 @@ pub mod component;
 pub mod component_layout;
 pub mod component_wrapper;
 pub mod custom_component;
+pub mod custom_resource;
 pub mod debug_snapshot;
 pub mod duration;
 pub mod entity;
