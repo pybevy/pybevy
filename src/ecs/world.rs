@@ -89,8 +89,11 @@ enum WorldStorage {
 #[pyclass(name = "World")]
 pub struct PyWorld {
     storage: WorldStorage,
-    // Runtime validity check - prevents use after system execution
-    // None for owned worlds (created from Python), Some for borrowed (system params)
+    // Runtime validity check - prevents use after the underlying World goes away.
+    // For borrowed worlds (system params) this is the system flag, invalidated on
+    // system exit. For owned worlds (created from Python) it is a flag that starts
+    // valid and is invalidated in Drop, so proxies handed out by get/get_mut (which
+    // cache a raw world_ptr, not a Py<PyWorld>) cannot outlive `del world`.
     validity: Option<ValidityFlag>,
 }
 
@@ -106,6 +109,22 @@ unsafe impl Send for PyWorld {}
 // - The ValidityFlag uses atomic operations for thread-safe access
 // - We only allow access when the validity flag is true (during system execution)
 unsafe impl Sync for PyWorld {}
+
+impl Drop for PyWorld {
+    fn drop(&mut self) {
+        // An owned world frees its `World` storage here (the `Box` drops after this runs).
+        // Invalidate its validity flag first so any proxy/handle that outlived `del world`
+        // - it caches a raw `world_ptr`, not a `Py<PyWorld>` - fails its validity check on
+        // next access instead of dereferencing freed memory. Only owned worlds own their
+        // flag; a borrowed world shares the system flag managed by ValidityGuard (and may
+        // be one of several duplicates), so leave those untouched.
+        if let WorldStorage::Owned(_) = self.storage {
+            if let Some(flag) = &self.validity {
+                flag.set_invalid();
+            }
+        }
+    }
+}
 
 impl PyWorld {
     /// Create a new PyWorld wrapper around a mutable World reference.
@@ -124,7 +143,9 @@ impl PyWorld {
     pub(crate) fn new_owned(world: World) -> Self {
         Self {
             storage: WorldStorage::Owned(Box::new(UnsafeCell::new(world))),
-            validity: None, // Owned worlds don't need validity checking
+            // Starts valid (Write mode); Drop invalidates it so any proxy/handle that
+            // outlives `del world` errors instead of dereferencing the freed World.
+            validity: Some(ValidityFlag::new_write()),
         }
     }
 
@@ -133,12 +154,12 @@ impl PyWorld {
         if let Some(ref validity) = self.validity {
             Ok(validity.check()?)
         } else {
-            Ok(()) // Owned worlds are always valid
+            Ok(()) // No flag: treat as valid (both owned and borrowed worlds carry one)
         }
     }
 
-    /// Get a clone of the validity flag for sharing with child structures
-    /// Returns None for owned worlds (they don't need validity tracking)
+    /// Get a clone of the validity flag for sharing with child structures.
+    /// Both owned and borrowed worlds carry a flag now, so this is `Some` in practice.
     pub(crate) fn validity(&self) -> Option<ValidityFlag> {
         self.validity.clone()
     }
