@@ -22,6 +22,7 @@
 //! to register their types without the core crate needing to import them at
 //! compile time, enabling independent compilation and faster incremental builds.
 
+pub mod added_plugins;
 pub mod asset;
 pub mod asset_cleanup;
 pub mod asset_path;

@@ -9,11 +9,7 @@ use std::{
 };
 
 use bevy::{
-    app::{
-        App, AppExit, First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate,
-        Last, Main, MainScheduleOrder, PostStartup, PostUpdate, PreStartup, PreUpdate, Startup,
-        Update,
-    },
+    app::{App, AppExit, Last, PreStartup, PreUpdate},
     ecs::{
         message::MessageWriter,
         resource::Resource,
@@ -27,9 +23,10 @@ use bevy::{
     time::Time,
 };
 use pybevy_core::{
-    LastSystemError, PyMessage, PyPlugin as PyPluginBase, plugin::plugin_registry,
-    register_wrapped_reflect_types,
+    LastSystemError, PyMessage, PyPlugin as PyPluginBase, added_plugins::AddedPythonPlugins,
+    plugin::plugin_registry, register_wrapped_reflect_types,
 };
+use pybevy_ecs::shared::schedule::configure_standard_schedules;
 use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     IntoPyObjectExt,
@@ -41,7 +38,7 @@ use pyo3::{
 
 use crate::{
     app::{
-        PyStage, SimTick,
+        PyStage,
         app_exit::PyAppExit,
         chained_systems::PyChainedSystems,
         error_messages,
@@ -184,47 +181,15 @@ fn drain_last_system_error(world: &mut World) {
     }
 }
 
-/// Tracks which plugins have been added, using both pointer (fast path) and
-/// qualified name (hot-reload resilience). On hot reload, Python classes get new
-/// PyTypeObject pointers, so pointer-only checks would miss already-added plugins.
-#[derive(Default)]
-struct PluginRegistry {
-    by_ptr: HashSet<*const PyTypeObject>,
-    by_name: HashSet<String>,
-}
-
-impl PluginRegistry {
-    fn contains(&self, type_ptr: *const PyTypeObject, py: Python) -> bool {
-        if self.by_ptr.contains(&type_ptr) {
-            return true;
-        }
-        // Hot-reload path: pointer changed but name matches
-        let name = Self::get_qualified_name(type_ptr, py);
-        if let Some(ref name) = name
-            && self.by_name.contains(name)
-        {
-            return true;
-        }
-        false
-    }
-
-    fn insert(&mut self, type_ptr: *const PyTypeObject, py: Python) {
-        self.by_ptr.insert(type_ptr);
-        if let Some(name) = Self::get_qualified_name(type_ptr, py) {
-            self.by_name.insert(name);
-        }
-    }
-
-    fn get_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<String> {
-        let py_type =
-            unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-        if let Ok(cls) = py_type.cast::<PyType>() {
-            let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
-            let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
-            Some(format!("{}.{}", module, qualname))
-        } else {
-            None
-        }
+fn plugin_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<String> {
+    // SAFETY: registered type pointers live for the interpreter lifetime.
+    let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
+    if let Ok(cls) = py_type.cast::<PyType>() {
+        let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
+        let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
+        Some(format!("{}.{}", module, qualname))
+    } else {
+        None
     }
 }
 
@@ -246,7 +211,7 @@ pub struct PyApp {
 
     /// Registry of plugin types that have been added (by pointer for fast lookup,
     /// by name for hot-reload resilience when Python classes get new type pointers)
-    plugin_registry: RefCell<PluginRegistry>,
+    plugin_registry: RefCell<AddedPythonPlugins>,
 
     /// Shared error state for collecting system errors (parameter + execution)
     /// Arc allows sharing with DynamicSystem instances, Mutex for thread-safe access
@@ -303,9 +268,10 @@ impl PyApp {
 
     /// Helper to get SystemStage for profiling based on PyStage
     fn get_system_stage(stage: PyStage) -> SystemStage {
-        match stage {
-            PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup => SystemStage::Startup,
-            _ => SystemStage::UpdateOrLast,
+        if stage.is_startup() {
+            SystemStage::Startup
+        } else {
+            SystemStage::UpdateOrLast
         }
     }
 
@@ -356,7 +322,7 @@ impl PyApp {
             app_id,
             creation_thread: std::thread::current().id(),
             is_consumed: Cell::new(false),
-            plugin_registry: RefCell::new(PluginRegistry::default()),
+            plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer: Arc::new(Mutex::new(None)),
             hot_reload_state: temp_state,
@@ -469,12 +435,7 @@ impl PyApp {
             });
         }
 
-        // Initialize SimTick schedule and insert it into the main schedule order
-        // Frame order: First → PreUpdate → SimTick → Update → PostUpdate → Last
-        app.init_schedule(SimTick);
-        app.world_mut()
-            .resource_mut::<MainScheduleOrder>()
-            .insert_after(PreUpdate, SimTick);
+        configure_standard_schedules(&mut app);
 
         // Reflect-register all bridged bevy types so MCP/editor tooling can
         // resolve them by name even without bevy's reflect_auto_register
@@ -502,7 +463,7 @@ impl PyApp {
             app_id,
             creation_thread: std::thread::current().id(),
             is_consumed: Cell::new(false),
-            plugin_registry: RefCell::new(PluginRegistry::default()),
+            plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer,
             hot_reload_state: HotReloadState::new(),
@@ -624,98 +585,11 @@ impl PyApp {
                 // Macro to add systems to the correct schedule with automatic schedule initialization
                 macro_rules! add_to_schedule {
                     ($app:expr, $stage:expr, $system:expr) => {{
-                        // Init schedule if needed
-                        match $stage {
-                            PyStage::Main => {
-                                if !$app.world().resource::<Schedules>().contains(Main) {
-                                    $app.init_schedule(Main);
-                                }
-                                $app.add_systems(Main, $system);
-                            }
-                            PyStage::First => {
-                                if !$app.world().resource::<Schedules>().contains(First) {
-                                    $app.init_schedule(First);
-                                }
-                                $app.add_systems(First, $system);
-                            }
-                            PyStage::PreUpdate => {
-                                if !$app.world().resource::<Schedules>().contains(PreUpdate) {
-                                    $app.init_schedule(PreUpdate);
-                                }
-                                $app.add_systems(PreUpdate, $system);
-                            }
-                            PyStage::PostUpdate => {
-                                if !$app.world().resource::<Schedules>().contains(PostUpdate) {
-                                    $app.init_schedule(PostUpdate);
-                                }
-                                $app.add_systems(PostUpdate, $system);
-                            }
-                            PyStage::PreStartup => {
-                                if !$app.world().resource::<Schedules>().contains(PreStartup) {
-                                    $app.init_schedule(PreStartup);
-                                }
-                                $app.add_systems(PreStartup, $system);
-                            }
-                            PyStage::PostStartup => {
-                                if !$app.world().resource::<Schedules>().contains(PostStartup) {
-                                    $app.init_schedule(PostStartup);
-                                }
-                                $app.add_systems(PostStartup, $system);
-                            }
-                            PyStage::Last => {
-                                if !$app.world().resource::<Schedules>().contains(Last) {
-                                    $app.init_schedule(Last);
-                                }
-                                $app.add_systems(Last, $system);
-                            }
-                            PyStage::FixedFirst => {
-                                if !$app.world().resource::<Schedules>().contains(FixedFirst) {
-                                    $app.init_schedule(FixedFirst);
-                                }
-                                $app.add_systems(FixedFirst, $system);
-                            }
-                            PyStage::FixedPreUpdate => {
-                                if !$app
-                                    .world()
-                                    .resource::<Schedules>()
-                                    .contains(FixedPreUpdate)
-                                {
-                                    $app.init_schedule(FixedPreUpdate);
-                                }
-                                $app.add_systems(FixedPreUpdate, $system);
-                            }
-                            PyStage::FixedPostUpdate => {
-                                if !$app
-                                    .world()
-                                    .resource::<Schedules>()
-                                    .contains(FixedPostUpdate)
-                                {
-                                    $app.init_schedule(FixedPostUpdate);
-                                }
-                                $app.add_systems(FixedPostUpdate, $system);
-                            }
-                            PyStage::FixedLast => {
-                                if !$app.world().resource::<Schedules>().contains(FixedLast) {
-                                    $app.init_schedule(FixedLast);
-                                }
-                                $app.add_systems(FixedLast, $system);
-                            }
-                            PyStage::Startup => {
-                                $app.add_systems(Startup, $system);
-                            }
-                            PyStage::Update => {
-                                $app.add_systems(Update, $system);
-                            }
-                            PyStage::FixedUpdate => {
-                                $app.add_systems(FixedUpdate, $system);
-                            }
-                            PyStage::SimTick => {
-                                if !$app.world().resource::<Schedules>().contains(SimTick) {
-                                    $app.init_schedule(SimTick);
-                                }
-                                $app.add_systems(SimTick, $system);
-                            }
+                        let label = $stage.intern_label();
+                        if !$app.world().resource::<Schedules>().contains(label) {
+                            $app.init_schedule(label);
                         }
+                        $app.add_systems(label, $system);
                     }};
                 }
 
@@ -772,10 +646,7 @@ impl PyApp {
                                 return Err(PyRuntimeError::new_err("Empty chained systems"));
                             }
 
-                            let is_startup = matches!(
-                                stage,
-                                PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup
-                            );
+                            let is_startup = stage.is_startup();
 
                             // Build chained SystemConfigs directly — supports any number of systems
                             let configs: Vec<ScheduleConfigs<_>> = dynamic_systems
@@ -827,12 +698,7 @@ impl PyApp {
                                 )?;
 
                                 if let Some(cond) = condition_func {
-                                    let is_startup = matches!(
-                                        stage,
-                                        PyStage::Startup
-                                            | PyStage::PreStartup
-                                            | PyStage::PostStartup
-                                    );
+                                    let is_startup = stage.is_startup();
                                     let config = build_conditional_system_config(
                                         dynamic_system,
                                         cond,
@@ -844,13 +710,11 @@ impl PyApp {
                                     add_to_schedule!(app, stage, config);
                                 } else {
                                     // No user condition - just use generation condition
-                                    let run_condition = match stage {
-                                        PyStage::Startup
-                                        | PyStage::PreStartup
-                                        | PyStage::PostStartup => dynamic_system
-                                            .run_if(startup_or_reload(current_generation)),
-                                        _ => dynamic_system
-                                            .run_if(generation_matches(current_generation)),
+                                    let run_condition = if stage.is_startup() {
+                                        dynamic_system.run_if(startup_or_reload(current_generation))
+                                    } else {
+                                        dynamic_system
+                                            .run_if(generation_matches(current_generation))
                                     };
                                     add_to_schedule!(app, stage, run_condition);
                                 }
@@ -982,10 +846,14 @@ impl PyApp {
 
             // Check if this plugin has already been added (important for hot reload)
             let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
+            let type_key = type_ptr as usize;
+            let qualified_name = plugin_qualified_name(type_ptr, py);
             let already_added = {
                 let app_borrow = pyself.borrow(py);
-                let registry = app_borrow.plugin_registry.borrow();
-                registry.contains(type_ptr, py)
+                app_borrow
+                    .plugin_registry
+                    .borrow_mut()
+                    .check_and_insert(type_key, qualified_name.as_deref())
             };
 
             if already_added {
@@ -995,22 +863,18 @@ impl PyApp {
                 continue;
             }
 
-            // Register the plugin type in the PyApp struct
-            {
-                let app_borrow = pyself.borrow(py);
-                app_borrow.plugin_registry.borrow_mut().insert(type_ptr, py);
-            }
-
             // If this is a PluginGroupBuilder, also register its source type (e.g., DefaultPlugins)
             // This prevents duplicates when mixing DefaultPlugins and DefaultPlugins().build()
             if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
                 let builder = plugin_instance.cast_exact::<PyPluginGroupBuilder>()?;
                 if let Some(source_type_id) = builder.borrow().source_type {
+                    let source_ptr = source_type_id.as_ptr();
+                    let source_name = plugin_qualified_name(source_ptr, py);
                     let app_borrow = pyself.borrow(py);
                     app_borrow
                         .plugin_registry
                         .borrow_mut()
-                        .insert(source_type_id.as_ptr(), py);
+                        .insert(source_ptr as usize, source_name.as_deref());
                 }
             }
 
@@ -1561,6 +1425,10 @@ impl PyApp {
                     "\n",
                     "if __name__ == \"__main__\":\n",
                     "    main().run()\n",
+                    "\n",
+                    "Under `pybevy mcp` / run_scene, @entrypoint also auto-injects the\n",
+                    "plugins that power MCP tools (screenshot, spawn, query); without it\n",
+                    "those tools appear to fail silently.\n",
                 )));
             }
         }
@@ -1631,7 +1499,11 @@ impl PyApp {
         self.ensure_active()?;
 
         let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
-        let is_added = self.plugin_registry.borrow().contains(type_ptr, py);
+        let qualified_name = plugin_qualified_name(type_ptr, py);
+        let is_added = self
+            .plugin_registry
+            .borrow()
+            .contains(type_ptr as usize, qualified_name.as_deref());
 
         Ok(is_added)
     }
@@ -1715,23 +1587,7 @@ impl PyApp {
             let mut apps = apps_cell.borrow_mut();
             let app = pyself.get_app_mut(&mut apps)?;
 
-            match label {
-                PyStage::Startup => app.init_schedule(Startup),
-                PyStage::Update => app.init_schedule(Update),
-                PyStage::Last => app.init_schedule(Last),
-                PyStage::FixedUpdate => app.init_schedule(FixedUpdate),
-                PyStage::Main => app.init_schedule(Main),
-                PyStage::First => app.init_schedule(First),
-                PyStage::PreUpdate => app.init_schedule(PreUpdate),
-                PyStage::PostUpdate => app.init_schedule(PostUpdate),
-                PyStage::PreStartup => app.init_schedule(PreStartup),
-                PyStage::PostStartup => app.init_schedule(PostStartup),
-                PyStage::FixedFirst => app.init_schedule(FixedFirst),
-                PyStage::FixedPreUpdate => app.init_schedule(FixedPreUpdate),
-                PyStage::FixedPostUpdate => app.init_schedule(FixedPostUpdate),
-                PyStage::FixedLast => app.init_schedule(FixedLast),
-                PyStage::SimTick => app.init_schedule(SimTick),
-            };
+            app.init_schedule(label.intern_label());
 
             Ok(pyself.into())
         })

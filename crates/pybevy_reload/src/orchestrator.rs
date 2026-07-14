@@ -1,8 +1,9 @@
-use std::{collections::HashSet, time::Instant};
+use std::collections::HashSet;
 
 use bevy::{
     app::Startup,
     ecs::{entity::Entity, resource::IsResource, schedule::Schedules, world::World},
+    platform::time::Instant,
     prelude::Without,
     time::{Real, Time},
 };

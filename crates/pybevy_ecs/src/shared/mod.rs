@@ -7,4 +7,5 @@ pub mod command_queue_helpers;
 pub mod param_spec;
 pub mod query_builder_ext;
 pub mod run_scaffold;
+pub mod schedule;
 pub mod system_flags;

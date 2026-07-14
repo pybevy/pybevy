@@ -55,7 +55,7 @@ use pyo3::{
 use crate::{
     _pybevy,
     app::{
-        PyStage, SimTick,
+        PyStage,
         hot_reload::{
             state::{HotReloadResource, HotReloadState},
             systems::{check_hot_reload_system, handle_f5_reload_system},
@@ -175,11 +175,10 @@ impl PySystemBuilder {
             })?;
 
             // Create DynamicSystem
-            let system_stage = match self.stage {
-                PyStage::Startup | PyStage::PreStartup | PyStage::PostStartup => {
-                    SystemStage::Startup
-                }
-                _ => SystemStage::UpdateOrLast,
+            let system_stage = if self.stage.is_startup() {
+                SystemStage::Startup
+            } else {
+                SystemStage::UpdateOrLast
             };
 
             // Native-plugin systems run on a separate mini-app with no LastSystemError
@@ -684,23 +683,7 @@ impl PyBevyPlugin {
 
 /// Add a DynamicSystem to the appropriate Bevy schedule (no run conditions)
 fn add_dynamic_system_to_schedule(app: &mut App, dynamic_system: DynamicSystem, stage: PyStage) {
-    match stage {
-        PyStage::Startup => app.add_systems(Startup, dynamic_system),
-        PyStage::Update => app.add_systems(Update, dynamic_system),
-        PyStage::Last => app.add_systems(Last, dynamic_system),
-        PyStage::FixedUpdate => app.add_systems(FixedUpdate, dynamic_system),
-        PyStage::Main => app.add_systems(Main, dynamic_system),
-        PyStage::First => app.add_systems(First, dynamic_system),
-        PyStage::PreUpdate => app.add_systems(PreUpdate, dynamic_system),
-        PyStage::PostUpdate => app.add_systems(PostUpdate, dynamic_system),
-        PyStage::PreStartup => app.add_systems(PreStartup, dynamic_system),
-        PyStage::PostStartup => app.add_systems(PostStartup, dynamic_system),
-        PyStage::FixedFirst => app.add_systems(FixedFirst, dynamic_system),
-        PyStage::FixedPreUpdate => app.add_systems(FixedPreUpdate, dynamic_system),
-        PyStage::FixedPostUpdate => app.add_systems(FixedPostUpdate, dynamic_system),
-        PyStage::FixedLast => app.add_systems(FixedLast, dynamic_system),
-        PyStage::SimTick => app.add_systems(SimTick, dynamic_system),
-    };
+    app.add_systems(stage.intern_label(), dynamic_system);
 }
 
 /// Add a DynamicSystem to the appropriate Bevy schedule WITH generation-based run conditions
@@ -710,65 +693,10 @@ fn add_dynamic_system_to_schedule_with_run_condition(
     stage: PyStage,
     generation: u32,
 ) {
-    match stage {
-        // Startup stages use startup_or_reload (runs once per generation)
-        PyStage::Startup => app.add_systems(
-            Startup,
-            dynamic_system.run_if(startup_or_reload(generation)),
-        ),
-        PyStage::PreStartup => app.add_systems(
-            PreStartup,
-            dynamic_system.run_if(startup_or_reload(generation)),
-        ),
-        PyStage::PostStartup => app.add_systems(
-            PostStartup,
-            dynamic_system.run_if(startup_or_reload(generation)),
-        ),
-        // All other stages use generation_matches (runs every frame while generation is active)
-        PyStage::Update => app.add_systems(
-            Update,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::Last => {
-            app.add_systems(Last, dynamic_system.run_if(generation_matches(generation)))
-        }
-        PyStage::FixedUpdate => app.add_systems(
-            FixedUpdate,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::Main => {
-            app.add_systems(Main, dynamic_system.run_if(generation_matches(generation)))
-        }
-        PyStage::First => {
-            app.add_systems(First, dynamic_system.run_if(generation_matches(generation)))
-        }
-        PyStage::PreUpdate => app.add_systems(
-            PreUpdate,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::PostUpdate => app.add_systems(
-            PostUpdate,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::FixedFirst => app.add_systems(
-            FixedFirst,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::FixedPreUpdate => app.add_systems(
-            FixedPreUpdate,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::FixedPostUpdate => app.add_systems(
-            FixedPostUpdate,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::FixedLast => app.add_systems(
-            FixedLast,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-        PyStage::SimTick => app.add_systems(
-            SimTick,
-            dynamic_system.run_if(generation_matches(generation)),
-        ),
-    };
+    let label = stage.intern_label();
+    if stage.is_startup() {
+        app.add_systems(label, dynamic_system.run_if(startup_or_reload(generation)));
+    } else {
+        app.add_systems(label, dynamic_system.run_if(generation_matches(generation)));
+    }
 }
