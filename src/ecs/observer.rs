@@ -415,32 +415,6 @@ impl EventType {
     }
 }
 
-/// Bundle filter for observers.
-///
-/// Observers with bundle filters only trigger if the target entity has
-/// at least one of the components in the bundle (OR logic).
-#[derive(Debug, Clone)]
-pub struct BundleFilter {
-    pub(crate) components: Vec<PyComponentType>,
-}
-
-impl BundleFilter {
-    /// Check if an entity matches this bundle filter.
-    /// Returns true if the entity has at least one of the components (OR logic).
-    pub(crate) fn matches(&self, world: &World, entity: Entity) -> bool {
-        // Get entity reference
-        let entity_ref = match world.get_entity(entity) {
-            Ok(e) => e,
-            Err(_) => return false, // Entity doesn't exist
-        };
-
-        // Check if entity has any of the required components (OR logic)
-        self.components
-            .iter()
-            .any(|comp_type| entity_has_component(world, &entity_ref, comp_type))
-    }
-}
-
 /// Helper function to check if an entity has a specific component type
 fn entity_has_component(world: &World, entity: &EntityRef, comp_type: &PyComponentType) -> bool {
     match comp_type {
