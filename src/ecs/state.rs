@@ -712,8 +712,8 @@ fn apply_transition_for_state(
     // Check if there's a pending transition and take it
     let next_state_borrow = next_state_py.bind(py).borrow();
     let pending_transition = next_state_borrow.take_pending();
-    let initial_enter =
-        pending_transition.is_none() && next_state_borrow.take_initial_enter_pending();
+    let initial_enter_pending = next_state_borrow.take_initial_enter_pending();
+    let initial_enter = pending_transition.is_none() && initial_enter_pending;
     drop(next_state_borrow); // Drop borrow
 
     // If this is the initial enter (no explicit transition queued), just fire OnEnter
@@ -749,6 +749,11 @@ fn apply_transition_for_state(
     let old_hash = current_state.bind(py).hash()? as u64;
     let new_hash = pending_transition.bind(py).hash()? as u64;
 
+    {
+        let state = state_py.bind(py).borrow();
+        state.set_value(pending_transition.clone_ref(py));
+    }
+
     // Run OnExit(old_state) schedule
     let exit_label = StateScheduleLabel::on_exit(old_hash);
     let has_exit_schedule = world.resource::<Schedules>().contains(exit_label.clone());
@@ -758,12 +763,6 @@ fn apply_transition_for_state(
 
     // Despawn entities with DespawnOnExit matching the old state
     despawn_matching_entities(py, world, "DespawnOnExit", &current_state);
-
-    // Update State<T> resource
-    {
-        let state = state_py.bind(py).borrow();
-        state.set_value(pending_transition.clone_ref(py));
-    }
 
     // Run OnTransition(old_state -> new_state) schedule
     let transition_label = TransitionScheduleLabel::new(old_hash, new_hash);

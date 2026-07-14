@@ -11,6 +11,7 @@ use std::any::TypeId;
 use bevy::{
     ecs::query::{FilteredAccess, FilteredAccessSet},
     prelude::*,
+    state::app::StatesPlugin,
 };
 
 #[derive(Component)]
@@ -20,6 +21,43 @@ struct TestComponent {
 
 #[derive(Component)]
 struct Marker;
+
+#[derive(States, Clone, Debug, Default, Eq, Hash, PartialEq)]
+enum TransitionContractState {
+    #[default]
+    Alpha,
+    Beta,
+}
+
+#[derive(Resource, Debug, Default)]
+struct TransitionContractTrace(Vec<(&'static str, TransitionContractState)>);
+
+fn record_contract_exit(
+    state: Res<State<TransitionContractState>>,
+    mut trace: ResMut<TransitionContractTrace>,
+) {
+    trace.0.push(("exit", state.get().clone()));
+}
+
+fn record_contract_transition(
+    state: Res<State<TransitionContractState>>,
+    mut trace: ResMut<TransitionContractTrace>,
+) {
+    trace.0.push(("transition", state.get().clone()));
+}
+
+fn record_contract_enter(
+    state: Res<State<TransitionContractState>>,
+    mut trace: ResMut<TransitionContractTrace>,
+) {
+    trace.0.push(("enter", state.get().clone()));
+}
+
+fn record_contract_initial_enter(mut trace: ResMut<TransitionContractTrace>) {
+    trace
+        .0
+        .push(("initial_enter", TransitionContractState::Alpha));
+}
 
 #[test]
 fn test_query_yields_unique_entities() {
@@ -887,5 +925,98 @@ fn test_exclusive_function_systems_declare_empty_access_and_non_send() {
         !system.is_send(),
         "exclusive fn systems must be non-Send; the executor's local-thread \
          accounting assumes the pairing"
+    );
+}
+
+#[test]
+fn test_state_is_committed_before_transition_schedules() {
+    //! BEHAVIOR: Bevy 0.19 commits the new `State<S>` value before it runs
+    //! `OnExit`, `OnTransition`, and `OnEnter`. All three schedules therefore
+    //! observe the entered state through `Res<State<S>>`.
+    //!
+    //! Relied on by: PyBevy's state-transition contract and future neutral
+    //! transition planner. If this changes upstream, reevaluate the planned
+    //! `CommitNew -> ExitOld -> Transition -> EnterNew` step order.
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<TransitionContractState>()
+        .insert_resource(TransitionContractTrace::default())
+        .add_systems(OnExit(TransitionContractState::Alpha), record_contract_exit)
+        .add_systems(
+            OnTransition {
+                exited: TransitionContractState::Alpha,
+                entered: TransitionContractState::Beta,
+            },
+            record_contract_transition,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Beta),
+            record_contract_enter,
+        );
+
+    // Drain the initial Alpha OnEnter event before testing an ordinary change.
+    app.update();
+    app.world_mut()
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .clear();
+    app.world_mut()
+        .resource_mut::<NextState<TransitionContractState>>()
+        .set(TransitionContractState::Beta);
+
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [
+            ("exit", TransitionContractState::Beta),
+            ("transition", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+        ]
+    );
+}
+
+#[test]
+fn test_pending_transition_before_first_update_supersedes_initial_enter() {
+    //! BEHAVIOR: If a new state is already pending before the first
+    //! `StateTransition` schedule, Bevy consumes the latest transition event.
+    //! It does not run the stale initial state's `OnEnter` first or replay the
+    //! entered state's `OnEnter` on the next update.
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<TransitionContractState>()
+        .insert_resource(TransitionContractTrace::default())
+        .add_systems(
+            OnEnter(TransitionContractState::Alpha),
+            record_contract_initial_enter,
+        )
+        .add_systems(OnExit(TransitionContractState::Alpha), record_contract_exit)
+        .add_systems(
+            OnTransition {
+                exited: TransitionContractState::Alpha,
+                entered: TransitionContractState::Beta,
+            },
+            record_contract_transition,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Beta),
+            record_contract_enter,
+        );
+    app.world_mut()
+        .resource_mut::<NextState<TransitionContractState>>()
+        .set(TransitionContractState::Beta);
+
+    app.update();
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [
+            ("exit", TransitionContractState::Beta),
+            ("transition", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+        ]
     );
 }
