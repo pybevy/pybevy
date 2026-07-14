@@ -34,6 +34,20 @@ use super::{
     helpers::validity_guard::ValidityFlagWithMode,
 };
 
+/// How a [`PyLazyWrapperProxy`] relates to ECS storage, which decides whether its cached
+/// `data_ptr` can be trusted across a structural mutation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProxyKind {
+    /// Long-lived handle from `world.get` / `world.get_mut`. The entity may be
+    /// structurally mutated while the proxy is held, so the address is re-resolved from
+    /// `(world_ptr, entity, component_id)` on every access, and escaped Vec3/Vec2 field
+    /// handles re-resolve too.
+    WorldGet,
+    /// Query iteration item. The cached `data_ptr` is valid for the ValidityFlag window
+    /// (no immediate structural mutation can intervene), so it is used directly.
+    QueryItem,
+}
+
 /// Lazy proxy for wrapper storage components in Query iteration.
 ///
 /// This proxy holds a pointer to the raw wrapper bytes in the ECS and deserializes
@@ -41,11 +55,19 @@ use super::{
 /// raw bytes.
 ///
 /// # Safety
-/// The data_ptr must remain valid for the lifetime of this object. This is ensured
-/// by the ValidityFlag which is invalidated when the query iteration advances.
+/// For query-iteration proxies (`ProxyKind::QueryItem`) the `data_ptr` must remain valid
+/// for the lifetime of this object; this is ensured by the ValidityFlag which is
+/// invalidated when the query iteration advances. For long-lived proxies returned from
+/// `world.get` / `world.get_mut` (`ProxyKind::WorldGet`) the ValidityFlag does not cover
+/// structural mutations, so `data_ptr` is treated as a stale hint and the current
+/// address is re-resolved from `(world_ptr, entity, component_id)` on every access.
 #[pyclass(name = "LazyWrapperProxy")]
 pub struct PyLazyWrapperProxy {
-    /// Pointer to the raw wrapper bytes in the ECS
+    /// Pointer to the raw wrapper bytes in the ECS.
+    ///
+    /// Only trusted directly on the query fast path (`ProxyKind::QueryItem`). For
+    /// `ProxyKind::WorldGet` this is a construction-time hint and may dangle after a
+    /// structural mutation; `resolved_ptr()` re-resolves instead.
     data_ptr: *mut u8,
 
     /// Component layout (field names, types, and byte offsets)
@@ -68,6 +90,10 @@ pub struct PyLazyWrapperProxy {
 
     /// World pointer (for change tracking outside iteration context)
     world_ptr: *mut World,
+
+    /// Whether this proxy re-resolves per access (`WorldGet`) or trusts the cached
+    /// `data_ptr` for the ValidityFlag window (`QueryItem`).
+    kind: ProxyKind,
 }
 
 // SAFETY: PyLazyWrapperProxy is Send because:
@@ -95,7 +121,7 @@ impl PyLazyWrapperProxy {
     /// - data_ptr must point to valid wrapper bytes for the component's lifetime
     /// - validity must be properly invalidated when the data becomes invalid
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn new(
+    pub(crate) unsafe fn new(
         data_ptr: *mut u8,
         layout: Arc<ComponentLayout>,
         py_type: *const pyo3::ffi::PyTypeObject,
@@ -104,6 +130,7 @@ impl PyLazyWrapperProxy {
         component_id: ComponentId,
         entity: Entity,
         world_ptr: *mut World,
+        kind: ProxyKind,
     ) -> Self {
         Self {
             data_ptr,
@@ -114,6 +141,7 @@ impl PyLazyWrapperProxy {
             component_id,
             entity,
             world_ptr,
+            kind,
         }
     }
 
@@ -121,6 +149,41 @@ impl PyLazyWrapperProxy {
     #[inline]
     fn check_valid(&self) -> PyResult<()> {
         Ok(self.validity.check()?)
+    }
+
+    /// Effective base pointer for the component's data bytes.
+    ///
+    /// For long-lived proxies (`ProxyKind::WorldGet`, from `world.get`/`world.get_mut`)
+    /// the entity may have been structurally mutated since construction, so the cached
+    /// `data_ptr` can dangle: re-resolve the component's current address and error if
+    /// the entity was despawned or the component removed. For query-iteration proxies
+    /// (`ProxyKind::QueryItem`) the cached pointer is kept valid by the ValidityFlag for
+    /// the duration of the access, so it is used directly (fast path).
+    ///
+    /// Callers must not run Python code between calling this and using the pointer: a
+    /// re-entrant structural mutation would invalidate it. Re-resolve again instead.
+    #[inline]
+    fn resolved_ptr(&self) -> PyResult<*mut u8> {
+        match self.kind {
+            ProxyKind::WorldGet => {
+                // SAFETY: world_ptr is valid while `validity` is active (callers run
+                // check_valid first); synchronous Python attribute access holds no
+                // competing &mut World.
+                unsafe {
+                    pybevy_ecs::shared::change_tracking::reresolve_wrapper_ptr(
+                        self.entity,
+                        self.world_ptr,
+                        self.component_id,
+                    )
+                }
+                .ok_or_else(|| {
+                    PyRuntimeError::new_err(
+                        "Component no longer available (entity despawned or component removed)",
+                    )
+                })
+            }
+            ProxyKind::QueryItem => Ok(self.data_ptr),
+        }
     }
 
     /// Deserialize a single field from the wrapper bytes
@@ -143,8 +206,10 @@ impl PyLazyWrapperProxy {
                 ))
             })?;
 
-        // Read bytes at the field's offset
-        let bytes_ptr = unsafe { self.data_ptr.add(field.offset) };
+        // Read bytes at the field's offset. For long-lived proxies this re-resolves
+        // the component's current address (the cached data_ptr may dangle after a
+        // structural mutation); for query iteration it is the cached pointer.
+        let bytes_ptr = unsafe { self.resolved_ptr()?.add(field.offset) };
 
         // Deserialize based on field type
         let value: Py<PyAny> = match field.field_type {
@@ -176,18 +241,52 @@ impl PyLazyWrapperProxy {
                 let val = unsafe { *(bytes_ptr as *const bool) };
                 Py::from(pyo3::types::PyBool::new(py, val)).into()
             }
-            PrimitiveType::Vec3 => {
-                let vec3_ptr = bytes_ptr as *mut Vec3;
-                let storage = unsafe { ValueStorage::borrowed(vec3_ptr, self.validity.clone()) };
-                let py_vec3 = PyVec3::from_borrowed(storage);
-                Py::new(py, py_vec3)?.into_any()
-            }
-            PrimitiveType::Vec2 => {
-                let vec2_ptr = bytes_ptr as *mut Vec2;
-                let storage = unsafe { ValueStorage::borrowed(vec2_ptr, self.validity.clone()) };
-                let py_vec2 = PyVec2::from_borrowed(storage);
-                Py::new(py, py_vec2)?.into_any()
-            }
+            PrimitiveType::Vec3 => match self.kind {
+                ProxyKind::WorldGet => {
+                    // Long-lived proxy: hand back a re-resolving handle, not a borrow into
+                    // ECS storage. The escaped PyVec3 re-derives the field's address on each
+                    // access, so `obj.field.x = ...` writes through to the live component and
+                    // survives structural moves (a cached borrow would dangle).
+                    let storage = unsafe {
+                        ValueStorage::revalidating(
+                            self.world_ptr,
+                            self.entity,
+                            self.component_id,
+                            field.offset,
+                            self.validity.clone(),
+                        )
+                    };
+                    Py::new(py, PyVec3::from_borrowed(storage))?.into_any()
+                }
+                ProxyKind::QueryItem => {
+                    // Query iteration: the ValidityFlag covers the access window, so a
+                    // borrowed (write-through) sub-proxy is safe and preserves mutation.
+                    let vec3_ptr = bytes_ptr as *mut Vec3;
+                    let storage =
+                        unsafe { ValueStorage::borrowed(vec3_ptr, self.validity.clone()) };
+                    Py::new(py, PyVec3::from_borrowed(storage))?.into_any()
+                }
+            },
+            PrimitiveType::Vec2 => match self.kind {
+                ProxyKind::WorldGet => {
+                    let storage = unsafe {
+                        ValueStorage::revalidating(
+                            self.world_ptr,
+                            self.entity,
+                            self.component_id,
+                            field.offset,
+                            self.validity.clone(),
+                        )
+                    };
+                    Py::new(py, PyVec2::from_borrowed(storage))?.into_any()
+                }
+                ProxyKind::QueryItem => {
+                    let vec2_ptr = bytes_ptr as *mut Vec2;
+                    let storage =
+                        unsafe { ValueStorage::borrowed(vec2_ptr, self.validity.clone()) };
+                    Py::new(py, PyVec2::from_borrowed(storage))?.into_any()
+                }
+            },
         };
 
         Ok(value)
@@ -217,49 +316,61 @@ impl PyLazyWrapperProxy {
             .ok_or_else(|| {
                 PyAttributeError::new_err(format!("Component has no field '{}'", field_name))
             })?;
+        let field_type = field.field_type;
+        let offset = field.offset;
 
-        // Get pointer to the field's bytes
-        let bytes_ptr = unsafe { self.data_ptr.add(field.offset) };
+        /// A field value already coerced to a plain Rust scalar, ready to write.
+        enum ScalarWrite {
+            F32(f32),
+            F64(f64),
+            I32(i32),
+            I64(i64),
+            U32(u32),
+            U64(u64),
+            Bool(bool),
+            Vec3(Vec3),
+            Vec2(Vec2),
+        }
 
-        // Serialize based on field type
-        match field.field_type {
-            PrimitiveType::F32 => {
-                let val: f32 = value.extract()?;
-                unsafe { *(bytes_ptr as *mut f32) = val };
-            }
-            PrimitiveType::F64 => {
-                let val: f64 = value.extract()?;
-                unsafe { *(bytes_ptr as *mut f64) = val };
-            }
-            PrimitiveType::I32 => {
-                let val: i32 = value.extract()?;
-                unsafe { *(bytes_ptr as *mut i32) = val };
-            }
-            PrimitiveType::I64 => {
-                let val: i64 = value.extract()?;
-                unsafe { *(bytes_ptr as *mut i64) = val };
-            }
-            PrimitiveType::U32 => {
-                let val: u32 = value.extract()?;
-                unsafe { *(bytes_ptr as *mut u32) = val };
-            }
-            PrimitiveType::U64 => {
-                let val: u64 = value.extract()?;
-                unsafe { *(bytes_ptr as *mut u64) = val };
-            }
-            PrimitiveType::Bool => {
-                let val: bool = value.extract()?;
-                unsafe { *(bytes_ptr as *mut bool) = val };
-            }
+        // Coerce the Python value to a plain Rust scalar FIRST. `value.extract()` can
+        // re-enter Python (e.g. via __float__/__index__/__bool__), and that Python code
+        // may run a structural mutation which reallocates or moves this component's
+        // storage. So all Python interaction must finish before we resolve a pointer:
+        // holding a resolved pointer across extract() would risk a use-after-free.
+        let write = match field_type {
+            PrimitiveType::F32 => ScalarWrite::F32(value.extract()?),
+            PrimitiveType::F64 => ScalarWrite::F64(value.extract()?),
+            PrimitiveType::I32 => ScalarWrite::I32(value.extract()?),
+            PrimitiveType::I64 => ScalarWrite::I64(value.extract()?),
+            PrimitiveType::U32 => ScalarWrite::U32(value.extract()?),
+            PrimitiveType::U64 => ScalarWrite::U64(value.extract()?),
+            PrimitiveType::Bool => ScalarWrite::Bool(value.extract()?),
             PrimitiveType::Vec3 => {
                 let py_vec3: PyRef<PyVec3> = value.extract()?;
-                let v: Vec3 = (&*py_vec3).into();
-                unsafe { *(bytes_ptr as *mut Vec3) = v };
+                ScalarWrite::Vec3((&*py_vec3).into())
             }
             PrimitiveType::Vec2 => {
                 let py_vec2: PyRef<PyVec2> = value.extract()?;
-                let v: Vec2 = (&*py_vec2).into();
-                unsafe { *(bytes_ptr as *mut Vec2) = v };
+                ScalarWrite::Vec2((&*py_vec2).into())
+            }
+        };
+
+        // Resolve the pointer immediately before the write, with no Python calls in
+        // between. For long-lived proxies this fetches the component's current address
+        // (erroring if the entity was despawned or the component removed since
+        // construction); for query iteration it is the cached pointer.
+        let bytes_ptr = unsafe { self.resolved_ptr()?.add(offset) };
+        unsafe {
+            match write {
+                ScalarWrite::F32(v) => *(bytes_ptr as *mut f32) = v,
+                ScalarWrite::F64(v) => *(bytes_ptr as *mut f64) = v,
+                ScalarWrite::I32(v) => *(bytes_ptr as *mut i32) = v,
+                ScalarWrite::I64(v) => *(bytes_ptr as *mut i64) = v,
+                ScalarWrite::U32(v) => *(bytes_ptr as *mut u32) = v,
+                ScalarWrite::U64(v) => *(bytes_ptr as *mut u64) = v,
+                ScalarWrite::Bool(v) => *(bytes_ptr as *mut bool) = v,
+                ScalarWrite::Vec3(v) => *(bytes_ptr as *mut Vec3) = v,
+                ScalarWrite::Vec2(v) => *(bytes_ptr as *mut Vec2) = v,
             }
         }
 
@@ -292,6 +403,7 @@ impl PyLazyWrapperProxy {
         }
 
         // Fall back to Python type attributes (methods, class variables, etc.)
+        // SAFETY: registered type pointers live for the interpreter lifetime
         let py_type =
             unsafe { pyo3::Bound::from_borrowed_ptr(py, this.py_type as *mut pyo3::ffi::PyObject) };
 
@@ -346,6 +458,7 @@ impl PyLazyWrapperProxy {
     /// Return the component's Python type for isinstance() checks
     #[getter(__class__)]
     fn get_class(&self, py: Python) -> PyResult<Py<PyType>> {
+        // SAFETY: registered type pointers live for the interpreter lifetime
         let py_type =
             unsafe { pyo3::Bound::from_borrowed_ptr(py, self.py_type as *mut pyo3::ffi::PyObject) };
 

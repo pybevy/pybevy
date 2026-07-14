@@ -8,12 +8,33 @@
 //! - ValueStorage stores Copy types directly (Owned(T))
 //! - ComponentStorage stores larger types in Box (Owned(Box<T>))
 
+use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+
 use crate::{
     borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
+
+/// Re-derive the address of a wrapper-component field: the component's current base
+/// pointer (matching construction's immutable `get_by_id`) plus the field's byte
+/// offset. `None` if the entity was despawned or the component removed.
+///
+/// # Safety
+/// `world_ptr` must be valid and free of a competing mutable borrow for the call.
+#[inline]
+unsafe fn revalidate_field_ptr(
+    world_ptr: *mut World,
+    entity: Entity,
+    component_id: ComponentId,
+    offset: usize,
+) -> Option<*mut u8> {
+    let world = unsafe { &*world_ptr };
+    let entity_ref = world.get_entity(entity).ok()?;
+    let base = entity_ref.get_by_id(component_id).ok()?.as_ptr();
+    Some(unsafe { base.add(offset) })
+}
 
 /// Generic storage for PyBevy value types (Copy types like Vec3, Quat, etc.)
 ///
@@ -48,7 +69,39 @@ pub enum ValueStorageInner<T: Copy> {
 
     /// Mutable borrow into a component field
     BorrowedMut(BorrowedMut<T>),
+
+    /// A field of a wrapper component reached from a long-lived `world.get`/`world.get_mut`
+    /// proxy. Caches no pointer: it re-derives the component's current address on every
+    /// access (the entity may be structurally moved while the handle is held), so
+    /// reads/writes land on the live component and access after despawn errors.
+    ///
+    /// Boxed so this rarely-used variant does not enlarge `ValueStorage` (hence every
+    /// math/color type) with its extra identity fields.
+    Revalidating(Box<RevalidatingField>),
 }
+
+/// Identity of a wrapper-component field, used by a re-resolving [`ValueStorage`] handle
+/// to re-derive the field's address on each access.
+///
+/// Public (like `BorrowedRef`/`BorrowedMut`) only because it appears in the `pub`
+/// `ValueStorageInner::Revalidating` variant; all fields stay private.
+#[derive(Debug, Clone)]
+pub struct RevalidatingField {
+    world_ptr: *mut World,
+    entity: Entity,
+    component_id: ComponentId,
+    offset: usize,
+    /// Validity + read/write mode. `check_write` still enforces read-only access
+    /// (a `world.get` field handle rejects mutation), same as `BorrowedRef`.
+    validity: ValidityFlagWithMode,
+}
+
+// SAFETY: the `*mut World` is just an address; it is only dereferenced through a fresh
+// re-resolve gated by `validity` (Arc<AtomicU8>, itself Send + Sync), which is
+// invalidated when the owning system exits. The other fields are plain Copy data.
+unsafe impl Send for RevalidatingField {}
+// SAFETY: same argument as the impl above
+unsafe impl Sync for RevalidatingField {}
 
 impl<T: Copy> Clone for ValueStorage<T> {
     fn clone(&self) -> Self {
@@ -58,6 +111,7 @@ impl<T: Copy> Clone for ValueStorage<T> {
             ValueStorageInner::BorrowedRef(b) => ValueStorageInner::BorrowedRef(b.clone()),
             // A cloned mutable borrow downgrades to read-only to avoid aliasing.
             ValueStorageInner::BorrowedMut(b) => ValueStorageInner::BorrowedRef(b.clone_as_ref()),
+            ValueStorageInner::Revalidating(f) => ValueStorageInner::Revalidating(f.clone()),
         };
         Self { inner }
     }
@@ -76,6 +130,9 @@ where
             }
             (ValueStorageInner::BorrowedMut(a), ValueStorageInner::BorrowedMut(b)) => {
                 a.as_ptr() == b.as_ptr()
+            }
+            (ValueStorageInner::Revalidating(a), ValueStorageInner::Revalidating(b)) => {
+                a.entity == b.entity && a.component_id == b.component_id && a.offset == b.offset
             }
             _ => false,
         }
@@ -134,6 +191,36 @@ impl<T: Copy> ValueStorage<T> {
         }
     }
 
+    /// Create a re-resolving field handle for a field of a wrapper component.
+    ///
+    /// Unlike `borrowed`, this caches no pointer: each access re-derives the field's
+    /// current address from `(world_ptr, entity, component_id, offset)`, so it stays
+    /// valid across structural mutations that move the component, and errors once the
+    /// entity is despawned. Used for Vec3/Vec2 fields escaped from a `world.get`/
+    /// `world.get_mut` proxy, where a cached borrow would dangle.
+    ///
+    /// # Safety
+    /// - `world_ptr` must be valid while `validity` is active.
+    /// - `entity`, `component_id` and `offset` must identify a field of type `T` at
+    ///   `offset` bytes into that component's storage.
+    pub unsafe fn revalidating(
+        world_ptr: *mut World,
+        entity: Entity,
+        component_id: ComponentId,
+        offset: usize,
+        validity: ValidityFlagWithMode,
+    ) -> Self {
+        Self {
+            inner: ValueStorageInner::Revalidating(Box::new(RevalidatingField {
+                world_ptr,
+                entity,
+                component_id,
+                offset,
+                validity,
+            })),
+        }
+    }
+
     /// Get immutable reference to the value, checking validity
     ///
     /// # Errors
@@ -145,6 +232,15 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => Ok(value),
             ValueStorageInner::BorrowedRef(b) => b.get(),
             ValueStorageInner::BorrowedMut(b) => b.get(),
+            ValueStorageInner::Revalidating(f) => {
+                f.validity.check_read()?;
+                let ptr = unsafe {
+                    revalidate_field_ptr(f.world_ptr, f.entity, f.component_id, f.offset)
+                }
+                .ok_or(StorageError::EntityUnavailable)?;
+                // SAFETY: validity checked; ptr re-resolved to the live component field
+                Ok(unsafe { &*(ptr as *const T) })
+            }
         }
     }
 
@@ -161,6 +257,15 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::OwnedReadOnly(_) => Err(StorageError::OwnedFieldReadOnly),
             ValueStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
             ValueStorageInner::BorrowedMut(b) => b.get_mut(),
+            ValueStorageInner::Revalidating(f) => {
+                f.validity.check_write()?;
+                let ptr = unsafe {
+                    revalidate_field_ptr(f.world_ptr, f.entity, f.component_id, f.offset)
+                }
+                .ok_or(StorageError::EntityUnavailable)?;
+                // SAFETY: validity + write permission checked; ptr re-resolved to the live field
+                Ok(unsafe { &mut *(ptr as *mut T) })
+            }
         }
     }
 
@@ -178,7 +283,9 @@ impl<T: Copy> ValueStorage<T> {
     pub fn is_borrowed(&self) -> bool {
         matches!(
             self.inner,
-            ValueStorageInner::BorrowedRef(_) | ValueStorageInner::BorrowedMut(_)
+            ValueStorageInner::BorrowedRef(_)
+                | ValueStorageInner::BorrowedMut(_)
+                | ValueStorageInner::Revalidating(_)
         )
     }
 
@@ -221,6 +328,18 @@ impl<T: Copy> ValueStorage<T> {
             }
             ValueStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
             ValueStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
+            ValueStorageInner::Revalidating(f) => {
+                f.validity.check_read()?;
+                // A sub-field of a re-resolving handle would itself dangle across a
+                // move, so return a read-only snapshot rather than a deeper borrow.
+                let ptr = unsafe {
+                    revalidate_field_ptr(f.world_ptr, f.entity, f.component_id, f.offset)
+                }
+                .ok_or(StorageError::EntityUnavailable)?;
+                // SAFETY: validity checked; ptr re-resolved to the live component field
+                let value_ref = unsafe { &*(ptr as *const T) };
+                Ok(S::snapshot(field_accessor(value_ref)))
+            }
         }
     }
 
@@ -426,5 +545,85 @@ mod tests {
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
         let field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
         assert!(field.is_borrowed());
+    }
+
+    #[derive(bevy::ecs::component::Component)]
+    #[repr(C, align(8))]
+    struct Holder {
+        v: [f32; 3],
+    }
+
+    #[derive(bevy::ecs::component::Component)]
+    struct Tag;
+
+    #[test]
+    fn test_revalidating_reads_and_writes_live_component() {
+        let mut world = World::new();
+        let cid = world.register_component::<Holder>();
+        let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // Handle to v[1]: offset = one f32 = 4 bytes.
+        let mut storage: ValueStorage<f32> =
+            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 4, validity) };
+
+        assert_eq!(storage.get().unwrap(), 2.0);
+        *storage.as_mut().unwrap() = 9.0;
+        // Write went through to the live component.
+        assert_eq!(world.entity(e).get::<Holder>().unwrap().v[1], 9.0);
+    }
+
+    #[test]
+    fn test_revalidating_tracks_after_archetype_move() {
+        let mut world = World::new();
+        let cid = world.register_component::<Holder>();
+        let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let mut storage: ValueStorage<f32> =
+            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 0, validity) };
+
+        // Insert a second component: moves the entity to a new archetype/table, which
+        // would dangle a cached pointer.
+        world.entity_mut(e).insert(Tag);
+
+        assert_eq!(storage.get().unwrap(), 1.0);
+        *storage.as_mut().unwrap() = 7.0;
+        assert_eq!(world.entity(e).get::<Holder>().unwrap().v[0], 7.0);
+    }
+
+    #[test]
+    fn test_revalidating_errors_after_despawn() {
+        let mut world = World::new();
+        let cid = world.register_component::<Holder>();
+        let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let mut storage: ValueStorage<f32> =
+            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 0, validity) };
+
+        assert!(storage.as_ref().is_ok());
+        world.despawn(e);
+        assert!(storage.as_ref().is_err());
+        assert!(storage.as_mut().is_err());
+        assert!(storage.get().is_err());
+    }
+
+    #[test]
+    fn test_revalidating_read_mode_rejects_write() {
+        let mut world = World::new();
+        let cid = world.register_component::<Holder>();
+        let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+        let mut storage: ValueStorage<f32> =
+            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 0, validity) };
+
+        assert!(storage.as_ref().is_ok());
+        assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
     }
 }

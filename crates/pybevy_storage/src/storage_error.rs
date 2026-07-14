@@ -21,6 +21,10 @@ pub enum StorageError {
     /// Accessed outside system execution (`RuntimeError`)
     InvalidAccess,
 
+    /// A re-resolving borrow's entity was despawned or its component removed
+    /// (`RuntimeError`).
+    EntityUnavailable,
+
     /// Write on read-only component (`RuntimeError`)
     ReadOnly,
 
@@ -47,6 +51,9 @@ impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StorageError::InvalidAccess => f.write_str(ERR_OUTSIDE_SYSTEM),
+            StorageError::EntityUnavailable => f.write_str(
+                "Component no longer available (entity despawned or component removed).",
+            ),
             StorageError::ReadOnly => f.write_str(
                 "Cannot modify read-only component. \
                  Use Query[Mut[ComponentType]] instead of Query[ComponentType] for mutable access.",
@@ -82,6 +89,7 @@ impl From<StorageError> for pyo3::PyErr {
         use pyo3::exceptions::{PyIndexError, PyRuntimeError};
         match err {
             StorageError::InvalidAccess
+            | StorageError::EntityUnavailable
             | StorageError::ReadOnly
             | StorageError::OwnedFieldReadOnly
             | StorageError::AssetConsumed
