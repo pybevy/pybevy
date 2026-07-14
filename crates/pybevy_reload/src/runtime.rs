@@ -116,6 +116,10 @@ pub trait ReloadRuntime {
         handles: Vec<Self::SystemHandle>,
     );
 
+    /// Disable systems registered for a candidate generation that failed
+    /// before it could be committed.
+    fn retire_handles(&mut self, _handles: &[Self::SystemHandle]) {}
+
     /// Prune old-generation message registrations.
     fn prune_messages(&mut self, world: &mut World, keep_after_generation: u32);
 
@@ -143,6 +147,11 @@ pub trait ReloadRuntime {
 
     /// Trigger garbage collection in the runtime.
     fn trigger_gc(&mut self);
+
+    /// Consume a runtime error buffered before the Last schedule can publish it.
+    fn take_pending_system_error(&mut self, _world: &mut World) -> Option<String> {
+        None
+    }
 
     /// Get runtime GC tracked object count (for overlay stats).
     fn gc_object_count(&self) -> usize {

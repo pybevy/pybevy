@@ -551,6 +551,17 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         }
     }
 
+    fn retire_handles(&mut self, handles: &[DynamicSystemHandle]) {
+        Python::attach(|_py| {
+            for handle in handles {
+                match handle.lock() {
+                    Ok(mut inner) => inner.gut(),
+                    Err(poisoned) => poisoned.into_inner().gut(),
+                }
+            }
+        });
+    }
+
     fn prune_messages(&mut self, world: &mut World, keep_after_generation: u32) {
         if let Some(mut msg_registry) = world.get_resource_mut::<MessageRegistry>() {
             let keep_after = keep_after_generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
