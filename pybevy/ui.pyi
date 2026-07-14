@@ -699,13 +699,6 @@ class BoxSizing:
     ContentBox: BoxSizing
     """Width/height refer to the content box (excluding padding and border)."""
 
-    @staticmethod
-    def border_box() -> BoxSizing:
-        """Create BorderBox sizing (default)."""
-
-    @staticmethod
-    def content_box() -> BoxSizing:
-        """Create ContentBox sizing."""
 
 
 class VisualBox:
@@ -732,17 +725,6 @@ class VisualBox:
     BorderBox: VisualBox
     """Clip content outside the border box."""
 
-    @staticmethod
-    def content_box() -> VisualBox:
-        """Create ContentBox clipping."""
-
-    @staticmethod
-    def padding_box() -> VisualBox:
-        """Create PaddingBox clipping."""
-
-    @staticmethod
-    def border_box() -> VisualBox:
-        """Create BorderBox clipping."""
 
 
 class OverflowClipMargin:
@@ -3204,9 +3186,6 @@ class ShadowStyle:
             blur_radius: Blurriness of the shadow
         """
 
-    @staticmethod
-    def default() -> ShadowStyle:
-        """Create a default shadow style."""
 
     @property
     def color(self) -> Color:
