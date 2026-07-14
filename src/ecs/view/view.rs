@@ -263,6 +263,18 @@ impl PyView {
             .collect()
     }
 
+    /// The per-component accept-set for `validate_bytecode_field_types`: each
+    /// declared component's `ComponentId` mapped to its legitimate bytecode
+    /// `(offset, FieldType)` pairs (vectors expanded to `F32` lanes). A `field`
+    /// expression whose `(offset, field_type)` is not in its component's set is a
+    /// type confusion (or mid-field offset) and is rejected before execution.
+    fn declared_field_offsets(&self) -> HashMap<ComponentId, HashSet<(usize, VmFieldType)>> {
+        self.component_types
+            .iter()
+            .filter_map(|ct| Some((self.get_component_id(ct).ok()?, expanded_field_offsets(ct))))
+            .collect()
+    }
+
     /// Get or register a component ID
     fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
         // Check cache first
@@ -391,6 +403,10 @@ impl PyView {
         // SECURITY: reject fields naming a component this view did not declare
         // (undeclared-read race + would panic on the stride/base lookup).
         view_engine::validate_bytecode_components(&bytecode, &self.declared_component_ids())
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        // SECURITY: reject fields whose (offset, type) don't name a real field
+        // (type confusion, e.g. reading an f32 field as Bool = invalid-bit-pattern UB).
+        view_engine::validate_bytecode_field_types(&bytecode, &self.declared_field_offsets())
             .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
         // Determine which component type to query based on the compiled expression.
@@ -1067,6 +1083,83 @@ pub(crate) fn get_component_field_info(
     }
 }
 
+/// Insert a field's legitimate bytecode `(offset, FieldType)` pair(s) into `set`,
+/// expanding `Vec2`/`Vec3`/`Vec4` into their per-lane `F32` sub-fields (the only
+/// forms the VM emits; a whole-vector read never reaches `read_field_value`).
+fn insert_expanded_field(set: &mut HashSet<(usize, VmFieldType)>, offset: usize, ft: VmFieldType) {
+    let lanes = match ft {
+        VmFieldType::Vec2 => 2,
+        VmFieldType::Vec3 => 3,
+        VmFieldType::Vec4 => 4,
+        scalar => {
+            set.insert((offset, scalar));
+            return;
+        }
+    };
+    for i in 0..lanes {
+        set.insert((offset + i * 4, VmFieldType::F32));
+    }
+}
+
+/// The set of legitimate bytecode `(offset, FieldType)` pairs a `field` expression
+/// may reference for `component_type` (vectors expanded to `F32` lanes). This is the
+/// per-component accept-set consumed by `validate_bytecode_field_types`.
+///
+/// Best-effort and fail-closed: returns an empty set for components whose field
+/// layout can't be enumerated (PyObject-storage custom components, or a built-in
+/// with no view bridge). The View API only reads wrapper-storage fields, so a
+/// legitimate bytecode never references such a component's fields; an empty set
+/// means any forged field access to it is rejected rather than trusted.
+pub(crate) fn expanded_field_offsets(
+    component_type: &PyComponentType,
+) -> HashSet<(usize, VmFieldType)> {
+    let mut set = HashSet::new();
+    match component_type {
+        PyComponentType::Custom(type_ptr) => Python::attach(|py| {
+            // SAFETY: registered type pointers live for the interpreter lifetime
+            let py_type = unsafe {
+                pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
+            };
+            if let Ok(cls) = py_type.cast::<pyo3::types::PyType>()
+                && matches!(
+                    ComponentStorageType::from_python_class(cls)
+                        .unwrap_or(ComponentStorageType::PyObject),
+                    ComponentStorageType::Wrapper(_)
+                )
+                && let Ok(layout) = ComponentLayout::from_annotations(cls)
+            {
+                for field in &layout.fields {
+                    insert_expanded_field(&mut set, field.offset, field.field_type.to_field_type());
+                }
+            }
+        }),
+        PyComponentType::Dynamic(type_ptr) => {
+            if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr)
+                && let Some(view_bridge) = bridge.view_bridge()
+            {
+                // Mirror `create_field_proxy`'s composite decision so the accept-set is
+                // exactly what a legit proxy chain emits: Vec3/Vec2 bridge types expand
+                // to their lanes; and on Transform, `rotation` is a Quat that the bridge
+                // reports as scalar F32 (BatchableField<Quat>::VIEW_FIELD_TYPE) but the
+                // proxy exposes as a 4-lane QuatExpr, so expand it to 4 F32 lanes.
+                let is_transform = bridge.name() == "Transform";
+                for &name in (view_bridge.field_names)() {
+                    if let Some(fo) = (view_bridge.field_offset)(name) {
+                        if is_transform && name == "rotation" {
+                            for i in 0..4 {
+                                set.insert((fo.offset + i * 4, VmFieldType::F32));
+                            }
+                        } else {
+                            insert_expanded_field(&mut set, fo.offset, fo.field_type);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
 /// Shared __getattr__ implementation for both read-only and mutable column proxies
 /// Returns the appropriate field proxy (FieldExpr, Vec3Expr, or QuatExpr)
 fn create_field_proxy<'py>(
@@ -1292,6 +1385,10 @@ impl PyViewColMut {
         // SECURITY: reject fields naming a component this view did not declare
         // (undeclared-read race on assignment sources + stride/base lookup panic).
         view_engine::validate_bytecode_components(bytecode, &view.declared_component_ids())
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        // SECURITY: reject fields whose (offset, type) don't name a real field
+        // (type confusion on assignment source/dest, e.g. Bool over an f32 field = UB).
+        view_engine::validate_bytecode_field_types(bytecode, &view.declared_field_offsets())
             .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
         // If all fields are from the same component, use the optimized single-component path
