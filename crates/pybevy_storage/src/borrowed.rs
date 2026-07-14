@@ -135,7 +135,7 @@ impl<T> BorrowedMut<T> {
 
     #[inline(always)]
     pub fn get_mut(&mut self) -> Result<&mut T, StorageError> {
-        self.validity.check_read()?;
+        self.validity.check_write()?;
         // SAFETY: validity checked above; ptr came from a &mut chain per new()'s contract
         Ok(unsafe { &mut *self.ptr })
     }
@@ -198,5 +198,36 @@ impl<T> BorrowedMut<T> {
             }
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// get_mut requires the flag to be in Write state, even though mutability
+    /// is otherwise encoded in the type: a master flag downgraded to Read
+    /// (or invalidated) must reject writes through an existing BorrowedMut.
+    #[test]
+    fn borrowed_mut_get_mut_requires_write_state() {
+        let mut value = 7u32;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value outlives the borrow within this test scope
+        let mut borrow = unsafe { BorrowedMut::new(&mut value as *mut u32, flag.clone()) };
+
+        *borrow.get_mut().unwrap() = 8;
+        assert_eq!(*borrow.get().unwrap(), 8);
+
+        let read_flag = ValidityFlag::new_read();
+        // SAFETY: same value, still live
+        let mut read_state_borrow = unsafe { BorrowedMut::new(&mut value as *mut u32, read_flag) };
+        assert!(read_state_borrow.get().is_ok());
+        assert!(matches!(
+            read_state_borrow.get_mut(),
+            Err(StorageError::ReadOnly)
+        ));
+
+        flag.set_invalid();
+        assert!(matches!(borrow.get_mut(), Err(StorageError::InvalidAccess)));
     }
 }
