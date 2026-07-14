@@ -541,6 +541,10 @@ pub struct ControlSender {
     pub tx: mpsc::UnboundedSender<ControlRequest>,
 }
 
+/// Default screenshot width when the caller doesn't pass `max_width`.
+/// Keep in sync with the "(default 768)" schema docs on the capture params.
+pub const DEFAULT_SCREENSHOT_MAX_WIDTH: u32 = 768;
+
 /// Bevy resource for pending screenshot responses (deferred until after render)
 #[derive(Resource, Default)]
 pub struct PendingScreenshots {
@@ -670,7 +674,7 @@ pub fn push_pending_screenshot(
         response_tx,
         frames_remaining: params.delay_frames,
         with_gizmos,
-        max_width: params.max_width,
+        max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
         debug_camera,
         hide_ui: params.hide_ui,
         extra_response: None,
@@ -845,7 +849,7 @@ pub fn push_pending_depth(
 
     let want_rgb = params.include_rgb.unwrap_or(true);
     let df = params.delay_frames.unwrap_or(2);
-    let mw = Some(params.max_width.unwrap_or(768));
+    let mw = Some(params.max_width.unwrap_or(DEFAULT_SCREENSHOT_MAX_WIDTH));
     let hu = params.hide_ui.unwrap_or(true);
     let dc = params.position.as_ref().map(|pos| DebugCameraRequest {
         position: *pos,
@@ -1087,6 +1091,25 @@ mod tests {
         let json = r#""MyEntity""#;
         let entity_ref: EntityRef = serde_json::from_str(json).unwrap();
         assert!(matches!(entity_ref, EntityRef::Name(ref s) if s == "MyEntity"));
+    }
+
+    #[test]
+    fn push_pending_screenshot_applies_default_max_width() {
+        let (tx, _rx) = oneshot::channel();
+        let params: CaptureScreenshotParams = serde_json::from_str("{}").unwrap();
+        let mut deferred = Vec::new();
+        push_pending_screenshot(params, false, tx, &mut deferred);
+        assert_eq!(deferred[0].max_width, Some(DEFAULT_SCREENSHOT_MAX_WIDTH));
+    }
+
+    #[test]
+    fn push_pending_screenshot_keeps_explicit_max_width() {
+        let (tx, _rx) = oneshot::channel();
+        let params: CaptureScreenshotParams =
+            serde_json::from_str(r#"{"max_width": 1280}"#).unwrap();
+        let mut deferred = Vec::new();
+        push_pending_screenshot(params, false, tx, &mut deferred);
+        assert_eq!(deferred[0].max_width, Some(1280));
     }
 
     #[test]

@@ -332,7 +332,9 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                             response_tx: rac.response_tx,
                             frames_remaining: rac.screenshot_delay_frames,
                             with_gizmos: false,
-                            max_width: rac.max_width.or(Some(768)),
+                            max_width: rac
+                                .max_width
+                                .or(Some(crate::bridge::DEFAULT_SCREENSHOT_MAX_WIDTH)),
                             debug_camera,
                             hide_ui: rac.hide_ui,
                             extra_response: Some(serde_json::json!({
