@@ -7,6 +7,7 @@ use crate::ecs::{
     query::{ParamType, query_helpers::extract_param_type_from_query_param},
 };
 
+pub mod cached_view;
 pub mod view;
 pub mod view_column;
 pub mod view_param;

@@ -20,10 +20,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use bevy::{
@@ -39,6 +36,7 @@ use pybevy_bytecodevm::{
     bytecode::{CompiledBytecode, Compiler, FieldType as VmFieldType},
     expr::RustExpr,
     view_engine::{self, TableRowRange, ViewFilter},
+    view_runtime::{ViewRuntimeCore, ViewRuntimeError},
 };
 use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
@@ -55,7 +53,7 @@ use crate::ecs::{
     component_type::{PyComponentType, register_component_id_simple},
     component_wrapper::*,
     helpers::validity_guard::ValidityFlag,
-    view::{construct_view_class_item, view_column::PyViewColumn},
+    view::{cached_view::CachedPyView, construct_view_class_item, view_column::PyViewColumn},
 };
 
 /// View parameter for batch operations
@@ -86,6 +84,10 @@ pub struct PyView {
     /// Current run tick for change detection comparison
     this_run: Tick,
 
+    /// Stable interpreter adapter and run-scoped neutral runtime.
+    cached: Arc<CachedPyView>,
+    runtime: Arc<ViewRuntimeCore>,
+
     /// Component types with mutable access (Mut[T] in View parameters)
     /// Components not in this set are read-only
     mutable_components: HashSet<PyComponentType>,
@@ -104,9 +106,6 @@ pub struct PyView {
 
     /// Bytecode cache for compiled expressions (keyed by dest field + expression hash)
     bytecode_cache: RefCell<view_engine::BytecodeCache>,
-
-    /// Component ID lookup cache
-    component_ids: RefCell<HashMap<PyComponentType, ComponentId>>,
 
     /// Validity tokens created by iter_batches() that need to be poisoned on drop
     batch_validity_tokens: RefCell<Vec<Arc<std::sync::atomic::AtomicBool>>>,
@@ -170,40 +169,44 @@ impl PyView {
     /// # Safety
     /// `world` must reference the World the view operates on and must remain valid
     /// for as long as `validity` is active.
-    #[allow(clippy::too_many_arguments)]
-    pub unsafe fn new_with_filters(
-        component_types: Vec<PyComponentType>,
-        mutable_components: HashSet<PyComponentType>,
-        filter_types: Vec<PyComponentType>,
-        without_filter_types: Vec<PyComponentType>,
-        changed_filter_types: Vec<PyComponentType>,
-        added_filter_types: Vec<PyComponentType>,
+    pub unsafe fn new_cached(
+        cached: Arc<CachedPyView>,
         last_run: Tick,
+        this_run: Tick,
         world: UnsafeWorldCell,
         validity: ValidityFlag,
-    ) -> Self {
-        // Stamp this_run from the cell (safe read) so batch write-backs and the
-        // system's last_run end-read observe the same tick (5a semantics).
-        let this_run = world.change_tick();
+    ) -> Result<Self, ViewRuntimeError> {
+        // SAFETY: forwarded from the caller: the cell and validity belong to
+        // this run, while cached metadata was built from the same declared View.
+        let runtime = Arc::new(unsafe {
+            ViewRuntimeCore::new(
+                Arc::clone(&cached.core),
+                world,
+                validity.clone(),
+                last_run,
+                this_run,
+            )
+        }?);
         // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the cell
         // is only used while `validity` is active.
         let world_cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(world) };
-        Self {
-            component_types,
-            filter_types,
-            without_filter_types,
-            changed_filter_types,
-            added_filter_types,
+        Ok(Self {
+            component_types: cached.component_types.clone(),
+            filter_types: cached.filter_types.clone(),
+            without_filter_types: cached.without_filter_types.clone(),
+            changed_filter_types: cached.changed_filter_types.clone(),
+            added_filter_types: cached.added_filter_types.clone(),
             last_run,
             this_run,
-            mutable_components,
+            mutable_components: cached.mutable_components.clone(),
+            cached,
+            runtime,
             borrowed_mut: RefCell::new(HashSet::new()),
             world_cell: Some(world_cell),
             validity,
             bytecode_cache: RefCell::new(view_engine::BytecodeCache::new()),
-            component_ids: RefCell::new(HashMap::new()),
             batch_validity_tokens: RefCell::new(Vec::new()),
-        }
+        })
     }
 
     /// Derive a raw `*mut World` from the stored cell for a single batch operation.
@@ -256,10 +259,7 @@ impl PyView {
     /// naming a component outside this set (e.g. a proxy captured from another
     /// View) is rejected before its column is read.
     fn declared_component_ids(&self) -> HashSet<ComponentId> {
-        self.component_types
-            .iter()
-            .filter_map(|ct| self.get_component_id(ct).ok())
-            .collect()
+        self.runtime.spec().filter().component_ids.clone()
     }
 
     /// The per-component accept-set for `validate_bytecode_field_types`: each
@@ -268,30 +268,16 @@ impl PyView {
     /// expression whose `(offset, field_type)` is not in its component's set is a
     /// type confusion (or mid-field offset) and is rejected before execution.
     fn declared_field_offsets(&self) -> HashMap<ComponentId, HashSet<(usize, VmFieldType)>> {
-        self.component_types
-            .iter()
-            .filter_map(|ct| Some((self.get_component_id(ct).ok()?, expanded_field_offsets(ct))))
-            .collect()
+        self.runtime.spec().allowed_fields().clone()
     }
 
-    /// Get or register a component ID
+    /// Get the initialization-time component ID for this View parameter.
     fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
-        // Check cache first
-        if let Some(&id) = self.component_ids.borrow().get(comp_type) {
-            return Ok(id);
-        }
-
-        // Register component
-        // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
-        let world = unsafe { &mut *self.world_ptr()? };
-
-        let id = register_component_id_simple(world, comp_type);
-
-        // Cache it
-        self.component_ids
-            .borrow_mut()
-            .insert(comp_type.clone(), id);
-        Ok(id)
+        self.cached.component_id(comp_type).ok_or_else(|| {
+            PyRuntimeError::new_err(format!(
+                "Component type {comp_type} was not resolved for this View parameter"
+            ))
+        })
     }
 
     /// Apply With, Without, Changed, and Added filters to a QueryBuilder.
@@ -812,37 +798,13 @@ impl PyView {
             )?;
             Ok(sum as usize)
         } else {
-            // Count all entities - simpler path without expression evaluation
-            // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
-            let world = unsafe { &mut *self.world_ptr()? };
-
-            // Build a query using the first component type's ID
-            let component_type = self
-                .component_types
-                .first()
-                .ok_or_else(|| PyRuntimeError::new_err("View has no component types"))?;
-
-            let component_id = self.get_component_id(component_type)?;
-
-            let mut query_builder = QueryBuilder::<FilteredEntityMut>::new(world);
-            query_builder.mut_id(component_id);
-            self.apply_filters_to_query_builder(&mut query_builder, None);
-
-            let mut query_state = query_builder.build();
-
-            // Just count - no expression evaluation needed
-            let counter = AtomicUsize::new(0);
-
-            let tick_filters = self.resolve_tick_filters();
-
-            query_state.par_iter_mut(world).for_each(|entity_mut| {
-                if !tick_filters.entity_passes(&entity_mut) {
-                    return;
-                }
-                counter.fetch_add(1, Ordering::Relaxed);
-            });
-
-            Ok(counter.load(Ordering::Relaxed))
+            let lease = self
+                .runtime
+                .gather_batches()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            lease
+                .entity_count()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))
         }
     }
 }
@@ -1021,83 +983,6 @@ pub(crate) fn get_component_field_info(
             Ok((offset_info.offset, offset_info.field_type))
         }
     }
-}
-
-/// Insert a field's legitimate bytecode `(offset, FieldType)` pair(s) into `set`,
-/// expanding `Vec2`/`Vec3`/`Vec4` into their per-lane `F32` sub-fields (the only
-/// forms the VM emits; a whole-vector read never reaches `read_field_value`).
-fn insert_expanded_field(set: &mut HashSet<(usize, VmFieldType)>, offset: usize, ft: VmFieldType) {
-    let lanes = match ft {
-        VmFieldType::Vec2 => 2,
-        VmFieldType::Vec3 => 3,
-        VmFieldType::Vec4 => 4,
-        scalar => {
-            set.insert((offset, scalar));
-            return;
-        }
-    };
-    for i in 0..lanes {
-        set.insert((offset + i * 4, VmFieldType::F32));
-    }
-}
-
-/// The set of legitimate bytecode `(offset, FieldType)` pairs a `field` expression
-/// may reference for `component_type` (vectors expanded to `F32` lanes). This is the
-/// per-component accept-set consumed by `validate_bytecode_field_types`.
-///
-/// Best-effort and fail-closed: returns an empty set for components whose field
-/// layout can't be enumerated (PyObject-storage custom components, or a built-in
-/// with no view bridge). The View API only reads wrapper-storage fields, so a
-/// legitimate bytecode never references such a component's fields; an empty set
-/// means any forged field access to it is rejected rather than trusted.
-pub(crate) fn expanded_field_offsets(
-    component_type: &PyComponentType,
-) -> HashSet<(usize, VmFieldType)> {
-    let mut set = HashSet::new();
-    match component_type {
-        PyComponentType::Custom(type_ptr) => Python::attach(|py| {
-            // SAFETY: registered type pointers live for the interpreter lifetime
-            let py_type = unsafe {
-                pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
-            };
-            if let Ok(cls) = py_type.cast::<pyo3::types::PyType>()
-                && matches!(
-                    ComponentStorageType::from_python_class(cls)
-                        .unwrap_or(ComponentStorageType::PyObject),
-                    ComponentStorageType::Wrapper(_)
-                )
-                && let Ok(layout) = ComponentLayout::from_annotations(cls)
-            {
-                for field in &layout.fields {
-                    insert_expanded_field(&mut set, field.offset, field.field_type.to_field_type());
-                }
-            }
-        }),
-        PyComponentType::Dynamic(type_ptr) => {
-            if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr)
-                && let Some(view_bridge) = bridge.view_bridge()
-            {
-                // Mirror `create_field_proxy`'s composite decision so the accept-set is
-                // exactly what a legit proxy chain emits: Vec3/Vec2 bridge types expand
-                // to their lanes; and on Transform, `rotation` is a Quat that the bridge
-                // reports as scalar F32 (BatchableField<Quat>::VIEW_FIELD_TYPE) but the
-                // proxy exposes as a 4-lane QuatExpr, so expand it to 4 F32 lanes.
-                let is_transform = bridge.name() == "Transform";
-                for &name in (view_bridge.field_names)() {
-                    if let Some(fo) = (view_bridge.field_offset)(name) {
-                        if is_transform && name == "rotation" {
-                            for i in 0..4 {
-                                set.insert((fo.offset + i * 4, VmFieldType::F32));
-                            }
-                        } else {
-                            insert_expanded_field(&mut set, fo.offset, fo.field_type);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    set
 }
 
 /// Shared __getattr__ implementation for both read-only and mutable column proxies
