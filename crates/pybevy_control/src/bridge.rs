@@ -697,12 +697,18 @@ pub fn push_pending_reload(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     world: &mut World,
 ) {
-    let _ = handlers::reload::trigger_reload(
+    // Surface validation errors (e.g. an out-of-range time_scale) directly.
+    // Otherwise the caller would silently drop the bad param and still receive
+    // a false "reload_completed" from the deferred response waiter below.
+    if let Err(e) = handlers::reload::trigger_reload(
         world,
         params.mode.clone(),
         params.pause,
         params.time_scale,
-    );
+    ) {
+        let _ = response_tx.send(Err(e));
+        return;
+    }
 
     let error_ts = world
         .get_resource::<pybevy_core::LastSystemError>()
@@ -723,12 +729,17 @@ pub fn push_pending_reload_and_capture(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     world: &mut World,
 ) {
-    let _ = handlers::reload::trigger_reload(
+    // Surface validation errors (e.g. an out-of-range time_scale) directly
+    // instead of dropping the bad param and reporting a false success later.
+    if let Err(e) = handlers::reload::trigger_reload(
         world,
         params.mode.clone(),
         params.pause,
         params.time_scale,
-    );
+    ) {
+        let _ = response_tx.send(Err(e));
+        return;
+    }
 
     let error_ts = world
         .get_resource::<pybevy_core::LastSystemError>()
@@ -1121,6 +1132,70 @@ mod tests {
 
         let req = receiver.rx.try_recv().unwrap();
         assert!(matches!(req.operation, ControlOperation::ListEntities));
+    }
+
+    #[test]
+    fn push_pending_reload_surfaces_time_scale_error() {
+        // Regression: trigger_reload's Result was discarded with `let _ =`, so a
+        // rejected time_scale silently dropped the param and the deferred waiter
+        // still reported a false "reload_completed". The error must reach the
+        // caller and no response waiter should be queued.
+        let mut world = World::new();
+        world.init_resource::<bevy::time::Time<bevy::time::Virtual>>();
+        let (tx, mut rx) = oneshot::channel();
+        push_pending_reload(
+            ReloadParams {
+                mode: ReloadMode::Full,
+                pause: false,
+                time_scale: Some(1.0e6),
+            },
+            tx,
+            &mut world,
+        );
+        let result = rx.try_recv().expect("caller should receive a response");
+        let err = result.expect_err("out-of-range time_scale must be an error");
+        assert!(err.message.contains("1000"));
+        // No deferred waiter queued, and the bad scale was not applied.
+        let queued = world
+            .get_resource::<PendingReloadResponses>()
+            .map(|p| p.pending.len())
+            .unwrap_or(0);
+        assert_eq!(queued, 0);
+        let speed = world
+            .resource::<bevy::time::Time<bevy::time::Virtual>>()
+            .relative_speed();
+        assert!((speed - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn push_pending_reload_valid_time_scale_defers() {
+        // A valid time_scale applies and queues the deferred waiter (no immediate
+        // response), confirming the error path did not regress the happy path.
+        let mut world = World::new();
+        world.init_resource::<bevy::time::Time<bevy::time::Virtual>>();
+        let (tx, mut rx) = oneshot::channel();
+        push_pending_reload(
+            ReloadParams {
+                mode: ReloadMode::Full,
+                pause: false,
+                time_scale: Some(2.0),
+            },
+            tx,
+            &mut world,
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "response is deferred, not immediate"
+        );
+        let queued = world
+            .get_resource::<PendingReloadResponses>()
+            .map(|p| p.pending.len())
+            .unwrap_or(0);
+        assert_eq!(queued, 1);
+        let speed = world
+            .resource::<bevy::time::Time<bevy::time::Virtual>>()
+            .relative_speed();
+        assert!((speed - 2.0).abs() < 1e-6);
     }
 
     #[test]
