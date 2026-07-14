@@ -307,42 +307,47 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
                 entity.contains::<#bevy_type>()
             }
 
-            fn extract_from_entity_ref(
+            unsafe fn extract_from_entity_ref(
                 &self,
-                entity: &bevy::ecs::world::EntityRef,
+                entity_id: bevy::ecs::entity::Entity,
+                world_ptr: *mut bevy::ecs::world::World,
                 validity: #core_path::ValidityFlagWithMode,
                 py: #pyo3_path::Python,
             ) -> #pyo3_path::PyResult<Option<#pyo3_path::Py<#pyo3_path::PyAny>>> {
-                if let Some(component) = entity.get::<#bevy_type>() {
-                    // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
-                    let ptr = component as *const #bevy_type as *mut #bevy_type;
-                    // SAFETY: ptr is from a valid entity.get() borrow; validity flag invalidates storage when borrow expires.
-                    let storage = unsafe {
-                        #core_path::ComponentStorage::borrowed(ptr, validity)
-                    };
-                    let obj = #pyo3_path::Py::new(py, #py_type::from_borrowed(storage))?;
-                    Ok(Some(obj.into_any()))
-                } else {
-                    Ok(None)
+                // SAFETY: caller guarantees world_ptr validity (trait contract). The handle
+                // re-resolves the component's address per access.
+                match unsafe {
+                    #core_path::resolve_revalidating_component::<#bevy_type>(
+                        entity_id, world_ptr, validity,
+                    )
+                } {
+                    Some(storage) => {
+                        let obj = #pyo3_path::Py::new(py, #py_type::from_borrowed(storage))?;
+                        Ok(Some(obj.into_any()))
+                    }
+                    None => Ok(None),
                 }
             }
 
-            fn extract_from_entity_mut(
+            unsafe fn extract_from_entity_mut(
                 &self,
-                entity: &mut bevy::ecs::world::EntityWorldMut,
+                entity_id: bevy::ecs::entity::Entity,
+                world_ptr: *mut bevy::ecs::world::World,
                 validity: #core_path::ValidityFlagWithMode,
                 py: #pyo3_path::Python,
             ) -> #pyo3_path::PyResult<Option<#pyo3_path::Py<#pyo3_path::PyAny>>> {
-                if let Some(mut component) = entity.get_mut::<#bevy_type>() {
-                    let ptr = component.as_mut() as *mut #bevy_type;
-                    // SAFETY: ptr is from a valid entity.get_mut() borrow; validity flag invalidates storage when borrow expires.
-                    let storage = unsafe {
-                        #core_path::ComponentStorage::borrowed(ptr, validity)
-                    };
-                    let obj = #pyo3_path::Py::new(py, #py_type::from_borrowed(storage))?;
-                    Ok(Some(obj.into_any()))
-                } else {
-                    Ok(None)
+                // SAFETY: caller guarantees world_ptr validity (trait contract). `validity`
+                // carries write access so mutations land on the live component.
+                match unsafe {
+                    #core_path::resolve_revalidating_component::<#bevy_type>(
+                        entity_id, world_ptr, validity,
+                    )
+                } {
+                    Some(storage) => {
+                        let obj = #pyo3_path::Py::new(py, #py_type::from_borrowed(storage))?;
+                        Ok(Some(obj.into_any()))
+                    }
+                    None => Ok(None),
                 }
             }
         }

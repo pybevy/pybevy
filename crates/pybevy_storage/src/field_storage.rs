@@ -23,8 +23,10 @@
 //! - `ValidityFlagWithMode` tracks validity and read/write permission
 //! - Inherits validity from parent (invalidated when parent's system exits)
 
+use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+
 use crate::{
-    borrowed::{BorrowedMut, BorrowedRef},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
@@ -75,6 +77,12 @@ pub enum FieldStorageInner<T: Clone> {
 
     /// Mutable borrow into a component field
     BorrowedMut(BorrowedMut<T>),
+
+    /// A non-Copy field reached from a long-lived `world.get`/`world.get_mut` handle.
+    /// Caches no pointer: it re-derives the field's current address on every access, so
+    /// it stays valid across structural moves and errors after despawn. Boxed so this
+    /// rarely-used variant does not enlarge `FieldStorage`.
+    Revalidating(Box<RevalidatingField>),
 }
 
 impl<T: Clone> Clone for FieldStorage<T> {
@@ -94,6 +102,7 @@ impl<T: Clone> Clone for FieldStorage<T> {
             FieldStorageInner::BorrowedRef(b) => FieldStorageInner::BorrowedRef(b.clone()),
             // A cloned mutable borrow downgrades to read-only to avoid aliasing.
             FieldStorageInner::BorrowedMut(b) => FieldStorageInner::BorrowedRef(b.clone_as_ref()),
+            FieldStorageInner::Revalidating(f) => FieldStorageInner::Revalidating(f.clone()),
         };
         Self { inner }
     }
@@ -115,6 +124,9 @@ impl<T: Clone + PartialEq> PartialEq for FieldStorage<T> {
             }
             (FieldStorageInner::BorrowedMut(a), FieldStorageInner::BorrowedMut(b)) => {
                 a.as_ptr() == b.as_ptr()
+            }
+            (FieldStorageInner::Revalidating(a), FieldStorageInner::Revalidating(b)) => {
+                a.same_identity(b)
             }
             _ => false,
         }
@@ -154,6 +166,21 @@ impl<T: Clone> BorrowableStorage<T> for FieldStorage<T> {
             inner: FieldStorageInner::OwnedReadOnly {
                 data: Box::new(value.clone()),
             },
+        }
+    }
+
+    unsafe fn revalidating_field(
+        world_ptr: *mut World,
+        entity: Entity,
+        component_id: ComponentId,
+        offset: usize,
+        validity: ValidityFlagWithMode,
+    ) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: FieldStorageInner::Revalidating(Box::new(unsafe {
+                RevalidatingField::new(world_ptr, entity, component_id, offset, validity)
+            })),
         }
     }
 }
@@ -196,6 +223,7 @@ impl<T: Clone> FieldStorage<T> {
             }
             FieldStorageInner::BorrowedRef(b) => b.get(),
             FieldStorageInner::BorrowedMut(b) => b.get(),
+            FieldStorageInner::Revalidating(f) => f.get::<T>(),
         }
     }
 
@@ -207,6 +235,7 @@ impl<T: Clone> FieldStorage<T> {
             FieldStorageInner::OwnedReadOnly { .. } => Err(StorageError::OwnedFieldReadOnly),
             FieldStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
             FieldStorageInner::BorrowedMut(b) => b.get_mut(),
+            FieldStorageInner::Revalidating(f) => f.get_mut::<T>(),
         }
     }
 
@@ -250,6 +279,7 @@ impl<T: Clone> FieldStorage<T> {
             }
             FieldStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
             FieldStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
+            FieldStorageInner::Revalidating(f) => f.child_of::<T, F, S>(field_accessor),
         }
     }
 
@@ -288,7 +318,9 @@ impl<T: Clone> FieldStorage<T> {
     pub fn is_borrowed(&self) -> bool {
         matches!(
             self.inner,
-            FieldStorageInner::BorrowedRef(_) | FieldStorageInner::BorrowedMut(_)
+            FieldStorageInner::BorrowedRef(_)
+                | FieldStorageInner::BorrowedMut(_)
+                | FieldStorageInner::Revalidating(_)
         )
     }
 
@@ -535,5 +567,64 @@ mod tests {
 
         // Guard dropped — borrowed field should also be invalid
         assert!(borrowed.as_ref().is_err());
+    }
+
+    #[test]
+    fn test_revalidating_field_via_component_writes_through_and_tracks_move() {
+        use crate::pycomponent::ComponentStorage;
+
+        #[derive(bevy::ecs::component::Component)]
+        #[repr(C)]
+        struct StringHolder {
+            text: String,
+        }
+        #[derive(bevy::ecs::component::Component)]
+        struct Tag;
+
+        let mut world = World::new();
+        let cid = world.register_component::<StringHolder>();
+        let e = world.spawn(StringHolder { text: "hi".into() }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let comp =
+            unsafe { ComponentStorage::<StringHolder>::revalidating(world_ptr, e, cid, validity) };
+        // Non-Copy field reached from a re-resolving component: itself re-resolves.
+        let mut field: FieldStorage<String> = comp.borrow_field(|c| &c.text).unwrap();
+        assert!(field.is_borrowed());
+        assert_eq!(field.as_ref().unwrap(), "hi");
+
+        world.entity_mut(e).insert(Tag); // archetype move
+        field.as_mut().unwrap().push_str("!");
+        assert_eq!(world.entity(e).get::<StringHolder>().unwrap().text, "hi!");
+
+        world.despawn(e);
+        assert!(field.as_ref().is_err());
+        assert!(field.as_mut().is_err());
+    }
+
+    #[test]
+    fn test_revalidating_field_read_mode_rejects_write() {
+        let mut world = World::new();
+
+        #[derive(bevy::ecs::component::Component)]
+        #[repr(C)]
+        struct StringHolder {
+            text: String,
+        }
+
+        let cid = world.register_component::<StringHolder>();
+        let e = world.spawn(StringHolder { text: "hi".into() }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+        // text is the first field of a #[repr(C)] struct, so offset 0.
+        let mut storage: FieldStorage<String> = unsafe {
+            <FieldStorage<String> as BorrowableStorage<String>>::revalidating_field(
+                world_ptr, e, cid, 0, validity,
+            )
+        };
+        assert!(storage.as_ref().is_ok());
+        assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
     }
 }

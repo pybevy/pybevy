@@ -762,13 +762,20 @@ pub(crate) fn generate_handle_bridge_tokens(
                 entity.contains::<#bevy_type>()
             }
 
-            fn extract_from_entity_ref(
+            unsafe fn extract_from_entity_ref(
                 &self,
-                entity: &bevy::ecs::world::EntityRef,
+                entity_id: bevy::ecs::entity::Entity,
+                world_ptr: *mut bevy::ecs::world::World,
                 _validity: pybevy_core::ValidityFlagWithMode,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-                if let Some(component) = entity.get::<#bevy_type>() {
+                // SAFETY: caller guarantees world_ptr validity (trait contract).
+                let Some(entity_ref) =
+                    (unsafe { pybevy_core::entity_ref_from_ptr(entity_id, world_ptr) })
+                else {
+                    return Ok(None);
+                };
+                if let Some(component) = entity_ref.get::<#bevy_type>() {
                     let py_component = #py_type::from(component);
                     let obj = pyo3::Py::new(py, (py_component, pybevy_core::PyComponent))?;
                     Ok(Some(obj.into_any()))
@@ -777,13 +784,20 @@ pub(crate) fn generate_handle_bridge_tokens(
                 }
             }
 
-            fn extract_from_entity_mut(
+            unsafe fn extract_from_entity_mut(
                 &self,
-                entity: &mut bevy::ecs::world::EntityWorldMut,
+                entity_id: bevy::ecs::entity::Entity,
+                world_ptr: *mut bevy::ecs::world::World,
                 _validity: pybevy_core::ValidityFlagWithMode,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-                if let Some(component) = entity.get::<#bevy_type>() {
+                // SAFETY: caller guarantees world_ptr validity (trait contract).
+                let Some(entity_ref) =
+                    (unsafe { pybevy_core::entity_ref_from_ptr(entity_id, world_ptr) })
+                else {
+                    return Ok(None);
+                };
+                if let Some(component) = entity_ref.get::<#bevy_type>() {
                     let py_component = #py_type::from(component);
                     let obj = pyo3::Py::new(py, (py_component, pybevy_core::PyComponent))?;
                     Ok(Some(obj.into_any()))

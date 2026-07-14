@@ -3,10 +3,14 @@
 //! This module provides a unified storage mechanism for all PyBevy component types.
 //! See the main crate's `pycomponent.rs` for detailed safety documentation.
 
-use bevy::ecs::component::Component;
+use bevy::ecs::{
+    component::{Component, ComponentId},
+    entity::Entity,
+    world::World,
+};
 
 use crate::{
-    borrowed::{BorrowedMut, BorrowedRef},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     storage_error::StorageError,
     storage_traits::BorrowableStorage,
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
@@ -35,6 +39,13 @@ pub enum ComponentStorageInner<T: Component> {
 
     /// Mutable borrow into ECS storage
     BorrowedMut(BorrowedMut<T>),
+
+    /// A component reached from a long-lived `world.get`/`world.get_mut` handle.
+    /// Caches no pointer: it re-derives the component's current address on every
+    /// access (offset 0), so it stays valid across structural moves that relocate the
+    /// component and errors after the entity is despawned. Boxed so this variant does
+    /// not enlarge `ComponentStorage`.
+    Revalidating(Box<RevalidatingField>),
 }
 
 impl<T: Component> Drop for ComponentStorage<T> {
@@ -57,6 +68,9 @@ impl<T: Component + PartialEq> PartialEq for ComponentStorage<T> {
             }
             (ComponentStorageInner::BorrowedMut(a), ComponentStorageInner::BorrowedMut(b)) => {
                 a.as_ptr() == b.as_ptr()
+            }
+            (ComponentStorageInner::Revalidating(a), ComponentStorageInner::Revalidating(b)) => {
+                a.same_identity(b)
             }
             _ => false,
         }
@@ -118,6 +132,32 @@ impl<T: Component> ComponentStorage<T> {
         }
     }
 
+    /// Create a re-resolving component handle keyed by ECS identity rather than a
+    /// cached pointer.
+    ///
+    /// Unlike `borrowed`, this caches no pointer: each access re-derives the
+    /// component's current base address from `(world_ptr, entity, component_id)`, so it
+    /// stays valid across structural mutations that relocate the component and errors
+    /// once the entity is despawned. Used for a component escaped from a long-lived
+    /// `world.get`/`world.get_mut` handle, where a cached borrow would dangle.
+    ///
+    /// # Safety
+    /// - `world_ptr` must be valid while `validity` is active.
+    /// - `(entity, component_id)` must identify a live component of type `T`.
+    pub unsafe fn revalidating(
+        world_ptr: *mut World,
+        entity: Entity,
+        component_id: ComponentId,
+        validity: ValidityFlagWithMode,
+    ) -> Self {
+        Self {
+            // SAFETY: whole-component handle, so offset is 0; forwards the contract
+            inner: ComponentStorageInner::Revalidating(Box::new(unsafe {
+                RevalidatingField::new(world_ptr, entity, component_id, 0, validity)
+            })),
+        }
+    }
+
     /// Get immutable reference to the component, checking validity
     #[inline(always)]
     pub fn as_ref(&self) -> Result<&T, StorageError> {
@@ -125,6 +165,7 @@ impl<T: Component> ComponentStorage<T> {
             ComponentStorageInner::Owned { data, .. } => Ok(&**data),
             ComponentStorageInner::BorrowedRef(b) => b.get(),
             ComponentStorageInner::BorrowedMut(b) => b.get(),
+            ComponentStorageInner::Revalidating(r) => r.get::<T>(),
         }
     }
 
@@ -135,6 +176,7 @@ impl<T: Component> ComponentStorage<T> {
             ComponentStorageInner::Owned { data, .. } => Ok(&mut **data),
             ComponentStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
             ComponentStorageInner::BorrowedMut(b) => b.get_mut(),
+            ComponentStorageInner::Revalidating(r) => r.get_mut::<T>(),
         }
     }
 
@@ -150,6 +192,11 @@ impl<T: Component> ComponentStorage<T> {
         let inner = match &self.inner {
             ComponentStorageInner::BorrowedRef(b) => ComponentStorageInner::BorrowedRef(b.clone()),
             ComponentStorageInner::BorrowedMut(b) => ComponentStorageInner::BorrowedMut(b.share()),
+            // A re-resolving handle shares its ECS identity, so the sub-object also
+            // re-resolves from the entity (e.g. AnimationPlayer.play() -> ActiveAnimation).
+            ComponentStorageInner::Revalidating(r) => {
+                ComponentStorageInner::Revalidating(r.clone())
+            }
             ComponentStorageInner::Owned { data, validity } => {
                 let ptr = &**data as *const T as *mut T;
                 // SAFETY: ptr points into our own Box, valid while this storage lives;
@@ -171,7 +218,9 @@ impl<T: Component> ComponentStorage<T> {
     pub fn is_borrowed(&self) -> bool {
         matches!(
             self.inner,
-            ComponentStorageInner::BorrowedRef(_) | ComponentStorageInner::BorrowedMut(_)
+            ComponentStorageInner::BorrowedRef(_)
+                | ComponentStorageInner::BorrowedMut(_)
+                | ComponentStorageInner::Revalidating(_)
         )
     }
 
@@ -190,6 +239,7 @@ impl<T: Component> ComponentStorage<T> {
             ComponentStorageInner::Owned { data, .. } => Ok(S::snapshot(field_accessor(&**data))),
             ComponentStorageInner::BorrowedRef(b) => b.borrow_field(field_accessor),
             ComponentStorageInner::BorrowedMut(b) => b.borrow_field(field_accessor),
+            ComponentStorageInner::Revalidating(r) => r.child_of::<T, F, S>(field_accessor),
         }
     }
 
@@ -223,6 +273,9 @@ impl<T: Component> ComponentStorage<T> {
             },
             ComponentStorageInner::BorrowedRef(b) => b.borrow_optional_field(field_accessor),
             ComponentStorageInner::BorrowedMut(b) => b.borrow_optional_field(field_accessor),
+            ComponentStorageInner::Revalidating(r) => {
+                r.child_of_optional::<T, F, S>(field_accessor)
+            }
         }
     }
 }
@@ -503,5 +556,122 @@ mod tests {
         };
         let mut field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
         assert!(matches!(field.as_mut(), Err(StorageError::ReadOnly)));
+    }
+
+    #[test]
+    fn test_revalidating_reads_and_writes_live_component() {
+        let mut world = World::new();
+        let cid = world.register_component::<TestComponent>();
+        let e = world.spawn(TestComponent { value: 5 }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let mut storage =
+            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+
+        assert!(storage.is_borrowed());
+        assert_eq!(storage.as_ref().unwrap().value, 5);
+        storage.as_mut().unwrap().value = 99;
+        assert_eq!(world.entity(e).get::<TestComponent>().unwrap().value, 99);
+    }
+
+    #[test]
+    fn test_revalidating_tracks_after_archetype_move() {
+        let mut world = World::new();
+        let cid = world.register_component::<TestComponent>();
+        let e = world.spawn(TestComponent { value: 1 }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let mut storage =
+            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+
+        // Insert a second component: relocates the entity, dangling a cached pointer.
+        world
+            .entity_mut(e)
+            .insert(NestedComponent { x: 0.0, y: 0.0 });
+
+        assert_eq!(storage.as_ref().unwrap().value, 1);
+        storage.as_mut().unwrap().value = 7;
+        assert_eq!(world.entity(e).get::<TestComponent>().unwrap().value, 7);
+    }
+
+    #[test]
+    fn test_revalidating_errors_after_despawn() {
+        let mut world = World::new();
+        let cid = world.register_component::<TestComponent>();
+        let e = world.spawn(TestComponent { value: 5 }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let mut storage =
+            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+
+        assert!(storage.as_ref().is_ok());
+        world.despawn(e);
+        assert!(storage.as_ref().is_err());
+        assert!(storage.as_mut().is_err());
+    }
+
+    #[test]
+    fn test_revalidating_read_mode_rejects_write() {
+        let mut world = World::new();
+        let cid = world.register_component::<TestComponent>();
+        let e = world.spawn(TestComponent { value: 5 }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+        let mut storage =
+            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+
+        assert!(storage.as_ref().is_ok());
+        assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
+    }
+
+    #[test]
+    fn test_revalidating_borrow_field_writes_through_and_tracks_move() {
+        use crate::value_storage::ValueStorage;
+
+        let mut world = World::new();
+        let cid = world.register_component::<NestedComponent>();
+        let e = world.spawn(NestedComponent { x: 1.0, y: 2.0 }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let storage = unsafe {
+            ComponentStorage::<NestedComponent>::revalidating(world_ptr, e, cid, validity)
+        };
+
+        // A sub-field of a re-resolving component re-resolves too (composed offset).
+        let mut field: ValueStorage<f32> = storage.borrow_field(|c| &c.y).unwrap();
+        assert_eq!(field.get().unwrap(), 2.0);
+
+        // Force an archetype move; the field handle must still land on the live component.
+        world.entity_mut(e).insert(TestComponent { value: 7 });
+        *field.as_mut().unwrap() = 42.0;
+        assert_eq!(world.entity(e).get::<NestedComponent>().unwrap().y, 42.0);
+    }
+
+    #[test]
+    fn test_share_borrow_revalidating_tracks_move() {
+        // Mirrors AnimationPlayer.play() sharing a world.get_mut handle: the shared
+        // sub-object must re-resolve from the entity, not a cached pointer.
+        let mut world = World::new();
+        let cid = world.register_component::<TestComponent>();
+        let e = world.spawn(TestComponent { value: 1 }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let storage =
+            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+        let mut shared = storage.share_borrow();
+        assert!(shared.is_borrowed());
+
+        world
+            .entity_mut(e)
+            .insert(NestedComponent { x: 0.0, y: 0.0 });
+        shared.as_mut().unwrap().value = 55;
+        assert_eq!(storage.as_ref().unwrap().value, 55);
+        assert_eq!(world.entity(e).get::<TestComponent>().unwrap().value, 55);
     }
 }

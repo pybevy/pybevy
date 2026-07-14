@@ -886,8 +886,9 @@ impl PyWorld {
                     return Ok(None);
                 };
 
-                let entity_ref = world.entity(entity.0);
-                bridge.extract_from_entity_ref(&entity_ref, validity, py)
+                // SAFETY: world_ptr comes from this live PyWorld and stays valid while
+                // the returned handle's validity flag is active.
+                unsafe { bridge.extract_from_entity_ref(entity.0, self.world_ptr(), validity, py) }
             }
             PyComponentType::Custom(type_ptr) => {
                 self.extract_custom_component(py, entity.0, type_ptr, validity)
@@ -929,8 +930,9 @@ impl PyWorld {
                     return Ok(None);
                 };
 
-                let mut entity_mut = world.entity_mut(entity.0);
-                bridge.extract_from_entity_mut(&mut entity_mut, validity, py)
+                // SAFETY: world_ptr comes from this live PyWorld and stays valid while
+                // the returned handle's validity flag is active.
+                unsafe { bridge.extract_from_entity_mut(entity.0, self.world_ptr(), validity, py) }
             }
             PyComponentType::Custom(type_ptr) => {
                 self.extract_custom_component(py, entity.0, type_ptr, validity)

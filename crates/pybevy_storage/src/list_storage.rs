@@ -3,8 +3,10 @@
 //! This module provides storage for Vec<T> fields that can be accessed from
 //! component fields, enabling mutations to persist back to ECS.
 
+use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+
 use crate::{
-    borrowed::{BorrowedMut, BorrowedRef},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     storage_error::StorageError,
     storage_traits::BorrowableStorage,
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
@@ -30,6 +32,11 @@ pub enum ListStorageInner<T: Clone> {
 
     /// Mutable borrow into a Vec field in a component
     BorrowedMut(BorrowedMut<Vec<T>>),
+
+    /// A `Vec<T>` field reached from a long-lived `world.get`/`world.get_mut` handle.
+    /// Caches no pointer: it re-derives the field's current address on every access, so
+    /// it stays valid across structural moves and errors after despawn.
+    Revalidating(Box<RevalidatingField>),
 }
 
 impl<T: Clone> Clone for ListStorage<T> {
@@ -39,6 +46,7 @@ impl<T: Clone> Clone for ListStorage<T> {
             ListStorageInner::BorrowedRef(b) => ListStorageInner::BorrowedRef(b.clone()),
             // A cloned mutable borrow downgrades to read-only to avoid aliasing.
             ListStorageInner::BorrowedMut(b) => ListStorageInner::BorrowedRef(b.clone_as_ref()),
+            ListStorageInner::Revalidating(f) => ListStorageInner::Revalidating(f.clone()),
         };
         Self { inner }
     }
@@ -62,6 +70,21 @@ impl<T: Clone> BorrowableStorage<Vec<T>> for ListStorage<T> {
     fn snapshot(value: &Vec<T>) -> Self {
         Self {
             inner: ListStorageInner::Owned(Box::new(value.clone())),
+        }
+    }
+
+    unsafe fn revalidating_field(
+        world_ptr: *mut World,
+        entity: Entity,
+        component_id: ComponentId,
+        offset: usize,
+        validity: ValidityFlagWithMode,
+    ) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged
+            inner: ListStorageInner::Revalidating(Box::new(unsafe {
+                RevalidatingField::new(world_ptr, entity, component_id, offset, validity)
+            })),
         }
     }
 }
@@ -102,6 +125,7 @@ impl<T: Clone> ListStorage<T> {
             ListStorageInner::Owned(boxed) => Ok(&**boxed),
             ListStorageInner::BorrowedRef(b) => b.get(),
             ListStorageInner::BorrowedMut(b) => b.get(),
+            ListStorageInner::Revalidating(f) => f.get::<Vec<T>>(),
         }
     }
 
@@ -112,6 +136,7 @@ impl<T: Clone> ListStorage<T> {
             ListStorageInner::Owned(boxed) => Ok(&mut **boxed),
             ListStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
             ListStorageInner::BorrowedMut(b) => b.get_mut(),
+            ListStorageInner::Revalidating(f) => f.get_mut::<Vec<T>>(),
         }
     }
 
@@ -388,5 +413,72 @@ mod tests {
         assert!(normalize_index(3, 3).is_err());
         assert!(normalize_index(-4, 3).is_err());
         assert!(normalize_index(0, 0).is_err());
+    }
+
+    #[test]
+    fn test_revalidating_reads_writes_and_tracks_move() {
+        use bevy::ecs::world::World;
+
+        #[derive(bevy::ecs::component::Component)]
+        #[repr(C)]
+        struct VecHolder {
+            items: Vec<f32>,
+        }
+        #[derive(bevy::ecs::component::Component)]
+        struct Tag;
+
+        let mut world = World::new();
+        let cid = world.register_component::<VecHolder>();
+        let e = world
+            .spawn(VecHolder {
+                items: vec![1.0, 2.0],
+            })
+            .id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // items is the first field of a #[repr(C)] struct, so offset 0.
+        let mut storage: ListStorage<f32> = unsafe {
+            <ListStorage<f32> as BorrowableStorage<Vec<f32>>>::revalidating_field(
+                world_ptr, e, cid, 0, validity,
+            )
+        };
+        assert_eq!(storage.as_ref().unwrap(), &vec![1.0, 2.0]);
+
+        world.entity_mut(e).insert(Tag); // archetype move dangles a cached pointer
+        storage.as_mut().unwrap().push(3.0);
+        assert_eq!(
+            world.entity(e).get::<VecHolder>().unwrap().items,
+            vec![1.0, 2.0, 3.0]
+        );
+
+        world.despawn(e);
+        assert!(storage.as_ref().is_err());
+        assert!(storage.as_mut().is_err());
+    }
+
+    #[test]
+    fn test_revalidating_read_mode_rejects_write() {
+        use bevy::ecs::world::World;
+
+        #[derive(bevy::ecs::component::Component)]
+        #[repr(C)]
+        struct VecHolder {
+            items: Vec<f32>,
+        }
+
+        let mut world = World::new();
+        let cid = world.register_component::<VecHolder>();
+        let e = world.spawn(VecHolder { items: vec![1.0] }).id();
+        let world_ptr: *mut World = &mut world;
+
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+        let mut storage: ListStorage<f32> = unsafe {
+            <ListStorage<f32> as BorrowableStorage<Vec<f32>>>::revalidating_field(
+                world_ptr, e, cid, 0, validity,
+            )
+        };
+        assert!(storage.as_ref().is_ok());
+        assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
     }
 }
