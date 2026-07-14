@@ -13,6 +13,13 @@ const ERR_OUTSIDE_SYSTEM: &str = "PyBevy component accessed outside of system ex
      Query parameters are only valid during the system's execution. \
      Do not store them in global variables or use them after the system has finished.";
 
+/// Error message for accessing a system parameter from the wrong thread
+const ERR_CROSS_THREAD: &str = "PyBevy system parameter used from a different thread than the one \
+     executing the system. Query/View/World/Commands parameters are pinned to \
+     the system's thread and must not be shared across threads: do not stash \
+     them in a global read by another system running in parallel, or hand them \
+     to a thread you spawned.";
+
 /// Errors returned by storage operations.
 ///
 /// Each variant maps to a specific Python exception via `From<StorageError> for PyErr`.
@@ -24,6 +31,12 @@ pub enum StorageError {
     /// A re-resolving borrow's entity was despawned or its component removed
     /// (`RuntimeError`).
     EntityUnavailable,
+
+    /// System parameter used from a thread other than the one executing the
+    /// system (`RuntimeError`). Rejected before any pointer dereference, so a
+    /// wrapper shared to a Python-spawned thread or to a concurrently scheduled
+    /// system on a worker thread cannot cause a use-after-free / data race.
+    CrossThreadAccess,
 
     /// Write on read-only component (`RuntimeError`)
     ReadOnly,
@@ -54,6 +67,7 @@ impl fmt::Display for StorageError {
             StorageError::EntityUnavailable => f.write_str(
                 "Component no longer available (entity despawned or component removed).",
             ),
+            StorageError::CrossThreadAccess => f.write_str(ERR_CROSS_THREAD),
             StorageError::ReadOnly => f.write_str(
                 "Cannot modify read-only component. \
                  Use Query[Mut[ComponentType]] instead of Query[ComponentType] for mutable access.",
@@ -143,6 +157,7 @@ impl From<StorageError> for pyo3::PyErr {
         match err {
             StorageError::InvalidAccess
             | StorageError::EntityUnavailable
+            | StorageError::CrossThreadAccess
             | StorageError::ReadOnly
             | StorageError::OwnedFieldReadOnly
             | StorageError::AssetConsumed
