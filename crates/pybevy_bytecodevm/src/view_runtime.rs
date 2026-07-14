@@ -7,10 +7,16 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::Arc,
+    marker::PhantomData,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-use bevy_ecs::component::ComponentId;
+use bevy_ecs::{change_detection::Tick, component::ComponentId};
+use pybevy_storage::{StorageError, ValidityFlag};
 
 use crate::{
     bytecode::{CompiledBytecode, FieldId, FieldType, Op},
@@ -154,17 +160,34 @@ impl CachedViewCore {
 /// First run-scoped portion of the shared View runtime.
 ///
 /// This initial form is the sole constructor of validated programs. Run-scoped
-/// world access, validity, operation fencing, and batch leases are added in the
-/// subsequent migration slice.
+/// world access and batch leases are added in the subsequent migration slice.
 #[derive(Debug)]
 pub struct ViewRuntimeCore {
     cached: Arc<CachedViewCore>,
+    validity: ValidityFlag,
+    last_run: Tick,
+    this_run: Tick,
+    operation_active: AtomicBool,
 }
 
 impl ViewRuntimeCore {
     /// Create a run-scoped core from stable per-parameter metadata.
-    pub fn new(cached: Arc<CachedViewCore>) -> Self {
-        Self { cached }
+    ///
+    /// `last_run` and `this_run` must be the system invocation's shared tick
+    /// window; the runtime never reads or increments the World tick itself.
+    pub fn new(
+        cached: Arc<CachedViewCore>,
+        validity: ValidityFlag,
+        last_run: Tick,
+        this_run: Tick,
+    ) -> Self {
+        Self {
+            cached,
+            validity,
+            last_run,
+            this_run,
+            operation_active: AtomicBool::new(false),
+        }
     }
 
     /// Return the stable cache owner shared across runs.
@@ -175,6 +198,46 @@ impl ViewRuntimeCore {
     /// Return the exact specification owned by this runtime's cache.
     pub fn spec(&self) -> &Arc<ResolvedViewSpec> {
         self.cached.spec()
+    }
+
+    /// Return the validity flag shared by this View and every derived proxy.
+    pub fn validity(&self) -> &ValidityFlag {
+        &self.validity
+    }
+
+    /// System tick immediately preceding this invocation.
+    pub fn last_run(&self) -> Tick {
+        self.last_run
+    }
+
+    /// One stable change tick shared by all operations in this invocation.
+    pub fn this_run(&self) -> Tick {
+        self.this_run
+    }
+
+    /// Check that this runtime is live and used on its activating thread.
+    pub fn check_valid(&self) -> Result<(), ViewRuntimeError> {
+        self.validity.check().map_err(Into::into)
+    }
+
+    /// Enter the single operation permitted across this View and all proxies.
+    ///
+    /// The caller must hold the returned guard through every pointer access and
+    /// backend materialization performed by the operation. A second or
+    /// re-entrant operation fails closed. Validity is checked once before the
+    /// compare-exchange and again after acquisition, immediately before future
+    /// execution code may touch run-scoped state.
+    pub fn enter_operation(&self) -> Result<ViewOperationGuard<'_>, ViewRuntimeError> {
+        self.check_valid()?;
+        self.operation_active
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map_err(|_| ViewRuntimeError::ReentrantOperation)?;
+        let guard = ViewOperationGuard {
+            active: &self.operation_active,
+            not_send: PhantomData,
+        };
+        self.check_valid()?;
+        Ok(guard)
     }
 
     /// Validate bytecode for one explicit read or assignment operation.
@@ -222,6 +285,22 @@ pub struct ValidatedViewProgram {
     spec: Arc<ResolvedViewSpec>,
 }
 
+/// RAII proof that one View operation exclusively owns its runtime fence.
+///
+/// The guard is intentionally neither `Send` nor `Sync`: acquisition, pointer
+/// access, and release belong to the system's validity-pinned executor thread.
+#[derive(Debug)]
+pub struct ViewOperationGuard<'runtime> {
+    active: &'runtime AtomicBool,
+    not_send: PhantomData<Rc<()>>,
+}
+
+impl Drop for ViewOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
+
 impl ValidatedViewProgram {
     /// The immutable bytecode that passed validation.
     pub fn bytecode(&self) -> &CompiledBytecode {
@@ -237,6 +316,10 @@ impl ValidatedViewProgram {
 /// Failure while resolving a View or validating a program capability.
 #[derive(Debug)]
 pub enum ViewRuntimeError {
+    /// The runtime escaped its system execution window or activating thread.
+    Storage(StorageError),
+    /// Another operation already owns this runtime's shared pointer-access fence.
+    ReentrantOperation,
     /// One metadata map names a component outside the View's data declaration.
     SpecComponentNotDeclared {
         /// The inconsistent component id.
@@ -296,6 +379,10 @@ pub enum ViewRuntimeError {
 impl fmt::Display for ViewRuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Storage(error) => error.fmt(f),
+            Self::ReentrantOperation => {
+                write!(f, "Cannot re-enter a View operation while access is active")
+            }
             Self::SpecComponentNotDeclared {
                 component_id,
                 metadata,
@@ -362,9 +449,16 @@ impl fmt::Display for ViewRuntimeError {
 impl std::error::Error for ViewRuntimeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Storage(error) => Some(error),
             Self::Engine(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+impl From<StorageError> for ViewRuntimeError {
+    fn from(value: StorageError) -> Self {
+        Self::Storage(value)
     }
 }
 
@@ -534,7 +628,12 @@ mod tests {
             component_strides,
         )
         .unwrap();
-        ViewRuntimeCore::new(Arc::new(CachedViewCore::new(spec)))
+        ViewRuntimeCore::new(
+            Arc::new(CachedViewCore::new(spec)),
+            ValidityFlag::new_write(),
+            Tick::new(10),
+            Tick::new(20),
+        )
     }
 
     fn read_program(field: FieldId) -> Arc<CompiledBytecode> {
@@ -882,7 +981,12 @@ mod tests {
     fn validated_program_is_shared_across_runs_of_same_cache() {
         let component_id = ComponentId::new(1);
         let first = runtime(component_id, false);
-        let second = ViewRuntimeCore::new(Arc::clone(first.cached()));
+        let second = ViewRuntimeCore::new(
+            Arc::clone(first.cached()),
+            ValidityFlag::new_write(),
+            Tick::new(20),
+            Tick::new(30),
+        );
         let program = first
             .validate_program(
                 read_program(field(component_id, 0, FieldType::F32)),
@@ -910,5 +1014,74 @@ mod tests {
             second.check_program(&program),
             Err(ViewRuntimeError::ProgramFromDifferentRuntime)
         ));
+    }
+
+    #[test]
+    fn runtime_preserves_shared_tick_window() {
+        let runtime = runtime(ComponentId::new(1), false);
+
+        assert_eq!(runtime.last_run(), Tick::new(10));
+        assert_eq!(runtime.this_run(), Tick::new(20));
+    }
+
+    #[test]
+    fn stale_validity_rejects_operation_before_access() {
+        let runtime = runtime(ComponentId::new(1), false);
+        runtime.validity().set_invalid();
+
+        assert!(matches!(
+            runtime.check_valid(),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
+        assert!(matches!(
+            runtime.enter_operation(),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
+    }
+
+    #[test]
+    fn cross_thread_operation_is_rejected_before_fence_acquisition() {
+        let runtime = Arc::new(runtime(ComponentId::new(1), false));
+        let other = Arc::clone(&runtime);
+
+        let rejected = std::thread::spawn(move || {
+            matches!(
+                other.enter_operation(),
+                Err(ViewRuntimeError::Storage(StorageError::CrossThreadAccess))
+            )
+        })
+        .join()
+        .unwrap();
+
+        assert!(rejected);
+        assert!(runtime.enter_operation().is_ok());
+    }
+
+    #[test]
+    fn operation_fence_is_shared_by_all_runtime_owners() {
+        let runtime = Arc::new(runtime(ComponentId::new(1), true));
+        let proxy_owner = Arc::clone(&runtime);
+        let guard = runtime.enter_operation().unwrap();
+
+        assert!(matches!(
+            proxy_owner.enter_operation(),
+            Err(ViewRuntimeError::ReentrantOperation)
+        ));
+
+        drop(guard);
+        assert!(proxy_owner.enter_operation().is_ok());
+    }
+
+    #[test]
+    fn operation_guard_releases_after_unwind() {
+        let runtime = runtime(ComponentId::new(1), true);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = runtime.enter_operation().unwrap();
+            panic!("injected View operation panic");
+        }));
+
+        assert!(result.is_err());
+        assert!(runtime.enter_operation().is_ok());
     }
 }
