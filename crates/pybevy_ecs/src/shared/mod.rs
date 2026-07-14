@@ -1,6 +1,7 @@
 pub mod access_audit;
 pub mod access_sets;
 pub mod access_validation;
+pub mod batch_spawn;
 pub mod cached_query;
 pub mod change_tracking;
 pub mod command_queue_helpers;
