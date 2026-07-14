@@ -70,6 +70,7 @@ pub struct TableBatch {
 /// Filter criteria for archetype matching.
 ///
 /// All IDs must be pre-resolved before calling view engine functions.
+#[derive(Clone, Debug)]
 pub struct ViewFilter {
     /// Component IDs that must be present (the query components).
     pub component_ids: HashSet<ComponentId>,
