@@ -1,4 +1,5 @@
 use bevy::ecs::world::World;
+use pybevy_core::AssetBorrowCounter;
 use pyo3::prelude::*;
 
 use super::{mutate::convert_field_value, scene::resolve_entity};
@@ -100,7 +101,13 @@ pub fn mutate_asset(
         let write_flag = pybevy_core::ValidityFlag::new_write();
         let write_validity = write_flag.with_access_mode(pybevy_core::AccessMode::Write);
 
-        match asset_bridge.get_mut(world, &untyped, write_validity, py) {
+        match asset_bridge.get_mut(
+            world,
+            &untyped,
+            write_validity,
+            AssetBorrowCounter::default(),
+            py,
+        ) {
             Ok(Some(py_asset)) => {
                 let asset_bound = py_asset.bind(py);
                 for (field_name, field_value) in field_obj {

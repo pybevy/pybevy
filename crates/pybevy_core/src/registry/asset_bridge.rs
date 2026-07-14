@@ -15,7 +15,7 @@ use bevy::{
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
-use crate::ValidityFlagWithMode;
+use crate::{AssetBorrowCounter, ValidityFlagWithMode};
 
 /// Trait that bridges a Bevy asset to its Python wrapper.
 ///
@@ -76,6 +76,7 @@ pub trait AssetBridge: Send + Sync + 'static {
         world: &World,
         handle: &UntypedHandle,
         validity: ValidityFlagWithMode,
+        borrow_counter: AssetBorrowCounter,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>>;
 
@@ -96,6 +97,7 @@ pub trait AssetBridge: Send + Sync + 'static {
         world: &mut World,
         handle: &UntypedHandle,
         validity: ValidityFlagWithMode,
+        borrow_counter: AssetBorrowCounter,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>>;
 
@@ -181,6 +183,7 @@ pub trait AssetBridge: Send + Sync + 'static {
         &self,
         world: &World,
         validity: ValidityFlagWithMode,
+        borrow_counter: AssetBorrowCounter,
         py: Python,
     ) -> PyResult<Vec<(UntypedHandle, Py<PyAny>)>>;
 

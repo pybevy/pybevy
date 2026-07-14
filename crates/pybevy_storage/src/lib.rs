@@ -29,7 +29,7 @@ pub use borrowed::{BorrowedMut, BorrowedRef};
 pub use field_storage::{FieldStorage, FieldStorageInner};
 pub use filtered_entity_access::FilteredEntityAccess;
 pub use list_storage::{ListStorage, ListStorageInner, normalize_index};
-pub use pyasset::AssetStorage;
+pub use pyasset::{AssetBorrowCounter, AssetStorage};
 pub use pycomponent::{ComponentStorage, ComponentStorageInner};
 pub use pyresource::{ResourceStorage, ResourceStorageInner};
 pub use storage_error::StorageError;

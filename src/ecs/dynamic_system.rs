@@ -14,7 +14,7 @@ use bevy::{
     },
     prelude::*,
 };
-use pybevy_core::registry::global_registry;
+use pybevy_core::{AssetBorrowCounter, registry::global_registry};
 #[cfg(debug_assertions)]
 use pybevy_ecs::shared::access_audit::assert_query_access_declared;
 use pybevy_ecs::shared::{
@@ -825,6 +825,7 @@ impl DynamicSystem {
                             world,
                             validity.clone(),
                             *mutable,
+                            AssetBorrowCounter::default(),
                         )
                     };
                     let obj =
@@ -1485,6 +1486,7 @@ pub(crate) fn execute_system_func(
                         world.as_unsafe_world_cell(),
                         validity.clone(),
                         *mutable,
+                        AssetBorrowCounter::default(),
                     )
                 };
                 let obj = Py::new(py, (py_assets, PyResource)).expect("Failed to create PyAssets");

@@ -74,6 +74,47 @@ impl ViewCounters {
     }
 }
 
+/// Shared count of live Python wrappers borrowing assets from one `Assets<T>`
+/// access scope.
+#[derive(Debug, Clone, Default)]
+pub struct AssetBorrowCounter {
+    active: Arc<AtomicUsize>,
+}
+
+impl AssetBorrowCounter {
+    pub fn active(&self) -> usize {
+        self.active.load(Ordering::Acquire)
+    }
+
+    pub fn has_active(&self) -> bool {
+        self.active() > 0
+    }
+
+    fn lease(&self) -> AssetBorrowLease {
+        self.active.fetch_add(1, Ordering::AcqRel);
+        AssetBorrowLease {
+            counter: self.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AssetBorrowLease {
+    counter: AssetBorrowCounter,
+}
+
+impl Clone for AssetBorrowLease {
+    fn clone(&self) -> Self {
+        self.counter.lease()
+    }
+}
+
+impl Drop for AssetBorrowLease {
+    fn drop(&mut self) {
+        self.counter.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Generic storage for PyBevy assets
 ///
 /// Supports two modes:
@@ -91,6 +132,7 @@ impl ViewCounters {
 pub struct AssetStorage<T: Asset> {
     pub(crate) inner: AssetStorageInner<T>,
     views: ViewCounters,
+    borrow_lease: Option<AssetBorrowLease>,
 }
 
 #[derive(Debug)]
@@ -145,7 +187,15 @@ impl<T: Asset + Clone> Clone for AssetStorage<T> {
             AssetStorageInner::Owned(_) => ViewCounters::default(),
             _ => self.views.clone(),
         };
-        Self { inner, views }
+        let borrow_lease = match &self.inner {
+            AssetStorageInner::Owned(_) => None,
+            _ => self.borrow_lease.clone(),
+        };
+        Self {
+            inner,
+            views,
+            borrow_lease,
+        }
     }
 }
 
@@ -173,6 +223,7 @@ impl<T: Asset> AssetStorage<T> {
         Self {
             inner: AssetStorageInner::Owned(Some(Box::new(asset))),
             views: ViewCounters::default(),
+            borrow_lease: None,
         }
     }
 
@@ -212,6 +263,28 @@ impl<T: Asset> AssetStorage<T> {
         validity: ValidityFlagWithMode,
         handle: UntypedHandle,
     ) -> Self {
+        // SAFETY: forwarded from this constructor's contract.
+        unsafe { Self::borrowed_readonly_inner(ptr, validity, handle, None) }
+    }
+
+    pub unsafe fn borrowed_readonly_tracked(
+        ptr: *const T,
+        validity: ValidityFlagWithMode,
+        handle: UntypedHandle,
+        borrow_counter: AssetBorrowCounter,
+    ) -> Self {
+        // SAFETY: forwarded from this constructor's contract.
+        unsafe {
+            Self::borrowed_readonly_inner(ptr, validity, handle, Some(borrow_counter.lease()))
+        }
+    }
+
+    unsafe fn borrowed_readonly_inner(
+        ptr: *const T,
+        validity: ValidityFlagWithMode,
+        handle: UntypedHandle,
+        borrow_lease: Option<AssetBorrowLease>,
+    ) -> Self {
         Self {
             inner: AssetStorageInner::BorrowedRef {
                 // SAFETY: forwards this constructor's contract unchanged
@@ -219,6 +292,7 @@ impl<T: Asset> AssetStorage<T> {
                 handle,
             },
             views: ViewCounters::default(),
+            borrow_lease,
         }
     }
 
@@ -232,6 +306,26 @@ impl<T: Asset> AssetStorage<T> {
         validity: ValidityFlagWithMode,
         handle: UntypedHandle,
     ) -> Self {
+        // SAFETY: forwarded from this constructor's contract.
+        unsafe { Self::borrowed_mut_inner(ptr, validity, handle, None) }
+    }
+
+    pub unsafe fn borrowed_mut_tracked(
+        ptr: *mut T,
+        validity: ValidityFlagWithMode,
+        handle: UntypedHandle,
+        borrow_counter: AssetBorrowCounter,
+    ) -> Self {
+        // SAFETY: forwarded from this constructor's contract.
+        unsafe { Self::borrowed_mut_inner(ptr, validity, handle, Some(borrow_counter.lease())) }
+    }
+
+    unsafe fn borrowed_mut_inner(
+        ptr: *mut T,
+        validity: ValidityFlagWithMode,
+        handle: UntypedHandle,
+        borrow_lease: Option<AssetBorrowLease>,
+    ) -> Self {
         Self {
             inner: AssetStorageInner::BorrowedMut {
                 // SAFETY: forwards this constructor's contract unchanged
@@ -239,6 +333,7 @@ impl<T: Asset> AssetStorage<T> {
                 handle,
             },
             views: ViewCounters::default(),
+            borrow_lease,
         }
     }
 
