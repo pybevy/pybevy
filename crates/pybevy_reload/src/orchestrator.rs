@@ -1346,4 +1346,178 @@ mod tests {
             Some("synthetic register_resources failure"),
         );
     }
+
+    /// Candidate repro for empty-world-after-many-reloads: each Full reload
+    /// should leave the world with the entities its Startup spawned. After many
+    /// cycles, the count must stay constant — never drop to zero.
+    ///
+    /// Probes for state leaks in `startup_run_for_generations` (set.retain) and
+    /// `BaseEntitySet` interactions across long edit sessions.
+    struct SpawningStartupRuntime {
+        spawn_count: usize,
+    }
+
+    impl ReloadRuntime for SpawningStartupRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            world: &mut World,
+            _defs: (),
+            generation: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            use bevy::ecs::schedule::IntoScheduleConfigs;
+
+            use crate::state::startup_or_reload;
+            let count = self.spawn_count;
+            let mut schedules = world.resource_mut::<Schedules>();
+            if let Some(startup) = schedules.get_mut(Startup) {
+                // Mirror production: gate by startup_or_reload so stale systems
+                // from older generations don't double-spawn.
+                let spawn_system = move |w: &mut World| {
+                    for _ in 0..count {
+                        w.spawn(bevy::prelude::Name::new("setup_entity"));
+                    }
+                };
+                startup.add_systems(spawn_system.run_if(startup_or_reload(generation)));
+            }
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    /// Many sequential Full reloads must each leave Startup-spawned entities
+    /// in place — empty world after a successful reload would mean Startup
+    /// silently failed to run.
+    #[test]
+    fn many_full_reloads_never_leave_empty_world() {
+        let (mut world, gen_counter) = setup_world();
+        // Pretend a single base entity exists (camera/window/etc).
+        let base = world.spawn(bevy::prelude::Name::new("base")).id();
+        world.insert_resource(crate::BaseEntitySet {
+            entities: [base].into_iter().collect(),
+        });
+        let state = MockState::new(gen_counter);
+
+        const SPAWN_PER_RELOAD: usize = 3;
+        const RELOAD_CYCLES: usize = 40;
+
+        for cycle in 0..RELOAD_CYCLES {
+            let mut runtime = SpawningStartupRuntime {
+                spawn_count: SPAWN_PER_RELOAD,
+            };
+            let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
+            assert!(result.is_ok(), "reload {} should succeed", cycle);
+
+            // Count named entities only: resources are entity-backed, so a raw
+            // Entity query also sees reload-machinery internals.
+            let live = world
+                .query_filtered::<Entity, With<Name>>()
+                .iter(&world)
+                .count();
+            // base + spawned-this-reload (previous reload entities are despawned by clear_world_state)
+            assert_eq!(
+                live,
+                1 + SPAWN_PER_RELOAD,
+                "cycle {}: world unexpectedly has {} entities (expected base + {} spawned)",
+                cycle,
+                live,
+                SPAWN_PER_RELOAD,
+            );
+            assert_ne!(live, 1, "cycle {}: empty world (only base)!", cycle);
+        }
+    }
+
+    /// Alternating success/failure cycles must not corrupt the
+    /// startup_run_for_generations set so badly that a later success leaves
+    /// the world empty (Startup gated off by stale has_startup_run entry).
+    #[test]
+    fn alternating_failure_success_never_skips_startup() {
+        let (mut world, gen_counter) = setup_world();
+        let base = world.spawn(bevy::prelude::Name::new("base")).id();
+        world.insert_resource(crate::BaseEntitySet {
+            entities: [base].into_iter().collect(),
+        });
+        let state = MockState::new(gen_counter);
+
+        for cycle in 0..10 {
+            // Fail
+            let _ = perform_reload(
+                &mut world,
+                &mut StartupErrorRuntime,
+                ReloadMode::Full,
+                &state,
+            );
+            // Succeed — must spawn entities
+            let mut runtime = SpawningStartupRuntime { spawn_count: 2 };
+            let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
+            assert!(result.is_ok(), "cycle {} success reload should ok", cycle);
+            // Named entities only; see many_full_reloads_never_leave_empty_world
+            let live = world
+                .query_filtered::<Entity, With<Name>>()
+                .iter(&world)
+                .count();
+            assert_eq!(
+                live, 3,
+                "cycle {}: expected base + 2 spawn (got {})",
+                cycle, live
+            );
+        }
+    }
 }
