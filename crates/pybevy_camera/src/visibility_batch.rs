@@ -5,7 +5,9 @@ use bevy::{
     ecs::{entity::Entity, world::World},
 };
 use pybevy_core::{BatchComponent, registry::global_registry};
-use pyo3::prelude::*;
+use pyo3::{PyTypeInfo, prelude::*};
+
+use crate::visibility::PyVisibility;
 
 #[pyclass(name = "VisibilityBatch", from_py_object)]
 #[derive(Debug)]
@@ -42,6 +44,10 @@ pub struct VisibilityBatchBridge;
 impl BatchComponent for VisibilityBatchBridge {
     fn name(&self) -> &'static str {
         "VisibilityBatch"
+    }
+
+    fn component_type_ptr(&self, py: Python, _batch: &Bound<PyAny>) -> PyResult<usize> {
+        Ok(<PyVisibility as PyTypeInfo>::type_object(py).as_type_ptr() as usize)
     }
 
     fn count(&self, py: Python, batch: &Bound<PyAny>) -> PyResult<usize> {

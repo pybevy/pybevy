@@ -17,6 +17,7 @@ use super::{
     component_type::{PyComponentType, register_custom_component},
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,
+    world::PyWorld,
 };
 
 /// Enum to represent either a batch component or a uniform component
@@ -106,6 +107,28 @@ impl SpawnBatchCommand {
                 }
             }
 
+            // Resolve the actual component class behind every batch wrapper.
+            // New batch entities begin empty, so each successful component
+            // insertion emits Add followed by Insert.
+            let lifecycle_types = self
+                .components
+                .iter()
+                .map(|component| match component {
+                    ComponentData::Batch { bridge, py_obj } => {
+                        let raw = bridge.component_type_ptr(py, py_obj.bind(py))?;
+                        let type_ptr = raw as *const PyTypeObject;
+                        Ok(
+                            if global_registry::get_bridge_by_py_type(type_ptr).is_some() {
+                                PyComponentType::Dynamic(type_ptr)
+                            } else {
+                                PyComponentType::Custom(type_ptr)
+                            },
+                        )
+                    }
+                    ComponentData::Uniform(_, component_type) => Ok(component_type.clone()),
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+
             // Phase 1: Spawn all entities.
             let mut entities = Vec::with_capacity(spawn_count);
             for _ in 0..spawn_count {
@@ -125,6 +148,19 @@ impl SpawnBatchCommand {
                 if let ComponentData::Uniform(py_obj, comp_type) = comp {
                     insert_uniform_bulk(py, py_obj.bind(py), comp_type, &entities, world)?;
                 }
+            }
+
+            for &entity in &entities {
+                PyWorld::trigger_lifecycle_events_for_add(
+                    world as *mut World,
+                    entity,
+                    &lifecycle_types,
+                );
+                PyWorld::trigger_lifecycle_events_for_insert(
+                    world as *mut World,
+                    entity,
+                    &lifecycle_types,
+                );
             }
 
             Ok(entities)

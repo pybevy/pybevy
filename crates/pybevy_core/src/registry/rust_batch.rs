@@ -50,6 +50,12 @@ impl BatchComponent for RustComponentBatchBridge {
         "RustComponentBatch"
     }
 
+    fn component_type_ptr(&self, _py: Python, batch: &Bound<PyAny>) -> PyResult<usize> {
+        Ok(batch
+            .extract::<PyRef<PyRustComponentBatch>>()?
+            .component_type_ptr)
+    }
+
     fn count(&self, _py: Python, batch: &Bound<PyAny>) -> PyResult<usize> {
         let batch = batch.extract::<PyRef<PyRustComponentBatch>>()?;
         Ok(batch.count)

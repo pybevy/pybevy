@@ -374,9 +374,7 @@ impl PyWorld {
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
 
-        let world = self.world_mut()?;
-
-        let entity_id = world.spawn_empty().id();
+        let entity_id = self.world_mut()?.spawn_empty().id();
 
         // Create a temporary PyCommands wrapper around this world to reuse component insertion logic
         let world_ptr = self.world_ptr();
@@ -386,27 +384,14 @@ impl PyWorld {
         // and dropped before returning, so the world pointer remains valid
         let temp_commands = unsafe { PyCommands::from_world_temporary(world_ptr, validity) };
 
-        // Collect component types for lifecycle events
-        let mut component_types = Vec::new();
-        for component in components.iter() {
-            let component_type = component.get_type();
-            if let Ok(comp_type) = PyComponentType::try_from((&component_type, py)) {
-                component_types.push(comp_type);
-            }
-        }
-
-        // Insert components using existing helper
+        // The shared insertion helper owns Discard -> mutation -> Add ->
+        // Insert ordering for both spawn and later insert paths.
         crate::ecs::commands::insert_components_to_entity_helper(
             &temp_commands,
             py,
             entity_id,
             components,
         )?;
-
-        // Trigger Add lifecycle events for added components
-        if !component_types.is_empty() {
-            Self::trigger_lifecycle_events_for_add(world_ptr, entity_id, &component_types);
-        }
 
         Ok(PyEntityCommands::with_world(entity_id, self))
     }
@@ -415,21 +400,20 @@ impl PyWorld {
     pub fn despawn(&self, entity: &PyEntity) -> PyResult<()> {
         self.check_valid()?;
         let world_ptr = self.world_ptr();
-        let world = self.world_mut()?;
+        let component_types = {
+            let world = self.world_mut()?;
+            Self::get_entity_data_names(world, entity.0)
+        };
 
-        // Collect component types before despawning
-        let component_types = Self::get_entity_data_names(world, entity.0);
-
-        // Clean up any per-entity observers watching this entity
-        ObserverRegistry::cleanup_on_entity_despawn(entity.0, world);
-
-        // Despawn the entity
-        world.despawn(entity.0);
-
-        // Trigger Despawn lifecycle events
+        // Dispatch while the entity, its components, and target observers are
+        // still present. Reacquire the World only after callbacks finish.
         if !component_types.is_empty() {
             Self::trigger_lifecycle_events_for_despawn(world_ptr, entity.0, &component_types);
         }
+
+        let world = self.world_mut()?;
+        ObserverRegistry::cleanup_on_entity_despawn(entity.0, world);
+        world.despawn(entity.0);
 
         Ok(())
     }
@@ -652,29 +636,12 @@ impl PyWorld {
                         pyo3::types::PyTuple::new(py, [&bundle])?
                     };
 
-                    // Collect component types for lifecycle events
-                    let mut component_types = Vec::new();
-                    for component in components.iter() {
-                        let component_type = component.get_type();
-                        if let Ok(comp_type) = PyComponentType::try_from((&component_type, py)) {
-                            component_types.push(comp_type);
-                        }
-                    }
-
                     crate::ecs::commands::insert_components_to_entity_helper(
                         &temp_commands,
                         py,
                         entity_id,
                         &components,
                     )?;
-
-                    if !component_types.is_empty() {
-                        Self::trigger_lifecycle_events_for_add(
-                            world_ptr,
-                            entity_id,
-                            &component_types,
-                        );
-                    }
                 }
                 Err(e) => {
                     if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {

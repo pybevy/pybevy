@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use bevy::ecs::{
     entity::Entity, hierarchy::ChildOf, ptr::OwningPtr, system::Commands, world::World,
 };
@@ -249,17 +251,17 @@ pub(crate) fn insert_components_to_entity_helper(
             // Immediate execution path
             let world_ptr = commands.commands_ptr as *mut World;
 
-            // Check which components already exist (for Discard)
-            let existing_components = {
+            // Partition the requested components before mutation. Existing
+            // values receive Discard; newly-present values receive Add.
+            let (existing_components, added_components) = {
                 let world = commands.world_mut()?;
                 ensure_entity_exists(world, entity_id)?;
                 component_types
                     .iter()
-                    .filter(|comp_type| {
+                    .cloned()
+                    .partition::<Vec<_>, _>(|comp_type| {
                         crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
                     })
-                    .cloned()
-                    .collect::<Vec<_>>()
             };
 
             // Fire Discard BEFORE the insert (so observers can read old value)
@@ -274,20 +276,33 @@ pub(crate) fn insert_components_to_entity_helper(
             // Do the insert
             insert_components_to_entity(commands, py, entity_id, components)?;
 
-            // Fire Insert AFTER the insert
+            // Bevy 0.19 ordering: newly-present values emit Add, then every
+            // successful insertion emits Insert. Both run with data present.
+            if !added_components.is_empty() {
+                PyWorld::trigger_lifecycle_events_for_add(world_ptr, entity_id, &added_components);
+            }
             PyWorld::trigger_lifecycle_events_for_insert(world_ptr, entity_id, &component_types);
         } else {
-            // Deferred execution path
-            // Queue Discard check+trigger BEFORE the inserts (at apply time)
+            // Deferred execution path. Capture the pre-insert partition at
+            // apply time because reserved entities and earlier queued commands
+            // are not visible while the Python system is still running.
+            let added_components = Arc::new(Mutex::new(Vec::new()));
+            let added_components_before_insert = Arc::clone(&added_components);
             let component_types_for_discard = component_types.clone();
             commands.execute_or_queue(move |world| {
-                let existing: Vec<_> = component_types_for_discard
+                if !entity_exists(world, entity_id) {
+                    return;
+                }
+                let (existing, added): (Vec<_>, Vec<_>) = component_types_for_discard
                     .iter()
-                    .filter(|comp_type| {
-                        crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
-                    })
                     .cloned()
-                    .collect();
+                    .partition(|comp_type| {
+                        crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
+                    });
+
+                *added_components_before_insert
+                    .lock()
+                    .expect("lifecycle partition lock poisoned") = added;
 
                 if !existing.is_empty() {
                     PyWorld::trigger_lifecycle_events_for_discard(
@@ -301,10 +316,21 @@ pub(crate) fn insert_components_to_entity_helper(
             // Queue the actual inserts
             insert_components_to_entity(commands, py, entity_id, components)?;
 
-            // Queue Insert trigger AFTER inserts
+            // Queue Add then Insert AFTER inserts.
             let component_types_for_insert = component_types.clone();
             commands.execute_or_queue(move |world| {
                 if entity_exists(world, entity_id) {
+                    let added = added_components
+                        .lock()
+                        .expect("lifecycle partition lock poisoned")
+                        .clone();
+                    if !added.is_empty() {
+                        PyWorld::trigger_lifecycle_events_for_add(
+                            world as *mut World,
+                            entity_id,
+                            &added,
+                        );
+                    }
                     PyWorld::trigger_lifecycle_events_for_insert(
                         world as *mut World,
                         entity_id,
@@ -697,28 +723,50 @@ pub(crate) fn remove_components_from_entity_helper(
         }
     }
 
-    // Remove the components
-    remove_components_from_entity(commands, py, entity_id, components)?;
-
-    // Trigger Remove lifecycle events (deferred if using Commands)
+    // Bevy 0.19 runs Remove before deleting storage so observers can still
+    // read the old value. Only components that are currently present fire.
     if !component_types.is_empty() {
         if commands.is_world {
-            // Immediate execution - trigger now
             let world_ptr = commands.commands_ptr as *mut World;
-            PyWorld::trigger_lifecycle_events_for_remove(world_ptr, entity_id, &component_types);
+            let existing = {
+                let world = commands.world_mut()?;
+                ensure_entity_exists(world, entity_id)?;
+                component_types
+                    .iter()
+                    .filter(|comp_type| {
+                        crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            if !existing.is_empty() {
+                PyWorld::trigger_lifecycle_events_for_remove(world_ptr, entity_id, &existing);
+            }
         } else {
-            // Deferred execution - queue the trigger
+            let component_types_for_remove = component_types.clone();
             commands.execute_or_queue(move |world| {
-                if entity_exists(world, entity_id) {
+                if !entity_exists(world, entity_id) {
+                    return;
+                }
+                let existing = component_types_for_remove
+                    .iter()
+                    .filter(|comp_type| {
+                        crate::ecs::observer::entity_has_component_type(world, entity_id, comp_type)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !existing.is_empty() {
                     PyWorld::trigger_lifecycle_events_for_remove(
                         world as *mut World,
                         entity_id,
-                        &component_types,
+                        &existing,
                     );
                 }
             })?;
         }
     }
+
+    remove_components_from_entity(commands, py, entity_id, components)?;
 
     Ok(())
 }
@@ -859,28 +907,7 @@ impl PyCommands {
             components.clone()
         };
 
-        // Collect component types for lifecycle events
-        let mut component_types = Vec::new();
-        for component in components_to_insert.iter() {
-            let component_type = component.get_type();
-            if let Ok(comp_type) = PyComponentType::try_from((&component_type, py)) {
-                component_types.push(comp_type);
-            }
-        }
-
-        // Then insert each component
-        insert_components_to_entity(self, py, entity_id, &components_to_insert)?;
-
-        // Queue lifecycle event triggering (deferred execution)
-        if !component_types.is_empty() {
-            self.execute_or_queue(move |world| {
-                PyWorld::trigger_lifecycle_events_for_add(
-                    world as *mut World,
-                    entity_id,
-                    &component_types,
-                );
-            })?;
-        }
+        insert_components_to_entity_helper(self, py, entity_id, &components_to_insert)?;
 
         Ok(PyEntityCommands::with_commands(entity_id, self))
     }
@@ -936,8 +963,7 @@ impl PyCommands {
                     // Extract components from the bundle tuple
                     let components_tuple = bundle.extract::<Bound<'_, PyTuple>>()?;
 
-                    // Insert each component
-                    insert_components_to_entity(self, py, entity_id, &components_tuple)?;
+                    insert_components_to_entity_helper(self, py, entity_id, &components_tuple)?;
                 }
                 Err(e) => {
                     if e.is_instance_of::<PyStopIteration>(py) {
@@ -980,19 +1006,13 @@ impl PyCommands {
         if self.is_world {
             // Direct world access
             let world_ptr = self.commands_ptr as *mut World;
-            let world = self.world_mut()?;
+            let component_types = {
+                let world = self.world_mut()?;
+                crate::ecs::world::PyWorld::get_entity_data_names(world, entity_id)
+            };
 
-            // Collect component types before despawning
-            let component_types =
-                crate::ecs::world::PyWorld::get_entity_data_names(world, entity_id);
-
-            // Clean up any per-entity observers watching this entity
-            ObserverRegistry::cleanup_on_entity_despawn(entity_id, world);
-
-            // Despawn the entity
-            world.despawn(entity_id);
-
-            // Trigger Despawn lifecycle events
+            // Despawn observers run while the entity, components, and
+            // entity-targeted observer registrations are still alive.
             if !component_types.is_empty() {
                 PyWorld::trigger_lifecycle_events_for_despawn(
                     world_ptr,
@@ -1000,6 +1020,10 @@ impl PyCommands {
                     &component_types,
                 );
             }
+
+            let world = self.world_mut()?;
+            ObserverRegistry::cleanup_on_entity_despawn(entity_id, world);
+            world.despawn(entity_id);
         } else {
             // Deferred commands
             // We need to collect component types before queuing the despawn
@@ -1009,13 +1033,7 @@ impl PyCommands {
                 // Collect component types before despawning
                 let component_types = PyWorld::get_entity_data_names(world, entity_id);
 
-                // Clean up any per-entity observers watching this entity
-                ObserverRegistry::cleanup_on_entity_despawn(entity_id, world);
-
-                // Despawn the entity
-                world.despawn(entity_id);
-
-                // Trigger Despawn lifecycle events
+                // Dispatch before target-observer cleanup or entity removal.
                 if !component_types.is_empty() {
                     PyWorld::trigger_lifecycle_events_for_despawn(
                         world as *mut World,
@@ -1023,6 +1041,9 @@ impl PyCommands {
                         &component_types,
                     );
                 }
+
+                ObserverRegistry::cleanup_on_entity_despawn(entity_id, world);
+                world.despawn(entity_id);
             })?;
         }
 
