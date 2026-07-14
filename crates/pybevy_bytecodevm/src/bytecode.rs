@@ -942,6 +942,13 @@ impl VM {
     /// - `field = field + const` (compound add)
     /// - `field = field * const` (compound multiply)
     /// - `field = const` (simple assignment)
+    ///
+    /// # Safety
+    ///
+    /// Same contract as [`Self::execute_batch`]: `base_ptr` must point to valid
+    /// component storage for `count` entities, `component_stride` must match the
+    /// actual component layout, all field offsets in bytecode must be valid within
+    /// the component, and no other code may mutate the same memory during execution.
     #[inline]
     unsafe fn try_fast_path(
         &self,
@@ -982,14 +989,14 @@ impl VM {
                                 base_ptr.add((base + 2) * component_stride + offset) as *mut f32;
                             let p3 =
                                 base_ptr.add((base + 3) * component_stride + offset) as *mut f32;
-                            *p0 += constant_f32;
-                            *p1 += constant_f32;
-                            *p2 += constant_f32;
-                            *p3 += constant_f32;
+                            p0.write_unaligned(p0.read_unaligned() + constant_f32);
+                            p1.write_unaligned(p1.read_unaligned() + constant_f32);
+                            p2.write_unaligned(p2.read_unaligned() + constant_f32);
+                            p3.write_unaligned(p3.read_unaligned() + constant_f32);
                         }
                         for i in (chunks * 4)..(chunks * 4 + remainder) {
                             let ptr = base_ptr.add(i * component_stride + offset) as *mut f32;
-                            *ptr += constant_f32;
+                            ptr.write_unaligned(ptr.read_unaligned() + constant_f32);
                         }
                         return true;
                     } else if field_id.field_type == FieldType::F64 {
@@ -1021,7 +1028,7 @@ impl VM {
                         for i in 0..count {
                             let ptr =
                                 base_ptr.add(i * component_stride + field_id.offset) as *mut f32;
-                            *ptr *= constant_f32;
+                            ptr.write_unaligned(ptr.read_unaligned() * constant_f32);
                         }
                         return true;
                     } else if field_id.field_type == FieldType::F64 {
@@ -1048,7 +1055,7 @@ impl VM {
                     let constant_f32 = constant as f32;
                     for i in 0..count {
                         let ptr = base_ptr.add(i * component_stride + field_id.offset) as *mut f32;
-                        *ptr = constant_f32;
+                        ptr.write_unaligned(constant_f32);
                     }
                     return true;
                 } else if field_id.field_type == FieldType::F64 {
@@ -2228,6 +2235,87 @@ mod tests {
         }
         let v = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::U64) };
         assert_eq!(v, 99.0);
+    }
+
+    /// Regression test: the f32 batch fast paths (add/mul/assign) must handle
+    /// misaligned field addresses, since ECS column bytes have no alignment
+    /// guarantee for embedded fields.
+    #[test]
+    fn test_unaligned_f32_batch_fast_paths() {
+        let compile = |ops: &[Op], constant: f64| {
+            let mut compiler = Compiler::new();
+            let field_id = FieldId {
+                component_id: ComponentId::new(0),
+                offset: 0,
+                field_type: FieldType::F32,
+            };
+            let field_idx = compiler.add_field(field_id);
+            let const_val = compiler.add_constant(constant);
+            for op in ops {
+                compiler.emit(match op {
+                    Op::PushField(_) => Op::PushField(field_idx),
+                    Op::PushConst(_) => Op::PushConst(const_val),
+                    Op::StoreField(_) => Op::StoreField(field_idx),
+                    other => other.clone(),
+                });
+            }
+            compiler.finalize()
+        };
+
+        // Odd stride keeps every entity's f32 misaligned; count > 4 exercises
+        // the unrolled add loop.
+        let count = 10;
+        let stride = 5;
+        let mut buf = vec![0u8; count * stride + 1];
+        let base_ptr = unsafe { buf.as_mut_ptr().add(1) };
+        assert_ne!(base_ptr as usize % 4, 0, "base pointer must be misaligned");
+
+        let read_all = |buf: &[u8]| -> Vec<f32> {
+            (0..count)
+                .map(|i| unsafe {
+                    (buf.as_ptr().add(1 + i * stride) as *const f32).read_unaligned()
+                })
+                .collect()
+        };
+
+        let mut vm = VM::new();
+
+        // field = const
+        let assign = compile(&[Op::PushConst(0), Op::StoreField(0)], 2.0);
+        unsafe {
+            vm.execute_batch(&assign, base_ptr, stride, count);
+        }
+        assert!(read_all(&buf).iter().all(|v| *v == 2.0));
+
+        // field = field + const (unrolled loop + remainder)
+        let add = compile(
+            &[
+                Op::PushField(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::StoreField(0),
+            ],
+            1.5,
+        );
+        unsafe {
+            vm.execute_batch(&add, base_ptr, stride, count);
+        }
+        assert!(read_all(&buf).iter().all(|v| *v == 3.5));
+
+        // field = field * const
+        let mul = compile(
+            &[
+                Op::PushField(0),
+                Op::PushConst(0),
+                Op::Mul,
+                Op::StoreField(0),
+            ],
+            2.0,
+        );
+        unsafe {
+            vm.execute_batch(&mul, base_ptr, stride, count);
+        }
+        assert!(read_all(&buf).iter().all(|v| *v == 7.0));
     }
 
     /// Eq uses exact comparison, not epsilon. Nearly-equal values must
