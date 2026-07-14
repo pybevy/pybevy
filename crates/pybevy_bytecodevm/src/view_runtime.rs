@@ -20,6 +20,7 @@ use std::{
 use bevy_ecs::{
     change_detection::Tick,
     component::{ComponentId, Components, StorageType},
+    entity::Entity,
     storage::TableId,
     world::{World, WorldId, unsafe_world_cell::UnsafeWorldCell},
 };
@@ -536,13 +537,54 @@ impl Drop for ViewOperationGuard {
 /// Ownership boundary for raw batches gathered during one system run.
 ///
 /// Batches never expose an unchecked safe slice. Backend adapters operate on
-/// them only through [`BatchLease::with_batches`], which shares the runtime's
-/// stale/thread/reentrancy fence. The lease intentionally has no `Send`/`Sync`
-/// implementation; a backend requiring one must justify it at that boundary.
+/// them only through fenced methods or an owned [`BatchSlice`].
 pub struct BatchLease {
     runtime: Arc<ViewRuntimeCore>,
     batches: Box<[view_engine::TableBatch]>,
 }
+
+// SAFETY: moving an owner does not permit pointer access. Every safe operation
+// rechecks the run-scoped, thread-affine ValidityFlag and acquires the runtime's
+// single-operation fence before touching storage. `BatchColumn::raw_ptr_unchecked`
+// is unsafe and retains the scheduler/validity obligations at the backend boundary.
+unsafe impl Send for BatchLease {}
+// SAFETY: shared access is subject to the same validity and operation fences;
+// mutable component access is additionally bounded by the resolved View spec.
+unsafe impl Sync for BatchLease {}
+
+/// One exact contiguous row run selected from a gathered batch.
+///
+/// Fields are private so adapters cannot forge a range or combine a range with
+/// a different lease. Tick masks are lowered to maximal passing runs before a
+/// value of this type is created.
+#[derive(Clone)]
+pub struct BatchSlice {
+    lease: Arc<BatchLease>,
+    batch_index: usize,
+    start_row: usize,
+    entity_count: usize,
+}
+
+/// Raw column capability for one exact [`BatchSlice`].
+///
+/// The capability owns the originating lease. Safe methods expose metadata and
+/// fenced validity checks only; dereferencing its pointer remains an explicit
+/// backend unsafe boundary.
+pub struct BatchColumn {
+    lease: Arc<BatchLease>,
+    ptr: *mut u8,
+    len: usize,
+    stride: usize,
+    writable: bool,
+}
+
+// SAFETY: see `BatchLease`. Merely moving or sharing this capability cannot
+// dereference its pointer; safe access remains validity/thread/fence checked.
+unsafe impl Send for BatchColumn {}
+// SAFETY: the scheduler access encoded by the lease excludes conflicting ECS
+// access. Backends must uphold the contract of `raw_ptr_unchecked` while native
+// code uses the pointer.
+unsafe impl Sync for BatchColumn {}
 
 /// Neutral reduction applied to a validated read-only View program.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -572,7 +614,58 @@ impl BatchLease {
         operation: impl FnOnce(&[view_engine::TableBatch]) -> Output,
     ) -> Result<Output, ViewRuntimeError> {
         let _operation = self.runtime.enter_operation()?;
+        self.runtime.validate_live_world_metadata()?;
         Ok(operation(&self.batches))
+    }
+
+    /// Lower gathered tick masks into exact contiguous public batch slices.
+    ///
+    /// A batch without Changed/Added filters produces one slice. A masked batch
+    /// produces one slice for every maximal run of passing rows, so zero-copy
+    /// consumers never see or mutate a filtered-out row.
+    pub fn contiguous_slices(self: &Arc<Self>) -> Result<Vec<BatchSlice>, ViewRuntimeError> {
+        let _operation = self.runtime.enter_operation()?;
+        self.runtime.validate_live_world_metadata()?;
+        let mut slices = Vec::new();
+        for (batch_index, batch) in self.batches.iter().enumerate() {
+            self.validate_batch_range(batch)?;
+            match &batch.tick_mask {
+                None => slices.push(BatchSlice {
+                    lease: Arc::clone(self),
+                    batch_index,
+                    start_row: batch.start_row,
+                    entity_count: batch.entity_count,
+                }),
+                Some(mask) => {
+                    if mask.len() != batch.entity_count {
+                        return Err(ViewRuntimeError::TickMaskLengthMismatch {
+                            table_id: batch.table_id,
+                            expected: batch.entity_count,
+                            actual: mask.len(),
+                        });
+                    }
+                    let mut local_row = 0;
+                    while local_row < mask.len() {
+                        while local_row < mask.len() && !mask[local_row] {
+                            local_row += 1;
+                        }
+                        let run_start = local_row;
+                        while local_row < mask.len() && mask[local_row] {
+                            local_row += 1;
+                        }
+                        if run_start < local_row {
+                            slices.push(BatchSlice {
+                                lease: Arc::clone(self),
+                                batch_index,
+                                start_row: batch.start_row + run_start,
+                                entity_count: local_row - run_start,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(slices)
     }
 
     /// Count selected rows, including Changed/Added masks.
@@ -593,13 +686,12 @@ impl BatchLease {
         self.entity_count().map(|count| count == 0)
     }
 
-    /// Evaluate and reduce one validated read-only program over exact rows.
-    pub fn reduce(
+    /// Evaluate one validated read-only program over exact rows.
+    pub fn evaluate(
         &self,
         program: &ValidatedViewProgram,
-        reduction: ViewReduction,
         parallel: bool,
-    ) -> Result<ViewReductionOutput, ViewRuntimeError> {
+    ) -> Result<Vec<f64>, ViewRuntimeError> {
         self.runtime.check_program(program)?;
         if !matches!(program.intent(), ProgramIntent::ReadOnly) {
             return Err(ViewRuntimeError::ProgramIntentMismatch {
@@ -612,14 +704,24 @@ impl BatchLease {
         self.runtime.validate_live_world_metadata()?;
         // SAFETY: validation bound every field to this exact spec and the
         // lease owns live selected rows under the operation/validity fences.
-        let values = unsafe {
+        Ok(unsafe {
             view_engine::evaluate_batch_program(
                 &self.batches,
                 program.bytecode(),
                 self.runtime.spec().component_strides(),
                 parallel,
             )
-        };
+        })
+    }
+
+    /// Evaluate and reduce one validated read-only program over exact rows.
+    pub fn reduce(
+        &self,
+        program: &ValidatedViewProgram,
+        reduction: ViewReduction,
+        parallel: bool,
+    ) -> Result<ViewReductionOutput, ViewRuntimeError> {
+        let values = self.evaluate(program, parallel)?;
         let count = values.len();
         let value = match reduction {
             ViewReduction::Sum => values.into_iter().sum(),
@@ -762,6 +864,324 @@ impl BatchLease {
             }
         }
         Ok(changed_ticks)
+    }
+
+    fn validate_batch_range(
+        &self,
+        batch: &view_engine::TableBatch,
+    ) -> Result<usize, ViewRuntimeError> {
+        // SAFETY: callers hold the runtime operation guard and have validated
+        // the live World metadata immediately before accessing storage.
+        let storages = unsafe { self.runtime.world_cell.storages() };
+        let table = storages
+            .tables
+            .get(batch.table_id)
+            .ok_or(ViewRuntimeError::BatchTableMissing(batch.table_id))?;
+        let table_entity_count = table.entity_count() as usize;
+        let range_end = batch.start_row.checked_add(batch.entity_count).ok_or(
+            ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: batch.table_id,
+                start_row: batch.start_row,
+                entity_count: batch.entity_count,
+                table_entity_count,
+            },
+        )?;
+        if range_end > table_entity_count {
+            return Err(ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: batch.table_id,
+                start_row: batch.start_row,
+                entity_count: batch.entity_count,
+                table_entity_count,
+            });
+        }
+        Ok(table_entity_count)
+    }
+}
+
+impl BatchSlice {
+    /// Number of consecutive selected rows in this slice.
+    pub fn len(&self) -> usize {
+        self.entity_count
+    }
+
+    /// Return whether this slice contains no rows.
+    pub fn is_empty(&self) -> bool {
+        self.entity_count == 0
+    }
+
+    /// Narrow this slice to one bounds-checked row.
+    pub fn row(&self, index: usize) -> Result<Self, ViewRuntimeError> {
+        if index >= self.entity_count {
+            return Err(ViewRuntimeError::BatchRowOutOfBounds {
+                index,
+                len: self.entity_count,
+            });
+        }
+        Ok(Self {
+            lease: Arc::clone(&self.lease),
+            batch_index: self.batch_index,
+            start_row: self.start_row + index,
+            entity_count: 1,
+        })
+    }
+
+    /// Runtime validity check without dereferencing storage.
+    pub fn check_valid(&self) -> Result<(), ViewRuntimeError> {
+        self.lease.runtime.check_valid()
+    }
+
+    /// Copy entity IDs in the same order as the slice's column data.
+    pub fn entities(&self) -> Result<Vec<Entity>, ViewRuntimeError> {
+        let _operation = self.lease.runtime.enter_operation()?;
+        self.lease.runtime.validate_live_world_metadata()?;
+        let batch = &self.lease.batches[self.batch_index];
+        let table_entity_count = self.lease.validate_batch_range(batch)?;
+        let range_end = self.start_row.checked_add(self.entity_count).ok_or(
+            ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: batch.table_id,
+                start_row: self.start_row,
+                entity_count: self.entity_count,
+                table_entity_count,
+            },
+        )?;
+        if range_end > table_entity_count {
+            return Err(ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: batch.table_id,
+                start_row: self.start_row,
+                entity_count: self.entity_count,
+                table_entity_count,
+            });
+        }
+        // SAFETY: the operation guard, live-metadata check, and scheduler access
+        // satisfy UnsafeWorldCell's storage access contract.
+        let storages = unsafe { self.lease.runtime.world_cell.storages() };
+        let table = storages
+            .tables
+            .get(batch.table_id)
+            .ok_or(ViewRuntimeError::BatchTableMissing(batch.table_id))?;
+        Ok(table.entities()[self.start_row..range_end].to_vec())
+    }
+
+    /// Evaluate one validated read-only program over only this slice.
+    pub fn evaluate(
+        &self,
+        program: &ValidatedViewProgram,
+        parallel: bool,
+    ) -> Result<Vec<f64>, ViewRuntimeError> {
+        self.lease.runtime.check_program(program)?;
+        if !matches!(program.intent(), ProgramIntent::ReadOnly) {
+            return Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "read-only",
+                actual: "assignment",
+            });
+        }
+        let _operation = self.lease.runtime.enter_operation()?;
+        self.lease.runtime.validate_live_world_metadata()?;
+        let batch = self.exact_batch()?;
+        // SAFETY: the program is validated for this runtime and `exact_batch`
+        // returns one bounds-checked, mask-free selected row range.
+        Ok(unsafe {
+            view_engine::evaluate_batch_program(
+                std::slice::from_ref(&batch),
+                program.bytecode(),
+                self.lease.runtime.spec().component_strides(),
+                parallel,
+            )
+        })
+    }
+
+    /// Execute one validated assignment over only this slice.
+    pub fn execute_assignment(
+        &self,
+        program: &ValidatedViewProgram,
+        parallel: bool,
+    ) -> Result<(), ViewRuntimeError> {
+        self.lease.runtime.check_program(program)?;
+        let ProgramIntent::Assignment { destination } = program.intent() else {
+            return Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "assignment",
+                actual: "read-only",
+            });
+        };
+        // Resolve the destination capability before execution. This validates
+        // mutable access and marks exactly these rows changed, matching Bevy's
+        // conservative `&mut T` change-detection semantics even if execution
+        // later unwinds after a partial write.
+        let _destination = self.column(destination.component_id, true)?;
+        let _operation = self.lease.runtime.enter_operation()?;
+        self.lease.runtime.validate_live_world_metadata()?;
+        let batch = self.exact_batch()?;
+        // SAFETY: program validation proves field identities, spans, and the
+        // unique mutable destination; the operation fence covers execution.
+        unsafe {
+            view_engine::execute_batch_assignment(
+                std::slice::from_ref(&batch),
+                program.bytecode(),
+                self.lease.runtime.spec().component_strides(),
+                parallel,
+            );
+        }
+        Ok(())
+    }
+
+    fn exact_batch(&self) -> Result<view_engine::TableBatch, ViewRuntimeError> {
+        let source = &self.lease.batches[self.batch_index];
+        let table_entity_count = self.lease.validate_batch_range(source)?;
+        let range_end = self.start_row.checked_add(self.entity_count).ok_or(
+            ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: source.table_id,
+                start_row: self.start_row,
+                entity_count: self.entity_count,
+                table_entity_count,
+            },
+        )?;
+        if range_end > table_entity_count {
+            return Err(ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: source.table_id,
+                start_row: self.start_row,
+                entity_count: self.entity_count,
+                table_entity_count,
+            });
+        }
+        Ok(view_engine::TableBatch {
+            table_id: source.table_id,
+            component_bases: source.component_bases.clone(),
+            start_row: self.start_row,
+            entity_count: self.entity_count,
+            tick_mask: None,
+        })
+    }
+
+    /// Resolve a raw component column capability for this exact slice.
+    ///
+    /// Requesting mutable access checks the resolved View declaration and marks
+    /// only this slice's rows changed with the invocation's stable `this_run`.
+    pub fn column(
+        &self,
+        component_id: ComponentId,
+        mutable: bool,
+    ) -> Result<BatchColumn, ViewRuntimeError> {
+        let _operation = self.lease.runtime.enter_operation()?;
+        self.lease.runtime.validate_live_world_metadata()?;
+        let spec = self.lease.runtime.spec();
+        if !spec.filter().component_ids.contains(&component_id) {
+            return Err(ViewRuntimeError::BatchComponentNotDeclared(component_id));
+        }
+        if mutable && !spec.mutable_components().contains(&component_id) {
+            return Err(ViewRuntimeError::BatchComponentReadOnly(component_id));
+        }
+
+        let batch = &self.lease.batches[self.batch_index];
+        let table_entity_count = self.lease.validate_batch_range(batch)?;
+        let range_end = self.start_row.checked_add(self.entity_count).ok_or(
+            ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: batch.table_id,
+                start_row: self.start_row,
+                entity_count: self.entity_count,
+                table_entity_count,
+            },
+        )?;
+        if range_end > table_entity_count {
+            return Err(ViewRuntimeError::BatchRangeOutOfBounds {
+                table_id: batch.table_id,
+                start_row: self.start_row,
+                entity_count: self.entity_count,
+                table_entity_count,
+            });
+        }
+        let stride = spec
+            .component_strides()
+            .get(&component_id)
+            .copied()
+            .ok_or(ViewRuntimeError::MissingComponentStride(component_id))?;
+        let base = batch.component_bases.get(&component_id).copied().ok_or(
+            ViewRuntimeError::BatchComponentColumnMissing {
+                table_id: batch.table_id,
+                component_id,
+            },
+        )?;
+
+        if mutable {
+            // SAFETY: the operation guard and scheduler provide unique mutable
+            // access to this declared component; all indices are bounds checked.
+            let storages = unsafe { self.lease.runtime.world_cell.storages() };
+            let table = storages
+                .tables
+                .get(batch.table_id)
+                .ok_or(ViewRuntimeError::BatchTableMissing(batch.table_id))?;
+            let column = table.get_column(component_id).ok_or(
+                ViewRuntimeError::BatchComponentColumnMissing {
+                    table_id: batch.table_id,
+                    component_id,
+                },
+            )?;
+            // SAFETY: `table_entity_count` is the live table length.
+            let ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
+            for tick in &ticks[self.start_row..range_end] {
+                // SAFETY: each tick belongs to this exact mutable slice.
+                unsafe { *tick.get() = self.lease.runtime.this_run() };
+            }
+        }
+
+        // SAFETY: `start_row * stride` identifies the first byte of this
+        // bounds-checked slice within the gathered component allocation.
+        let ptr = unsafe { base.add(self.start_row * stride) };
+        Ok(BatchColumn {
+            lease: Arc::clone(&self.lease),
+            ptr,
+            len: self.entity_count,
+            stride,
+            writable: mutable,
+        })
+    }
+}
+
+impl BatchColumn {
+    /// Number of elements addressed by this capability.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Return whether this column contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Byte distance between consecutive elements.
+    pub fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// Whether this capability came from declared mutable View access.
+    pub fn is_writable(&self) -> bool {
+        self.writable
+    }
+
+    /// Runtime whose validity and operation fence protect this pointer.
+    pub fn runtime(&self) -> &Arc<ViewRuntimeCore> {
+        self.lease.runtime()
+    }
+
+    /// Enter the shared View pointer-access fence.
+    pub fn enter_operation(&self) -> Result<ViewOperationGuard, ViewRuntimeError> {
+        self.lease.runtime.enter_operation()
+    }
+
+    /// Check run lifetime and thread affinity without touching storage.
+    pub fn check_valid(&self) -> Result<(), ViewRuntimeError> {
+        self.lease.runtime.check_valid()
+    }
+
+    /// Return the first element pointer for an interpreter backend.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain this `BatchColumn`, check validity on the
+    /// activating thread immediately before use, and ensure native pointer use
+    /// finishes before the system invocation returns. Rust-side dereferences
+    /// must additionally hold [`BatchColumn::enter_operation`].
+    pub unsafe fn raw_ptr_unchecked(&self) -> *mut u8 {
+        self.ptr
     }
 }
 
@@ -929,11 +1349,29 @@ pub enum ViewRuntimeError {
         /// Current table row count.
         table_entity_count: usize,
     },
+    /// A backend requested a row outside one exact public batch slice.
+    BatchRowOutOfBounds {
+        /// Requested slice-local row.
+        index: usize,
+        /// Number of rows in the slice.
+        len: usize,
+    },
     /// The destination column is absent from a gathered table.
     BatchDestinationColumnMissing {
         /// Table missing the column.
         table_id: TableId,
         /// Destination component.
+        component_id: ComponentId,
+    },
+    /// A batch adapter requested a component outside the View data tuple.
+    BatchComponentNotDeclared(ComponentId),
+    /// A batch adapter requested mutable access to a read-only component.
+    BatchComponentReadOnly(ComponentId),
+    /// A declared component column is absent from a gathered table.
+    BatchComponentColumnMissing {
+        /// Table missing the column.
+        table_id: TableId,
+        /// Declared component requested by the adapter.
         component_id: ComponentId,
     },
     /// A gathered tick mask does not match its row range.
@@ -1079,12 +1517,33 @@ impl fmt::Display for ViewRuntimeError {
                  {table_entity_count} rows",
                 start_row.saturating_add(*entity_count)
             ),
+            Self::BatchRowOutOfBounds { index, len } => {
+                write!(
+                    f,
+                    "View batch row {index} is outside a slice of length {len}"
+                )
+            }
             Self::BatchDestinationColumnMissing {
                 table_id,
                 component_id,
             } => write!(
                 f,
                 "View assignment destination {component_id:?} is absent from table {table_id:?}"
+            ),
+            Self::BatchComponentNotDeclared(component_id) => write!(
+                f,
+                "View batch component {component_id:?} is not declared in this View"
+            ),
+            Self::BatchComponentReadOnly(component_id) => write!(
+                f,
+                "View batch component {component_id:?} was not declared mutable"
+            ),
+            Self::BatchComponentColumnMissing {
+                table_id,
+                component_id,
+            } => write!(
+                f,
+                "View batch component {component_id:?} is absent from table {table_id:?}"
             ),
             Self::TickMaskLengthMismatch {
                 table_id,
@@ -2515,6 +2974,73 @@ mod tests {
                 count: 1
             }
         );
+    }
+
+    #[test]
+    fn contiguous_slices_split_noncontiguous_changed_mask() {
+        let mut world = World::new();
+        let first = world.spawn(RuntimeDense(10)).id();
+        world.spawn(RuntimeDense(20));
+        let third = world.spawn(RuntimeDense(30)).id();
+        world.clear_trackers();
+        let last_run = world.last_change_tick();
+        world.increment_change_tick();
+        world.entity_mut(first).get_mut::<RuntimeDense>().unwrap().0 = 11;
+        world.entity_mut(third).get_mut::<RuntimeDense>().unwrap().0 = 31;
+        let this_run = world.change_tick();
+
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let mut view_filter = filter(component_id);
+        view_filter.changed_ids.push(component_id);
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::from([component_id]),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World stays live and structurally unchanged through all
+        // lease/slice operations.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, last_run, this_run) };
+        let lease = Arc::new(runtime.gather_batches().unwrap());
+        let slices = lease.contiguous_slices().unwrap();
+
+        assert_eq!(slices.len(), 2);
+        assert_eq!(
+            slices.iter().map(BatchSlice::len).collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+        assert_eq!(slices[0].entities().unwrap(), vec![first]);
+        assert_eq!(slices[1].entities().unwrap(), vec![third]);
+        assert!(matches!(
+            slices[0].row(1),
+            Err(ViewRuntimeError::BatchRowOutOfBounds { index: 1, len: 1 })
+        ));
+
+        let expression = RustExpr::Field {
+            component_id,
+            offset: 0,
+            field_type: FieldType::U32,
+        };
+        let read = runtime.prepare_read_program(&expression).unwrap();
+        assert_eq!(slices[0].evaluate(&read, false).unwrap(), vec![11.0]);
+        assert_eq!(slices[1].evaluate(&read, false).unwrap(), vec![31.0]);
+
+        let destination = FieldId {
+            component_id,
+            offset: 0,
+            field_type: FieldType::U32,
+        };
+        let assignment = runtime
+            .prepare_assignment_program(destination, &RustExpr::Const(99.0))
+            .unwrap();
+        slices[0].execute_assignment(&assignment, false).unwrap();
+
+        runtime.validity().set_invalid();
+        drop(slices);
+        drop(lease);
+        drop(runtime);
+        assert_eq!(world.entity(first).get::<RuntimeDense>().unwrap().0, 99);
+        assert_eq!(world.entity(third).get::<RuntimeDense>().unwrap().0, 31);
     }
 
     #[test]
