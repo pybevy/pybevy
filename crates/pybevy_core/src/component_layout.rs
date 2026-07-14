@@ -1,4 +1,4 @@
-use std::ffi::c_void;
+use std::{error::Error, ffi::c_void, fmt};
 
 use bevy::math::{Vec2, Vec3};
 
@@ -22,6 +22,18 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
+    /// Resolve the canonical annotation names accepted by both Python backends.
+    pub fn from_annotation_name(name: &str) -> Option<Self> {
+        match name {
+            "float" => Some(Self::F64),
+            "int" => Some(Self::I64),
+            "bool" => Some(Self::Bool),
+            "Vec3" | "builtins.Vec3" => Some(Self::Vec3),
+            "Vec2" | "builtins.Vec2" => Some(Self::Vec2),
+            _ => None,
+        }
+    }
+
     /// Size in bytes of this primitive type
     pub const fn size_bytes(&self) -> usize {
         match self {
@@ -115,6 +127,7 @@ impl PrimitiveValue {
     /// `self.field_type().size_bytes()` bytes.
     #[inline]
     pub unsafe fn write_to_ptr(self, dst: *mut u8) {
+        // SAFETY: the caller guarantees a writable region large enough for this value.
         unsafe {
             match self {
                 PrimitiveValue::F32(v) => (dst as *mut f32).write_unaligned(v),
@@ -136,6 +149,90 @@ impl PrimitiveValue {
             }
         }
     }
+
+    fn write_to_slice(self, dst: &mut [u8]) {
+        assert_eq!(dst.len(), self.field_type().size_bytes());
+        match self {
+            PrimitiveValue::F32(v) => dst.copy_from_slice(&v.to_le_bytes()),
+            PrimitiveValue::F64(v) => dst.copy_from_slice(&v.to_le_bytes()),
+            PrimitiveValue::I32(v) => dst.copy_from_slice(&v.to_le_bytes()),
+            PrimitiveValue::I64(v) => dst.copy_from_slice(&v.to_le_bytes()),
+            PrimitiveValue::U32(v) => dst.copy_from_slice(&v.to_le_bytes()),
+            PrimitiveValue::U64(v) => dst.copy_from_slice(&v.to_le_bytes()),
+            PrimitiveValue::Bool(v) => dst[0] = u8::from(v),
+            PrimitiveValue::Vec3(v) => {
+                dst[0..4].copy_from_slice(&v.x.to_le_bytes());
+                dst[4..8].copy_from_slice(&v.y.to_le_bytes());
+                dst[8..12].copy_from_slice(&v.z.to_le_bytes());
+            }
+            PrimitiveValue::Vec2(v) => {
+                dst[0..4].copy_from_slice(&v.x.to_le_bytes());
+                dst[4..8].copy_from_slice(&v.y.to_le_bytes());
+            }
+        }
+    }
+}
+
+/// A neutral layout invariant rejected before wrapper bytes are written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentLayoutError {
+    MisalignedField {
+        field: String,
+        offset: usize,
+        alignment: usize,
+    },
+    FieldOutOfBounds {
+        field: String,
+        offset: usize,
+        size: usize,
+        buffer_size: usize,
+    },
+    FieldTypeMismatch {
+        field: String,
+        expected: PrimitiveType,
+        actual: PrimitiveType,
+    },
+}
+
+impl fmt::Display for ComponentLayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MisalignedField {
+                field,
+                offset,
+                alignment,
+            } => write!(
+                f,
+                "field '{field}' at offset {offset} is not aligned to {alignment} bytes"
+            ),
+            Self::FieldOutOfBounds {
+                field,
+                offset,
+                size,
+                buffer_size,
+            } => write!(
+                f,
+                "field '{field}' at offset {offset} with size {size} exceeds wrapper buffer size {buffer_size}"
+            ),
+            Self::FieldTypeMismatch {
+                field,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "field '{field}' extractor returned {actual:?}, expected {expected:?}"
+            ),
+        }
+    }
+}
+
+impl Error for ComponentLayoutError {}
+
+/// Serialization can fail in the backend extractor or in the neutral layout core.
+#[derive(Debug)]
+pub enum ComponentSerializationError<E> {
+    Extract(E),
+    Layout(ComponentLayoutError),
 }
 
 /// Information about a single field in a component
@@ -234,6 +331,64 @@ impl ComponentLayout {
     pub fn field_names(&self) -> Vec<&str> {
         self.fields.iter().map(|f| f.name.as_str()).collect()
     }
+
+    /// Serialize backend-extracted field values into a wrapper-sized byte buffer.
+    pub fn serialize_with<E>(
+        &self,
+        mut extract: impl FnMut(&FieldInfo) -> Result<PrimitiveValue, E>,
+    ) -> Result<Vec<u8>, ComponentSerializationError<E>> {
+        let mut buffer = vec![0u8; self.wrapper_size.size_bytes()];
+
+        for field in &self.fields {
+            let alignment = field.field_type.alignment();
+            if field.offset % alignment != 0 {
+                return Err(ComponentSerializationError::Layout(
+                    ComponentLayoutError::MisalignedField {
+                        field: field.name.clone(),
+                        offset: field.offset,
+                        alignment,
+                    },
+                ));
+            }
+
+            let size = field.field_type.size_bytes();
+            let Some(end) = field.offset.checked_add(size) else {
+                return Err(ComponentSerializationError::Layout(
+                    ComponentLayoutError::FieldOutOfBounds {
+                        field: field.name.clone(),
+                        offset: field.offset,
+                        size,
+                        buffer_size: buffer.len(),
+                    },
+                ));
+            };
+            let Some(dst) = buffer.get_mut(field.offset..end) else {
+                return Err(ComponentSerializationError::Layout(
+                    ComponentLayoutError::FieldOutOfBounds {
+                        field: field.name.clone(),
+                        offset: field.offset,
+                        size,
+                        buffer_size: buffer.len(),
+                    },
+                ));
+            };
+
+            let value = extract(field).map_err(ComponentSerializationError::Extract)?;
+            let actual = value.field_type();
+            if actual != field.field_type {
+                return Err(ComponentSerializationError::Layout(
+                    ComponentLayoutError::FieldTypeMismatch {
+                        field: field.name.clone(),
+                        expected: field.field_type,
+                        actual,
+                    },
+                ));
+            }
+            value.write_to_slice(dst);
+        }
+
+        Ok(buffer)
+    }
 }
 
 /// Storage type for a custom component
@@ -247,7 +402,34 @@ pub enum ComponentStorageType {
 
 #[cfg(test)]
 mod tests {
+    use std::{convert::Infallible, ptr};
+
     use super::*;
+
+    #[test]
+    fn annotation_names_map_to_shared_primitive_types() {
+        assert_eq!(
+            PrimitiveType::from_annotation_name("float"),
+            Some(PrimitiveType::F64)
+        );
+        assert_eq!(
+            PrimitiveType::from_annotation_name("int"),
+            Some(PrimitiveType::I64)
+        );
+        assert_eq!(
+            PrimitiveType::from_annotation_name("bool"),
+            Some(PrimitiveType::Bool)
+        );
+        assert_eq!(
+            PrimitiveType::from_annotation_name("builtins.Vec3"),
+            Some(PrimitiveType::Vec3)
+        );
+        assert_eq!(
+            PrimitiveType::from_annotation_name("Vec2"),
+            Some(PrimitiveType::Vec2)
+        );
+        assert_eq!(PrimitiveType::from_annotation_name("list"), None);
+    }
 
     #[test]
     fn test_primitive_type_sizes() {
@@ -291,8 +473,6 @@ mod tests {
 
     #[test]
     fn test_layout_from_fields() {
-        use std::ptr;
-
         let fields = vec![
             ("x".to_string(), PrimitiveType::F64),
             ("y".to_string(), PrimitiveType::F64),
@@ -326,8 +506,6 @@ mod tests {
 
     #[test]
     fn test_layout_field_lookup() {
-        use std::ptr;
-
         let fields = vec![
             ("x".to_string(), PrimitiveType::F64),
             ("y".to_string(), PrimitiveType::F64),
@@ -344,8 +522,6 @@ mod tests {
 
     #[test]
     fn test_layout_alignment_mixed_types() {
-        use std::ptr;
-
         let fields = vec![
             ("active".to_string(), PrimitiveType::Bool),
             ("x".to_string(), PrimitiveType::F64),
@@ -360,9 +536,23 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_too_large() {
-        use std::ptr;
+    fn test_layout_alignment_composite_then_scalar() {
+        let fields = vec![
+            ("position".to_string(), PrimitiveType::Vec3),
+            ("speed".to_string(), PrimitiveType::F64),
+        ];
 
+        let layout =
+            ComponentLayout::from_fields(ptr::null(), "Test".to_string(), &fields).unwrap();
+
+        assert_eq!(layout.fields[0].offset, 0);
+        assert_eq!(layout.fields[1].offset, 16);
+        assert_eq!(layout.data_size, 24);
+        assert_eq!(layout.wrapper_size, WrapperSize::W32);
+    }
+
+    #[test]
+    fn test_layout_too_large() {
         // 129 i64 fields = 1032 bytes, exceeds 1024
         let fields: Vec<_> = (0..129)
             .map(|i| (format!("f{}", i), PrimitiveType::I64))
@@ -376,7 +566,6 @@ mod tests {
     #[test]
     fn primitive_value_write_to_ptr_roundtrips() {
         // Each variant writes exactly its bytes at the destination and reads back equal.
-        let mut buf = [0u8; 16];
         let cases: &[PrimitiveValue] = &[
             PrimitiveValue::F32(1.5),
             PrimitiveValue::F64(-2.25),
@@ -389,7 +578,7 @@ mod tests {
             PrimitiveValue::Vec2(Vec2::new(9.0, -8.0)),
         ];
         for v in cases {
-            buf = [0u8; 16];
+            let mut buf = [0u8; 16];
             let dst = buf.as_mut_ptr();
             // SAFETY: buf is 16 bytes, larger than any primitive's size.
             unsafe { v.write_to_ptr(dst) };
@@ -439,5 +628,98 @@ mod tests {
         unsafe { PrimitiveValue::F64(6.5).write_to_ptr(buf.as_mut_ptr().add(1)) };
         let got = unsafe { (buf.as_ptr().add(1) as *const f64).read_unaligned() };
         assert_eq!(got, 6.5);
+    }
+
+    #[test]
+    fn serialize_with_writes_values_and_zeroes_padding() {
+        let fields = vec![
+            ("active".to_string(), PrimitiveType::Bool),
+            ("count".to_string(), PrimitiveType::I64),
+            ("velocity".to_string(), PrimitiveType::Vec2),
+        ];
+        let layout =
+            ComponentLayout::from_fields(ptr::null(), "Mixed".to_string(), &fields).unwrap();
+
+        let buffer = layout
+            .serialize_with(|field| {
+                Ok::<_, Infallible>(match field.name.as_str() {
+                    "active" => PrimitiveValue::Bool(true),
+                    "count" => PrimitiveValue::I64(-42),
+                    "velocity" => PrimitiveValue::Vec2(Vec2::new(1.5, -2.5)),
+                    _ => unreachable!(),
+                })
+            })
+            .unwrap();
+
+        assert_eq!(buffer.len(), WrapperSize::W32.size_bytes());
+        assert_eq!(buffer[0], 1);
+        assert_eq!(&buffer[1..8], &[0; 7]);
+        assert_eq!(i64::from_le_bytes(buffer[8..16].try_into().unwrap()), -42);
+        assert_eq!(f32::from_le_bytes(buffer[16..20].try_into().unwrap()), 1.5);
+        assert_eq!(f32::from_le_bytes(buffer[20..24].try_into().unwrap()), -2.5);
+        assert_eq!(&buffer[24..], &[0; 8]);
+    }
+
+    #[test]
+    fn serialize_with_preserves_backend_extraction_errors() {
+        let fields = vec![("value".to_string(), PrimitiveType::I64)];
+        let layout =
+            ComponentLayout::from_fields(ptr::null(), "Test".to_string(), &fields).unwrap();
+
+        let error = layout
+            .serialize_with(|_| Err::<PrimitiveValue, _>("extract failed"))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ComponentSerializationError::Extract("extract failed")
+        ));
+    }
+
+    #[test]
+    fn serialize_with_rejects_mismatched_extractor_types() {
+        let fields = vec![("value".to_string(), PrimitiveType::I64)];
+        let layout =
+            ComponentLayout::from_fields(ptr::null(), "Test".to_string(), &fields).unwrap();
+
+        let error = layout
+            .serialize_with(|_| Ok::<_, Infallible>(PrimitiveValue::F64(1.0)))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ComponentSerializationError::Layout(ComponentLayoutError::FieldTypeMismatch {
+                expected: PrimitiveType::I64,
+                actual: PrimitiveType::F64,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn serialize_with_rejects_invalid_layout_bounds() {
+        let layout = ComponentLayout::new(
+            ptr::null(),
+            "Invalid".to_string(),
+            vec![FieldInfo {
+                name: "value".to_string(),
+                offset: 8,
+                field_type: PrimitiveType::I64,
+            }],
+            16,
+            WrapperSize::W8,
+        );
+
+        let error = layout
+            .serialize_with(|_| Ok::<_, Infallible>(PrimitiveValue::I64(1)))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ComponentSerializationError::Layout(ComponentLayoutError::FieldOutOfBounds {
+                buffer_size: 8,
+                ..
+            })
+        ));
     }
 }
