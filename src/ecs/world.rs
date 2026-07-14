@@ -35,6 +35,7 @@
 
 use std::{
     cell::UnsafeCell,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -42,7 +43,7 @@ use bevy::{
     ecs::{system::System, world::World},
     prelude::*,
 };
-use pybevy_core::registry::global_registry;
+use pybevy_core::{AssetBorrowCounter, registry::global_registry};
 use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     PyTypeInfo,
@@ -95,6 +96,7 @@ pub struct PyWorld {
     // valid and is invalidated in Drop, so proxies handed out by get/get_mut (which
     // cache a raw world_ptr, not a Py<PyWorld>) cannot outlive `del world`.
     validity: Option<ValidityFlag>,
+    asset_borrow_counters: Arc<Mutex<HashMap<usize, AssetBorrowCounter>>>,
 }
 
 // SAFETY: PyWorld is Send because:
@@ -136,6 +138,7 @@ impl PyWorld {
         Self {
             storage: WorldStorage::Borrowed(world as *mut World),
             validity: Some(validity),
+            asset_borrow_counters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -146,6 +149,7 @@ impl PyWorld {
             // Starts valid (Write mode); Drop invalidates it so any proxy/handle that
             // outlives `del world` errors instead of dereferencing the freed World.
             validity: Some(ValidityFlag::new_write()),
+            asset_borrow_counters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -185,6 +189,7 @@ impl PyWorld {
                 WorldStorage::Borrowed(ptr) => WorldStorage::Borrowed(*ptr),
             },
             validity: self.validity.clone(),
+            asset_borrow_counters: self.asset_borrow_counters.clone(),
         }
     }
 
@@ -193,6 +198,15 @@ impl PyWorld {
             WorldStorage::Owned(boxed) => boxed.get(),
             WorldStorage::Borrowed(ptr) => *ptr,
         }
+    }
+
+    fn asset_borrow_counter(&self, type_ptr: *const pyo3::ffi::PyTypeObject) -> AssetBorrowCounter {
+        self.asset_borrow_counters
+            .lock()
+            .expect("asset borrow counter lock poisoned")
+            .entry(type_ptr as usize)
+            .or_default()
+            .clone()
     }
 
     /// Execute a function with temporary World access, automatically managing validity guards.
@@ -230,11 +244,12 @@ impl PyWorld {
         // SAFETY: `world_ptr` is valid while this PyWorld is valid; the derived cell is
         // fenced by the same `validity` flag. PyAssets only reaches the `Assets<T>` resource.
         let cell = unsafe { (*world_ptr).as_unsafe_world_cell() };
+        let borrow_counter = self.asset_borrow_counter(type_ptr);
         let py_assets = unsafe {
             Py::new(
                 py,
                 (
-                    PyAssets::new(type_ptr, None, cell, validity, true),
+                    PyAssets::new(type_ptr, None, cell, validity, true, borrow_counter),
                     super::resource::PyResource,
                 ),
             )?

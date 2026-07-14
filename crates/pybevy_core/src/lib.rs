@@ -385,11 +385,11 @@ pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};
 pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
-    AccessMode, AssetStorage, BorrowableStorage, ComponentStorage, ComponentStorageInner,
-    FieldOffset, FieldStorage, FieldStorageInner, FieldType, FilteredEntityAccess,
-    FromBorrowedStorage, ListStorage, ListStorageInner, ResourceStorage, ResourceStorageInner,
-    StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage,
-    ValueStorageInner, ViewBridge, ViewFieldAccess, normalize_index,
+    AccessMode, AssetBorrowCounter, AssetStorage, BorrowableStorage, ComponentStorage,
+    ComponentStorageInner, FieldOffset, FieldStorage, FieldStorageInner, FieldType,
+    FilteredEntityAccess, FromBorrowedStorage, ListStorage, ListStorageInner, ResourceStorage,
+    ResourceStorageInner, StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard,
+    ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, normalize_index,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{

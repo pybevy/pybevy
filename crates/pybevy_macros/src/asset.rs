@@ -363,6 +363,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 world: &bevy::ecs::world::World,
                 handle: &bevy::asset::UntypedHandle,
                 validity: pybevy_core::ValidityFlagWithMode,
+                borrow_counter: pybevy_core::AssetBorrowCounter,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
                 use bevy::asset::Assets;
@@ -379,10 +380,11 @@ pub(crate) fn generate_asset_bridge_tokens(
                         let ptr = asset as *const #bevy_type;
                         // SAFETY: `ptr` is derived from a valid Bevy `Assets` borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                         let storage = unsafe {
-                            pybevy_core::AssetStorage::borrowed_readonly(
+                            pybevy_core::AssetStorage::borrowed_readonly_tracked(
                                 ptr,
                                 validity,
                                 handle.clone(),
+                                borrow_counter,
                             )
                         };
                         let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
@@ -397,6 +399,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 world: &mut bevy::ecs::world::World,
                 handle: &bevy::asset::UntypedHandle,
                 validity: pybevy_core::ValidityFlagWithMode,
+                borrow_counter: pybevy_core::AssetBorrowCounter,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
                 use bevy::asset::Assets;
@@ -413,10 +416,11 @@ pub(crate) fn generate_asset_bridge_tokens(
                         let ptr = asset.into_inner() as *mut #bevy_type;
                         // SAFETY: `ptr` is derived from a valid Bevy `Assets` mutable borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                         let storage = unsafe {
-                            pybevy_core::AssetStorage::borrowed_mut(
+                            pybevy_core::AssetStorage::borrowed_mut_tracked(
                                 ptr,
                                 validity,
                                 handle.clone(),
+                                borrow_counter,
                             )
                         };
                         let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
@@ -498,6 +502,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 &self,
                 world: &bevy::ecs::world::World,
                 validity: pybevy_core::ValidityFlagWithMode,
+                borrow_counter: pybevy_core::AssetBorrowCounter,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Vec<(bevy::asset::UntypedHandle, pyo3::Py<pyo3::PyAny>)>> {
                 use bevy::asset::{Assets, AssetId};
@@ -527,10 +532,11 @@ pub(crate) fn generate_asset_bridge_tokens(
                     let ptr = asset as *const #bevy_type;
                     // SAFETY: `ptr` is derived from a valid Bevy `Assets` borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                     let storage = unsafe {
-                        pybevy_core::AssetStorage::borrowed_readonly(
+                        pybevy_core::AssetStorage::borrowed_readonly_tracked(
                             ptr,
                             validity.clone(),
                             untyped_handle.clone(),
+                            borrow_counter.clone(),
                         )
                     };
                     let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;

@@ -24,6 +24,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use bevy::{ecs::world::unsafe_world_cell::UnsafeWorldCell, prelude::World};
 use pybevy_core::{
+    AssetBorrowCounter,
     handle::PyHandle,
     registry::{AssetBridge, global_registry},
 };
@@ -54,6 +55,7 @@ pub struct PyAssets {
     // Runtime validity check with read/write mode - prevents use after system execution
     // and enforces Res[Assets[T]] (read-only) vs ResMut[Assets[T]] (mutable) semantics
     validity: ValidityFlagWithMode,
+    borrow_counter: AssetBorrowCounter,
 }
 
 // SAFETY: PyAssets is Send because:
@@ -81,6 +83,7 @@ impl PyAssets {
         cell: UnsafeWorldCell,
         validity: ValidityFlag,
         is_mutable: bool,
+        borrow_counter: AssetBorrowCounter,
     ) -> Self {
         let access_mode = if is_mutable {
             AccessMode::Write
@@ -97,6 +100,7 @@ impl PyAssets {
             wrapper_class,
             cell,
             validity: validity.with_access_mode(access_mode),
+            borrow_counter,
         }
     }
 
@@ -114,6 +118,17 @@ impl PyAssets {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Handle of type `{}` does not match expected type `{}`",
                 handle_name, self_name
+            )));
+        }
+        Ok(())
+    }
+
+    fn check_no_live_asset_borrows(&self) -> PyResult<()> {
+        self.validity.check_read()?;
+        if self.borrow_counter.has_active() {
+            let name = self.bridge().map(|b| b.name()).unwrap_or("T");
+            return Err(PyRuntimeError::new_err(format!(
+                "Cannot structurally mutate Assets[{name}] while borrowed asset wrappers are live"
             )));
         }
         Ok(())
@@ -178,6 +193,7 @@ impl PyAssets {
     pub fn add(&mut self, asset: Bound<'_, PyAny>) -> PyResult<PyHandle> {
         let py = asset.py();
         let bridge = self.bridge()?;
+        self.check_no_live_asset_borrows()?;
 
         let asset = match bridge.try_convert_input(&asset, py)? {
             Some(converted) => converted,
@@ -222,6 +238,7 @@ impl PyAssets {
     pub fn remove(&mut self, py: Python, id: Bound<'_, PyHandle>) -> PyResult<Option<Py<PyAny>>> {
         let handle = id.extract::<PyHandle>()?;
         self.check_handle_type(&handle)?;
+        self.check_no_live_asset_borrows()?;
         let bridge = self.bridge()?;
         let world = self.world_mut()?;
         bridge.remove_and_return(world, &handle.to_untyped_handle()?, py)
@@ -236,6 +253,7 @@ impl PyAssets {
             world,
             &handle.to_untyped_handle()?,
             self.validity.clone(),
+            self.borrow_counter.clone(),
             py,
         )
     }
@@ -245,9 +263,10 @@ impl PyAssets {
         self.check_handle_type(&handle)?;
         let bridge = self.bridge()?;
         let validity = self.validity.clone();
+        let borrow_counter = self.borrow_counter.clone();
         let untyped_handle = handle.to_untyped_handle()?;
         let world = self.world_mut()?;
-        let raw = bridge.get_mut(world, &untyped_handle, validity, py)?;
+        let raw = bridge.get_mut(world, &untyped_handle, validity, borrow_counter, py)?;
 
         // Auto-wrap with @material class if this is a redirected Assets[HologramMaterial]
         if let (Some(raw_obj), Some(wrapper_ptr)) = (&raw, self.wrapper_class) {
@@ -265,7 +284,12 @@ impl PyAssets {
     pub fn __iter__(&self, py: Python) -> PyResult<PyAssetIter> {
         let bridge = self.bridge()?;
         let world = self.world_ref()?;
-        let pairs = bridge.iter_pairs(world, self.validity.clone(), py)?;
+        let pairs = bridge.iter_pairs(
+            world,
+            self.validity.clone(),
+            self.borrow_counter.clone(),
+            py,
+        )?;
         let type_ptr = self.type_ptr;
         let values = pairs
             .into_iter()
