@@ -31,7 +31,6 @@ use bevy::{
         change_detection::Tick,
         component::ComponentId,
         query::QueryBuilder,
-        storage::TableId,
         world::{FilteredEntityMut, World, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
@@ -39,7 +38,7 @@ use bevy::{
 use pybevy_bytecodevm::{
     bytecode::{CompiledBytecode, Compiler, FieldType as VmFieldType},
     expr::RustExpr,
-    view_engine::{self, ViewFilter},
+    view_engine::{self, TableRowRange, ViewFilter},
 };
 use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
@@ -733,11 +732,11 @@ impl PyView {
         self.reduce_with_op(py, expr, |acc, val| acc.min(val), f64::INFINITY)
     }
 
-    /// Iterate over batches (archetypes) for zero-copy ViewColumn access.
+    /// Iterate over contiguous filtered table-row batches for zero-copy ViewColumn access.
     ///
-    /// Each batch represents entities from a single archetype, enabling
-    /// zero-copy access via ViewColumn handles that can only be used with
-    /// Numba JIT functions.
+    /// Each batch represents a contiguous range of selected rows from one ECS
+    /// table, enabling zero-copy access via ViewColumn handles that can only be
+    /// used with Numba JIT functions.
     ///
     /// ```python
     /// import numba
@@ -762,80 +761,21 @@ impl PyView {
             .borrow_mut()
             .push(validity_token.clone());
 
-        // Discover matching archetype tables (same pattern as expression path)
+        // Discover the exact matching table-row ranges. Sparse-set components
+        // can split one table across multiple archetypes, so a table ID alone
+        // is not a valid representation of a filtered batch.
         // SAFETY: momentary &World for archetype discovery; see PyView::world_ptr.
         let world = unsafe { &*self.world_ptr()? };
 
-        // Register all component IDs
-        let component_ids: Vec<ComponentId> = self
+        let component_ids: HashSet<ComponentId> = self
             .component_types
             .iter()
             .map(|ct| self.get_component_id(ct))
-            .collect::<PyResult<Vec<_>>>()?;
+            .collect::<PyResult<HashSet<_>>>()?;
+        let filter = self.build_view_filter(component_ids)?;
+        let table_ranges = view_engine::matching_table_row_ranges(world, &filter);
 
-        // Register all filter IDs
-        let with_filter_ids: Vec<ComponentId> = self
-            .filter_types
-            .iter()
-            .map(|ft| self.get_component_id(ft))
-            .collect::<PyResult<Vec<_>>>()?;
-
-        let without_filter_ids: Vec<ComponentId> = self
-            .without_filter_types
-            .iter()
-            .map(|ft| self.get_component_id(ft))
-            .collect::<PyResult<Vec<_>>>()?;
-
-        // Changed/Added filter components must also be present on the archetype
-        let changed_filter_ids: Vec<ComponentId> = self
-            .changed_filter_types
-            .iter()
-            .map(|ft| self.get_component_id(ft))
-            .collect::<PyResult<Vec<_>>>()?;
-
-        let added_filter_ids: Vec<ComponentId> = self
-            .added_filter_types
-            .iter()
-            .map(|ft| self.get_component_id(ft))
-            .collect::<PyResult<Vec<_>>>()?;
-
-        // Collect table IDs for all archetypes containing ALL required components AND With filters,
-        // and NONE of the Without filter components
-        let table_ids: Vec<TableId> = {
-            let archetypes = world.archetypes();
-            let storages = world.storages();
-            let tables = &storages.tables;
-
-            archetypes
-                .iter()
-                .filter_map(|archetype| {
-                    if !component_ids.iter().all(|id| archetype.contains(*id)) {
-                        return None;
-                    }
-                    if !with_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                        return None;
-                    }
-                    if without_filter_ids.iter().any(|id| archetype.contains(*id)) {
-                        return None;
-                    }
-                    // Changed/Added filter components must be present
-                    if !changed_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                        return None;
-                    }
-                    if !added_filter_ids.iter().all(|id| archetype.contains(*id)) {
-                        return None;
-                    }
-                    let table_id = archetype.table_id();
-                    if tables.get(table_id).is_some_and(|t| t.entity_count() > 0) {
-                        Some(table_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
-
-        let total_batches = table_ids.len();
+        let total_batches = table_ranges.len();
 
         let iterator = PyBatchIterator {
             component_types: self.component_types.clone(),
@@ -843,7 +783,7 @@ impl PyView {
             world_cell: self.world_cell,
             validity_token,
             validity: self.validity.clone(),
-            table_ids,
+            table_ranges,
             current_batch: 0,
             total_batches,
         };
@@ -1525,10 +1465,10 @@ impl PyViewColMut {
     }
 }
 
-/// A batch of entities from a single archetype with zero-copy column access.
+/// A contiguous batch of filtered table rows with zero-copy column access.
 ///
-/// PyBatch provides access to contiguous component storage within a single
-/// archetype, enabling zero-copy ViewColumn creation for Numba JIT kernels.
+/// PyBatch provides access to a contiguous range of component storage within
+/// one table, enabling zero-copy ViewColumn creation for Numba JIT kernels.
 #[pyclass(name = "Batch", frozen)]
 pub struct PyBatch {
     /// Component types accessible in this batch
@@ -1549,8 +1489,8 @@ pub struct PyBatch {
     /// Must be checked before dereferencing the world cell to prevent use-after-free
     validity: ValidityFlag,
 
-    /// Specific archetype table for this batch
-    table_id: TableId,
+    /// Exact contiguous table-row range selected by the View filters.
+    table_range: TableRowRange,
 }
 
 unsafe impl Send for PyBatch {}
@@ -1564,7 +1504,7 @@ impl PyBatch {
         world_cell: Option<UnsafeWorldCell<'static>>,
         validity_token: Arc<std::sync::atomic::AtomicBool>,
         validity: ValidityFlag,
-        table_id: TableId,
+        table_range: TableRowRange,
     ) -> Self {
         Self {
             component_types,
@@ -1572,7 +1512,7 @@ impl PyBatch {
             world_cell,
             validity_token,
             validity,
-            table_id,
+            table_range,
         }
     }
 
@@ -1630,10 +1570,16 @@ impl PyBatch {
         let storages = world.storages();
         let tables = &storages.tables;
         let table = tables
-            .get(self.table_id)
+            .get(self.table_range.table_id)
             .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
 
-        let entity_count = table.entity_count() as usize;
+        let table_entity_count = table.entity_count() as usize;
+        let range_end = self
+            .table_range
+            .start_row
+            .checked_add(self.table_range.entity_count)
+            .filter(|&end| end <= table_entity_count)
+            .ok_or_else(|| PyRuntimeError::new_err("Batch row range is no longer valid"))?;
 
         let column = table.get_column(component_id).ok_or_else(|| {
             PyRuntimeError::new_err(format!("Column not found for component {:?}", comp_type))
@@ -1661,8 +1607,9 @@ impl PyBatch {
 
                     match storage_type {
                         ComponentStorageType::Wrapper(wrapper_size) => {
-                            let ptr =
-                                unsafe { wrapper_size.get_column_data_ptr(column, entity_count) };
+                            let ptr = unsafe {
+                                wrapper_size.get_column_data_ptr(column, table_entity_count)
+                            };
                             Ok(ptr)
                         }
                         _ => Err(PyRuntimeError::new_err(
@@ -1684,9 +1631,13 @@ impl PyBatch {
                     ))
                 })?;
 
-                unsafe { (view_bridge.column_data_ptr)(column, entity_count) }
+                unsafe { (view_bridge.column_data_ptr)(column, table_entity_count) }
             }
         };
+        // SAFETY: the row range was checked against the current table size,
+        // and `ptr` addresses the first element of this component column.
+        let ptr = unsafe { ptr.add(self.table_range.start_row * stride) };
+        let entity_count = range_end - self.table_range.start_row;
 
         let view_column = unsafe {
             match comp_type {
@@ -1758,10 +1709,16 @@ impl PyBatch {
         let storages = world.storages();
         let tables = &storages.tables;
         let table = tables
-            .get(self.table_id)
+            .get(self.table_range.table_id)
             .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
 
-        let entity_count = table.entity_count() as usize;
+        let table_entity_count = table.entity_count() as usize;
+        let range_end = self
+            .table_range
+            .start_row
+            .checked_add(self.table_range.entity_count)
+            .filter(|&end| end <= table_entity_count)
+            .ok_or_else(|| PyRuntimeError::new_err("Batch row range is no longer valid"))?;
 
         let column = table.get_column(component_id).ok_or_else(|| {
             PyRuntimeError::new_err(format!("Column not found for component {:?}", comp_type))
@@ -1776,8 +1733,12 @@ impl PyBatch {
         let stride = layout.size();
 
         // Mark all entities as changed for Bevy's change detection
-        let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
-        for tick in changed_ticks {
+        // SAFETY: the column belongs to this table and `table_entity_count` is
+        // its current row count. The selected range was bounds-checked above.
+        let changed_ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
+        for tick in &changed_ticks[self.table_range.start_row..range_end] {
+            // SAFETY: this tick belongs to the bounds-checked selected range and
+            // the parent View declared mutable access to this component.
             unsafe {
                 *tick.get() = change_tick;
             }
@@ -1797,8 +1758,9 @@ impl PyBatch {
 
                     match storage_type {
                         ComponentStorageType::Wrapper(wrapper_size) => {
-                            let ptr =
-                                unsafe { wrapper_size.get_column_data_ptr(column, entity_count) };
+                            let ptr = unsafe {
+                                wrapper_size.get_column_data_ptr(column, table_entity_count)
+                            };
                             Ok(ptr)
                         }
                         _ => Err(PyRuntimeError::new_err(
@@ -1820,9 +1782,13 @@ impl PyBatch {
                     ))
                 })?;
 
-                unsafe { (view_bridge.column_data_ptr)(column, entity_count) }
+                unsafe { (view_bridge.column_data_ptr)(column, table_entity_count) }
             }
         };
+        // SAFETY: the row range was checked against the current table size,
+        // and `ptr` addresses the first element of this component column.
+        let ptr = unsafe { ptr.add(self.table_range.start_row * stride) };
+        let entity_count = range_end - self.table_range.start_row;
 
         let view_column = unsafe {
             match comp_type {
@@ -1862,11 +1828,17 @@ impl PyBatch {
         let table = world
             .storages()
             .tables
-            .get(self.table_id)
+            .get(self.table_range.table_id)
             .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
 
-        table
-            .entities()
+        let range_end = self
+            .table_range
+            .start_row
+            .checked_add(self.table_range.entity_count)
+            .filter(|&end| end <= table.entity_count() as usize)
+            .ok_or_else(|| PyRuntimeError::new_err("Batch row range is no longer valid"))?;
+
+        table.entities()[self.table_range.start_row..range_end]
             .iter()
             .map(|&e| Py::new(py, PyEntity::from(e)))
             .collect()
@@ -1874,16 +1846,7 @@ impl PyBatch {
 
     fn __len__(&self) -> PyResult<usize> {
         self.validity.check()?;
-        // SAFETY: momentary &World for table access; see PyBatch::world_ptr.
-        let world = unsafe { &*self.world_ptr()? };
-
-        let table = world
-            .storages()
-            .tables
-            .get(self.table_id)
-            .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
-
-        Ok(table.entity_count() as usize)
+        Ok(self.table_range.entity_count)
     }
 
     fn __repr__(&self) -> String {
@@ -1914,8 +1877,8 @@ pub struct PyBatchIterator {
     /// Master validity flag
     validity: ValidityFlag,
 
-    /// Table IDs for each matching archetype
-    table_ids: Vec<TableId>,
+    /// Exact contiguous table-row ranges selected by the View filters.
+    table_ranges: Vec<TableRowRange>,
 
     /// Current batch index
     current_batch: usize,
@@ -1940,7 +1903,7 @@ impl PyBatchIterator {
             return Ok(None);
         }
 
-        let table_id = self.table_ids[self.current_batch];
+        let table_range = self.table_ranges[self.current_batch];
         self.current_batch += 1;
 
         let batch = PyBatch::new(
@@ -1949,9 +1912,190 @@ impl PyBatchIterator {
             self.world_cell,
             self.validity_token.clone(),
             self.validity.clone(),
-            table_id,
+            table_range,
         );
 
         Ok(Some(Py::new(py, batch)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashSet,
+        mem,
+        sync::{Arc, atomic::AtomicBool},
+    };
+
+    use bevy::{
+        ecs::component::Component,
+        prelude::{Entity, Transform},
+    };
+    use pybevy_bytecodevm::view_engine::{ViewFilter, matching_table_row_ranges};
+    use pybevy_core::{ValidityGuard, bridge_inventory};
+    use pybevy_transform::transform::PyTransform;
+    use pyo3::{PyTypeInfo, types::PyAnyMethods};
+
+    use super::*;
+
+    #[derive(Component)]
+    #[component(storage = "SparseSet")]
+    struct SparseBatchMarker;
+
+    #[test]
+    fn pybatch_binding_limits_columns_entities_and_ticks_to_sparse_selected_range() {
+        bridge_inventory::collect_all();
+
+        let mut world = World::new();
+        let plain_first = world.spawn(Transform::from_xyz(10.0, 0.0, 0.0)).id();
+        let selected_first = world
+            .spawn((Transform::from_xyz(20.0, 0.0, 0.0), SparseBatchMarker))
+            .id();
+        let selected_second = world
+            .spawn((Transform::from_xyz(30.0, 0.0, 0.0), SparseBatchMarker))
+            .id();
+        let plain_last = world.spawn(Transform::from_xyz(40.0, 0.0, 0.0)).id();
+
+        let transform_id = world.components().component_id::<Transform>().unwrap();
+        let marker_id = world
+            .components()
+            .component_id::<SparseBatchMarker>()
+            .unwrap();
+        let filter = ViewFilter {
+            component_ids: HashSet::from([transform_id]),
+            with_ids: vec![marker_id],
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let ranges = matching_table_row_ranges(&world, &filter);
+        assert_eq!(ranges.len(), 1);
+        let table_range = ranges[0];
+        assert_eq!(table_range.start_row, 1);
+        assert_eq!(table_range.entity_count, 2);
+
+        world.clear_trackers();
+        let last_run = world.last_change_tick();
+        world.increment_change_tick();
+        let this_run = world.change_tick();
+
+        // SAFETY: `world` outlives the Python batch and is not structurally
+        // modified while the batch and its derived column are alive.
+        let world_cell: UnsafeWorldCell<'static> =
+            unsafe { mem::transmute(world.as_unsafe_world_cell()) };
+        let validity = ValidityFlag::new();
+        let _validity_guard = ValidityGuard::new(validity.clone());
+        let validity_token = Arc::new(AtomicBool::new(true));
+
+        Python::attach(|py| {
+            let transform_type = PyTransform::type_object(py);
+            let component_type = PyComponentType::Dynamic(transform_type.as_type_ptr());
+            let batch = Py::new(
+                py,
+                PyBatch::new(
+                    vec![component_type.clone()],
+                    HashSet::from([component_type]),
+                    Some(world_cell),
+                    validity_token,
+                    validity,
+                    table_range,
+                ),
+            )
+            .unwrap();
+            let batch = batch.bind(py);
+
+            assert_eq!(
+                batch
+                    .call_method0("__len__")
+                    .unwrap()
+                    .extract::<usize>()
+                    .unwrap(),
+                2
+            );
+            let entities = batch.call_method0("entities").unwrap();
+            assert_eq!(entities.len().unwrap(), 2);
+
+            let column = batch.call_method1("column_mut", (transform_type,)).unwrap();
+            assert_eq!(
+                column.getattr("len").unwrap().extract::<usize>().unwrap(),
+                2
+            );
+            let column = column.cast::<PyViewColumn>().unwrap().borrow();
+            let x_column = column
+                .at_offset_typed(
+                    mem::offset_of!(Transform, translation),
+                    Some(VmFieldType::F32),
+                )
+                .unwrap();
+            drop(column);
+            let x_column = Py::new(py, x_column).unwrap();
+            let x_column = x_column.bind(py);
+            assert_eq!(
+                x_column
+                    .call_method1("peek", (0,))
+                    .unwrap()
+                    .extract::<f64>()
+                    .unwrap(),
+                20.0
+            );
+            assert_eq!(
+                x_column
+                    .call_method1("peek", (1,))
+                    .unwrap()
+                    .extract::<f64>()
+                    .unwrap(),
+                30.0
+            );
+            x_column.call_method1("set", (99.0,)).unwrap();
+        });
+
+        assert_eq!(
+            world
+                .entity(plain_first)
+                .get::<Transform>()
+                .unwrap()
+                .translation
+                .x,
+            10.0
+        );
+        assert_eq!(
+            world
+                .entity(selected_first)
+                .get::<Transform>()
+                .unwrap()
+                .translation
+                .x,
+            99.0
+        );
+        assert_eq!(
+            world
+                .entity(selected_second)
+                .get::<Transform>()
+                .unwrap()
+                .translation
+                .x,
+            99.0
+        );
+        assert_eq!(
+            world
+                .entity(plain_last)
+                .get::<Transform>()
+                .unwrap()
+                .translation
+                .x,
+            40.0
+        );
+
+        let was_changed = |entity: Entity| {
+            world
+                .entity(entity)
+                .get_change_ticks_by_id(transform_id)
+                .unwrap()
+                .is_changed(last_run, this_run)
+        };
+        assert!(!was_changed(plain_first));
+        assert!(was_changed(selected_first));
+        assert!(was_changed(selected_second));
+        assert!(!was_changed(plain_last));
     }
 }

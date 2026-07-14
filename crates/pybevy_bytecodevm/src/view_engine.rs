@@ -36,16 +36,34 @@ struct SendPtr(*mut u8);
 unsafe impl Send for SendPtr {}
 unsafe impl Sync for SendPtr {}
 
-/// A batch of entities from one archetype table with raw column pointers.
+/// A contiguous range of rows in one ECS table.
+///
+/// Sparse-set components can split one table across multiple archetypes. View
+/// filters therefore select table rows, not whole tables. Keeping the selected
+/// rows as maximal contiguous ranges preserves the batch VM's contiguous-memory
+/// fast path and the public View API's zero-copy column semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TableRowRange {
+    /// The table containing the selected rows.
+    pub table_id: TableId,
+    /// First selected row in the table.
+    pub start_row: usize,
+    /// Number of consecutive selected rows.
+    pub entity_count: usize,
+}
+
+/// A contiguous batch of selected table rows with raw column pointers.
 pub struct TableBatch {
     /// The table this batch was gathered from.
     pub table_id: TableId,
     /// Base pointer for each component's column data in this table.
     pub component_bases: HashMap<ComponentId, *mut u8>,
-    /// Number of entities in this table.
+    /// First selected row in the table.
+    pub start_row: usize,
+    /// Number of entities in this contiguous selected range.
     pub entity_count: usize,
     /// Per-entity tick mask. `None` means all entities pass.
-    /// `Some(vec)` where `vec[i]` is true if entity i passes all tick filters.
+    /// `Some(vec)` where `vec[i]` is true if local row i passes all tick filters.
     pub tick_mask: Option<Vec<bool>>,
 }
 
@@ -274,7 +292,8 @@ pub fn resolve_component_strides(
 /// Returns `None` if there are no tick filters (all entities pass).
 fn build_tick_mask_for_table(
     table: &Table,
-    entity_count: usize,
+    table_entity_count: usize,
+    row_range: TableRowRange,
     changed_ids: &[ComponentId],
     added_ids: &[ComponentId],
     last_run: Tick,
@@ -284,14 +303,18 @@ fn build_tick_mask_for_table(
         return None;
     }
 
-    let mut mask = vec![true; entity_count];
+    let mut mask = vec![true; row_range.entity_count];
 
     for &id in changed_ids {
         if let Some(column) = table.get_column(id) {
-            let changed_ticks = unsafe { column.get_changed_ticks_slice(entity_count) };
-            for i in 0..entity_count {
+            // SAFETY: `table_entity_count` is the table's current row count and
+            // the column belongs to this table.
+            let changed_ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
+            for i in 0..row_range.entity_count {
                 if mask[i] {
-                    let tick = unsafe { *changed_ticks[i].get() };
+                    // SAFETY: the range was built from live archetype rows and
+                    // the tick slice covers the full current table.
+                    let tick = unsafe { *changed_ticks[row_range.start_row + i].get() };
                     if !tick.is_newer_than(last_run, this_run) {
                         mask[i] = false;
                     }
@@ -302,10 +325,14 @@ fn build_tick_mask_for_table(
 
     for &id in added_ids {
         if let Some(column) = table.get_column(id) {
-            let added_ticks = unsafe { column.get_added_ticks_slice(entity_count) };
-            for i in 0..entity_count {
+            // SAFETY: `table_entity_count` is the table's current row count and
+            // the column belongs to this table.
+            let added_ticks = unsafe { column.get_added_ticks_slice(table_entity_count) };
+            for i in 0..row_range.entity_count {
                 if mask[i] {
-                    let tick = unsafe { *added_ticks[i].get() };
+                    // SAFETY: the range was built from live archetype rows and
+                    // the tick slice covers the full current table.
+                    let tick = unsafe { *added_ticks[row_range.start_row + i].get() };
                     if !tick.is_newer_than(last_run, this_run) {
                         mask[i] = false;
                     }
@@ -315,6 +342,78 @@ fn build_tick_mask_for_table(
     }
 
     Some(mask)
+}
+
+/// Resolve the exact table rows selected by the archetype-level portions of a
+/// View filter.
+///
+/// Multiple archetypes can share a table when they differ only by sparse-set
+/// components. Rows are grouped by table, sorted, deduplicated defensively, and
+/// coalesced into maximal contiguous ranges. Consequently each selected table
+/// row appears in exactly one returned range.
+pub fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<TableRowRange> {
+    let mut rows_by_table = Vec::<(TableId, Vec<usize>)>::new();
+
+    for archetype in world.archetypes().iter() {
+        if !filter
+            .component_ids
+            .iter()
+            .all(|id| archetype.contains(*id))
+            || !filter.with_ids.iter().all(|id| archetype.contains(*id))
+            || filter.without_ids.iter().any(|id| archetype.contains(*id))
+            || !filter.changed_ids.iter().all(|id| archetype.contains(*id))
+            || !filter.added_ids.iter().all(|id| archetype.contains(*id))
+        {
+            continue;
+        }
+
+        let table_id = archetype.table_id();
+        let index = rows_by_table
+            .iter()
+            .position(|(existing_id, _)| *existing_id == table_id)
+            .unwrap_or_else(|| {
+                let index = rows_by_table.len();
+                rows_by_table.push((table_id, Vec::new()));
+                index
+            });
+        rows_by_table[index].1.extend(
+            archetype
+                .entities()
+                .iter()
+                .map(|entity| entity.table_row().index()),
+        );
+    }
+
+    let mut ranges = Vec::new();
+    for (table_id, mut rows) in rows_by_table {
+        rows.sort_unstable();
+        rows.dedup();
+
+        let Some(&first) = rows.first() else {
+            continue;
+        };
+        let mut start = first;
+        let mut previous = first;
+        for &row in &rows[1..] {
+            if row == previous + 1 {
+                previous = row;
+                continue;
+            }
+            ranges.push(TableRowRange {
+                table_id,
+                start_row: start,
+                entity_count: previous - start + 1,
+            });
+            start = row;
+            previous = row;
+        }
+        ranges.push(TableRowRange {
+            table_id,
+            start_row: start,
+            entity_count: previous - start + 1,
+        });
+    }
+    ranges
 }
 
 /// Gather all archetype table batches matching the filter criteria.
@@ -333,40 +432,21 @@ pub fn gather_table_batches(
 ) -> Vec<TableBatch> {
     let has_tick_filters = !filter.changed_ids.is_empty() || !filter.added_ids.is_empty();
 
-    let archetypes = world.archetypes();
     let storages = world.storages();
     let tables = &storages.tables;
 
     let mut batches = Vec::new();
-    for archetype in archetypes.iter() {
-        if !filter
-            .component_ids
-            .iter()
-            .all(|id| archetype.contains(*id))
-        {
-            continue;
-        }
-        if !filter.with_ids.iter().all(|id| archetype.contains(*id)) {
-            continue;
-        }
-        if filter.without_ids.iter().any(|id| archetype.contains(*id)) {
-            continue;
-        }
-        if !filter.changed_ids.iter().all(|id| archetype.contains(*id)) {
-            continue;
-        }
-        if !filter.added_ids.iter().all(|id| archetype.contains(*id)) {
-            continue;
-        }
-
-        let table_id = archetype.table_id();
-        if let Some(table) = tables.get(table_id) {
-            let entity_count = table.entity_count() as usize;
-            if entity_count > 0 {
+    for row_range in matching_table_row_ranges(world, filter) {
+        if let Some(table) = tables.get(row_range.table_id) {
+            let table_entity_count = table.entity_count() as usize;
+            if row_range.entity_count > 0
+                && row_range.start_row + row_range.entity_count <= table_entity_count
+            {
                 let tick_mask = if has_tick_filters {
                     build_tick_mask_for_table(
                         table,
-                        entity_count,
+                        table_entity_count,
+                        row_range,
                         &filter.changed_ids,
                         &filter.added_ids,
                         last_run,
@@ -377,18 +457,20 @@ pub fn gather_table_batches(
                 };
 
                 // Skip entire table if tick mask filters out all entities
-                if let Some(ref mask) = tick_mask {
-                    if !mask.iter().any(|&v| v) {
-                        continue;
-                    }
+                if let Some(ref mask) = tick_mask
+                    && !mask.iter().any(|&v| v)
+                {
+                    continue;
                 }
 
                 let mut component_bases: HashMap<ComponentId, *mut u8> = HashMap::new();
                 let mut all_found = true;
                 for &component_id in &filter.component_ids {
                     if let Some(column) = table.get_column(component_id) {
+                        // SAFETY: the column belongs to `table` and the supplied
+                        // length is exactly the table's current entity count.
                         let ptr = unsafe {
-                            let data_slice = column.get_data_slice::<u8>(entity_count);
+                            let data_slice = column.get_data_slice::<u8>(table_entity_count);
                             data_slice.as_ptr() as *mut u8
                         };
                         component_bases.insert(component_id, ptr);
@@ -400,9 +482,10 @@ pub fn gather_table_batches(
 
                 if all_found {
                     batches.push(TableBatch {
-                        table_id,
+                        table_id: row_range.table_id,
                         component_bases,
-                        entity_count,
+                        start_row: row_range.start_row,
+                        entity_count: row_range.entity_count,
                         tick_mask,
                     });
                 }
@@ -521,8 +604,13 @@ pub unsafe fn execute_batch_assignment(
                         .map(|(i, field_id)| {
                             let component_base = batch.component_bases[&field_id.component_id];
                             let stride = field_strides[i];
+                            // SAFETY: the batch range and chunk are within the
+                            // gathered table column, and validated field offsets
+                            // fit their registered component layouts.
                             SendPtr(unsafe {
-                                component_base.add(field_id.offset).add(start * stride)
+                                component_base
+                                    .add(field_id.offset)
+                                    .add((batch.start_row + start) * stride)
                             })
                         })
                         .collect();
@@ -599,10 +687,10 @@ pub unsafe fn execute_filtered_assignment(
             let mask = batch.tick_mask.as_ref();
             let strides = &field_strides;
             (0..batch.entity_count).filter_map(move |entity_idx| {
-                if let Some(mask) = mask {
-                    if !mask[entity_idx] {
-                        return None;
-                    }
+                if let Some(mask) = mask
+                    && !mask[entity_idx]
+                {
+                    return None;
                 }
 
                 let field_ptrs: Vec<SendPtr> = bytecode
@@ -612,7 +700,12 @@ pub unsafe fn execute_filtered_assignment(
                     .map(|(i, field_id)| {
                         let base = batch.component_bases[&field_id.component_id];
                         let stride = strides[i];
-                        SendPtr(unsafe { base.add(field_id.offset).add(entity_idx * stride) })
+                        // SAFETY: the local entity index is inside this gathered
+                        // range and validated field offsets fit the component.
+                        SendPtr(unsafe {
+                            base.add(field_id.offset)
+                                .add((batch.start_row + entity_idx) * stride)
+                        })
                     })
                     .collect();
 
@@ -669,18 +762,27 @@ pub fn mark_component_changed(
             continue;
         };
 
-        let changed_ticks = unsafe { column.get_changed_ticks_slice(batch.entity_count) };
+        let table_entity_count = table.entity_count() as usize;
+        if batch.start_row + batch.entity_count > table_entity_count {
+            continue;
+        }
+        // SAFETY: the column belongs to this table and `table_entity_count` is
+        // its current row count. The batch range was bounds-checked above.
+        let changed_ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
 
         if let Some(ref mask) = batch.tick_mask {
             for i in 0..batch.entity_count {
                 if mask[i] {
+                    // SAFETY: the full-table tick slice and batch range were
+                    // bounds-checked above.
                     unsafe {
-                        *changed_ticks[i].get() = change_tick;
+                        *changed_ticks[batch.start_row + i].get() = change_tick;
                     }
                 }
             }
         } else {
-            for tick in changed_ticks {
+            for tick in &changed_ticks[batch.start_row..batch.start_row + batch.entity_count] {
+                // SAFETY: the sliced ticks belong exactly to this batch's rows.
                 unsafe {
                     *tick.get() = change_tick;
                 }
@@ -1065,7 +1167,7 @@ impl ViewExecutionContext {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use bevy_ecs::{component::ComponentId, prelude::Component};
+    use bevy_ecs::{component::ComponentId, entity::Entity, prelude::Component};
 
     use super::*;
     use crate::bytecode::{Compiler, FieldId, FieldType, Op};
@@ -1079,6 +1181,23 @@ mod tests {
         a: f32,
         b: f32,
         c: f32,
+    }
+
+    #[derive(Component)]
+    struct DenseValue(f32);
+
+    #[derive(Component)]
+    #[component(storage = "SparseSet")]
+    struct SparseMarker;
+
+    fn sparse_filter(component_id: ComponentId, marker_id: ComponentId, with: bool) -> ViewFilter {
+        ViewFilter {
+            component_ids: HashSet::from([component_id]),
+            with_ids: if with { vec![marker_id] } else { Vec::new() },
+            without_ids: if with { Vec::new() } else { vec![marker_id] },
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        }
     }
 
     /// Helper: bytecode that reads a single field of the given type at `offset`.
@@ -1213,6 +1332,7 @@ mod tests {
         let batches = vec![TableBatch {
             table_id: TableId::from_u32(0),
             component_bases,
+            start_row: 0,
             entity_count: 3,
             tick_mask: None,
         }];
@@ -1246,6 +1366,7 @@ mod tests {
         let batches = vec![TableBatch {
             table_id: TableId::from_u32(0),
             component_bases,
+            start_row: 0,
             entity_count: 4,
             tick_mask: Some(vec![false, true, false, true]),
         }];
@@ -1259,6 +1380,121 @@ mod tests {
         assert_eq!(data[1], 102.0); // +100
         assert_eq!(data[2], 3.0); // unchanged
         assert_eq!(data[3], 104.0); // +100
+    }
+
+    #[test]
+    fn sparse_filters_select_exact_rows_from_shared_table() {
+        let mut world = World::new();
+        let plain_first = world.spawn(DenseValue(0.0)).id();
+        let selected_first = world.spawn((DenseValue(1.0), SparseMarker)).id();
+        let selected_second = world.spawn((DenseValue(2.0), SparseMarker)).id();
+        let plain_last = world.spawn(DenseValue(3.0)).id();
+
+        let component_id = world.components().component_id::<DenseValue>().unwrap();
+        let marker_id = world.components().component_id::<SparseMarker>().unwrap();
+
+        let with_ranges =
+            matching_table_row_ranges(&world, &sparse_filter(component_id, marker_id, true));
+        assert_eq!(with_ranges.len(), 1);
+        assert_eq!(with_ranges[0].start_row, 1);
+        assert_eq!(with_ranges[0].entity_count, 2);
+
+        let table = world
+            .storages()
+            .tables
+            .get(with_ranges[0].table_id)
+            .unwrap();
+        assert_eq!(&table.entities()[1..3], &[selected_first, selected_second]);
+
+        let without_ranges =
+            matching_table_row_ranges(&world, &sparse_filter(component_id, marker_id, false));
+        assert_eq!(
+            without_ranges,
+            vec![
+                TableRowRange {
+                    table_id: with_ranges[0].table_id,
+                    start_row: 0,
+                    entity_count: 1,
+                },
+                TableRowRange {
+                    table_id: with_ranges[0].table_id,
+                    start_row: 3,
+                    entity_count: 1,
+                },
+            ]
+        );
+        assert_eq!(table.entities()[0], plain_first);
+        assert_eq!(table.entities()[3], plain_last);
+
+        let all_filter = ViewFilter {
+            component_ids: HashSet::from([component_id]),
+            with_ids: Vec::new(),
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let all_ranges = matching_table_row_ranges(&world, &all_filter);
+        assert_eq!(
+            all_ranges,
+            vec![TableRowRange {
+                table_id: with_ranges[0].table_id,
+                start_row: 0,
+                entity_count: 4,
+            }]
+        );
+    }
+
+    #[test]
+    fn sparse_filtered_assignment_only_mutates_selected_rows() {
+        let mut world = World::new();
+        let plain_first = world.spawn(DenseValue(10.0)).id();
+        let selected_first = world.spawn((DenseValue(20.0), SparseMarker)).id();
+        let selected_second = world.spawn((DenseValue(30.0), SparseMarker)).id();
+        let plain_last = world.spawn(DenseValue(40.0)).id();
+
+        let component_id = world.components().component_id::<DenseValue>().unwrap();
+        let marker_id = world.components().component_id::<SparseMarker>().unwrap();
+        let filter = sparse_filter(component_id, marker_id, true);
+        let bytecode = make_add_bytecode(component_id, 0, 5.0);
+        world.clear_trackers();
+        let last_run = world.last_change_tick();
+        world.increment_change_tick();
+        let this_run = world.change_tick();
+        let context = ViewExecutionContext::new(&mut world, &filter, last_run, this_run).unwrap();
+
+        assert_eq!(context.entity_count(), 2);
+        // SAFETY: the context was gathered from this unchanged World and the
+        // bytecode only accesses the declared `DenseValue` component field.
+        unsafe { context.execute(&mut world, &bytecode, component_id) };
+
+        assert_eq!(
+            world.entity(plain_first).get::<DenseValue>().unwrap().0,
+            10.0
+        );
+        assert_eq!(
+            world.entity(selected_first).get::<DenseValue>().unwrap().0,
+            25.0
+        );
+        assert_eq!(
+            world.entity(selected_second).get::<DenseValue>().unwrap().0,
+            35.0
+        );
+        assert_eq!(
+            world.entity(plain_last).get::<DenseValue>().unwrap().0,
+            40.0
+        );
+
+        let was_changed = |entity: Entity| {
+            world
+                .entity(entity)
+                .get_change_ticks_by_id(component_id)
+                .unwrap()
+                .is_changed(last_run, this_run)
+        };
+        assert!(!was_changed(plain_first));
+        assert!(was_changed(selected_first));
+        assert!(was_changed(selected_second));
+        assert!(!was_changed(plain_last));
     }
 
     #[test]
