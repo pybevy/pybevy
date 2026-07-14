@@ -12,6 +12,7 @@ use crate::{
     BaseEntitySet,
     cleanup::{NativeResourceSnapshot, clear_world_state},
     profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
+    progress::{ReloadProgress, ReloadProgressPhase, emit_reload_progress},
     runtime::{EscalationTracker, ReloadError, ReloadRuntime},
     state::{HotReloadGeneration, ReloadMode},
     tracker::PluginTracker,
@@ -45,6 +46,14 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     // PHASE 1: VALIDATE — load definitions before committing.
     let next_generation = old_generation + 1;
+    emit_reload_progress(
+        world,
+        ReloadProgress::new(
+            ReloadProgressPhase::DefinitionsLoading,
+            next_generation,
+            mode,
+        ),
+    );
     let defs = match runtime.load_definitions(next_generation) {
         Ok(defs) => defs,
         Err(e) => {
@@ -72,6 +81,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             return Err(e);
         }
     };
+    emit_reload_progress(
+        world,
+        ReloadProgress::new(ReloadProgressPhase::DefinitionsReady, next_generation, mode),
+    );
 
     // PHASE 2: COMMIT — increment generation (point of no return).
     hot_reload_state.increment_generation();
@@ -123,7 +136,15 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     }
 
     if mode == ReloadMode::Full {
+        emit_reload_progress(
+            world,
+            ReloadProgress::new(ReloadProgressPhase::CleanupStarted, new_generation, mode),
+        );
         clear_world_state(world, runtime, is_verbose());
+        emit_reload_progress(
+            world,
+            ReloadProgress::new(ReloadProgressPhase::CleanupFinished, new_generation, mode),
+        );
     }
 
     // Reset reload result tracking
@@ -181,7 +202,15 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         if let Some(reason) = reason {
             eprintln!("⬆️ [Hot Reload] Escalating Partial → Full: {reason}");
             mode = ReloadMode::Full;
+            emit_reload_progress(
+                world,
+                ReloadProgress::new(ReloadProgressPhase::CleanupStarted, new_generation, mode),
+            );
             clear_world_state(world, runtime, is_verbose());
+            emit_reload_progress(
+                world,
+                ReloadProgress::new(ReloadProgressPhase::CleanupFinished, new_generation, mode),
+            );
 
             if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
                 stats.last_mode = Some(ReloadMode::Full);
@@ -253,6 +282,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             }
         }
     }
+
+    emit_reload_progress(
+        world,
+        ReloadProgress::new(ReloadProgressPhase::Registering, new_generation, mode),
+    );
 
     if mode == ReloadMode::Full {
         if let Err(e) = runtime.register_resources(world, &defs) {
@@ -336,6 +370,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 eprintln!("   → Running Startup schedule");
             }
 
+            emit_reload_progress(
+                world,
+                ReloadProgress::new(ReloadProgressPhase::StartupStarted, new_generation, mode),
+            );
             let startup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 world.run_schedule(Startup);
             }));
@@ -409,6 +447,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                     is_load_failure: false,
                 });
             }
+
+            emit_reload_progress(
+                world,
+                ReloadProgress::new(ReloadProgressPhase::StartupFinished, new_generation, mode),
+            );
         } else if is_verbose() {
             eprintln!("   → Skipping Startup schedule (not present in app)");
         }
@@ -572,6 +615,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         eprintln!("✅ [Hot Reload] {:?} reload complete\n", mode);
     }
 
+    emit_reload_progress(
+        world,
+        ReloadProgress::new(ReloadProgressPhase::Complete, new_generation, mode),
+    );
+
     Ok(())
 }
 
@@ -597,7 +645,7 @@ mod tests {
         any::TypeId,
         collections::{HashSet, VecDeque},
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
     };
@@ -849,6 +897,69 @@ mod tests {
         world.insert_resource(schedules);
 
         (world, gen_counter)
+    }
+
+    fn record_progress(world: &mut World) -> Arc<Mutex<Vec<ReloadProgress>>> {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        world.insert_resource(crate::ReloadProgressReporter::new(move |progress| {
+            captured.lock().unwrap().push(progress);
+        }));
+        events
+    }
+
+    #[test]
+    fn full_reload_reports_backend_neutral_progress() {
+        let (mut world, gen_counter) = setup_world();
+        let events = record_progress(&mut world);
+        let state = MockState::new(gen_counter);
+
+        assert!(perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state).is_ok());
+
+        let phases: Vec<_> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|progress| progress.phase)
+            .collect();
+        assert_eq!(
+            phases,
+            vec![
+                ReloadProgressPhase::DefinitionsLoading,
+                ReloadProgressPhase::DefinitionsReady,
+                ReloadProgressPhase::CleanupStarted,
+                ReloadProgressPhase::CleanupFinished,
+                ReloadProgressPhase::Registering,
+                ReloadProgressPhase::StartupStarted,
+                ReloadProgressPhase::StartupFinished,
+                ReloadProgressPhase::Complete,
+            ]
+        );
+    }
+
+    #[test]
+    fn partial_reload_skips_cleanup_and_startup_progress() {
+        let (mut world, gen_counter) = setup_world();
+        let events = record_progress(&mut world);
+        let state = MockState::new(gen_counter);
+
+        assert!(perform_reload(&mut world, &mut MockRuntime, ReloadMode::Partial, &state).is_ok());
+
+        let phases: Vec<_> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|progress| progress.phase)
+            .collect();
+        assert_eq!(
+            phases,
+            vec![
+                ReloadProgressPhase::DefinitionsLoading,
+                ReloadProgressPhase::DefinitionsReady,
+                ReloadProgressPhase::Registering,
+                ReloadProgressPhase::Complete,
+            ]
+        );
     }
 
     /// Runtime with a configurable fingerprint, for escalation tests.

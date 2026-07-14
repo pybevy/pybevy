@@ -2,6 +2,7 @@ pub mod cleanup;
 pub mod orchestrator;
 pub mod overlay;
 pub mod profiling;
+pub mod progress;
 pub mod runtime;
 pub mod state;
 pub mod tracker;
@@ -40,6 +41,9 @@ pub use overlay::{
 };
 pub use profiling::{
     HotReloadStats, MemoryProfile, ReloadMemorySnapshot, SystemMonitor, SystemProfiler, SystemStage,
+};
+pub use progress::{
+    ReloadProgress, ReloadProgressPhase, ReloadProgressReporter, ReloadProgressSink,
 };
 pub use runtime::{DefsFingerprint, EscalationTracker, ReloadError, ReloadRuntime};
 pub use state::{HotReloadGeneration, ReloadMode, generation_matches, startup_or_reload};
