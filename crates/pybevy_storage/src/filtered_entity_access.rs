@@ -18,9 +18,9 @@ use bevy::ecs::{
 /// code path works for both `QueryState<FilteredEntityRef>` (read-only) and
 /// `QueryState<FilteredEntityMut>` (read-write) queries.
 pub enum FilteredEntityAccess<'w, 's> {
-    /// Read-only access — query has no `Mut[T]` components.
+    /// Read-only access: query has no `Mut[T]` components.
     Ref(FilteredEntityRef<'w, 's>),
-    /// Read-write access — query has at least one `Mut[T]` component.
+    /// Read-write access: query has at least one `Mut[T]` component.
     Mut(FilteredEntityMut<'w, 's>),
 }
 
@@ -62,7 +62,7 @@ impl<'w, 's> FilteredEntityAccess<'w, 's> {
     pub fn get_mut_by_id(&mut self, component_id: ComponentId) -> Option<MutUntyped<'_>> {
         match self {
             Self::Ref(_) => panic!(
-                "get_mut_by_id called on FilteredEntityRef — \
+                "get_mut_by_id called on FilteredEntityRef: \
                  read-only queries must never request mutable access"
             ),
             Self::Mut(m) => m.get_mut_by_id(component_id),

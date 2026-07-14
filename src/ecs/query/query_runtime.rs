@@ -280,9 +280,9 @@ impl CachedQuery {
 /// 5. GIL acquisition/release (handled by PyO3 automatically)
 #[pyclass(name = "QueryIter")]
 pub struct PyQueryIter {
-    /// The query parameter information (Arc-shared clone of the cache's copy).
-    /// Kept as its own field so per-entity extraction can iterate `param.data`
-    /// while mutating `values_buffer` (disjoint-field borrows).
+    /// The query parameter information: an `Arc` handle cloned from the cache at
+    /// construction. Kept as a direct field so hot-path extraction reads
+    /// `param.data` without dereferencing the raw `cached` pointer per entity.
     param: Arc<PyQueryParam>,
 
     /// Raw pointer to the static per-parameter state owned by the DynamicSystem.

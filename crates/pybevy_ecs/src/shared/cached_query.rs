@@ -53,43 +53,90 @@ impl ErasedQueryState {
         }
     }
 
-    /// Count matching entities (O(n) - iterates all).
+    /// Reconstitute the concrete `QueryState` behind the erased pointer and run
+    /// the branch selected by the variant tag. This is the single place that
+    /// performs the `*mut () as *mut QueryState<_>` cast, so a mistagged cast
+    /// (which would be UB) cannot be duplicated across call sites.
     ///
-    pub fn count(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> usize {
-        let (read_only, p) = self.parts();
-        // SAFETY: declared access from `initialize` covers this state and the
-        // executor prevents conflicting systems from running concurrently.
-        unsafe {
-            if read_only {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .iter_inner()
-                    .count()
-            } else {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .iter_inner()
-                    .count()
-            }
+    /// # Safety
+    ///
+    /// The erased pointer must still own a live `QueryState` of the tagged
+    /// variant, and the caller must uphold whatever contract the closures rely
+    /// on (typically the world/access/aliasing requirements of
+    /// `query_unchecked_with_ticks`).
+    /// The `'s` lifetime is chosen by the caller: because the state borrow is
+    /// reconstituted from a raw pointer, a caller returning a value that borrows
+    /// the state (e.g. `get_inner`) can tie `'s` to the world lifetime, while a
+    /// caller returning an owned value leaves it minimal.
+    pub(crate) unsafe fn with_state<'s, R>(
+        &self,
+        read_only: impl FnOnce(&'s mut QueryState<FilteredEntityRef<'static, 'static>>) -> R,
+        mutable: impl FnOnce(&'s mut QueryState<FilteredEntityMut<'static, 'static>>) -> R,
+    ) -> R {
+        let (is_read_only, p) = self.parts();
+        if is_read_only {
+            // SAFETY: `parts` tags this pointer as the read-only variant; the
+            // caller upholds liveness for `'s` and the closure's own preconditions.
+            read_only(unsafe { &mut *(p as *mut QueryState<FilteredEntityRef<'static, 'static>>) })
+        } else {
+            // SAFETY: `parts` tags this pointer as the mutable variant; the
+            // caller upholds liveness for `'s` and the closure's own preconditions.
+            mutable(unsafe { &mut *(p as *mut QueryState<FilteredEntityMut<'static, 'static>>) })
         }
     }
 
-    /// Check if no entities match.
+    /// Count matching entities by draining a fresh unchecked traversal (O(n)).
     ///
-    /// SAFETY: same discipline as [`Self::count`].
-    pub fn is_empty_check(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> bool {
-        let (read_only, p) = self.parts();
-        // SAFETY: the same declared-access and executor discipline as `count`.
+    /// # Safety
+    ///
+    /// `cell` must reference the world this state was built from, and the
+    /// scheduler's declared access must cover this state so the unchecked query
+    /// has unique access to the components it touches. No other live iterator or
+    /// query may borrow this same `QueryState` for the duration of the call.
+    pub unsafe fn count(&self, cell: UnsafeWorldCell, last_run: Tick, this_run: Tick) -> usize {
+        // SAFETY: the caller guarantees `cell` matches this state's world, declared
+        // access covers it, and no other iterator/query aliases it; the closures'
+        // `query_unchecked_with_ticks` calls inherit that contract.
         unsafe {
-            if read_only {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityRef>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .is_empty()
-            } else {
-                let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
-                qs.query_unchecked_with_ticks(cell, last_run, this_run)
-                    .is_empty()
-            }
+            self.with_state(
+                |qs| {
+                    qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                        .iter_inner()
+                        .count()
+                },
+                |qs| {
+                    qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                        .iter_inner()
+                        .count()
+                },
+            )
+        }
+    }
+
+    /// True when no entities match, via a fresh unchecked traversal.
+    ///
+    /// # Safety
+    ///
+    /// Same world/access/aliasing contract as [`Self::count`].
+    pub unsafe fn is_empty_check(
+        &self,
+        cell: UnsafeWorldCell,
+        last_run: Tick,
+        this_run: Tick,
+    ) -> bool {
+        // SAFETY: same contract as `count`; the closures' `query_unchecked_with_ticks`
+        // calls inherit the caller's world/access/aliasing guarantee.
+        unsafe {
+            self.with_state(
+                |qs| {
+                    qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                        .is_empty()
+                },
+                |qs| {
+                    qs.query_unchecked_with_ticks(cell, last_run, this_run)
+                        .is_empty()
+                },
+            )
         }
     }
 
@@ -353,16 +400,22 @@ mod tests {
 
         let tick = world.change_tick();
         let cell = world.as_unsafe_world_cell_readonly();
-        assert!(core.state.is_empty_check(cell, Tick::new(0), tick));
-        assert_eq!(core.state.count(cell, Tick::new(0), tick), 0);
+        // SAFETY: `cell` is the world `core` was built from, no other query borrows it.
+        unsafe {
+            assert!(core.state.is_empty_check(cell, Tick::new(0), tick));
+            assert_eq!(core.state.count(cell, Tick::new(0), tick), 0);
+        }
 
         world.spawn(A);
         world.spawn((A, B));
         world.spawn(B);
         let tick = world.change_tick();
         let cell = world.as_unsafe_world_cell_readonly();
-        assert!(!core.state.is_empty_check(cell, Tick::new(0), tick));
-        assert_eq!(core.state.count(cell, Tick::new(0), tick), 2);
+        // SAFETY: `cell` is the world `core` was built from, no other query borrows it.
+        unsafe {
+            assert!(!core.state.is_empty_check(cell, Tick::new(0), tick));
+            assert_eq!(core.state.count(cell, Tick::new(0), tick), 2);
+        }
     }
 
     #[test]
