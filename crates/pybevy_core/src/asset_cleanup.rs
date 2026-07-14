@@ -29,3 +29,64 @@ pub fn clear_all_programmatic_assets(world: &mut World, verbose: bool) {
         (reg.clear)(world, verbose);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::RefCell,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::*;
+
+    static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    thread_local! {
+        /// Per-test-thread log of the `verbose` arg each cleaner call received.
+        /// Tests only inspect calls made on their own thread, so this is immune
+        /// to inter-test races on the shared global registry.
+        static VERBOSE_LOG: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn test_cleaner(_world: &mut World, verbose: bool) {
+        CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        VERBOSE_LOG.with(|log| log.borrow_mut().push(verbose));
+    }
+
+    inventory::submit!(AssetCleanupRegistration {
+        clear: test_cleaner,
+        name: "test_cleaner",
+    });
+
+    #[test]
+    fn test_clear_all_calls_registered_cleaner() {
+        let before = CALL_COUNT.load(Ordering::SeqCst);
+        let mut world = World::new();
+        clear_all_programmatic_assets(&mut world, false);
+        assert!(CALL_COUNT.load(Ordering::SeqCst) > before);
+    }
+
+    #[test]
+    fn test_clear_all_passes_verbose_flag() {
+        VERBOSE_LOG.with(|log| log.borrow_mut().clear());
+        let mut world = World::new();
+        clear_all_programmatic_assets(&mut world, true);
+        let calls: Vec<bool> = VERBOSE_LOG.with(|log| log.borrow().clone());
+        assert!(
+            calls.contains(&true),
+            "verbose=true must reach the cleaner: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn test_clear_all_passes_false_verbose_flag() {
+        VERBOSE_LOG.with(|log| log.borrow_mut().clear());
+        let mut world = World::new();
+        clear_all_programmatic_assets(&mut world, false);
+        let calls: Vec<bool> = VERBOSE_LOG.with(|log| log.borrow().clone());
+        assert!(
+            calls.contains(&false),
+            "verbose=false must reach the cleaner: {calls:?}"
+        );
+    }
+}
