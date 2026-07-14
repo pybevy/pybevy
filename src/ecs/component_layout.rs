@@ -1,12 +1,12 @@
-use bevy::math::{Vec2, Vec3};
 use pybevy_bytecodevm::bytecode::FieldType;
 // Re-export backend-agnostic types from pybevy_core
 pub use pybevy_core::component_layout::{
-    ComponentLayout, ComponentStorageType, FieldInfo, PrimitiveType, PrimitiveValue,
+    ComponentLayout, ComponentSerializationError, ComponentStorageType, FieldInfo, PrimitiveType,
+    PrimitiveValue,
 };
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyDict, PyType},
 };
@@ -39,24 +39,7 @@ impl PrimitiveTypeExt for PrimitiveType {
             ty_str
         };
 
-        match ty_str {
-            "float" => Ok(Some(PrimitiveType::F64)), // Python float is f64
-            "int" => Ok(Some(PrimitiveType::I64)),   // Python int is i64
-            "bool" => Ok(Some(PrimitiveType::Bool)),
-            // PyO3 classes show as "builtins.ClassName"
-            "Vec3" | "builtins.Vec3" => Ok(Some(PrimitiveType::Vec3)),
-            "Vec2" | "builtins.Vec2" => Ok(Some(PrimitiveType::Vec2)),
-            _ => {
-                // Check if it's a typing annotation that's not supported
-                if ty_str.contains("typing.") || ty_str.contains("list") || ty_str.contains("dict")
-                {
-                    Ok(None)
-                } else {
-                    // Unknown type - might be a custom class
-                    Ok(None)
-                }
-            }
-        }
+        Ok(PrimitiveType::from_annotation_name(ty_str))
     }
 
     fn to_numpy_dtype(self) -> &'static str {
@@ -86,6 +69,30 @@ impl PrimitiveTypeExt for PrimitiveType {
             PrimitiveType::Vec2 => FieldType::Vec2,
         }
     }
+}
+
+/// Coerce one PyO3 value into the neutral primitive representation.
+pub(crate) fn extract_primitive_from_py(
+    field_type: PrimitiveType,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<PrimitiveValue> {
+    Ok(match field_type {
+        PrimitiveType::F32 => PrimitiveValue::F32(value.extract()?),
+        PrimitiveType::F64 => PrimitiveValue::F64(value.extract()?),
+        PrimitiveType::I32 => PrimitiveValue::I32(value.extract()?),
+        PrimitiveType::I64 => PrimitiveValue::I64(value.extract()?),
+        PrimitiveType::U32 => PrimitiveValue::U32(value.extract()?),
+        PrimitiveType::U64 => PrimitiveValue::U64(value.extract()?),
+        PrimitiveType::Bool => PrimitiveValue::Bool(value.extract()?),
+        PrimitiveType::Vec3 => {
+            let py_vec3: PyRef<PyVec3> = value.extract()?;
+            PrimitiveValue::Vec3((&*py_vec3).into())
+        }
+        PrimitiveType::Vec2 => {
+            let py_vec2: PyRef<PyVec2> = value.extract()?;
+            PrimitiveValue::Vec2((&*py_vec2).into())
+        }
+    })
 }
 
 /// PyO3-specific extension methods for ComponentLayout
@@ -199,78 +206,15 @@ impl ComponentStorageTypeExt for ComponentStorageType {
 /// # Errors
 /// Returns PyErr if serialization fails (e.g., field not found, wrong type)
 pub fn serialize_to_wrapper(obj: &Bound<'_, PyAny>, layout: &ComponentLayout) -> PyResult<Vec<u8>> {
-    let mut buffer = vec![0u8; layout.wrapper_size.size_bytes()];
-
-    for field in &layout.fields {
-        debug_assert!(
-            field.offset % field.field_type.alignment() == 0,
-            "field '{}' at offset {} is not aligned to {} bytes",
-            field.name,
-            field.offset,
-            field.field_type.alignment()
-        );
-        debug_assert!(
-            field.offset + field.field_type.size_bytes() <= buffer.len(),
-            "field '{}' at offset {} + size {} exceeds buffer length {}",
-            field.name,
-            field.offset,
-            field.field_type.size_bytes(),
-            buffer.len()
-        );
-
-        let value = obj.getattr(field.name.as_str())?;
-
-        // Extract primitive value and write to buffer at the correct offset
-        match field.field_type {
-            PrimitiveType::F32 => {
-                let val: f32 = value.extract()?;
-                let bytes = val.to_le_bytes();
-                buffer[field.offset..field.offset + 4].copy_from_slice(&bytes);
+    layout
+        .serialize_with(|field| {
+            let value = obj.getattr(field.name.as_str())?;
+            extract_primitive_from_py(field.field_type, &value)
+        })
+        .map_err(|error| match error {
+            ComponentSerializationError::Extract(error) => error,
+            ComponentSerializationError::Layout(error) => {
+                PyRuntimeError::new_err(error.to_string())
             }
-            PrimitiveType::F64 => {
-                let val: f64 = value.extract()?;
-                let bytes = val.to_le_bytes();
-                buffer[field.offset..field.offset + 8].copy_from_slice(&bytes);
-            }
-            PrimitiveType::I32 => {
-                let val: i32 = value.extract()?;
-                let bytes = val.to_le_bytes();
-                buffer[field.offset..field.offset + 4].copy_from_slice(&bytes);
-            }
-            PrimitiveType::I64 => {
-                let val: i64 = value.extract()?;
-                let bytes = val.to_le_bytes();
-                buffer[field.offset..field.offset + 8].copy_from_slice(&bytes);
-            }
-            PrimitiveType::U32 => {
-                let val: u32 = value.extract()?;
-                let bytes = val.to_le_bytes();
-                buffer[field.offset..field.offset + 4].copy_from_slice(&bytes);
-            }
-            PrimitiveType::U64 => {
-                let val: u64 = value.extract()?;
-                let bytes = val.to_le_bytes();
-                buffer[field.offset..field.offset + 8].copy_from_slice(&bytes);
-            }
-            PrimitiveType::Bool => {
-                let val: bool = value.extract()?;
-                buffer[field.offset] = if val { 1 } else { 0 };
-            }
-            PrimitiveType::Vec3 => {
-                let py_vec3: PyRef<PyVec3> = value.extract()?;
-                let v: Vec3 = (&*py_vec3).into();
-                buffer[field.offset..field.offset + 4].copy_from_slice(&v.x.to_le_bytes());
-                buffer[field.offset + 4..field.offset + 8].copy_from_slice(&v.y.to_le_bytes());
-                buffer[field.offset + 8..field.offset + 12].copy_from_slice(&v.z.to_le_bytes());
-            }
-            PrimitiveType::Vec2 => {
-                let py_vec2: PyRef<PyVec2> = value.extract()?;
-                let v: Vec2 = (&*py_vec2).into();
-                buffer[field.offset..field.offset + 4].copy_from_slice(&v.x.to_le_bytes());
-                buffer[field.offset + 4..field.offset + 8].copy_from_slice(&v.y.to_le_bytes());
-            }
-        }
-    }
-
-    Ok(buffer)
+        })
 }

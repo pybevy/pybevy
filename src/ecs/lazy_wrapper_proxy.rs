@@ -30,7 +30,7 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue},
+    component_layout::{ComponentLayout, PrimitiveType, extract_primitive_from_py},
     helpers::validity_guard::ValidityFlagWithMode,
 };
 
@@ -324,23 +324,7 @@ impl PyLazyWrapperProxy {
         // may run a structural mutation which reallocates or moves this component's storage.
         // So all Python interaction must finish before we resolve a pointer: holding a
         // resolved pointer across extract() would risk a use-after-free.
-        let write = match field_type {
-            PrimitiveType::F32 => PrimitiveValue::F32(value.extract()?),
-            PrimitiveType::F64 => PrimitiveValue::F64(value.extract()?),
-            PrimitiveType::I32 => PrimitiveValue::I32(value.extract()?),
-            PrimitiveType::I64 => PrimitiveValue::I64(value.extract()?),
-            PrimitiveType::U32 => PrimitiveValue::U32(value.extract()?),
-            PrimitiveType::U64 => PrimitiveValue::U64(value.extract()?),
-            PrimitiveType::Bool => PrimitiveValue::Bool(value.extract()?),
-            PrimitiveType::Vec3 => {
-                let py_vec3: PyRef<PyVec3> = value.extract()?;
-                PrimitiveValue::Vec3((&*py_vec3).into())
-            }
-            PrimitiveType::Vec2 => {
-                let py_vec2: PyRef<PyVec2> = value.extract()?;
-                PrimitiveValue::Vec2((&*py_vec2).into())
-            }
-        };
+        let write = extract_primitive_from_py(field_type, value)?;
 
         // Resolve the pointer immediately before the write, with no Python calls in
         // between. For long-lived proxies this fetches the component's current address
