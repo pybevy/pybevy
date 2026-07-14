@@ -27,6 +27,7 @@ features = [
     "bevy_render",
     "bevy_pbr",
     "bevy_animation",
+    "bevy_window",
     "bevy_world_serialization",
     "bevy_log",
 ]

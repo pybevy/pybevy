@@ -1,6 +1,5 @@
 import gc
 import os
-import runpy
 import sys
 import threading
 import traceback
@@ -388,8 +387,12 @@ def _run_script(
                 if verbose:
                     click.echo(f"   → Flushed {len(flushed)} user modules from sys.modules")
 
-                # Don't use run_name="__main__" to avoid triggering if __name__ == "__main__" blocks
-                module_globals = runpy.run_module(module_name, run_name=module_name)
+                # Execute a fresh copy and register it in sys.modules so that
+                # `import <module_name>` (run_code, numba cache loading,
+                # pickling) resolves to the live scene classes. __name__ is the
+                # module name, so `if __name__ == "__main__"` blocks don't run.
+                from .util.hot_reload import exec_scene_module
+                module_globals = exec_scene_module(module_name, verbose=verbose)
             else:
                 # Standalone script without package - use run_path
                 # Handle caching BEFORE reloading module
@@ -427,11 +430,19 @@ def _run_script(
 
                 # Match `python script.py` semantics: ensure the script's
                 # directory is on sys.path so sibling imports resolve.
-                # runpy.run_path doesn't do this for plain .py files.
                 if parent_dir not in sys.path:
                     sys.path.insert(0, parent_dir)
 
-                module_globals = runpy.run_path(script_path, init_globals={})
+                # Execute under the file-stem module name and register in
+                # sys.modules (runpy.run_path named the module "<run_path>"
+                # and left it unregistered, so `import <scene>` from run_code
+                # duplicated every class and numba's cache pickled an
+                # unimportable module name).
+                from .util.hot_reload import exec_scene_module
+                module_name = os.path.splitext(os.path.basename(abs_path))[0]
+                module_globals = exec_scene_module(
+                    module_name, file_path=abs_path, verbose=verbose
+                )
 
             # Look for create_app (legacy) or any @entrypoint decorated function
             if "create_app" in module_globals:

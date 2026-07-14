@@ -736,6 +736,19 @@ class McpBridge:
                         body[key] = arguments[key]
                 url = f"{base}/api/v1/spatial/overlaps/all"
             resp = httpx.post(url, json=body, timeout=timeout)
+        elif tool_name == "query_spatial_neighborhood":
+            body = {"entity": arguments.get("entity"), "radius": arguments.get("radius")}
+            if "max_results" in arguments:
+                body["max_results"] = arguments["max_results"]
+            url = f"{base}/api/v1/spatial/neighborhood"
+            resp = httpx.post(url, json=body, timeout=timeout)
+        elif tool_name == "check_all_overlaps":
+            body = {}
+            for key in ("min_penetration", "max_results", "max_float_gap", "ground_y", "include_siblings"):
+                if key in arguments:
+                    body[key] = arguments[key]
+            url = f"{base}/api/v1/spatial/overlaps/all"
+            resp = httpx.post(url, json=body, timeout=timeout)
         elif tool_name == "capture_screenshot":
             gizmos = arguments.pop("gizmos", False)
             path = "/api/v1/screenshot/gizmos" if gizmos else "/api/v1/screenshot"

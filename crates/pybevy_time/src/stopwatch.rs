@@ -1,28 +1,8 @@
 use std::time::Duration;
 
 use bevy::time::Stopwatch;
-use pyo3::{exceptions::PyTypeError, prelude::*};
-
-fn duration_from_py(py_duration: &Bound<'_, PyAny>) -> PyResult<Duration> {
-    if let Ok(duration) = py_duration.extract::<Duration>() {
-        return Ok(duration);
-    }
-
-    if let Ok(seconds) = py_duration.extract::<f64>() {
-        if seconds < 0.0 {
-            return Err(PyTypeError::new_err("Duration cannot be negative"));
-        }
-        return Ok(Duration::from_secs_f64(seconds));
-    }
-
-    if let Ok(seconds) = py_duration.extract::<u64>() {
-        return Ok(Duration::from_secs(seconds));
-    }
-
-    Err(PyTypeError::new_err(
-        "Duration must be a Duration object, float (seconds), or int (seconds)",
-    ))
-}
+use pybevy_core::duration_from_py;
+use pyo3::prelude::*;
 
 #[pyclass(name = "Stopwatch", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Default, PartialEq)]

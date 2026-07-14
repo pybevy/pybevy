@@ -12,7 +12,7 @@
 use bevy::ecs::{
     change_detection::{ComponentTicks, Tick},
     component::ComponentId,
-    query::QueryState,
+    query::{FilteredAccess, QueryState},
     world::{FilteredEntityMut, FilteredEntityRef, World, unsafe_world_cell::UnsafeWorldCell},
 };
 
@@ -90,6 +90,30 @@ impl ErasedQueryState {
                 let qs = &mut *(p as *mut QueryState<FilteredEntityMut>);
                 qs.query_unchecked_with_ticks(cell, last_run, this_run)
                     .is_empty()
+            }
+        }
+    }
+
+    /// The Bevy-computed `FilteredAccess` for this state: the authoritative set
+    /// of components the built query actually reads and writes. The debug access
+    /// auditor compares it against the access `initialize` declared to the
+    /// scheduler (derived independently from the ParamSpec via `QueryParamAccess`).
+    ///
+    /// SAFETY: reads only the QueryState's precomputed access metadata through
+    /// the erased pointer (no world access); the pointer is valid for the life of
+    /// the owning cache.
+    #[cfg(debug_assertions)]
+    pub fn component_access(&self) -> FilteredAccess {
+        let (read_only, p) = self.parts();
+        unsafe {
+            if read_only {
+                (*(p as *const QueryState<FilteredEntityRef>))
+                    .component_access()
+                    .clone()
+            } else {
+                (*(p as *const QueryState<FilteredEntityMut>))
+                    .component_access()
+                    .clone()
             }
         }
     }

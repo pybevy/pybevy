@@ -304,6 +304,29 @@ mod tests {
     }
 
     #[test]
+    fn manipulation_object_params_advertise_object_type() {
+        // Regression: spawn_entity.components / set_component.fields /
+        // set_resource.value / set_asset.fields are serde_json::Value, which
+        // schemars renders without a "type". MCP clients then send the argument
+        // as a JSON string and the handlers reject it ("must be a JSON object").
+        // Each object param must advertise type: object.
+        let tools = list_tools();
+        let find = |name: &str| -> &Value { tools.iter().find(|t| t["name"] == name).unwrap() };
+        for (tool, param) in [
+            ("spawn_entity", "components"),
+            ("set_component", "fields"),
+            ("set_resource", "value"),
+            ("set_asset", "fields"),
+        ] {
+            assert_eq!(
+                find(tool)["inputSchema"]["properties"][param]["type"],
+                "object",
+                "{tool}.{param} must advertise type: object so clients send an object, not a string",
+            );
+        }
+    }
+
+    #[test]
     fn list_tools_feature_gates_correct() {
         let tools = list_tools();
         let find = |name: &str| -> &Value { tools.iter().find(|t| t["name"] == name).unwrap() };

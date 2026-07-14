@@ -9,7 +9,7 @@ use syn::{ItemStruct, Type, parse_macro_input};
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyplugin(bevy::window::WindowPlugin)]
 /// #[pyclass(name = "WindowPlugin", extends = PyPlugin)]
 /// pub struct PyWindowPlugin { ... }

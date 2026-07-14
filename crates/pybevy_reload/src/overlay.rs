@@ -4,11 +4,17 @@ use bevy::{
     animation::{AnimationClip, graph::AnimationGraph},
     asset::Assets,
     color::Color,
-    ecs::{component::Component, world::World},
+    ecs::{
+        component::Component,
+        entity::Entity,
+        query::{Or, With, Without},
+        resource::IsResource,
+        world::World,
+    },
     image::{Image, TextureAtlasLayout},
     mesh::Mesh,
     pbr::{StandardMaterial, wireframe::WireframeMaterial},
-    prelude::{ImageNode, Resource, TextColor, TextFont, default},
+    prelude::{ImageNode, Resource, TextColor, TextFont, Visibility, default},
     text::FontSize,
     ui::{Node, PositionType, Val, widget::Text},
     world_serialization::WorldAsset,
@@ -36,7 +42,7 @@ pub struct HotReloadOverlayText;
 
 /// Marker component for the hot reload overlay icon entity
 #[derive(Component)]
-struct HotReloadOverlayIcon;
+pub struct HotReloadOverlayIcon;
 
 /// Marker component for the hot reload error text entity
 #[derive(Component)]
@@ -219,8 +225,14 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
             }
         }
 
-        // Update entity count (O(1) operation)
-        stats.entity_count = world.entities().len() as usize;
+        // Count scene entities with the same filter as MCP's get_performance /
+        // list_entities (resource-entities excluded, raw allocator count would
+        // also include observers and other engine internals) so all surfaces
+        // report the same number.
+        stats.entity_count = world
+            .query_filtered::<Entity, Without<IsResource>>()
+            .iter(world)
+            .count();
 
         // Update asset counts by type (O(1) per type)
         stats.asset_counts.clear();
@@ -315,6 +327,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
     // Extract memory profiling data
     let (
         total_schedule_systems,
+        current_generation_systems,
         python_gc_objects,
         memory_growth_mb,
         memory_peak_mb,
@@ -333,6 +346,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
                     delta_mb: s.delta_mb,
                     gc_objects: s.gc_objects,
                     schedule_systems: s.schedule_systems,
+                    current_generation_systems: s.current_generation_systems,
                 })
                 .collect();
             (
@@ -340,6 +354,11 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
                     .snapshots
                     .last()
                     .map(|s| s.schedule_systems)
+                    .unwrap_or(0),
+                profile
+                    .snapshots
+                    .last()
+                    .map(|s| s.current_generation_systems)
                     .unwrap_or(0),
                 profile.snapshots.last().map(|s| s.gc_objects).unwrap_or(0),
                 profile.growth_mb(current_rss),
@@ -376,6 +395,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
         update_profiles,
         startup_profiles,
         total_schedule_systems,
+        current_generation_systems,
         python_gc_objects,
         memory_growth_mb,
         memory_peak_mb,
@@ -410,7 +430,36 @@ pub fn render_hot_reload_overlay(
     reload_result: Option<bevy::ecs::system::Res<pybevy_core::ReloadResult>>,
     memory_visible: Option<bevy::ecs::system::Res<MemoryOverlayVisible>>,
     start_paused: Option<bevy::ecs::system::Res<StartPaused>>,
+    mut overlay_vis_query: bevy::ecs::system::Query<
+        &mut Visibility,
+        (
+            Or<(With<HotReloadOverlayText>, With<HotReloadOverlayIcon>)>,
+            Without<HotReloadErrorText>,
+        ),
+    >,
+    #[cfg(feature = "mcp")] suppression: Option<
+        bevy::ecs::system::Res<pybevy_control::bridge::OverlaySuppression>,
+    >,
 ) {
+    // Drive overlay visibility from the capture-suppression refcount every
+    // frame, before the render throttle below, so suppress/release from
+    // screenshots and timelines applies without the 250ms text-update lag.
+    #[cfg(feature = "mcp")]
+    let suppressed = suppression.as_ref().is_some_and(|s| s.0 > 0);
+    #[cfg(not(feature = "mcp"))]
+    let suppressed = false;
+
+    let target = if suppressed {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut vis in overlay_vis_query.iter_mut() {
+        if *vis != target {
+            *vis = target;
+        }
+    }
+
     // Skip if resources aren't available
     let (Some(mut monitor), Some(mut stats), Some(time)) = (monitor, stats, time) else {
         return;
@@ -618,10 +667,10 @@ pub fn render_hot_reload_overlay(
             stats.last_error_timestamp = last_err.timestamp_secs;
         }
 
-        *visibility = if has_error {
-            bevy::prelude::Visibility::Inherited
+        *visibility = if has_error && !suppressed {
+            Visibility::Inherited
         } else {
-            bevy::prelude::Visibility::Hidden
+            Visibility::Hidden
         };
     }
 }
@@ -635,5 +684,41 @@ pub fn format_uptime(secs: f64) -> String {
         format!("{}m{}s", mins, secs)
     } else {
         format!("{}s", secs)
+    }
+}
+
+#[cfg(all(test, feature = "mcp"))]
+mod suppression_tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use pybevy_control::bridge::OverlaySuppression;
+
+    use super::*;
+
+    /// The render system drives icon/status visibility from the capture
+    /// suppression refcount every frame, so a capture's release restores the
+    /// overlay even if the overlay entities were respawned mid-capture.
+    #[test]
+    fn suppression_drives_overlay_visibility() {
+        let mut world = World::new();
+        let icon = world
+            .spawn((Visibility::Visible, HotReloadOverlayIcon))
+            .id();
+        let text = world.spawn((Visibility::Hidden, HotReloadOverlayText)).id();
+
+        world.insert_resource(OverlaySuppression(1));
+        world.run_system_once(render_hot_reload_overlay).unwrap();
+        assert_eq!(*world.get::<Visibility>(icon).unwrap(), Visibility::Hidden);
+        assert_eq!(*world.get::<Visibility>(text).unwrap(), Visibility::Hidden);
+
+        world.resource_mut::<OverlaySuppression>().0 = 0;
+        world.run_system_once(render_hot_reload_overlay).unwrap();
+        assert_eq!(
+            *world.get::<Visibility>(icon).unwrap(),
+            Visibility::Inherited
+        );
+        assert_eq!(
+            *world.get::<Visibility>(text).unwrap(),
+            Visibility::Inherited
+        );
     }
 }

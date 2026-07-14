@@ -41,7 +41,7 @@ pub use overlay::{
 pub use profiling::{
     HotReloadStats, MemoryProfile, ReloadMemorySnapshot, SystemMonitor, SystemProfiler, SystemStage,
 };
-pub use runtime::{ReloadError, ReloadRuntime};
+pub use runtime::{DefsFingerprint, EscalationTracker, ReloadError, ReloadRuntime};
 pub use state::{HotReloadGeneration, ReloadMode, generation_matches, startup_or_reload};
 pub use tracker::{KEEP_ALIVE_GENERATIONS, PluginTracker};
 pub use util::{

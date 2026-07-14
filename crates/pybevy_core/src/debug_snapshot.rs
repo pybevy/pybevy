@@ -38,8 +38,13 @@ pub struct DebugSnapshot {
     /// Startup systems with rolling-window timing.
     pub startup_profiles: Vec<SystemProfile>,
 
-    /// Total number of systems across all schedules
+    /// Total number of systems across all schedules (includes engine
+    /// infrastructure and inert prior-generation "zombie" systems).
     pub total_schedule_systems: usize,
+    /// Systems registered for the latest reload generation (the live scene
+    /// systems). Stays flat across reloads while `total_schedule_systems` rises,
+    /// which is expected generation accumulation, not a leak.
+    pub current_generation_systems: usize,
     /// Python GC tracked objects (gen0 + gen1 + gen2)
     pub python_gc_objects: usize,
     /// Memory growth since baseline (MB)
@@ -73,6 +78,8 @@ pub struct ReloadMemorySnapshotInfo {
     pub delta_mb: f64,
     /// Python GC tracked objects at reload time
     pub gc_objects: usize,
-    /// Number of systems in all schedules
+    /// Number of systems in all schedules (total, includes zombies)
     pub schedule_systems: usize,
+    /// Systems registered for this generation (the live scene systems)
+    pub current_generation_systems: usize,
 }

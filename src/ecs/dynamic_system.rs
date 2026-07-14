@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     sync::{Arc, Mutex},
-    time::Instant,
 };
 
 use bevy::{
@@ -16,12 +15,16 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::registry::global_registry;
+#[cfg(debug_assertions)]
+use pybevy_ecs::shared::access_audit::assert_query_access_declared;
 use pybevy_ecs::shared::{
     access_validation::{self as shared_validation},
+    command_queue_helpers::create_commands_from_queue,
     param_spec::{
         BackendKeys, ComponentSpec, FilterSpec, KeyResolver, ParamSpec, QuerySpec, ResolvedMessage,
         ResolvedResource, build_declared_access, conflict_error_message, to_param_accesses,
     },
+    run_scaffold::{RunScaffoldResult, run_scaffold},
 };
 use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
 use pyo3::{
@@ -43,7 +46,7 @@ use crate::{
             validity_guard::{ValidityFlag, ValidityGuard},
         },
         message::{PyMessageReader, PyMessageWriter},
-        messages::{MessageRegistry, MessageType, MessageWorld, PyMessages},
+        messages::{CursorStorage, MessageRegistry, MessageType, MessageWorld, PyMessages},
         mutable::PyMut,
         observer::PyOn,
         query::{
@@ -305,14 +308,19 @@ pub(crate) fn lower_param_type(ty: &SystemParamType) -> ParamSpec<MainKeys> {
             wrapper_class,
             mutable,
         } => {
-            // wrapper_class (e.g. GroundMaterial) keys the conflict check when
-            // present, falling back to type_ptr (e.g. ShaderMaterial): Bevy
-            // treats Assets<MaterialA> and Assets<MaterialB> as separate
-            // resources even when both are backed by the same underlying type.
-            let key = wrapper_class.unwrap_or(*type_ptr);
-            let name = format!("{:p}", key.0);
+            // Access is declared under the real asset type: `type_ptr` (e.g.
+            // ShaderMaterial) owns the registered AssetBridge, so `asset_id`
+            // resolves it to the Assets<T> ComponentId. A `@material` wrapper
+            // (e.g. GroundMaterial) has no bridge, so keying access on the
+            // wrapper would declare no Assets<T> access at all while the system
+            // still reads/writes the underlying collection -- a data race
+            // versus native asset systems. The conflict key keeps using
+            // wrapper_class (falling back to type_ptr) so distinct materials
+            // backed by the same underlying type stay distinct collections.
+            let vkey_ptr = wrapper_class.unwrap_or(*type_ptr);
+            let name = format!("{:p}", vkey_ptr.0);
             ParamSpec::Assets {
-                key,
+                key: *type_ptr,
                 vkey: name.clone(),
                 name,
                 mutable: *mutable,
@@ -575,6 +583,265 @@ impl DynamicSystem {
     }
 }
 
+impl DynamicSystem {
+    /// Build the Python argument list for one run of a non-observer system.
+    ///
+    /// The shared run scaffold calls this as its `build_args` hook; the
+    /// rustpython backend's `build_system_args` is the counterpart. Fills
+    /// `args_buffer` in parameter order and returns `Some(err)` on the first
+    /// parameter that fails to resolve (e.g. a missing resource), leaving the
+    /// remaining parameters unbuilt.
+    ///
+    /// # Safety
+    /// `world` must be this run's valid `UnsafeWorldCell`, and `validity` must
+    /// stay active for as long as any built argument can read through the cell.
+    /// Each arm's access is bounded by what `initialize` declared for that
+    /// parameter; the executor prevents a conflicting system from running
+    /// concurrently, so the cell's unchecked borrows are unique.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn build_run_args<'w, 'c1, 'c2>(
+        py: Python<'_>,
+        params: &[SystemParam],
+        query_caches: &[CachedQuery],
+        message_cursor_storage: &[CursorStorage],
+        commands_storage: &mut Option<Commands<'c1, 'c2>>,
+        args_buffer: &mut SmallVec<[Py<PyAny>; 8]>,
+        world: UnsafeWorldCell<'w>,
+        validity: &ValidityFlag,
+        last_run: Tick,
+        this_run: Tick,
+        func_name: &str,
+    ) -> Option<PyErr> {
+        let mut message_reader_idx = 0usize;
+        let mut query_cache_idx = 0usize;
+        for param in params {
+            match &param.ty {
+                SystemParamType::Local(local) => {
+                    args_buffer.push(local.clone_ref(py));
+                }
+                SystemParamType::Resource { type_obj, mutable } => {
+                    // Fetch resource from world using PyResourceType
+                    let type_bound = type_obj.bind(py);
+                    let resource_type = match PyResourceType::try_from((type_bound, py)) {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            return Some(e);
+                        }
+                    };
+
+                    // Use appropriate extraction method based on mutability.
+                    // Both paths go through narrow cell accessors so no `&World`
+                    // or `&mut World` is ever materialized for a resource read.
+                    let resource = if *mutable {
+                        // SAFETY: `initialize` declared write access to this
+                        // resource (AssetServer/Dynamic bridge id, or the
+                        // ResourceRegistry/PyResourceStorage reads for Custom);
+                        // the executor prevents a conflicting system from running
+                        // concurrently, so the cell's unchecked borrow is unique.
+                        match unsafe {
+                            resource_type.get_from_cell_mut(world, py, validity.clone())
+                        } {
+                            Ok(r) => r,
+                            Err(_e) => {
+                                let type_name = type_bound
+                                    .name()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+                                let err_msg = format!(
+                                    "System `{}`: resource `{}` not found in world",
+                                    func_name, type_name
+                                );
+                                return Some(PyTypeError::new_err(err_msg));
+                            }
+                        }
+                    } else {
+                        // SAFETY: `initialize` declared read access to this
+                        // resource; the executor prevents a concurrent writer, so
+                        // the cell's unchecked read is unique.
+                        match unsafe { resource_type.get_from_cell(world, py, validity.clone()) } {
+                            Ok(r) => r,
+                            Err(_e) => {
+                                let type_name = type_bound
+                                    .name()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+                                let err_msg = format!(
+                                    "System `{}`: resource `{}` not found in world",
+                                    func_name, type_name
+                                );
+                                return Some(PyTypeError::new_err(err_msg));
+                            }
+                        }
+                    };
+
+                    Self::wrap_resource_in_res(py, resource, *mutable, args_buffer);
+                }
+                SystemParamType::Query { .. } => {
+                    // Static per-parameter state was built once in `initialize`;
+                    // borrow the cached QueryState by raw pointer (fenced by the
+                    // ValidityFlag) instead of rebuilding and conjuring `&mut World`.
+                    let cached = &query_caches[query_cache_idx];
+                    query_cache_idx += 1;
+                    if cached.single_entity_enforced {
+                        // SAFETY: `world` is this run's UnsafeWorldCell; the declared
+                        // access from `initialize` covers this cached state and the
+                        // executor prevents conflicting systems from running
+                        // concurrently, so the query's access is unique. `cached`
+                        // lives on the DynamicSystem, which outlives the run.
+                        let single_query = unsafe {
+                            PySingleQuery::new(cached, world, validity.clone(), last_run, this_run)
+                        };
+
+                        let obj =
+                            Py::new(py, single_query).expect("Failed to create PySingleQuery");
+                        args_buffer.push(obj.into_any());
+                    } else {
+                        // SAFETY: as above — unique access to the cached state's
+                        // components is guaranteed by the declared-access scheduling.
+                        let query_runtime = unsafe {
+                            PyQueryIter::new(cached, world, validity.clone(), last_run, this_run)
+                        };
+
+                        let obj = Py::new(py, query_runtime).expect("Failed to create PyQueryIter");
+                        args_buffer.push(obj.into_any());
+                    }
+                }
+                SystemParamType::View { param } => {
+                    // Extract component types and mutability from PyViewParam
+                    let mut component_types = Vec::new();
+                    let mut mutable_components = HashSet::new();
+
+                    for view_param_type in &param.parameters {
+                        let ViewParamType::Component { comp_type, mutable } = view_param_type;
+                        component_types.push(comp_type.clone());
+                        if *mutable {
+                            mutable_components.insert(comp_type.clone());
+                        }
+                    }
+
+                    let filter_types = param.with_filters.to_vec();
+                    let without_filter_types = param.without_filters.to_vec();
+                    let changed_filter_types = param.changed_filters.to_vec();
+                    let added_filter_types = param.added_filters.to_vec();
+
+                    // SAFETY: `world` is this run's UnsafeWorldCell; PyView reads
+                    // this_run via cell.change_tick() and derives per-operation
+                    // world pointers internally, bounded by the view's declared
+                    // component read/write access from `initialize`.
+                    let py_view = unsafe {
+                        PyView::new_with_filters(
+                            component_types,
+                            mutable_components,
+                            filter_types,
+                            without_filter_types,
+                            changed_filter_types,
+                            added_filter_types,
+                            last_run,
+                            world,
+                            validity.clone(),
+                        )
+                    };
+                    let obj = Py::new(py, py_view).expect("Failed to create PyView");
+                    args_buffer.push(obj.into_any());
+                }
+                SystemParamType::World => {
+                    // A World param requests exclusive access: `flags()` marks this
+                    // system EXCLUSIVE, so the executor runs it with no other
+                    // system in flight (initialize declares an empty access set,
+                    // matching Bevy's ExclusiveFunctionSystem).
+                    // SAFETY: exclusive scheduling guarantees this `&mut World` is
+                    // the only borrow of the world for the duration of the run.
+                    let world_mut = unsafe { world.world_mut() };
+                    let py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
+                    let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
+                    args_buffer.push(obj.into_any());
+                }
+                SystemParamType::Commands => {
+                    // Use the pre-created Commands from commands_storage
+                    let commands = commands_storage
+                        .as_mut()
+                        .expect("Commands should be pre-created");
+                    let py_commands = unsafe { PyCommands::new(commands, validity.clone()) };
+                    let obj = Py::new(py, py_commands).expect("Failed to create PyCommands");
+                    args_buffer.push(obj.into_any());
+                }
+                SystemParamType::MessageWriter { message_type } => {
+                    // Create PyMessageWriter with narrow cell-based world access.
+                    // SAFETY: `initialize` declares write access for this
+                    // writer's Messages<T> id; the writer only reaches that buffer.
+                    let mw = unsafe { MessageWorld::new(world, validity.clone()) };
+                    let py_writer = PyMessageWriter {
+                        message_type: message_type.clone(),
+                        world: mw,
+                    };
+                    let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
+                    args_buffer.push(obj.into_any());
+                }
+                SystemParamType::MessageReader { message_type } => {
+                    // Create PyMessageReader with narrow cell-based world access.
+                    // SAFETY: `initialize` declares reads for this reader's
+                    // resource ids (Messages<T>, plus ButtonInput<KeyCode> for
+                    // KeyboardInput); the reader only reaches those.
+                    let mw_1 = unsafe { MessageWorld::new(world, validity.clone()) };
+                    let mw_2 = unsafe { MessageWorld::new(world, validity.clone()) };
+                    let cursor = message_cursor_storage.get(message_reader_idx).cloned();
+                    message_reader_idx += 1;
+                    let py_messages = PyMessages {
+                        message_type: message_type.clone(),
+                        world: mw_1,
+                        cursor_storage: cursor,
+                    };
+                    let py_reader = PyMessageReader {
+                        world: mw_2,
+                        messages: py_messages,
+                    };
+                    let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
+                    args_buffer.push(obj.into_any());
+                }
+                SystemParamType::On { .. } => {
+                    // On parameters are only valid in observer contexts.
+                    // Observer dispatch uses execute_system_func() instead of run_unsafe().
+                    unreachable!(
+                        "On parameter in non-observer system — observers use execute_system_func()"
+                    )
+                }
+                SystemParamType::Assets {
+                    type_ptr,
+                    wrapper_class,
+                    mutable,
+                } => {
+                    // Create PyAssets wrapper with cell-based world access.
+                    // SAFETY: `world` is this run's UnsafeWorldCell; `initialize`
+                    // declares this Assets<T> resource's access, which
+                    // bounds the data PyAssets reaches via the AssetBridge.
+                    let py_assets = unsafe {
+                        PyAssets::new(
+                            type_ptr.0,
+                            wrapper_class.map(|w| w.0),
+                            world,
+                            validity.clone(),
+                            *mutable,
+                        )
+                    };
+                    let obj =
+                        Py::new(py, (py_assets, PyResource)).expect("Failed to create PyAssets");
+
+                    if *mutable {
+                        // Wrap in Mut[Assets[T]]
+                        let assets_any: Bound<'_, PyAny> = obj.into_bound(py).into_any();
+                        let mut_wrapper =
+                            Py::new(py, PyMut::new(assets_any)).expect("Failed to create PyMut");
+                        args_buffer.push(mut_wrapper.into_any());
+                    } else {
+                        args_buffer.push(obj.into_any());
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 impl System for DynamicSystem {
     type In = ();
     type Out = ();
@@ -606,534 +873,277 @@ impl System for DynamicSystem {
         _input: SystemIn<'_, Self>,
         world: UnsafeWorldCell,
     ) -> Result<Self::Out, RunSystemError> {
-        // Defense-in-depth: verify this system's generation matches the current active
-        // generation BEFORE doing any work. This prevents zombie system execution if the
-        // schedule-level run_if(generation_matches(N)) condition is bypassed for any reason
-        // (e.g., schedule rebuild edge cases). Without this guard, each hot reload would
-        // accumulate duplicate systems that all execute on the same entities every frame.
-        {
-            // SAFETY: read access to HotReloadGeneration is declared in `initialize`.
-            let current_gen = unsafe { world.get_resource::<HotReloadGeneration>() }
-                .map(|res| res.current)
-                .unwrap_or(0);
-            if current_gen != self.expected_generation {
-                return Ok(());
-            }
-        }
-
         self.validate_params()?;
 
-        // Advance the world change tick once per run, matching FunctionSystem so change
-        // detection windows advance even in an all-DynamicSystem schedule. We read
-        // change_tick() AFTER incrementing (not the value increment_change_tick returns)
-        // so `this_run` equals the tick pybevy's mutation write-backs stamp (both observe
-        // world.change_tick()); using the pre-increment value would make a system
-        // re-detect its own writes on the next frame. See stage-1 report.
-        world.increment_change_tick();
-        let this_run = world.change_tick();
         let last_run = self.get_last_run();
+        // The pyo3 backend gates on a concrete generation (0 == ungated); pass it
+        // as `Some` with the absent-resource default so the scaffold's guard
+        // reproduces the previous `current_gen(default 0) != expected` check.
+        let expected_generation = Some(self.expected_generation);
+        // SAFETY: read access to HotReloadGeneration is declared in `initialize`.
+        let current_generation = Some(
+            unsafe { world.get_resource::<HotReloadGeneration>() }
+                .map(|res| res.current)
+                .unwrap_or(0),
+        );
 
-        // Start timing for profiler (captures entire system execution)
-        Python::attach(|py| {
-            let start_time = Instant::now();
+        // The shared scaffold owns the run sequence (tick advance, ValidityFlag +
+        // RAII guard, local Commands, body timing, end-of-run tick); this closure
+        // is the interpreter body it calls.
+        // SAFETY: `world` is this run's valid cell; the ValidityFlag the scaffold
+        // creates fences every argument built below for the run's duration.
+        let scaffold_result = unsafe {
+            run_scaffold(
+                world,
+                last_run,
+                expected_generation,
+                current_generation,
+                |ctx, validity, queue| {
+                    Python::attach(|py| {
+                        // Reuse the args buffer - clear it and it keeps its capacity.
+                        self.args_buffer.clear();
 
-            // Create validity flag for this system execution
-            // This will be shared by all system parameters
-            let validity = ValidityFlag::new();
-
-            // Create RAII guard that will automatically invalidate when system completes
-            // This happens even if Python code panics
-            let _validity_guard = ValidityGuard::new(validity.clone());
-
-            // Reuse the args buffer - clear it and it keeps its capacity
-            self.args_buffer.clear();
-
-            // Track any parameter preparation errors
-            let mut param_error: Option<PyErr> = None;
-
-            // Create Commands if needed using a local CommandQueue.
-            // This avoids needing &mut World (which is unsound in parallel systems).
-            // Instead, we use UnsafeWorldCell::entities() and entities_allocator()
-            // which are safe for concurrent access (read-only metadata).
-            // The queue is appended to self.command_queue after the system runs,
-            // then flushed to the world via queue_deferred().
-            let mut local_command_queue = if self.needs_commands {
-                Some(CommandQueue::default())
-            } else {
-                None
-            };
-            let mut commands_storage = if let Some(ref mut queue) = local_command_queue {
-                Some(
-                    pybevy_ecs::shared::command_queue_helpers::create_commands_from_queue(
-                        queue, world,
-                    ),
-                )
-            } else {
-                None
-            };
-
-            // No shared `&mut World` is materialized here: each parameter arm below
-            // reaches the world through the `UnsafeWorldCell` (narrow resource
-            // accessors, or per-operation pointer derivation inside the wrappers),
-            // so a non-exclusive system never conjures whole-world access. The one
-            // exception is the World arm, which derives its own `world.world_mut()`
-            // under the EXCLUSIVE-scheduling guarantee.
-
-            // Lock the inner state to access system_func and message_cursor_storage
-            let mut inner_guard = lock_or_recover(&self.inner);
-            if inner_guard.gutted {
-                return;
-            }
-            let Some(system_func) = inner_guard.system_func.as_ref() else {
-                eprintln!(
-                    "⚠️ System {}.{} has no function — skipping",
-                    self.module_name, self.function_name
-                );
-                return;
-            };
-
-            let mut message_reader_idx = 0usize;
-            let mut query_cache_idx = 0usize;
-            for param in &system_func.params {
-                match &param.ty {
-                    SystemParamType::Local(local) => {
-                        self.args_buffer.push(local.clone_ref(py));
-                    }
-                    SystemParamType::Resource { type_obj, mutable } => {
-                        // Fetch resource from world using PyResourceType
-                        let type_bound = type_obj.bind(py);
-                        let resource_type = match PyResourceType::try_from((type_bound, py)) {
-                            Ok(rt) => rt,
-                            Err(e) => {
-                                param_error = Some(e);
-                                break; // Stop processing parameters
-                            }
-                        };
-
-                        // Use appropriate extraction method based on mutability.
-                        // Both paths go through narrow cell accessors so no `&World`
-                        // or `&mut World` is ever materialized for a resource read.
-                        let resource = if *mutable {
-                            // SAFETY: `initialize` declared write access to this
-                            // resource (AssetServer/Dynamic bridge id, or the
-                            // ResourceRegistry/PyResourceStorage reads for Custom);
-                            // the executor prevents a conflicting system from running
-                            // concurrently, so the cell's unchecked borrow is unique.
-                            match unsafe {
-                                resource_type.get_from_cell_mut(world, py, validity.clone())
-                            } {
-                                Ok(r) => r,
-                                Err(_e) => {
-                                    let type_name = type_bound
-                                        .name()
-                                        .map(|n| n.to_string())
-                                        .unwrap_or_else(|_| "Unknown".to_string());
-                                    let err_msg = format!(
-                                        "System `{}`: resource `{}` not found in world",
-                                        self.func_name, type_name
-                                    );
-                                    param_error = Some(PyTypeError::new_err(err_msg));
-                                    break; // Stop processing parameters
-                                }
-                            }
+                        // Build a Bevy `Commands` over the scaffold's local queue for
+                        // any `Commands` param. The raw-pointer deref lets the borrow
+                        // match `ctx.world`'s lifetime; both are fenced by `validity`.
+                        // SAFETY: `queue` is the scaffold's live local queue.
+                        let queue_ptr: *mut CommandQueue = queue;
+                        let mut commands_storage = if self.needs_commands {
+                            Some(create_commands_from_queue(&mut *queue_ptr, ctx.world))
                         } else {
-                            // SAFETY: `initialize` declared read access to this
-                            // resource; the executor prevents a concurrent writer, so
-                            // the cell's unchecked read is unique.
-                            match unsafe {
-                                resource_type.get_from_cell(world, py, validity.clone())
-                            } {
-                                Ok(r) => r,
-                                Err(_e) => {
-                                    let type_name = type_bound
-                                        .name()
-                                        .map(|n| n.to_string())
-                                        .unwrap_or_else(|_| "Unknown".to_string());
-                                    let err_msg = format!(
-                                        "System `{}`: resource `{}` not found in world",
-                                        self.func_name, type_name
-                                    );
-                                    param_error = Some(PyTypeError::new_err(err_msg));
-                                    break; // Stop processing parameters
-                                }
-                            }
+                            None
                         };
 
-                        Self::wrap_resource_in_res(py, resource, *mutable, &mut self.args_buffer);
-                    }
-                    SystemParamType::Query { .. } => {
-                        // Static per-parameter state was built once in `initialize`;
-                        // borrow the cached QueryState by raw pointer (fenced by the
-                        // ValidityFlag) instead of rebuilding and conjuring `&mut World`.
-                        let cached = &self.query_caches[query_cache_idx];
-                        query_cache_idx += 1;
-                        if cached.single_entity_enforced {
-                            // SAFETY: `world` is this run's UnsafeWorldCell; the declared
-                            // access from `initialize` covers this cached state and the
-                            // executor prevents conflicting systems from running
-                            // concurrently, so the query's access is unique. `cached`
-                            // lives on the DynamicSystem, which outlives the run.
-                            let single_query = unsafe {
-                                PySingleQuery::new(
-                                    cached,
-                                    world,
-                                    validity.clone(),
-                                    last_run,
-                                    this_run,
-                                )
-                            };
+                        // No shared `&mut World` is materialized here: each parameter
+                        // arm reaches the world through `ctx.world`, so a non-exclusive
+                        // system never conjures whole-world access. The one exception is
+                        // the World arm, under the EXCLUSIVE-scheduling guarantee.
 
-                            let obj =
-                                Py::new(py, single_query).expect("Failed to create PySingleQuery");
-                            self.args_buffer.push(obj.into_any());
-                        } else {
-                            // SAFETY: as above — unique access to the cached state's
-                            // components is guaranteed by the declared-access scheduling.
-                            let query_runtime = unsafe {
-                                PyQueryIter::new(
-                                    cached,
-                                    world,
-                                    validity.clone(),
-                                    last_run,
-                                    this_run,
-                                )
-                            };
-
-                            let obj =
-                                Py::new(py, query_runtime).expect("Failed to create PyQueryIter");
-                            self.args_buffer.push(obj.into_any());
+                        // Lock the inner state for system_func and message_cursor_storage.
+                        let mut inner_guard = lock_or_recover(&self.inner);
+                        if inner_guard.gutted {
+                            return false;
                         }
-                    }
-                    SystemParamType::View { param } => {
-                        // Extract component types and mutability from PyViewParam
-                        let mut component_types = Vec::new();
-                        let mut mutable_components = HashSet::new();
-
-                        for view_param_type in &param.parameters {
-                            let ViewParamType::Component { comp_type, mutable } = view_param_type;
-                            component_types.push(comp_type.clone());
-                            if *mutable {
-                                mutable_components.insert(comp_type.clone());
-                            }
-                        }
-
-                        let filter_types = param.with_filters.to_vec();
-                        let without_filter_types = param.without_filters.to_vec();
-                        let changed_filter_types = param.changed_filters.to_vec();
-                        let added_filter_types = param.added_filters.to_vec();
-                        let last_run = self.get_last_run();
-
-                        // SAFETY: `world` is this run's UnsafeWorldCell; PyView reads
-                        // this_run via cell.change_tick() and derives per-operation
-                        // world pointers internally, bounded by the view's declared
-                        // component read/write access from `initialize`.
-                        let py_view = unsafe {
-                            PyView::new_with_filters(
-                                component_types,
-                                mutable_components,
-                                filter_types,
-                                without_filter_types,
-                                changed_filter_types,
-                                added_filter_types,
-                                last_run,
-                                world,
-                                validity.clone(),
-                            )
-                        };
-                        let obj = Py::new(py, py_view).expect("Failed to create PyView");
-                        self.args_buffer.push(obj.into_any());
-                    }
-                    SystemParamType::World => {
-                        // A World param requests exclusive access: `flags()` marks this
-                        // system EXCLUSIVE, so the executor runs it with no other
-                        // system in flight (initialize declares an empty access set,
-                        // matching Bevy's ExclusiveFunctionSystem).
-                        // SAFETY: exclusive scheduling guarantees this `&mut World` is
-                        // the only borrow of the world for the duration of the run.
-                        let world_mut = unsafe { world.world_mut() };
-                        let py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
-                        let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
-                        self.args_buffer.push(obj.into_any());
-                    }
-                    SystemParamType::Commands => {
-                        // Use the pre-created Commands from commands_storage
-                        let commands = commands_storage
-                            .as_mut()
-                            .expect("Commands should be pre-created");
-                        let py_commands = unsafe { PyCommands::new(commands, validity.clone()) };
-                        let obj = Py::new(py, py_commands).expect("Failed to create PyCommands");
-                        self.args_buffer.push(obj.into_any());
-                    }
-                    SystemParamType::MessageWriter { message_type } => {
-                        // Create PyMessageWriter with narrow cell-based world access.
-                        // SAFETY: `initialize` declares write access for this
-                        // writer's Messages<T> id; the writer only reaches that buffer.
-                        let mw = unsafe { MessageWorld::new(world, validity.clone()) };
-                        let py_writer = PyMessageWriter {
-                            message_type: message_type.clone(),
-                            world: mw,
-                        };
-                        let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
-                        self.args_buffer.push(obj.into_any());
-                    }
-                    SystemParamType::MessageReader { message_type } => {
-                        // Create PyMessageReader with narrow cell-based world access.
-                        // SAFETY: `initialize` declares reads for this reader's
-                        // resource ids (Messages<T>, plus ButtonInput<KeyCode> for
-                        // KeyboardInput); the reader only reaches those.
-                        let mw_1 = unsafe { MessageWorld::new(world, validity.clone()) };
-                        let mw_2 = unsafe { MessageWorld::new(world, validity.clone()) };
-                        let cursor = inner_guard
-                            .message_cursor_storage
-                            .get(message_reader_idx)
-                            .cloned();
-                        message_reader_idx += 1;
-                        let py_messages = PyMessages {
-                            message_type: message_type.clone(),
-                            world: mw_1,
-                            cursor_storage: cursor,
-                        };
-                        let py_reader = PyMessageReader {
-                            world: mw_2,
-                            messages: py_messages,
-                        };
-                        let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
-                        self.args_buffer.push(obj.into_any());
-                    }
-                    SystemParamType::On { .. } => {
-                        // On parameters are only valid in observer contexts.
-                        // Observer dispatch uses execute_system_func() instead of run_unsafe().
-                        unreachable!(
-                            "On parameter in non-observer system — observers use execute_system_func()"
-                        )
-                    }
-                    SystemParamType::Assets {
-                        type_ptr,
-                        wrapper_class,
-                        mutable,
-                    } => {
-                        // Create PyAssets wrapper with cell-based world access.
-                        // SAFETY: `world` is this run's UnsafeWorldCell; `initialize`
-                        // declares this Assets<T> resource's access, which
-                        // bounds the data PyAssets reaches via the AssetBridge.
-                        let py_assets = unsafe {
-                            PyAssets::new(
-                                type_ptr.0,
-                                wrapper_class.map(|w| w.0),
-                                world,
-                                validity.clone(),
-                                *mutable,
-                            )
-                        };
-                        let obj = Py::new(py, (py_assets, PyResource))
-                            .expect("Failed to create PyAssets");
-
-                        if *mutable {
-                            // Wrap in Mut[Assets[T]]
-                            let assets_any: Bound<'_, PyAny> = obj.into_bound(py).into_any();
-                            let mut_wrapper = Py::new(py, PyMut::new(assets_any))
-                                .expect("Failed to create PyMut");
-                            self.args_buffer.push(mut_wrapper.into_any());
-                        } else {
-                            self.args_buffer.push(obj.into_any());
-                        }
-                    }
-                }
-            }
-
-            // Check if there was an error during parameter preparation
-            if let Some(err) = param_error {
-                // Drop the inner guard before acquiring error_state lock
-                drop(inner_guard);
-                // Store the error in shared state
-                let mut error_lock = self.error_state.lock().unwrap();
-                error_lock.push(err);
-                // Don't call the function if there was an error
-            } else {
-                // Get current generation and refresh function if needed
-                let current_generation = {
-                    let world_ref = unsafe { world.world() };
-                    if let Some(gen_res) = world_ref.get_resource::<HotReloadGeneration>() {
-                        gen_res.current
-                    } else {
-                        0 // No hot reload, use generation 0
-                    }
-                };
-
-                // Get the current version of the function (may trigger re-import on generation change)
-                // Inlined from get_function() since we already hold the inner lock
-                let func = {
-                    let get_func_result: PyResult<Py<PyAny>> = (|| {
-                        if self.module_name == "__main__" {
-                            if let Some(ref func) = inner_guard.cached_func {
-                                return Ok(func.clone_ref(py));
-                            } else {
-                                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                    "Function {}.{} not cached",
-                                    self.module_name, self.function_name
-                                )));
-                            }
-                        }
-                        if inner_guard.cached_generation != current_generation
-                            || inner_guard.cached_func.is_none()
-                        {
-                            let module = py.import(self.module_name.as_str())?.into_any();
-                            let func = module.getattr(self.function_name.as_str())?;
-                            inner_guard.cached_func = Some(func.unbind());
-                            inner_guard.cached_generation = current_generation;
-                            if is_verbose() {
-                                eprintln!(
-                                    "🔄 Hot reload: Refreshed function {}.{} for generation {}",
-                                    self.module_name, self.function_name, current_generation
-                                );
-                            }
-                        }
-                        Ok(inner_guard.cached_func.as_ref().unwrap().clone_ref(py))
-                    })();
-                    match get_func_result {
-                        Ok(f) => f,
-                        Err(e) => {
-                            if is_verbose() {
-                                eprintln!(
-                                    "❌ Error refreshing function {}.{}: {}",
-                                    self.module_name, self.function_name, e
-                                );
-                            }
-                            e.print(py);
-                            return;
-                        }
-                    }
-                };
-
-                // Drop the inner guard before calling the Python function
-                // This ensures gutting can proceed if needed (though unlikely during execution)
-                drop(inner_guard);
-
-                // Debug: Print which function we're about to call
-                if is_verbose() {
-                    eprintln!(
-                        "🎯 Executing {}.{} (id: {:?}, expected_gen: {}, current_gen: {})",
-                        self.module_name,
-                        self.function_name,
-                        func.as_ptr(),
-                        self.expected_generation,
-                        current_generation
-                    );
-                }
-
-                // Call the Python function
-                let call_result = if self.args_buffer.is_empty() {
-                    func.bind(py).call0()
-                } else {
-                    let tuple =
-                        PyTuple::new(py, &self.args_buffer).expect("Failed to create PyTuple");
-                    func.bind(py).call1(tuple)
-                };
-
-                if let Err(e) = call_result {
-                    let error_str = e.to_string();
-
-                    // Extract full Python traceback with file/line info
-                    let traceback_str = e.traceback(py).map(|tb| {
-                        tb.format()
-                            .unwrap_or_else(|_| "(traceback format failed)".into())
-                    });
-
-                    // Buffer the error for MCP get_last_error without touching the
-                    // world. A `Last`-schedule drain moves this into `LastSystemError`,
-                    // keeping the parallel error path free of structural world mutation.
-                    {
-                        let mut buffered = lock_or_recover(&self.error_buffer);
-                        *buffered = Some(BufferedSystemError {
-                            error: error_str.clone(),
-                            traceback: traceback_str,
-                        });
-                    }
-
-                    // When hot reload is NOT active, store the error for propagation
-                    // to the caller (app.update() / app.run()). This makes assert/raise
-                    // in systems actually fail tests and standalone scripts.
-                    let hot_reload_active = {
-                        let wr = unsafe { world.world() };
-                        wr.get_resource::<HotReloadGeneration>().is_some()
-                    };
-                    if !hot_reload_active {
-                        let mut error_lock = self.error_state.lock().unwrap();
-                        error_lock.push(e.clone_ref(py));
-                    }
-
-                    // Throttle repeated stderr prints: same error → print once then
-                    // suppress for 5 seconds, showing a count summary when resumed
-                    let now = std::time::Instant::now();
-                    let is_repeat = self.last_error_msg.as_ref() == Some(&error_str);
-
-                    if is_repeat {
-                        let elapsed = self
-                            .last_error_print_time
-                            .map(|t| now.duration_since(t).as_secs_f32())
-                            .unwrap_or(f32::MAX);
-
-                        if elapsed < 5.0 {
-                            self.suppressed_error_count += 1;
-                        } else {
-                            // Time to print again
-                            if self.suppressed_error_count > 0 {
-                                eprintln!(
-                                    "  ... (repeated {} more times)",
-                                    self.suppressed_error_count
-                                );
-                            }
-                            e.print(py);
-                            self.last_error_print_time = Some(now);
-                            self.suppressed_error_count = 0;
-                        }
-                    } else {
-                        // New/different error — always print
-                        if self.suppressed_error_count > 0 {
+                        let Some(system_func) = inner_guard.system_func.as_ref() else {
                             eprintln!(
-                                "  ... (previous error repeated {} more times)",
-                                self.suppressed_error_count
+                                "⚠️ System {}.{} has no function — skipping",
+                                self.module_name, self.function_name
                             );
+                            return false;
+                        };
+
+                        // Build the Python argument list via `build_run_args` (the
+                        // rustpython backend's `build_system_args` is the counterpart).
+                        // SAFETY: `world` is this run's valid cell and `validity` stays
+                        // active for the whole attach block.
+                        let param_error = {
+                            Self::build_run_args(
+                                py,
+                                &system_func.params,
+                                &self.query_caches,
+                                &inner_guard.message_cursor_storage,
+                                &mut commands_storage,
+                                &mut self.args_buffer,
+                                ctx.world,
+                                validity,
+                                ctx.ticks.last_run,
+                                ctx.ticks.this_run,
+                                &self.func_name,
+                            )
+                        };
+
+                        // Check if there was an error during parameter preparation
+                        if let Some(err) = param_error {
+                            // Drop the inner guard before acquiring error_state lock
+                            drop(inner_guard);
+                            // Store the error in shared state
+                            let mut error_lock = self.error_state.lock().unwrap();
+                            error_lock.push(err);
+                            // Don't call the function if there was an error
+                        } else {
+                            // The generation the scaffold already read for the guard, reused
+                            // here to decide whether to re-import the function.
+                            let current_generation = ctx.current_generation.unwrap_or(0);
+
+                            // Get the current version of the function (may trigger re-import on generation change)
+                            // Inlined from get_function() since we already hold the inner lock
+                            let func = {
+                                let get_func_result: PyResult<Py<PyAny>> = (|| {
+                                    if self.module_name == "__main__" {
+                                        if let Some(ref func) = inner_guard.cached_func {
+                                            return Ok(func.clone_ref(py));
+                                        } else {
+                                            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                                                format!(
+                                                    "Function {}.{} not cached",
+                                                    self.module_name, self.function_name
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                    if inner_guard.cached_generation != current_generation
+                                        || inner_guard.cached_func.is_none()
+                                    {
+                                        let module =
+                                            py.import(self.module_name.as_str())?.into_any();
+                                        let func = module.getattr(self.function_name.as_str())?;
+                                        inner_guard.cached_func = Some(func.unbind());
+                                        inner_guard.cached_generation = current_generation;
+                                        if is_verbose() {
+                                            eprintln!(
+                                                "🔄 Hot reload: Refreshed function {}.{} for generation {}",
+                                                self.module_name,
+                                                self.function_name,
+                                                current_generation
+                                            );
+                                        }
+                                    }
+                                    Ok(inner_guard.cached_func.as_ref().unwrap().clone_ref(py))
+                                })(
+                                );
+                                match get_func_result {
+                                    Ok(f) => f,
+                                    Err(e) => {
+                                        if is_verbose() {
+                                            eprintln!(
+                                                "❌ Error refreshing function {}.{}: {}",
+                                                self.module_name, self.function_name, e
+                                            );
+                                        }
+                                        e.print(py);
+                                        return false;
+                                    }
+                                }
+                            };
+
+                            // Drop the inner guard before calling the Python function
+                            // This ensures gutting can proceed if needed (though unlikely during execution)
+                            drop(inner_guard);
+
+                            // Debug: Print which function we're about to call
+                            if is_verbose() {
+                                eprintln!(
+                                    "🎯 Executing {}.{} (id: {:?}, expected_gen: {}, current_gen: {})",
+                                    self.module_name,
+                                    self.function_name,
+                                    func.as_ptr(),
+                                    self.expected_generation,
+                                    current_generation
+                                );
+                            }
+
+                            // Call the Python function
+                            let call_result = if self.args_buffer.is_empty() {
+                                func.bind(py).call0()
+                            } else {
+                                let tuple = PyTuple::new(py, &self.args_buffer)
+                                    .expect("Failed to create PyTuple");
+                                func.bind(py).call1(tuple)
+                            };
+
+                            if let Err(e) = call_result {
+                                let error_str = e.to_string();
+
+                                // Extract full Python traceback with file/line info
+                                let traceback_str = e.traceback(py).map(|tb| {
+                                    tb.format()
+                                        .unwrap_or_else(|_| "(traceback format failed)".into())
+                                });
+
+                                // Buffer the error for MCP get_last_error without touching the
+                                // world. A `Last`-schedule drain moves this into `LastSystemError`,
+                                // keeping the parallel error path free of structural world mutation.
+                                {
+                                    let mut buffered = lock_or_recover(&self.error_buffer);
+                                    *buffered = Some(BufferedSystemError {
+                                        error: error_str.clone(),
+                                        traceback: traceback_str,
+                                    });
+                                }
+
+                                // When hot reload is NOT active, store the error for propagation
+                                // to the caller (app.update() / app.run()). This makes assert/raise
+                                // in systems actually fail tests and standalone scripts.
+                                let hot_reload_active = {
+                                    let wr = ctx.world.world();
+                                    wr.get_resource::<HotReloadGeneration>().is_some()
+                                };
+                                if !hot_reload_active {
+                                    let mut error_lock = self.error_state.lock().unwrap();
+                                    error_lock.push(e.clone_ref(py));
+                                }
+
+                                // Throttle repeated stderr prints: same error → print once then
+                                // suppress for 5 seconds, showing a count summary when resumed
+                                let now = std::time::Instant::now();
+                                let is_repeat = self.last_error_msg.as_ref() == Some(&error_str);
+
+                                if is_repeat {
+                                    let elapsed = self
+                                        .last_error_print_time
+                                        .map(|t| now.duration_since(t).as_secs_f32())
+                                        .unwrap_or(f32::MAX);
+
+                                    if elapsed < 5.0 {
+                                        self.suppressed_error_count += 1;
+                                    } else {
+                                        // Time to print again
+                                        if self.suppressed_error_count > 0 {
+                                            eprintln!(
+                                                "  ... (repeated {} more times)",
+                                                self.suppressed_error_count
+                                            );
+                                        }
+                                        e.print(py);
+                                        self.last_error_print_time = Some(now);
+                                        self.suppressed_error_count = 0;
+                                    }
+                                } else {
+                                    // New/different error — always print
+                                    if self.suppressed_error_count > 0 {
+                                        eprintln!(
+                                            "  ... (previous error repeated {} more times)",
+                                            self.suppressed_error_count
+                                        );
+                                    }
+                                    e.print(py);
+                                    self.last_error_msg = Some(error_str);
+                                    self.last_error_print_time = Some(now);
+                                    self.suppressed_error_count = 0;
+                                }
+                            }
                         }
-                        e.print(py);
-                        self.last_error_msg = Some(error_str);
-                        self.last_error_print_time = Some(now);
-                        self.suppressed_error_count = 0;
-                    }
-                }
+
+                        // Systems ignore the boolean; run conditions interpret it.
+                        false
+                    })
+                },
+            )
+        };
+
+        match scaffold_result {
+            RunScaffoldResult::SkippedStaleGeneration => {}
+            RunScaffoldResult::Ran {
+                duration,
+                end_tick,
+                mut local_queue,
+                ..
+            } => {
+                // Append queued commands to the per-system queue for deferred application.
+                self.command_queue.append(&mut local_queue);
+
+                // Profiler epilogue: record this run's duration if a profiler is present.
+                // Shared with the rustpython backend so the profiler + Time read cannot
+                // drift. SAFETY: `world` is valid; the SystemProfiler read is declared.
+                let world_ref = unsafe { world.world() };
+                SystemProfiler::record_run(world_ref, &self.func_name, duration, self.stage);
+
+                // last_run is the scaffold's end_tick: the change tick read AFTER the
+                // run's writes, not this_run. pybevy stamps live ticks, so a
+                // start-of-run value would make the system re-detect its own writes.
+                self.last_run = Some(end_tick);
             }
-
-            // Consume the Commands wrapper before appending the queue
-            // (Commands borrows local_command_queue, must release that borrow first)
-            let _commands_storage = commands_storage;
-
-            // Append queued commands to the per-system queue for deferred application
-            if let Some(mut queue) = local_command_queue {
-                self.command_queue.append(&mut queue);
-            }
-
-            // Record timing at the end of system execution (captures entire execution block)
-            let duration = start_time.elapsed();
-            let world_ref = unsafe { world.world() };
-            if let Some(profiler) = world_ref.get_resource::<SystemProfiler>() {
-                // Get current time from Time resource for startup visibility tracking
-                let current_time = world_ref
-                    .get_resource::<Time>()
-                    .map(|t| t.elapsed_secs_f64())
-                    .unwrap_or(0.0);
-                profiler.record_timing(&self.func_name, duration, self.stage, current_time);
-            }
-        });
-
-        // Record last_run as the world change tick read AFTER the run's writes, not the
-        // `this_run` captured at the top. Unlike a Bevy FunctionSystem (whose writes flow
-        // through params stamped with `this_run`), pybevy's writes stamp `world.change_tick()`
-        // live at write time (View batch writes, custom-component write-back). If the tick
-        // advances between `this_run`'s capture and those writes, storing `this_run` would
-        // leave last_run < the write tick and the same system would re-detect its own writes
-        // as changes on the next frame. Reading the tick here guarantees last_run covers
-        // every write this run made, matching the pre-existing (pre-increment) behavior.
-        self.last_run = Some(world.change_tick());
+        }
 
         Ok(())
     }
@@ -1208,6 +1218,25 @@ impl System for DynamicSystem {
                         format!("parameter_{}", conflict.param_idx),
                     )
                 });
+
+        // Debug-only: verify the declared scheduler access covers what each
+        // query's QueryState actually touches. `build_declared_access` derives
+        // the declaration from the ParamSpec via `QueryParamAccess`; the
+        // QueryState is built from the same spec down a separate path, so a
+        // divergence here is a real under-declaration that would let the
+        // multithreaded executor run a conflicting system in parallel and race.
+        // Catch it loudly at initialize instead of silently at runtime.
+        #[cfg(debug_assertions)]
+        {
+            for (i, cached) in self.query_caches.iter().enumerate() {
+                assert_query_access_declared(
+                    &self.func_name,
+                    i,
+                    &declared.set,
+                    &cached.component_access(),
+                );
+            }
+        }
 
         declared.set
     }

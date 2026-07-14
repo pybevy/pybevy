@@ -6,9 +6,7 @@ use bevy::{
         entity::Entity,
         hierarchy::ChildOf,
         name::Name,
-        prelude::Without,
         reflect::{AppTypeRegistry, ReflectComponent},
-        resource::IsResource,
         schedule::Schedules,
         world::{EntityRef as BevyEntityRef, World},
     },
@@ -343,9 +341,7 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
     let mut entities = Vec::new();
     let bridges = all_component_bridges();
 
-    // Exclude resource-entities (resources are stored as entities).
-    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
-    let entity_list: Vec<Entity> = query_state.iter(world).collect();
+    let entity_list = crate::handlers::entity_count::scene_entities(world);
 
     for entity in &entity_list {
         let entity_id = entity.to_bits();
@@ -432,9 +428,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         .map(|info| info.iter().map(|(_, entry)| entry.name.clone()).collect())
         .unwrap_or_default();
 
-    // Exclude resource-entities (resources are stored as entities).
-    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
-    let entity_count = query_state.iter(world).count();
+    let entity_count = crate::handlers::entity_count::scene_entity_count(world) as usize;
 
     // Sample named entities (user's scene entities) for component detection
     let mut samples = Vec::new();
@@ -692,9 +686,7 @@ pub fn query_entities(
 ) -> Result<serde_json::Value, ControlError> {
     let bridges = all_component_bridges();
 
-    // Exclude resource-entities (resources are stored as entities).
-    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
-    let all_entities: Vec<Entity> = query_state.iter(world).collect();
+    let all_entities = crate::handlers::entity_count::scene_entities(world);
 
     let mut matching = Vec::new();
 
@@ -1281,9 +1273,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
 
     let bridges = all_component_bridges();
 
-    // Exclude resource-entities (resources are stored as entities).
-    let mut query_state = world.query_filtered::<Entity, Without<IsResource>>();
-    let entity_list: Vec<Entity> = query_state.iter(world).collect();
+    let entity_list = crate::handlers::entity_count::scene_entities(world);
     let total = entity_list.len();
 
     // Per-group state for grouping pass.
@@ -2262,10 +2252,10 @@ mod tests {
             assert_eq!(py_value_to_json(&i), serde_json::json!(42));
 
             // float
-            let f = 3.14f64.into_pyobject(py).unwrap().into_any();
+            let f = std::f64::consts::PI.into_pyobject(py).unwrap().into_any();
             let result = py_value_to_json(&f);
             assert!(result.is_number());
-            assert!((result.as_f64().unwrap() - 3.14).abs() < 0.001);
+            assert!((result.as_f64().unwrap() - std::f64::consts::PI).abs() < 0.001);
 
             // str
             let s = "hello".into_pyobject(py).unwrap().into_any();

@@ -1466,8 +1466,9 @@ holder = Holder()
 
     #[test]
     fn json_number_to_f64_valid() {
-        let val = serde_json::json!(3.14);
-        assert!((json_number_to_f64(&val).unwrap() - 3.14).abs() < 1e-10);
+        let pi = std::f64::consts::PI;
+        let val = serde_json::json!(pi);
+        assert!((json_number_to_f64(&val).unwrap() - pi).abs() < 1e-10);
     }
 
     #[test]

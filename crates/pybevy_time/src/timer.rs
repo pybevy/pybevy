@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
+use pybevy_core::duration_from_py;
 use pybevy_macros::pyenum;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::prelude::*;
 
 #[pyenum(TimerMode)]
 #[pyclass(name = "TimerMode", eq, from_py_object)]
@@ -26,27 +27,6 @@ impl PyTimerMode {
             PyTimerMode::Repeating => "repeating",
         }
     }
-}
-
-fn duration_from_py(py_duration: &Bound<'_, PyAny>) -> PyResult<Duration> {
-    if let Ok(duration) = py_duration.extract::<Duration>() {
-        return Ok(duration);
-    }
-
-    if let Ok(seconds) = py_duration.extract::<f64>() {
-        if seconds < 0.0 {
-            return Err(PyTypeError::new_err("Duration cannot be negative"));
-        }
-        return Ok(Duration::from_secs_f64(seconds));
-    }
-
-    if let Ok(seconds) = py_duration.extract::<u64>() {
-        return Ok(Duration::from_secs(seconds));
-    }
-
-    Err(PyTypeError::new_err(
-        "Duration must be a Duration object, float (seconds), or int (seconds)",
-    ))
 }
 
 #[pyclass(name = "Timer", eq, skip_from_py_object)]

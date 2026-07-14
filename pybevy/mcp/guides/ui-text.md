@@ -47,6 +47,21 @@ TextFont(font=FontSource.Monospace())           # generic family (Serif, SansSer
 TextFont(weight=FontWeight.BOLD, style=FontStyle.Italic())  # variable font properties
 ```
 
+### Letter Spacing
+
+`LetterSpacing` is its own component on the text entity (mirroring bevy), not a `TextFont` field. `Px` is absolute; `Rem` scales with the root font size:
+
+```python
+from pybevy.text import LetterSpacing
+
+commands.spawn(
+    Text("W I D E   T I T L E"),
+    Node(),
+    TextFont.from_font_size(32.0),
+    LetterSpacing.Px(4.0),   # or LetterSpacing.Rem(0.25)
+)
+```
+
 ### Absolute Positioning
 
 Use `position_type = 1` (Absolute) to place text anywhere on screen:
@@ -128,6 +143,35 @@ def update_score_display(
     for text in query:
         text.content = f"Score: {score.value}"
 ```
+
+## Text Input (EditableText)
+
+`EditableText` turns a UI node into a text input field. Typing, cursor movement, selection, and clipboard are handled by the engine; click the field to focus it. There is no built-in submit event: read `.value` from a system (poll it, or check it when the user presses Enter via `ButtonInput[KeyCode]`).
+
+```python
+from pybevy.text import EditableText
+
+# In setup:
+commands.spawn(
+    EditableText("type here", max_characters=64),
+    Node(width=320.0, height=40.0),
+    TextFont.from_font_size(24.0),
+    BackgroundColor(Color.srgb(0.15, 0.15, 0.2)),
+)
+
+# In an update system:
+def read_input(query: Query[EditableText]):
+    for field in query:
+        if field.value:
+            ...
+```
+
+Options worth knowing:
+
+- Single-line by default; `allow_newlines=True` with `visible_lines=4.0` makes a multiline box.
+- `cursor_blink_period` accepts a `timedelta` or plain seconds (`0.5`); `cursor_width` is relative to the font size.
+- `max_characters=None` (the default) means unlimited.
+- Focus follows clicks. Tab-navigation and auto-focus components are not wrapped yet, so make each field's node large enough to click comfortably.
 
 ## Fading Text
 

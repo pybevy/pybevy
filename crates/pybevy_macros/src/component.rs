@@ -206,7 +206,7 @@ impl Parse for ComponentArgs {
 ///
 /// # Usage in feature crates (e.g., pybevy_transform)
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pycomponent(Transform)]
 /// #[pyclass(name = "Transform", extends = PyComponent, eq)]
 /// #[derive(Debug, Clone)]
@@ -220,7 +220,7 @@ impl Parse for ComponentArgs {
 /// For engine-managed components that don't implement `Clone` (like `AudioSink`),
 /// use the `no_clone` option:
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pycomponent(AudioSink, no_clone)]
 /// #[pyclass(name = "AudioSink", extends = PyComponent)]
 /// pub struct PyAudioSink {
@@ -1091,7 +1091,7 @@ fn generate_bridge_tokens(
 /// This macro supports multiple variants for different component patterns:
 ///
 /// # Standard (default) - ComponentStorage with full extraction
-/// ```rust
+/// ```rust,ignore
 /// #[native_component(Transform)]
 /// #[pyclass(name = "Transform", extends = PyComponent)]
 /// pub struct PyTransform {
@@ -1100,14 +1100,14 @@ fn generate_bridge_tokens(
 /// ```
 ///
 /// # Unit - Marker components with no data
-/// ```rust
+/// ```rust,ignore
 /// #[native_component(VolumetricLight, unit)]
 /// #[pyclass(name = "VolumetricLight", extends = PyComponent, frozen)]
 /// pub struct PyVolumetricLight;
 /// ```
 ///
 /// # NoExtract - ComponentStorage but extraction returns error
-/// ```rust
+/// ```rust,ignore
 /// #[native_component(AudioSink, no_extract)]
 /// #[pyclass(name = "AudioSink", extends = PyComponent)]
 /// pub struct PyAudioSink {
@@ -1116,14 +1116,14 @@ fn generate_bridge_tokens(
 /// ```
 ///
 /// # Handle - Asset handle wrapper with type validation
-/// ```rust
+/// ```rust,ignore
 /// #[native_component(Mesh3d, handle(Mesh))]
 /// #[pyclass(name = "Mesh3d", extends = PyComponent, frozen)]
 /// pub struct PyMesh3d(pub(crate) PyHandle);
 /// ```
 ///
 /// # Newtype - Simple wrapper for Copy/Clone types (e.g., enums)
-/// ```rust
+/// ```rust,ignore
 /// #[native_component(Tonemapping, newtype)]
 /// #[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
 /// pub struct PyTonemapping(pub(crate) Tonemapping);

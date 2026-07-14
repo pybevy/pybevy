@@ -15,8 +15,8 @@ use bevy::{
     },
 };
 use pybevy_reload::{
-    KEEP_ALIVE_GENERATIONS, ReloadError, ReloadRuntime, SystemStage, generation_matches,
-    is_verbose, lock_or_recover, startup_or_reload,
+    DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadRuntime, SystemStage,
+    generation_matches, is_verbose, lock_or_recover, startup_or_reload,
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
@@ -154,6 +154,56 @@ fn add_systems_to_schedule(
     }
 }
 
+/// Hash a Python callable's name and code object into `hasher`.
+///
+/// `marshal.dumps(func.__code__)` covers the bytecode, literals, and nested
+/// code objects deterministically. It also embeds the first line number, so
+/// shifting a function within its file counts as a change (conservative).
+/// Callables without `__code__` contribute only their qualified name.
+fn hash_callable_code(py: Python<'_>, obj: &Bound<'_, PyAny>, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+
+    if let Ok(name) = obj
+        .getattr("__qualname__")
+        .and_then(|n| n.extract::<String>())
+    {
+        name.hash(hasher);
+    }
+    if let Ok(code) = obj.getattr("__code__")
+        && let Ok(dumped) = py
+            .import("marshal")
+            .and_then(|m| m.call_method1("dumps", (code,)))
+        && let Ok(bytes) = dumped.extract::<Vec<u8>>()
+    {
+        bytes.hash(hasher);
+    }
+    // Keyword defaults live outside __code__ but change call behavior.
+    if let Ok(defaults) = obj.getattr("__defaults__")
+        && let Ok(repr) = defaults.repr()
+    {
+        repr.to_string().hash(hasher);
+    }
+}
+
+/// Hash a registered system into `hasher`, unwrapping conditional and
+/// chained wrappers the same way `system_names` does.
+fn hash_system_code(
+    py: Python<'_>,
+    sys_bound: &Bound<'_, PyAny>,
+    hasher: &mut impl std::hash::Hasher,
+) {
+    if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
+        hash_callable_code(py, conditional.system.bind(py), hasher);
+        hash_callable_code(py, conditional.condition.bind(py), hasher);
+    } else if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
+        for inner in chained.systems.bind(py).iter() {
+            hash_callable_code(py, &inner, hasher);
+        }
+    } else {
+        hash_callable_code(py, sys_bound, hasher);
+    }
+}
+
 pub(crate) struct Pyo3ReloadRuntime {
     pub loader_func: Py<PyAny>,
     pub error_state: Arc<Mutex<Vec<PyErr>>>,
@@ -190,20 +240,57 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         })
     }
 
-    fn requires_escalation(&self, defs: &PendingDefinitions) -> Option<&'static str> {
-        let has_startup = defs
-            .systems
-            .iter()
-            .any(|(stage, systems)| !systems.is_empty() && stage.is_startup());
-        let has_resources = !defs.resources.is_empty();
-        let has_observers = !defs.observers.is_empty();
-        match (has_startup, has_resources, has_observers) {
-            (true, true, _) => Some("new Startup systems and resources detected"),
-            (true, false, _) => Some("new Startup systems detected"),
-            (false, true, _) => Some("new resources detected"),
-            (false, false, true) => Some("observers modified"),
-            _ => None,
-        }
+    fn defs_fingerprint(&self, defs: &PendingDefinitions) -> DefsFingerprint {
+        use std::hash::{Hash, Hasher};
+
+        Python::attach(|py| {
+            let mut startup_hasher = std::hash::DefaultHasher::new();
+            let mut has_startup = false;
+            for (stage, systems) in &defs.systems {
+                if !stage.is_startup() || systems.is_empty() {
+                    continue;
+                }
+                has_startup = true;
+                // Both the startup stage and the registration order are part
+                // of the identity: reordering changes execution order.
+                format!("{stage:?}").hash(&mut startup_hasher);
+                for sys in systems {
+                    hash_system_code(py, sys.bind(py), &mut startup_hasher);
+                }
+            }
+
+            // Resource identity is the type, not the value: Partial reloads
+            // never re-insert resources, and re-applying initial values would
+            // be a Full-reload semantic anyway.
+            let mut resource_names: Vec<String> = defs
+                .resources
+                .iter()
+                .map(|res| {
+                    res.bind(py)
+                        .get_type()
+                        .fully_qualified_name()
+                        .map(|name| name.to_string())
+                        .unwrap_or_else(|_| "<unknown>".to_string())
+                })
+                .collect();
+            resource_names.sort();
+            let mut resources_hasher = std::hash::DefaultHasher::new();
+            resource_names.hash(&mut resources_hasher);
+
+            let mut observer_hasher = std::hash::DefaultHasher::new();
+            for observer in &defs.observers {
+                hash_system_code(py, observer.bind(py), &mut observer_hasher);
+            }
+
+            DefsFingerprint {
+                startup_code: startup_hasher.finish(),
+                resource_types: resources_hasher.finish(),
+                observer_code: observer_hasher.finish(),
+                has_startup,
+                has_resources: !defs.resources.is_empty(),
+                has_observers: !defs.observers.is_empty(),
+            }
+        })
     }
 
     fn plugin_names(&self, defs: &PendingDefinitions) -> Vec<String> {

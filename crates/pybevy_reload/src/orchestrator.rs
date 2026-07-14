@@ -11,7 +11,7 @@ use crate::{
     BaseEntitySet,
     cleanup::{NativeResourceSnapshot, clear_world_state},
     profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
-    runtime::{ReloadError, ReloadRuntime},
+    runtime::{EscalationTracker, ReloadError, ReloadRuntime},
     state::{HotReloadGeneration, ReloadMode},
     tracker::PluginTracker,
     util::{count_schedule_systems, get_current_rss_mb, is_verbose},
@@ -142,24 +142,61 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         });
     }
 
-    // Auto-escalation: partial -> full if startup systems or resources changed
+    // Auto-escalation: Partial -> Full when the new definitions contain
+    // changes only a Full reload applies (Startup re-run, resource insertion,
+    // observer re-registration). Compared against the previous generation's
+    // fingerprint; an unchanged file stays on the fast Partial path.
+    let fingerprint = runtime.defs_fingerprint(&defs);
     let mut mode = mode;
-    if mode == ReloadMode::Partial
-        && let Some(reason) = runtime.requires_escalation(&defs)
-    {
-        eprintln!("⬆️ [Hot Reload] Escalating Partial → Full: {reason}");
-        mode = ReloadMode::Full;
-        clear_world_state(world, runtime, is_verbose());
+    if mode == ReloadMode::Partial {
+        let previous = world
+            .get_resource::<EscalationTracker>()
+            .and_then(|t| t.last.clone());
+        let reason = match &previous {
+            Some(previous) => {
+                if previous.startup_code != fingerprint.startup_code {
+                    Some("Startup systems changed")
+                } else if previous.resource_types != fingerprint.resource_types {
+                    Some("resource definitions changed")
+                } else if previous.observer_code != fingerprint.observer_code {
+                    Some("observers changed")
+                } else {
+                    None
+                }
+            }
+            // No baseline yet: conservatively escalate if the scene defines
+            // anything only a Full reload applies.
+            None => match (
+                fingerprint.has_startup,
+                fingerprint.has_resources,
+                fingerprint.has_observers,
+            ) {
+                (true, _, _) => Some("no fingerprint baseline, Startup systems present"),
+                (false, true, _) => Some("no fingerprint baseline, resources present"),
+                (false, false, true) => Some("no fingerprint baseline, observers present"),
+                _ => None,
+            },
+        };
+        if let Some(reason) = reason {
+            eprintln!("⬆️ [Hot Reload] Escalating Partial → Full: {reason}");
+            mode = ReloadMode::Full;
+            clear_world_state(world, runtime, is_verbose());
 
-        if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
-            stats.last_mode = Some(ReloadMode::Full);
-        }
-        if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
-            result.escalated = true;
-            result.escalation_reason = Some(reason.to_string());
-            result.actual_mode = Some(pybevy_core::ReloadRequestMode::Full);
+            if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
+                stats.last_mode = Some(ReloadMode::Full);
+            }
+            if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
+                result.escalated = true;
+                result.escalation_reason = Some(reason.to_string());
+                result.actual_mode = Some(pybevy_core::ReloadRequestMode::Full);
+            }
         }
     }
+    // Record on every reload (Full included) so the next Partial compares
+    // against the definitions that are actually live.
+    world
+        .get_resource_or_insert_with(EscalationTracker::default)
+        .last = Some(fingerprint);
 
     // Plugin delta detection
     {
@@ -453,6 +490,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     }
 
     // Register handles and gut old-generation systems
+    let current_generation_systems = system_handles.len();
     if !system_handles.is_empty() {
         runtime.register_handles(world, new_generation, system_handles);
     }
@@ -469,7 +507,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         let schedule_systems = count_schedule_systems(world);
 
         if let Some(mut profile) = world.get_resource_mut::<MemoryProfile>() {
-            profile.capture_snapshot(new_generation, rss_mb, gc_objects, schedule_systems);
+            profile.capture_snapshot(
+                new_generation,
+                rss_mb,
+                gc_objects,
+                schedule_systems,
+                current_generation_systems,
+            );
 
             if is_verbose() {
                 let growth = profile.growth_mb(rss_mb);
@@ -479,8 +523,14 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                     ""
                 };
                 eprintln!(
-                    "   → Memory: {:.1}MB (growth: {:.1}MB, peak: {:.1}MB, gc: {}, systems: {}){}",
-                    rss_mb, growth, profile.peak_rss_mb, gc_objects, schedule_systems, warning
+                    "   → Memory: {:.1}MB (growth: {:.1}MB, peak: {:.1}MB, gc: {}, systems: {} total, {} this generation){}",
+                    rss_mb,
+                    growth,
+                    profile.peak_rss_mb,
+                    gc_objects,
+                    schedule_systems,
+                    current_generation_systems,
+                    warning
                 );
             }
         }
@@ -531,7 +581,7 @@ mod tests {
     use super::*;
     use crate::{
         profiling::{MemoryProfile, SystemProfiler},
-        runtime::{ReloadError, ReloadRuntime},
+        runtime::{DefsFingerprint, ReloadError, ReloadRuntime},
     };
 
     /// Minimal mock runtime that succeeds immediately with no systems.
@@ -543,8 +593,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -635,8 +685,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -742,6 +792,134 @@ mod tests {
         (world, gen_counter)
     }
 
+    /// Runtime with a configurable fingerprint, for escalation tests.
+    struct FingerprintRuntime(DefsFingerprint);
+
+    impl ReloadRuntime for FingerprintRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            self.0.clone()
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            vec![]
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            HashSet::new()
+        }
+        fn register_systems(
+            &mut self,
+            _world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            Ok(vec![])
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, _keep: u32) {}
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(
+            &mut self,
+            _world: &mut World,
+            _new: HashSet<String>,
+        ) -> Vec<String> {
+            vec![]
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {}
+    }
+
+    /// An unchanged fingerprint must stay on the fast Partial path.
+    /// Previously any scene with a Startup system escalated on every save.
+    #[test]
+    fn partial_reload_unchanged_fingerprint_stays_partial() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint {
+            startup_code: 42,
+            has_startup: true,
+            ..Default::default()
+        });
+
+        // First Partial has no fingerprint baseline: escalates conservatively.
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert!(
+            world.resource::<pybevy_core::ReloadResult>().escalated,
+            "first reload without a baseline should escalate"
+        );
+
+        // Second Partial with an identical fingerprint stays Partial.
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(
+            !result.escalated,
+            "unchanged definitions must stay on the Partial path"
+        );
+        assert_eq!(
+            result.actual_mode,
+            Some(pybevy_core::ReloadRequestMode::Partial)
+        );
+    }
+
+    #[test]
+    fn partial_reload_changed_startup_escalates() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint {
+            startup_code: 42,
+            has_startup: true,
+            ..Default::default()
+        });
+
+        // Establish the baseline (Full reloads record it too).
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+
+        runtime.0.startup_code = 43;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(result.escalated, "changed Startup code must escalate");
+        assert_eq!(
+            result.escalation_reason.as_deref(),
+            Some("Startup systems changed")
+        );
+    }
+
     /// A Python exception (not a panic) in a Startup system must trigger
     /// generation rollback so that Update systems from the broken
     /// generation don't keep running.
@@ -814,8 +992,8 @@ mod tests {
             fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
                 Ok(())
             }
-            fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-                None
+            fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+                DefsFingerprint::default()
             }
             fn plugin_names(&self, _defs: &()) -> Vec<String> {
                 vec![]
@@ -886,7 +1064,7 @@ mod tests {
         let state = MockState::new(gen_counter);
 
         // Resources are stored as entities; exclude them so the count
-        // reflects only game entities, matching the cleanup logic under test.
+        // reflects only scene entities, matching the cleanup logic under test.
         let pre_entity_count = world
             .query_filtered::<Entity, Without<IsResource>>()
             .iter(&world)
@@ -966,8 +1144,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -1042,8 +1220,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]

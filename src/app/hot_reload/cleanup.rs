@@ -72,7 +72,7 @@ pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
 /// - RenderDevice and render infrastructure
 /// - Plugin state
 pub fn clear_entities_and_resources(world: &mut World) {
-    // Despawn ALL game entities (complete clean slate)
+    // Despawn ALL scene entities (complete clean slate)
     let all_entities: Vec<Entity> = world
         .query_filtered::<Entity, Without<IsResource>>()
         .iter(world)

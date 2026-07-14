@@ -19,7 +19,7 @@ use crate::util::{
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[derive(Component, PyComponent)]
 /// struct Health {
 ///     value: f32,

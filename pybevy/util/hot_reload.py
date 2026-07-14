@@ -106,6 +106,88 @@ def flush_user_modules(
     return to_remove
 
 
+def exec_scene_module(
+    module_name: str,
+    file_path: str | None = None,
+    verbose: bool = False,
+) -> dict:
+    """Execute a scene module and register it in ``sys.modules``.
+
+    Replaces ``runpy.run_module``/``run_path`` in the dev loader. runpy left
+    the executed module unregistered (named ``<run_path>`` for plain
+    scripts), so ``import scene`` from ``run_code`` created a duplicate
+    module with distinct class objects (every pybevy registry is
+    identity-keyed), and anything that pickles ``__module__`` (numba's
+    ``cache=True``, multiprocessing) recorded an unimportable name.
+
+    A fresh module object is executed on every call (hot reload needs new
+    code objects per generation); ``sys.modules[module_name]`` always points
+    at the latest generation. ``__name__`` is the module name, so
+    ``if __name__ == "__main__"`` blocks do not run.
+
+    If a foreign module (different ``__file__``) already owns the name, for
+    example a scene file named like a stdlib module, the scene is executed
+    WITHOUT registering so the existing module is not clobbered; imports of
+    that name then still resolve to the foreign module.
+
+    Args:
+        module_name: Importable name for the scene (e.g. file stem or
+            dotted path for packaged scenes).
+        file_path: Path to the ``.py`` file. When ``None``, the module is
+            located by name via the normal import machinery (packaged
+            scenes; the project root must be on ``sys.path``).
+        verbose: If True, print registration details.
+
+    Returns:
+        The executed module's globals dict (live, via ``vars(module)``).
+    """
+    import importlib.util
+
+    if file_path is not None:
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+    else:
+        spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load scene module {module_name!r}")
+
+    module = importlib.util.module_from_spec(spec)
+    module_file = getattr(module, "__file__", None)
+
+    existing = sys.modules.get(module_name)
+    existing_file = getattr(existing, "__file__", None) if existing is not None else None
+    foreign = existing is not None and (
+        existing_file is None
+        or module_file is None
+        or os.path.abspath(existing_file) != os.path.abspath(module_file)
+    )
+
+    if foreign:
+        print(
+            f"⚠️  Scene module name {module_name!r} collides with an already-imported "
+            f"module ({existing_file}); not registering in sys.modules. Imports of "
+            f"{module_name!r} will not see the scene's classes; consider renaming the file.",
+            file=sys.stderr,
+        )
+        spec.loader.exec_module(module)
+    else:
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(module_name, None)
+            raise
+        # Keep the parent package attribute in sync, as a normal import would.
+        if "." in module_name:
+            parent_name, _, child = module_name.rpartition(".")
+            parent = sys.modules.get(parent_name)
+            if parent is not None:
+                setattr(parent, child, module)
+        if verbose:
+            print(f"   → Registered scene module {module_name!r} in sys.modules")
+
+    return vars(module)
+
+
 def reload_module_from_source(module_path: str, module_name: str | None = None, project_dir: str | None = None, verbose: bool = False) -> dict:
     """
     Reload a Python module from source, bypassing .pyc bytecode cache.

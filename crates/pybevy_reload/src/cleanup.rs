@@ -5,6 +5,7 @@ use bevy::{
     log::info as log_info,
     prelude::{Resource, With, Without},
     time::{Time, Virtual},
+    window::{Monitor, Window},
 };
 
 use crate::{BaseEntitySet, Retained, runtime::ReloadRuntime};
@@ -46,26 +47,38 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
     // Resources are stored as entities; exclude them via the
     // `IsResource` marker so the cleanup never despawns resource-entities
     // (doing so triggers a panic when later commands touch them).
+    // `Window`/`Monitor` entities are also off-limits: winit creates them
+    // when the event loop starts (after the baseline snapshot), and
+    // despawning the primary window exits the app via `exit_on_all_closed`.
     let to_despawn: Vec<Entity> = world
-        .query_filtered::<Entity, Without<IsResource>>()
+        .query_filtered::<Entity, (Without<IsResource>, Without<Window>, Without<Monitor>)>()
         .iter(world)
         .filter(|e| !base.contains(e) && !retained.contains(e))
         .collect();
 
-    let live_before = base.len() + retained.len() + to_despawn.len();
+    // Count scene and resource entities with the same filter used for the
+    // "remaining" log below, so the before/after numbers are comparable.
+    let live_scene = world
+        .query_filtered::<Entity, Without<IsResource>>()
+        .iter(world)
+        .count();
+    let resource_entities = world
+        .query_filtered::<Entity, With<IsResource>>()
+        .iter(world)
+        .count();
     log_info!(
-        "[hot-reload] clear_world_state: {} base / {} retained / {} live entities, despawning {}...",
-        base.len(),
+        "[hot-reload] clear_world_state: despawning {} of {} scene entities ({} retained, {} resource-entities untouched)...",
+        to_despawn.len(),
+        live_scene,
         retained.len(),
-        live_before,
-        to_despawn.len()
+        resource_entities
     );
 
     if verbose {
         eprintln!(
-            "   → Despawning {} entities ({} base preserved)",
+            "   → Despawning {} of {} scene entities",
             to_despawn.len(),
-            base.len()
+            live_scene
         );
     }
 
@@ -80,7 +93,7 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         .iter(world)
         .count();
     log_info!(
-        "[hot-reload] clear_world_state: {} live entities remaining",
+        "[hot-reload] clear_world_state: {} scene entities remaining",
         live_after
     );
 
@@ -123,6 +136,20 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
     // but rebuilding it throws off accumulated render frame deltas. Leave it.
 }
 
+/// Fold every currently-live entity into the `BaseEntitySet` baseline.
+///
+/// The initial baseline is captured before `app.run()`, but winit creates
+/// more engine entities once the event loop starts (`Monitor`s, a11y).
+/// Running this right before the first user Startup system folds those into
+/// the baseline so Full reloads never despawn them.
+pub fn extend_base_entity_set(world: &mut World) {
+    let entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
+    let Some(mut base) = world.get_resource_mut::<BaseEntitySet>() else {
+        return;
+    };
+    base.entities.extend(entities);
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -146,8 +173,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> crate::runtime::DefsFingerprint {
+            crate::runtime::DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -219,7 +246,7 @@ mod tests {
 
     fn live_entity_count(world: &mut World) -> usize {
         // Resources are stored as entities; exclude them via the
-        // `IsResource` marker so counts reflect only game entities, matching
+        // `IsResource` marker so counts reflect only scene entities, matching
         // what the production `clear_world_state` cleanup operates on.
         world
             .query_filtered::<Entity, Without<IsResource>>()
@@ -395,6 +422,67 @@ mod tests {
     }
 
     #[test]
+    fn window_and_monitor_entities_survive_cleanup() {
+        use bevy::{math::IVec2, window::OnMonitor};
+
+        let mut world = World::new();
+        insert_base_set(&mut world, vec![]);
+
+        // Simulates winit state after event-loop start: Monitor spawned
+        // post-baseline, Window related to it. Monitor's `HasWindows` is a
+        // `linked_spawn` relationship, so despawning the monitor would
+        // cascade-despawn the window and exit the app.
+        let monitor = world
+            .spawn(Monitor {
+                name: None,
+                physical_height: 1080,
+                physical_width: 1920,
+                physical_position: IVec2::ZERO,
+                refresh_rate_millihertz: None,
+                scale_factor: 1.0,
+                video_modes: vec![],
+            })
+            .id();
+        let window = world.spawn((Window::default(), OnMonitor(monitor))).id();
+        let user = world.spawn(Marker("user")).id();
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        assert!(
+            world.get_entity(monitor).is_ok(),
+            "monitor must survive cleanup; winit never respawns it"
+        );
+        assert!(
+            world.get_entity(window).is_ok(),
+            "window must survive cleanup; despawning it exits the app"
+        );
+        assert!(world.get_entity(user).is_err(), "user entity despawned");
+    }
+
+    #[test]
+    fn extend_base_entity_set_folds_live_entities() {
+        let mut world = World::new();
+        insert_base_set(&mut world, vec![]);
+
+        // Engine entity created after the initial snapshot (e.g., at
+        // event-loop start) but before user Startup.
+        let engine = world.spawn(Marker("engine_late")).id();
+        extend_base_entity_set(&mut world);
+        let user = world.spawn(Marker("user")).id();
+
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        assert!(
+            world.get_entity(engine).is_ok(),
+            "entity alive at extension time joins the baseline"
+        );
+        assert!(
+            world.get_entity(user).is_err(),
+            "entity spawned after extension is still despawned"
+        );
+    }
+
+    #[test]
     fn despawns_all_non_base_entities() {
         let mut world = World::new();
         // Base entity (plugin-init)
@@ -516,8 +604,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> crate::runtime::DefsFingerprint {
+            crate::runtime::DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -762,8 +850,8 @@ mod tests {
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn requires_escalation(&self, _defs: &()) -> Option<&'static str> {
-            None
+        fn defs_fingerprint(&self, _defs: &()) -> crate::runtime::DefsFingerprint {
+            crate::runtime::DefsFingerprint::default()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]

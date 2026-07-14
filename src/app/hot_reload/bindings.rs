@@ -4,10 +4,10 @@ use std::{
 };
 
 use bevy::{
-    app::{App, Last, PreStartup},
+    app::{App, Last, MainScheduleOrder, PreStartup},
     ecs::{
         component::ComponentId,
-        schedule::{IntoScheduleConfigs, Schedules},
+        schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
     },
 };
 use pybevy_core::PyPlugin;
@@ -412,8 +412,27 @@ pub fn add_hot_reload_system(
             );
         }
         app.insert_resource(pybevy_reload::BaseEntitySet { entities });
+
+        // Winit creates more engine entities (Monitors, a11y) when the event
+        // loop starts, after the snapshot above. Fold everything alive at
+        // startup into the baseline from a dedicated schedule that runs
+        // before PreStartup, so ordering against user PreStartup systems is
+        // deterministic.
+        app.init_schedule(ExtendBaseEntitySet);
+        app.world_mut()
+            .resource_mut::<MainScheduleOrder>()
+            .insert_startup_before(PreStartup, ExtendBaseEntitySet);
+        app.add_systems(
+            ExtendBaseEntitySet,
+            pybevy_reload::cleanup::extend_base_entity_set,
+        );
     }
 }
+
+/// Schedule that runs once before `PreStartup` to fold engine entities
+/// created at event-loop start into the `BaseEntitySet` baseline.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct ExtendBaseEntitySet;
 
 /// PyO3 plugin for enabling hot reload functionality
 ///

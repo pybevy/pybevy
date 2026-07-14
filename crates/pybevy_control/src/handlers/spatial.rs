@@ -1744,8 +1744,11 @@ mod tests {
     }
 
     #[test]
+    // 3.141593 (the expected output) is PI rounded to 6 dp — no const form, so approx_constant
+    // fires on the literal even though the input uses std::f32::consts::PI directly.
+    #[allow(clippy::approx_constant)]
     fn round6_basic() {
-        assert_eq!(super::round6(3.1415927), 3.141593);
+        assert_eq!(super::round6(std::f32::consts::PI), 3.141593);
         assert_eq!(super::round6(0.0), 0.0);
         assert_eq!(super::round6(-1.23456789), -1.234568);
     }

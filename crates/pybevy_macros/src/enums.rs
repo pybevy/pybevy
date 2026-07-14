@@ -52,7 +52,7 @@ impl Parse for BevyEnumArgs {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pyenum(BevyCursorGrabMode)]
 /// #[pyclass(name = "CursorGrabMode", eq)]
 /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

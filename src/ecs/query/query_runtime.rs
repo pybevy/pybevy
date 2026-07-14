@@ -1,5 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, ptr::NonNull, sync::Arc};
 
+#[cfg(debug_assertions)]
+use bevy::ecs::query::FilteredAccess;
 use bevy::{
     ecs::{
         change_detection::Tick,
@@ -345,6 +347,13 @@ impl CachedQuery {
             extract_fns,
             single_entity_enforced,
         }
+    }
+
+    /// The QueryState's Bevy-computed `FilteredAccess`, exposed for the debug
+    /// access auditor to compare against this system's declared access.
+    #[cfg(debug_assertions)]
+    pub(crate) fn component_access(&self) -> FilteredAccess {
+        self.core.state.component_access()
     }
 }
 
@@ -704,6 +713,9 @@ impl PyQueryIter {
         {
             let mut borrowed = slf.borrow_mut(py);
 
+            // Reject iteration of a query that outlived its system (stale cell).
+            borrowed.validity.check()?;
+
             // Reject nested iteration — in Bevy Rust this is a borrow error
             if borrowed.iterating {
                 return Err(PyRuntimeError::new_err(
@@ -720,6 +732,11 @@ impl PyQueryIter {
 
     /// Returns the next query result
     fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        // A query iterator leaked past its system would advance against a stale
+        // world cell; the ValidityFlag (set Invalid when the system finished)
+        // catches it with a clean error instead of a use-after-free.
+        self.validity.check()?;
+
         // Mark that iteration is in progress (for nested iteration detection)
         self.iterating = true;
 
@@ -778,14 +795,16 @@ impl PyQueryIter {
     /// **Warning: O(n)** - this iterates all matching entities to count them.
     /// Python users calling `len(query)` may expect O(1) but Bevy's
     /// `QueryState` does not cache entity counts.
-    fn __len__(&self) -> usize {
+    fn __len__(&self) -> PyResult<usize> {
+        // Reject len() on a query that outlived its system (stale cell).
+        self.validity.check()?;
         let Some(cell) = self.world_cell else {
-            return 0;
+            return Ok(0);
         };
 
         let cached = self.cached();
         if !self.has_tick_filters() {
-            return cached.core.state.count(cell, self.last_run, self.this_run);
+            return Ok(cached.core.state.count(cell, self.last_run, self.this_run));
         }
 
         // Count with tick filtering: iterate the cell-based unchecked iterator and
@@ -802,12 +821,14 @@ impl PyQueryIter {
                 n += 1;
             }
         }
-        n
+        Ok(n)
     }
 
     /// Get exactly one entity from the query.
     /// Returns an error if there are 0 or 2+ entities matching the query.
     fn single(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        // Reject single() on a query that outlived its system (stale cell).
+        self.validity.check()?;
         let cell = self
             .world_cell
             .expect("Query used outside system execution");
@@ -919,6 +940,8 @@ impl PyQueryIter {
     /// Check if the query has no matching entities.
     /// Returns true if there are no entities matching the query filters.
     fn is_empty(&self) -> PyResult<bool> {
+        // Reject is_empty() on a query that outlived its system (stale cell).
+        self.validity.check()?;
         let cell = self
             .world_cell
             .expect("Query used outside system execution");
@@ -951,6 +974,8 @@ impl PyQueryIter {
     /// Returns None if the entity doesn't match the query filters.
     /// Returns an error if the entity doesn't have the queried components.
     fn get(&mut self, entity: PyEntity, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        // Reject get() on a query that outlived its system (stale cell).
+        self.validity.check()?;
         let cell = self
             .world_cell
             .expect("Query used outside system execution");
@@ -1007,6 +1032,8 @@ impl PyQueryIter {
     ///     pass
     /// ```
     fn iter_many(&mut self, entities: &Bound<'_, PyAny>, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        // Reject iter_many() on a query that outlived its system (stale cell).
+        self.validity.check()?;
         let mut results = Vec::new();
         let cell = self
             .world_cell

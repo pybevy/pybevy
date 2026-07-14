@@ -36,7 +36,7 @@ Enables windowing support on Linux by activating Bevy's `x11` and `wayland` feat
 
 - Required for any graphical application on Linux
 - Not needed on macOS or Windows (those use platform-native windowing by default)
-- The standard development build command includes it: `maturin develop --features "linux-display"`
+- It is part of `pybevy-python`'s default features, so plain `maturin develop` enables it. Do not pass `--features` to maturin unless needed: the flag replaces the `pyo3/extension-module` feature configured in `pyproject.toml [tool.maturin]`, producing a build that links libpython (works locally, but warns and differs from wheels).
 
 ```toml
 # For Linux development
@@ -90,11 +90,12 @@ The `native-plugin` and `native-hot-reload` features are only relevant when usin
 ## Common Configurations
 
 ```toml
-# Python-first development on Linux (default + linux windowing)
-maturin develop --features "linux-display"
+# Python-first development on Linux (defaults include linux windowing)
+maturin develop
 
-# Minimal build (CI, no GPU overlay, no MCP)
-maturin develop --features "linux-display" --no-default-features
+# Minimal build (CI, no GPU overlay, no MCP); re-add extension-module because
+# --features replaces the pyproject.toml [tool.maturin] feature list
+maturin develop --no-default-features --features "linux-display,pyo3/extension-module"
 
 # Native Rust app with Python scripting + auto-reload
 [dependencies]

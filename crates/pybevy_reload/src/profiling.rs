@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use bevy::prelude::Resource;
+use bevy::{ecs::world::World, prelude::Resource, time::Time};
 
 use crate::{state::ReloadMode, util::lock_or_recover};
 
@@ -158,6 +158,20 @@ impl SystemProfiler {
         }
     }
 
+    /// Record one system run's duration into the profiler resource if the world
+    /// has one, reading the current time from `Time`. Both backends' `run_unsafe`
+    /// epilogue call this so the profiler read, `Time` read, and timing write stay
+    /// one implementation and cannot drift between pyo3 and rustpython.
+    pub fn record_run(world: &World, system_name: &str, duration: Duration, stage: SystemStage) {
+        if let Some(profiler) = world.get_resource::<SystemProfiler>() {
+            let current_time = world
+                .get_resource::<Time>()
+                .map(|t| t.elapsed_secs_f64())
+                .unwrap_or(0.0);
+            profiler.record_timing(system_name, duration, stage, current_time);
+        }
+    }
+
     /// Get the top N Update/Last systems by average execution time (concurrent-safe).
     /// Returns `(name, avg, max)` per entry, both timings over the same rolling window.
     pub fn get_top_n_update(&self, n: usize) -> Vec<(String, Duration, Duration)> {
@@ -220,8 +234,14 @@ pub struct ReloadMemorySnapshot {
     pub delta_mb: f64,
     /// Python GC tracked objects (sum of gc.get_count())
     pub gc_objects: usize,
-    /// Total systems across all schedules
+    /// Total systems across all schedules (includes engine infrastructure and
+    /// inert prior-generation "zombie" systems that no longer run).
     pub schedule_systems: usize,
+    /// Systems registered for this reload's generation (the live scene systems).
+    /// `schedule_systems - current_generation_systems` is infrastructure plus
+    /// gated-off prior generations, so a rising `schedule_systems` across reloads
+    /// while this stays flat is expected accumulation, not a leak.
+    pub current_generation_systems: usize,
 }
 
 /// Resource tracking memory across reloads (rolling window of snapshots).
@@ -262,6 +282,7 @@ impl MemoryProfile {
         rss_mb: f64,
         gc_objects: usize,
         schedule_systems: usize,
+        current_generation_systems: usize,
     ) {
         let delta_mb = self
             .snapshots
@@ -279,6 +300,7 @@ impl MemoryProfile {
             delta_mb,
             gc_objects,
             schedule_systems,
+            current_generation_systems,
         };
 
         if self.snapshots.len() >= Self::MAX_SNAPSHOTS {
@@ -469,6 +491,36 @@ mod tests {
     }
 
     #[test]
+    fn record_run_files_timing_when_profiler_present() {
+        let mut world = World::new();
+        world.insert_resource(SystemProfiler::new(60));
+        // No `Time` inserted: current_time falls back to 0.0 but the run is still
+        // recorded, matching the previous inline epilogue's `unwrap_or(0.0)`.
+        SystemProfiler::record_run(
+            &world,
+            "sys",
+            Duration::from_millis(2),
+            SystemStage::UpdateOrLast,
+        );
+        let profiler = world.get_resource::<SystemProfiler>().unwrap();
+        let top = profiler.get_top_n_update(10);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].0, "sys");
+    }
+
+    #[test]
+    fn record_run_is_noop_without_profiler() {
+        let world = World::new();
+        // Must not panic when the world has no profiler (hot reload inactive).
+        SystemProfiler::record_run(
+            &world,
+            "sys",
+            Duration::from_millis(2),
+            SystemStage::UpdateOrLast,
+        );
+    }
+
+    #[test]
     fn test_memory_profile_baseline() {
         let mut profile = MemoryProfile::default();
         assert!(!profile.baseline_captured);
@@ -493,18 +545,19 @@ mod tests {
     #[test]
     fn test_memory_profile_snapshots() {
         let mut profile = MemoryProfile::default();
-        profile.capture_snapshot(1, 100.0, 5000, 20);
+        profile.capture_snapshot(1, 100.0, 5000, 20, 6);
         assert_eq!(profile.snapshots.len(), 1);
         assert_eq!(profile.snapshots[0].delta_mb, 0.0);
+        assert_eq!(profile.snapshots[0].current_generation_systems, 6);
         assert_eq!(profile.peak_rss_mb, 100.0);
 
-        profile.capture_snapshot(2, 110.0, 5500, 25);
+        profile.capture_snapshot(2, 110.0, 5500, 25, 6);
         assert_eq!(profile.snapshots.len(), 2);
         assert_eq!(profile.snapshots[1].delta_mb, 10.0);
         assert_eq!(profile.peak_rss_mb, 110.0);
 
         // Peak tracks correctly even if current RSS drops
-        profile.capture_snapshot(3, 105.0, 5200, 22);
+        profile.capture_snapshot(3, 105.0, 5200, 22, 6);
         assert_eq!(profile.peak_rss_mb, 110.0);
         assert_eq!(profile.snapshots[2].delta_mb, -5.0);
     }
@@ -513,7 +566,7 @@ mod tests {
     fn test_memory_profile_rolling_window() {
         let mut profile = MemoryProfile::default();
         for i in 0..25 {
-            profile.capture_snapshot(i, 100.0 + i as f64, 5000, 20);
+            profile.capture_snapshot(i, 100.0 + i as f64, 5000, 20, 6);
         }
         assert_eq!(profile.snapshots.len(), MemoryProfile::MAX_SNAPSHOTS);
         // First snapshot should be generation 5 (0-4 were evicted)

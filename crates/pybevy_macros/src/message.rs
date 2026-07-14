@@ -12,7 +12,7 @@ use syn::{
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[pymessage(CursorEntered)]
 /// #[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
 /// pub struct PyCursorEntered { ... }

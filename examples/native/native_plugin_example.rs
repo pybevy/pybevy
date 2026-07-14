@@ -6,7 +6,7 @@
 //! **Security:** PyBevyPlugin embeds a full CPython interpreter with unrestricted
 //! access to the host system. Never load untrusted Python code.
 //!
-//!   cargo run --example native_plugin_example --release
+//!   cargo run --example native_plugin_example --features native-plugin --release
 
 use bevy::prelude::*;
 use pybevy::{PyBevyPlugin, PyComponent};

@@ -11,10 +11,16 @@ homepage = "https://pybevy.com"
 [lib]
 name = "_pybevy"
 crate-type = ["cdylib"]
+# Thin cdylib wrapper with nothing to unit test; skipping avoids linking a huge test binary.
+test = false
+doctest = false
 
 [dependencies]
 pybevy = { path = "../..", version = "=0.2.1" }
-pyo3 = { workspace = true, features = ["extension-module"] }
+# pyo3/extension-module is enabled by maturin via pyproject.toml [tool.maturin] features.
+# Keeping it out of Cargo.toml stops workspace feature unification from disabling
+# libpython linking for every other crate's test binaries in `cargo test --workspace`.
+pyo3 = { workspace = true }
 
 [features]
 default = ["pybevy/mcp", "linux-display"]
