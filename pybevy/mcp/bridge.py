@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -34,6 +35,13 @@ type JsonDict = dict[str, Any]
 def _log(msg: str) -> None:
     sys.stderr.write(msg + "\n")
     sys.stderr.flush()
+
+
+# A native error line has "error:" at the start or after a short tool prefix
+# ("error: ...", "Error: ...", "wgpu error: ...", "shader compilation error: ...").
+# Mid-sentence mentions ("... returned error: No such file or directory" from
+# alsa-lib device probing and similar C-library noise) are not errors themselves.
+_NATIVE_ERROR_LINE = re.compile(r"(\S+ ){0,3}error:", re.IGNORECASE)
 
 
 def _is_log_error_line(line: str) -> bool:
@@ -1125,8 +1133,8 @@ class McpBridge:
                 current_block = [line]
             # Native/library errors on non-indented lines
             elif not in_traceback and not line.startswith(" ") and (
-                # Case-insensitive "error:" on non-indented line
-                "error:" in line.lower()
+                # Anchored "error:" (optionally after a short tool prefix)
+                _NATIVE_ERROR_LINE.match(line)
                 # tracing/log ERROR lines (e.g. "ERROR bevy_render::renderer:")
                 or _is_log_error_line(line)
             ):
