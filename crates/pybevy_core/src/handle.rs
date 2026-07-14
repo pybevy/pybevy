@@ -308,18 +308,24 @@ impl PyHandle {
 
     /// Get the Python type of the asset this handle refers to.
     pub fn asset_type_class(&self) -> PyResult<Py<PyType>> {
-        Ok(Python::attach(|py| {
+        Python::attach(|py| {
             if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(self.type_ptr) {
-                bridge.py_type(py).unbind()
-            } else {
-                // Return the stored type pointer directly
-                unsafe {
-                    Bound::from_borrowed_ptr(py, self.type_ptr as *mut ffi::PyObject)
-                        .cast_into_unchecked::<PyType>()
-                        .unbind()
-                }
+                return Ok(bridge.py_type(py).unbind());
             }
-        }))
+            // SAFETY: type_ptr was captured from a live type object at handle
+            // construction; asset classes are module-level, so their defining
+            // module keeps them alive
+            let type_obj =
+                unsafe { Bound::from_borrowed_ptr(py, self.type_ptr as *mut ffi::PyObject) };
+            type_obj
+                .cast_into::<PyType>()
+                .map(Bound::unbind)
+                .map_err(|_| {
+                    PyValueError::new_err(
+                        "Stored asset type pointer no longer refers to a type object",
+                    )
+                })
+        })
     }
 
     /// Get a unique identifier for this handle.
