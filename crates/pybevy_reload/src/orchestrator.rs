@@ -298,6 +298,16 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         }
     };
 
+    // An Update system from the scene being replaced may have failed earlier
+    // in this Main schedule. Do not misattribute that buffered error to the
+    // candidate scene's Startup systems.
+    if mode == ReloadMode::Full
+        && let Some(error) = runtime.take_pending_system_error(world)
+        && is_verbose()
+    {
+        eprintln!("   → Replacing scene after system error: {error}");
+    }
+
     // Run Startup with rollback on panic
     // Snapshot pre-Startup error state: both the timestamp and whether an
     // error was already present.  We need both because on the first reload
@@ -392,6 +402,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 result.running_previous_generation = true;
 
                 runtime.clear_param_cache();
+                runtime.retire_handles(&system_handles);
 
                 return Err(ReloadError {
                     message: error_msg,
@@ -405,11 +416,18 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         eprintln!("   → Skipping Startup schedule (Partial mode)");
     }
 
-    let startup_had_error = world
-        .get_resource::<pybevy_core::LastSystemError>()
-        .is_some_and(|e| {
-            e.error.is_some() && (e.timestamp_secs > pre_startup_error_ts || !pre_startup_had_error)
-        });
+    let pending_system_error = if mode == ReloadMode::Full {
+        runtime.take_pending_system_error(world)
+    } else {
+        None
+    };
+    let startup_had_error = pending_system_error.is_some()
+        || world
+            .get_resource::<pybevy_core::LastSystemError>()
+            .is_some_and(|e| {
+                e.error.is_some()
+                    && (e.timestamp_secs > pre_startup_error_ts || !pre_startup_had_error)
+            });
 
     // If a Startup system raised a Python exception (not a panic), apply
     // the same generation rollback so Update systems from the broken
@@ -417,9 +435,12 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     // Update systems execute every frame even though their Startup failed
     // to set up the entities/resources they depend on.
     if startup_had_error && mode == ReloadMode::Full {
-        let error_msg = world
-            .get_resource::<pybevy_core::LastSystemError>()
-            .and_then(|e| e.error.clone())
+        let error_msg = pending_system_error
+            .or_else(|| {
+                world
+                    .get_resource::<pybevy_core::LastSystemError>()
+                    .and_then(|e| e.error.clone())
+            })
             .unwrap_or_else(|| "Startup system error".to_string());
 
         eprintln!(
@@ -469,6 +490,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         result.running_previous_generation = true;
 
         runtime.clear_param_cache();
+        runtime.retire_handles(&system_handles);
 
         return Err(ReloadError {
             message: error_msg,
@@ -573,8 +595,11 @@ pub trait HotReloadStateAccess {
 mod tests {
     use std::{
         any::TypeId,
-        collections::HashSet,
-        sync::{Arc, atomic::Ordering},
+        collections::{HashSet, VecDeque},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
     };
 
     use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};
@@ -661,7 +686,23 @@ mod tests {
     /// Mock runtime that injects a Startup system which writes to
     /// `LastSystemError` - simulating a Python exception (not a panic)
     /// during Startup.
-    struct StartupErrorRuntime;
+    struct StartupErrorRuntime {
+        retired: Arc<AtomicBool>,
+        inject_startup_error: bool,
+        pending_errors: VecDeque<Option<String>>,
+        take_pending_calls: usize,
+    }
+
+    impl Default for StartupErrorRuntime {
+        fn default() -> Self {
+            Self {
+                retired: Arc::default(),
+                inject_startup_error: true,
+                pending_errors: VecDeque::new(),
+                take_pending_calls: 0,
+            }
+        }
+    }
 
     /// Bevy system that simulates a Python exception by writing to
     /// `LastSystemError` (same as DynamicSystem::run_inner on exception).
@@ -681,7 +722,7 @@ mod tests {
 
     impl ReloadRuntime for StartupErrorRuntime {
         type Defs = ();
-        type SystemHandle = ();
+        type SystemHandle = Arc<AtomicBool>;
 
         fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
             Ok(())
@@ -700,12 +741,14 @@ mod tests {
             world: &mut World,
             _defs: (),
             _gen: u32,
-        ) -> Result<Vec<()>, ReloadError> {
-            let mut schedules = world.resource_mut::<Schedules>();
-            if let Some(startup) = schedules.get_mut(Startup) {
-                startup.add_systems(crashing_startup_system);
+        ) -> Result<Vec<Arc<AtomicBool>>, ReloadError> {
+            if self.inject_startup_error {
+                let mut schedules = world.resource_mut::<Schedules>();
+                if let Some(startup) = schedules.get_mut(Startup) {
+                    startup.add_systems(crashing_startup_system);
+                }
             }
-            Ok(vec![])
+            Ok(vec![self.retired.clone()])
         }
         fn register_resources(
             &mut self,
@@ -729,7 +772,18 @@ mod tests {
         ) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn register_handles(
+            &mut self,
+            _world: &mut World,
+            _gen: u32,
+            _handles: Vec<Arc<AtomicBool>>,
+        ) {
+        }
+        fn retire_handles(&mut self, handles: &[Arc<AtomicBool>]) {
+            for handle in handles {
+                handle.store(true, Ordering::SeqCst);
+            }
+        }
         fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
         fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
         fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
@@ -751,6 +805,10 @@ mod tests {
         }
         fn clear_param_cache(&mut self) {}
         fn trigger_gc(&mut self) {}
+        fn take_pending_system_error(&mut self, _world: &mut World) -> Option<String> {
+            self.take_pending_calls += 1;
+            self.pending_errors.pop_front().flatten()
+        }
         fn print_error(&self, _error: &ReloadError) {}
     }
 
@@ -929,13 +987,13 @@ mod tests {
         let (mut world, gen_counter) = setup_world();
         let state = MockState::new(gen_counter);
         assert_eq!(state.current_generation(), 0);
+        let retired = Arc::new(AtomicBool::new(false));
+        let mut runtime = StartupErrorRuntime {
+            retired: retired.clone(),
+            ..Default::default()
+        };
 
-        let result = perform_reload(
-            &mut world,
-            &mut StartupErrorRuntime,
-            ReloadMode::Full,
-            &state,
-        );
+        let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
 
         assert!(result.is_err(), "reload should fail when Startup has error");
         let err = result.unwrap_err();
@@ -961,6 +1019,39 @@ mod tests {
         assert!(
             reload_result.running_previous_generation,
             "should be running previous generation"
+        );
+        assert!(
+            retired.load(Ordering::SeqCst),
+            "systems from the rejected generation must be retired"
+        );
+    }
+
+    #[test]
+    fn outgoing_pending_error_does_not_reject_incoming_scene() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let retired = Arc::new(AtomicBool::new(false));
+        let mut runtime = StartupErrorRuntime {
+            retired: retired.clone(),
+            inject_startup_error: false,
+            pending_errors: VecDeque::from([
+                Some("ValueError: outgoing scene failed".to_string()),
+                None,
+            ]),
+            take_pending_calls: 0,
+        };
+
+        let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
+
+        assert!(
+            result.is_ok(),
+            "outgoing scene errors must not fail the replacement"
+        );
+        assert_eq!(runtime.take_pending_calls, 2);
+        assert_eq!(state.current_generation(), 1);
+        assert!(
+            !retired.load(Ordering::SeqCst),
+            "systems from a successful generation must stay active"
         );
     }
 
@@ -1117,7 +1208,7 @@ mod tests {
         // Step 2: failing reload (gen 1 -> 2, rolled back to 1)
         let result = perform_reload(
             &mut world,
-            &mut StartupErrorRuntime,
+            &mut StartupErrorRuntime::default(),
             ReloadMode::Full,
             &state,
         );
@@ -1501,7 +1592,7 @@ mod tests {
             // Fail
             let _ = perform_reload(
                 &mut world,
-                &mut StartupErrorRuntime,
+                &mut StartupErrorRuntime::default(),
                 ReloadMode::Full,
                 &state,
             );
