@@ -10,11 +10,12 @@ use std::{
 };
 
 use bevy_ecs::{
+    archetype::Archetypes,
     change_detection::Tick,
-    component::ComponentId,
+    component::{ComponentId, StorageType},
     prelude::QueryBuilder,
     storage::{Table, TableId},
-    world::{FilteredEntityMut, World},
+    world::{FilteredEntityMut, World, unsafe_world_cell::UnsafeWorldCell},
 };
 use smallvec::SmallVec;
 
@@ -118,6 +119,12 @@ pub enum ViewEngineError {
         offset: usize,
         field_type: FieldType,
     },
+    /// A View data component uses sparse-set storage, which cannot be addressed
+    /// by the dense table base/stride execution engine.
+    SparseDataComponentUnsupported(ComponentId),
+    /// A Changed/Added filter reads ticks from a sparse-set component, whose
+    /// per-entity ticks do not live in the selected dense table.
+    SparseTickComponentUnsupported(ComponentId),
 }
 
 impl std::fmt::Display for ViewEngineError {
@@ -157,6 +164,16 @@ impl std::fmt::Display for ViewEngineError {
                      field of component {component_id:?} (type confusion / mid-field offset)"
                 )
             }
+            ViewEngineError::SparseDataComponentUnsupported(component_id) => write!(
+                f,
+                "View data component {component_id:?} uses sparse-set storage, which is not \
+                 supported by the dense table View engine"
+            ),
+            ViewEngineError::SparseTickComponentUnsupported(component_id) => write!(
+                f,
+                "View Changed/Added filter component {component_id:?} uses sparse-set storage, \
+                 whose per-entity ticks are not supported by the dense table View engine"
+            ),
         }
     }
 }
@@ -352,10 +369,13 @@ fn build_tick_mask_for_table(
 /// components. Rows are grouped by table, sorted, deduplicated defensively, and
 /// coalesced into maximal contiguous ranges. Consequently each selected table
 /// row appears in exactly one returned range.
-pub fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<TableRowRange> {
+fn matching_table_row_ranges_from_archetypes(
+    archetypes: &Archetypes,
+    filter: &ViewFilter,
+) -> Vec<TableRowRange> {
     let mut rows_by_table = Vec::<(TableId, Vec<usize>)>::new();
 
-    for archetype in world.archetypes().iter() {
+    for archetype in archetypes.iter() {
         if !filter
             .component_ids
             .iter()
@@ -415,6 +435,132 @@ pub fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<Tabl
         });
     }
     ranges
+}
+
+/// Resolve exact selected rows using an ordinary shared World reference.
+pub fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<TableRowRange> {
+    matching_table_row_ranges_from_archetypes(world.archetypes(), filter)
+}
+
+/// Resolve exact selected rows from World metadata without borrowing the World.
+pub fn matching_table_row_ranges_from_cell(
+    world_cell: UnsafeWorldCell<'_>,
+    filter: &ViewFilter,
+) -> Vec<TableRowRange> {
+    matching_table_row_ranges_from_archetypes(world_cell.archetypes(), filter)
+}
+
+/// Gather exact dense-table batches through access-bounded World-cell storage.
+///
+/// Unlike [`gather_table_batches`], this strict core path rejects sparse-set
+/// data components and sparse Changed/Added tick sources rather than silently
+/// returning incomplete or incorrectly filtered results.
+///
+/// # Safety
+///
+/// - `world_cell` must remain live for every returned pointer use.
+/// - The scheduler's declared access must cover every data and tick component
+///   in `filter`, including mutable access for any later destination writes.
+/// - No structural World mutation may overlap the returned batches.
+/// - Callers must prevent aliasing accesses to the same selected component rows.
+pub unsafe fn gather_table_batches_from_cell(
+    world_cell: UnsafeWorldCell<'_>,
+    filter: &ViewFilter,
+    last_run: Tick,
+    this_run: Tick,
+) -> Result<Vec<TableBatch>, ViewEngineError> {
+    let has_tick_filters = !filter.changed_ids.is_empty() || !filter.added_ids.is_empty();
+
+    let components = world_cell.components();
+    for &component_id in &filter.component_ids {
+        let info = components
+            .get_info(component_id)
+            .ok_or(ViewEngineError::ComponentNotFound(component_id))?;
+        if matches!(info.storage_type(), StorageType::SparseSet) {
+            return Err(ViewEngineError::SparseDataComponentUnsupported(
+                component_id,
+            ));
+        }
+    }
+    for &component_id in filter.changed_ids.iter().chain(&filter.added_ids) {
+        let info = components
+            .get_info(component_id)
+            .ok_or(ViewEngineError::ComponentNotFound(component_id))?;
+        if matches!(info.storage_type(), StorageType::SparseSet) {
+            return Err(ViewEngineError::SparseTickComponentUnsupported(
+                component_id,
+            ));
+        }
+    }
+
+    // SAFETY: guaranteed by the caller. This obtains only the storage registry;
+    // the code below reads table metadata and the exact declared columns/ticks.
+    let storages = unsafe { world_cell.storages() };
+    let tables = &storages.tables;
+
+    let mut batches = Vec::new();
+    for row_range in matching_table_row_ranges_from_cell(world_cell, filter) {
+        let Some(table) = tables.get(row_range.table_id) else {
+            continue;
+        };
+        let table_entity_count = table.entity_count() as usize;
+        let Some(range_end) = row_range.start_row.checked_add(row_range.entity_count) else {
+            continue;
+        };
+        if row_range.entity_count == 0 || range_end > table_entity_count {
+            continue;
+        }
+
+        for &component_id in filter.changed_ids.iter().chain(&filter.added_ids) {
+            if table.get_column(component_id).is_none() {
+                return Err(ViewEngineError::SparseTickComponentUnsupported(
+                    component_id,
+                ));
+            }
+        }
+
+        let tick_mask = if has_tick_filters {
+            build_tick_mask_for_table(
+                table,
+                table_entity_count,
+                row_range,
+                &filter.changed_ids,
+                &filter.added_ids,
+                last_run,
+                this_run,
+            )
+        } else {
+            None
+        };
+
+        if let Some(ref mask) = tick_mask
+            && !mask.iter().any(|&passes| passes)
+        {
+            continue;
+        }
+
+        let mut component_bases = HashMap::with_capacity(filter.component_ids.len());
+        for &component_id in &filter.component_ids {
+            let column = table.get_column(component_id).ok_or(
+                ViewEngineError::SparseDataComponentUnsupported(component_id),
+            )?;
+            // SAFETY: the column belongs to this live table, the length is its
+            // exact row count, and the caller owns scheduler access to this
+            // declared component for the returned pointer's lifetime.
+            let pointer =
+                unsafe { column.get_data_slice::<u8>(table_entity_count).as_ptr() as *mut u8 };
+            component_bases.insert(component_id, pointer);
+        }
+
+        batches.push(TableBatch {
+            table_id: row_range.table_id,
+            component_bases,
+            start_row: row_range.start_row,
+            entity_count: row_range.entity_count,
+            tick_mask,
+        });
+    }
+    Ok(batches)
 }
 
 /// Gather all archetype table batches matching the filter criteria.

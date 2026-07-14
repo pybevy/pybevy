@@ -15,7 +15,11 @@ use std::{
     },
 };
 
-use bevy_ecs::{change_detection::Tick, component::ComponentId};
+use bevy_ecs::{
+    change_detection::Tick,
+    component::{ComponentId, Components, StorageType},
+    world::{World, WorldId, unsafe_world_cell::UnsafeWorldCell},
+};
 use pybevy_storage::{StorageError, ValidityFlag};
 
 use crate::{
@@ -42,6 +46,7 @@ pub enum ProgramIntent {
 /// objects and field names deliberately do not cross this boundary.
 #[derive(Debug)]
 pub struct ResolvedViewSpec {
+    world_id: WorldId,
     filter: ViewFilter,
     mutable_components: HashSet<ComponentId>,
     allowed_fields: HashMap<ComponentId, HashSet<(usize, FieldType)>>,
@@ -50,7 +55,15 @@ pub struct ResolvedViewSpec {
 
 impl ResolvedViewSpec {
     /// Build a resolved View specification from registration-time metadata.
-    pub fn new(
+    ///
+    /// # Safety
+    ///
+    /// - Every component id, stride, and allowed `(offset, FieldType)` must
+    ///   describe the real registered layout in `world_id`'s World.
+    /// - `mutable_components` and `filter` must be lowered from the same View
+    ///   descriptor used to declare this system parameter's scheduler access.
+    pub unsafe fn new(
+        world_id: WorldId,
         filter: ViewFilter,
         mutable_components: HashSet<ComponentId>,
         mut allowed_fields: HashMap<ComponentId, HashSet<(usize, FieldType)>>,
@@ -105,11 +118,17 @@ impl ResolvedViewSpec {
         }
 
         Ok(Self {
+            world_id,
             filter,
             mutable_components,
             allowed_fields,
             component_strides,
         })
+    }
+
+    /// World whose component ids and field layouts this specification names.
+    pub fn world_id(&self) -> WorldId {
+        self.world_id
     }
 
     /// The resolved filter used for exact batch gathering.
@@ -141,19 +160,36 @@ impl ResolvedViewSpec {
 #[derive(Debug)]
 pub struct CachedViewCore {
     spec: Arc<ResolvedViewSpec>,
+    world_id: WorldId,
 }
 
 impl CachedViewCore {
-    /// Create a stable cache owner around one resolved View specification.
-    pub fn new(spec: ResolvedViewSpec) -> Self {
+    /// Create a stable cache owner after checking live World metadata.
+    pub fn new(spec: ResolvedViewSpec, world: &World) -> Result<Self, ViewRuntimeError> {
+        validate_spec_world_metadata(&spec, world.id(), world.components())?;
+        Ok(Self {
+            spec: Arc::new(spec),
+            world_id: world.id(),
+        })
+    }
+
+    #[cfg(test)]
+    fn new_unchecked(spec: ResolvedViewSpec) -> Self {
+        let world_id = spec.world_id();
         Self {
             spec: Arc::new(spec),
+            world_id,
         }
     }
 
     /// Return the exact specification shared by this cache owner.
     pub fn spec(&self) -> &Arc<ResolvedViewSpec> {
         &self.spec
+    }
+
+    /// World whose component ids and layouts were used to build this cache.
+    pub fn world_id(&self) -> WorldId {
+        self.world_id
     }
 }
 
@@ -164,6 +200,7 @@ impl CachedViewCore {
 #[derive(Debug)]
 pub struct ViewRuntimeCore {
     cached: Arc<CachedViewCore>,
+    world_cell: UnsafeWorldCell<'static>,
     validity: ValidityFlag,
     last_run: Tick,
     this_run: Tick,
@@ -171,23 +208,48 @@ pub struct ViewRuntimeCore {
 }
 
 impl ViewRuntimeCore {
-    /// Create a run-scoped core from stable per-parameter metadata.
+    /// Create a run-scoped core from stable per-parameter metadata and a World cell.
     ///
     /// `last_run` and `this_run` must be the system invocation's shared tick
     /// window; the runtime never reads or increments the World tick itself.
-    pub fn new(
+    ///
+    /// # Safety
+    ///
+    /// - `world_cell` must remain live until `validity` is invalidated and all
+    ///   runtime/proxy owners have stopped using it.
+    /// - `validity` must belong to this one run and must never be reactivated
+    ///   for a later lifetime while any runtime, lease, or proxy owner survives.
+    /// - The scheduler access declared for this system parameter must cover all
+    ///   data/filter/tick components in `cached.spec()` with the declared
+    ///   read/write modes.
+    /// - Structural World mutation must not overlap any runtime operation.
+    pub unsafe fn new(
         cached: Arc<CachedViewCore>,
+        world_cell: UnsafeWorldCell<'_>,
         validity: ValidityFlag,
         last_run: Tick,
         this_run: Tick,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ViewRuntimeError> {
+        let actual = world_cell.id();
+        if cached.world_id != actual {
+            return Err(ViewRuntimeError::WorldMismatch {
+                expected: cached.world_id,
+                actual,
+            });
+        }
+        // SAFETY: the caller binds this lifetime erasure to `validity` and the
+        // system execution window described in the constructor contract.
+        let world_cell = unsafe {
+            std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell)
+        };
+        Ok(Self {
             cached,
+            world_cell,
             validity,
             last_run,
             this_run,
             operation_active: AtomicBool::new(false),
-        }
+        })
     }
 
     /// Return the stable cache owner shared across runs.
@@ -227,17 +289,49 @@ impl ViewRuntimeCore {
     /// re-entrant operation fails closed. Validity is checked once before the
     /// compare-exchange and again after acquisition, immediately before future
     /// execution code may touch run-scoped state.
-    pub fn enter_operation(&self) -> Result<ViewOperationGuard<'_>, ViewRuntimeError> {
+    pub fn enter_operation(self: &Arc<Self>) -> Result<ViewOperationGuard, ViewRuntimeError> {
         self.check_valid()?;
         self.operation_active
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .map_err(|_| ViewRuntimeError::ReentrantOperation)?;
         let guard = ViewOperationGuard {
-            active: &self.operation_active,
+            runtime: Arc::clone(self),
             not_send: PhantomData,
         };
         self.check_valid()?;
         Ok(guard)
+    }
+
+    /// Gather exact selected table ranges without constructing `&mut World`.
+    ///
+    /// The returned lease owns the raw batch metadata and re-enters this
+    /// runtime's validity/operation fence for every access.
+    pub fn gather_batches(self: &Arc<Self>) -> Result<BatchLease, ViewRuntimeError> {
+        let _operation = self.enter_operation()?;
+        self.validate_live_world_metadata()?;
+        // SAFETY: the constructor binds this cell to the cache's World and
+        // scheduler access. The operation guard prevents reentrant access, and
+        // validity was checked immediately after acquiring it.
+        let batches = unsafe {
+            view_engine::gather_table_batches_from_cell(
+                self.world_cell,
+                self.spec().filter(),
+                self.last_run,
+                self.this_run,
+            )
+        }?;
+        Ok(BatchLease {
+            runtime: Arc::clone(self),
+            batches: batches.into_boxed_slice(),
+        })
+    }
+
+    fn validate_live_world_metadata(&self) -> Result<(), ViewRuntimeError> {
+        validate_spec_world_metadata(
+            self.spec(),
+            self.world_cell.id(),
+            self.world_cell.components(),
+        )
     }
 
     /// Validate bytecode for one explicit read or assignment operation.
@@ -290,14 +384,61 @@ pub struct ValidatedViewProgram {
 /// The guard is intentionally neither `Send` nor `Sync`: acquisition, pointer
 /// access, and release belong to the system's validity-pinned executor thread.
 #[derive(Debug)]
-pub struct ViewOperationGuard<'runtime> {
-    active: &'runtime AtomicBool,
+pub struct ViewOperationGuard {
+    runtime: Arc<ViewRuntimeCore>,
     not_send: PhantomData<Rc<()>>,
 }
 
-impl Drop for ViewOperationGuard<'_> {
+impl Drop for ViewOperationGuard {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
+        self.runtime
+            .operation_active
+            .store(false, Ordering::Release);
+    }
+}
+
+/// Ownership boundary for raw batches gathered during one system run.
+///
+/// Batches never expose an unchecked safe slice. Backend adapters operate on
+/// them only through [`BatchLease::with_batches`], which shares the runtime's
+/// stale/thread/reentrancy fence. The lease intentionally has no `Send`/`Sync`
+/// implementation; a backend requiring one must justify it at that boundary.
+pub struct BatchLease {
+    runtime: Arc<ViewRuntimeCore>,
+    batches: Box<[view_engine::TableBatch]>,
+}
+
+impl BatchLease {
+    /// Runtime whose World and access declaration own these batches.
+    pub fn runtime(&self) -> &Arc<ViewRuntimeCore> {
+        &self.runtime
+    }
+
+    /// Run a synchronous operation while holding the shared View fence.
+    pub fn with_batches<Output>(
+        &self,
+        operation: impl FnOnce(&[view_engine::TableBatch]) -> Output,
+    ) -> Result<Output, ViewRuntimeError> {
+        let _operation = self.runtime.enter_operation()?;
+        Ok(operation(&self.batches))
+    }
+
+    /// Count selected rows, including Changed/Added masks.
+    pub fn entity_count(&self) -> Result<usize, ViewRuntimeError> {
+        self.with_batches(|batches| {
+            batches
+                .iter()
+                .map(|batch| match &batch.tick_mask {
+                    Some(mask) => mask.iter().filter(|&&passes| passes).count(),
+                    None => batch.entity_count,
+                })
+                .sum()
+        })
+    }
+
+    /// Return whether no selected row passes all filters.
+    pub fn is_empty(&self) -> Result<bool, ViewRuntimeError> {
+        self.entity_count().map(|count| count == 0)
     }
 }
 
@@ -320,6 +461,22 @@ pub enum ViewRuntimeError {
     Storage(StorageError),
     /// Another operation already owns this runtime's shared pointer-access fence.
     ReentrantOperation,
+    /// Cached component ids were resolved against a different World.
+    WorldMismatch {
+        /// World used to build the cached specification.
+        expected: WorldId,
+        /// World presented for this runtime invocation.
+        actual: WorldId,
+    },
+    /// Registration metadata's stride differs from the live component layout.
+    ComponentStrideMismatch {
+        /// Component with inconsistent layout metadata.
+        component_id: ComponentId,
+        /// Stride recorded during View resolution.
+        resolved: usize,
+        /// Stride registered in the runtime's World.
+        registered: usize,
+    },
     /// One metadata map names a component outside the View's data declaration.
     SpecComponentNotDeclared {
         /// The inconsistent component id.
@@ -383,6 +540,19 @@ impl fmt::Display for ViewRuntimeError {
             Self::ReentrantOperation => {
                 write!(f, "Cannot re-enter a View operation while access is active")
             }
+            Self::WorldMismatch { expected, actual } => write!(
+                f,
+                "Cached View belongs to World {expected:?}, but runtime received World {actual:?}"
+            ),
+            Self::ComponentStrideMismatch {
+                component_id,
+                resolved,
+                registered,
+            } => write!(
+                f,
+                "Resolved View stride {resolved} for component {component_id:?} does not match \
+                 the live World stride {registered}"
+            ),
             Self::SpecComponentNotDeclared {
                 component_id,
                 metadata,
@@ -466,6 +636,51 @@ impl From<ViewEngineError> for ViewRuntimeError {
     fn from(value: ViewEngineError) -> Self {
         Self::Engine(value)
     }
+}
+
+fn validate_spec_world_metadata(
+    spec: &ResolvedViewSpec,
+    actual_world_id: WorldId,
+    components: &Components,
+) -> Result<(), ViewRuntimeError> {
+    if spec.world_id() != actual_world_id {
+        return Err(ViewRuntimeError::WorldMismatch {
+            expected: spec.world_id(),
+            actual: actual_world_id,
+        });
+    }
+
+    for (&component_id, &resolved) in spec.component_strides() {
+        let info = components
+            .get_info(component_id)
+            .ok_or(ViewEngineError::ComponentNotFound(component_id))?;
+        let registered = info.layout().size();
+        if resolved != registered {
+            return Err(ViewRuntimeError::ComponentStrideMismatch {
+                component_id,
+                resolved,
+                registered,
+            });
+        }
+        if matches!(info.storage_type(), StorageType::SparseSet) {
+            return Err(ViewEngineError::SparseDataComponentUnsupported(component_id).into());
+        }
+    }
+
+    for &component_id in spec
+        .filter()
+        .changed_ids
+        .iter()
+        .chain(&spec.filter().added_ids)
+    {
+        let info = components
+            .get_info(component_id)
+            .ok_or(ViewEngineError::ComponentNotFound(component_id))?;
+        if matches!(info.storage_type(), StorageType::SparseSet) {
+            return Err(ViewEngineError::SparseTickComponentUnsupported(component_id).into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_instruction_indices(bytecode: &CompiledBytecode) -> Result<(), ViewRuntimeError> {
@@ -584,9 +799,21 @@ fn validate_write_effects(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Deref;
+
+    use bevy_ecs::{component::Component, world::World};
+
     use super::*;
 
     const STRIDE: usize = 8;
+
+    #[derive(Component)]
+    #[repr(transparent)]
+    struct RuntimeDense(u32);
+
+    #[derive(Component)]
+    #[component(storage = "SparseSet")]
+    struct RuntimeSparse;
 
     fn field(component_id: ComponentId, offset: usize, field_type: FieldType) -> FieldId {
         FieldId {
@@ -606,7 +833,21 @@ mod tests {
         }
     }
 
-    fn runtime(component_id: ComponentId, mutable: bool) -> ViewRuntimeCore {
+    struct TestRuntime {
+        // Drop the runtime/cell before freeing the allocation it references.
+        runtime: Arc<ViewRuntimeCore>,
+        _world: Box<World>,
+    }
+
+    impl Deref for TestRuntime {
+        type Target = Arc<ViewRuntimeCore>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.runtime
+        }
+    }
+
+    fn runtime(component_id: ComponentId, mutable: bool) -> TestRuntime {
         let mutable_components = if mutable {
             HashSet::from([component_id])
         } else {
@@ -621,19 +862,36 @@ mod tests {
             ]),
         )]);
         let component_strides = HashMap::from([(component_id, STRIDE)]);
-        let spec = ResolvedViewSpec::new(
-            filter(component_id),
-            mutable_components,
-            allowed_fields,
-            component_strides,
-        )
+        let mut world = Box::new(World::new());
+        // SAFETY: these synthetic layouts are used only by validation tests;
+        // no test using this helper gathers or dereferences World storage.
+        let spec = unsafe {
+            ResolvedViewSpec::new(
+                world.id(),
+                filter(component_id),
+                mutable_components,
+                allowed_fields,
+                component_strides,
+            )
+        }
         .unwrap();
-        ViewRuntimeCore::new(
-            Arc::new(CachedViewCore::new(spec)),
-            ValidityFlag::new_write(),
-            Tick::new(10),
-            Tick::new(20),
-        )
+        let cached = Arc::new(CachedViewCore::new_unchecked(spec));
+        // SAFETY: the boxed World allocation remains stable and is owned by
+        // TestRuntime until after its runtime field drops.
+        let runtime = unsafe {
+            ViewRuntimeCore::new(
+                cached,
+                world.as_unsafe_world_cell(),
+                ValidityFlag::new_write(),
+                Tick::new(10),
+                Tick::new(20),
+            )
+        }
+        .unwrap();
+        TestRuntime {
+            runtime: Arc::new(runtime),
+            _world: world,
+        }
     }
 
     fn read_program(field: FieldId) -> Arc<CompiledBytecode> {
@@ -652,10 +910,84 @@ mod tests {
         })
     }
 
+    fn cache_for(
+        world: &World,
+        filter: ViewFilter,
+        mutable_components: HashSet<ComponentId>,
+        allowed_fields: HashMap<ComponentId, HashSet<(usize, FieldType)>>,
+    ) -> Arc<CachedViewCore> {
+        let component_strides = filter
+            .component_ids
+            .iter()
+            .map(|&component_id| {
+                let stride = world
+                    .components()
+                    .get_info(component_id)
+                    .unwrap()
+                    .layout()
+                    .size();
+                (component_id, stride)
+            })
+            .collect();
+        // SAFETY: callers derive field metadata from the concrete test
+        // components declared above; strides come from this exact World.
+        let spec = unsafe {
+            ResolvedViewSpec::new(
+                world.id(),
+                filter,
+                mutable_components,
+                allowed_fields,
+                component_strides,
+            )
+        }
+        .unwrap();
+        Arc::new(CachedViewCore::new(spec, world).unwrap())
+    }
+
+    fn synthetic_spec(
+        filter: ViewFilter,
+        mutable_components: HashSet<ComponentId>,
+        allowed_fields: HashMap<ComponentId, HashSet<(usize, FieldType)>>,
+        component_strides: HashMap<ComponentId, usize>,
+    ) -> Result<ResolvedViewSpec, ViewRuntimeError> {
+        // SAFETY: these specs exercise constructor validation only and are
+        // never used to gather or execute against a World.
+        unsafe {
+            ResolvedViewSpec::new(
+                World::new().id(),
+                filter,
+                mutable_components,
+                allowed_fields,
+                component_strides,
+            )
+        }
+    }
+
+    unsafe fn runtime_for_world(
+        world: &mut World,
+        cached: Arc<CachedViewCore>,
+        last_run: Tick,
+        this_run: Tick,
+    ) -> Arc<ViewRuntimeCore> {
+        // SAFETY: forwarded from the caller; tests keep the World allocation
+        // live and structurally unchanged through every runtime operation.
+        let runtime = unsafe {
+            ViewRuntimeCore::new(
+                cached,
+                world.as_unsafe_world_cell(),
+                ValidityFlag::new_write(),
+                last_run,
+                this_run,
+            )
+        }
+        .unwrap();
+        Arc::new(runtime)
+    }
+
     #[test]
     fn resolved_spec_normalizes_empty_allowed_field_sets() {
         let component_id = ComponentId::new(1);
-        let spec = ResolvedViewSpec::new(
+        let spec = synthetic_spec(
             filter(component_id),
             HashSet::new(),
             HashMap::new(),
@@ -670,7 +1002,7 @@ mod tests {
     fn resolved_spec_rejects_mutability_for_undeclared_component() {
         let declared = ComponentId::new(1);
         let forged = ComponentId::new(2);
-        let result = ResolvedViewSpec::new(
+        let result = synthetic_spec(
             filter(declared),
             HashSet::from([forged]),
             HashMap::new(),
@@ -690,7 +1022,7 @@ mod tests {
     fn resolved_spec_rejects_fields_for_undeclared_component() {
         let declared = ComponentId::new(1);
         let forged = ComponentId::new(2);
-        let result = ResolvedViewSpec::new(
+        let result = synthetic_spec(
             filter(declared),
             HashSet::new(),
             HashMap::from([(forged, HashSet::from([(0, FieldType::F32)]))]),
@@ -711,7 +1043,7 @@ mod tests {
         let declared = ComponentId::new(1);
         let extra = ComponentId::new(2);
 
-        let missing = ResolvedViewSpec::new(
+        let missing = synthetic_spec(
             filter(declared),
             HashSet::new(),
             HashMap::new(),
@@ -722,7 +1054,7 @@ mod tests {
             Err(ViewRuntimeError::MissingComponentStride(id)) if id == declared
         ));
 
-        let extra_result = ResolvedViewSpec::new(
+        let extra_result = synthetic_spec(
             filter(declared),
             HashSet::new(),
             HashMap::new(),
@@ -741,7 +1073,7 @@ mod tests {
     fn resolved_spec_rejects_out_of_bounds_and_overflowing_fields() {
         let component_id = ComponentId::new(1);
         for offset in [STRIDE, usize::MAX] {
-            let result = ResolvedViewSpec::new(
+            let result = synthetic_spec(
                 filter(component_id),
                 HashSet::new(),
                 HashMap::from([(component_id, HashSet::from([(offset, FieldType::F32)]))]),
@@ -759,7 +1091,7 @@ mod tests {
     #[test]
     fn resolved_spec_rejects_unexpanded_vector_fields() {
         let component_id = ComponentId::new(1);
-        let result = ResolvedViewSpec::new(
+        let result = synthetic_spec(
             filter(component_id),
             HashSet::new(),
             HashMap::from([(component_id, HashSet::from([(0, FieldType::Vec2)]))]),
@@ -981,12 +1313,19 @@ mod tests {
     fn validated_program_is_shared_across_runs_of_same_cache() {
         let component_id = ComponentId::new(1);
         let first = runtime(component_id, false);
-        let second = ViewRuntimeCore::new(
-            Arc::clone(first.cached()),
-            ValidityFlag::new_write(),
-            Tick::new(20),
-            Tick::new(30),
-        );
+        // SAFETY: the second runtime shares the first TestRuntime's live World
+        // cell and cache, and is dropped before that TestRuntime.
+        let second = unsafe {
+            ViewRuntimeCore::new(
+                Arc::clone(first.cached()),
+                first.runtime.world_cell,
+                ValidityFlag::new_write(),
+                Tick::new(20),
+                Tick::new(30),
+            )
+        }
+        .map(Arc::new)
+        .unwrap();
         let program = first
             .validate_program(
                 read_program(field(component_id, 0, FieldType::F32)),
@@ -1041,8 +1380,8 @@ mod tests {
 
     #[test]
     fn cross_thread_operation_is_rejected_before_fence_acquisition() {
-        let runtime = Arc::new(runtime(ComponentId::new(1), false));
-        let other = Arc::clone(&runtime);
+        let runtime = runtime(ComponentId::new(1), false);
+        let other = Arc::clone(&runtime.runtime);
 
         let rejected = std::thread::spawn(move || {
             matches!(
@@ -1059,8 +1398,8 @@ mod tests {
 
     #[test]
     fn operation_fence_is_shared_by_all_runtime_owners() {
-        let runtime = Arc::new(runtime(ComponentId::new(1), true));
-        let proxy_owner = Arc::clone(&runtime);
+        let runtime = runtime(ComponentId::new(1), true);
+        let proxy_owner = Arc::clone(&runtime.runtime);
         let guard = runtime.enter_operation().unwrap();
 
         assert!(matches!(
@@ -1083,5 +1422,316 @@ mod tests {
 
         assert!(result.is_err());
         assert!(runtime.enter_operation().is_ok());
+    }
+
+    #[test]
+    fn runtime_rejects_cache_from_different_world() {
+        let mut first = World::new();
+        let component_id = first.register_component::<RuntimeDense>();
+        let cache = cache_for(
+            &first,
+            filter(component_id),
+            HashSet::new(),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        let mut second = World::new();
+
+        // SAFETY: the second World is live for this constructor call. The
+        // constructor rejects its identity before storing the cell.
+        let result = unsafe {
+            ViewRuntimeCore::new(
+                cache,
+                second.as_unsafe_world_cell(),
+                ValidityFlag::new_write(),
+                Tick::new(0),
+                Tick::new(1),
+            )
+        };
+
+        assert!(matches!(
+            result,
+            Err(ViewRuntimeError::WorldMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn gather_rejects_resolved_stride_that_differs_from_live_world() {
+        let mut world = World::new();
+        let component_id = world.register_component::<RuntimeDense>();
+        // SAFETY: this intentionally violates the constructor contract to prove
+        // the live-World defense rejects forged registration metadata before
+        // any table pointer is gathered.
+        let forged = unsafe {
+            ResolvedViewSpec::new(
+                world.id(),
+                filter(component_id),
+                HashSet::new(),
+                HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+                HashMap::from([(component_id, STRIDE)]),
+            )
+        }
+        .unwrap();
+        let cache = Arc::new(CachedViewCore::new_unchecked(forged));
+        // SAFETY: the World remains live and unchanged through the operation.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+
+        assert!(matches!(
+            runtime.gather_batches(),
+            Err(ViewRuntimeError::ComponentStrideMismatch {
+                component_id: id,
+                resolved: STRIDE,
+                registered,
+            }) if id == component_id && registered == std::mem::size_of::<RuntimeDense>()
+        ));
+    }
+
+    #[test]
+    fn batch_lease_preserves_exact_sparse_range_and_validity() {
+        let mut world = World::new();
+        world.spawn(RuntimeDense(10));
+        world.spawn((RuntimeDense(20), RuntimeSparse));
+        world.spawn((RuntimeDense(30), RuntimeSparse));
+        world.spawn(RuntimeDense(40));
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let marker_id = world.components().component_id::<RuntimeSparse>().unwrap();
+        let view_filter = ViewFilter {
+            component_ids: HashSet::from([component_id]),
+            with_ids: vec![marker_id],
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::new(),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World remains live and structurally unchanged until the
+        // lease and runtime are dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let lease = runtime.gather_batches().unwrap();
+
+        assert_eq!(lease.entity_count().unwrap(), 2);
+        let values = lease
+            .with_batches(|batches| {
+                assert_eq!(batches.len(), 1);
+                assert_eq!(batches[0].start_row, 1);
+                assert_eq!(batches[0].entity_count, 2);
+                (0..batches[0].entity_count)
+                    .map(|local_row| {
+                        let table_row = batches[0].start_row + local_row;
+                        let base = batches[0].component_bases[&component_id];
+                        // SAFETY: the batch was gathered from this live World;
+                        // `table_row` is inside its exact selected range and the
+                        // pointer names the RuntimeDense table column.
+                        unsafe { (*base.cast::<RuntimeDense>().add(table_row)).0 }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert_eq!(values, vec![20, 30]);
+
+        runtime.validity().set_invalid();
+        assert!(matches!(
+            lease.entity_count(),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
+    }
+
+    #[test]
+    fn cache_rejects_sparse_data_even_without_entities() {
+        let mut world = World::new();
+        let component_id = world.register_component::<RuntimeSparse>();
+        // SAFETY: the empty allowed-field set and registered zero-sized stride
+        // exactly describe RuntimeSparse; cache validation rejects its storage.
+        let spec = unsafe {
+            ResolvedViewSpec::new(
+                world.id(),
+                filter(component_id),
+                HashSet::new(),
+                HashMap::new(),
+                HashMap::from([(component_id, 0)]),
+            )
+        }
+        .unwrap();
+
+        assert!(matches!(
+            CachedViewCore::new(spec, &world),
+            Err(ViewRuntimeError::Engine(
+                ViewEngineError::SparseDataComponentUnsupported(id)
+            )) if id == component_id
+        ));
+    }
+
+    #[test]
+    fn cache_rejects_sparse_tick_source_even_without_entities() {
+        let mut world = World::new();
+        let component_id = world.register_component::<RuntimeDense>();
+        let marker_id = world.register_component::<RuntimeSparse>();
+        let mut view_filter = filter(component_id);
+        view_filter.changed_ids.push(marker_id);
+        // SAFETY: the data component metadata exactly describes RuntimeDense;
+        // cache validation rejects the sparse tick source independently.
+        let spec = unsafe {
+            ResolvedViewSpec::new(
+                world.id(),
+                view_filter,
+                HashSet::new(),
+                HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+                HashMap::from([(component_id, std::mem::size_of::<RuntimeDense>())]),
+            )
+        }
+        .unwrap();
+
+        assert!(matches!(
+            CachedViewCore::new(spec, &world),
+            Err(ViewRuntimeError::Engine(
+                ViewEngineError::SparseTickComponentUnsupported(id)
+            )) if id == marker_id
+        ));
+    }
+
+    #[test]
+    fn core_gather_applies_dense_added_tick_mask() {
+        let mut world = World::new();
+        world.spawn(RuntimeDense(10));
+        world.clear_trackers();
+        let last_run = world.last_change_tick();
+        world.increment_change_tick();
+        world.spawn(RuntimeDense(20));
+        let this_run = world.change_tick();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let mut view_filter = filter(component_id);
+        view_filter.added_ids.push(component_id);
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::new(),
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World remains live and structurally unchanged through the
+        // lease operations.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, last_run, this_run) };
+        let lease = runtime.gather_batches().unwrap();
+
+        assert_eq!(lease.entity_count().unwrap(), 1);
+        let selected = lease
+            .with_batches(|batches| {
+                batches
+                    .iter()
+                    .flat_map(|batch| {
+                        batch
+                            .tick_mask
+                            .as_ref()
+                            .unwrap()
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(local_row, &passes)| {
+                                passes.then(|| {
+                                    let table_row = batch.start_row + local_row;
+                                    let base = batch.component_bases[&component_id];
+                                    // SAFETY: the passing row is inside this live
+                                    // batch's exact dense-table range.
+                                    unsafe { (*base.cast::<RuntimeDense>().add(table_row)).0 }
+                                })
+                            })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert_eq!(selected, vec![20]);
+    }
+
+    #[test]
+    fn complementary_sparse_views_mutate_disjoint_rows_in_parallel() {
+        let mut world = World::new();
+        let plain_first = world.spawn(RuntimeDense(1)).id();
+        let selected_first = world.spawn((RuntimeDense(2), RuntimeSparse)).id();
+        let selected_second = world.spawn((RuntimeDense(3), RuntimeSparse)).id();
+        let plain_last = world.spawn(RuntimeDense(4)).id();
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let marker_id = world.components().component_id::<RuntimeSparse>().unwrap();
+        let make_filter = |with_marker| ViewFilter {
+            component_ids: HashSet::from([component_id]),
+            with_ids: if with_marker {
+                vec![marker_id]
+            } else {
+                Vec::new()
+            },
+            without_ids: if with_marker {
+                Vec::new()
+            } else {
+                vec![marker_id]
+            },
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let allowed = || HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]);
+        let with_cache = cache_for(
+            &world,
+            make_filter(true),
+            HashSet::from([component_id]),
+            allowed(),
+        );
+        let without_cache = cache_for(
+            &world,
+            make_filter(false),
+            HashSet::from([component_id]),
+            allowed(),
+        );
+        let world_cell = world.as_unsafe_world_cell();
+
+        std::thread::scope(|scope| {
+            let run = |cache: Arc<CachedViewCore>, value: u32| {
+                // SAFETY: both runtimes reference this live World, and their
+                // complementary With/Without filters select disjoint table rows.
+                // No structural mutation occurs while either runtime is live.
+                let runtime = unsafe {
+                    ViewRuntimeCore::new(
+                        cache,
+                        world_cell,
+                        ValidityFlag::new_write(),
+                        Tick::new(0),
+                        Tick::new(1),
+                    )
+                }
+                .map(Arc::new)
+                .unwrap();
+                let lease = runtime.gather_batches().unwrap();
+                lease
+                    .with_batches(|batches| {
+                        for batch in batches {
+                            let base = batch.component_bases[&component_id];
+                            for local_row in 0..batch.entity_count {
+                                let table_row = batch.start_row + local_row;
+                                // SAFETY: the two scoped threads operate on
+                                // complementary exact row ranges, the pointer is
+                                // the RuntimeDense column, and the World stays live.
+                                unsafe {
+                                    (*base.cast::<RuntimeDense>().add(table_row)).0 = value;
+                                }
+                            }
+                        }
+                    })
+                    .unwrap();
+            };
+
+            let with_handle = scope.spawn({
+                let cache = Arc::clone(&with_cache);
+                move || run(cache, 100)
+            });
+            let without_handle = scope.spawn({
+                let cache = Arc::clone(&without_cache);
+                move || run(cache, 200)
+            });
+            with_handle.join().unwrap();
+            without_handle.join().unwrap();
+        });
+
+        assert_eq!(world.get::<RuntimeDense>(plain_first).unwrap().0, 200);
+        assert_eq!(world.get::<RuntimeDense>(selected_first).unwrap().0, 100);
+        assert_eq!(world.get::<RuntimeDense>(selected_second).unwrap().0, 100);
+        assert_eq!(world.get::<RuntimeDense>(plain_last).unwrap().0, 200);
     }
 }
