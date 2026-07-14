@@ -12,6 +12,113 @@ use bevy::{
     },
 };
 
+/// Exact identity of one interpreter-defined state type.
+///
+/// PyO3 adapters use `PyTypeObject* as usize`; RustPython adapters use the
+/// corresponding interpreter object id. The value is opaque to the shared
+/// schedule layer and is only meaningful for one interpreter lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StateMachineId(usize);
+
+impl StateMachineId {
+    #[must_use]
+    pub const fn new(raw: usize) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+/// Whether a state schedule runs when entering or exiting a state value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StateScheduleKind {
+    Enter,
+    Exit,
+}
+
+/// Interpreter-neutral label for `OnEnter` and `OnExit` schedules.
+///
+/// The machine id prevents equal enum-member hashes from aliasing schedules
+/// belonging to different state types.
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StateScheduleLabel {
+    machine_id: StateMachineId,
+    kind: StateScheduleKind,
+    state_hash: u64,
+}
+
+impl StateScheduleLabel {
+    #[must_use]
+    pub const fn on_enter(machine_id: StateMachineId, state_hash: u64) -> Self {
+        Self {
+            machine_id,
+            kind: StateScheduleKind::Enter,
+            state_hash,
+        }
+    }
+
+    #[must_use]
+    pub const fn on_exit(machine_id: StateMachineId, state_hash: u64) -> Self {
+        Self {
+            machine_id,
+            kind: StateScheduleKind::Exit,
+            state_hash,
+        }
+    }
+
+    #[must_use]
+    pub const fn machine_id(&self) -> StateMachineId {
+        self.machine_id
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> StateScheduleKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn state_hash(&self) -> u64 {
+        self.state_hash
+    }
+}
+
+/// Interpreter-neutral label for `OnTransition` schedules.
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TransitionScheduleLabel {
+    machine_id: StateMachineId,
+    exit_hash: u64,
+    enter_hash: u64,
+}
+
+impl TransitionScheduleLabel {
+    #[must_use]
+    pub const fn new(machine_id: StateMachineId, exit_hash: u64, enter_hash: u64) -> Self {
+        Self {
+            machine_id,
+            exit_hash,
+            enter_hash,
+        }
+    }
+
+    #[must_use]
+    pub const fn machine_id(&self) -> StateMachineId {
+        self.machine_id
+    }
+
+    #[must_use]
+    pub const fn exit_hash(&self) -> u64 {
+        self.exit_hash
+    }
+
+    #[must_use]
+    pub const fn enter_hash(&self) -> u64 {
+        self.enter_hash
+    }
+}
+
 /// Custom PyBevy schedule that runs between `PreUpdate` and `Update`.
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimTick;
@@ -189,6 +296,44 @@ mod tests {
         assert!(
             app.world()
                 .contains_resource::<StandardSchedulesConfigured>()
+        );
+    }
+
+    #[test]
+    fn state_schedule_labels_include_machine_identity() {
+        let first = StateMachineId::new(1);
+        let second = StateMachineId::new(2);
+
+        assert_eq!(
+            StateScheduleLabel::on_enter(first, 42),
+            StateScheduleLabel::on_enter(first, 42)
+        );
+        assert_ne!(
+            StateScheduleLabel::on_enter(first, 42),
+            StateScheduleLabel::on_enter(second, 42)
+        );
+        assert_ne!(
+            StateScheduleLabel::on_enter(first, 42),
+            StateScheduleLabel::on_exit(first, 42)
+        );
+    }
+
+    #[test]
+    fn transition_schedule_labels_include_machine_identity() {
+        let first = StateMachineId::new(1);
+        let second = StateMachineId::new(2);
+
+        assert_eq!(
+            TransitionScheduleLabel::new(first, 10, 20),
+            TransitionScheduleLabel::new(first, 10, 20)
+        );
+        assert_ne!(
+            TransitionScheduleLabel::new(first, 10, 20),
+            TransitionScheduleLabel::new(second, 10, 20)
+        );
+        assert_ne!(
+            TransitionScheduleLabel::new(first, 10, 20),
+            TransitionScheduleLabel::new(first, 10, 30)
         );
     }
 }

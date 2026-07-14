@@ -12,8 +12,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use bevy::ecs::{entity::Entity, schedule::ScheduleLabel, world::World};
+use bevy::ecs::{entity::Entity, world::World};
 use pybevy_core::CustomComponentInfo;
+use pybevy_ecs::shared::schedule::{StateMachineId, StateScheduleLabel, TransitionScheduleLabel};
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -377,75 +378,38 @@ impl PyOnTransitionSchedule {
     }
 }
 
-/// Bevy schedule labels for state transitions
-/// These implement Bevy's ScheduleLabel trait to integrate with the schedule system
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ScheduleKind {
-    Enter,
-    Exit,
-}
-
-/// Rust-side schedule label for OnEnter/OnExit schedules
-/// Uses hash-based approach for simplicity (as recommended in design doc)
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StateScheduleLabel {
-    kind: ScheduleKind,
-    state_hash: u64,
-}
-
-impl StateScheduleLabel {
-    pub fn on_enter(state_hash: u64) -> Self {
-        Self {
-            kind: ScheduleKind::Enter,
-            state_hash,
-        }
-    }
-
-    pub fn on_exit(state_hash: u64) -> Self {
-        Self {
-            kind: ScheduleKind::Exit,
-            state_hash,
-        }
-    }
-}
-
-/// Transition schedule label (for OnTransition)
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TransitionScheduleLabel {
-    exit_hash: u64,
-    enter_hash: u64,
-}
-
-impl TransitionScheduleLabel {
-    pub fn new(exit_hash: u64, enter_hash: u64) -> Self {
-        Self {
-            exit_hash,
-            enter_hash,
-        }
-    }
+fn state_machine_id(state_type: &Bound<'_, PyType>) -> StateMachineId {
+    StateMachineId::new(state_type.as_type_ptr() as usize)
 }
 
 /// Helper methods for Python schedule types to get their Bevy labels
 impl PyOnEnterSchedule {
     pub fn to_bevy_label(&self, py: Python) -> PyResult<StateScheduleLabel> {
-        let hash = self.state_value.bind(py).hash()? as u64;
-        Ok(StateScheduleLabel::on_enter(hash))
+        let state_value = self.state_value.bind(py);
+        let machine_id = state_machine_id(&state_value.get_type());
+        let hash = state_value.hash()? as u64;
+        Ok(StateScheduleLabel::on_enter(machine_id, hash))
     }
 }
 
 impl PyOnExitSchedule {
     pub fn to_bevy_label(&self, py: Python) -> PyResult<StateScheduleLabel> {
-        let hash = self.state_value.bind(py).hash()? as u64;
-        Ok(StateScheduleLabel::on_exit(hash))
+        let state_value = self.state_value.bind(py);
+        let machine_id = state_machine_id(&state_value.get_type());
+        let hash = state_value.hash()? as u64;
+        Ok(StateScheduleLabel::on_exit(machine_id, hash))
     }
 }
 
 impl PyOnTransitionSchedule {
     pub fn to_bevy_label(&self, py: Python) -> PyResult<TransitionScheduleLabel> {
-        let exit_hash = self.exited.bind(py).hash()? as u64;
+        let exited = self.exited.bind(py);
+        let machine_id = state_machine_id(&exited.get_type());
+        let exit_hash = exited.hash()? as u64;
         let enter_hash = self.entered.bind(py).hash()? as u64;
-        Ok(TransitionScheduleLabel::new(exit_hash, enter_hash))
+        Ok(TransitionScheduleLabel::new(
+            machine_id, exit_hash, enter_hash,
+        ))
     }
 }
 
@@ -724,8 +688,9 @@ fn apply_transition_for_state(
             let state = state_py.bind(py).borrow();
             state.current_value(py)
         };
+        let machine_id = state_machine_id(&current_state.bind(py).get_type());
         let hash = current_state.bind(py).hash()? as u64;
-        let enter_label = StateScheduleLabel::on_enter(hash);
+        let enter_label = StateScheduleLabel::on_enter(machine_id, hash);
         let has_enter_schedule = world.resource::<Schedules>().contains(enter_label.clone());
         if has_enter_schedule {
             world.try_run_schedule(enter_label).ok();
@@ -744,6 +709,7 @@ fn apply_transition_for_state(
         let state = state_py.bind(py).borrow();
         state.current_value(py)
     };
+    let machine_id = state_machine_id(&current_state.bind(py).get_type());
 
     // Get hash values for schedule lookup
     let old_hash = current_state.bind(py).hash()? as u64;
@@ -755,7 +721,7 @@ fn apply_transition_for_state(
     }
 
     // Run OnExit(old_state) schedule
-    let exit_label = StateScheduleLabel::on_exit(old_hash);
+    let exit_label = StateScheduleLabel::on_exit(machine_id, old_hash);
     let has_exit_schedule = world.resource::<Schedules>().contains(exit_label.clone());
     if has_exit_schedule {
         world.try_run_schedule(exit_label).ok();
@@ -765,7 +731,7 @@ fn apply_transition_for_state(
     despawn_matching_entities(py, world, "DespawnOnExit", &current_state);
 
     // Run OnTransition(old_state -> new_state) schedule
-    let transition_label = TransitionScheduleLabel::new(old_hash, new_hash);
+    let transition_label = TransitionScheduleLabel::new(machine_id, old_hash, new_hash);
     let has_transition_schedule = world
         .resource::<Schedules>()
         .contains(transition_label.clone());
@@ -774,7 +740,7 @@ fn apply_transition_for_state(
     }
 
     // Run OnEnter(new_state) schedule
-    let enter_label = StateScheduleLabel::on_enter(new_hash);
+    let enter_label = StateScheduleLabel::on_enter(machine_id, new_hash);
     let has_enter_schedule = world.resource::<Schedules>().contains(enter_label.clone());
     if has_enter_schedule {
         world.try_run_schedule(enter_label).ok();
