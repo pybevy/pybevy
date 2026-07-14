@@ -4,15 +4,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use bevy::{
-    app::{
-        First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate, Last, Main,
-        PostStartup, PostUpdate, PreStartup, PreUpdate, Startup, Update,
-    },
-    ecs::{
-        schedule::{Chain, IntoScheduleConfigs, Schedule, ScheduleConfigs, Schedules},
-        world::World,
-    },
+use bevy::ecs::{
+    schedule::{Chain, IntoScheduleConfigs, Schedule, ScheduleConfigs, Schedules},
+    world::World,
 };
 use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadRuntime, SystemStage,
@@ -22,7 +16,7 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
 use super::{cleanup, registry::DynamicSystemRegistry, util::get_python_gc_objects};
 use crate::{
-    app::{PyStage, SimTick, app::PyApp, chained_systems::PyChainedSystems},
+    app::{PyStage, app::PyApp, chained_systems::PyChainedSystems},
     ecs::{
         conditional_system::{PyConditionalSystem, build_conditional_system_config},
         dynamic_system::{DynamicSystem, DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
@@ -390,39 +384,18 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 }
             }
 
-            macro_rules! scope_with_label {
-                ($label_type:ident) => {
-                    world.schedule_scope($label_type, |_world, schedule| {
-                        add_systems_to_schedule(
-                            schedule,
-                            systems,
-                            generation,
-                            &self.error_state,
-                            &error_buffer,
-                            system_stage,
-                            stage,
-                            &mut system_handles,
-                        )
-                    })
-                };
-            }
-            match stage {
-                PyStage::Startup => scope_with_label!(Startup),
-                PyStage::PreStartup => scope_with_label!(PreStartup),
-                PyStage::PostStartup => scope_with_label!(PostStartup),
-                PyStage::Main => scope_with_label!(Main),
-                PyStage::First => scope_with_label!(First),
-                PyStage::PreUpdate => scope_with_label!(PreUpdate),
-                PyStage::Update => scope_with_label!(Update),
-                PyStage::PostUpdate => scope_with_label!(PostUpdate),
-                PyStage::Last => scope_with_label!(Last),
-                PyStage::FixedFirst => scope_with_label!(FixedFirst),
-                PyStage::FixedPreUpdate => scope_with_label!(FixedPreUpdate),
-                PyStage::FixedUpdate => scope_with_label!(FixedUpdate),
-                PyStage::FixedPostUpdate => scope_with_label!(FixedPostUpdate),
-                PyStage::FixedLast => scope_with_label!(FixedLast),
-                PyStage::SimTick => scope_with_label!(SimTick),
-            }
+            world.schedule_scope(label, |_world, schedule| {
+                add_systems_to_schedule(
+                    schedule,
+                    systems,
+                    generation,
+                    &self.error_state,
+                    &error_buffer,
+                    system_stage,
+                    stage,
+                    &mut system_handles,
+                )
+            });
 
             // Check for errors stored during system addition
             {
