@@ -26,7 +26,9 @@ use pybevy_core::{
     LastSystemError, PyMessage, PyPlugin as PyPluginBase, added_plugins::AddedPythonPlugins,
     plugin::plugin_registry, register_wrapped_reflect_types,
 };
-use pybevy_ecs::shared::schedule::configure_standard_schedules;
+use pybevy_ecs::shared::schedule::{
+    StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
+};
 use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
     IntoPyObjectExt,
@@ -59,7 +61,7 @@ use crate::{
         observer_registry::ObserverRegistry,
         state::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
-            StateScheduleLabel, TransitionScheduleLabel, apply_state_transitions,
+            apply_state_transitions,
         },
         world::PyWorld,
     },
