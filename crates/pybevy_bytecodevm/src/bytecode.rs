@@ -386,7 +386,17 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
         FieldType::I64 => unsafe { (ptr as *const i64).read_unaligned() as f64 },
         FieldType::U32 => unsafe { (ptr as *const u32).read_unaligned() as f64 },
         FieldType::U64 => unsafe { (ptr as *const u64).read_unaligned() as f64 },
-        FieldType::Bool => unsafe { if *(ptr as *const bool) { 1.0 } else { 0.0 } },
+        // Read the byte as `u8`, not `bool`: a `bool` whose byte is not 0/1 is an
+        // invalid bit pattern (instant UB). `validate_bytecode_field_types` should
+        // already reject a `Bool` field aimed at non-bool bytes, but keep this read
+        // sound on its own. Any non-zero byte reads as true.
+        FieldType::Bool => unsafe {
+            if (ptr as *const u8).read_unaligned() != 0 {
+                1.0
+            } else {
+                0.0
+            }
+        },
         // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
         // before execution, so these should never appear in read_field_value
         FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
@@ -423,7 +433,9 @@ pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType)
             (ptr as *mut u64).write_unaligned(value as u64);
         },
         FieldType::Bool => unsafe {
-            *(ptr as *mut bool) = value >= 0.5;
+            // Write through `u8` (mirrors the `u8` read) so the store never depends
+            // on `*mut bool` provenance; a bool is stored as 1/0.
+            (ptr as *mut u8).write_unaligned(u8::from(value >= 0.5));
         },
         FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
             unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")

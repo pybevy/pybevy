@@ -87,6 +87,18 @@ pub enum ViewEngineError {
     /// scheduler was never told about the access (undeclared-read race) and the
     /// stride/base maps lack the id (would otherwise panic on lookup).
     FieldComponentNotDeclared(ComponentId),
+    /// A bytecode field's `(offset, field_type)` does not match any real field
+    /// of its component. Reachable when a `field` expression supplies a type
+    /// that aliases a differently-typed field's bytes (e.g. reading an `f32`
+    /// field as `Bool`, whose non-0/1 byte is an invalid bit pattern = instant
+    /// UB in `read_field_value`) or an `offset` that lands mid-field. Stricter
+    /// than `FieldOffsetOutOfBounds`, which only checks the byte span fits the
+    /// layout, not that a field of that type actually lives there.
+    FieldTypeMismatch {
+        component_id: ComponentId,
+        offset: usize,
+        field_type: FieldType,
+    },
 }
 
 impl std::fmt::Display for ViewEngineError {
@@ -113,6 +125,17 @@ impl std::fmt::Display for ViewEngineError {
                     "Field expression references component {:?}, which is not \
                      declared in this view",
                     id
+                )
+            }
+            ViewEngineError::FieldTypeMismatch {
+                component_id,
+                offset,
+                field_type,
+            } => {
+                write!(
+                    f,
+                    "Field access at offset {offset} as {field_type:?} does not match any real \
+                     field of component {component_id:?} (type confusion / mid-field offset)"
                 )
             }
         }
@@ -188,6 +211,43 @@ pub fn validate_bytecode_components(
             return Err(ViewEngineError::FieldComponentNotDeclared(
                 field_id.component_id,
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate that every field referenced by `bytecode` names a REAL field of its
+/// component: each `(offset, field_type)` must be a member of `allowed_fields`
+/// for that component id.
+///
+/// `allowed_fields` maps each declared component to its set of legitimate
+/// `(offset, FieldType)` pairs, with `Vec2`/`Vec3`/`Vec4` fields already expanded
+/// to their `F32` sub-fields (the only forms the VM ever emits: the Python `Expr`
+/// compiler decomposes vectors into per-lane `F32` reads and never emits a `Vec*`
+/// `FieldType` into `field_map`).
+///
+/// This is the safety gate paired with `validate_bytecode_offsets`. Offsets guard
+/// against reads that spill outside the component layout; this guards against a
+/// `field` expression whose `field_type` aliases a differently-typed field's bytes
+/// or whose `offset` lands mid-field - both in-bounds, so the offset check passes.
+/// The sharpest case it closes: an attacker-constructed
+/// `Expr("field", [cid, name, offset, "Bool"])` pointed at an `f32`/padding byte,
+/// which `read_field_value` reads as `bool` - a non-0/1 byte is an invalid bit
+/// pattern and instant undefined behaviour.
+pub fn validate_bytecode_field_types(
+    bytecode: &CompiledBytecode,
+    allowed_fields: &HashMap<ComponentId, HashSet<(usize, FieldType)>>,
+) -> Result<(), ViewEngineError> {
+    for field_id in &bytecode.field_map {
+        let fields = allowed_fields.get(&field_id.component_id).ok_or(
+            ViewEngineError::FieldComponentNotDeclared(field_id.component_id),
+        )?;
+        if !fields.contains(&(field_id.offset, field_id.field_type)) {
+            return Err(ViewEngineError::FieldTypeMismatch {
+                component_id: field_id.component_id,
+                offset: field_id.offset,
+                field_type: field_id.field_type,
+            });
         }
     }
     Ok(())
@@ -1471,5 +1531,138 @@ mod tests {
             field_map: vec![],
         };
         assert!(validate_bytecode_components(&bytecode, &allowed).is_ok());
+    }
+
+    /// Accept-set for a single component (offsets already vector-expanded).
+    fn allowed_fields_for(
+        cid: ComponentId,
+        pairs: &[(usize, FieldType)],
+    ) -> HashMap<ComponentId, HashSet<(usize, FieldType)>> {
+        let mut map = HashMap::new();
+        map.insert(cid, pairs.iter().copied().collect());
+        map
+    }
+
+    #[test]
+    fn field_type_validator_accepts_real_fields() {
+        // Three f32 fields at 0/4/8 (a Vec3's expanded lanes, or three scalars).
+        let cid = ComponentId::new(3);
+        let allowed = allowed_fields_for(
+            cid,
+            &[
+                (0, FieldType::F32),
+                (4, FieldType::F32),
+                (8, FieldType::F32),
+            ],
+        );
+        for offset in [0usize, 4, 8] {
+            let bytecode = make_typed_read_bytecode(cid, offset, FieldType::F32);
+            assert!(validate_bytecode_field_types(&bytecode, &allowed).is_ok());
+        }
+    }
+
+    #[test]
+    fn field_type_validator_rejects_bool_over_f32_field() {
+        // The sharp case: a real f32 field read as Bool. At execution that reads a
+        // non-0/1 byte as `bool` — an invalid bit pattern and instant UB.
+        let cid = ComponentId::new(3);
+        let allowed = allowed_fields_for(cid, &[(0, FieldType::F32)]);
+        let bytecode = make_typed_read_bytecode(cid, 0, FieldType::Bool);
+        assert!(matches!(
+            validate_bytecode_field_types(&bytecode, &allowed),
+            Err(ViewEngineError::FieldTypeMismatch {
+                component_id,
+                offset: 0,
+                field_type: FieldType::Bool,
+            }) if component_id == cid
+        ));
+    }
+
+    #[test]
+    fn field_type_validator_rejects_mid_field_offset() {
+        // Offset 2 lands inside the first f32 field ([0,4)); not a field start, so
+        // `validate_bytecode_offsets` (bounds-only) would allow it but this rejects it.
+        let cid = ComponentId::new(3);
+        let allowed = allowed_fields_for(cid, &[(0, FieldType::F32), (4, FieldType::F32)]);
+        let bytecode = make_typed_read_bytecode(cid, 2, FieldType::F32);
+        assert!(matches!(
+            validate_bytecode_field_types(&bytecode, &allowed),
+            Err(ViewEngineError::FieldTypeMismatch { offset: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn field_type_validator_rejects_type_pun_wider_than_field() {
+        // Reading an f32 field as I64: in-bounds within a 3-f32 layout (passes the
+        // offset validator), but not a real field -> type confusion / info leak.
+        let cid = ComponentId::new(3);
+        let allowed = allowed_fields_for(
+            cid,
+            &[
+                (0, FieldType::F32),
+                (4, FieldType::F32),
+                (8, FieldType::F32),
+            ],
+        );
+        let bytecode = make_typed_read_bytecode(cid, 0, FieldType::I64);
+        assert!(matches!(
+            validate_bytecode_field_types(&bytecode, &allowed),
+            Err(ViewEngineError::FieldTypeMismatch {
+                field_type: FieldType::I64,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn field_type_validator_rejects_undeclared_component() {
+        let declared = ComponentId::new(3);
+        let forged = ComponentId::new(7);
+        let allowed = allowed_fields_for(declared, &[(0, FieldType::F32)]);
+        let bytecode = make_typed_read_bytecode(forged, 0, FieldType::F32);
+        assert!(matches!(
+            validate_bytecode_field_types(&bytecode, &allowed),
+            Err(ViewEngineError::FieldComponentNotDeclared(id)) if id == forged
+        ));
+    }
+
+    #[test]
+    fn field_type_validator_checks_store_dest_not_just_reads() {
+        // Read a real f32 field, but write a confused I64 at the same offset. Both
+        // FieldIds live in field_map, so the store dest must also be checked.
+        let cid = ComponentId::new(1);
+        let allowed = allowed_fields_for(cid, &[(0, FieldType::F32)]);
+        let mut compiler = Compiler::new();
+        let read_idx = compiler.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::F32,
+        });
+        let write_idx = compiler.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::I64,
+        });
+        compiler.emit(Op::PushField(read_idx));
+        compiler.emit(Op::StoreField(write_idx));
+        let bytecode = compiler.finalize();
+        assert!(matches!(
+            validate_bytecode_field_types(&bytecode, &allowed),
+            Err(ViewEngineError::FieldTypeMismatch {
+                field_type: FieldType::I64,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn field_type_validator_accepts_empty_field_map() {
+        let allowed: HashMap<ComponentId, HashSet<(usize, FieldType)>> = HashMap::new();
+        let bytecode = CompiledBytecode {
+            bytecode: vec![],
+            constants: vec![],
+            field_map: vec![],
+        };
+        assert!(validate_bytecode_field_types(&bytecode, &allowed).is_ok());
     }
 }
