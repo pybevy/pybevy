@@ -1,41 +1,27 @@
 use core::fmt;
 use std::{alloc::Layout, any::TypeId, collections::HashMap};
 
-use bevy::{
-    ecs::{
-        component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
-        ptr::OwningPtr,
-        world::World,
-    },
-    prelude::Resource,
+use bevy::ecs::{
+    component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
+    ptr::OwningPtr,
+    world::World,
 };
-use pybevy_core::{custom_component::PythonObjectDescriptor, registry::global_registry};
+/// Registry of custom Python components (Bevy resource).
+///
+/// The concrete type is the backend-neutral [`CustomComponentRegistry`], shared
+/// key-for-key with the RustPython backend and re-exported here under the
+/// crate-local name used throughout the PyO3 code. It is keyed by
+/// `type_ptr as usize`; call `.get(type_ptr as usize)` to look a component up.
+pub use pybevy_core::custom_component::CustomComponentRegistry as ComponentRegistry;
+use pybevy_core::{
+    custom_component::{
+        PythonObjectDescriptor, RegisterOutcome, register_custom_component_guarded,
+    },
+    registry::global_registry,
+};
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::ecs::{component::PyComponent, helpers::type_utils::get_python_type_name};
-
-/// Component registry stored as a Bevy resource
-/// Maps Python type pointers to their ComponentIds and vice versa
-#[derive(Default, Resource)]
-pub struct ComponentRegistry {
-    pub(crate) registry: HashMap<*const PyTypeObject, ComponentId>,
-    /// Maps qualified names (`module.qualname`) to ComponentIds for alias-based
-    /// lookup during hot reload. When Python re-executes `@component` classes,
-    /// new PyTypeObject pointers are created; this map lets us find the existing
-    /// ComponentId by name and add the new pointer as an alias.
-    pub(crate) by_name: HashMap<String, ComponentId>,
-}
-
-impl ComponentRegistry {
-    /// Get the ComponentId for a registered component type
-    pub fn get(&self, type_ptr: *const PyTypeObject) -> Option<ComponentId> {
-        self.registry.get(&type_ptr).copied()
-    }
-}
-
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
-unsafe impl Send for ComponentRegistry {}
-unsafe impl Sync for ComponentRegistry {}
 
 /// All components use dynamic dispatch via feature crate bridges or custom Python components.
 #[derive(Debug, Clone)]
@@ -384,221 +370,63 @@ pub(crate) fn register_custom_component(
 ) -> ComponentId {
     use crate::ecs::component_layout::{ComponentStorageType, ComponentStorageTypeExt};
 
-    // Ensure the registry resources exist
-    if !world.contains_resource::<ComponentRegistry>() {
-        world.insert_resource(ComponentRegistry::default());
-    }
+    // The neutral registry is created by the guarded register below; ensure the
+    // MCP-facing metadata resource exists so we can keep it in sync afterwards.
     if !world.contains_resource::<pybevy_core::CustomComponentInfo>() {
         world.insert_resource(pybevy_core::CustomComponentInfo::default());
     }
 
-    // Fast path: already registered by this exact pointer AND its storage type is
-    // unchanged. The storage type is recomputed from the live class on every spawn,
-    // so untrusted Python can mutate `__pybevy_storage__` / `__annotations__` on the
-    // same class object between spawns. Blindly reusing the cached ComponentId across
-    // a PyObject<->Wrapper flip (or a wrapper-size change) would write data shaped for
-    // the new layout into a column laid out — and dropped — as the old one: type
-    // confusion (a forged `Py<PyAny>` cloned/dropped from attacker bytes -> RCE) or an
-    // out-of-bounds copy. On a mismatch, fall through to a fresh registration with the
-    // correct descriptor (mirrors the name-based branch below and the RustPython guard).
-    let cached = world
-        .resource::<ComponentRegistry>()
-        .registry
-        .get(&type_ptr)
-        .copied();
-    if let Some(component_id) = cached {
-        let requested_storage = Python::attach(|py| {
-            // SAFETY: registered type pointers live for the interpreter lifetime
-            let py_type =
-                unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-            match py_type.cast::<pyo3::types::PyType>() {
-                Ok(cls) => ComponentStorageType::from_python_class(cls)
-                    .unwrap_or(ComponentStorageType::PyObject),
-                Err(_) => ComponentStorageType::PyObject,
-            }
-        });
-        let registered_is_pyobject = world
-            .resource::<pybevy_core::CustomComponentInfo>()
-            .get(component_id)
-            .map(|e| e.is_pyobject_storage);
-        // Bevy's own column layout is the source of truth for the registered size.
-        let registered_size = world
-            .components()
-            .get_info(component_id)
-            .map(|info| info.layout().size());
-
-        let storage_unchanged = match requested_storage {
-            // PyObject columns have a uniform layout, so matching kind is sufficient.
-            ComponentStorageType::PyObject => registered_is_pyobject == Some(true),
-            // Wrapper columns must match kind AND byte size.
-            ComponentStorageType::Wrapper(ws) => {
-                registered_is_pyobject == Some(false) && registered_size == Some(ws.size_bytes())
-            }
-        };
-
-        if storage_unchanged {
-            return component_id;
-        }
-        // else: storage type changed on this class object -> fall through and
-        // register a fresh ComponentId with the correct descriptor.
-    }
-
-    // Hot-reload path: check if a previous generation registered the same class by name.
-    // This happens when Python re-executes @component, producing a new PyTypeObject pointer
-    // for the same logical class.
-    let qualified_name = Python::attach(|py| get_python_qualified_name(py, type_ptr));
-
-    // Track an old `CustomComponentInfo` entry that must be dropped before we
-    // register a fresh one. Set when the storage-compat check below fails on a
-    // name collision (typically the wrapper-storage hot-reload path). Without
-    // this cleanup the registry leaks one entry per reload, surfacing as
-    // "Available custom components: Bouncy, Bouncy, Bouncy, …" in errors.
-    let mut stale_entry_to_drop: Option<ComponentId> = None;
-
-    if let Some(ref qname) = qualified_name {
-        // Need to read by_name while not holding a mutable borrow
-        let existing_id = world
-            .resource::<ComponentRegistry>()
-            .by_name
-            .get(qname)
-            .copied();
-
-        if let Some(existing_id) = existing_id {
-            // Verify storage type compatibility: if the user changed field layout
-            // across reload (e.g., unit component -> dataclass with floats, or
-            // different wrapper sizes), we can't safely alias - the ECS column
-            // was sized for the old layout.
-            let new_storage_type = Python::attach(|py| {
-                // SAFETY: registered type pointers live for the interpreter lifetime
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
-                };
-                match py_type.cast::<pyo3::types::PyType>() {
-                    Ok(cls) => ComponentStorageType::from_python_class(cls)
-                        .unwrap_or(ComponentStorageType::PyObject),
-                    Err(_) => ComponentStorageType::PyObject,
-                }
-            });
-
-            let existing_is_pyobject = world
-                .resource::<pybevy_core::CustomComponentInfo>()
-                .get(existing_id)
-                .map(|e| e.is_pyobject_storage);
-
-            let storage_compatible = match (&new_storage_type, existing_is_pyobject) {
-                // Both PyObject - compatible
-                (ComponentStorageType::PyObject, Some(true)) => true,
-                // Both Wrapper - must also match size (checked below via descriptor)
-                (ComponentStorageType::Wrapper(_), Some(false)) => {
-                    // Compare wrapper size: the existing component's descriptor
-                    // layout is fixed at registration. A different WrapperSize
-                    // means different column size → corruption if reused.
-                    // For simplicity, always re-register wrapper components on
-                    // name collision. The old ComponentId is orphaned but harmless
-                    // since entities using it were despawned during clear_world_state.
-                    // TODO: compare actual WrapperSize for finer-grained reuse.
-                    false
-                }
-                // Mismatch (PyObject vs Wrapper) - incompatible
-                _ => false,
-            };
-
-            if storage_compatible {
-                // Compatible: add pointer alias and update CustomComponentInfo
-                world
-                    .resource_mut::<ComponentRegistry>()
-                    .registry
-                    .insert(type_ptr, existing_id);
-
-                world
-                    .resource_mut::<pybevy_core::CustomComponentInfo>()
-                    .update_type_ptr(existing_id, type_ptr);
-
-                bevy::log::debug!(
-                    "Hot reload: aliased component '{}' (new ptr {:p}) to existing ComponentId {:?}",
-                    qname,
-                    type_ptr,
-                    existing_id,
-                );
-
-                return existing_id;
-            } else {
-                bevy::log::warn!(
-                    "Component '{}' changed storage type across reload; \
-                     entities with old ComponentId won't be queryable",
-                    qname,
-                );
-                // Schedule removal of the prior CustomComponentInfo entry so
-                // the about-to-be-inserted fresh ComponentId doesn't sit next
-                // to the orphaned one. The old `by_name` entry is overwritten
-                // below when we re-insert with the new ComponentId.
-                stale_entry_to_drop = Some(existing_id);
-                // Fall through to fresh registration
-            }
-        }
-    }
-
-    // Drop the orphaned entry before inserting the fresh one so iter() reports
-    // exactly one entry per logical component name across any number of reloads.
-    if let Some(stale_id) = stale_entry_to_drop {
-        world
-            .resource_mut::<pybevy_core::CustomComponentInfo>()
-            .remove(stale_id);
-        // Also evict any pointer aliases targeting the orphaned ComponentId so
-        // the type_ptr→ComponentId map doesn't accumulate stale rows pointing
-        // at a column the new ComponentId no longer owns.
-        let mut registry = world.resource_mut::<ComponentRegistry>();
-        registry.registry.retain(|_, id| *id != stale_id);
-    }
-
-    // Determine storage type based on component layout
-    let storage_type = Python::attach(|py| {
-        // SAFETY: type_ptr is guaranteed to be valid for the lifetime of the Python interpreter
-        // and was obtained from a valid PyType object
+    // Backend leaves: type identity, qualified name (for hot-reload aliasing),
+    // and the storage type recomputed from the *live* class every spawn (so a
+    // mutated `__pybevy_storage__` / `__annotations__` is caught by the guard).
+    let type_id = type_ptr as usize;
+    let (qualified_name, storage_type) = Python::attach(|py| {
+        let qname = get_python_qualified_name(py, type_ptr);
+        // SAFETY: registered type pointers live for the interpreter lifetime.
         let py_type =
             unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-
-        // Try to downcast to PyType
-        match py_type.cast::<pyo3::types::PyType>() {
-            Ok(cls) => {
-                // Try to determine storage type
-                ComponentStorageType::from_python_class(cls)
-                    .unwrap_or(ComponentStorageType::PyObject)
-            }
+        let storage = match py_type.cast::<pyo3::types::PyType>() {
+            Ok(cls) => ComponentStorageType::from_python_class(cls)
+                .unwrap_or(ComponentStorageType::PyObject),
             Err(_) => ComponentStorageType::PyObject,
-        }
+        };
+        (qname, storage)
     });
 
-    let is_pyobject = matches!(storage_type, ComponentStorageType::PyObject);
-    let component_name = name.clone();
+    // The shared storage-flip guard + hot-reload aliasing lives in pybevy_core.
+    let outcome = register_custom_component_guarded::<Pyo3ObjectDescriptor>(
+        world,
+        type_id,
+        &name,
+        qualified_name.as_deref(),
+        storage_type,
+    );
 
-    // Register with Bevy using the shared backend-agnostic function
-    let component_id = pybevy_core::custom_component::register_custom_component_descriptor::<
-        Pyo3ObjectDescriptor,
-    >(world, name, storage_type);
-
-    // Store in registry resource (both by pointer and by name)
-    {
-        let mut registry = world.resource_mut::<ComponentRegistry>();
-        registry.registry.insert(type_ptr, component_id);
-        if let Some(qname) = qualified_name {
-            registry.by_name.insert(qname, component_id);
+    // Mirror the guard's decision into the MCP-facing CustomComponentInfo.
+    match outcome {
+        RegisterOutcome::Reused(_) => {}
+        RegisterOutcome::Aliased(id) => {
+            world
+                .resource_mut::<pybevy_core::CustomComponentInfo>()
+                .update_type_ptr(id, type_ptr);
+        }
+        RegisterOutcome::Registered { id, evicted } => {
+            let mut info = world.resource_mut::<pybevy_core::CustomComponentInfo>();
+            if let Some(stale) = evicted {
+                info.remove(stale);
+            }
+            info.insert(
+                id,
+                pybevy_core::CustomComponentEntry {
+                    type_ptr,
+                    name,
+                    is_pyobject_storage: matches!(storage_type, ComponentStorageType::PyObject),
+                },
+            );
         }
     }
 
-    // Store in cross-crate custom component info (readable by MCP)
-    world
-        .resource_mut::<pybevy_core::CustomComponentInfo>()
-        .insert(
-            component_id,
-            pybevy_core::CustomComponentEntry {
-                type_ptr,
-                name: component_name,
-                is_pyobject_storage: is_pyobject,
-            },
-        );
-
-    component_id
+    outcome.id()
 }
 
 /// Helper function to register a component and get its ComponentId.

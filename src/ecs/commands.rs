@@ -730,7 +730,7 @@ fn remove_components_from_entity(
                     // Direct world access - look up ComponentId and remove
                     let world = commands.world_mut()?;
                     if let Some(registry) = world.get_resource::<ComponentRegistry>()
-                        && let Some(component_id) = registry.get(type_ptr.as_ptr())
+                        && let Some(component_id) = registry.get(type_ptr.as_ptr() as usize)
                     {
                         world.entity_mut(entity_id).remove_by_id(component_id);
                     }
@@ -739,7 +739,7 @@ fn remove_components_from_entity(
                     // Commands - queue the operation for later
                     commands.execute_or_queue(move |world: &mut World| {
                         if let Some(registry) = world.get_resource::<ComponentRegistry>()
-                            && let Some(component_id) = registry.get(type_ptr.as_ptr())
+                            && let Some(component_id) = registry.get(type_ptr.as_ptr() as usize)
                         {
                             world.entity_mut(entity_id).remove_by_id(component_id);
                         }

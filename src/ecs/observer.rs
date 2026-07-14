@@ -447,7 +447,7 @@ fn entity_has_component(world: &World, entity: &EntityRef, comp_type: &PyCompone
         PyComponentType::Custom(type_ptr) => {
             // For custom components, look up the ComponentId from the registry
             if let Some(registry) = world.get_resource::<ComponentRegistry>()
-                && let Some(component_id) = registry.get(*type_ptr)
+                && let Some(component_id) = registry.get(*type_ptr as usize)
             {
                 // Check if entity has this component using the ComponentId
                 return entity.contains_id(component_id);
