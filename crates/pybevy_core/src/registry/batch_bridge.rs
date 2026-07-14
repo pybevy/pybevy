@@ -9,6 +9,13 @@ pub trait BatchComponent: Send + Sync + 'static {
     /// Human-readable name for error messages
     fn name(&self) -> &'static str;
 
+    /// Python type-object identity of the component produced by this batch.
+    ///
+    /// The batch wrapper's own type is not necessarily the component type
+    /// (`TransformBatch` produces `Transform`). Lifecycle dispatch therefore
+    /// asks the bridge for the exact component class identity.
+    fn component_type_ptr(&self, py: Python, batch: &Bound<PyAny>) -> PyResult<usize>;
+
     /// Get the count of entities in this batch
     fn count(&self, py: Python, batch: &Bound<PyAny>) -> PyResult<usize>;
 

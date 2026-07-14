@@ -269,6 +269,11 @@ impl BatchComponent for CustomComponentBatchBridge {
         "CustomComponentBatch"
     }
 
+    fn component_type_ptr(&self, py: Python, batch: &Bound<PyAny>) -> PyResult<usize> {
+        let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
+        Ok(batch.component_cls.bind(py).as_type_ptr() as usize)
+    }
+
     fn count(&self, _py: Python, batch: &Bound<PyAny>) -> PyResult<usize> {
         let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
         Ok(batch.count)
