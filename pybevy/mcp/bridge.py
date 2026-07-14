@@ -259,6 +259,18 @@ class McpBridge:
             return True
         return self._subprocess is not None and self._subprocess.poll() is None
 
+    def _no_engine_message(self) -> str:
+        """Explain why scene tools are unavailable, distinguishing a scene that
+        was never started from a subprocess that has since exited."""
+        proc = self._subprocess
+        if proc is not None and proc.poll() is not None:
+            return (
+                f"Scene subprocess exited (exit code {proc.returncode}) - e.g. window "
+                "closed or crash. Call run_scene again to restart it; get_logs shows "
+                "its final output."
+            )
+        return "No scene loaded. Use the 'run_scene' tool first to start a Bevy app."
+
     def _dispatch(self, request: JsonDict) -> JsonDict | None:
         t0 = time.monotonic()
         response = self._dispatch_inner(request)
@@ -353,9 +365,7 @@ class McpBridge:
             return self._handle_search_api(req_id, arguments)
         if tool_name == "get_type_definition":
             return self._handle_get_type_definition(req_id, arguments)
-        return self._error(
-            req_id, -32603, "No scene loaded. Use the 'run_scene' tool first to start a Bevy app."
-        )
+        return self._error(req_id, -32603, self._no_engine_message())
 
     def _handle_resources_list_local(self, req_id: JsonId) -> JsonDict:
         # Expose all resources including scene:// — clients that don't support
@@ -401,9 +411,7 @@ class McpBridge:
                 )
 
         if uri.startswith("scene://"):
-            return self._error(
-                req_id, -32603, "No scene loaded. Use the 'run_scene' tool first to start a Bevy app."
-            )
+            return self._error(req_id, -32603, self._no_engine_message())
 
         return self._error(req_id, -32602, f"Unknown resource: {uri}")
 
@@ -965,6 +973,14 @@ class McpBridge:
             output = self._get_recent_stderr(max_lines=min(lines, 100))
             if not output:
                 output = "(no output captured yet)"
+
+        # A dead subprocess still serves its buffered output; say so, otherwise
+        # stale logs make the scene look alive.
+        if self._subprocess.poll() is not None:
+            output += (
+                f"\n\n(note: scene subprocess has exited with code "
+                f"{self._subprocess.returncode}; logs above are its final output)"
+            )
 
         return self._success(req_id, {"content": [{"type": "text", "text": output}]})
 
