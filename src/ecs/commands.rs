@@ -19,7 +19,10 @@ use super::{
 };
 use crate::ecs::{
     batch_spawn::SpawnBatchCommand,
-    component_layout::{ComponentLayout, ComponentStorageType, serialize_to_wrapper},
+    component_layout::{
+        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
+        serialize_to_wrapper,
+    },
     component_type::ComponentRegistry,
     component_wrapper::*,
     dynamic_system::execute_system_func,
@@ -366,6 +369,7 @@ fn insert_components_to_entity(
                             register_custom_component(world, type_ptr.as_ptr(), name.clone());
 
                         // Determine storage type
+                        // SAFETY: registered type pointers live for the interpreter lifetime
                         let py_type = unsafe {
                             pyo3::Bound::from_borrowed_ptr(
                                 py,
@@ -442,6 +446,7 @@ fn insert_components_to_entity(
                 } else {
                     // Determine storage type and serialize for deferred command
                     let wrapper_data = Python::attach(|py| {
+                        // SAFETY: registered type pointers live for the interpreter lifetime
                         let py_type = unsafe {
                             pyo3::Bound::from_borrowed_ptr(
                                 py,

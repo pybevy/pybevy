@@ -1,7 +1,9 @@
-use std::ffi::c_void;
-
 use bevy::math::{Vec2, Vec3};
 use pybevy_bytecodevm::bytecode::FieldType;
+// Re-export backend-agnostic types from pybevy_core
+pub use pybevy_core::component_layout::{
+    ComponentLayout, ComponentStorageType, FieldInfo, PrimitiveType,
+};
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
     exceptions::PyTypeError,
@@ -9,59 +11,24 @@ use pyo3::{
     types::{PyDict, PyType},
 };
 
-use super::component_wrapper::WrapperSize;
-
-/// Primitive types that can be stored in wrapper components
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PrimitiveType {
-    F32,
-    F64,
-    I32,
-    I64,
-    U32,
-    U64,
-    Bool,
-    Vec3,
-    Vec2,
-}
-
-impl PrimitiveType {
-    /// Size in bytes of this primitive type
-    pub const fn size_bytes(&self) -> usize {
-        match self {
-            PrimitiveType::F32 => 4,
-            PrimitiveType::F64 => 8,
-            PrimitiveType::I32 => 4,
-            PrimitiveType::I64 => 8,
-            PrimitiveType::U32 => 4,
-            PrimitiveType::U64 => 8,
-            PrimitiveType::Bool => 1,
-            PrimitiveType::Vec3 => 12, // 3 × f32
-            PrimitiveType::Vec2 => 8,  // 2 × f32
-        }
-    }
-
-    /// Alignment requirement of this primitive type
-    pub const fn alignment(&self) -> usize {
-        match self {
-            PrimitiveType::F32 => 4,
-            PrimitiveType::F64 => 8,
-            PrimitiveType::I32 => 4,
-            PrimitiveType::I64 => 8,
-            PrimitiveType::U32 => 4,
-            PrimitiveType::U64 => 8,
-            PrimitiveType::Bool => 1,
-            PrimitiveType::Vec3 => 4, // f32 alignment
-            PrimitiveType::Vec2 => 4, // f32 alignment
-        }
-    }
-
+/// PyO3-specific extension methods for PrimitiveType
+pub trait PrimitiveTypeExt {
     /// Try to parse a Python type annotation into a PrimitiveType
     ///
     /// TODO: replace string-based dispatch with PyO3 type-identity comparisons
     /// (e.g. `ty.is(<PyVec3 as PyTypeInfo>::type_object(py))`) for O(1) pointer
     /// equality instead of string allocation + matching on every field registration.
-    pub fn from_python_type(ty: &Bound<'_, PyAny>) -> PyResult<Option<Self>> {
+    fn from_python_type(ty: &Bound<'_, PyAny>) -> PyResult<Option<PrimitiveType>>;
+
+    /// Convert to numpy dtype string
+    fn to_numpy_dtype(self) -> &'static str;
+
+    /// Convert to FieldType for bytecode VM
+    fn to_field_type(self) -> FieldType;
+}
+
+impl PrimitiveTypeExt for PrimitiveType {
+    fn from_python_type(ty: &Bound<'_, PyAny>) -> PyResult<Option<PrimitiveType>> {
         let ty_str_bound = ty.str()?;
         let ty_str = ty_str_bound.to_str()?;
 
@@ -92,8 +59,7 @@ impl PrimitiveType {
         }
     }
 
-    /// Convert to numpy dtype string
-    pub fn to_numpy_dtype(self) -> &'static str {
+    fn to_numpy_dtype(self) -> &'static str {
         match self {
             PrimitiveType::F32 => "f4",
             PrimitiveType::F64 => "f8",
@@ -107,22 +73,7 @@ impl PrimitiveType {
         }
     }
 
-    /// Whether this type is a composite (multi-element) type like Vec3/Vec2
-    pub const fn is_composite(&self) -> bool {
-        matches!(self, PrimitiveType::Vec3 | PrimitiveType::Vec2)
-    }
-
-    /// Number of elements for composite types (1 for scalars)
-    pub const fn element_count(&self) -> usize {
-        match self {
-            PrimitiveType::Vec3 => 3,
-            PrimitiveType::Vec2 => 2,
-            _ => 1,
-        }
-    }
-
-    /// Convert to FieldType for bytecode VM
-    pub fn to_field_type(self) -> FieldType {
+    fn to_field_type(self) -> FieldType {
         match self {
             PrimitiveType::F32 => FieldType::F32,
             PrimitiveType::F64 => FieldType::F64,
@@ -137,35 +88,14 @@ impl PrimitiveType {
     }
 }
 
-/// Information about a single field in a component
-#[derive(Debug, Clone)]
-pub struct FieldInfo {
-    pub name: String,
-    pub offset: usize,
-    pub field_type: PrimitiveType,
-}
-
-/// Layout metadata for a wrapper component
-#[derive(Debug, Clone)]
-pub struct ComponentLayout {
-    /// Pointer to the Python type object (for type identity)
-    pub py_type_ptr: *const c_void,
-    /// Component type name
-    pub name: String,
-    /// Field information
-    pub fields: Vec<FieldInfo>,
-    /// Total size of the data (may be less than wrapper_size)
-    pub data_size: usize,
-    /// Wrapper size used to store this component
-    pub wrapper_size: WrapperSize,
-}
-
-unsafe impl Send for ComponentLayout {}
-unsafe impl Sync for ComponentLayout {}
-
-impl ComponentLayout {
+/// PyO3-specific extension methods for ComponentLayout
+pub trait ComponentLayoutExt {
     /// Compute layout from a Python class's __annotations__
-    pub fn from_annotations(cls: &Bound<'_, PyType>) -> PyResult<Self> {
+    fn from_annotations(cls: &Bound<'_, PyType>) -> PyResult<ComponentLayout>;
+}
+
+impl ComponentLayoutExt for ComponentLayout {
+    fn from_annotations(cls: &Bound<'_, PyType>) -> PyResult<ComponentLayout> {
         let name = cls.name()?.to_string();
 
         // Get __annotations__ dict
@@ -182,8 +112,7 @@ impl ComponentLayout {
         }
 
         // Parse each field annotation
-        let mut fields = Vec::new();
-        let mut current_offset = 0usize;
+        let mut field_types = Vec::new();
 
         for (field_name, field_type) in annotations.iter() {
             let field_name_bound = field_name.str()?;
@@ -194,17 +123,7 @@ impl ComponentLayout {
 
             match primitive_type {
                 Some(prim_type) => {
-                    // Align current offset to field's alignment requirement
-                    let alignment = prim_type.alignment();
-                    current_offset = current_offset.div_ceil(alignment) * alignment;
-
-                    fields.push(FieldInfo {
-                        name: field_name_str.clone(),
-                        offset: current_offset,
-                        field_type: prim_type,
-                    });
-
-                    current_offset += prim_type.size_bytes();
+                    field_types.push((field_name_str, prim_type));
                 }
                 None => {
                     // Non-primitive type found - cannot use wrapper storage
@@ -219,49 +138,26 @@ impl ComponentLayout {
             }
         }
 
-        let data_size = current_offset;
+        let py_type_ptr = cls.as_ptr() as *const std::ffi::c_void;
 
-        // Select wrapper size
-        let wrapper_size = WrapperSize::for_size(data_size).ok_or_else(|| {
+        ComponentLayout::from_fields(py_type_ptr, name.clone(), &field_types).map_err(|data_size| {
             PyTypeError::new_err(format!(
                 "Component '{}' is too large ({} bytes). \
                  Maximum size for wrapper storage is 1024 bytes.",
                 name, data_size
             ))
-        })?;
-
-        Ok(ComponentLayout {
-            py_type_ptr: cls.as_ptr() as *const c_void,
-            name,
-            fields,
-            data_size,
-            wrapper_size,
         })
     }
-
-    /// Get field information by name
-    pub fn get_field(&self, name: &str) -> Option<&FieldInfo> {
-        self.fields.iter().find(|f| f.name == name)
-    }
-
-    /// Get list of field names (for error messages)
-    pub fn field_names(&self) -> Vec<&str> {
-        self.fields.iter().map(|f| f.name.as_str()).collect()
-    }
 }
 
-/// Storage type for a custom component
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentStorageType {
-    /// Component uses wrapper storage (primitive-only fields)
-    Wrapper(WrapperSize),
-    /// Component uses PyAny storage (contains non-primitive types or opted out)
-    PyObject,
-}
-
-impl ComponentStorageType {
+/// PyO3-specific extension methods for ComponentStorageType
+pub trait ComponentStorageTypeExt {
     /// Determine storage type from a Python class
-    pub fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<Self> {
+    fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<ComponentStorageType>;
+}
+
+impl ComponentStorageTypeExt for ComponentStorageType {
+    fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<ComponentStorageType> {
         // Check for explicit storage mode in class attributes
         if let Ok(storage_attr) = cls.getattr("__pybevy_storage__") {
             let storage_str_bound = storage_attr.str()?;
@@ -294,7 +190,6 @@ impl ComponentStorageType {
 /// Serialize a Python object to wrapper bytes according to the layout
 ///
 /// # Arguments
-/// * `py` - Python GIL token
 /// * `obj` - Python object to serialize
 /// * `layout` - Component layout describing field offsets and types
 ///

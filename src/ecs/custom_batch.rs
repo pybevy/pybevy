@@ -10,7 +10,9 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{ComponentLayout, FieldInfo, PrimitiveType},
+    component_layout::{
+        ComponentLayout, ComponentLayoutExt, FieldInfo, PrimitiveType, PrimitiveTypeExt,
+    },
     component_type::register_custom_component,
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,

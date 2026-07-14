@@ -25,11 +25,7 @@ use pyo3::{
     types::{PyBytes, PyList},
 };
 
-use crate::ecs::{
-    component_layout::{ComponentLayout, PrimitiveType},
-    component_type::PyComponentType,
-    view::view::get_component_field_info,
-};
+use crate::ecs::{component_type::PyComponentType, view::view::get_component_field_info};
 
 /// Opaque column view that can only be accessed through Numba JIT.
 ///
@@ -473,6 +469,10 @@ impl PyViewColumn {
 
         // Priority 2: Custom component with dynamic field access
         if let Some(type_ptr) = self.component_type {
+            use crate::ecs::component_layout::{
+                ComponentLayout, ComponentLayoutExt, PrimitiveType, PrimitiveTypeExt,
+            };
+
             // Safety: `type_ptr` was captured from a live Python type object and the GIL
             // is held here, so the pointer is valid for the duration of this call.
             let py_type =

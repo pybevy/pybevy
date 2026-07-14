@@ -9,7 +9,7 @@ use bevy::{
     },
     prelude::Resource,
 };
-use pybevy_core::registry::global_registry;
+use pybevy_core::{custom_component::PythonObjectDescriptor, registry::global_registry};
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::ecs::{component::PyComponent, helpers::type_utils::get_python_type_name};
@@ -330,11 +330,24 @@ pub(crate) fn create_python_object_descriptor(name: String) -> ComponentDescript
     }
 }
 
+/// PyO3 implementation of [`PythonObjectDescriptor`].
+///
+/// Stores custom Python components/resources as `Py<PyAny>` objects in the ECS,
+/// with a drop function that properly decrements Python reference counts.
+pub(crate) struct Pyo3ObjectDescriptor;
+
+impl PythonObjectDescriptor for Pyo3ObjectDescriptor {
+    fn create(name: String) -> ComponentDescriptor {
+        create_python_object_descriptor(name)
+    }
+}
+
 /// Extract the fully qualified Python name (`module.qualname`) for a type pointer.
 ///
 /// This matches the format used by `pybevy/decorators.py`:
 ///   `f"{cls.__module__}.{cls.__qualname__}"`
 fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Option<String> {
+    // SAFETY: registered type pointers live for the interpreter lifetime
     let type_obj =
         unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
     let cls = type_obj.cast::<pyo3::types::PyType>().ok()?;
@@ -369,7 +382,7 @@ pub(crate) fn register_custom_component(
     type_ptr: *const PyTypeObject,
     name: String,
 ) -> ComponentId {
-    use crate::ecs::{component_layout::ComponentStorageType, component_wrapper::*};
+    use crate::ecs::component_layout::{ComponentStorageType, ComponentStorageTypeExt};
 
     // Ensure the registry resources exist
     if !world.contains_resource::<ComponentRegistry>() {
@@ -395,6 +408,7 @@ pub(crate) fn register_custom_component(
         .copied();
     if let Some(component_id) = cached {
         let requested_storage = Python::attach(|py| {
+            // SAFETY: registered type pointers live for the interpreter lifetime
             let py_type =
                 unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
             match py_type.cast::<pyo3::types::PyType>() {
@@ -455,6 +469,7 @@ pub(crate) fn register_custom_component(
             // different wrapper sizes), we can't safely alias - the ECS column
             // was sized for the old layout.
             let new_storage_type = Python::attach(|py| {
+                // SAFETY: registered type pointers live for the interpreter lifetime
                 let py_type = unsafe {
                     pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
                 };
@@ -557,59 +572,10 @@ pub(crate) fn register_custom_component(
     let is_pyobject = matches!(storage_type, ComponentStorageType::PyObject);
     let component_name = name.clone();
 
-    // Component not in registry, register it with Bevy based on storage type
-    let component_id = match storage_type {
-        ComponentStorageType::Wrapper(wrapper_size) => {
-            // Create a descriptor with unique name for this component
-            // Even though multiple components may use the same wrapper size,
-            // each needs its own ComponentId
-            let layout = match wrapper_size {
-                crate::ecs::component_wrapper::WrapperSize::W8 => {
-                    Layout::new::<ComponentWrapper8>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W16 => {
-                    Layout::new::<ComponentWrapper16>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W32 => {
-                    Layout::new::<ComponentWrapper32>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W64 => {
-                    Layout::new::<ComponentWrapper64>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W128 => {
-                    Layout::new::<ComponentWrapper128>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W256 => {
-                    Layout::new::<ComponentWrapper256>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W512 => {
-                    Layout::new::<ComponentWrapper512>()
-                }
-                crate::ecs::component_wrapper::WrapperSize::W1024 => {
-                    Layout::new::<ComponentWrapper1024>()
-                }
-            };
-
-            // Create descriptor with unique name - each Python component gets its own ComponentId
-            unsafe {
-                let descriptor = ComponentDescriptor::new_with_layout(
-                    name.clone(),
-                    StorageType::Table,
-                    layout,
-                    None, // No drop function needed for Copy types
-                    true, // Mutable - wrapper components can be modified
-                    ComponentCloneBehavior::Default,
-                    None,
-                );
-                world.register_component_with_descriptor(descriptor)
-            }
-        }
-        ComponentStorageType::PyObject => {
-            // Use PyAny storage as before
-            let descriptor = create_python_object_descriptor(name);
-            world.register_component_with_descriptor(descriptor)
-        }
-    };
+    // Register with Bevy using the shared backend-agnostic function
+    let component_id = pybevy_core::custom_component::register_custom_component_descriptor::<
+        Pyo3ObjectDescriptor,
+    >(world, name, storage_type);
 
     // Store in registry resource (both by pointer and by name)
     {
