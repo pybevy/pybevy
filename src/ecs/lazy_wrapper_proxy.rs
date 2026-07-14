@@ -30,7 +30,7 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{ComponentLayout, PrimitiveType},
+    component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue},
     helpers::validity_guard::ValidityFlagWithMode,
 };
 
@@ -319,39 +319,26 @@ impl PyLazyWrapperProxy {
         let field_type = field.field_type;
         let offset = field.offset;
 
-        /// A field value already coerced to a plain Rust scalar, ready to write.
-        enum ScalarWrite {
-            F32(f32),
-            F64(f64),
-            I32(i32),
-            I64(i64),
-            U32(u32),
-            U64(u64),
-            Bool(bool),
-            Vec3(Vec3),
-            Vec2(Vec2),
-        }
-
-        // Coerce the Python value to a plain Rust scalar FIRST. `value.extract()` can
-        // re-enter Python (e.g. via __float__/__index__/__bool__), and that Python code
-        // may run a structural mutation which reallocates or moves this component's
-        // storage. So all Python interaction must finish before we resolve a pointer:
-        // holding a resolved pointer across extract() would risk a use-after-free.
+        // Coerce the Python value to a plain Rust `PrimitiveValue` FIRST. `value.extract()`
+        // can re-enter Python (e.g. via __float__/__index__/__bool__), and that Python code
+        // may run a structural mutation which reallocates or moves this component's storage.
+        // So all Python interaction must finish before we resolve a pointer: holding a
+        // resolved pointer across extract() would risk a use-after-free.
         let write = match field_type {
-            PrimitiveType::F32 => ScalarWrite::F32(value.extract()?),
-            PrimitiveType::F64 => ScalarWrite::F64(value.extract()?),
-            PrimitiveType::I32 => ScalarWrite::I32(value.extract()?),
-            PrimitiveType::I64 => ScalarWrite::I64(value.extract()?),
-            PrimitiveType::U32 => ScalarWrite::U32(value.extract()?),
-            PrimitiveType::U64 => ScalarWrite::U64(value.extract()?),
-            PrimitiveType::Bool => ScalarWrite::Bool(value.extract()?),
+            PrimitiveType::F32 => PrimitiveValue::F32(value.extract()?),
+            PrimitiveType::F64 => PrimitiveValue::F64(value.extract()?),
+            PrimitiveType::I32 => PrimitiveValue::I32(value.extract()?),
+            PrimitiveType::I64 => PrimitiveValue::I64(value.extract()?),
+            PrimitiveType::U32 => PrimitiveValue::U32(value.extract()?),
+            PrimitiveType::U64 => PrimitiveValue::U64(value.extract()?),
+            PrimitiveType::Bool => PrimitiveValue::Bool(value.extract()?),
             PrimitiveType::Vec3 => {
                 let py_vec3: PyRef<PyVec3> = value.extract()?;
-                ScalarWrite::Vec3((&*py_vec3).into())
+                PrimitiveValue::Vec3((&*py_vec3).into())
             }
             PrimitiveType::Vec2 => {
                 let py_vec2: PyRef<PyVec2> = value.extract()?;
-                ScalarWrite::Vec2((&*py_vec2).into())
+                PrimitiveValue::Vec2((&*py_vec2).into())
             }
         };
 
@@ -360,19 +347,8 @@ impl PyLazyWrapperProxy {
         // (erroring if the entity was despawned or the component removed since
         // construction); for query iteration it is the cached pointer.
         let bytes_ptr = unsafe { self.resolved_ptr()?.add(offset) };
-        unsafe {
-            match write {
-                ScalarWrite::F32(v) => *(bytes_ptr as *mut f32) = v,
-                ScalarWrite::F64(v) => *(bytes_ptr as *mut f64) = v,
-                ScalarWrite::I32(v) => *(bytes_ptr as *mut i32) = v,
-                ScalarWrite::I64(v) => *(bytes_ptr as *mut i64) = v,
-                ScalarWrite::U32(v) => *(bytes_ptr as *mut u32) = v,
-                ScalarWrite::U64(v) => *(bytes_ptr as *mut u64) = v,
-                ScalarWrite::Bool(v) => *(bytes_ptr as *mut bool) = v,
-                ScalarWrite::Vec3(v) => *(bytes_ptr as *mut Vec3) = v,
-                ScalarWrite::Vec2(v) => *(bytes_ptr as *mut Vec2) = v,
-            }
-        }
+        // SAFETY: bytes_ptr is the field's current address; `write` matches field_type.
+        unsafe { write.write_to_ptr(bytes_ptr) };
 
         Ok(())
     }
