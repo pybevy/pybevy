@@ -224,11 +224,12 @@ impl System for DynamicCondition {
 
 // SAFETY: `ReadOnlySystem` must only be implemented for systems that do not
 // mutate the `World` when `run_unsafe` is called (bevy_ecs/src/system/system.rs).
-// `DynamicCondition::new` enforces the user-visible part of that contract by
-// rejecting every parameter kind that mutates the world (World, Commands,
-// ResMut, mutable Assets, Mut queries/views, MessageWriter, MessageReader), so a
-// condition function cannot request write access. A remaining internal gap
-// exists: parameter construction in `DynamicSystem::run_unsafe` still calls
-// `world.world_mut()` while building read-only parameters. That gap is tracked
-// separately and is not reachable through any accepted condition parameter.
+// `DynamicCondition::new` enforces that contract by rejecting every parameter
+// kind that mutates the world (World, Commands, ResMut, mutable Assets, Mut
+// queries/views, MessageWriter, MessageReader), so a condition function cannot
+// request write access. Parameter construction builds every accepted kind from
+// the run's `UnsafeWorldCell`; the only `world_mut()` arm (World) is rejected
+// above. Read-only View evaluation still derives momentary world pointers
+// internally without mutating; that residual-pointer class is documented in
+// docs/safety.md ("Query Parameters and the World Cell").
 unsafe impl ReadOnlySystem for DynamicCondition {}
