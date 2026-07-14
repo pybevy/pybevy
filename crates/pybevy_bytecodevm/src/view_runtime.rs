@@ -8,10 +8,11 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    hash::{Hash, Hasher},
     marker::PhantomData,
     rc::Rc,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -25,7 +26,8 @@ use bevy_ecs::{
 use pybevy_storage::{StorageError, ValidityFlag};
 
 use crate::{
-    bytecode::{CompiledBytecode, FieldId, FieldType, Op},
+    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op},
+    expr::RustExpr,
     view_engine::{self, ViewEngineError, ViewFilter},
 };
 
@@ -154,15 +156,89 @@ impl ResolvedViewSpec {
     }
 }
 
-/// Stable, per-parameter View metadata shared across system runs.
-///
-/// The collision-safe bytecode cache will join this type in the execution
-/// migration slice. Keeping the specification here now ensures validated
-/// programs remain bound to the same metadata across frames.
+#[derive(Clone, Debug)]
+enum CachedProgramKey {
+    ReadOnly(RustExpr),
+    Assignment {
+        destination: FieldId,
+        expression: RustExpr,
+    },
+}
+
+impl CachedProgramKey {
+    fn canonical_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ReadOnly(a), Self::ReadOnly(b)) => a.canonical_eq(b),
+            (
+                Self::Assignment {
+                    destination: ad,
+                    expression: ae,
+                },
+                Self::Assignment {
+                    destination: bd,
+                    expression: be,
+                },
+            ) => ad == bd && ae.canonical_eq(be),
+            _ => false,
+        }
+    }
+
+    fn hash(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        match self {
+            Self::ReadOnly(expression) => {
+                0_u8.hash(&mut hasher);
+                format!("{expression:?}").hash(&mut hasher);
+            }
+            Self::Assignment {
+                destination,
+                expression,
+            } => {
+                1_u8.hash(&mut hasher);
+                destination.hash(&mut hasher);
+                format!("{expression:?}").hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    fn compile(&self) -> Arc<CompiledBytecode> {
+        match self {
+            Self::ReadOnly(expression) => {
+                let mut compiler = Compiler::new();
+                expression.compile(&mut compiler);
+                Arc::new(compiler.finalize())
+            }
+            Self::Assignment {
+                destination,
+                expression,
+            } => Arc::new(view_engine::compile_assignment(
+                destination.component_id,
+                destination.offset,
+                destination.field_type,
+                expression,
+            )),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CachedProgram {
+    key: CachedProgramKey,
+    bytecode: Arc<CompiledBytecode>,
+}
+
+#[derive(Debug, Default)]
+struct ProgramCache {
+    buckets: HashMap<u64, Vec<CachedProgram>>,
+}
+
+/// Stable, per-parameter View metadata and programs shared across system runs.
 #[derive(Debug)]
 pub struct CachedViewCore {
     spec: Arc<ResolvedViewSpec>,
     world_id: WorldId,
+    programs: Mutex<ProgramCache>,
 }
 
 impl CachedViewCore {
@@ -172,6 +248,7 @@ impl CachedViewCore {
         Ok(Self {
             spec: Arc::new(spec),
             world_id: world.id(),
+            programs: Mutex::new(ProgramCache::default()),
         })
     }
 
@@ -181,6 +258,7 @@ impl CachedViewCore {
         Self {
             spec: Arc::new(spec),
             world_id,
+            programs: Mutex::new(ProgramCache::default()),
         }
     }
 
@@ -192,6 +270,35 @@ impl CachedViewCore {
     /// World whose component ids and layouts were used to build this cache.
     pub fn world_id(&self) -> WorldId {
         self.world_id
+    }
+
+    fn get_or_compile(
+        &self,
+        key: CachedProgramKey,
+    ) -> Result<Arc<CompiledBytecode>, ViewRuntimeError> {
+        let hash = key.hash();
+        self.get_or_compile_with_hash(key, hash)
+    }
+
+    fn get_or_compile_with_hash(
+        &self,
+        key: CachedProgramKey,
+        hash: u64,
+    ) -> Result<Arc<CompiledBytecode>, ViewRuntimeError> {
+        let mut cache = self
+            .programs
+            .lock()
+            .map_err(|_| ViewRuntimeError::ProgramCachePoisoned)?;
+        let bucket = cache.buckets.entry(hash).or_default();
+        if let Some(cached) = bucket.iter().find(|cached| cached.key.canonical_eq(&key)) {
+            return Ok(Arc::clone(&cached.bytecode));
+        }
+        let bytecode = key.compile();
+        bucket.push(CachedProgram {
+            key,
+            bytecode: Arc::clone(&bytecode),
+        });
+        Ok(bytecode)
     }
 }
 
@@ -361,6 +468,32 @@ impl ViewRuntimeCore {
         })
     }
 
+    /// Compile/cache and validate one read-only expression for this exact View.
+    pub fn prepare_read_program(
+        &self,
+        expression: &RustExpr,
+    ) -> Result<ValidatedViewProgram, ViewRuntimeError> {
+        self.check_valid()?;
+        let bytecode = self
+            .cached
+            .get_or_compile(CachedProgramKey::ReadOnly(expression.clone()))?;
+        self.validate_program(bytecode, ProgramIntent::ReadOnly)
+    }
+
+    /// Compile/cache and validate one assignment for this exact View.
+    pub fn prepare_assignment_program(
+        &self,
+        destination: FieldId,
+        expression: &RustExpr,
+    ) -> Result<ValidatedViewProgram, ViewRuntimeError> {
+        self.check_valid()?;
+        let bytecode = self.cached.get_or_compile(CachedProgramKey::Assignment {
+            destination,
+            expression: expression.clone(),
+        })?;
+        self.validate_program(bytecode, ProgramIntent::Assignment { destination })
+    }
+
     /// Reject a capability validated for a different View runtime.
     pub fn check_program(&self, program: &ValidatedViewProgram) -> Result<(), ViewRuntimeError> {
         if Arc::ptr_eq(self.cached.spec(), &program.spec) {
@@ -411,6 +544,22 @@ pub struct BatchLease {
     batches: Box<[view_engine::TableBatch]>,
 }
 
+/// Neutral reduction applied to a validated read-only View program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ViewReduction {
+    Sum,
+    Min,
+    Max,
+    CountTruthy,
+}
+
+/// Scalar reduction value plus the number of selected rows evaluated.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewReductionOutput {
+    pub value: f64,
+    pub count: usize,
+}
+
 impl BatchLease {
     /// Runtime whose World and access declaration own these batches.
     pub fn runtime(&self) -> &Arc<ViewRuntimeCore> {
@@ -442,6 +591,45 @@ impl BatchLease {
     /// Return whether no selected row passes all filters.
     pub fn is_empty(&self) -> Result<bool, ViewRuntimeError> {
         self.entity_count().map(|count| count == 0)
+    }
+
+    /// Evaluate and reduce one validated read-only program over exact rows.
+    pub fn reduce(
+        &self,
+        program: &ValidatedViewProgram,
+        reduction: ViewReduction,
+        parallel: bool,
+    ) -> Result<ViewReductionOutput, ViewRuntimeError> {
+        self.runtime.check_program(program)?;
+        if !matches!(program.intent(), ProgramIntent::ReadOnly) {
+            return Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "read-only",
+                actual: "assignment",
+            });
+        }
+
+        let _operation = self.runtime.enter_operation()?;
+        self.runtime.validate_live_world_metadata()?;
+        // SAFETY: validation bound every field to this exact spec and the
+        // lease owns live selected rows under the operation/validity fences.
+        let values = unsafe {
+            view_engine::evaluate_batch_program(
+                &self.batches,
+                program.bytecode(),
+                self.runtime.spec().component_strides(),
+                parallel,
+            )
+        };
+        let count = values.len();
+        let value = match reduction {
+            ViewReduction::Sum => values.into_iter().sum(),
+            ViewReduction::Min => values.into_iter().fold(f64::INFINITY, f64::min),
+            ViewReduction::Max => values.into_iter().fold(f64::NEG_INFINITY, f64::max),
+            ViewReduction::CountTruthy => {
+                values.into_iter().filter(|value| *value >= 0.5).count() as f64
+            }
+        };
+        Ok(ViewReductionOutput { value, count })
     }
 
     /// Execute one validated assignment over this lease's exact selected rows.
@@ -620,6 +808,8 @@ pub enum ViewRuntimeError {
     Storage(StorageError),
     /// Another operation already owns this runtime's shared pointer-access fence.
     ReentrantOperation,
+    /// A panic occurred while the stable compiled-program cache was locked.
+    ProgramCachePoisoned,
     /// Cached component ids were resolved against a different World.
     WorldMismatch {
         /// World used to build the cached specification.
@@ -765,6 +955,12 @@ impl fmt::Display for ViewRuntimeError {
             Self::Storage(error) => error.fmt(f),
             Self::ReentrantOperation => {
                 write!(f, "Cannot re-enter a View operation while access is active")
+            }
+            Self::ProgramCachePoisoned => {
+                write!(
+                    f,
+                    "View compiled-program cache was poisoned by an earlier panic"
+                )
             }
             Self::WorldMismatch { expected, actual } => write!(
                 f,
@@ -1296,6 +1492,10 @@ mod tests {
     #[derive(Component)]
     #[repr(transparent)]
     struct RuntimeDense(u32);
+
+    #[derive(Component)]
+    #[repr(transparent)]
+    struct RuntimeOther(u32);
 
     #[derive(Component)]
     #[component(storage = "SparseSet")]
@@ -1906,6 +2106,81 @@ mod tests {
     }
 
     #[test]
+    fn prepared_program_cache_reuses_exact_expression_across_runs() {
+        let component_id = ComponentId::new(1);
+        let first = runtime(component_id, false);
+        // SAFETY: the second runtime shares the first TestRuntime's live World
+        // cell/cache and is dropped before the owning TestRuntime.
+        let second = unsafe {
+            ViewRuntimeCore::new(
+                Arc::clone(first.cached()),
+                first.runtime.world_cell,
+                ValidityFlag::new_write(),
+                Tick::new(20),
+                Tick::new(30),
+            )
+        }
+        .map(Arc::new)
+        .unwrap();
+        let expression = RustExpr::Const(7.0);
+
+        let first_program = first.prepare_read_program(&expression).unwrap();
+        let second_program = second.prepare_read_program(&expression).unwrap();
+
+        assert!(std::ptr::eq(
+            first_program.bytecode(),
+            second_program.bytecode()
+        ));
+    }
+
+    #[test]
+    fn prepared_program_cache_resolves_hash_collisions_by_full_key() {
+        let runtime = runtime(ComponentId::new(1), false);
+        let cache = runtime.cached();
+        let forced_hash = 17;
+
+        let first = cache
+            .get_or_compile_with_hash(
+                CachedProgramKey::ReadOnly(RustExpr::Const(1.0)),
+                forced_hash,
+            )
+            .unwrap();
+        let second = cache
+            .get_or_compile_with_hash(
+                CachedProgramKey::ReadOnly(RustExpr::Const(2.0)),
+                forced_hash,
+            )
+            .unwrap();
+        let first_again = cache
+            .get_or_compile_with_hash(
+                CachedProgramKey::ReadOnly(RustExpr::Const(1.0)),
+                forced_hash,
+            )
+            .unwrap();
+
+        assert_eq!(first.constants, vec![1.0]);
+        assert_eq!(second.constants, vec![2.0]);
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &first_again));
+    }
+
+    #[test]
+    fn poisoned_program_cache_fails_closed() {
+        let runtime = runtime(ComponentId::new(1), false);
+        let cache = Arc::clone(runtime.cached());
+        let result = std::panic::catch_unwind(move || {
+            let _guard = cache.programs.lock().unwrap();
+            panic!("poison View program cache");
+        });
+        assert!(result.is_err());
+
+        assert!(matches!(
+            runtime.prepare_read_program(&RustExpr::Const(1.0)),
+            Err(ViewRuntimeError::ProgramCachePoisoned)
+        ));
+    }
+
+    #[test]
     fn validated_program_is_rejected_by_equivalent_but_distinct_cache() {
         let component_id = ComponentId::new(1);
         let first = runtime(component_id, false);
@@ -1942,6 +2217,10 @@ mod tests {
         ));
         assert!(matches!(
             runtime.enter_operation(),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
+        assert!(matches!(
+            runtime.prepare_read_program(&RustExpr::Const(1.0)),
             Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
         ));
     }
@@ -2100,9 +2379,21 @@ mod tests {
             .unwrap();
         assert_eq!(values, vec![20, 30]);
 
+        let program = runtime
+            .prepare_read_program(&RustExpr::Field {
+                component_id,
+                offset: 0,
+                field_type: FieldType::U32,
+            })
+            .unwrap();
+
         runtime.validity().set_invalid();
         assert!(matches!(
             lease.entity_count(),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
+        assert!(matches!(
+            lease.reduce(&program, ViewReduction::Sum, false),
             Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
         ));
     }
@@ -2209,6 +2500,97 @@ mod tests {
             })
             .unwrap();
         assert_eq!(selected, vec![20]);
+
+        let expression = RustExpr::Field {
+            component_id,
+            offset: 0,
+            field_type: FieldType::U32,
+        };
+        let program = runtime.prepare_read_program(&expression).unwrap();
+        let output = lease.reduce(&program, ViewReduction::Sum, true).unwrap();
+        assert_eq!(
+            output,
+            ViewReductionOutput {
+                value: 20.0,
+                count: 1
+            }
+        );
+    }
+
+    #[test]
+    fn leased_reductions_cover_all_operations_and_complete_data_filter() {
+        let mut world = World::new();
+        world.spawn(RuntimeDense(10));
+        world.spawn((RuntimeDense(20), RuntimeOther(2)));
+        world.spawn((RuntimeDense(30), RuntimeOther(3)));
+        let dense_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let other_id = world.components().component_id::<RuntimeOther>().unwrap();
+        let view_filter = ViewFilter {
+            component_ids: HashSet::from([dense_id, other_id]),
+            with_ids: Vec::new(),
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::new(),
+            HashMap::from([
+                (dense_id, HashSet::from([(0, FieldType::U32)])),
+                (other_id, HashSet::from([(0, FieldType::U32)])),
+            ]),
+        );
+        // SAFETY: the World remains live and structurally unchanged through
+        // every reduction and lease operation below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let field_expression = RustExpr::Field {
+            component_id: dense_id,
+            offset: 0,
+            field_type: FieldType::U32,
+        };
+        let field_program = runtime.prepare_read_program(&field_expression).unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        assert_eq!(
+            lease
+                .reduce(&field_program, ViewReduction::Sum, true)
+                .unwrap(),
+            ViewReductionOutput {
+                value: 50.0,
+                count: 2,
+            }
+        );
+        assert_eq!(
+            lease
+                .reduce(&field_program, ViewReduction::Min, false)
+                .unwrap(),
+            ViewReductionOutput {
+                value: 20.0,
+                count: 2,
+            }
+        );
+        assert_eq!(
+            lease
+                .reduce(&field_program, ViewReduction::Max, true)
+                .unwrap(),
+            ViewReductionOutput {
+                value: 30.0,
+                count: 2,
+            }
+        );
+
+        let truthy = RustExpr::Gt(Box::new(field_expression), Box::new(RustExpr::Const(20.0)));
+        let truthy_program = runtime.prepare_read_program(&truthy).unwrap();
+        assert_eq!(
+            lease
+                .reduce(&truthy_program, ViewReduction::CountTruthy, true)
+                .unwrap(),
+            ViewReductionOutput {
+                value: 1.0,
+                count: 2,
+            }
+        );
     }
 
     #[test]
@@ -2418,6 +2800,13 @@ mod tests {
                 ProgramIntent::ReadOnly,
             )
             .unwrap();
+        let destination = field(component_id, 0, FieldType::U32);
+        let assignment = runtime
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
         let lease = runtime.gather_batches().unwrap();
 
         assert!(matches!(
@@ -2425,6 +2814,13 @@ mod tests {
             Err(ViewRuntimeError::ProgramIntentMismatch {
                 expected: "assignment",
                 actual: "read-only",
+            })
+        ));
+        assert!(matches!(
+            lease.reduce(&assignment, ViewReduction::Sum, false),
+            Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "read-only",
+                actual: "assignment",
             })
         ));
         runtime.validity().set_invalid();

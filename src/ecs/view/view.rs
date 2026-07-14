@@ -17,26 +17,21 @@
 //! **Important**: Use `Mut[T]` in the View type parameter to declare mutable access,
 //! just like Query. This ensures type safety and correct ECS access tracking.
 
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, collections::HashSet, sync::Arc};
 
 use bevy::{
     ecs::{
         change_detection::Tick,
         component::ComponentId,
-        query::QueryBuilder,
-        world::{FilteredEntityMut, World, unsafe_world_cell::UnsafeWorldCell},
+        world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
 };
 use pybevy_bytecodevm::{
-    bytecode::{CompiledBytecode, Compiler, FieldType as VmFieldType},
+    bytecode::{FieldId, FieldType as VmFieldType},
     expr::RustExpr,
     view_engine::{self, TableRowRange, ViewFilter},
-    view_runtime::{ViewRuntimeCore, ViewRuntimeError},
+    view_runtime::{ViewReduction, ViewReductionOutput, ViewRuntimeCore, ViewRuntimeError},
 };
 use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
@@ -51,7 +46,6 @@ use crate::ecs::{
         PrimitiveType, PrimitiveTypeExt,
     },
     component_type::{PyComponentType, register_component_id_simple},
-    component_wrapper::*,
     helpers::validity_guard::ValidityFlag,
     view::{cached_view::CachedPyView, construct_view_class_item, view_column::PyViewColumn},
 };
@@ -78,12 +72,6 @@ pub struct PyView {
     /// Added filter component types (Added<T> filters) - per-entity tick check
     added_filter_types: Vec<PyComponentType>,
 
-    /// System's last_run tick for change detection comparison
-    last_run: Tick,
-
-    /// Current run tick for change detection comparison
-    this_run: Tick,
-
     /// Stable interpreter adapter and run-scoped neutral runtime.
     cached: Arc<CachedPyView>,
     runtime: Arc<ViewRuntimeCore>,
@@ -96,16 +84,12 @@ pub struct PyView {
     /// This prevents getting multiple mutable column proxies for the same component
     borrowed_mut: RefCell<HashSet<PyComponentType>>,
 
-    /// World cell (lifetime-erased), valid only during system execution. The View's
-    /// batch ops (QueryBuilder / par_iter_mut) fundamentally need `&mut World`, so a
-    /// `*mut World` is derived per-operation from this cell (see `world_ptr`).
+    /// World cell retained only for the legacy `iter_batches`/Numba proxy path.
+    /// Expression assignments and reductions use `runtime` instead.
     world_cell: Option<UnsafeWorldCell<'static>>,
 
     /// Master validity flag - invalidated when system exits
     validity: ValidityFlag,
-
-    /// Bytecode cache for compiled expressions (keyed by dest field + expression hash)
-    bytecode_cache: RefCell<view_engine::BytecodeCache>,
 
     /// Validity tokens created by iter_batches() that need to be poisoned on drop
     batch_validity_tokens: RefCell<Vec<Arc<std::sync::atomic::AtomicBool>>>,
@@ -114,44 +98,6 @@ pub struct PyView {
 // SAFETY: PyView is only used during system execution on a single thread
 unsafe impl Send for PyView {}
 unsafe impl Sync for PyView {}
-
-/// Pre-resolved tick filter component IDs for thread-safe parallel access.
-///
-/// `RefCell`-based `get_component_id()` cannot be called from `par_iter_mut` closures
-/// because `RefCell` is not `Sync`. This struct holds the resolved IDs so the parallel
-/// closure only needs plain field reads.
-struct ResolvedTickFilters {
-    changed_ids: Vec<ComponentId>,
-    added_ids: Vec<ComponentId>,
-    last_run: Tick,
-    this_run: Tick,
-}
-
-impl ResolvedTickFilters {
-    fn entity_passes(&self, entity_mut: &FilteredEntityMut) -> bool {
-        if self.changed_ids.is_empty() && self.added_ids.is_empty() {
-            return true;
-        }
-
-        for &id in &self.changed_ids {
-            if let Some(ticks) = entity_mut.get_change_ticks_by_id(id)
-                && !ticks.is_changed(self.last_run, self.this_run)
-            {
-                return false;
-            }
-        }
-
-        for &id in &self.added_ids {
-            if let Some(ticks) = entity_mut.get_change_ticks_by_id(id)
-                && !ticks.is_added(self.last_run, self.this_run)
-            {
-                return false;
-            }
-        }
-
-        true
-    }
-}
 
 impl Drop for PyView {
     fn drop(&mut self) {
@@ -196,25 +142,21 @@ impl PyView {
             without_filter_types: cached.without_filter_types.clone(),
             changed_filter_types: cached.changed_filter_types.clone(),
             added_filter_types: cached.added_filter_types.clone(),
-            last_run,
-            this_run,
             mutable_components: cached.mutable_components.clone(),
             cached,
             runtime,
             borrowed_mut: RefCell::new(HashSet::new()),
             world_cell: Some(world_cell),
             validity,
-            bytecode_cache: RefCell::new(view_engine::BytecodeCache::new()),
             batch_validity_tokens: RefCell::new(Vec::new()),
         })
     }
 
     /// Derive a raw `*mut World` from the stored cell for a single batch operation.
     ///
-    /// The View's batch machinery (`QueryBuilder`, `par_iter_mut`) fundamentally
-    /// requires `&mut World`, so a pointer is derived per-operation rather than a
-    /// long-lived borrow. This is the same residual-pointer pattern as
-    /// `query_runtime::world_ptr`.
+    /// The legacy `iter_batches`/Numba proxy machinery still requires World
+    /// access, so it derives a pointer per operation rather than retaining a
+    /// long-lived borrow. Expression execution never calls this method.
     ///
     /// SAFETY of dereferencing the returned pointer: `initialize` declares this
     /// view's component read/write access; the executor prevents a conflicting
@@ -254,23 +196,6 @@ impl PyView {
         })
     }
 
-    /// The set of component ids this view declares as data. Used as the
-    /// `allowed` set for `validate_bytecode_components`: a `field` expression
-    /// naming a component outside this set (e.g. a proxy captured from another
-    /// View) is rejected before its column is read.
-    fn declared_component_ids(&self) -> HashSet<ComponentId> {
-        self.runtime.spec().filter().component_ids.clone()
-    }
-
-    /// The per-component accept-set for `validate_bytecode_field_types`: each
-    /// declared component's `ComponentId` mapped to its legitimate bytecode
-    /// `(offset, FieldType)` pairs (vectors expanded to `F32` lanes). A `field`
-    /// expression whose `(offset, field_type)` is not in its component's set is a
-    /// type confusion (or mid-field offset) and is rejected before execution.
-    fn declared_field_offsets(&self) -> HashMap<ComponentId, HashSet<(usize, VmFieldType)>> {
-        self.runtime.spec().allowed_fields().clone()
-    }
-
     /// Get the initialization-time component ID for this View parameter.
     fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
         self.cached.component_id(comp_type).ok_or_else(|| {
@@ -280,296 +205,25 @@ impl PyView {
         })
     }
 
-    /// Apply With, Without, Changed, and Added filters to a QueryBuilder.
-    /// Changed/Added add `with_id` for archetype filtering; per-entity tick checks happen separately.
-    /// Optionally skips a component type (to avoid filtering on the data component itself).
-    fn apply_filters_to_query_builder<D: bevy::ecs::query::QueryData>(
-        &self,
-        builder: &mut QueryBuilder<D>,
-        skip: Option<&PyComponentType>,
-    ) {
-        for filter_type in &self.filter_types {
-            if skip.is_some_and(|s| s == filter_type) {
-                continue;
-            }
-            if let Ok(filter_id) = self.get_component_id(filter_type) {
-                builder.with_id(filter_id);
-            }
-        }
-        for filter_type in &self.without_filter_types {
-            if let Ok(filter_id) = self.get_component_id(filter_type) {
-                builder.without_id(filter_id);
-            }
-        }
-        // Changed/Added components need ref_id() for tick access via FilteredEntityMut
-        for filter_type in &self.changed_filter_types {
-            if skip.is_some_and(|s| s == filter_type) {
-                continue;
-            }
-            if let Ok(filter_id) = self.get_component_id(filter_type) {
-                builder.ref_id(filter_id);
-            }
-        }
-        for filter_type in &self.added_filter_types {
-            if skip.is_some_and(|s| s == filter_type) {
-                continue;
-            }
-            if let Ok(filter_id) = self.get_component_id(filter_type) {
-                builder.ref_id(filter_id);
-            }
-        }
-    }
-
-    /// Pre-resolve tick filter component IDs for thread-safe use in `par_iter_mut`.
-    ///
-    /// `RefCell<HashMap>` in `get_component_id()` is NOT thread-safe, so we must
-    /// resolve all IDs on the main thread before entering parallel iteration.
-    fn resolve_tick_filters(&self) -> ResolvedTickFilters {
-        let changed_ids = self
-            .changed_filter_types
-            .iter()
-            .filter_map(|ct| self.get_component_id(ct).ok())
-            .collect();
-        let added_ids = self
-            .added_filter_types
-            .iter()
-            .filter_map(|ct| self.get_component_id(ct).ok())
-            .collect();
-        ResolvedTickFilters {
-            changed_ids,
-            added_ids,
-            last_run: self.last_run,
-            this_run: self.this_run,
-        }
-    }
-
-    /// Helper: Execute a reduction operation with a custom accumulator function
-    fn reduce_with_op<F>(
+    /// Compile, validate, and reduce one expression through the neutral core.
+    fn reduce_expression(
         &self,
         py: Python<'_>,
         expr: &Bound<'_, PyAny>,
-        op: F,
-        initial: f64,
-    ) -> PyResult<f64>
-    where
-        F: Fn(f64, f64) -> f64 + Send + Sync,
-    {
-        let (result, _) = self.reduce_with_count(py, expr, op, initial)?;
-        Ok(result)
-    }
-
-    /// Helper: Execute a reduction with count tracking
-    fn reduce_with_count<F>(
-        &self,
-        py: Python<'_>,
-        expr: &Bound<'_, PyAny>,
-        op: F,
-        initial: f64,
-    ) -> PyResult<(f64, usize)>
-    where
-        F: Fn(f64, f64) -> f64 + Send + Sync,
-    {
-        // Compile expression to bytecode
-        let rust_expr = RustExpr::from_py_object(py, expr)?;
-
-        // Compile without destination (for reduction, we just evaluate)
-        let mut compiler = Compiler::new();
-        rust_expr.compile(&mut compiler);
-        let bytecode = Arc::new(compiler.finalize());
-
-        // Get world pointer
-        // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
-        let world = unsafe { &mut *self.world_ptr()? };
-
-        // SECURITY: validate field offsets before raw-pointer evaluation
-        // (reduction path uses `evaluate_on_ptr` -> `base.add(offset)`).
-        view_engine::validate_bytecode_offsets(world, &bytecode)
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-        // SECURITY: reject fields naming a component this view did not declare
-        // (undeclared-read race + would panic on the stride/base lookup).
-        view_engine::validate_bytecode_components(&bytecode, &self.declared_component_ids())
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-        // SECURITY: reject fields whose (offset, type) don't name a real field
-        // (type confusion, e.g. reading an f32 field as Bool = invalid-bit-pattern UB).
-        view_engine::validate_bytecode_field_types(&bytecode, &self.declared_field_offsets())
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-
-        // Determine which component type to query based on the compiled expression.
-        // The bytecode's field_map contains the ComponentId for each field reference,
-        // so we match it against our registered component IDs.
-        let component_type = if bytecode.field_map.is_empty() {
-            // Pure constant expression — use first component type
-            self.component_types
-                .first()
-                .ok_or_else(|| PyRuntimeError::new_err("View has no component types"))?
-        } else {
-            // Find which component type owns the fields referenced in the expression
-            let expr_component_id = bytecode.field_map[0].component_id;
-            self.component_types
-                .iter()
-                .find(|ct| {
-                    self.get_component_id(ct)
-                        .map(|id| id == expr_component_id)
-                        .unwrap_or(false)
-                })
-                .ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Expression references component {:?} which is not in the View",
-                        expr_component_id
-                    ))
-                })?
-        };
-
-        // Execute reduction based on component type
-        // Use generic helper that constrains T::Mutability = Mutable
-        let (result, count) = match component_type {
-            PyComponentType::Custom(type_ptr) => {
-                let accumulator = Mutex::new((initial, 0usize));
-
-                // Get Python type and determine storage type
-                let storage_type = Python::attach(|py| {
-                    // SAFETY: registered type pointers live for the interpreter lifetime
-                    let py_type = unsafe {
-                        pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
-                    };
-                    if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                        ComponentStorageType::from_python_class(cls)
-                            .unwrap_or(ComponentStorageType::PyObject)
-                    } else {
-                        ComponentStorageType::PyObject
-                    }
-                });
-
-                match storage_type {
-                    ComponentStorageType::Wrapper(wrapper_size) => {
-                        // CRITICAL: Query by ComponentId, not by wrapper type!
-                        // Multiple custom components can share the same wrapper size,
-                        // so we must use the specific component's ComponentId.
-                        let component_id = self.get_component_id(component_type)?;
-
-                        let tick_filters = self.resolve_tick_filters();
-
-                        macro_rules! reduce_wrapper {
-                            ($wrapper_type:ty) => {{
-                                let mut query_builder =
-                                    QueryBuilder::<FilteredEntityMut>::new(world);
-                                query_builder.mut_id(component_id);
-
-                                self.apply_filters_to_query_builder(
-                                    &mut query_builder,
-                                    Some(component_type),
-                                );
-
-                                let mut query_state = query_builder.build();
-
-                                query_state.par_iter_mut(world).for_each(|mut entity_mut| {
-                                    if !tick_filters.entity_passes(&entity_mut) {
-                                        return;
-                                    }
-                                    if let Some(mut untyped) =
-                                        entity_mut.get_mut_by_id(component_id)
-                                    {
-                                        // SAFETY: deref_mut + evaluate_on_ptr: pointer from
-                                        // get_mut_by_id() with matching wrapper layout.
-                                        let value = unsafe {
-                                            let wrapper =
-                                                untyped.as_mut().deref_mut::<$wrapper_type>();
-                                            let data_ptr = wrapper.data.as_ptr() as *const u8;
-                                            self.evaluate_expr_on_wrapper_data(data_ptr, &bytecode)
-                                        };
-                                        let mut acc = accumulator.lock().unwrap();
-                                        acc.0 = op(acc.0, value);
-                                        acc.1 += 1;
-                                    }
-                                });
-                            }};
-                        }
-
-                        match wrapper_size {
-                            WrapperSize::W8 => reduce_wrapper!(ComponentWrapper8),
-                            WrapperSize::W16 => reduce_wrapper!(ComponentWrapper16),
-                            WrapperSize::W32 => reduce_wrapper!(ComponentWrapper32),
-                            WrapperSize::W64 => reduce_wrapper!(ComponentWrapper64),
-                            WrapperSize::W128 => reduce_wrapper!(ComponentWrapper128),
-                            WrapperSize::W256 => reduce_wrapper!(ComponentWrapper256),
-                            WrapperSize::W512 => reduce_wrapper!(ComponentWrapper512),
-                            WrapperSize::W1024 => reduce_wrapper!(ComponentWrapper1024),
-                        }
-                    }
-                    ComponentStorageType::PyObject => {
-                        return Err(PyRuntimeError::new_err(
-                            "View API not supported for PyObject storage custom components",
-                        ));
-                    }
-                }
-
-                // into_inner only fails on poisoned mutex; par_iter_mut won't
-                // poison it since the closure doesn't panic.
-                accumulator.into_inner().unwrap()
-            }
-            PyComponentType::Dynamic(type_ptr) => {
-                let bridge = global_registry::get_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
-
-                let view_bridge = bridge.view_bridge().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Dynamic component '{}' does not support View reduce (no view_bridge)",
-                        bridge.name()
-                    ))
-                })?;
-
-                // Get component ID via the view_bridge
-                let component_id = (view_bridge.component_id)(world);
-
-                let accumulator = Mutex::new((initial, 0usize));
-
-                // Build query using ComponentId
-                let mut query_builder = QueryBuilder::<FilteredEntityMut>::new(world);
-                query_builder.mut_id(component_id);
-                self.apply_filters_to_query_builder(&mut query_builder, Some(component_type));
-
-                let mut query_state = query_builder.build();
-
-                let tick_filters = self.resolve_tick_filters();
-
-                // Execute reduction on all entities in parallel
-                query_state.par_iter_mut(world).for_each(|mut entity_mut| {
-                    // Per-entity tick filter check
-                    if !tick_filters.entity_passes(&entity_mut) {
-                        return;
-                    }
-                    if let Some(mut untyped) = entity_mut.get_mut_by_id(component_id) {
-                        let ptr = untyped.as_mut().as_ptr() as *const u8;
-                        // SAFETY: ptr from get_mut_by_id() points to valid component data
-                        let value = unsafe { self.evaluate_expr_on_wrapper_data(ptr, &bytecode) };
-                        let mut acc = accumulator.lock().unwrap();
-                        acc.0 = op(acc.0, value);
-                        acc.1 += 1;
-                    }
-                });
-
-                // into_inner only fails on poisoned mutex; par_iter_mut won't
-                // poison it since the closure doesn't panic.
-                accumulator.into_inner().unwrap()
-            }
-        };
-
-        Ok((result, count))
-    }
-
-    /// Evaluate expression on wrapper storage data (read-only).
-    ///
-    /// # Safety
-    ///
-    /// `data_ptr` must point to valid component data whose layout matches
-    /// the field offsets in `bytecode`.
-    #[inline]
-    unsafe fn evaluate_expr_on_wrapper_data(
-        &self,
-        data_ptr: *const u8,
-        bytecode: &CompiledBytecode,
-    ) -> f64 {
-        unsafe { view_engine::evaluate_on_ptr(data_ptr, bytecode) }
+        reduction: ViewReduction,
+    ) -> PyResult<ViewReductionOutput> {
+        let expression = RustExpr::from_py_object(py, expr)?;
+        let program = self
+            .runtime
+            .prepare_read_program(&expression)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let lease = self
+            .runtime
+            .gather_batches()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        lease
+            .reduce(&program, reduction, true)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 }
 
@@ -683,7 +337,7 @@ impl PyView {
     /// total_health = view.reduce_sum(transform.translation.x)
     /// ```
     fn reduce_sum(&self, py: Python<'_>, expr: &Bound<'_, PyAny>) -> PyResult<f64> {
-        self.reduce_with_op(py, expr, |acc, val| acc + val, 0.0)
+        Ok(self.reduce_expression(py, expr, ViewReduction::Sum)?.value)
     }
 
     /// Reduce operation: Compute mean (average) of an expression across entities
@@ -692,11 +346,11 @@ impl PyView {
     /// avg_position = view.reduce_mean(transform.translation.x)
     /// ```
     fn reduce_mean(&self, py: Python<'_>, expr: &Bound<'_, PyAny>) -> PyResult<f64> {
-        let (sum, count) = self.reduce_with_count(py, expr, |acc, val| acc + val, 0.0)?;
-        if count == 0 {
+        let output = self.reduce_expression(py, expr, ViewReduction::Sum)?;
+        if output.count == 0 {
             Ok(0.0)
         } else {
-            Ok(sum / count as f64)
+            Ok(output.value / output.count as f64)
         }
     }
 
@@ -706,7 +360,7 @@ impl PyView {
     /// max_score = view.reduce_max(transform.scale.z)
     /// ```
     fn reduce_max(&self, py: Python<'_>, expr: &Bound<'_, PyAny>) -> PyResult<f64> {
-        self.reduce_with_op(py, expr, |acc, val| acc.max(val), f64::NEG_INFINITY)
+        Ok(self.reduce_expression(py, expr, ViewReduction::Max)?.value)
     }
 
     /// Reduce operation: Find minimum value of an expression across entities
@@ -715,7 +369,7 @@ impl PyView {
     /// min_distance = view.reduce_min(distance_expr)
     /// ```
     fn reduce_min(&self, py: Python<'_>, expr: &Bound<'_, PyAny>) -> PyResult<f64> {
-        self.reduce_with_op(py, expr, |acc, val| acc.min(val), f64::INFINITY)
+        Ok(self.reduce_expression(py, expr, ViewReduction::Min)?.value)
     }
 
     /// Iterate over contiguous filtered table-row batches for zero-copy ViewColumn access.
@@ -786,17 +440,9 @@ impl PyView {
     #[pyo3(signature = (expr=None))]
     fn reduce_count(&self, py: Python<'_>, expr: Option<&Bound<'_, PyAny>>) -> PyResult<usize> {
         if let Some(expr_obj) = expr {
-            // Count entities where expression evaluates to true (>= 0.5)
-            let (sum, _) = self.reduce_with_count(
-                py,
-                expr_obj,
-                |acc, val| {
-                    // Treat any value >= 0.5 as true
-                    if val >= 0.5 { acc + 1.0 } else { acc }
-                },
-                0.0,
-            )?;
-            Ok(sum as usize)
+            Ok(self
+                .reduce_expression(py, expr_obj, ViewReduction::CountTruthy)?
+                .value as usize)
         } else {
             let lease = self
                 .runtime
@@ -1147,8 +793,8 @@ impl PyViewColMut {
     /// Called by `__setattr__` for direct assignments (e.g., `pos.x = expr`)
     /// and by Vec3Expr/QuatExpr for nested assignments (e.g., `pos.translation.y = expr`).
     ///
-    /// Uses `BytecodeCache` from `view_engine` for frame-persistent caching
-    /// keyed by (component_id, field_offset, expression_hash).
+    /// Compiled programs are cached on the stable `CachedViewCore` and always
+    /// pass intent/layout/access validation before execution.
     #[pyo3(name = "_trigger_assignment")]
     fn _trigger_assignment(
         &self,
@@ -1161,192 +807,29 @@ impl PyViewColMut {
         let (dest_offset, dest_field_type) =
             get_component_field_info(&self.component_type, field_name)?;
 
+        // SAFETY: validity was checked immediately above. The proxy and parent
+        // are created for the same run and the run guard invalidates the shared
+        // flag before the parent can be used again.
         let view = unsafe { &*self.view_ptr };
 
         // Parse the Python expression to RustExpr
         let expr = RustExpr::from_py_object(py, value)?;
-        let expr_hash = view_engine::BytecodeCache::expr_hash(&expr);
-
-        // Get or compile bytecode (cached across frames)
-        let bytecode = view
-            .bytecode_cache
-            .borrow_mut()
-            .get_or_compile(
-                self.component_id,
-                dest_offset,
-                dest_field_type,
-                &expr,
-                expr_hash,
-            )
-            .clone();
-
-        self.execute_batch(py, &bytecode)
-    }
-}
-
-impl PyViewColMut {
-    /// Execute compiled bytecode on all entities in a parallel batch
-    fn execute_batch(&self, _py: Python, bytecode: &CompiledBytecode) -> PyResult<()> {
-        // Collect all unique component IDs from the bytecode
-        let mut component_ids: HashSet<ComponentId> = HashSet::new();
-        for field_id in &bytecode.field_map {
-            component_ids.insert(field_id.component_id);
-        }
-
-        // Get world reference
-        let view = unsafe { &*self.view_ptr };
-        // SAFETY: momentary &mut World for a batch op; see PyView::world_ptr.
-        let world = unsafe { &mut *view.world_ptr()? };
-
-        // SECURITY: validate every field offset (source fields AND the
-        // assignment destination, which `compile_assignment` appends to
-        // `field_map`) against each component's registered layout before any
-        // raw-pointer arithmetic. A Python-constructed `Expr("field", ...)`
-        // can supply an arbitrary `offset`; without this check the VM would
-        // compute `base.add(offset)` and read/write out of bounds of the
-        // component column allocation.
-        view_engine::validate_bytecode_offsets(world, bytecode)
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-        // SECURITY: reject fields naming a component this view did not declare
-        // (undeclared-read race on assignment sources + stride/base lookup panic).
-        view_engine::validate_bytecode_components(bytecode, &view.declared_component_ids())
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-        // SECURITY: reject fields whose (offset, type) don't name a real field
-        // (type confusion on assignment source/dest, e.g. Bool over an f32 field = UB).
-        view_engine::validate_bytecode_field_types(bytecode, &view.declared_field_offsets())
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-
-        // If all fields are from the same component, use the optimized single-component path
-        if component_ids.len() == 1 && component_ids.contains(&self.component_id) {
-            return self.execute_batch_single_component(world, view, bytecode);
-        }
-
-        // Cross-component expression - use dynamic query
-        self.execute_batch_multi_component(world, view, bytecode, component_ids)
-    }
-
-    /// Execute bytecode on a single component (optimized path)
-    fn execute_batch_single_component(
-        &self,
-        world: &mut World,
-        view: &PyView,
-        bytecode: &CompiledBytecode,
-    ) -> PyResult<()> {
-        // Execute based on component type using concrete types
-        match &self.component_type {
-            PyComponentType::Dynamic(_type_ptr) => {
-                let filter = view.build_view_filter([self.component_id].into_iter().collect())?;
-
-                view_engine::execute_query_assignment(world, self.component_id, &filter, bytecode);
-                Ok(())
-            }
-            PyComponentType::Custom(type_ptr) => {
-                // Get Python type and determine storage type
-                let storage_type = Python::attach(|py| {
-                    // SAFETY: registered type pointers live for the interpreter lifetime
-                    let py_type = unsafe {
-                        pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
-                    };
-                    if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                        ComponentStorageType::from_python_class(cls)
-                            .unwrap_or(ComponentStorageType::PyObject)
-                    } else {
-                        ComponentStorageType::PyObject
-                    }
-                });
-
-                match storage_type {
-                    ComponentStorageType::Wrapper(wrapper_size) => {
-                        let tick_filters = view.resolve_tick_filters();
-
-                        // Execute on wrapper storage
-                        macro_rules! execute_wrapper {
-                            ($wrapper_type:ty) => {{
-                                // Get the component ID that was registered for this custom component
-                                let component_id = view.get_component_id(&self.component_type)?;
-
-                                // CRITICAL: Query by ComponentId, not by wrapper type!
-                                // Multiple custom components can share the same wrapper size
-                                let mut query_builder =
-                                    QueryBuilder::<FilteredEntityMut>::new(world);
-                                query_builder.mut_id(component_id);
-
-                                view.apply_filters_to_query_builder(&mut query_builder, Some(&self.component_type));
-
-                                let mut query_state = query_builder.build();
-
-                                // Execute on all entities in parallel
-                                query_state.par_iter_mut(world).for_each(|mut entity_mut| {
-                                    // Per-entity tick filter check
-                                    if !tick_filters.entity_passes(&entity_mut) {
-                                        return;
-                                    }
-                                    // Get the wrapper by ComponentId
-                                    if let Some(mut untyped) = entity_mut.get_mut_by_id(component_id) {
-                                        // Cast to wrapper type and execute
-                                        unsafe {
-                                            let wrapper = untyped.as_mut().deref_mut::<$wrapper_type>();
-                                            let data_ptr = wrapper.data.as_mut_ptr() as *mut u8;
-                                            self.execute_on_wrapper_data(data_ptr, bytecode);
-                                        }
-                                    }
-                                });
-
-                                Ok(())
-                            }};
-                        }
-
-                        match wrapper_size {
-                            WrapperSize::W8 => execute_wrapper!(ComponentWrapper8),
-                            WrapperSize::W16 => execute_wrapper!(ComponentWrapper16),
-                            WrapperSize::W32 => execute_wrapper!(ComponentWrapper32),
-                            WrapperSize::W64 => execute_wrapper!(ComponentWrapper64),
-                            WrapperSize::W128 => execute_wrapper!(ComponentWrapper128),
-                            WrapperSize::W256 => execute_wrapper!(ComponentWrapper256),
-                            WrapperSize::W512 => execute_wrapper!(ComponentWrapper512),
-                            WrapperSize::W1024 => execute_wrapper!(ComponentWrapper1024),
-                        }
-                    }
-                    ComponentStorageType::PyObject => Err(PyRuntimeError::new_err(
-                        "View API not supported for PyObject storage custom components",
-                    )),
-                }
-            }
-        }
-    }
-
-    /// Execute bytecode on multiple components (cross-component expressions)
-    ///
-    /// Uses `ViewExecutionContext` for cached batch execution with automatic
-    /// change tick marking.
-    fn execute_batch_multi_component(
-        &self,
-        world: &mut World,
-        view: &PyView,
-        bytecode: &CompiledBytecode,
-        component_ids: HashSet<ComponentId>,
-    ) -> PyResult<()> {
-        let filter = view.build_view_filter(component_ids)?;
-
-        let ctx =
-            view_engine::ViewExecutionContext::new(world, &filter, view.last_run, view.this_run)
-                .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
-
-        unsafe {
-            ctx.execute(world, bytecode, self.component_id);
-        }
-        Ok(())
-    }
-
-    /// Execute bytecode on wrapper storage data.
-    ///
-    /// # Safety
-    ///
-    /// `data_ptr` must point to valid component data whose layout matches
-    /// the field offsets in `bytecode`.
-    #[inline]
-    unsafe fn execute_on_wrapper_data(&self, data_ptr: *mut u8, bytecode: &CompiledBytecode) {
-        unsafe { view_engine::execute_on_ptr(data_ptr, bytecode) };
+        let destination = FieldId {
+            component_id: self.component_id,
+            offset: dest_offset,
+            field_type: dest_field_type,
+        };
+        let program = view
+            .runtime
+            .prepare_assignment_program(destination, &expr)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let lease = view
+            .runtime
+            .gather_batches()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        lease
+            .execute_assignment(&program, true)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 }
 

@@ -886,6 +886,108 @@ pub unsafe fn execute_filtered_assignment(
     }
 }
 
+/// Evaluate one validated read-only program over exact gathered batches.
+///
+/// This is crate-private so raw batch pointers cannot bypass
+/// `ViewRuntimeCore`'s validation and operation fence. Results preserve batch
+/// and row order even when evaluation runs in parallel.
+///
+/// # Safety
+///
+/// - Every bytecode field must have been validated against the gathered
+///   component bases and `component_strides`.
+/// - All batch pointers and tick masks must remain live and unchanged for the
+///   complete call.
+/// - Scheduler access must prevent writes to every referenced component.
+pub(crate) unsafe fn evaluate_batch_program(
+    batches: &[TableBatch],
+    bytecode: &CompiledBytecode,
+    component_strides: &HashMap<ComponentId, usize>,
+    parallel: bool,
+) -> Vec<f64> {
+    if bytecode
+        .field_map
+        .iter()
+        .any(|field| !component_strides.contains_key(&field.component_id))
+    {
+        return Vec::new();
+    }
+
+    struct EntityWork {
+        field_ptrs: Vec<SendPtr>,
+        entity_seed: usize,
+    }
+
+    let work_items: Vec<EntityWork> = batches
+        .iter()
+        .flat_map(|batch| {
+            (0..batch.entity_count).filter_map(move |local_row| {
+                if batch
+                    .tick_mask
+                    .as_ref()
+                    .is_some_and(|mask| !mask[local_row])
+                {
+                    return None;
+                }
+
+                let table_row = batch.start_row + local_row;
+                let field_ptrs: Vec<SendPtr> = bytecode
+                    .field_map
+                    .iter()
+                    .map(|field| {
+                        let base = batch.component_bases[&field.component_id];
+                        let stride = component_strides[&field.component_id];
+                        // SAFETY: the caller validated the field span and this
+                        // row lies inside the gathered contiguous range.
+                        SendPtr(unsafe { base.add(field.offset).add(table_row * stride) })
+                    })
+                    .collect();
+
+                // Preserve the existing pointer-derived random seed when a
+                // field is present. Constant-only programs instead use the
+                // actual table/range row, avoiding range-local seed resets.
+                let entity_seed = field_ptrs.first().map_or_else(
+                    || {
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        if let Some((&component_id, &base)) = batch
+                            .component_bases
+                            .iter()
+                            .min_by_key(|(component_id, _)| component_id.index())
+                        {
+                            component_id.hash(&mut hasher);
+                            (base as usize).hash(&mut hasher);
+                        }
+                        table_row.hash(&mut hasher);
+                        hasher.finish() as usize
+                    },
+                    |pointer| pointer.0 as usize,
+                );
+                Some(EntityWork {
+                    field_ptrs,
+                    entity_seed,
+                })
+            })
+        })
+        .collect();
+
+    let evaluate = |work: &EntityWork| {
+        let mut vm = VM::new();
+        let field_ptrs: Vec<*mut u8> = work.field_ptrs.iter().map(|pointer| pointer.0).collect();
+        // SAFETY: upheld by this function's caller and the bounds-checked work
+        // construction above; the bytecode is read-only and fully validated.
+        unsafe { vm.execute_and_reduce(bytecode, &field_ptrs, work.entity_seed) }
+    };
+
+    #[cfg(feature = "parallel")]
+    if parallel {
+        use rayon::prelude::*;
+        return work_items.par_iter().map(evaluate).collect();
+    }
+
+    let _ = parallel;
+    work_items.iter().map(evaluate).collect()
+}
+
 /// Mark destination component as changed on all matching entities.
 ///
 /// Reuses the already-gathered batches (and their tick masks) to avoid
