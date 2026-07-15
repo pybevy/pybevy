@@ -183,9 +183,7 @@ class LinearRgba:
     # EuclideanDistance trait methods
     def distance_squared(self, other: LinearRgba) -> float: ...
 
-    # Alpha trait methods
-    def set_alpha(self, alpha: float) -> None:
-        """Set the alpha channel (mutates in place)."""
+    # Alpha trait methods (alpha is directly writable on LinearRgba)
     def is_fully_transparent(self) -> bool: ...
     def is_fully_opaque(self) -> bool: ...
 

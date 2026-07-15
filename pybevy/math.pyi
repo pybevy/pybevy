@@ -1529,10 +1529,6 @@ class Aabb2d:
         """
 
     @staticmethod
-    def new(center: Vec2, half_size: Vec2) -> Aabb2d:
-        """Create a new Aabb2d from center and half-extents."""
-
-    @staticmethod
     def from_point_cloud(isometry: Isometry2d, points: list[Vec2]) -> Aabb2d:
         """Create an Aabb2d that contains all given points.
 
@@ -1604,10 +1600,6 @@ class BoundingCircle:
             circle = BoundingCircle(Vec2(100.0, 100.0), 50.0)
             ```
         """
-
-    @staticmethod
-    def new(center: Vec2, radius: float) -> BoundingCircle:
-        """Create a new BoundingCircle."""
 
     @staticmethod
     def from_point_cloud(isometry: Isometry2d, points: list[Vec2]) -> BoundingCircle:
