@@ -16,7 +16,7 @@ use bevy::ecs::{
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
-use crate::{FilteredEntityAccess, ValidityFlagWithMode, ViewBridge};
+use crate::{FilteredEntityAccess, PreparedUniformComponent, ValidityFlagWithMode, ViewBridge};
 
 /// Function pointer type for component extraction.
 ///
@@ -117,6 +117,17 @@ pub trait ComponentBridge: Send + Sync + 'static {
         entity: &mut EntityWorldMut,
         component: &Bound<PyAny>,
     ) -> PyResult<()>;
+
+    /// Convert one Python component into an owned uniform insertion payload.
+    fn prepare_uniform(
+        &self,
+        _component: &Bound<PyAny>,
+    ) -> PyResult<Box<dyn PreparedUniformComponent>> {
+        Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "{} cannot be spawned from Python",
+            self.name()
+        )))
+    }
 
     /// Check if entity has this component type
     fn entity_contains(&self, entity: &EntityRef) -> bool;

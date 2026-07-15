@@ -1,9 +1,9 @@
 //! Backend-agnostic custom component registration.
 //!
 //! This module provides shared infrastructure for registering Python-defined
-//! `@component` classes as Bevy components. Both PyO3 and RustPython backends
-//! use these functions, providing their own implementations of the
-//! [`PythonObjectDescriptor`] trait for backend-specific Python object storage.
+//! `@component` classes as Bevy components. Interpreter adapters use these
+//! functions and provide their own [`PythonObjectDescriptor`] implementation
+//! for interpreter-object storage.
 
 use std::collections::HashMap;
 
@@ -47,8 +47,8 @@ pub fn create_wrapper_descriptor(name: String, wrapper_size: WrapperSize) -> Com
 /// [`ComponentDescriptor`] with the correct layout and drop function for its
 /// Python object representation.
 ///
-/// - **PyO3**: Stores `Py<PyAny>` and drops via `OwningPtr::drop_as::<Py<PyAny>>()`
-/// - **RustPython**: Would store its own object type with its own drop logic
+/// Each adapter supplies a descriptor and drop logic appropriate to its
+/// interpreter object representation.
 pub trait PythonObjectDescriptor {
     /// Create a [`ComponentDescriptor`] for storing Python objects in the ECS.
     fn create(name: String) -> ComponentDescriptor;
@@ -82,10 +82,9 @@ pub fn register_custom_component_descriptor<D: PythonObjectDescriptor>(
 
 /// Neutral registry of custom Python components, shared by both backends.
 ///
-/// Keyed by a backend-agnostic type identity: a `usize`. PyO3 passes
-/// `type_ptr as usize`; RustPython passes `PyObjectRef::get_id()`. Storing a
-/// `usize` (not a raw pointer) keeps this resource `Send`/`Sync` with no
-/// `unsafe impl`.
+/// Keyed by an interpreter-neutral type identity: a `usize`. Adapters provide
+/// a stable type-object identity; storing it as a `usize` (not a raw pointer)
+/// keeps this resource `Send`/`Sync` with no `unsafe impl`.
 ///
 /// The `storage_types` map (keyed by [`ComponentId`]) is the **single source of
 /// truth** for the storage-flip guard: reuse of a cached `ComponentId` is
@@ -94,6 +93,7 @@ pub fn register_custom_component_descriptor<D: PythonObjectDescriptor>(
 #[derive(Resource, Default)]
 pub struct CustomComponentRegistry {
     by_id: HashMap<usize, ComponentId>,
+    alias_generations: HashMap<usize, u32>,
     by_name: HashMap<String, ComponentId>,
     storage_types: HashMap<ComponentId, ComponentStorageType>,
 }
@@ -115,11 +115,34 @@ impl CustomComponentRegistry {
     pub fn storage_type(&self, id: ComponentId) -> Option<ComponentStorageType> {
         self.storage_types.get(&id).copied()
     }
+
+    /// Number of interpreter type identities retained for live/rollback reload generations.
+    pub fn alias_count(&self) -> usize {
+        self.by_id.len()
+    }
+
+    /// Remove exact type identities older than the hot-reload rollback window.
+    ///
+    /// Logical name and storage mappings remain: a later definition of the same
+    /// component can still reuse its stable Bevy `ComponentId`.
+    pub fn prune_aliases(&mut self, minimum_generation: u32) -> Vec<usize> {
+        let removed = self
+            .alias_generations
+            .iter()
+            .filter_map(|(type_id, generation)| {
+                (*generation < minimum_generation).then_some(*type_id)
+            })
+            .collect::<Vec<_>>();
+        for type_id in &removed {
+            self.by_id.remove(type_id);
+            self.alias_generations.remove(type_id);
+        }
+        removed
+    }
 }
 
 /// What a call to [`register_custom_component_guarded`] did, so the caller can
-/// keep its backend-specific side-tables in sync (PyO3: `CustomComponentInfo`;
-/// RustPython: its `layouts`/`names` maps).
+/// keep its adapter-local side tables in sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterOutcome {
     /// The exact type-id was already registered with an unchanged storage type;
@@ -174,6 +197,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
     name: &str,
     qualified_name: Option<&str>,
     storage_type: ComponentStorageType,
+    generation: u32,
 ) -> RegisterOutcome {
     if !world.contains_resource::<CustomComponentRegistry>() {
         world.insert_resource(CustomComponentRegistry::default());
@@ -195,6 +219,10 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
             .get(&id)
             .copied();
         if stored == Some(storage_type) {
+            world
+                .resource_mut::<CustomComponentRegistry>()
+                .alias_generations
+                .insert(type_id, generation);
             return RegisterOutcome::Reused(id);
         }
         // Storage flipped on this class object: do NOT reuse `id`. The name-based
@@ -224,6 +252,10 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
                     .resource_mut::<CustomComponentRegistry>()
                     .by_id
                     .insert(type_id, existing_id);
+                world
+                    .resource_mut::<CustomComponentRegistry>()
+                    .alias_generations
+                    .insert(type_id, generation);
                 return RegisterOutcome::Aliased(existing_id);
             }
             // Storage changed across reload: the old column can't hold the new
@@ -238,13 +270,22 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
     if let Some(stale) = evicted {
         let mut reg = world.resource_mut::<CustomComponentRegistry>();
         reg.storage_types.remove(&stale);
+        let stale_type_ids = reg
+            .by_id
+            .iter()
+            .filter_map(|(type_id, id)| (*id == stale).then_some(*type_id))
+            .collect::<Vec<_>>();
         reg.by_id.retain(|_, id| *id != stale);
+        for type_id in stale_type_ids {
+            reg.alias_generations.remove(&type_id);
+        }
     }
 
     let id = register_custom_component_descriptor::<D>(world, name.to_string(), storage_type);
 
     let mut reg = world.resource_mut::<CustomComponentRegistry>();
     reg.by_id.insert(type_id, id);
+    reg.alias_generations.insert(type_id, generation);
     reg.storage_types.insert(id, storage_type);
     if let Some(qname) = qualified_name {
         reg.by_name.insert(qname.to_string(), id);
@@ -356,6 +397,7 @@ mod tests {
             "Foo",
             Some("m.Foo"),
             storage,
+            0,
         )
     }
 
@@ -432,5 +474,28 @@ mod tests {
             world.resource::<CustomComponentRegistry>().get(0x2000),
             Some(b.id())
         );
+    }
+
+    #[test]
+    fn guarded_hot_reload_aliases_are_bounded_by_generation() {
+        let mut world = World::new();
+        for generation in 0..100 {
+            register_custom_component_guarded::<TestObjectDescriptor>(
+                &mut world,
+                0x1000 + generation as usize,
+                "Foo",
+                Some("m.Foo"),
+                pyobj(),
+                generation,
+            );
+            world
+                .resource_mut::<CustomComponentRegistry>()
+                .prune_aliases(generation.saturating_sub(1));
+        }
+
+        let registry = world.resource::<CustomComponentRegistry>();
+        assert_eq!(registry.alias_count(), 2);
+        assert!(registry.get(0x1000 + 98).is_some());
+        assert!(registry.get(0x1000 + 99).is_some());
     }
 }

@@ -6,8 +6,8 @@ use super::component_wrapper::WrapperSize;
 
 /// Primitive types that can be stored in wrapper components.
 ///
-/// Backend-agnostic: both PyO3 and RustPython backends use this enum
-/// to describe field types in custom components.
+/// Interpreter-neutral: adapters use this enum to describe field types in
+/// custom components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     F32,
@@ -82,8 +82,8 @@ impl PrimitiveType {
 /// A component-field value already coerced from Python to a plain Rust value, ready
 /// to write into wrapper bytes. One variant per [`PrimitiveType`].
 ///
-/// Backend-agnostic: both backends extract their interpreter's value into this enum
-/// (PyO3 via `.extract()`, RustPython via `try_*`) and then call [`Self::write_to_ptr`].
+/// Interpreter-neutral: adapters extract their interpreter's value into this enum
+/// and then call [`Self::write_to_ptr`].
 /// Splitting extraction from the write lets a caller finish ALL Python interaction
 /// before it resolves the destination pointer - extraction can re-enter Python
 /// (`__float__`/`__index__`/`__bool__`) and structurally mutate the World, relocating
@@ -246,7 +246,7 @@ pub struct FieldInfo {
 /// Layout metadata for a wrapper component.
 ///
 /// Backend-agnostic: describes the memory layout of a custom component's fields.
-/// Each backend (PyO3, RustPython) provides its own constructor to build this
+/// Each interpreter adapter provides its own constructor to build this
 /// from Python class metadata.
 #[derive(Debug, Clone)]
 pub struct ComponentLayout {

@@ -2,21 +2,19 @@
 //! backends execute, with the interpreter- and reload-specific steps left to
 //! the caller.
 //!
-//! Both the pyo3 and the rustpython `DynamicSystem::run_unsafe` bodies follow
-//! the same skeleton: a generation guard, a change-tick advance, a
+//! Each adapter's `DynamicSystem::run_unsafe` body follows the same skeleton:
+//! a generation guard, a change-tick advance, a
 //! `ValidityFlag` fenced by an RAII guard, a local `CommandQueue`, the actual
 //! interpreter call, then an end-of-run tick re-read. Only the middle (enter
 //! the interpreter runtime, build the arguments, call the function, route the
-//! error) touches types the shared crate cannot see (`Py<PyAny>` vs
-//! `PyObjectRef`, the reload/profiler resources), so that middle is passed in
-//! as `run_interpreted`. Keeping the ordering here means it cannot drift
-//! between the two backends the way the access-declaration logic did before the
+//! error) touches types the shared crate cannot see, so that middle is passed
+//! in as `run_interpreted`. Keeping the ordering here prevents interpreter
+//! adapters from drifting as the access-declaration logic did before the
 //! earlier extraction steps.
 //!
 //! The scaffold owns the local `CommandQueue` but not the `Commands`/`PyCommands`
-//! wrappers: the pyo3 backend builds a Bevy `Commands` from the queue while the
-//! rustpython backend hands a raw queue pointer to its lazy `PyCommands`, so the
-//! queue is the shared unit and each backend wraps it its own way.
+//! wrappers: each adapter exposes the queue through its own command wrapper,
+//! while the queue itself remains the shared unit.
 
 use std::time::Duration;
 
@@ -32,7 +30,7 @@ use pybevy_storage::{ValidityFlag, ValidityGuard};
 /// The change-detection window for one system run: `last_run` opens it and
 /// `this_run` is the freshly advanced world tick every query, view, and
 /// write-back observes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct RunTicks {
     pub last_run: Tick,
     pub this_run: Tick,
@@ -45,8 +43,8 @@ pub struct RunCtx<'w> {
     /// The run's change-detection ticks.
     pub ticks: RunTicks,
     /// The current hot-reload generation, or `None` when reload is inactive.
-    /// The pyo3 backend uses it to decide whether to re-import the function;
-    /// the rustpython backend ignores it.
+    /// Adapters that reload imported callables use it to decide whether to
+    /// re-import the function.
     pub current_generation: Option<u32>,
 }
 

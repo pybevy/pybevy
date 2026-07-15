@@ -10,18 +10,36 @@
 //! - in_state() run condition - conditional system execution
 //! - DespawnOnExit/DespawnOnEnter - automatic entity cleanup
 
-use std::sync::{Arc, Mutex};
-
-use bevy::ecs::{entity::Entity, world::World};
-use pybevy_core::CustomComponentInfo;
-use pybevy_ecs::shared::schedule::{StateMachineId, StateScheduleLabel, TransitionScheduleLabel};
-use pyo3::{
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
-    prelude::*,
-    types::PyType,
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
 };
 
-use crate::ecs::{component::PyComponent, resource::PyResource};
+use bevy::ecs::{entity::Entity, resource::Resource, world::World};
+use pybevy_core::CustomComponentInfo;
+use pybevy_ecs::shared::{
+    schedule::{StateMachineId, StateScheduleKind, StateScheduleLabel, TransitionScheduleLabel},
+    state_machine_registry::{
+        StateMachineIdentityRegistry, StateMachineRegisterOutcome, StateTypeKey,
+    },
+    state_transition::{
+        StateTransitionGate, StateTransitionPassGuard, StateTransitionPlan, StateTransitionStep,
+    },
+};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    prelude::*,
+    types::{PyDict, PyTuple, PyType},
+};
+
+use crate::ecs::{
+    component::PyComponent,
+    resource::PyResource,
+    resource_type::{PyResourceStorage, register_custom_resource},
+};
+
+pub(crate) const STATE_RESOURCE_TYPE_CACHE_ATTR: &str = "__pybevy_state_resource_cache__";
 
 /// Python decorator for marking an Enum as a state machine
 ///
@@ -70,12 +88,18 @@ pub fn state(py: Python, cls: Bound<PyType>) -> PyResult<Py<PyType>> {
 pub struct PyState {
     /// Current state value (Python enum member) - uses internal mutability for transitions
     current: Arc<Mutex<Py<PyAny>>>,
-    /// Type of the state enum (for validation)
-    state_type: Py<PyType>,
 }
 
 #[pymethods]
 impl PyState {
+    #[classmethod]
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
+        state_type: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyType>> {
+        typed_state_resource_type(cls.py(), cls, state_type, StateResourceKind::Current)
+    }
+
     /// Create a new State resource
     #[new]
     fn py_new(py: Python, initial_state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
@@ -87,7 +111,6 @@ impl PyState {
         Ok((
             PyState {
                 current: Arc::new(Mutex::new(initial_state)),
-                state_type,
             },
             PyResource,
         )
@@ -137,7 +160,6 @@ impl PyState {
             (
                 PyState {
                     current: Arc::new(Mutex::new(state_value)),
-                    state_type,
                 },
                 PyResource,
             ),
@@ -176,7 +198,7 @@ pub struct PyNextState {
     /// Internal state: Unchanged or Pending(value)
     inner: Arc<Mutex<NextStateInner>>,
     /// Type of the state enum
-    state_type: Py<PyType>,
+    state_type: Mutex<Py<PyType>>,
     /// Whether the initial OnEnter for the starting state still needs to fire.
     /// Set to true on creation, cleared after the first transition system run.
     /// This matches Bevy's behavior where OnEnter fires for the initial state.
@@ -190,6 +212,14 @@ enum NextStateInner {
 
 #[pymethods]
 impl PyNextState {
+    #[classmethod]
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
+        state_type: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyType>> {
+        typed_state_resource_type(cls.py(), cls, state_type, StateResourceKind::Next)
+    }
+
     /// Queue a state transition
     ///
     /// The transition will be applied during the StateTransition schedule
@@ -198,13 +228,15 @@ impl PyNextState {
         let state_bound = state.bind(py);
         let provided_type = state_bound.get_type();
 
-        if !provided_type.is(self.state_type.bind(py)) {
+        let state_type = self.state_type.lock().unwrap();
+        if !provided_type.is(state_type.bind(py)) {
             return Err(PyTypeError::new_err(format!(
                 "State type mismatch: expected {}, got {}",
-                self.state_type.bind(py).name()?,
+                state_type.bind(py).name()?,
                 provided_type.name()?
             )));
         }
+        drop(state_type);
 
         *self.inner.lock().unwrap() = NextStateInner::Pending(state);
         Ok(())
@@ -251,7 +283,7 @@ impl PyNextState {
             (
                 PyNextState {
                     inner: Arc::new(Mutex::new(NextStateInner::Unchanged)),
-                    state_type,
+                    state_type: Mutex::new(state_type),
                     initial_enter_pending: Arc::new(Mutex::new(true)),
                 },
                 PyResource,
@@ -279,6 +311,352 @@ impl PyNextState {
             false
         }
     }
+
+    fn migrate_state_type(&self, py: Python<'_>, state_type: Py<PyType>) -> PyResult<()> {
+        let pending = match &*self.inner.lock().unwrap() {
+            NextStateInner::Pending(value) => Some(value.clone_ref(py)),
+            NextStateInner::Unchanged => None,
+        };
+        let migrated = pending
+            .map(|value| remap_state_value(py, &value, state_type.bind(py)))
+            .transpose()?;
+
+        *self.state_type.lock().unwrap() = state_type;
+        if let Some(value) = migrated {
+            *self.inner.lock().unwrap() = NextStateInner::Pending(value);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StateResourceKind {
+    Current,
+    Next,
+}
+
+impl StateResourceKind {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Current => "State",
+            Self::Next => "NextState",
+        }
+    }
+}
+
+fn state_type_qualified_name(state_type: &Bound<'_, PyType>) -> PyResult<String> {
+    let module = state_type
+        .getattr("__module__")?
+        .extract::<String>()
+        .unwrap_or_default();
+    let qualname = state_type
+        .getattr("__qualname__")
+        .or_else(|_| state_type.getattr("__name__"))?
+        .extract::<String>()?;
+    Ok(if module.is_empty() {
+        qualname
+    } else {
+        format!("{module}.{qualname}")
+    })
+}
+
+fn typed_state_resource_type(
+    py: Python<'_>,
+    wrapper_type: &Bound<'_, PyType>,
+    state_type: &Bound<'_, PyAny>,
+    kind: StateResourceKind,
+) -> PyResult<Py<PyType>> {
+    let state_type = state_type.cast::<PyType>().map_err(|_| {
+        PyTypeError::new_err(format!("{}[...] requires a @state Enum type", kind.name()))
+    })?;
+    PyState::validate_state_type(py, &state_type.clone().unbind())?;
+
+    let cache = wrapper_type
+        .getattr(STATE_RESOURCE_TYPE_CACHE_ATTR)?
+        .cast_into::<PyDict>()?;
+    if let Some(cached) = cache.get_item(state_type)? {
+        return Ok(cached.cast_into::<PyType>()?.unbind());
+    }
+
+    let state_name = state_type_qualified_name(state_type)?;
+    let descriptor_name = format!("{}[{state_name}]", kind.name());
+    let namespace = PyDict::new(py);
+    namespace.set_item("__module__", "pybevy.ecs")?;
+    namespace.set_item("__qualname__", &descriptor_name)?;
+    namespace.set_item("__pybevy_resource_decorated__", true)?;
+    namespace.set_item("__pybevy_state_type__", state_type)?;
+    namespace.set_item("__pybevy_state_kind__", kind.name())?;
+    let bases = PyTuple::new(py, [PyResource::type_object(py)])?;
+    let descriptor = py
+        .get_type::<PyType>()
+        .call1((&descriptor_name, bases, namespace))?
+        .cast_into::<PyType>()?;
+    // set_default_with_result is the canonicalization point: concurrent cache
+    // misses may build short-lived candidates, but every caller receives the
+    // single descriptor stored for this exact state class.
+    let (_, canonical) = cache.set_default_with_result(state_type, &descriptor)?;
+    Ok(canonical.cast_into::<PyType>()?.unbind())
+}
+
+struct PyStateMachineEntry {
+    state: Py<PyState>,
+    next_state: Py<PyNextState>,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct PyStateMachineRegistry {
+    order: Vec<StateMachineId>,
+    entries: HashMap<StateMachineId, PyStateMachineEntry>,
+    identities: StateMachineIdentityRegistry,
+    transition_gate: StateTransitionGate,
+}
+
+impl PyStateMachineRegistry {
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn is_ambiguous(&self) -> bool {
+        self.len() > 1
+    }
+
+    fn snapshots(&self, py: Python<'_>) -> Vec<(StateMachineId, Py<PyState>, Py<PyNextState>)> {
+        self.order
+            .iter()
+            .filter_map(|machine_id| {
+                self.entries.get(machine_id).map(|entry| {
+                    (
+                        *machine_id,
+                        entry.state.clone_ref(py),
+                        entry.next_state.clone_ref(py),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn canonical_id(&self, type_key: StateTypeKey) -> Option<StateMachineId> {
+        self.identities.get(type_key)
+    }
+
+    fn begin_transition_pass(&self) -> Option<StateTransitionPassGuard> {
+        self.transition_gate.try_enter()
+    }
+}
+
+fn remap_state_value(
+    py: Python<'_>,
+    value: &Py<PyAny>,
+    state_type: &Bound<'_, PyType>,
+) -> PyResult<Py<PyAny>> {
+    let member_name = value.bind(py).getattr("name")?.extract::<String>()?;
+    Ok(state_type.get_item(member_name)?.unbind())
+}
+
+fn state_values_match(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if left.eq(right)? {
+        return Ok(true);
+    }
+
+    let left_type = left.get_type();
+    let right_type = right.get_type();
+    if state_type_qualified_name(&left_type)? != state_type_qualified_name(&right_type)? {
+        return Ok(false);
+    }
+
+    let left_name = left.getattr("name")?.extract::<String>()?;
+    let right_name = right.getattr("name")?.extract::<String>()?;
+    Ok(left_name == right_name)
+}
+
+pub(crate) fn untyped_state_resource_name(
+    resource_type: &Bound<'_, PyType>,
+) -> Option<&'static str> {
+    let py = resource_type.py();
+    if resource_type.is(PyState::type_object(py)) {
+        Some("State")
+    } else if resource_type.is(PyNextState::type_object(py)) {
+        Some("NextState")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn insert_state_machine_resources(
+    py: Python<'_>,
+    world: &mut World,
+    state_type: Py<PyType>,
+    state: Py<PyState>,
+    next_state: Py<PyNextState>,
+) -> PyResult<()> {
+    let state_type_bound = state_type.bind(py);
+    let qualified_name = state_type_qualified_name(state_type_bound)?;
+    if !world.contains_resource::<PyStateMachineRegistry>() {
+        world.insert_resource(PyStateMachineRegistry::default());
+    }
+    let machine_id = world
+        .resource_mut::<PyStateMachineRegistry>()
+        .identities
+        .register(state_type_key(state_type_bound), &qualified_name)
+        .machine_id();
+
+    let machine_count = {
+        let mut registry = world.resource_mut::<PyStateMachineRegistry>();
+        if !registry.entries.contains_key(&machine_id) {
+            registry.order.push(machine_id);
+        }
+        registry.entries.insert(
+            machine_id,
+            PyStateMachineEntry {
+                state: state.clone_ref(py),
+                next_state: next_state.clone_ref(py),
+            },
+        );
+        registry.len()
+    };
+
+    bind_state_machine_resource_channels(
+        py,
+        world,
+        state_type_bound,
+        state,
+        next_state,
+        machine_count,
+    )
+}
+
+fn bind_state_machine_resource_channels(
+    py: Python<'_>,
+    world: &mut World,
+    state_type: &Bound<'_, PyType>,
+    state: Py<PyState>,
+    next_state: Py<PyNextState>,
+    machine_count: usize,
+) -> PyResult<()> {
+    let typed_state = typed_state_resource_type(
+        py,
+        &PyState::type_object(py),
+        state_type.as_any(),
+        StateResourceKind::Current,
+    )?;
+    let typed_next = typed_state_resource_type(
+        py,
+        &PyNextState::type_object(py),
+        state_type.as_any(),
+        StateResourceKind::Next,
+    )?;
+
+    let typed_state_bound = typed_state.bind(py);
+    let typed_next_bound = typed_next.bind(py);
+    let typed_state_id = register_custom_resource(
+        world,
+        typed_state_bound.as_type_ptr(),
+        typed_state_bound.name()?.to_string(),
+    );
+    let typed_next_id = register_custom_resource(
+        world,
+        typed_next_bound.as_type_ptr(),
+        typed_next_bound.name()?.to_string(),
+    );
+    let legacy_state_type = PyState::type_object(py);
+    let legacy_next_type = PyNextState::type_object(py);
+    let legacy_state_id = register_custom_resource(
+        world,
+        legacy_state_type.as_type_ptr(),
+        legacy_state_type.name()?.to_string(),
+    );
+    let legacy_next_id = register_custom_resource(
+        world,
+        legacy_next_type.as_type_ptr(),
+        legacy_next_type.name()?.to_string(),
+    );
+
+    if !world.contains_resource::<PyResourceStorage>() {
+        world.insert_resource(PyResourceStorage::default());
+    }
+    let mut storage = world.resource_mut::<PyResourceStorage>();
+    storage
+        .resources
+        .insert(typed_state_id, state.clone_ref(py).into_any());
+    storage
+        .resources
+        .insert(typed_next_id, next_state.clone_ref(py).into_any());
+    if machine_count == 1 {
+        storage.resources.insert(legacy_state_id, state.into_any());
+        storage
+            .resources
+            .insert(legacy_next_id, next_state.into_any());
+    } else {
+        storage.resources.remove(&legacy_state_id);
+        storage.resources.remove(&legacy_next_id);
+    }
+
+    Ok(())
+}
+
+/// Attach a state class produced by hot reload to its stable logical machine.
+///
+/// Full reload supplies `reset = true`, rebuilding the state from its entrypoint
+/// declaration after custom resource cleanup. Partial reload migrates retained
+/// current/pending enum members by member name and preserves transition flags.
+pub(crate) fn register_reloaded_state_machine(
+    py: Python<'_>,
+    world: &mut World,
+    state_type: Py<PyType>,
+    initial_state: Py<PyAny>,
+    reset: bool,
+) -> PyResult<()> {
+    if reset {
+        let state = PyState::new(py, initial_state)?;
+        let next_state = PyNextState::new(py, state_type.clone_ref(py))?;
+        return insert_state_machine_resources(py, world, state_type, state, next_state);
+    }
+
+    let state_type_bound = state_type.bind(py);
+    let qualified_name = state_type_qualified_name(state_type_bound)?;
+    if !world.contains_resource::<PyStateMachineRegistry>() {
+        world.insert_resource(PyStateMachineRegistry::default());
+    }
+    let outcome = world
+        .resource_mut::<PyStateMachineRegistry>()
+        .identities
+        .register(state_type_key(state_type_bound), &qualified_name);
+    let machine_id = outcome.machine_id();
+
+    if matches!(outcome, StateMachineRegisterOutcome::Registered(_)) {
+        let state = PyState::new(py, initial_state)?;
+        let next_state = PyNextState::new(py, state_type.clone_ref(py))?;
+        return insert_state_machine_resources(py, world, state_type, state, next_state);
+    }
+
+    let (state, next_state, machine_count) = {
+        let registry = world.resource::<PyStateMachineRegistry>();
+        let entry = registry.entries.get(&machine_id).ok_or_else(|| {
+            PyRuntimeError::new_err("state identity exists without a machine entry")
+        })?;
+        (
+            entry.state.clone_ref(py),
+            entry.next_state.clone_ref(py),
+            registry.len(),
+        )
+    };
+
+    let current = state.bind(py).borrow().current_value(py);
+    let migrated_current = remap_state_value(py, &current, state_type_bound)?;
+    next_state
+        .bind(py)
+        .borrow()
+        .migrate_state_type(py, state_type.clone_ref(py))?;
+    state.bind(py).borrow().set_value(migrated_current);
+
+    bind_state_machine_resource_channels(
+        py,
+        world,
+        state_type_bound,
+        state,
+        next_state,
+        machine_count,
+    )
 }
 
 /// Schedule label for systems that run when entering a state
@@ -378,8 +756,37 @@ impl PyOnTransitionSchedule {
     }
 }
 
+fn state_type_key(state_type: &Bound<'_, PyType>) -> StateTypeKey {
+    state_type.as_type_ptr() as usize
+}
+
 fn state_machine_id(state_type: &Bound<'_, PyType>) -> StateMachineId {
-    StateMachineId::new(state_type.as_type_ptr() as usize)
+    StateMachineId::new(state_type_key(state_type))
+}
+
+pub(crate) fn canonicalize_state_schedule_label(
+    world: &World,
+    label: StateScheduleLabel,
+) -> StateScheduleLabel {
+    let machine_id = world
+        .get_resource::<PyStateMachineRegistry>()
+        .and_then(|registry| registry.canonical_id(label.machine_id().get()))
+        .unwrap_or(label.machine_id());
+    match label.kind() {
+        StateScheduleKind::Enter => StateScheduleLabel::on_enter(machine_id, label.state_hash()),
+        StateScheduleKind::Exit => StateScheduleLabel::on_exit(machine_id, label.state_hash()),
+    }
+}
+
+pub(crate) fn canonicalize_transition_schedule_label(
+    world: &World,
+    label: TransitionScheduleLabel,
+) -> TransitionScheduleLabel {
+    let machine_id = world
+        .get_resource::<PyStateMachineRegistry>()
+        .and_then(|registry| registry.canonical_id(label.machine_id().get()))
+        .unwrap_or(label.machine_id());
+    TransitionScheduleLabel::new(machine_id, label.exit_hash(), label.enter_hash())
 }
 
 /// Helper methods for Python schedule types to get their Bevy labels
@@ -605,73 +1012,11 @@ result = _make_in_state_condition(target_state)
 fn apply_transition_for_state(
     py: Python,
     world: &mut World,
-    state_type_name: &str,
+    machine_id: StateMachineId,
+    state_py: Py<PyState>,
+    next_state_py: Py<PyNextState>,
 ) -> PyResult<bool> {
     use bevy::ecs::schedule::Schedules;
-
-    use crate::ecs::resource_type::PyResourceStorage;
-
-    // Get the NextState resource for this state type
-    // We need to find it by matching the Python type name stored in the resource
-    let mut next_state_opt: Option<Py<PyNextState>> = None;
-    let mut state_opt: Option<Py<PyState>> = None;
-
-    // Scan resources to find State<T> and NextState<T> for this type
-    {
-        let pyresource = world.resource::<PyResourceStorage>();
-
-        for (_, resource_py) in pyresource.resources.iter() {
-            let resource = resource_py.bind(py);
-
-            // Check if this is NextState for our type
-            if let Ok(next_state) = resource.cast::<PyNextState>() {
-                let type_name = next_state
-                    .borrow()
-                    .state_type
-                    .bind(py)
-                    .name()
-                    .unwrap()
-                    .to_string();
-                if type_name == state_type_name {
-                    next_state_opt = Some(
-                        resource_py
-                            .clone_ref(py)
-                            .extract::<Py<PyNextState>>(py)
-                            .unwrap(),
-                    );
-                }
-            }
-
-            // Check if this is State for our type
-            if let Ok(state) = resource.cast::<PyState>() {
-                let type_name = state
-                    .borrow()
-                    .state_type
-                    .bind(py)
-                    .name()
-                    .unwrap()
-                    .to_string();
-                if type_name == state_type_name {
-                    state_opt = Some(
-                        resource_py
-                            .clone_ref(py)
-                            .extract::<Py<PyState>>(py)
-                            .unwrap(),
-                    );
-                }
-            }
-        }
-    }
-
-    let next_state_py = match next_state_opt {
-        Some(ns) => ns,
-        None => return Ok(false), // No NextState resource for this type
-    };
-
-    let state_py = match state_opt {
-        Some(s) => s,
-        None => return Ok(false), // No State resource for this type
-    };
 
     // Check if there's a pending transition and take it
     let next_state_borrow = next_state_py.bind(py).borrow();
@@ -688,14 +1033,22 @@ fn apply_transition_for_state(
             let state = state_py.bind(py).borrow();
             state.current_value(py)
         };
-        let machine_id = state_machine_id(&current_state.bind(py).get_type());
         let hash = current_state.bind(py).hash()? as u64;
-        let enter_label = StateScheduleLabel::on_enter(machine_id, hash);
-        let has_enter_schedule = world.resource::<Schedules>().contains(enter_label.clone());
-        if has_enter_schedule {
-            world.try_run_schedule(enter_label).ok();
-        }
-        despawn_matching_entities(py, world, "DespawnOnEnter", &current_state);
+        StateTransitionPlan::initial_enter().run(|step| {
+            match step {
+                StateTransitionStep::RunEnter => {
+                    let enter_label = StateScheduleLabel::on_enter(machine_id, hash);
+                    if world.resource::<Schedules>().contains(enter_label.clone()) {
+                        world.try_run_schedule(enter_label).ok();
+                    }
+                }
+                StateTransitionStep::CleanupEntered => {
+                    despawn_matching_entities(py, world, "DespawnOnEnter", &current_state);
+                }
+                _ => unreachable!("invalid step in initial-enter plan"),
+            }
+            Ok::<(), PyErr>(())
+        })?;
         return Ok(true);
     }
 
@@ -709,45 +1062,46 @@ fn apply_transition_for_state(
         let state = state_py.bind(py).borrow();
         state.current_value(py)
     };
-    let machine_id = state_machine_id(&current_state.bind(py).get_type());
-
     // Get hash values for schedule lookup
     let old_hash = current_state.bind(py).hash()? as u64;
     let new_hash = pending_transition.bind(py).hash()? as u64;
 
-    {
-        let state = state_py.bind(py).borrow();
-        state.set_value(pending_transition.clone_ref(py));
-    }
-
-    // Run OnExit(old_state) schedule
-    let exit_label = StateScheduleLabel::on_exit(machine_id, old_hash);
-    let has_exit_schedule = world.resource::<Schedules>().contains(exit_label.clone());
-    if has_exit_schedule {
-        world.try_run_schedule(exit_label).ok();
-    }
-
-    // Despawn entities with DespawnOnExit matching the old state
-    despawn_matching_entities(py, world, "DespawnOnExit", &current_state);
-
-    // Run OnTransition(old_state -> new_state) schedule
-    let transition_label = TransitionScheduleLabel::new(machine_id, old_hash, new_hash);
-    let has_transition_schedule = world
-        .resource::<Schedules>()
-        .contains(transition_label.clone());
-    if has_transition_schedule {
-        world.try_run_schedule(transition_label).ok();
-    }
-
-    // Run OnEnter(new_state) schedule
-    let enter_label = StateScheduleLabel::on_enter(machine_id, new_hash);
-    let has_enter_schedule = world.resource::<Schedules>().contains(enter_label.clone());
-    if has_enter_schedule {
-        world.try_run_schedule(enter_label).ok();
-    }
-
-    // Despawn entities with DespawnOnEnter matching the new state
-    despawn_matching_entities(py, world, "DespawnOnEnter", &pending_transition);
+    StateTransitionPlan::change().run(|step| {
+        match step {
+            StateTransitionStep::CommitNew => {
+                let state = state_py.bind(py).borrow();
+                state.set_value(pending_transition.clone_ref(py));
+            }
+            StateTransitionStep::RunExit => {
+                let exit_label = StateScheduleLabel::on_exit(machine_id, old_hash);
+                if world.resource::<Schedules>().contains(exit_label.clone()) {
+                    world.try_run_schedule(exit_label).ok();
+                }
+            }
+            StateTransitionStep::CleanupExited => {
+                despawn_matching_entities(py, world, "DespawnOnExit", &current_state);
+            }
+            StateTransitionStep::RunTransition => {
+                let transition_label = TransitionScheduleLabel::new(machine_id, old_hash, new_hash);
+                if world
+                    .resource::<Schedules>()
+                    .contains(transition_label.clone())
+                {
+                    world.try_run_schedule(transition_label).ok();
+                }
+            }
+            StateTransitionStep::RunEnter => {
+                let enter_label = StateScheduleLabel::on_enter(machine_id, new_hash);
+                if world.resource::<Schedules>().contains(enter_label.clone()) {
+                    world.try_run_schedule(enter_label).ok();
+                }
+            }
+            StateTransitionStep::CleanupEntered => {
+                despawn_matching_entities(py, world, "DespawnOnEnter", &pending_transition);
+            }
+        }
+        Ok::<(), PyErr>(())
+    })?;
 
     Ok(true)
 }
@@ -788,8 +1142,7 @@ fn despawn_matching_entities(
             .bind(py)
             .call_method0("state_value")
             .expect("DespawnOnExit/DespawnOnEnter component missing state_value() method");
-        let matches = sv
-            .eq(target_state.bind(py))
+        let matches = state_values_match(&sv, target_state.bind(py))
             .expect("state_value() comparison failed");
         if matches {
             world.despawn(entity);
@@ -803,53 +1156,26 @@ fn despawn_matching_entities(
 /// init_state() or insert_state() is called. It runs OnExit/OnTransition/OnEnter
 /// schedules when a pending transition is found.
 ///
-/// State types are discovered dynamically by scanning the world's PyResourceStorage
-/// for State<T> and NextState<T> resources.
+/// State machines are snapshotted from the exact-type registry before any
+/// transition schedule runs, so callbacks never execute while it is borrowed.
 pub fn apply_state_transitions(py: Python, world: &mut bevy::ecs::world::World) -> PyResult<()> {
-    use std::{
-        collections::HashSet,
-        sync::atomic::{AtomicBool, Ordering},
+    // Guard only this World's transition pass. A process-global guard would
+    // incorrectly suppress another App running on a different thread.
+    let Some((guard, machines)) =
+        world
+            .get_resource::<PyStateMachineRegistry>()
+            .and_then(|registry| {
+                registry
+                    .begin_transition_pass()
+                    .map(|guard| (guard, registry.snapshots(py)))
+            })
+    else {
+        return Ok(());
     };
+    let _guard = guard;
 
-    use crate::ecs::resource_type::PyResourceStorage;
-
-    // Guard against re-entrant calls (world.run_schedule for OnEnter/OnExit
-    // can trigger the parent schedule to re-run)
-    static PROCESSING: AtomicBool = AtomicBool::new(false);
-    if PROCESSING.swap(true, Ordering::SeqCst) {
-        return Ok(()); // Already processing, skip
-    }
-    struct ProcessingGuard;
-    impl Drop for ProcessingGuard {
-        fn drop(&mut self) {
-            PROCESSING.store(false, Ordering::SeqCst);
-        }
-    }
-    let _guard = ProcessingGuard;
-
-    // Discover state type names by scanning PyResourceStorage for NextState<T> resources
-    let mut state_type_names = HashSet::new();
-    {
-        let pyresource = world.resource::<PyResourceStorage>();
-        for (_, resource_py) in pyresource.resources.iter() {
-            let resource = resource_py.bind(py);
-            // Check if this is NextState for any type
-            if let Ok(next_state) = resource.cast::<PyNextState>() {
-                let type_name = next_state
-                    .borrow()
-                    .state_type
-                    .bind(py)
-                    .name()
-                    .unwrap()
-                    .to_string();
-                state_type_names.insert(type_name);
-            }
-        }
-    }
-
-    // Apply transitions for each discovered state type
-    for type_name in state_type_names {
-        apply_transition_for_state(py, world, &type_name)?;
+    for (machine_id, state, next_state) in machines {
+        apply_transition_for_state(py, world, machine_id, state, next_state)?;
     }
 
     Ok(())

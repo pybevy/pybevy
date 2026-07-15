@@ -11,9 +11,9 @@ use bevy::ecs::{component::ComponentId, entity::Entity, prelude::Resource};
 
 /// Stable identity of an interpreter type object for one interpreter lifetime.
 ///
-/// PyO3 adapters use `PyTypeObject* as usize`; RustPython adapters use
-/// `PyObject::get_id()`. A backend must retain a strong type handle for as long
-/// as a key is registered so an interpreter cannot recycle the identity.
+/// Adapters map their stable type-object identity to this integer key and must
+/// retain a strong type handle for as long as it is registered, so an
+/// interpreter cannot recycle the identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ObserverTypeKey(usize);
 

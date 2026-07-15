@@ -30,10 +30,6 @@ pub(crate) struct CachedPyView {
     pub(crate) core: Arc<CachedViewCore>,
     component_ids: HashMap<PyComponentType, ComponentId>,
     pub(crate) component_types: Vec<PyComponentType>,
-    pub(crate) filter_types: Vec<PyComponentType>,
-    pub(crate) without_filter_types: Vec<PyComponentType>,
-    pub(crate) changed_filter_types: Vec<PyComponentType>,
-    pub(crate) added_filter_types: Vec<PyComponentType>,
     pub(crate) mutable_components: HashSet<PyComponentType>,
 }
 
@@ -153,10 +149,6 @@ impl CachedPyView {
             core,
             component_ids,
             component_types,
-            filter_types,
-            without_filter_types,
-            changed_filter_types,
-            added_filter_types,
             mutable_components,
         }))
     }

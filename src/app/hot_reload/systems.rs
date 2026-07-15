@@ -1,14 +1,100 @@
 use bevy::{
-    ecs::world::World,
+    ecs::{
+        resource::Resource,
+        schedule::{ScheduleCleanupPolicy, Schedules},
+        world::World,
+    },
     input::{ButtonInput, keyboard::KeyCode},
 };
 use pybevy_reload::{
-    HotReloadStats, MemoryOverlayVisible, ReloadMode, StartPaused, is_verbose, lock_or_recover,
+    HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode, StartPaused, is_verbose,
     perform_reload,
 };
 use pyo3::prelude::*;
 
-use super::{runtime_pyo3::Pyo3ReloadRuntime, state::HotReloadResource};
+use super::{
+    runtime_pyo3::Pyo3ReloadRuntime,
+    state::{HotReloadResource, HotReloadState},
+};
+
+/// Retired generations whose Bevy schedule nodes must be physically removed.
+/// This is processed in a dedicated schedule after `Last`, never while a
+/// target schedule is executing.
+#[derive(Resource, Default)]
+pub(crate) struct PendingScheduleCompaction(Vec<u32>);
+
+pub(crate) fn queue_schedule_compaction(world: &mut World, generations: Vec<u32>) {
+    if generations.is_empty() {
+        return;
+    }
+    let mut pending = world.get_resource_or_insert_with(PendingScheduleCompaction::default);
+    for generation in generations {
+        if !pending.0.contains(&generation) {
+            pending.0.push(generation);
+        }
+    }
+}
+
+pub(crate) fn compact_retired_generation_systems(world: &mut World) {
+    let generations = world
+        .get_resource_mut::<PendingScheduleCompaction>()
+        .map(|mut pending| std::mem::take(&mut pending.0))
+        .unwrap_or_default();
+    if generations.is_empty() {
+        return;
+    }
+
+    let labels: Vec<_> = world
+        .resource::<Schedules>()
+        .iter()
+        .map(|(_, schedule)| schedule.label())
+        .collect();
+    for label in labels {
+        world.schedule_scope(label, |world, schedule| {
+            for generation in &generations {
+                // A generation may not have registered in each schedule.
+                let _ = schedule.remove_systems_in_set(
+                    ReloadGenerationSet(*generation),
+                    world,
+                    ScheduleCleanupPolicy::RemoveSetAndSystems,
+                );
+            }
+        });
+    }
+}
+
+fn publish_reload_error(world: &mut World, message: String) {
+    let timestamp = world
+        .get_resource::<bevy::time::Time>()
+        .map(|time| time.elapsed_secs_f64())
+        .unwrap_or(0.0);
+    {
+        let mut last_error =
+            world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
+        last_error.error = Some(message.clone());
+        last_error.timestamp_secs = timestamp;
+    }
+    let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
+    result.failed = true;
+    result.failure_reason = Some(message);
+    result.running_previous_generation = true;
+}
+
+fn run_definition_reload_attempt(
+    world: &mut World,
+    loader_func: Py<PyAny>,
+    mode: ReloadMode,
+    error_state: std::sync::Arc<std::sync::Mutex<Vec<PyErr>>>,
+    hot_reload_state: HotReloadState,
+) {
+    let mut runtime = Pyo3ReloadRuntime {
+        loader_func,
+        error_state,
+    };
+    if let Err(error) = perform_reload(world, &mut runtime, mode, &hot_reload_state) {
+        publish_reload_error(world, error.message);
+    }
+}
 
 /// Built-in system that checks for F5/F6 keypress and triggers reload or mode toggle
 /// This runs automatically when hot reload is enabled
@@ -133,9 +219,7 @@ pub fn check_hot_reload_system(world: &mut World) {
             None => return, // No reload resource, skip
         };
 
-        // Check the atomic flag without GIL
-        let inner = lock_or_recover(&reload_res.state.inner);
-        inner.reload_pending
+        reload_res.state.is_reload_pending()
     };
 
     // If no reload pending, return early (99.99% of frames)
@@ -163,20 +247,6 @@ pub fn check_hot_reload_system(world: &mut World) {
 
     // If we got the loader func, construct runtime and perform reload
     if let Some((loader_func, mode, error_state, hot_reload_state)) = reload_data {
-        let mut runtime = Pyo3ReloadRuntime {
-            loader_func,
-            error_state,
-        };
-        if let Err(e) = perform_reload(world, &mut runtime, mode, &hot_reload_state) {
-            // Write reload errors to LastSystemError so MCP can see them
-            let timestamp = world
-                .get_resource::<bevy::time::Time>()
-                .map(|t| t.elapsed_secs_f64())
-                .unwrap_or(0.0);
-            let mut last_error =
-                world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
-            last_error.error = Some(e.message);
-            last_error.timestamp_secs = timestamp;
-        }
+        run_definition_reload_attempt(world, loader_func, mode, error_state, hot_reload_state);
     }
 }

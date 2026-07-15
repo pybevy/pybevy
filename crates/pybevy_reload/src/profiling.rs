@@ -5,15 +5,10 @@ use std::{
 };
 
 use bevy::{ecs::world::World, prelude::Resource, time::Time};
+use pybevy_ecs::shared::system_runtime::RunProfileSink;
+pub use pybevy_ecs::shared::system_runtime::SystemStage;
 
 use crate::{state::ReloadMode, util::lock_or_recover};
-
-/// Stage where a system runs
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SystemStage {
-    Startup,
-    UpdateOrLast,
-}
 
 /// Statistics about hot reload events for the overlay
 #[derive(Resource, Clone)]
@@ -184,7 +179,7 @@ impl SystemProfiler {
     /// Record one system run's duration into the profiler resource if the world
     /// has one, reading the current time from `Time`. Both backends' `run_unsafe`
     /// epilogue call this so the profiler read, `Time` read, and timing write stay
-    /// one implementation and cannot drift between pyo3 and rustpython.
+    /// one implementation and cannot drift between interpreter adapters.
     pub fn record_run(world: &World, system_name: &str, duration: Duration, stage: SystemStage) {
         if let Some(profiler) = world.get_resource::<SystemProfiler>() {
             let current_time = world
@@ -243,6 +238,18 @@ impl SystemProfiler {
         data.update_systems.clear();
         data.startup_systems.clear();
         data.startup_visible_until = None;
+    }
+}
+
+impl RunProfileSink for SystemProfiler {
+    fn record(
+        &self,
+        system_name: &str,
+        duration: Duration,
+        stage: SystemStage,
+        app_time_seconds: f64,
+    ) {
+        self.record_timing(system_name, duration, stage, app_time_seconds);
     }
 }
 

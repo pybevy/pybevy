@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use bevy::ecs::{entity::Entity, ptr::OwningPtr, world::World};
+use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
-use pybevy_core::{BatchComponent, registry::global_registry};
+use pybevy_core::{BatchComponent, PreparedBatchComponent, registry::global_registry};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
@@ -261,6 +261,165 @@ impl<'a> FieldSlice<'a> {
     }
 }
 
+struct PreparedCustomBatch {
+    wrapper_size: WrapperSize,
+    data_size: usize,
+    rows: Vec<Vec<u8>>,
+}
+
+impl PreparedBatchComponent for PreparedCustomBatch {
+    fn count(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn insert(&mut self, component_id: ComponentId, entities: &[Entity], world: &mut World) {
+        assert_eq!(
+            self.rows.len(),
+            entities.len(),
+            "validated custom batch count changed before commit"
+        );
+
+        for (entity_id, buffer) in entities.iter().copied().zip(self.rows.drain(..)) {
+            macro_rules! insert_wrapper {
+                ($size:expr, $wrapper_type:ty) => {
+                    if self.wrapper_size == $size {
+                        let mut wrapper = <$wrapper_type>::default();
+                        let copy_len = self.data_size.min(wrapper.data.len());
+                        wrapper.data[..copy_len].copy_from_slice(&buffer[..copy_len]);
+
+                        OwningPtr::make(wrapper, |ptr| {
+                            // SAFETY: preparation validated the layout and selected the wrapper
+                            // registered for this custom component's exact ComponentId.
+                            unsafe {
+                                world.entity_mut(entity_id).insert_by_id(component_id, ptr);
+                            }
+                        });
+                    }
+                };
+            }
+
+            insert_wrapper!(WrapperSize::W8, ComponentWrapper8);
+            insert_wrapper!(WrapperSize::W16, ComponentWrapper16);
+            insert_wrapper!(WrapperSize::W32, ComponentWrapper32);
+            insert_wrapper!(WrapperSize::W64, ComponentWrapper64);
+            insert_wrapper!(WrapperSize::W128, ComponentWrapper128);
+            insert_wrapper!(WrapperSize::W256, ComponentWrapper256);
+            insert_wrapper!(WrapperSize::W512, ComponentWrapper512);
+            insert_wrapper!(WrapperSize::W1024, ComponentWrapper1024);
+        }
+    }
+}
+
+fn prepare_custom_batch(
+    py: Python,
+    batch: &PyCustomComponentBatch,
+) -> PyResult<PreparedCustomBatch> {
+    let layout = &batch.layout;
+    let mut holders = Vec::with_capacity(batch.field_arrays.len());
+    for (field_idx, array) in &batch.field_arrays {
+        let array = array.bind(py);
+        let field_info = &layout.fields[*field_idx];
+        let holder = match field_info.field_type {
+            PrimitiveType::F32 => {
+                ReadonlyArrayHolder::F32(array.extract::<PyReadonlyArray1<f32>>()?)
+            }
+            PrimitiveType::F64 => {
+                ReadonlyArrayHolder::F64(array.extract::<PyReadonlyArray1<f64>>()?)
+            }
+            PrimitiveType::I32 => {
+                ReadonlyArrayHolder::I32(array.extract::<PyReadonlyArray1<i32>>()?)
+            }
+            PrimitiveType::I64 => {
+                ReadonlyArrayHolder::I64(array.extract::<PyReadonlyArray1<i64>>()?)
+            }
+            PrimitiveType::U32 => {
+                ReadonlyArrayHolder::U32(array.extract::<PyReadonlyArray1<u32>>()?)
+            }
+            PrimitiveType::U64 => {
+                ReadonlyArrayHolder::U64(array.extract::<PyReadonlyArray1<u64>>()?)
+            }
+            PrimitiveType::Bool => {
+                ReadonlyArrayHolder::Bool(array.extract::<PyReadonlyArray1<u8>>()?)
+            }
+            PrimitiveType::Vec3 => {
+                ReadonlyArrayHolder::Vec3(array.extract::<PyReadonlyArray2<f32>>()?)
+            }
+            PrimitiveType::Vec2 => {
+                ReadonlyArrayHolder::Vec2(array.extract::<PyReadonlyArray2<f32>>()?)
+            }
+        };
+        holders.push(holder);
+    }
+
+    let mut field_slices: Vec<(&FieldInfo, FieldSlice<'_>)> = Vec::with_capacity(holders.len());
+    for ((field_idx, _), holder) in batch.field_arrays.iter().zip(&holders) {
+        let field_info = &layout.fields[*field_idx];
+        let slice = match holder {
+            ReadonlyArrayHolder::F32(array) => {
+                FieldSlice::F32(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::F64(array) => {
+                FieldSlice::F64(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::I32(array) => {
+                FieldSlice::I32(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::I64(array) => {
+                FieldSlice::I64(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::U32(array) => {
+                FieldSlice::U32(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::U64(array) => {
+                FieldSlice::U64(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::Bool(array) => {
+                FieldSlice::Bool(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::Vec3(array) => {
+                FieldSlice::Vec3(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+            ReadonlyArrayHolder::Vec2(array) => {
+                FieldSlice::Vec2(array.as_slice().map_err(|error| {
+                    PyValueError::new_err(format!("Array not contiguous: {error}"))
+                })?)
+            }
+        };
+        field_slices.push((field_info, slice));
+    }
+
+    let mut rows = Vec::with_capacity(batch.count);
+    for index in 0..batch.count {
+        let mut buffer = vec![0u8; layout.wrapper_size.size_bytes()];
+        for (field_info, slice) in &field_slices {
+            slice.write_to_buffer(index, &mut buffer, field_info.offset);
+        }
+        rows.push(buffer);
+    }
+
+    Ok(PreparedCustomBatch {
+        wrapper_size: layout.wrapper_size,
+        data_size: layout.data_size,
+        rows,
+    })
+}
+
 /// Bridge for CustomComponentBatch that implements BatchComponent.
 pub struct CustomComponentBatchBridge;
 
@@ -279,6 +438,15 @@ impl BatchComponent for CustomComponentBatchBridge {
         Ok(batch.count)
     }
 
+    fn prepare(
+        &self,
+        py: Python,
+        batch: &Bound<PyAny>,
+    ) -> PyResult<Box<dyn PreparedBatchComponent>> {
+        let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
+        Ok(Box::new(prepare_custom_batch(py, &batch)?))
+    }
+
     fn insert_bulk(
         &self,
         py: Python,
@@ -287,139 +455,11 @@ impl BatchComponent for CustomComponentBatchBridge {
         world: &mut World,
     ) -> PyResult<()> {
         let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
-        let layout = &batch.layout;
-
-        // Register the component and get its ComponentId
         let type_ptr = batch.component_cls.bind(py).as_type_ptr();
         let name = get_python_type_name(py, type_ptr);
         let component_id = register_custom_component(world, type_ptr, name);
-
-        // Borrow all field arrays as typed slices — zero-copy, held alive for loop
-        let mut holders: Vec<ReadonlyArrayHolder<'_>> =
-            Vec::with_capacity(batch.field_arrays.len());
-        for (_, arr) in &batch.field_arrays {
-            let arr_bound = arr.bind(py);
-            let field_idx = batch
-                .field_arrays
-                .iter()
-                .position(|(_, a)| std::ptr::eq(a, arr))
-                .unwrap();
-            let (actual_field_idx, _) = batch.field_arrays[field_idx];
-            let field_info = &layout.fields[actual_field_idx];
-
-            let holder = match field_info.field_type {
-                PrimitiveType::F32 => {
-                    ReadonlyArrayHolder::F32(arr_bound.extract::<PyReadonlyArray1<f32>>()?)
-                }
-                PrimitiveType::F64 => {
-                    ReadonlyArrayHolder::F64(arr_bound.extract::<PyReadonlyArray1<f64>>()?)
-                }
-                PrimitiveType::I32 => {
-                    ReadonlyArrayHolder::I32(arr_bound.extract::<PyReadonlyArray1<i32>>()?)
-                }
-                PrimitiveType::I64 => {
-                    ReadonlyArrayHolder::I64(arr_bound.extract::<PyReadonlyArray1<i64>>()?)
-                }
-                PrimitiveType::U32 => {
-                    ReadonlyArrayHolder::U32(arr_bound.extract::<PyReadonlyArray1<u32>>()?)
-                }
-                PrimitiveType::U64 => {
-                    ReadonlyArrayHolder::U64(arr_bound.extract::<PyReadonlyArray1<u64>>()?)
-                }
-                PrimitiveType::Bool => {
-                    ReadonlyArrayHolder::Bool(arr_bound.extract::<PyReadonlyArray1<u8>>()?)
-                }
-                PrimitiveType::Vec3 => {
-                    ReadonlyArrayHolder::Vec3(arr_bound.extract::<PyReadonlyArray2<f32>>()?)
-                }
-                PrimitiveType::Vec2 => {
-                    ReadonlyArrayHolder::Vec2(arr_bound.extract::<PyReadonlyArray2<f32>>()?)
-                }
-            };
-            holders.push(holder);
-        }
-
-        // Extract slices from holders
-        let mut field_slices: Vec<(&FieldInfo, FieldSlice<'_>)> = Vec::with_capacity(holders.len());
-        for (idx, holder) in holders.iter().enumerate() {
-            let (field_idx, _) = batch.field_arrays[idx];
-            let field_info = &layout.fields[field_idx];
-            let slice =
-                match holder {
-                    ReadonlyArrayHolder::F32(a) => FieldSlice::F32(a.as_slice().map_err(|e| {
-                        PyValueError::new_err(format!("Array not contiguous: {}", e))
-                    })?),
-                    ReadonlyArrayHolder::F64(a) => FieldSlice::F64(a.as_slice().map_err(|e| {
-                        PyValueError::new_err(format!("Array not contiguous: {}", e))
-                    })?),
-                    ReadonlyArrayHolder::I32(a) => FieldSlice::I32(a.as_slice().map_err(|e| {
-                        PyValueError::new_err(format!("Array not contiguous: {}", e))
-                    })?),
-                    ReadonlyArrayHolder::I64(a) => FieldSlice::I64(a.as_slice().map_err(|e| {
-                        PyValueError::new_err(format!("Array not contiguous: {}", e))
-                    })?),
-                    ReadonlyArrayHolder::U32(a) => FieldSlice::U32(a.as_slice().map_err(|e| {
-                        PyValueError::new_err(format!("Array not contiguous: {}", e))
-                    })?),
-                    ReadonlyArrayHolder::U64(a) => FieldSlice::U64(a.as_slice().map_err(|e| {
-                        PyValueError::new_err(format!("Array not contiguous: {}", e))
-                    })?),
-                    ReadonlyArrayHolder::Bool(a) => {
-                        FieldSlice::Bool(a.as_slice().map_err(|e| {
-                            PyValueError::new_err(format!("Array not contiguous: {}", e))
-                        })?)
-                    }
-                    ReadonlyArrayHolder::Vec3(a) => {
-                        FieldSlice::Vec3(a.as_slice().map_err(|e| {
-                            PyValueError::new_err(format!("Array not contiguous: {}", e))
-                        })?)
-                    }
-                    ReadonlyArrayHolder::Vec2(a) => {
-                        FieldSlice::Vec2(a.as_slice().map_err(|e| {
-                            PyValueError::new_err(format!("Array not contiguous: {}", e))
-                        })?)
-                    }
-                };
-            field_slices.push((field_info, slice));
-        }
-
-        let wrapper_size = layout.wrapper_size;
-        let data_size = layout.data_size;
-
-        // Tight loop: write field bytes into wrapper buffer and insert via insert_by_id
-        for (i, &entity_id) in entities.iter().enumerate() {
-            // Create zero-initialized buffer
-            let mut buffer = vec![0u8; wrapper_size.size_bytes()];
-
-            // Write each field's value
-            for (field_info, slice) in &field_slices {
-                slice.write_to_buffer(i, &mut buffer, field_info.offset);
-            }
-
-            // Insert using the appropriate wrapper type
-            macro_rules! insert_wrapper {
-                ($size:expr, $wrapper_type:ty) => {
-                    if wrapper_size == $size {
-                        let mut wrapper = <$wrapper_type>::default();
-                        let copy_len = data_size.min(wrapper.data.len());
-                        wrapper.data[..copy_len].copy_from_slice(&buffer[..copy_len]);
-
-                        OwningPtr::make(wrapper, |ptr| unsafe {
-                            world.entity_mut(entity_id).insert_by_id(component_id, ptr);
-                        });
-                    }
-                };
-            }
-
-            insert_wrapper!(WrapperSize::W8, ComponentWrapper8);
-            insert_wrapper!(WrapperSize::W16, ComponentWrapper16);
-            insert_wrapper!(WrapperSize::W32, ComponentWrapper32);
-            insert_wrapper!(WrapperSize::W64, ComponentWrapper64);
-            insert_wrapper!(WrapperSize::W128, ComponentWrapper128);
-            insert_wrapper!(WrapperSize::W256, ComponentWrapper256);
-            insert_wrapper!(WrapperSize::W512, ComponentWrapper512);
-            insert_wrapper!(WrapperSize::W1024, ComponentWrapper1024);
-        }
+        let mut prepared = prepare_custom_batch(py, &batch)?;
+        prepared.insert(component_id, entities, world);
 
         Ok(())
     }

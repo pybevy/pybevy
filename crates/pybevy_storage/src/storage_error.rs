@@ -50,6 +50,10 @@ pub enum StorageError {
     /// Can't modify read-only asset (`RuntimeError`)
     AssetReadOnly,
 
+    /// Borrowed asset or its `Assets<T>` collection disappeared during access
+    /// (`RuntimeError`).
+    AssetUnavailable,
+
     /// Operation would alias or invalidate a live NumPy view (`RuntimeError`)
     AssetViewsLive,
 
@@ -87,6 +91,9 @@ impl fmt::Display for StorageError {
                 "Cannot modify asset obtained from Res[Assets[T]].get(). \
                  Use ResMut[Assets[T]].get_mut() for mutable access.",
             ),
+            StorageError::AssetUnavailable => {
+                f.write_str("Borrowed asset is no longer available in Assets<T>.")
+            }
             StorageError::AssetViewsLive => f.write_str(
                 "A live NumPy view still aliases this asset's data. \
                  Drop the array (del it or leave the with-block that created it) \
@@ -140,6 +147,12 @@ mod tests {
     }
 
     #[test]
+    fn test_asset_unavailable_names_asset_collection() {
+        let err = StorageError::AssetUnavailable;
+        assert!(err.to_string().contains("Assets<T>"));
+    }
+
+    #[test]
     fn test_owned_field_read_only_suggests_assign_back() {
         let err = StorageError::OwnedFieldReadOnly;
         assert!(err.to_string().contains("Assign the field back"));
@@ -171,6 +184,7 @@ impl From<StorageError> for pyo3::PyErr {
             | StorageError::AssetConsumed
             | StorageError::AssetBorrowed
             | StorageError::AssetReadOnly
+            | StorageError::AssetUnavailable
             | StorageError::AssetViewsLive => PyRuntimeError::new_err(err.to_string()),
             StorageError::IndexOutOfRange | StorageError::EmptyList => {
                 PyIndexError::new_err(err.to_string())

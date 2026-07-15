@@ -14,6 +14,7 @@ use crate::state::ReloadMode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReloadProgressPhase {
     DefinitionsLoading,
+    DefinitionFilesFetching,
     DefinitionsReady,
     CleanupStarted,
     CleanupFinished,
@@ -82,7 +83,7 @@ impl ReloadProgressReporter {
     }
 }
 
-pub(crate) fn emit_reload_progress(world: &World, progress: ReloadProgress) {
+pub fn emit_reload_progress(world: &World, progress: ReloadProgress) {
     let sink = world
         .get_resource::<ReloadProgressReporter>()
         .map(ReloadProgressReporter::shared_sink);

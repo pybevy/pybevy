@@ -1,4 +1,4 @@
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyDict};
 
 pub mod batch_spawn;
 pub mod commands;
@@ -10,12 +10,12 @@ pub mod conditional_system;
 pub mod custom_batch;
 pub mod custom_component;
 pub mod disabled;
-pub mod dynamic_condition;
 pub mod dynamic_system;
 pub mod entity_commands;
 pub mod filter;
 pub mod helpers;
 pub mod lazy_wrapper_proxy;
+pub(crate) mod lifecycle_mutation;
 
 // Re-exports from pybevy_core
 #[allow(unused_imports)]
@@ -29,11 +29,15 @@ pub mod mutable;
 // Name moved to pybevy_ecs crate
 pub mod observer;
 pub mod observer_registry;
+pub(crate) mod parity_trace;
+pub(crate) mod python_message;
 pub mod query;
+mod reflect_dump;
 pub mod resource;
 pub mod resource_type;
 pub mod state;
 pub mod system;
+pub(crate) mod system_interpreter;
 pub mod view;
 pub mod world;
 
@@ -67,6 +71,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<message::PyMessageId>()?;
     ecs.add_class::<message::PyMessageReader>()?;
     ecs.add_class::<message::PyMessageWriter>()?;
+    ecs.add_class::<message::PyMessageMutator>()?;
     ecs.add_class::<messages::PyMessageType>()?;
     ecs.add_class::<messages::PyMessageTypeParam>()?;
     ecs.add_class::<messages::PyMessages>()?;
@@ -87,6 +92,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<observer::PyDespawn>()?;
     ecs.add_class::<query::query_param::PyQueryParam>()?;
     ecs.add_class::<query::query_runtime::PyQueryIter>()?;
+    ecs.add_class::<query::query_runtime::PyQueryIterator>()?;
     ecs.add_class::<view::view::PyView>()?;
     ecs.add_class::<view::view_param::PyViewParam>()?;
     ecs.add_class::<view::view::PyViewCol>()?;
@@ -110,6 +116,10 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<resource::PyResource>()?;
     ecs.add_class::<state::PyState>()?;
     ecs.add_class::<state::PyNextState>()?;
+    for wrapper_name in ["State", "NextState"] {
+        ecs.getattr(wrapper_name)?
+            .setattr(state::STATE_RESOURCE_TYPE_CACHE_ATTR, PyDict::new(m.py()))?;
+    }
     ecs.add_class::<state::PyOnEnterSchedule>()?;
     ecs.add_class::<state::PyOnExitSchedule>()?;
     ecs.add_class::<state::PyOnTransitionSchedule>()?;
@@ -120,6 +130,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_function(wrap_pyfunction!(state::on_enter, m)?)?;
     ecs.add_function(wrap_pyfunction!(state::on_exit, m)?)?;
     ecs.add_function(wrap_pyfunction!(state::on_transition, m)?)?;
+    ecs.add_function(wrap_pyfunction!(reflect_dump::reflect_component_dump, m)?)?;
     ecs.add_class::<world::PyWorld>()?;
     ecs.add_class::<disabled::PyDisabled>()?;
     m.add_submodule(&ecs)

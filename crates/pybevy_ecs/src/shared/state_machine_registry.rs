@@ -6,7 +6,7 @@ use super::schedule::StateMachineId;
 
 /// Interpreter-neutral exact identity for one Python state class.
 ///
-/// PyO3 supplies `PyTypeObject* as usize`; RustPython supplies its object id.
+/// Adapters supply a stable integer identity for each state class.
 pub type StateTypeKey = usize;
 
 /// Result of registering a state class identity.

@@ -2095,7 +2095,7 @@ mod tests {
         let json = r#"{"actions": [{"tool": "pause_time"}]}"#;
         let req: ScheduleRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.mode, ScheduleMode::Sync);
-        assert_eq!(req.stop_on_error, false);
+        assert!(!req.stop_on_error);
         assert_eq!(req.actions.len(), 1);
     }
 

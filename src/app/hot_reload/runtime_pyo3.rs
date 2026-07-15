@@ -5,23 +5,38 @@ use std::{
 };
 
 use bevy::ecs::{
-    schedule::{Chain, IntoScheduleConfigs, Schedule, ScheduleConfigs, Schedules},
+    schedule::{
+        Chain, IntoScheduleConfigs, Schedule, ScheduleConfigs, Schedules, SingleThreadedExecutor,
+    },
     world::World,
 };
+use pybevy_ecs::shared::schedule::{StateScheduleLabel, TransitionScheduleLabel};
 use pybevy_reload::{
-    DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadRuntime, SystemStage,
-    generation_matches, is_verbose, lock_or_recover, startup_or_reload,
+    DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadGenerationSet, ReloadMode,
+    ReloadRuntime, SystemStage, generation_matches, is_verbose, lock_or_recover, startup_or_reload,
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
 use super::{cleanup, registry::DynamicSystemRegistry, util::get_python_gc_objects};
 use crate::{
-    app::{PyStage, app::PyApp, chained_systems::PyChainedSystems},
+    app::{
+        PyStage,
+        app::{PendingStateDefinition, PendingStateSystems, PyApp},
+        chained_systems::PyChainedSystems,
+    },
     ecs::{
         conditional_system::{PyConditionalSystem, build_conditional_system_config},
-        dynamic_system::{DynamicSystem, DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
-        messages::MessageRegistry,
+        dynamic_system::{DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
         observer_registry::ObserverRegistry,
+        python_message::{
+            clear_python_messages, prune_python_message_aliases, register_python_message,
+        },
+        state::{
+            PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
+            canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
+            register_reloaded_state_machine,
+        },
+        system_interpreter::{new_main_system, retire_main_handle},
         world::PyWorld,
     },
 };
@@ -30,9 +45,16 @@ use crate::{
 pub(crate) struct PendingDefinitions {
     pub systems: Vec<(PyStage, Vec<Py<PyAny>>)>,
     pub resources: Vec<Py<PyAny>>,
+    pub states: Vec<PendingStateDefinition>,
+    pub state_systems: Vec<PendingStateSystems>,
     pub messages: Vec<Py<PyType>>,
     pub observers: Vec<Py<PyAny>>,
     pub plugins: Vec<String>,
+}
+
+enum ReloadStateSchedule {
+    State(StateScheduleLabel),
+    Transition(TransitionScheduleLabel),
 }
 
 /// Add a batch of Python system functions to a Bevy schedule.
@@ -58,14 +80,14 @@ fn add_systems_to_schedule(
                 let system_inner = conditional.system.clone_ref(py);
                 let condition = conditional.condition;
 
-                let dynamic_system = DynamicSystem::new(
+                let dynamic_system = new_main_system(
                     system_inner,
                     generation,
                     error_state.clone(),
                     error_buffer.clone(),
                     system_stage,
                 )?;
-                system_handles.push(dynamic_system.handle());
+                system_handles.push(dynamic_system.handle().clone());
 
                 let config = build_conditional_system_config(
                     dynamic_system,
@@ -74,21 +96,22 @@ fn add_systems_to_schedule(
                     error_state.clone(),
                     system_stage,
                     is_startup,
-                )?;
+                )?
+                .in_set(ReloadGenerationSet(generation));
                 schedule.add_systems(config);
             } else if let Ok(chained) = system_bound.extract::<PyChainedSystems>() {
                 let systems_tuple = chained.systems.bind(py);
                 let mut dynamic_systems = Vec::new();
 
                 for sys in systems_tuple.iter() {
-                    let dynamic_system = DynamicSystem::new(
+                    let dynamic_system = new_main_system(
                         sys.unbind(),
                         generation,
                         error_state.clone(),
                         error_buffer.clone(),
                         system_stage,
                     )?;
-                    system_handles.push(dynamic_system.handle());
+                    system_handles.push(dynamic_system.handle().clone());
                     dynamic_systems.push(dynamic_system);
                 }
 
@@ -101,8 +124,10 @@ fn add_systems_to_schedule(
                     .map(|sys| {
                         if is_startup {
                             sys.run_if(startup_or_reload(generation))
+                                .in_set(ReloadGenerationSet(generation))
                         } else {
                             sys.run_if(generation_matches(generation))
+                                .in_set(ReloadGenerationSet(generation))
                         }
                     })
                     .collect();
@@ -115,18 +140,26 @@ fn add_systems_to_schedule(
 
                 schedule.add_systems(chained);
             } else {
-                let dynamic_system = DynamicSystem::new(
+                let dynamic_system = new_main_system(
                     system_func,
                     generation,
                     error_state.clone(),
                     error_buffer.clone(),
                     system_stage,
                 )?;
-                system_handles.push(dynamic_system.handle());
+                system_handles.push(dynamic_system.handle().clone());
                 if is_startup {
-                    schedule.add_systems(dynamic_system.run_if(startup_or_reload(generation)));
+                    schedule.add_systems(
+                        dynamic_system
+                            .run_if(startup_or_reload(generation))
+                            .in_set(ReloadGenerationSet(generation)),
+                    );
                 } else {
-                    schedule.add_systems(dynamic_system.run_if(generation_matches(generation)));
+                    schedule.add_systems(
+                        dynamic_system
+                            .run_if(generation_matches(generation))
+                            .in_set(ReloadGenerationSet(generation)),
+                    );
                 }
             }
             Ok(())
@@ -208,7 +241,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     type SystemHandle = DynamicSystemHandle;
 
     fn load_definitions(&mut self, generation: u32) -> Result<PendingDefinitions, ReloadError> {
-        Python::attach(|py| -> PyResult<PendingDefinitions> {
+        let result = Python::attach(|py| -> PyResult<PendingDefinitions> {
             let temp_app = PyApp::create_reload_temp(generation);
             let temp_app_py = Py::new(py, temp_app)?;
 
@@ -219,12 +252,14 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             Ok(PendingDefinitions {
                 systems: temp_app_ref.take_pending_systems(),
                 resources: temp_app_ref.take_pending_resources(),
+                states: temp_app_ref.take_pending_states(),
+                state_systems: temp_app_ref.take_pending_state_systems(),
                 messages: temp_app_ref.take_pending_messages(),
                 observers: temp_app_ref.take_pending_observers(),
                 plugins: temp_app_ref.take_pending_plugins(),
             })
-        })
-        .map_err(|e| {
+        });
+        result.map_err(|e| {
             let message = format!("Reload loader failed: {}", e);
             Python::attach(|py| e.print(py));
             ReloadError {
@@ -267,6 +302,14 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                         .unwrap_or_else(|_| "<unknown>".to_string())
                 })
                 .collect();
+            resource_names.extend(defs.states.iter().map(|state| {
+                state
+                    .state_type
+                    .bind(py)
+                    .fully_qualified_name()
+                    .map(|name| format!("State[{name}]"))
+                    .unwrap_or_else(|_| "State[<unknown>]".to_string())
+            }));
             resource_names.sort();
             let mut resources_hasher = std::hash::DefaultHasher::new();
             resource_names.hash(&mut resources_hasher);
@@ -281,7 +324,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 resource_types: resources_hasher.finish(),
                 observer_code: observer_hasher.finish(),
                 has_startup,
-                has_resources: !defs.resources.is_empty(),
+                has_resources: !defs.resources.is_empty() || !defs.states.is_empty(),
                 has_observers: !defs.observers.is_empty(),
             }
         })
@@ -315,6 +358,15 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                         && let Ok(s) = name.extract::<String>()
                     {
                         names.insert(s);
+                    }
+                }
+            }
+            for pending in &defs.state_systems {
+                for system in &pending.systems {
+                    if let Ok(name) = system.bind(py).getattr("__name__")
+                        && let Ok(name) = name.extract::<String>()
+                    {
+                        names.insert(name);
                     }
                 }
             }
@@ -412,6 +464,91 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             }
         }
 
+        for pending in defs.state_systems {
+            let label = Python::attach(|py| -> PyResult<ReloadStateSchedule> {
+                let schedule = pending.schedule.bind(py);
+                if let Ok(on_enter) = schedule.cast::<PyOnEnterSchedule>() {
+                    return Ok(ReloadStateSchedule::State(
+                        canonicalize_state_schedule_label(
+                            world,
+                            on_enter.borrow().to_bevy_label(py)?,
+                        ),
+                    ));
+                }
+                if let Ok(on_exit) = schedule.cast::<PyOnExitSchedule>() {
+                    return Ok(ReloadStateSchedule::State(
+                        canonicalize_state_schedule_label(
+                            world,
+                            on_exit.borrow().to_bevy_label(py)?,
+                        ),
+                    ));
+                }
+                if let Ok(on_transition) = schedule.cast::<PyOnTransitionSchedule>() {
+                    return Ok(ReloadStateSchedule::Transition(
+                        canonicalize_transition_schedule_label(
+                            world,
+                            on_transition.borrow().to_bevy_label(py)?,
+                        ),
+                    ));
+                }
+                Err(PyRuntimeError::new_err(
+                    "invalid state schedule collected during reload",
+                ))
+            })
+            .map_err(|error| ReloadError {
+                message: error.to_string(),
+                is_load_failure: false,
+            })?;
+
+            macro_rules! register_state_systems {
+                ($label:expr) => {{
+                    let label = $label;
+                    if !world.resource::<Schedules>().contains(label.clone()) {
+                        world
+                            .resource_mut::<Schedules>()
+                            .insert(Schedule::new(label.clone()));
+                    }
+                    world.schedule_scope(label, |_world, schedule| {
+                        schedule.set_executor(SingleThreadedExecutor::new());
+                        for system in pending.systems {
+                            match new_main_system(
+                                system,
+                                generation,
+                                self.error_state.clone(),
+                                error_buffer.clone(),
+                                SystemStage::UpdateOrLast,
+                            ) {
+                                Ok(dynamic_system) => {
+                                    system_handles.push(dynamic_system.handle().clone());
+                                    schedule.add_systems(
+                                        dynamic_system
+                                            .run_if(generation_matches(generation))
+                                            .in_set(ReloadGenerationSet(generation)),
+                                    );
+                                }
+                                Err(error) => {
+                                    lock_or_recover(&self.error_state).push(error);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }};
+            }
+
+            match label {
+                ReloadStateSchedule::State(label) => register_state_systems!(label),
+                ReloadStateSchedule::Transition(label) => register_state_systems!(label),
+            }
+
+            if let Some(error) = lock_or_recover(&self.error_state).last() {
+                return Err(ReloadError {
+                    message: error.to_string(),
+                    is_load_failure: false,
+                });
+            }
+        }
+
         Ok(system_handles)
     }
 
@@ -438,6 +575,30 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         })
     }
 
+    fn register_states(
+        &mut self,
+        world: &mut World,
+        defs: &PendingDefinitions,
+        mode: ReloadMode,
+    ) -> Result<(), ReloadError> {
+        Python::attach(|py| -> PyResult<()> {
+            for state in &defs.states {
+                register_reloaded_state_machine(
+                    py,
+                    world,
+                    state.state_type.clone_ref(py),
+                    state.initial_state.clone_ref(py),
+                    mode == ReloadMode::Full,
+                )?;
+            }
+            Ok(())
+        })
+        .map_err(|e| ReloadError {
+            message: e.to_string(),
+            is_load_failure: false,
+        })
+    }
+
     fn register_messages(
         &mut self,
         world: &mut World,
@@ -450,32 +611,13 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         Python::attach(|py| -> PyResult<()> {
             for msg_type in &defs.messages {
                 let bound = msg_type.bind(py);
-                let type_ptr = bound.as_type_ptr();
-
-                let already_registered = world
-                    .get_resource::<MessageRegistry>()
-                    .is_some_and(|reg| reg.get(type_ptr).is_some());
-
-                if !already_registered {
-                    let class_name = bound
-                        .getattr("__name__")
-                        .and_then(|n| n.extract::<String>())
-                        .unwrap_or_default();
-
-                    if let Some(mut registry) = world.get_resource_mut::<MessageRegistry>()
-                        && registry.alias_by_name(
-                            type_ptr,
-                            &class_name,
-                            msg_type.clone_ref(py),
-                            generation,
-                        )
-                        && is_verbose()
-                    {
-                        eprintln!(
-                            "   → Aliased message '{}' with new type pointer",
-                            class_name
-                        );
-                    }
+                let outcome = register_python_message(py, world, bound, generation)?;
+                if is_verbose() {
+                    eprintln!(
+                        "   → Registered message '{}' as {:?}",
+                        bound.name()?,
+                        outcome
+                    );
                 }
             }
             Ok(())
@@ -540,7 +682,10 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 registry.register(generation, handle);
             }
             let keep_after = generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
-            registry.cleanup_old_generations(keep_after);
+            let retired_generations =
+                registry.cleanup_old_generations(keep_after, retire_main_handle);
+            drop(registry);
+            super::systems::queue_schedule_compaction(world, retired_generations);
 
             if is_verbose() {
                 eprintln!(
@@ -552,24 +697,28 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     }
 
     fn retire_handles(&mut self, handles: &[DynamicSystemHandle]) {
-        Python::attach(|_py| {
-            for handle in handles {
-                match handle.lock() {
-                    Ok(mut inner) => inner.gut(),
-                    Err(poisoned) => poisoned.into_inner().gut(),
-                }
-            }
-        });
+        for handle in handles {
+            retire_main_handle(handle);
+        }
     }
 
     fn prune_messages(&mut self, world: &mut World, keep_after_generation: u32) {
-        if let Some(mut msg_registry) = world.get_resource_mut::<MessageRegistry>() {
-            let keep_after = keep_after_generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
-            msg_registry.prune_old_generations(keep_after);
+        let keep_after = keep_after_generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
+        prune_python_message_aliases(world, keep_after);
+        if let Some(mut registry) =
+            world.get_resource_mut::<pybevy_core::custom_component::CustomComponentRegistry>()
+        {
+            registry.prune_aliases(keep_after);
+        }
+        if let Some(mut registry) =
+            world.get_resource_mut::<pybevy_core::custom_resource::CustomResourceRegistry>()
+        {
+            registry.prune_aliases(keep_after);
         }
     }
 
     fn clear_custom_resources(&mut self, world: &mut World, verbose: bool) {
+        clear_python_messages(world);
         cleanup::clear_custom_resources(world, verbose);
     }
 
@@ -627,12 +776,5 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
 
     fn gc_object_count(&self) -> usize {
         get_python_gc_objects()
-    }
-
-    fn print_error(&self, error: &ReloadError) {
-        eprintln!(
-            "❌ [Hot Reload] {} — old systems still running",
-            error.message
-        );
     }
 }

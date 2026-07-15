@@ -62,9 +62,15 @@ pub enum ParamAccess<K> {
         name: String,
         mutable: bool,
     },
+    /// Buffered message channel access. Readers are shared; writers are mutable.
+    Message {
+        key: String,
+        name: String,
+        mutable: bool,
+    },
     /// Exclusive world access
     World,
-    /// No conflict (Commands, Local, MessageWriter, etc.)
+    /// No conflict (Commands, Local, observer trigger, etc.)
     None,
 }
 
@@ -84,6 +90,7 @@ pub struct ComponentAccessConflict {
 /// - Multiple mutable accesses to the same component (unless queries are disjoint via filters)
 /// - Mixed mutable/immutable access to the same component (unless disjoint)
 /// - Multiple mutable accesses to the same resource
+/// - A message writer conflicting with another reader or writer for its channel
 /// - World parameter conflicting with any other parameter
 ///
 /// The `accesses` slice is indexed by parameter position — the index is used
@@ -101,6 +108,9 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
 
     // Track assets access (for Res<Assets<T>> / ResMut<Assets<T>> conflicts)
     let mut assets_access: HashMap<String, (usize, bool, String)> = HashMap::new();
+
+    // Track buffered message channels (reader=shared, writer=mutable).
+    let mut message_access: HashMap<String, (usize, bool, String)> = HashMap::new();
 
     // Track if World parameter exists (World is exclusive with everything)
     let mut world_param_idx: Option<usize> = None;
@@ -213,6 +223,34 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 }
             }
 
+            ParamAccess::Message { key, name, mutable } => {
+                if let Some((existing_idx, existing_mut, existing_name)) = message_access.get(key) {
+                    if *mutable || *existing_mut {
+                        return Err(ComponentAccessConflict {
+                            param_idx,
+                            mutable: *mutable,
+                            comp_name: name.clone(),
+                            existing_idx: *existing_idx,
+                            existing_mut: *existing_mut,
+                            existing_name: existing_name.clone(),
+                        });
+                    }
+                } else {
+                    message_access.insert(key.clone(), (param_idx, *mutable, name.clone()));
+                }
+
+                if let Some(world_idx) = world_param_idx {
+                    return Err(ComponentAccessConflict {
+                        param_idx,
+                        mutable: *mutable,
+                        comp_name: name.clone(),
+                        existing_idx: world_idx,
+                        existing_mut: true,
+                        existing_name: "World".to_string(),
+                    });
+                }
+            }
+
             ParamAccess::World => {
                 // World is exclusive - conflicts with everything
                 if let Some(world_idx) = world_param_idx {
@@ -230,6 +268,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 if !component_access.is_empty()
                     || !resource_access.is_empty()
                     || !assets_access.is_empty()
+                    || !message_access.is_empty()
                 {
                     let (existing_idx, existing_name) =
                         if let Some(entries) = component_access.values().next() {
@@ -238,6 +277,8 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         } else if let Some((idx, _, name)) = resource_access.values().next() {
                             (*idx, name.clone())
                         } else if let Some((idx, _, name)) = assets_access.values().next() {
+                            (*idx, name.clone())
+                        } else if let Some((idx, _, name)) = message_access.values().next() {
                             (*idx, name.clone())
                         } else {
                             unreachable!()
@@ -301,6 +342,14 @@ mod tests {
         ParamAccess::Assets {
             key: key.to_string(),
             name: key.to_string(),
+            mutable,
+        }
+    }
+
+    fn message(key: &str, mutable: bool) -> ParamAccess<String> {
+        ParamAccess::Message {
+            key: key.to_string(),
+            name: format!("Message<{key}>"),
             mutable,
         }
     }
@@ -377,6 +426,35 @@ mod tests {
             query(vec![comp("Transform", false)], filters(&["Transform"], &[])),
         ];
         assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn two_readers_of_same_message_are_compatible() {
+        assert!(validate_access(&[message("Tick", false), message("Tick", false)]).is_ok());
+    }
+
+    #[test]
+    fn reader_and_writer_of_same_message_conflict() {
+        let error = validate_access(&[message("Tick", false), message("Tick", true)]).unwrap_err();
+        assert_eq!(error.existing_idx, 0);
+        assert_eq!(error.param_idx, 1);
+        assert_eq!(error.comp_name, "Message<Tick>");
+    }
+
+    #[test]
+    fn two_writers_of_same_message_conflict() {
+        assert!(validate_access(&[message("Tick", true), message("Tick", true)]).is_err());
+    }
+
+    #[test]
+    fn unrelated_message_channels_are_compatible() {
+        assert!(validate_access(&[message("Tick", true), message("Damage", false)]).is_ok());
+    }
+
+    #[test]
+    fn message_and_world_conflict_in_either_order() {
+        assert!(validate_access(&[message("Tick", false), ParamAccess::World]).is_err());
+        assert!(validate_access(&[ParamAccess::World, message("Tick", false)]).is_err());
     }
 
     #[test]

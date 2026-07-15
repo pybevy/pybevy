@@ -478,11 +478,15 @@ pub(crate) fn register_custom_resource(
     name: String,
 ) -> ComponentId {
     let qualified_name = Python::attach(|py| get_python_qualified_name(py, type_ptr));
+    let generation = world
+        .get_resource::<pybevy_reload::HotReloadGeneration>()
+        .map_or(0, |generation| generation.current);
     let outcome = register_custom_resource_guarded::<Pyo3ObjectDescriptor>(
         world,
         type_ptr as usize,
         &name,
         qualified_name.as_deref(),
+        generation,
     );
 
     // Synchronize the PyO3/MCP class table only after the neutral registry's

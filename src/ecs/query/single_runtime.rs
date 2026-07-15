@@ -1,9 +1,10 @@
 use bevy::ecs::{change_detection::Tick, world::unsafe_world_cell::UnsafeWorldCell};
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pybevy_ecs::shared::query_runtime::{QueryExecutionError, QueryRuntimeError};
+use pyo3::{exceptions::PyStopIteration, prelude::*};
 
 use crate::ecs::{
     helpers::validity_guard::ValidityFlag,
-    query::query_runtime::{CachedQuery, PyQueryIter},
+    query::query_runtime::{CachedQuery, PyQueryIter, query_execution_error_to_py},
 };
 
 /// Runtime wrapper for Single<T> queries that enforces exactly one entity matches.
@@ -60,30 +61,9 @@ impl PySingleQuery {
     /// Returns the single query result, panicking if zero or multiple entities match
     fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
         if self.returned {
-            return Err(pyo3::exceptions::PyStopIteration::new_err(""));
+            return Err(PyStopIteration::new_err(""));
         }
-
-        // Get the first result
-        let first = self.query_iter.call_method0(py, "__next__")?;
-
-        // Check if there's a second result (which would be an error)
-        match self.query_iter.call_method0(py, "__next__") {
-            Ok(_) => {
-                // There's a second result - this is an error
-                Err(PyRuntimeError::new_err(
-                    "Single<T> query matched multiple entities. Expected exactly one entity.",
-                ))
-            }
-            Err(e) if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => {
-                // No second result - this is correct, return the first
-                self.returned = true;
-                Ok(first)
-            }
-            Err(e) => {
-                // Some other error
-                Err(e)
-            }
-        }
+        self.fetch_single(py)
     }
 
     /// Delegate attribute access to the single result, matching Bevy's Deref behavior.
@@ -107,24 +87,22 @@ impl PySingleQuery {
             return Ok(item.clone_ref(py));
         }
 
-        // Get the first result
-        let first = self.query_iter.call_method0(py, "__next__")?;
-
-        // Verify exactly one entity matches
-        match self.query_iter.call_method0(py, "__next__") {
-            Ok(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "Single<T> query matched multiple entities. Expected exactly one entity.",
-                ));
-            }
-            Err(e) if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => {
-                // Correct - exactly one entity
-            }
-            Err(e) => return Err(e),
-        }
-
-        self.returned = true;
+        let first = self.fetch_single(py)?;
         self.cached_item = Some(first.clone_ref(py));
         Ok(first)
+    }
+
+    fn fetch_single(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        let result = self.query_iter.borrow(py).materialize_single(py);
+        match result {
+            Ok(item) => {
+                self.returned = true;
+                Ok(item)
+            }
+            Err(QueryExecutionError::Runtime(QueryRuntimeError::NoEntities)) => {
+                Err(PyStopIteration::new_err(""))
+            }
+            Err(error) => Err(query_execution_error_to_py(error)),
+        }
     }
 }

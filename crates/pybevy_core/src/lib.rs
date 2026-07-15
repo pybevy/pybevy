@@ -158,6 +158,15 @@ impl ComponentBridge for ChildOfBridge {
         Ok(())
     }
 
+    fn prepare_uniform(
+        &self,
+        component: &Bound<PyAny>,
+    ) -> PyResult<Box<dyn PreparedUniformComponent>> {
+        let py_component = component.extract::<PyRef<hierarchy::PyChildOf>>()?;
+        let native: ChildOf = py_component.storage.as_ref()?.clone();
+        Ok(Box::new(PreparedNativeUniform::new(native)))
+    }
+
     fn insert_into_entity(
         &self,
         entity: &mut EntityWorldMut,
@@ -386,18 +395,21 @@ pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};
 pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
-    AccessMode, AssetBorrowCounter, AssetStorage, BorrowableStorage, ComponentStorage,
+    AccessMode, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, AssetBorrowCounter,
+    AssetRuntimeCore, AssetRuntimeError, AssetStorage, BorrowableStorage, ComponentStorage,
     ComponentStorageInner, FieldOffset, FieldStorage, FieldStorageInner, FieldType,
     FilteredEntityAccess, FromBorrowedStorage, ListStorage, ListStorageInner, ResourceStorage,
     ResourceStorageInner, StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard,
-    ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, normalize_index,
+    ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, allocate_id, consume_unstored_id,
+    normalize_index,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{
     AssetBridge, AssetInputConverter, BatchComponent, BatchFieldMeta, BatchableField,
-    ComponentBatchInsertFn, ComponentBatchMeta, ComponentBridge, ExtractFn, MessageBridge,
-    PluginConfigs, PyRustComponentBatch, ResourceBridge, batch_field_meta_for, field_type_of,
-    set_field_from_numpy,
+    ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn, ComponentBridge,
+    ExtractFn, MessageBridge, PluginConfigs, PreparedBatchComponent, PreparedNativeBatch,
+    PreparedNativeUniform, PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch,
+    ResourceBridge, batch_field_meta_for, field_type_of, set_field_from_numpy,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,

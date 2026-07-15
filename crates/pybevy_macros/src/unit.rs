@@ -95,6 +95,19 @@ pub(crate) fn generate_unit_bridge_tokens(
                 Ok(())
             }
 
+            fn prepare_uniform(
+                &self,
+                _component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<Box<dyn pybevy_core::PreparedUniformComponent>> {
+                fn insert_one(
+                    entity: bevy::ecs::entity::Entity,
+                    world: &mut bevy::ecs::world::World,
+                ) {
+                    world.entity_mut(entity).insert(#bevy_type);
+                }
+                Ok(Box::new(pybevy_core::PreparedUniformFn::new(insert_one)))
+            }
+
             fn extract_fn(&self) -> pybevy_core::ExtractFn {
                 #[inline(always)]
                 fn extract_impl(

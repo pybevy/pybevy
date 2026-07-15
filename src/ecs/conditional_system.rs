@@ -1,14 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use bevy::ecs::{
-    change_detection::Res,
     schedule::{IntoScheduleConfigs, ScheduleConfigs},
     system::ScheduleSystem,
 };
-use pybevy_reload::{HotReloadGeneration, SystemStage};
+use pybevy_reload::SystemStage;
 use pyo3::{prelude::*, types::PyDict};
 
-use crate::ecs::{dynamic_condition::DynamicCondition, dynamic_system::DynamicSystem};
+use crate::ecs::system_interpreter::{MainDynamicSystem as DynamicSystem, new_main_condition};
 
 /// Wrapper for a system with a run condition
 /// Similar to Bevy's IntoSystemConfigs::run_if()
@@ -155,56 +154,8 @@ pub(crate) fn build_conditional_system_config(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     system_stage: SystemStage,
-    is_startup: bool,
+    _is_startup: bool,
 ) -> PyResult<ScheduleConfigs<ScheduleSystem>> {
-    let has_params = Python::attach(|py| -> bool {
-        let Ok(inspect) = py.import("inspect") else {
-            return false;
-        };
-        let Ok(sig) = inspect.call_method1("signature", (condition.bind(py),)) else {
-            return false;
-        };
-        let Ok(params) = sig.getattr("parameters") else {
-            return false;
-        };
-        let Ok(values) = params.call_method0("values") else {
-            return false;
-        };
-        values.len().unwrap_or(0) > 0
-    });
-
-    if has_params {
-        let dynamic_condition =
-            DynamicCondition::new(condition, generation, error_state, system_stage)?;
-        Ok(dynamic_system.run_if(dynamic_condition))
-    } else {
-        let expected_gen = generation;
-        let combined = move |gen_res: Option<Res<HotReloadGeneration>>| -> bool {
-            let gen_check = if is_startup {
-                match gen_res {
-                    Some(ref res) => res.current == expected_gen || res.current == expected_gen + 1,
-                    None => true,
-                }
-            } else {
-                match gen_res {
-                    Some(ref res) => res.current == expected_gen,
-                    None => true,
-                }
-            };
-            if !gen_check {
-                return false;
-            }
-            Python::attach(|py| match condition.bind(py).call0() {
-                Ok(obj) => obj.extract::<bool>().unwrap_or_else(|e| {
-                    eprintln!("run_if condition must return bool: {}", e);
-                    false
-                }),
-                Err(e) => {
-                    eprintln!("Error calling run_if condition: {}", e);
-                    false
-                }
-            })
-        };
-        Ok(dynamic_system.run_if(combined))
-    }
+    let dynamic_condition = new_main_condition(condition, generation, error_state, system_stage)?;
+    Ok(dynamic_system.run_if(dynamic_condition))
 }

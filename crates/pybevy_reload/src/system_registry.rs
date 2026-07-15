@@ -33,7 +33,11 @@ impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
     /// The callback borrows each handle before the registry drops its owning
     /// reference. Backends use it to clear interpreter references with their
     /// required lock/attachment ordering.
-    pub fn cleanup_old_generations(&mut self, keep_after: u32, mut retire: impl FnMut(&H)) {
+    pub fn cleanup_old_generations(
+        &mut self,
+        keep_after: u32,
+        mut retire: impl FnMut(&H),
+    ) -> Vec<u32> {
         let old_generations: Vec<u32> = self
             .generations
             .keys()
@@ -41,13 +45,15 @@ impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
             .copied()
             .collect();
 
-        for generation in old_generations {
+        for &generation in &old_generations {
             if let Some(handles) = self.generations.remove(&generation) {
                 for handle in &handles {
                     retire(handle);
                 }
             }
         }
+
+        old_generations
     }
 
     /// Replace the latest system-name snapshot and return removed names.

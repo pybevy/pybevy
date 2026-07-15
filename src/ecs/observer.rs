@@ -1,13 +1,6 @@
-use bevy::ecs::{
-    entity::Entity,
-    world::{EntityRef, World},
-};
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 
-use super::{
-    PyEntity,
-    component_type::{ComponentRegistry, PyComponentType},
-};
+use super::{PyEntity, component_type::PyComponentType};
 
 /// Base class for all events in PyBevy.
 ///
@@ -66,8 +59,8 @@ pub struct PyRemove;
 
 /// Marker class for component discard lifecycle events.
 /// Use with On[Discard, ComponentType] to observe when a component value is
-/// discarded because a new value is inserted over it. Fires before the value
-/// is replaced, so observers can still read the original component data.
+/// discarded because it is replaced, removed, or despawned. Fires before the
+/// value is dropped, so observers can still read the original component data.
 #[pyclass(name = "Discard", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDiscard;
@@ -412,38 +405,6 @@ impl EventType {
             // TODO: Implement lifecycle event matching
             _ => false,
         }
-    }
-}
-
-/// Helper function to check if an entity has a specific component type
-fn entity_has_component(world: &World, entity: &EntityRef, comp_type: &PyComponentType) -> bool {
-    match comp_type {
-        PyComponentType::Custom(type_ptr) => {
-            // For custom components, look up the ComponentId from the registry
-            if let Some(registry) = world.get_resource::<ComponentRegistry>()
-                && let Some(component_id) = registry.get(*type_ptr as usize)
-            {
-                // Check if entity has this component using the ComponentId
-                return entity.contains_id(component_id);
-            }
-            // Component not registered or registry doesn't exist
-            false
-        }
-        // For built-in components, use the generated entity_contains method
-        _ => comp_type.entity_contains(entity),
-    }
-}
-
-/// Public helper to check if an entity has a specific component type.
-/// This is used by commands.rs to check for component existence before insertion.
-pub(crate) fn entity_has_component_type(
-    world: &World,
-    entity: Entity,
-    comp_type: &PyComponentType,
-) -> bool {
-    match world.get_entity(entity) {
-        Ok(entity_ref) => entity_has_component(world, &entity_ref, comp_type),
-        Err(_) => false,
     }
 }
 

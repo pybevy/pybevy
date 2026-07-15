@@ -7,31 +7,39 @@
 //! Safety: World pointer is only dereferenced during valid query iteration (protected by ValidityFlag)
 
 use bevy::ecs::{
-    change_detection::DetectChangesMut, component::ComponentId, entity::Entity, world::World,
+    change_detection::DetectChangesMut,
+    component::ComponentId,
+    entity::Entity,
+    world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
 
-/// Mark a specific component as changed using explicit entity and world pointer.
+use super::run_scaffold::RunTicks;
+
+/// Mark a specific component as changed through the run's existing world cell.
 ///
 /// # Safety
-/// - `world_ptr` must point to a valid `World` (caller must ensure the pointer
-///   has not been invalidated, e.g. via `ValidityFlag`).
+/// - `world` must be the live cell protected by the caller's `ValidityFlag`.
 /// - `entity` must exist in the world.
-/// - No other mutable reference to the `World` may be live at the call site.
+/// - Scheduler access must permit mutable access to `component_id`.
+/// - When supplied, `ticks` must be the captured window for this system run.
 pub unsafe fn mark_component_changed_explicit(
     entity: Entity,
-    world_ptr: *mut World,
+    world: UnsafeWorldCell<'_>,
     component_id: ComponentId,
+    ticks: Option<RunTicks>,
 ) {
-    // SAFETY:
-    // - world_ptr is valid because ValidityFlag is still active
-    // - Entity and ComponentId are valid (came from query extraction)
-    unsafe {
-        let world = &mut *world_ptr;
-        if let Ok(mut entity_mut) = world.get_entity_mut(entity)
-            && let Ok(mut comp) = entity_mut.get_mut_by_id(component_id)
-        {
-            comp.set_changed();
-        }
+    let entity_cell = match ticks {
+        Some(ticks) => world.get_entity_with_ticks(entity, ticks.last_run, ticks.this_run),
+        None => world.get_entity(entity),
+    };
+    let Ok(entity_cell) = entity_cell else {
+        return;
+    };
+    // SAFETY: the caller guarantees declared mutable access to this exact
+    // component and no overlapping reference to it. The cell carries either
+    // the run's captured tick window or Bevy's current live window.
+    if let Ok(mut component) = unsafe { entity_cell.get_mut_by_id(component_id) } {
+        component.set_changed();
     }
 }
 
@@ -105,8 +113,8 @@ mod tests {
         assert!(!ticks.is_changed(last_run, this_run));
 
         // Mark it
-        let world_ptr: *mut World = &mut world;
-        unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
+        let cell = world.as_unsafe_world_cell();
+        unsafe { mark_component_changed_explicit(entity, cell, component_id, None) };
 
         // Now it should appear changed
         let this_run = world.read_change_tick();
@@ -121,14 +129,47 @@ mod tests {
     }
 
     #[test]
+    fn captured_ticks_stamp_the_run_tick_not_a_later_live_tick() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Health>();
+        let entity = world.spawn(Health).id();
+
+        world.increment_change_tick();
+        let last_run = world.read_change_tick();
+        world.increment_change_tick();
+        let this_run = world.read_change_tick();
+        // Simulate unrelated systems advancing the global tick while this
+        // interpreted system is still running.
+        world.increment_change_tick();
+        world.increment_change_tick();
+        assert_ne!(world.read_change_tick(), this_run);
+
+        let cell = world.as_unsafe_world_cell();
+        unsafe {
+            mark_component_changed_explicit(
+                entity,
+                cell,
+                component_id,
+                Some(RunTicks { last_run, this_run }),
+            )
+        };
+
+        let ticks = world
+            .entity(entity)
+            .get_change_ticks_by_id(component_id)
+            .unwrap();
+        assert_eq!(ticks.changed, this_run);
+    }
+
+    #[test]
     fn mark_changed_nonexistent_entity_does_not_panic() {
         let mut world = World::new();
         let component_id = world.register_component::<Health>();
         let entity = Entity::from_bits(9999);
 
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
         // Should silently do nothing
-        unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
+        unsafe { mark_component_changed_explicit(entity, cell, component_id, None) };
     }
 
     #[test]
@@ -138,9 +179,9 @@ mod tests {
         // Spawn entity without Health
         let entity = world.spawn_empty().id();
 
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
         // Should silently do nothing
-        unsafe { mark_component_changed_explicit(entity, world_ptr, component_id) };
+        unsafe { mark_component_changed_explicit(entity, cell, component_id, None) };
     }
 
     // A wrapper-like component: repr(C) with the data payload at offset 0, matching

@@ -1129,32 +1129,32 @@ mod tests {
         let bytecode = compile_expr(&RustExpr::Eq(c(5.0), c(5.0)));
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Ne(c(5.0), c(3.0)));
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Lt(c(3.0), c(5.0)));
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Le(c(5.0), c(5.0)));
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Gt(c(5.0), c(3.0)));
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Ge(c(3.0), c(5.0)));
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), false);
+        assert!(!vm.stack[0].as_bool());
     }
 
     #[test]
@@ -1167,7 +1167,7 @@ mod tests {
         let bytecode = compile_expr(&expr);
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), false);
+        assert!(!vm.stack[0].as_bool());
 
         // true OR false = true
         let expr = RustExpr::Or(
@@ -1177,14 +1177,14 @@ mod tests {
         let bytecode = compile_expr(&expr);
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         // NOT true = false
         let expr = RustExpr::Not(Box::new(RustExpr::Gt(c(5.0), c(3.0))));
         let bytecode = compile_expr(&expr);
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
-        assert_eq!(vm.stack[0].as_bool(), false);
+        assert!(!vm.stack[0].as_bool());
     }
 
     #[test]

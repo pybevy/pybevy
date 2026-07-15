@@ -1,6 +1,5 @@
 use std::{
     any::Any,
-    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -9,7 +8,6 @@ use bevy::{
     ecs::{
         component::ComponentId,
         message::{Message, MessageCursor, Messages},
-        resource::Resource,
         world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
     image::Image,
@@ -18,13 +16,12 @@ use bevy::{
         keyboard::{KeyCode, KeyboardInput},
     },
     mesh::Mesh,
-    window::WindowEvent,
+    window::{WindowClosing, WindowCreated, WindowEvent, WindowResized, WindowScaleFactorChanged},
 };
 use pybevy_core::registry::global_registry;
+use pybevy_ecs::shared::message_resources::ensure_message_resource;
 use pybevy_world_serialization::WorldInstanceReadyMessage;
-use pyo3::{
-    IntoPyObjectExt, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType,
-};
+use pyo3::{IntoPyObjectExt, exceptions::PyTypeError, prelude::*, types::PyType};
 
 /// Persistent cursor storage shared between DynamicSystem and PyMessages.
 /// The Arc+Mutex allows frozen pyclass fields to hold mutable state.
@@ -37,8 +34,8 @@ use crate::ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource};
 ///
 /// Holds the lifetime-erased [`UnsafeWorldCell`] (fenced by the same `ValidityFlag`
 /// as `PyQueryIter`) and derives a momentary `&mut World` per operation. The
-/// message macros/bridges only reach their `Messages<T>` resource (plus
-/// `MessageRegistry` and, for KeyboardInput readers, `ButtonInput<KeyCode>`), all
+/// native message adapters/bridges only reach their `Messages<T>` resource (plus,
+/// for KeyboardInput readers, `ButtonInput<KeyCode>`), all
 /// of which `DynamicSystem::initialize` declares. This is the same
 /// residual-pointer class as `query_runtime::world_ptr`.
 #[derive(Clone)]
@@ -76,85 +73,6 @@ impl MessageWorld {
         // SAFETY: momentary derivation; see method docs.
         Ok(unsafe { self.cell.world_mut() })
     }
-}
-
-// Macro to generate CustomMessage types
-macro_rules! define_custom_messages {
-    ($($n:literal),+ $(,)?) => {
-        paste::paste! {
-            $(
-                #[derive(Message)]
-                pub(crate) struct [<CustomMessage $n>](pub(crate) Py<PyAny>);
-            )+
-        }
-    };
-}
-
-// Macro to generate match arms for message registration using add_message
-// Maps message_num (0-19) to CustomMessage types (1-20)
-// Uses app.add_message() which adds BOTH the Messages resource AND the update system
-macro_rules! add_message_arms {
-    ($message_num:expr, $app:expr, $($idx:literal => $type_num:literal),+ $(,)?) => {
-        paste::paste! {
-            match $message_num {
-                $(
-                    $idx => {
-                        $app.add_message::<[<CustomMessage $type_num>]>();
-                        // Get the ComponentId for the Messages resource
-                        $app.world().component_id::<Messages<[<CustomMessage $type_num>]>>().unwrap()
-                    }
-                )+
-                _ => unreachable!(),
-            }
-        }
-    };
-}
-
-// Macro to generate match arms for reading messages with persistent cursor support
-macro_rules! read_message_arms {
-    ($message_num:expr, $world:expr, $py:expr, $result:expr, $cursor_storage:expr, $($idx:literal => $type_num:literal),+ $(,)?) => {
-        paste::paste! {
-            match $message_num {
-                $(
-                    $idx => {
-                        if let Some(messages) = $world.get_resource::<Messages<[<CustomMessage $type_num>]>>() {
-                            let mut cursor = $cursor_storage
-                                .as_ref()
-                                .and_then(|s| s.downcast_ref::<MessageCursor<[<CustomMessage $type_num>]>>())
-                                .cloned()
-                                .unwrap_or_else(|| messages.get_cursor());
-                            for msg in cursor.read(messages) {
-                                $result.push(msg.0.clone_ref($py));
-                            }
-                            *$cursor_storage = Some(Box::new(cursor));
-                        }
-                    }
-                )+
-                _ => return Err(PyTypeError::new_err("Invalid message number")),
-            }
-        }
-    };
-}
-
-// Macro to generate match arms for with_messages
-macro_rules! with_messages_arms {
-    ($message_num:expr, $world:expr, $f:expr, $($idx:literal => $type_num:literal),+ $(,)?) => {
-        paste::paste! {
-            match $message_num {
-                $(
-                    $idx => {
-                        // Missing buffer reads as empty; never insert (no structural
-                        // world mutation from a possibly-parallel system).
-                        match $world.get_resource_mut::<Messages<[<CustomMessage $type_num>]>>() {
-                            Some(mut messages) => Ok($f(&mut Wrap(&mut *messages))),
-                            None => Ok($f(&mut EmptyMessages)),
-                        }
-                    }
-                )+
-                _ => Err(PyTypeError::new_err("Invalid message number")),
-            }
-        }
-    };
 }
 
 /// Python-facing wrapper for Bevy message resources (events).
@@ -266,7 +184,12 @@ impl PyMessages {
                     py,
                     world,
                     cursor_state,
-                    |msg, py| Ok(Py::new(py, PyWorldInstanceReady::from(&msg.0))?.into_any()),
+                    |msg, py| {
+                        Ok(
+                            Py::new(py, (PyWorldInstanceReady::from(&msg.0), PyMessage))?
+                                .into_any(),
+                        )
+                    },
                 )
             }
             MessageType::AssetEventImage => {
@@ -281,29 +204,9 @@ impl PyMessages {
                     Ok(Py::new(py, (PyAssetEvent::from_bevy(event), PyMessage))?.into_any())
                 })
             }
-            MessageType::Custom(py_type) => {
-                // Look up the message number from registry
-                let type_ptr = py_type.bind(py).as_type_ptr();
-                let message_num = {
-                    let Some(registry) = world.get_resource::<MessageRegistry>() else {
-                        return Err(PyTypeError::new_err(
-                            "MessageRegistry not initialized. Call app.add_message(T) to register message types.",
-                        ));
-                    };
-                    registry
-                        .get(type_ptr)
-                        .ok_or_else(|| PyTypeError::new_err("Message type not registered"))?
-                        .message_num
-                };
-
-                // Read from the appropriate CustomMessageN resource
-                let mut result = Vec::new();
-                read_message_arms!(message_num, world, py, result, cursor_state,
-                    0=>1, 1=>2, 2=>3, 3=>4, 4=>5, 5=>6, 6=>7, 7=>8, 8=>9, 9=>10,
-                    10=>11, 11=>12, 12=>13, 13=>14, 14=>15, 15=>16, 16=>17, 17=>18, 18=>19, 19=>20
-                );
-                Ok(result)
-            }
+            MessageType::Custom(_) => Err(PyTypeError::new_err(
+                "custom messages use the shared Python message store",
+            )),
             MessageType::Dynamic(type_ptr) => {
                 // Use global registry for dynamic dispatch (most message types use this)
                 let bridge =
@@ -359,27 +262,9 @@ impl PyMessages {
                     None => Ok(f(&mut EmptyMessages)),
                 }
             }
-            MessageType::Custom(py_type) => {
-                // Look up the message number from registry
-                let message_num = Python::attach(|py| {
-                    let type_ptr = py_type.bind(py).as_type_ptr();
-                    let Some(registry) = world.get_resource::<MessageRegistry>() else {
-                        return Err(PyTypeError::new_err(
-                            "MessageRegistry not initialized. Call app.add_message(T) to register message types.",
-                        ));
-                    };
-                    registry
-                        .get(type_ptr)
-                        .ok_or_else(|| PyTypeError::new_err("Message type not registered"))
-                        .map(|reg| reg.message_num)
-                })?;
-
-                // Access the appropriate CustomMessageN resource
-                with_messages_arms!(message_num, world, f,
-                    0=>1, 1=>2, 2=>3, 3=>4, 4=>5, 5=>6, 6=>7, 7=>8, 8=>9, 9=>10,
-                    10=>11, 11=>12, 12=>13, 13=>14, 14=>15, 15=>16, 16=>17, 17=>18, 18=>19, 19=>20
-                )
-            }
+            MessageType::Custom(_) => Err(PyTypeError::new_err(
+                "custom messages use the shared Python message store",
+            )),
             MessageType::Dynamic(_) => {
                 // Dynamic types are handled directly in the public methods before calling with_messages
                 unreachable!("Dynamic message types should be handled before with_messages()")
@@ -557,49 +442,61 @@ impl Clone for MessageType {
 }
 
 impl MessageType {
-    /// Get the ComponentId for the Messages<T> resource this message type maps to.
-    ///
-    /// Used by DynamicSystem::initialize() to register read/write access for messages.
-    pub(crate) fn resource_id(&self, world: &World) -> Option<ComponentId> {
+    /// Stable exact channel identity and a user-facing validation label.
+    pub(crate) fn validation_identity(&self) -> (String, String) {
         match self {
-            MessageType::KeyboardInput => {
-                world.components().component_id::<Messages<KeyboardInput>>()
-            }
-            MessageType::GamepadRumbleRequest => {
-                // PyBevy-only type with no actual Messages resource
-                None
-            }
-            MessageType::WindowEvent => world.components().component_id::<Messages<WindowEvent>>(),
-            MessageType::WorldInstanceReady => world
-                .components()
-                .component_id::<Messages<WorldInstanceReadyMessage>>(),
-            MessageType::AssetEventImage => world
-                .components()
-                .component_id::<Messages<AssetEvent<Image>>>(),
-            MessageType::AssetEventMesh => world
-                .components()
-                .component_id::<Messages<AssetEvent<Mesh>>>(),
-            MessageType::Custom(py_type) => {
-                let type_ptr = Python::attach(|py| py_type.bind(py).as_type_ptr());
-                world
-                    .get_resource::<MessageRegistry>()
-                    .and_then(|registry| registry.get(type_ptr))
-                    .map(|registered| registered.component_id)
-            }
-            MessageType::Dynamic(type_ptr) => {
-                global_registry::get_message_bridge_by_py_type(*type_ptr)
-                    .and_then(|bridge| bridge.resource_id(world))
+            Self::KeyboardInput => (
+                "native:KeyboardInput".to_string(),
+                "Message<KeyboardInput>".to_string(),
+            ),
+            Self::GamepadRumbleRequest => (
+                "native:GamepadRumbleRequest".to_string(),
+                "Message<GamepadRumbleRequest>".to_string(),
+            ),
+            Self::WindowEvent => (
+                "native:WindowEvent".to_string(),
+                "Message<WindowEvent>".to_string(),
+            ),
+            Self::WorldInstanceReady => (
+                "native:WorldInstanceReady".to_string(),
+                "Message<WorldInstanceReady>".to_string(),
+            ),
+            Self::AssetEventImage => (
+                "native:AssetEvent<Image>".to_string(),
+                "Message<AssetEvent<Image>>".to_string(),
+            ),
+            Self::AssetEventMesh => (
+                "native:AssetEvent<Mesh>".to_string(),
+                "Message<AssetEvent<Mesh>>".to_string(),
+            ),
+            Self::Custom(class) => Python::attach(|py| {
+                let class = class.bind(py);
+                let module = class
+                    .getattr("__module__")
+                    .and_then(|value| value.extract::<String>())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                let qualname = class
+                    .getattr("__qualname__")
+                    .and_then(|value| value.extract::<String>())
+                    .unwrap_or_else(|_| "<custom>".to_string());
+                (
+                    format!("custom:{module}.{qualname}"),
+                    format!("Message<{module}.{qualname}>"),
+                )
+            }),
+            Self::Dynamic(type_ptr) => {
+                let name = global_registry::get_message_bridge_by_py_type(*type_ptr)
+                    .map_or("Dynamic", |bridge| bridge.name());
+                (format!("dynamic:{type_ptr:p}"), format!("Message<{name}>"))
             }
         }
     }
 
-    /// Register (get-or-create) the ComponentId for the `Messages<T>` resource.
+    /// Register (get-or-create) the ComponentId for a native `Messages<T>` resource.
     ///
-    /// `resource_id` is lookup-only and returns None before the message type's
-    /// first write, silently dropping access and letting conflicting systems race.
-    /// This variant creates the id so `DynamicSystem::initialize` declares it up
-    /// front. `initialize` holds `&mut World`, so registration is sound, and the
-    /// created id is TypeId-keyed to the one a later insertion resolves to.
+    /// `DynamicSystem::initialize` calls this before the first write so native
+    /// message access is never silently omitted. Custom Python messages declare
+    /// their shared-store and synthetic channel access in `MainResolver` instead.
     pub(crate) fn register_resource_id(&self, world: &mut World) -> Option<ComponentId> {
         match self {
             MessageType::KeyboardInput => {
@@ -622,16 +519,7 @@ impl MessageType {
             MessageType::AssetEventMesh => {
                 Some(world.register_component::<Messages<AssetEvent<Mesh>>>())
             }
-            MessageType::Custom(_) => {
-                // Custom Python messages share the CustomMessage1..20 slot pool; the
-                // slot (hence the Messages<CustomMessageN> ComponentId) is assigned by
-                // app.add_message insertion order and is unknowable from the Python
-                // type alone. Full registration also needs App-level wiring (the
-                // double-buffering update system) that initialize's &mut World cannot
-                // provide. RESIDUAL HOLE: a custom message used in a system param
-                // before its app.add_message call leaves access undeclared until then.
-                self.resource_id(world)
-            }
+            MessageType::Custom(_) => None,
             MessageType::Dynamic(type_ptr) => {
                 global_registry::get_message_bridge_by_py_type(*type_ptr)
                     .map(|bridge| bridge.register_resource_id(world))
@@ -719,189 +607,6 @@ impl PyMessageType {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct CustomMessageState {
-    registered_count: usize,
-}
-
-pub(crate) struct RegisteredMessage {
-    // The component ID of the resource
-    pub component_id: ComponentId,
-    pub message_num: usize,
-    pub pytype: Py<PyType>,
-    /// Generation when this registration was created or last aliased.
-    /// Used by prune_old_generations() to remove stale type pointer entries.
-    pub generation: u32,
-}
-
-// Generate CustomMessage1 through CustomMessage20 using macro
-define_custom_messages!(
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
-);
-
-/// Registry mapping Python message types to their ComponentIds
-#[derive(Default, Resource)]
-pub(crate) struct MessageRegistry {
-    registry: HashMap<*const PyTypeObject, RegisteredMessage>,
-}
-
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
-unsafe impl Send for MessageRegistry {}
-unsafe impl Sync for MessageRegistry {}
-
-impl MessageRegistry {
-    /// Get the RegisteredMessage for a Python message type
-    pub(crate) fn get(&self, type_ptr: *const PyTypeObject) -> Option<&RegisteredMessage> {
-        self.registry.get(&type_ptr)
-    }
-
-    /// Add a new type pointer as an alias for an existing registration found by name.
-    /// Used during hot reload: Python classes are recreated with new PyTypeObject pointers,
-    /// but MCP tool dispatchers still hold old class references. Keeping both old and new
-    /// pointers ensures both can resolve to the same message slot.
-    /// Returns true if an alias was added.
-    pub(crate) fn alias_by_name(
-        &mut self,
-        new_type_ptr: *const PyTypeObject,
-        name: &str,
-        new_pytype: Py<PyType>,
-        generation: u32,
-    ) -> bool {
-        // Find the existing registration by class name
-        let existing = Python::attach(|py| {
-            self.registry.iter().find_map(|(_ptr, reg)| {
-                let type_name = reg
-                    .pytype
-                    .bind(py)
-                    .getattr("__name__")
-                    .and_then(|n| n.extract::<String>())
-                    .unwrap_or_default();
-                if type_name == name {
-                    Some(reg.message_num)
-                } else {
-                    None
-                }
-            })
-        });
-
-        if let Some(message_num) = existing {
-            // Add the new pointer as an alias pointing to the same slot
-            self.registry.insert(
-                new_type_ptr,
-                RegisteredMessage {
-                    component_id: ComponentId::new(0), // Not used for lookup
-                    message_num,
-                    pytype: new_pytype,
-                    generation,
-                },
-            );
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Remove stale type pointer entries from generations older than `min_generation`.
-    /// Keeps at least one entry per message_num (the newest one) to ensure messages
-    /// remain functional. Only removes duplicate pointer aliases from old reloads.
-    pub(crate) fn prune_old_generations(&mut self, min_generation: u32) {
-        use std::collections::HashMap as StdHashMap;
-
-        // Find the newest generation for each message_num
-        let mut newest_per_slot: StdHashMap<usize, u32> = StdHashMap::new();
-        for reg in self.registry.values() {
-            let entry = newest_per_slot.entry(reg.message_num).or_insert(0);
-            if reg.generation > *entry {
-                *entry = reg.generation;
-            }
-        }
-
-        // Remove entries that are both old AND not the newest for their slot
-        self.registry.retain(|_ptr, reg| {
-            if reg.generation >= min_generation {
-                return true; // Recent enough, keep
-            }
-            // Old entry: keep only if it's the newest for its slot
-            newest_per_slot
-                .get(&reg.message_num)
-                .is_none_or(|&newest| reg.generation >= newest)
-        });
-    }
-
-    pub(crate) fn register_message(
-        py: Python,
-        message: &Bound<'_, PyType>,
-        app: &mut bevy::app::App,
-    ) -> PyResult<()> {
-        if !message.is_subclass_of::<PyMessage>()? {
-            return Err(PyTypeError::new_err("Expected a subclass of `Message`"));
-        }
-
-        let type_ptr = message.as_type_ptr();
-        let world = app.world_mut();
-
-        // Ensure registry exists
-        if !world.contains_resource::<MessageRegistry>() {
-            world.init_resource::<MessageRegistry>();
-        }
-        if !world.contains_resource::<CustomMessageState>() {
-            world.init_resource::<CustomMessageState>();
-        }
-
-        // Check if already registered
-        {
-            let registry = world.resource::<MessageRegistry>();
-            if registry.get(type_ptr).is_some() {
-                return Ok(()); // Already registered
-            }
-        }
-
-        // Get the next message number
-        let message_num = {
-            let state = world.resource::<CustomMessageState>();
-            state.registered_count
-        };
-
-        // Support up to 20 custom message types
-        if message_num >= 20 {
-            return Err(PyTypeError::new_err(
-                "Maximum of 20 custom message types supported",
-            ));
-        }
-
-        // Register the appropriate Messages<CustomMessageN> resource using add_message
-        // This ensures both the resource AND the update system are added for double-buffering
-        let component_id = add_message_arms!(message_num, app,
-            0=>1, 1=>2, 2=>3, 3=>4, 4=>5, 5=>6, 6=>7, 7=>8, 8=>9, 9=>10,
-            10=>11, 11=>12, 12=>13, 13=>14, 14=>15, 15=>16, 16=>17, 17=>18, 18=>19, 19=>20
-        );
-
-        // Store in registry
-        {
-            let world = app.world_mut();
-            let mut registry = world.resource_mut::<MessageRegistry>();
-            registry.registry.insert(
-                type_ptr,
-                RegisteredMessage {
-                    component_id,
-                    message_num,
-                    pytype: message.as_unbound().clone_ref(py),
-                    generation: 0, // Initial registration, generation 0
-                },
-            );
-        }
-
-        // Increment count
-        {
-            let world = app.world_mut();
-            let mut state = world.resource_mut::<CustomMessageState>();
-            state.registered_count += 1;
-        }
-
-        Ok(())
-    }
-}
-
 #[pyclass(name = "MessageTypeParam", frozen)]
 #[derive(Debug, PartialEq)]
 pub struct PyMessageTypeParam(pub(crate) PyMessageType);
@@ -911,19 +616,13 @@ pub struct PyMessageTypeParam(pub(crate) PyMessageType);
 /// PreStartup so any plugin that owns a buffer (and its double-buffering update
 /// system) has already inserted it first; this only fills genuinely missing ones.
 pub(crate) fn ensure_builtin_message_resources(world: &mut World) {
-    if !world.contains_resource::<Messages<KeyboardInput>>() {
-        world.insert_resource(Messages::<KeyboardInput>::default());
-    }
-    if !world.contains_resource::<Messages<WindowEvent>>() {
-        world.insert_resource(Messages::<WindowEvent>::default());
-    }
-    if !world.contains_resource::<Messages<WorldInstanceReadyMessage>>() {
-        world.insert_resource(Messages::<WorldInstanceReadyMessage>::default());
-    }
-    if !world.contains_resource::<Messages<AssetEvent<Image>>>() {
-        world.insert_resource(Messages::<AssetEvent<Image>>::default());
-    }
-    if !world.contains_resource::<Messages<AssetEvent<Mesh>>>() {
-        world.insert_resource(Messages::<AssetEvent<Mesh>>::default());
-    }
+    ensure_message_resource::<KeyboardInput>(world);
+    ensure_message_resource::<WindowEvent>(world);
+    ensure_message_resource::<WindowResized>(world);
+    ensure_message_resource::<WindowCreated>(world);
+    ensure_message_resource::<WindowScaleFactorChanged>(world);
+    ensure_message_resource::<WindowClosing>(world);
+    ensure_message_resource::<WorldInstanceReadyMessage>(world);
+    ensure_message_resource::<AssetEvent<Image>>(world);
+    ensure_message_resource::<AssetEvent<Mesh>>(world);
 }

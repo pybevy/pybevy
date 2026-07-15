@@ -121,16 +121,16 @@ pub enum Op {
     /// Pop value, push ceil(value)
     Ceil,
 
-    /// Pop value, push round(value)
+    /// Pop value, push ties-to-even round(value)
     Round,
 
-    /// Pop two values, push min(a, b)
+    /// Pop two values, push NaN-propagating min(a, b)
     Min,
 
-    /// Pop two values, push max(a, b)
+    /// Pop two values, push NaN-propagating max(a, b)
     Max,
 
-    /// Pop three values (max, min, value), push clamp(value, min, max)
+    /// Pop three values (max, min, value), push NumPy-style clip(value, min, max)
     Clamp,
 
     /// Pop two floats, push bool (a == b)
@@ -177,7 +177,7 @@ pub enum Op {
     /// Pop value, push log2(value)
     Log2,
 
-    /// Pop value, push sign(value) (-1.0, 0.0, or 1.0)
+    /// Pop value, push the Python-facing sign of the value.
     Sign,
 
     /// Linear interpolation: lerp(a, b, t) = a + t * (b - a)
@@ -188,7 +188,7 @@ pub enum Op {
     /// Pop value, push fract(value) (fractional part)
     Fract,
 
-    /// Modulo operation: a % b
+    /// Python modulo operation: a % b
     /// Stack before: [b: float, a: float]
     /// Stack after: [result: float]
     Mod,
@@ -370,6 +370,85 @@ impl Compiler {
     }
 }
 
+/// Return the sign convention exposed by PyBevy's Python expression APIs.
+///
+/// Python numeric, tensor, and column-expression libraries define `sign(0)`
+/// as zero and propagate NaN. Returning `x` in the unordered/equal branch also
+/// preserves signed zero. Do not replace this with [`f64::signum`], which maps
+/// signed zero to `-1.0` or `1.0` and would be surprising for a method named
+/// `sign` in a Python API.
+#[inline]
+pub fn python_sign(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        x
+    }
+}
+
+/// Return Python's `%` result for floating-point operands.
+///
+/// Rust's remainder keeps the dividend's sign, while Python and array
+/// expression libraries give a nonzero result the divisor's sign. A zero
+/// result also inherits the divisor's sign. NaN inputs and a zero divisor
+/// naturally remain NaN, which is appropriate for element-wise evaluation.
+#[inline]
+pub fn python_remainder(dividend: f64, divisor: f64) -> f64 {
+    let remainder = dividend % divisor;
+    if remainder == 0.0 {
+        return remainder.copysign(divisor);
+    }
+    if (remainder < 0.0) != (divisor < 0.0) {
+        remainder + divisor
+    } else {
+        remainder
+    }
+}
+
+/// Round to the nearest integer using Python's ties-to-even convention.
+#[inline]
+pub fn python_round(x: f64) -> f64 {
+    x.round_ties_even()
+}
+
+/// Return the element-wise minimum while propagating NaN.
+///
+/// This matches Python array-expression `minimum`; Rust's [`f64::min`] instead
+/// treats a single NaN as missing and returns the other operand.
+#[inline]
+pub fn python_minimum(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if b.is_nan() {
+        b
+    } else {
+        a.min(b)
+    }
+}
+
+/// Return the element-wise maximum while propagating NaN.
+#[inline]
+pub fn python_maximum(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if b.is_nan() {
+        b
+    } else {
+        a.max(b)
+    }
+}
+
+/// Clip a value using NumPy-compatible element-wise semantics.
+///
+/// NaN values or bounds propagate. If `min > max`, the upper bound is returned
+/// instead of allowing [`f64::clamp`] to panic across a Python call boundary.
+#[inline]
+pub fn python_clip(value: f64, min: f64, max: f64) -> f64 {
+    python_minimum(python_maximum(value, min), max)
+}
+
 /// Read a field value from a raw pointer based on its type, returning f64.
 ///
 /// Uses `read_unaligned` for types wider than 4 bytes because ECS column
@@ -390,13 +469,7 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
         // invalid bit pattern (instant UB). `validate_bytecode_field_types` should
         // already reject a `Bool` field aimed at non-bool bytes, but keep this read
         // sound on its own. Any non-zero byte reads as true.
-        FieldType::Bool => unsafe {
-            if (ptr as *const u8).read_unaligned() != 0 {
-                1.0
-            } else {
-                0.0
-            }
-        },
+        FieldType::Bool => unsafe { if ptr.read_unaligned() != 0 { 1.0 } else { 0.0 } },
         // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
         // before execution, so these should never appear in read_field_value
         FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
@@ -435,7 +508,7 @@ pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType)
         FieldType::Bool => unsafe {
             // Write through `u8` (mirrors the `u8` read) so the store never depends
             // on `*mut bool` provenance; a bool is stored as 1/0.
-            (ptr as *mut u8).write_unaligned(u8::from(value >= 0.5));
+            ptr.write_unaligned(u8::from(value >= 0.5));
         },
         FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
             unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
@@ -538,7 +611,7 @@ impl VM {
     /// Returns `false` for PushField and StoreField, which require pointer-dependent
     /// handling by the caller. Returns `true` for all other ops.
     #[inline(always)]
-    fn dispatch_stack_op(&mut self, op: &Op, bytecode: &CompiledBytecode) -> bool {
+    pub(crate) fn dispatch_stack_op(&mut self, op: &Op, bytecode: &CompiledBytecode) -> bool {
         match op {
             Op::PushField(_) | Op::StoreField(_) => return false,
 
@@ -575,7 +648,7 @@ impl VM {
             Op::Mod => {
                 let b = self.stack.pop().expect("Stack underflow on Mod").as_float();
                 let a = self.stack.pop().expect("Stack underflow on Mod").as_float();
-                self.stack.push(StackValue::Float(a % b));
+                self.stack.push(StackValue::Float(python_remainder(a, b)));
             }
             Op::Neg => {
                 let a = self.stack.pop().expect("Stack underflow on Neg").as_float();
@@ -655,7 +728,7 @@ impl VM {
                     .pop()
                     .expect("Stack underflow on Round")
                     .as_float();
-                self.stack.push(StackValue::Float(x.round()));
+                self.stack.push(StackValue::Float(python_round(x)));
             }
             Op::Exp => {
                 let x = self.stack.pop().expect("Stack underflow on Exp").as_float();
@@ -687,14 +760,7 @@ impl VM {
                     .pop()
                     .expect("Stack underflow on Sign")
                     .as_float();
-                let sign = if x > 0.0 {
-                    1.0
-                } else if x < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                };
-                self.stack.push(StackValue::Float(sign));
+                self.stack.push(StackValue::Float(python_sign(x)));
             }
             Op::Fract => {
                 let x = self
@@ -727,12 +793,12 @@ impl VM {
             Op::Min => {
                 let b = self.stack.pop().expect("Stack underflow on Min").as_float();
                 let a = self.stack.pop().expect("Stack underflow on Min").as_float();
-                self.stack.push(StackValue::Float(a.min(b)));
+                self.stack.push(StackValue::Float(python_minimum(a, b)));
             }
             Op::Max => {
                 let b = self.stack.pop().expect("Stack underflow on Max").as_float();
                 let a = self.stack.pop().expect("Stack underflow on Max").as_float();
-                self.stack.push(StackValue::Float(a.max(b)));
+                self.stack.push(StackValue::Float(python_maximum(a, b)));
             }
             Op::Clamp => {
                 let max = self
@@ -750,7 +816,8 @@ impl VM {
                     .pop()
                     .expect("Stack underflow on Clamp")
                     .as_float();
-                self.stack.push(StackValue::Float(value.clamp(min, max)));
+                self.stack
+                    .push(StackValue::Float(python_clip(value, min, max)));
             }
 
             // Comparison (exact equality — consistent across all execution modes)
@@ -1452,7 +1519,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), false);
+        assert!(!vm.stack[0].as_bool());
 
         // Test: 3.0 <= 5.0 => true
         let mut compiler = Compiler::new();
@@ -1471,7 +1538,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         // Test: 5.0 == 5.0 => true
         let mut compiler = Compiler::new();
@@ -1490,7 +1557,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
     }
 
     #[test]
@@ -1571,7 +1638,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), false);
+        assert!(!vm.stack[0].as_bool());
 
         // Test: true || false => true
         let mut compiler = Compiler::new();
@@ -1597,7 +1664,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         // Test: !false => true
         let mut compiler = Compiler::new();
@@ -1617,7 +1684,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
 
         // Test complex: (true && false) || !false => true
         let mut compiler = Compiler::new();
@@ -1652,7 +1719,7 @@ mod tests {
         }
 
         assert_eq!(vm.stack.len(), 1);
-        assert_eq!(vm.stack[0].as_bool(), true);
+        assert!(vm.stack[0].as_bool());
     }
 
     #[test]
@@ -2346,7 +2413,7 @@ mod tests {
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
 
-        assert_eq!(vm.stack[0].as_bool(), false, "1.0 != 1.0+EPSILON (exact)");
+        assert!(!vm.stack[0].as_bool(), "1.0 != 1.0+EPSILON (exact)");
     }
 
     #[test]
@@ -2363,7 +2430,7 @@ mod tests {
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
 
-        assert_eq!(vm.stack[0].as_bool(), true, "3.0 != 4.0");
+        assert!(vm.stack[0].as_bool(), "3.0 != 4.0");
 
         // Same values should be not Ne
         let mut compiler = Compiler::new();
@@ -2378,12 +2445,12 @@ mod tests {
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
 
-        assert_eq!(vm.stack[0].as_bool(), false, "5.0 == 5.0 so Ne is false");
+        assert!(!vm.stack[0].as_bool(), "5.0 == 5.0 so Ne is false");
     }
 
-    /// Sign returns 0.0 for NaN (not NaN like f64::signum would).
+    /// Sign propagates NaN, matching Python array and expression libraries.
     #[test]
-    fn test_sign_nan_returns_zero() {
+    fn test_sign_nan_propagates() {
         let mut compiler = Compiler::new();
         let nan = compiler.add_constant(f64::NAN);
 
@@ -2394,11 +2461,11 @@ mod tests {
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
 
-        assert_eq!(vm.stack[0].as_float(), 0.0, "sign(NaN) should be 0.0");
+        assert!(vm.stack[0].as_float().is_nan());
     }
 
     #[test]
-    fn test_sign_positive_negative_zero() {
+    fn test_sign_positive_negative_and_signed_zero() {
         // Positive
         let mut compiler = Compiler::new();
         let c = compiler.add_constant(42.0);
@@ -2428,5 +2495,60 @@ mod tests {
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert_eq!(vm.stack[0].as_float(), 0.0);
+
+        // Preserve negative zero rather than converting it to -1.0.
+        let mut compiler = Compiler::new();
+        let c = compiler.add_constant(-0.0);
+        compiler.emit(Op::PushConst(c));
+        compiler.emit(Op::Sign);
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], 0) };
+        let result = vm.stack[0].as_float();
+        assert_eq!(result, 0.0);
+        assert!(result.is_sign_negative());
+    }
+
+    #[test]
+    fn test_python_remainder_uses_divisor_sign() {
+        assert_eq!(python_remainder(-3.0, 2.0), 1.0);
+        assert_eq!(python_remainder(3.0, -2.0), -1.0);
+        assert!(python_remainder(1.0, 0.0).is_nan());
+
+        let zero = python_remainder(-4.0, 2.0);
+        assert_eq!(zero, 0.0);
+        assert!(!zero.is_sign_negative());
+        let negative_zero = python_remainder(4.0, -2.0);
+        assert_eq!(negative_zero, 0.0);
+        assert!(negative_zero.is_sign_negative());
+    }
+
+    #[test]
+    fn test_python_round_uses_ties_to_even() {
+        assert_eq!(python_round(2.5), 2.0);
+        assert_eq!(python_round(3.5), 4.0);
+        assert_eq!(python_round(-2.5), -2.0);
+        assert_eq!(python_round(-3.5), -4.0);
+    }
+
+    #[test]
+    fn test_python_minimum_and_maximum_propagate_nan() {
+        assert!(python_minimum(f64::NAN, 1.0).is_nan());
+        assert!(python_minimum(1.0, f64::NAN).is_nan());
+        assert!(python_maximum(f64::NAN, 1.0).is_nan());
+        assert!(python_maximum(1.0, f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn test_python_clip_propagates_nan_and_accepts_reversed_bounds() {
+        assert_eq!(python_clip(-1.0, 0.0, 1.0), 0.0);
+        assert_eq!(python_clip(0.5, 0.0, 1.0), 0.5);
+        assert_eq!(python_clip(2.0, 0.0, 1.0), 1.0);
+        assert_eq!(python_clip(-1.0, 2.0, 1.0), 1.0);
+        assert_eq!(python_clip(0.5, 2.0, 1.0), 1.0);
+        assert_eq!(python_clip(2.0, 2.0, 1.0), 1.0);
+        assert!(python_clip(f64::NAN, 0.0, 1.0).is_nan());
+        assert!(python_clip(0.5, f64::NAN, 1.0).is_nan());
+        assert!(python_clip(0.5, 0.0, f64::NAN).is_nan());
     }
 }

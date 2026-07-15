@@ -18,10 +18,15 @@
 use std::sync::Arc;
 
 use bevy::{
-    ecs::{component::ComponentId, entity::Entity, world::World},
+    ecs::{
+        component::ComponentId,
+        entity::Entity,
+        world::{World, unsafe_world_cell::UnsafeWorldCell},
+    },
     math::{Vec2, Vec3},
 };
 use pybevy_core::{ValueStorage, storage_traits::FromBorrowedStorage};
+use pybevy_ecs::shared::run_scaffold::RunTicks;
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError},
@@ -88,8 +93,16 @@ pub struct PyLazyWrapperProxy {
     /// Entity this component belongs to (for change tracking outside iteration context)
     entity: Entity,
 
-    /// World pointer (for change tracking outside iteration context)
+    /// World pointer used only to re-resolve long-lived `WorldGet` proxies.
+    /// Query items use their cached data pointer and store null here.
     world_ptr: *mut World,
+
+    /// The validity-fenced world cell used for narrow change-tick writeback.
+    world_cell: UnsafeWorldCell<'static>,
+
+    /// Captured query ticks. `None` is used by long-lived `World.get_mut`
+    /// proxies, which intentionally stamp Bevy's current live tick.
+    run_ticks: Option<RunTicks>,
 
     /// Whether this proxy re-resolves per access (`WorldGet`) or trusts the cached
     /// `data_ptr` for the ValidityFlag window (`QueryItem`).
@@ -130,8 +143,14 @@ impl PyLazyWrapperProxy {
         component_id: ComponentId,
         entity: Entity,
         world_ptr: *mut World,
+        world_cell: UnsafeWorldCell<'_>,
+        run_ticks: Option<RunTicks>,
         kind: ProxyKind,
     ) -> Self {
+        // SAFETY: the caller fences this lifetime-erased cell with `validity`.
+        let world_cell = unsafe {
+            std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell)
+        };
         Self {
             data_ptr,
             layout,
@@ -141,6 +160,8 @@ impl PyLazyWrapperProxy {
             component_id,
             entity,
             world_ptr,
+            world_cell,
+            run_ticks,
             kind,
         }
     }
@@ -407,8 +428,9 @@ impl PyLazyWrapperProxy {
         unsafe {
             pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
                 self.entity,
-                self.world_ptr,
+                self.world_cell,
                 self.component_id,
+                self.run_ticks,
             );
         }
 

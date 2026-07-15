@@ -1,13 +1,19 @@
-use std::sync::Arc;
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 
 use bevy::{
     ecs::{component::ComponentId, entity::Entity, world::World},
     prelude::Resource,
 };
 use pybevy_core::registry::global_registry;
-use pybevy_ecs::shared::observer_registry::{
-    LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
-    ObserverRegistryCore, ObserverTypeKey, ResolvedObserverComponent,
+use pybevy_ecs::shared::{
+    observer_registry::{
+        LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
+        ObserverRegistryCore, ObserverTypeKey, ResolvedObserverComponent,
+    },
+    system_runtime::{ErrorPolicy, execute_observer},
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
@@ -20,16 +26,25 @@ use super::{
     component_type::{ComponentRegistry, PyComponentType},
     observer::EventType,
     system::{SystemFunction, SystemParamType},
+    system_interpreter::{MainPreparedObserver, ObserverRuntimeSinks, new_main_observer},
 };
 
 /// Main-interpreter state retained by one observer registration.
-#[derive(Debug)]
 pub struct ObserverPayload {
-    pub(crate) system_func: SystemFunction,
+    pub(crate) prepared: MainPreparedObserver,
     /// Keep every type object used as a registry key alive until removal.
     /// This prevents CPython from recycling an address still present in the
     /// interpreter-neutral registry.
     _retained_types: Vec<Py<PyType>>,
+}
+
+impl fmt::Debug for ObserverPayload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ObserverPayload")
+            .field("metadata", &self.prepared.metadata)
+            .finish_non_exhaustive()
+    }
 }
 
 pub type ObserverEntry = CoreObserverEntry<ObserverPayload>;
@@ -84,10 +99,27 @@ impl ObserverRegistry {
         }
 
         let observer_entity = world.spawn_empty().id();
+        let generation = world
+            .get_resource::<pybevy_reload::HotReloadGeneration>()
+            .map(|generation| generation.current)
+            .unwrap_or(0);
+        let sinks = world
+            .get_resource::<ObserverRuntimeSinks>()
+            .cloned()
+            .unwrap_or_else(|| ObserverRuntimeSinks {
+                error_state: Arc::new(Mutex::new(Vec::new())),
+                error_buffer: Arc::new(Mutex::new(None)),
+            });
+        let prepared = new_main_observer(
+            system_func,
+            generation,
+            sinks.error_state,
+            sinks.error_buffer,
+        );
         let entry = ObserverEntry {
             observer_entity,
             prepared: Arc::new(ObserverPayload {
-                system_func,
+                prepared,
                 _retained_types: retained_types,
             }),
             event,
@@ -104,6 +136,44 @@ impl ObserverRegistry {
         }
 
         Ok(observer_entity)
+    }
+
+    /// Invoke one owned registry snapshot through the neutral observer shell.
+    pub(crate) fn invoke(
+        entry: &ObserverEntry,
+        world: &mut World,
+        trigger: &Py<super::observer::PyOn>,
+        target: Option<Entity>,
+        policy: ErrorPolicy,
+    ) -> PyResult<()> {
+        let prepared = &entry.prepared.prepared;
+        let current_generation = world
+            .get_resource::<pybevy_reload::HotReloadGeneration>()
+            .map(|generation| generation.current);
+        // SAFETY: dispatch owns the exclusive World, the registry entry is an
+        // owned snapshot, and the shared shell owns the callback validity and
+        // command queue through invalidation and application.
+        let result = unsafe {
+            execute_observer(
+                &prepared.interpreter,
+                &prepared.retained,
+                &prepared.params,
+                &prepared.persistent,
+                &prepared.failure_sink,
+                &prepared.metadata,
+                current_generation,
+                trigger,
+                target,
+                policy,
+                world,
+            )
+        };
+        result.map_err(|mut failure| {
+            failure
+                .exception
+                .take()
+                .unwrap_or_else(|| PyRuntimeError::new_err(failure.report.message))
+        })
     }
 
     fn extract_event_type_from_params(

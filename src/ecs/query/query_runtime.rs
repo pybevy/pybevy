@@ -12,10 +12,12 @@ use pybevy_core::{ExtractFn, FilteredEntityAccess, registry::global_registry};
 use pybevy_ecs::shared::{
     cached_query::CachedQueryCore,
     query_builder_ext::{QueryBuildSpec, QueryComponent},
-    query_runtime::{QueryExecutionError, QueryRuntimeCore, QueryRuntimeError, RowMaterializer},
+    query_runtime::{
+        IterationToken, QueryExecutionError, QueryRuntimeCore, QueryRuntimeError, RowMaterializer,
+    },
 };
 use pyo3::{
-    exceptions::{PyRuntimeError, PyStopIteration},
+    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError},
     ffi::PyTypeObject,
     prelude::*,
     types::PyTuple,
@@ -39,7 +41,7 @@ fn query_runtime_error_to_py(error: QueryRuntimeError) -> PyErr {
     }
 }
 
-fn query_execution_error_to_py(error: QueryExecutionError<PyErr>) -> PyErr {
+pub(crate) fn query_execution_error_to_py(error: QueryExecutionError<PyErr>) -> PyErr {
     match error {
         QueryExecutionError::Runtime(error) => query_runtime_error_to_py(error),
         QueryExecutionError::Materialize(error) => error,
@@ -313,12 +315,20 @@ pub struct PyQueryIter {
 // QueryRuntimeCore fences the world cell and cached query state with the run's
 // ValidityFlag; the remaining Python metadata follows the same discipline.
 unsafe impl Send for PyQueryIter {}
-// SAFETY: every Python-visible operation takes PyO3's exclusive borrow (`&mut
-// self`, or `borrow_mut` for `__iter__`). That runtime borrow prevents concurrent
-// access on free-threaded Python even though PyO3 requires the pyclass to be Sync.
-// Row materialization is only entered while one of those exclusive operations
-// holds the object borrow.
+// SAFETY: at most one IterationToken exists per runtime, and `__next__` takes
+// `&mut self` on that iterator, so only one shared borrow can materialize rows.
+// Every other Python-visible QueryIter operation takes `&mut self`; PyO3's
+// borrow flag prevents those operations from overlapping the iterator's shared
+// borrow. Any future `&self` QueryIter method that starts traversal or touches
+// `values_buffer`/`layout_cache` must preserve this serialization argument.
 unsafe impl Sync for PyQueryIter {}
+
+/// Python iterator for one fresh traversal of a runtime Query.
+#[pyclass(name = "QueryIterator")]
+pub struct PyQueryIterator {
+    query: Py<PyQueryIter>,
+    token: IterationToken,
+}
 
 impl PyQueryIter {
     /// Creates a new runtime query bound to a cached query state and world cell.
@@ -359,18 +369,6 @@ impl PyQueryIter {
     #[inline]
     fn cached(&self) -> &CachedQuery {
         unsafe { self.cached.as_ref() }
-    }
-
-    /// Raw `*mut World` for the legacy custom-component write-back path.
-    ///
-    /// SAFETY: the custom-component mutation write-back still needs a `&mut World`
-    /// to stamp change ticks (not yet migrated off the raw pointer, slated for a
-    /// later stage). The cell is valid while the ValidityFlag is active.
-    #[inline]
-    fn world_ptr(&self) -> PyResult<*mut World> {
-        // SAFETY: this is the documented custom-component compatibility path;
-        // validity and scheduler access constrain its residual whole-world pointer.
-        unsafe { self.runtime.world_ptr() }.map_err(query_runtime_error_to_py)
     }
 
     /// Get extraction function pointer for a parameter by index.
@@ -448,7 +446,10 @@ impl PyQueryIter {
                 let access_mode = self.cached().param_access_modes[param_idx];
                 let validity = self.runtime.validity().with_access_mode(access_mode);
                 let mutable = access_mode == AccessMode::Write;
-                let world_ptr = self.world_ptr()?;
+                // SAFETY: this proxy shares the query runtime's validity
+                // window and may touch only its declared component.
+                let world_cell =
+                    unsafe { self.runtime.world_cell() }.map_err(query_runtime_error_to_py)?;
                 let proxy = unsafe {
                     PyLazyWrapperProxy::new(
                         data_ptr,
@@ -458,7 +459,9 @@ impl PyQueryIter {
                         mutable, // true for Mut[T], false for read-only
                         component_id,
                         entity_id,
-                        world_ptr,
+                        std::ptr::null_mut(),
+                        world_cell,
+                        Some(self.runtime.run_ticks()),
                         // Query iteration: the cached data_ptr is kept valid by the
                         // ValidityFlag for the duration of the access (fast path).
                         ProxyKind::QueryItem,
@@ -491,14 +494,18 @@ impl PyQueryIter {
                 // Create borrowed reference with validity tracking and entity context
                 let access_mode = self.cached().param_access_modes[param_idx];
                 let validity = self.runtime.validity().with_access_mode(access_mode);
-                let world_ptr = self.world_ptr()?;
+                // SAFETY: this wrapper shares the query runtime's validity
+                // window and declared component access.
+                let world_cell =
+                    unsafe { self.runtime.world_cell() }.map_err(query_runtime_error_to_py)?;
 
                 let custom_comp = PyCustomComponent::from_borrowed(
                     py_obj_ptr,
                     validity,
                     component_id,
                     entity_id,
-                    world_ptr,
+                    world_cell,
+                    Some(self.runtime.run_ticks()),
                 );
 
                 let py_obj = Py::new(py, (custom_comp, crate::ecs::component::PyComponent))
@@ -582,6 +589,14 @@ impl PyQueryIter {
             Ok(tuple.into_any().unbind())
         }
     }
+
+    pub(crate) fn materialize_single(
+        &self,
+        py: Python,
+    ) -> Result<Py<PyAny>, QueryExecutionError<PyErr>> {
+        let materializer = PyQueryRowMaterializer { query: self };
+        self.runtime.single_with(&materializer, py)
+    }
 }
 
 /// Private row adapter. Keeping the public neutral trait off `PyQueryIter`
@@ -610,29 +625,19 @@ impl PyQueryIter {
     /// Resets the iterator state so that re-iteration works correctly
     /// (matching Bevy's query semantics where each .iter() call is fresh).
     /// Rejects nested iteration (matching Bevy's borrow-checker prevention).
-    fn __iter__(slf: Py<Self>, py: Python) -> PyResult<Py<Self>> {
-        {
-            let borrowed = slf.borrow_mut(py);
-            borrowed
-                .runtime
-                .begin_iteration()
-                .map_err(query_runtime_error_to_py)?;
-        }
-        Ok(slf)
-    }
-
-    /// Returns the next query result
-    fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        let materializer = PyQueryRowMaterializer { query: self };
-        if let Some(row) = self
+    fn __iter__(slf: Py<Self>, py: Python) -> PyResult<Py<PyQueryIterator>> {
+        let token = slf
+            .borrow(py)
             .runtime
-            .next_with(&materializer, py)
-            .map_err(query_execution_error_to_py)?
-        {
-            Ok(row)
-        } else {
-            Err(PyStopIteration::new_err(""))
-        }
+            .begin_iteration()
+            .map_err(query_runtime_error_to_py)?;
+        Py::new(
+            py,
+            PyQueryIterator {
+                query: slf.clone_ref(py),
+                token,
+            },
+        )
     }
 
     /// Returns the number of entities matching the query.
@@ -641,15 +646,21 @@ impl PyQueryIter {
     /// Python users calling `len(query)` may expect O(1) but Bevy's
     /// `QueryState` does not cache entity counts.
     fn __len__(&mut self) -> PyResult<usize> {
+        if self.runtime.has_unadvanced_iterator() {
+            // CPython asks the original iterable for a length hint after
+            // `list(query)` has already called `iter(query)`. TypeError means
+            // "no hint" to list(), while direct len(query) remains rejected.
+            return Err(PyTypeError::new_err(
+                "Query length is unavailable while an iterator is pending",
+            ));
+        }
         self.runtime.count().map_err(query_runtime_error_to_py)
     }
 
     /// Get exactly one entity from the query.
     /// Returns an error if there are 0 or 2+ entities matching the query.
     fn single(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        let materializer = PyQueryRowMaterializer { query: self };
-        self.runtime
-            .single_with(&materializer, py)
+        self.materialize_single(py)
             .map_err(query_execution_error_to_py)
     }
 
@@ -706,5 +717,25 @@ impl PyQueryIter {
         }
 
         Ok(results)
+    }
+}
+
+#[pymethods]
+impl PyQueryIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        let query = self.query.borrow(py);
+        let materializer = PyQueryRowMaterializer { query: &query };
+        match query
+            .runtime
+            .advance_with(&mut self.token, &materializer, py)
+            .map_err(query_execution_error_to_py)?
+        {
+            Some(row) => Ok(row),
+            None => Err(PyStopIteration::new_err("")),
+        }
     }
 }

@@ -21,23 +21,22 @@ use std::{cell::RefCell, collections::HashSet, sync::Arc};
 
 use bevy::{
     ecs::{
-        change_detection::Tick,
-        component::ComponentId,
-        world::{World, unsafe_world_cell::UnsafeWorldCell},
+        change_detection::Tick, component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell,
     },
     prelude::*,
 };
 use pybevy_bytecodevm::{
     bytecode::{FieldId, FieldType as VmFieldType},
     expr::RustExpr,
-    view_engine::{self, TableRowRange, ViewFilter},
-    view_runtime::{ViewReduction, ViewReductionOutput, ViewRuntimeCore, ViewRuntimeError},
+    view_runtime::{
+        BatchSlice, ViewReduction, ViewReductionOutput, ViewRuntimeCore, ViewRuntimeError,
+    },
 };
 use pybevy_core::{PyEntity, registry::global_registry};
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyAny, PyType},
+    types::{PyAny, PyDict, PyType},
 };
 
 use crate::ecs::{
@@ -45,69 +44,36 @@ use crate::ecs::{
         ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
         PrimitiveType, PrimitiveTypeExt,
     },
-    component_type::{PyComponentType, register_component_id_simple},
+    component_type::PyComponentType,
     helpers::validity_guard::ValidityFlag,
     view::{cached_view::CachedPyView, construct_view_class_item, view_column::PyViewColumn},
 };
 
 /// View parameter for batch operations
 ///
-/// SAFETY: This struct uses raw pointers to World and must only be used
-/// within the scope of a system execution.
+/// The run-scoped core owns the World cell and rejects stale or cross-thread
+/// access before any pointer operation.
 #[pyclass(name = "View", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyView {
-    /// Component types accessible in this view
-    component_types: Vec<PyComponentType>,
-
-    /// Include filter component types (With<T> filters)
-    filter_types: Vec<PyComponentType>,
-
-    /// Exclude filter component types (Without<T> filters)
-    without_filter_types: Vec<PyComponentType>,
-
-    /// Changed filter component types (Changed<T> filters) - per-entity tick check
-    changed_filter_types: Vec<PyComponentType>,
-
-    /// Added filter component types (Added<T> filters) - per-entity tick check
-    added_filter_types: Vec<PyComponentType>,
-
     /// Stable interpreter adapter and run-scoped neutral runtime.
     cached: Arc<CachedPyView>,
     runtime: Arc<ViewRuntimeCore>,
-
-    /// Component types with mutable access (Mut[T] in View parameters)
-    /// Components not in this set are read-only
-    mutable_components: HashSet<PyComponentType>,
 
     /// Track which components have already been borrowed mutably
     /// This prevents getting multiple mutable column proxies for the same component
     borrowed_mut: RefCell<HashSet<PyComponentType>>,
 
-    /// World cell retained only for the legacy `iter_batches`/Numba proxy path.
-    /// Expression assignments and reductions use `runtime` instead.
-    world_cell: Option<UnsafeWorldCell<'static>>,
-
     /// Master validity flag - invalidated when system exits
     validity: ValidityFlag,
-
-    /// Validity tokens created by iter_batches() that need to be poisoned on drop
-    batch_validity_tokens: RefCell<Vec<Arc<std::sync::atomic::AtomicBool>>>,
 }
 
-// SAFETY: PyView is only used during system execution on a single thread
+// SAFETY: moving the Python wrapper cannot access World storage. Every core
+// operation checks the run's thread-affine validity and shared operation fence.
 unsafe impl Send for PyView {}
+// SAFETY: shared wrapper access is subject to the same checks; scheduler access
+// encoded by the cached View spec excludes conflicting ECS operations.
 unsafe impl Sync for PyView {}
-
-impl Drop for PyView {
-    fn drop(&mut self) {
-        // Poison all validity tokens created by iter_batches()
-        // This ensures ViewColumn objects become invalid after the system ends
-        for token in self.batch_validity_tokens.borrow().iter() {
-            token.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-}
 
 impl PyView {
     /// Create a new View with filter components
@@ -133,66 +99,11 @@ impl PyView {
                 this_run,
             )
         }?);
-        // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the cell
-        // is only used while `validity` is active.
-        let world_cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(world) };
         Ok(Self {
-            component_types: cached.component_types.clone(),
-            filter_types: cached.filter_types.clone(),
-            without_filter_types: cached.without_filter_types.clone(),
-            changed_filter_types: cached.changed_filter_types.clone(),
-            added_filter_types: cached.added_filter_types.clone(),
-            mutable_components: cached.mutable_components.clone(),
             cached,
             runtime,
             borrowed_mut: RefCell::new(HashSet::new()),
-            world_cell: Some(world_cell),
             validity,
-            batch_validity_tokens: RefCell::new(Vec::new()),
-        })
-    }
-
-    /// Derive a raw `*mut World` from the stored cell for a single batch operation.
-    ///
-    /// The legacy `iter_batches`/Numba proxy machinery still requires World
-    /// access, so it derives a pointer per operation rather than retaining a
-    /// long-lived borrow. Expression execution never calls this method.
-    ///
-    /// SAFETY of dereferencing the returned pointer: `initialize` declares this
-    /// view's component read/write access; the executor prevents a conflicting
-    /// system from running concurrently, so the data the batch ops touch is unique.
-    fn world_ptr(&self) -> PyResult<*mut World> {
-        let cell = self
-            .world_cell
-            .ok_or_else(|| PyRuntimeError::new_err("View used outside system execution"))?;
-        // SAFETY: momentary derivation of a Copy pointer; see method docs.
-        Ok(unsafe { cell.world_mut() as *mut World })
-    }
-
-    /// Build a `ViewFilter` from this view's filter types for use with `view_engine` functions.
-    fn build_view_filter(&self, component_ids: HashSet<ComponentId>) -> PyResult<ViewFilter> {
-        Ok(ViewFilter {
-            component_ids,
-            with_ids: self
-                .filter_types
-                .iter()
-                .filter_map(|ft| self.get_component_id(ft).ok())
-                .collect(),
-            without_ids: self
-                .without_filter_types
-                .iter()
-                .filter_map(|ft| self.get_component_id(ft).ok())
-                .collect(),
-            changed_ids: self
-                .changed_filter_types
-                .iter()
-                .filter_map(|ft| self.get_component_id(ft).ok())
-                .collect(),
-            added_ids: self
-                .added_filter_types
-                .iter()
-                .filter_map(|ft| self.get_component_id(ft).ok())
-                .collect(),
         })
     }
 
@@ -255,7 +166,7 @@ impl PyView {
         // Verify this type is in the view's component list
         let comp_type = PyComponentType::try_from((component_type, py))?;
 
-        if !self.component_types.contains(&comp_type) {
+        if !self.cached.component_types.contains(&comp_type) {
             return Err(PyTypeError::new_err(format!(
                 "Component type {} not in View parameters",
                 component_type.name()?
@@ -288,7 +199,7 @@ impl PyView {
         // Verify this type is in the view's component list AND is mutable
         let comp_type = PyComponentType::try_from((component_type, py))?;
 
-        if !self.component_types.contains(&comp_type) {
+        if !self.cached.component_types.contains(&comp_type) {
             return Err(PyTypeError::new_err(format!(
                 "Component type {} not in View parameters",
                 component_type.name()?
@@ -296,11 +207,29 @@ impl PyView {
         }
 
         // NEW: Verify component was declared as mutable (Mut[T])
-        if !self.mutable_components.contains(&comp_type) {
+        if !self.cached.mutable_components.contains(&comp_type) {
             return Err(PyRuntimeError::new_err(format!(
                 "Component type {} requires mutable access but was not declared with Mut[{}]. Use View[Mut[{}]] in the system signature.",
                 component_type.name()?,
                 component_type.name()?,
+                component_type.name()?
+            )));
+        }
+
+        let has_declared_fields = component_type
+            .getattr("__annotations__")
+            .ok()
+            .and_then(|annotations| annotations.cast_into::<PyDict>().ok())
+            .is_some_and(|annotations| !annotations.is_empty());
+        if has_declared_fields
+            && matches!(&comp_type, PyComponentType::Custom(_))
+            && matches!(
+                ComponentStorageType::from_python_class(component_type)?,
+                ComponentStorageType::PyObject
+            )
+        {
+            return Err(PyRuntimeError::new_err(format!(
+                "Component type {} uses Python-object storage, which is not supported by View.column_mut()",
                 component_type.name()?
             )));
         }
@@ -392,40 +321,19 @@ impl PyView {
     ///         add_one(col)  # Zero-copy access!
     /// ```
     fn iter_batches(&self, py: Python) -> PyResult<Py<PyBatchIterator>> {
-        // Create a new validity token for this batch iteration
-        // This token will be poisoned when PyView is dropped (system ends)
-        let validity_token = Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        // Store the token so we can poison it on drop
-        self.batch_validity_tokens
-            .borrow_mut()
-            .push(validity_token.clone());
-
-        // Discover the exact matching table-row ranges. Sparse-set components
-        // can split one table across multiple archetypes, so a table ID alone
-        // is not a valid representation of a filtered batch.
-        // SAFETY: momentary &World for archetype discovery; see PyView::world_ptr.
-        let world = unsafe { &*self.world_ptr()? };
-
-        let component_ids: HashSet<ComponentId> = self
-            .component_types
-            .iter()
-            .map(|ct| self.get_component_id(ct))
-            .collect::<PyResult<HashSet<_>>>()?;
-        let filter = self.build_view_filter(component_ids)?;
-        let table_ranges = view_engine::matching_table_row_ranges(world, &filter);
-
-        let total_batches = table_ranges.len();
+        let lease = Arc::new(
+            self.runtime
+                .gather_batches()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?,
+        );
+        let slices = lease
+            .contiguous_slices()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
         let iterator = PyBatchIterator {
-            component_types: self.component_types.clone(),
-            mutable_components: self.mutable_components.clone(),
-            world_cell: self.world_cell,
-            validity_token,
-            validity: self.validity.clone(),
-            table_ranges,
+            cached: Arc::clone(&self.cached),
+            slices,
             current_batch: 0,
-            total_batches,
         };
 
         Py::new(py, iterator)
@@ -839,71 +747,32 @@ impl PyViewColMut {
 /// one table, enabling zero-copy ViewColumn creation for Numba JIT kernels.
 #[pyclass(name = "Batch", frozen)]
 pub struct PyBatch {
-    /// Component types accessible in this batch
-    component_types: Vec<PyComponentType>,
-
-    /// Mutable component types (same as parent View)
-    mutable_components: HashSet<PyComponentType>,
-
-    /// World cell (lifetime-erased), valid only during system execution. A
-    /// `*mut World` is derived per-operation (see `world_ptr`).
-    world_cell: Option<UnsafeWorldCell<'static>>,
-
-    /// Validity token shared with ViewColumn instances
-    /// When this is poisoned, all ViewColumns become invalid
-    validity_token: Arc<std::sync::atomic::AtomicBool>,
-
-    /// Master validity flag from parent View
-    /// Must be checked before dereferencing the world cell to prevent use-after-free
-    validity: ValidityFlag,
-
-    /// Exact contiguous table-row range selected by the View filters.
-    table_range: TableRowRange,
+    cached: Arc<CachedPyView>,
+    slice: BatchSlice,
 }
 
+// SAFETY: `BatchSlice` retains the core lease and every safe operation checks
+// validity/thread affinity and acquires the shared pointer-operation fence.
 unsafe impl Send for PyBatch {}
+// SAFETY: see `Send`; mutable access is checked against the resolved View spec.
 unsafe impl Sync for PyBatch {}
 
 impl PyBatch {
     /// Create a new batch for zero-copy column access.
-    pub(crate) fn new(
-        component_types: Vec<PyComponentType>,
-        mutable_components: HashSet<PyComponentType>,
-        world_cell: Option<UnsafeWorldCell<'static>>,
-        validity_token: Arc<std::sync::atomic::AtomicBool>,
-        validity: ValidityFlag,
-        table_range: TableRowRange,
-    ) -> Self {
-        Self {
-            component_types,
-            mutable_components,
-            world_cell,
-            validity_token,
-            validity,
-            table_range,
-        }
-    }
-
-    /// Derive a raw `*mut World` from the stored cell for a single batch operation.
-    ///
-    /// Same residual-pointer pattern as `PyView::world_ptr`: the batch column and
-    /// change-tick machinery need `&mut World`; the parent view's declared
-    /// component access bounds the data actually touched.
-    fn world_ptr(&self) -> PyResult<*mut World> {
-        let cell = self
-            .world_cell
-            .ok_or_else(|| PyRuntimeError::new_err("Batch not properly initialized"))?;
-        // SAFETY: momentary derivation of a Copy pointer; see method docs.
-        Ok(unsafe { cell.world_mut() as *mut World })
+    pub(crate) fn new(cached: Arc<CachedPyView>, slice: BatchSlice) -> Self {
+        Self { cached, slice }
     }
 
     /// Get component ID for a component type
     fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
-        self.validity.check()?;
-        // SAFETY: momentary &mut World for component registration; see world_ptr.
-        let world = unsafe { &mut *self.world_ptr()? };
-
-        Ok(register_component_id_simple(world, comp_type))
+        self.slice
+            .check_valid()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        self.cached.component_id(comp_type).ok_or_else(|| {
+            PyRuntimeError::new_err(format!(
+                "Component type {comp_type} was not resolved for this View parameter"
+            ))
+        })
     }
 }
 
@@ -922,7 +791,7 @@ impl PyBatch {
         // Verify this type is in the batch's component list
         let comp_type = PyComponentType::try_from((component_type, py))?;
 
-        if !self.component_types.contains(&comp_type) {
+        if !self.cached.component_types.contains(&comp_type) {
             return Err(PyTypeError::new_err(format!(
                 "Component type {} not in View parameters",
                 component_type.name()?
@@ -930,99 +799,16 @@ impl PyBatch {
         }
 
         let component_id = self.get_component_id(&comp_type)?;
-
-        // Access the table directly via stored table_id (archetype filtering already done in iter_batches)
-        // SAFETY: momentary &World for table access; see PyBatch::world_ptr.
-        let world = unsafe { &*self.world_ptr()? };
-
-        let storages = world.storages();
-        let tables = &storages.tables;
-        let table = tables
-            .get(self.table_range.table_id)
-            .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
-
-        let table_entity_count = table.entity_count() as usize;
-        let range_end = self
-            .table_range
-            .start_row
-            .checked_add(self.table_range.entity_count)
-            .filter(|&end| end <= table_entity_count)
-            .ok_or_else(|| PyRuntimeError::new_err("Batch row range is no longer valid"))?;
-
-        let column = table.get_column(component_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Column not found for component {:?}", comp_type))
-        })?;
-
-        // Get layout from world's component registry
-        let components = world.components();
-        let component_info = components.get_info(component_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Component info not found for {:?}", comp_type))
-        })?;
-        let layout = component_info.layout();
-        let stride = layout.size();
-
-        // Get pointer to column data - match on component type
-        let ptr = match comp_type {
-            PyComponentType::Custom(_type_ptr) => Python::attach(|py| {
-                // SAFETY: registered type pointers live for the interpreter lifetime
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, _type_ptr as *mut pyo3::ffi::PyObject)
-                };
-
-                if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                    let storage_type = ComponentStorageType::from_python_class(cls)
-                        .unwrap_or(ComponentStorageType::PyObject);
-
-                    match storage_type {
-                        ComponentStorageType::Wrapper(wrapper_size) => {
-                            let ptr = unsafe {
-                                wrapper_size.get_column_data_ptr(column, table_entity_count)
-                            };
-                            Ok(ptr)
-                        }
-                        _ => Err(PyRuntimeError::new_err(
-                            "Custom component must use wrapper storage for View API",
-                        )),
-                    }
-                } else {
-                    Err(PyRuntimeError::new_err("Invalid component type"))
-                }
-            })?,
-            PyComponentType::Dynamic(type_ptr) => {
-                let bridge = global_registry::get_bridge_by_py_type(type_ptr)
-                    .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
-
-                let view_bridge = bridge.view_bridge().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Dynamic component '{}' does not support View column access (no view_bridge)",
-                        bridge.name()
-                    ))
-                })?;
-
-                unsafe { (view_bridge.column_data_ptr)(column, table_entity_count) }
+        let column = self
+            .slice
+            .column(component_id, false)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let view_column = match comp_type {
+            PyComponentType::Custom(type_ptr) => {
+                PyViewColumn::from_batch_column_with_type(column, type_ptr)
             }
-        };
-        // SAFETY: the row range was checked against the current table size,
-        // and `ptr` addresses the first element of this component column.
-        let ptr = unsafe { ptr.add(self.table_range.start_row * stride) };
-        let entity_count = range_end - self.table_range.start_row;
-
-        let view_column = unsafe {
-            match comp_type {
-                PyComponentType::Custom(type_ptr) => PyViewColumn::from_raw_parts_with_type(
-                    ptr,
-                    entity_count,
-                    stride,
-                    self.validity_token.clone(),
-                    type_ptr,
-                ),
-                PyComponentType::Dynamic(_) => PyViewColumn::from_raw_parts_with_builtin_type(
-                    ptr,
-                    entity_count,
-                    stride,
-                    self.validity_token.clone(),
-                    comp_type,
-                ),
+            PyComponentType::Dynamic(_) => {
+                PyViewColumn::from_batch_column_with_builtin_type(column, comp_type)
             }
         };
 
@@ -1047,7 +833,7 @@ impl PyBatch {
         // Verify this type is in the batch's component list AND is mutable
         let comp_type = PyComponentType::try_from((component_type, py))?;
 
-        if !self.component_types.contains(&comp_type) {
+        if !self.cached.component_types.contains(&comp_type) {
             return Err(PyTypeError::new_err(format!(
                 "Component type {} not in View parameters",
                 component_type.name()?
@@ -1055,7 +841,7 @@ impl PyBatch {
         }
 
         // Verify component was declared as mutable (Mut[T])
-        if !self.mutable_components.contains(&comp_type) {
+        if !self.cached.mutable_components.contains(&comp_type) {
             return Err(PyRuntimeError::new_err(format!(
                 "Component type {} requires mutable access but was not declared with Mut[{}]. Use View[Mut[{}]] in the system signature.",
                 component_type.name()?,
@@ -1065,115 +851,16 @@ impl PyBatch {
         }
 
         let component_id = self.get_component_id(&comp_type)?;
-
-        // Access the table directly via stored table_id (archetype filtering already done in iter_batches)
-        // Mutable access needed for change tick marking
-        // SAFETY: momentary &mut World for change-tick marking; see PyBatch::world_ptr.
-        let world = unsafe { &mut *self.world_ptr()? };
-
-        // Get change tick before immutable borrows
-        let change_tick = world.change_tick();
-
-        let storages = world.storages();
-        let tables = &storages.tables;
-        let table = tables
-            .get(self.table_range.table_id)
-            .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
-
-        let table_entity_count = table.entity_count() as usize;
-        let range_end = self
-            .table_range
-            .start_row
-            .checked_add(self.table_range.entity_count)
-            .filter(|&end| end <= table_entity_count)
-            .ok_or_else(|| PyRuntimeError::new_err("Batch row range is no longer valid"))?;
-
-        let column = table.get_column(component_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Column not found for component {:?}", comp_type))
-        })?;
-
-        // Get layout from world's component registry
-        let components = world.components();
-        let component_info = components.get_info(component_id).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Component info not found for {:?}", comp_type))
-        })?;
-        let layout = component_info.layout();
-        let stride = layout.size();
-
-        // Mark all entities as changed for Bevy's change detection
-        // SAFETY: the column belongs to this table and `table_entity_count` is
-        // its current row count. The selected range was bounds-checked above.
-        let changed_ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
-        for tick in &changed_ticks[self.table_range.start_row..range_end] {
-            // SAFETY: this tick belongs to the bounds-checked selected range and
-            // the parent View declared mutable access to this component.
-            unsafe {
-                *tick.get() = change_tick;
+        let column = self
+            .slice
+            .column(component_id, true)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let view_column = match comp_type {
+            PyComponentType::Custom(type_ptr) => {
+                PyViewColumn::from_batch_column_with_type(column, type_ptr)
             }
-        }
-
-        // Get pointer to column data
-        let ptr = match comp_type {
-            PyComponentType::Custom(_type_ptr) => Python::attach(|py| {
-                // SAFETY: registered type pointers live for the interpreter lifetime
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, _type_ptr as *mut pyo3::ffi::PyObject)
-                };
-
-                if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                    let storage_type = ComponentStorageType::from_python_class(cls)
-                        .unwrap_or(ComponentStorageType::PyObject);
-
-                    match storage_type {
-                        ComponentStorageType::Wrapper(wrapper_size) => {
-                            let ptr = unsafe {
-                                wrapper_size.get_column_data_ptr(column, table_entity_count)
-                            };
-                            Ok(ptr)
-                        }
-                        _ => Err(PyRuntimeError::new_err(
-                            "Custom component must use wrapper storage for View API",
-                        )),
-                    }
-                } else {
-                    Err(PyRuntimeError::new_err("Invalid component type"))
-                }
-            })?,
-            PyComponentType::Dynamic(type_ptr) => {
-                let bridge = global_registry::get_bridge_by_py_type(type_ptr)
-                    .ok_or_else(|| PyRuntimeError::new_err("Dynamic component bridge not found"))?;
-
-                let view_bridge = bridge.view_bridge().ok_or_else(|| {
-                    PyRuntimeError::new_err(format!(
-                        "Dynamic component '{}' does not support View column_mut access (no view_bridge)",
-                        bridge.name()
-                    ))
-                })?;
-
-                unsafe { (view_bridge.column_data_ptr)(column, table_entity_count) }
-            }
-        };
-        // SAFETY: the row range was checked against the current table size,
-        // and `ptr` addresses the first element of this component column.
-        let ptr = unsafe { ptr.add(self.table_range.start_row * stride) };
-        let entity_count = range_end - self.table_range.start_row;
-
-        let view_column = unsafe {
-            match comp_type {
-                PyComponentType::Custom(type_ptr) => PyViewColumn::from_raw_parts_with_type(
-                    ptr,
-                    entity_count,
-                    stride,
-                    self.validity_token.clone(),
-                    type_ptr,
-                ),
-                PyComponentType::Dynamic(_) => PyViewColumn::from_raw_parts_with_builtin_type(
-                    ptr,
-                    entity_count,
-                    stride,
-                    self.validity_token.clone(),
-                    comp_type,
-                ),
+            PyComponentType::Dynamic(_) => {
+                PyViewColumn::from_batch_column_with_builtin_type(column, comp_type)
             }
         };
 
@@ -1189,73 +876,45 @@ impl PyBatch {
     ///     # entities[i] corresponds to col data at index i
     /// ```
     fn entities(&self, py: Python) -> PyResult<Vec<Py<PyEntity>>> {
-        self.validity.check()?;
-        // SAFETY: momentary &World for table access; see PyBatch::world_ptr.
-        let world = unsafe { &*self.world_ptr()? };
-
-        let table = world
-            .storages()
-            .tables
-            .get(self.table_range.table_id)
-            .ok_or_else(|| PyRuntimeError::new_err("Table not found"))?;
-
-        let range_end = self
-            .table_range
-            .start_row
-            .checked_add(self.table_range.entity_count)
-            .filter(|&end| end <= table.entity_count() as usize)
-            .ok_or_else(|| PyRuntimeError::new_err("Batch row range is no longer valid"))?;
-
-        table.entities()[self.table_range.start_row..range_end]
-            .iter()
-            .map(|&e| Py::new(py, PyEntity::from(e)))
+        self.slice
+            .entities()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            .into_iter()
+            .map(|entity| Py::new(py, PyEntity::from(entity)))
             .collect()
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        self.validity.check()?;
-        Ok(self.table_range.entity_count)
+        self.slice
+            .check_valid()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(self.slice.len())
     }
 
     fn __repr__(&self) -> String {
         format!(
             "Batch(components={}, valid={})",
-            self.component_types.len(),
-            self.validity_token
-                .load(std::sync::atomic::Ordering::Relaxed)
+            self.cached.component_types.len(),
+            self.slice.check_valid().is_ok()
         )
     }
 }
 
-/// Iterator over batches (archetypes) in a View.
+/// Iterator over exact contiguous filtered batches in a View.
 #[pyclass(name = "BatchIterator")]
 pub struct PyBatchIterator {
-    /// Parent view's component types
-    component_types: Vec<PyComponentType>,
-
-    /// Mutable components
-    mutable_components: HashSet<PyComponentType>,
-
-    /// World cell (lifetime-erased), passed to each PyBatch it yields
-    world_cell: Option<UnsafeWorldCell<'static>>,
-
-    /// Validity token for all batches
-    validity_token: Arc<std::sync::atomic::AtomicBool>,
-
-    /// Master validity flag
-    validity: ValidityFlag,
-
-    /// Exact contiguous table-row ranges selected by the View filters.
-    table_ranges: Vec<TableRowRange>,
+    cached: Arc<CachedPyView>,
+    slices: Vec<BatchSlice>,
 
     /// Current batch index
     current_batch: usize,
-
-    /// Total number of batches
-    total_batches: usize,
 }
 
+// SAFETY: slices retain their lease and cannot expose storage without the core
+// validity/thread/fence checks.
 unsafe impl Send for PyBatchIterator {}
+// SAFETY: iteration only clones unforgeable slices; storage access happens in
+// `PyBatch` under the same core checks.
 unsafe impl Sync for PyBatchIterator {}
 
 #[pymethods]
@@ -1265,205 +924,17 @@ impl PyBatchIterator {
     }
 
     fn __next__(&mut self, py: Python) -> PyResult<Option<Py<PyBatch>>> {
-        self.validity.check()?;
-
-        if self.current_batch >= self.total_batches {
+        if self.current_batch >= self.slices.len() {
             return Ok(None);
         }
 
-        let table_range = self.table_ranges[self.current_batch];
+        let slice = self.slices[self.current_batch].clone();
+        slice
+            .check_valid()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         self.current_batch += 1;
-
-        let batch = PyBatch::new(
-            self.component_types.clone(),
-            self.mutable_components.clone(),
-            self.world_cell,
-            self.validity_token.clone(),
-            self.validity.clone(),
-            table_range,
-        );
+        let batch = PyBatch::new(Arc::clone(&self.cached), slice);
 
         Ok(Some(Py::new(py, batch)?))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        collections::HashSet,
-        mem,
-        sync::{Arc, atomic::AtomicBool},
-    };
-
-    use bevy::{
-        ecs::component::Component,
-        prelude::{Entity, Transform},
-    };
-    use pybevy_bytecodevm::view_engine::{ViewFilter, matching_table_row_ranges};
-    use pybevy_core::{ValidityGuard, bridge_inventory};
-    use pybevy_transform::transform::PyTransform;
-    use pyo3::{PyTypeInfo, types::PyAnyMethods};
-
-    use super::*;
-
-    #[derive(Component)]
-    #[component(storage = "SparseSet")]
-    struct SparseBatchMarker;
-
-    #[test]
-    fn pybatch_binding_limits_columns_entities_and_ticks_to_sparse_selected_range() {
-        bridge_inventory::collect_all();
-
-        let mut world = World::new();
-        let plain_first = world.spawn(Transform::from_xyz(10.0, 0.0, 0.0)).id();
-        let selected_first = world
-            .spawn((Transform::from_xyz(20.0, 0.0, 0.0), SparseBatchMarker))
-            .id();
-        let selected_second = world
-            .spawn((Transform::from_xyz(30.0, 0.0, 0.0), SparseBatchMarker))
-            .id();
-        let plain_last = world.spawn(Transform::from_xyz(40.0, 0.0, 0.0)).id();
-
-        let transform_id = world.components().component_id::<Transform>().unwrap();
-        let marker_id = world
-            .components()
-            .component_id::<SparseBatchMarker>()
-            .unwrap();
-        let filter = ViewFilter {
-            component_ids: HashSet::from([transform_id]),
-            with_ids: vec![marker_id],
-            without_ids: Vec::new(),
-            changed_ids: Vec::new(),
-            added_ids: Vec::new(),
-        };
-        let ranges = matching_table_row_ranges(&world, &filter);
-        assert_eq!(ranges.len(), 1);
-        let table_range = ranges[0];
-        assert_eq!(table_range.start_row, 1);
-        assert_eq!(table_range.entity_count, 2);
-
-        world.clear_trackers();
-        let last_run = world.last_change_tick();
-        world.increment_change_tick();
-        let this_run = world.change_tick();
-
-        // SAFETY: `world` outlives the Python batch and is not structurally
-        // modified while the batch and its derived column are alive.
-        let world_cell: UnsafeWorldCell<'static> =
-            unsafe { mem::transmute(world.as_unsafe_world_cell()) };
-        let validity = ValidityFlag::new();
-        let _validity_guard = ValidityGuard::new(validity.clone());
-        let validity_token = Arc::new(AtomicBool::new(true));
-
-        Python::attach(|py| {
-            let transform_type = PyTransform::type_object(py);
-            let component_type = PyComponentType::Dynamic(transform_type.as_type_ptr());
-            let batch = Py::new(
-                py,
-                PyBatch::new(
-                    vec![component_type.clone()],
-                    HashSet::from([component_type]),
-                    Some(world_cell),
-                    validity_token,
-                    validity,
-                    table_range,
-                ),
-            )
-            .unwrap();
-            let batch = batch.bind(py);
-
-            assert_eq!(
-                batch
-                    .call_method0("__len__")
-                    .unwrap()
-                    .extract::<usize>()
-                    .unwrap(),
-                2
-            );
-            let entities = batch.call_method0("entities").unwrap();
-            assert_eq!(entities.len().unwrap(), 2);
-
-            let column = batch.call_method1("column_mut", (transform_type,)).unwrap();
-            assert_eq!(
-                column.getattr("len").unwrap().extract::<usize>().unwrap(),
-                2
-            );
-            let column = column.cast::<PyViewColumn>().unwrap().borrow();
-            let x_column = column
-                .at_offset_typed(
-                    mem::offset_of!(Transform, translation),
-                    Some(VmFieldType::F32),
-                )
-                .unwrap();
-            drop(column);
-            let x_column = Py::new(py, x_column).unwrap();
-            let x_column = x_column.bind(py);
-            assert_eq!(
-                x_column
-                    .call_method1("peek", (0,))
-                    .unwrap()
-                    .extract::<f64>()
-                    .unwrap(),
-                20.0
-            );
-            assert_eq!(
-                x_column
-                    .call_method1("peek", (1,))
-                    .unwrap()
-                    .extract::<f64>()
-                    .unwrap(),
-                30.0
-            );
-            x_column.call_method1("set", (99.0,)).unwrap();
-        });
-
-        assert_eq!(
-            world
-                .entity(plain_first)
-                .get::<Transform>()
-                .unwrap()
-                .translation
-                .x,
-            10.0
-        );
-        assert_eq!(
-            world
-                .entity(selected_first)
-                .get::<Transform>()
-                .unwrap()
-                .translation
-                .x,
-            99.0
-        );
-        assert_eq!(
-            world
-                .entity(selected_second)
-                .get::<Transform>()
-                .unwrap()
-                .translation
-                .x,
-            99.0
-        );
-        assert_eq!(
-            world
-                .entity(plain_last)
-                .get::<Transform>()
-                .unwrap()
-                .translation
-                .x,
-            40.0
-        );
-
-        let was_changed = |entity: Entity| {
-            world
-                .entity(entity)
-                .get_change_ticks_by_id(transform_id)
-                .unwrap()
-                .is_changed(last_run, this_run)
-        };
-        assert!(!was_changed(plain_first));
-        assert!(was_changed(selected_first));
-        assert!(was_changed(selected_second));
-        assert!(!was_changed(plain_last));
     }
 }

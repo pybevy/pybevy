@@ -1,11 +1,19 @@
 //! Interpreter-neutral query iteration and lookup orchestration.
 //!
-//! [`QueryRuntimeCore`] owns the per-run world cell, tick window, lazy erased
-//! iterator, and validity fence. Backends retain only their row materializers:
+//! [`QueryRuntimeCore`] owns the per-run world cell, tick window, iterator
+//! admission, and validity fence. [`IterationToken`] owns each erased iterator.
+//! Backends retain only their row materializers:
 //! turning a [`FilteredEntityAccess`] into interpreter objects and mapping
 //! [`QueryRuntimeError`] into the appropriate Python exception.
 
-use std::{cell::Cell, fmt, ptr::NonNull};
+use std::{
+    fmt,
+    ptr::NonNull,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+};
 
 use bevy::ecs::{
     change_detection::Tick,
@@ -15,7 +23,10 @@ use bevy::ecs::{
 };
 use pybevy_storage::{FilteredEntityAccess, StorageError, ValidityFlag};
 
-use super::cached_query::{CachedQueryCore, ErasedQueryState};
+use super::{
+    cached_query::{CachedQueryCore, ErasedQueryState},
+    run_scaffold::RunTicks,
+};
 
 const NESTED_ITERATION_MESSAGE: &str = "Cannot nest iteration on the same Query (Bevy disallows this via borrow rules). \
      Collect into a list first: items = list(query)";
@@ -246,13 +257,44 @@ unsafe fn get_entity<'a>(
 pub struct QueryRuntimeCore {
     cached: Option<NonNull<CachedQueryCore>>,
     world_cell: UnsafeWorldCell<'static>,
-    iterator: Cell<Option<ErasedQueryIter>>,
     validity: ValidityFlag,
-    iterating: Cell<bool>,
-    operation_active: Cell<bool>,
+    live_iterators: Arc<AtomicUsize>,
+    iteration_started: AtomicBool,
+    operation_active: AtomicBool,
     last_run: Tick,
     this_run: Tick,
 }
+
+/// RAII owner for one Python-level query traversal.
+pub struct IterationToken {
+    erased: Option<ErasedQueryIter>,
+    live: Arc<AtomicUsize>,
+}
+
+impl IterationToken {
+    /// Release the iterator allocation and live-traversal slot, if held.
+    fn release(&mut self) {
+        if let Some(iterator) = self.erased.take() {
+            // SAFETY: this token uniquely owns the iterator allocation.
+            unsafe { iterator.drop_allocation() };
+            self.live.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
+impl Drop for IterationToken {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+// SAFETY: the token uniquely owns its erased iterator allocation. Backend
+// iterator objects serialize advancement, and dropping only frees that owned
+// allocation and updates an atomic counter without touching the World.
+unsafe impl Send for IterationToken {}
+// SAFETY: shared access cannot advance or release the token; both require
+// `&mut self`. Backend iterator objects must serialize those mutable operations.
+unsafe impl Sync for IterationToken {}
 
 impl QueryRuntimeCore {
     /// Construct a runtime over a cached query and a system-run world cell.
@@ -277,10 +319,10 @@ impl QueryRuntimeCore {
         Self {
             cached: cached.map(NonNull::from),
             world_cell,
-            iterator: Cell::new(None),
             validity,
-            iterating: Cell::new(false),
-            operation_active: Cell::new(false),
+            live_iterators: Arc::new(AtomicUsize::new(0)),
+            iteration_started: AtomicBool::new(false),
+            operation_active: AtomicBool::new(false),
             last_run,
             this_run,
         }
@@ -289,6 +331,26 @@ impl QueryRuntimeCore {
     /// Return the shared validity flag used by row materializers.
     pub fn validity(&self) -> &ValidityFlag {
         &self.validity
+    }
+
+    /// Return the captured change-detection window for this run.
+    pub fn run_ticks(&self) -> RunTicks {
+        RunTicks {
+            last_run: self.last_run,
+            this_run: self.this_run,
+        }
+    }
+
+    /// Return this runtime's validity-fenced world cell for narrow proxy
+    /// write-back operations.
+    ///
+    /// # Safety
+    /// The returned cell must not escape this runtime's validity window, and
+    /// callers may access only components covered by the query's declared
+    /// scheduler access.
+    pub unsafe fn world_cell(&self) -> Result<UnsafeWorldCell<'static>, QueryRuntimeError> {
+        self.validity.check()?;
+        Ok(self.world_cell)
     }
 
     /// Check that this runtime is still inside its system execution window.
@@ -312,55 +374,37 @@ impl QueryRuntimeCore {
     }
 
     /// Start a fresh Python-level iteration.
-    pub fn begin_iteration(&self) -> Result<(), QueryRuntimeError> {
+    pub fn begin_iteration(&self) -> Result<IterationToken, QueryRuntimeError> {
         self.check_valid()?;
         let _operation = self.enter_operation()?;
-        if self.iterating.get() {
+        let Some(cached) = self.cached() else {
+            return Ok(IterationToken {
+                erased: None,
+                live: Arc::clone(&self.live_iterators),
+            });
+        };
+        if self
+            .live_iterators
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Err(QueryRuntimeError::NestedIteration);
         }
-        self.clear_iterator();
-        Ok(())
+        self.iteration_started.store(false, Ordering::Release);
+        // SAFETY: the constructor binds this cache to this cell, validity was
+        // checked above, and scheduler access covers the query.
+        let erased =
+            unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
+        Ok(IterationToken {
+            erased: Some(erased),
+            live: Arc::clone(&self.live_iterators),
+        })
     }
 
-    /// Advance the lazy iterator and return the next entity passing tick filters.
-    ///
-    /// # Safety
-    ///
-    /// The caller must hold this runtime's operation guard until the returned
-    /// access is dropped, preventing overlapping mutable entity access.
-    unsafe fn next_entity(
+    /// Advance a traversal token and materialize one row through the backend leaf.
+    pub fn advance_with<Context, Materializer>(
         &self,
-    ) -> Result<Option<FilteredEntityAccess<'_, '_>>, QueryRuntimeError> {
-        let Some(cached) = self.cached() else {
-            self.iterating.set(false);
-            return Ok(None);
-        };
-
-        self.iterating.set(true);
-        if self.iterator.get().is_none() {
-            // SAFETY: the constructor's contract binds this cache to this cell,
-            // validity is checked above, and scheduler access covers the query.
-            let iterator = unsafe {
-                create_iter(&cached.state, self.world_cell, self.last_run, self.this_run)
-            };
-            self.iterator.set(Some(iterator));
-        }
-
-        let iterator = self.iterator.get().expect("iterator initialized above");
-        // SAFETY: the allocation is owned by `self.iterator`, validity was
-        // checked above, and the returned borrow remains within this run.
-        match unsafe { self.next_passing(cached, iterator) } {
-            Some(access) => Ok(Some(access)),
-            None => {
-                self.iterating.set(false);
-                Ok(None)
-            }
-        }
-    }
-
-    /// Advance and materialize one row through the backend leaf.
-    pub fn next_with<Context, Materializer>(
-        &self,
+        token: &mut IterationToken,
         materializer: &Materializer,
         context: Context,
     ) -> Result<Option<Materializer::Output>, QueryExecutionError<Materializer::Error>>
@@ -369,15 +413,22 @@ impl QueryRuntimeCore {
     {
         self.check_valid()?;
         let _operation = self.enter_operation()?;
-        // SAFETY: `_operation` prevents another operation from overlapping the
-        // entity access, which is consumed by the materializer before it drops.
-        let Some(mut entity) = (unsafe { self.next_entity()? }) else {
+        let (Some(cached), Some(iterator)) = (self.cached(), token.erased) else {
             return Ok(None);
         };
-        materializer
-            .materialize(&mut entity, context)
-            .map(Some)
-            .map_err(QueryExecutionError::Materialize)
+        self.iteration_started.store(true, Ordering::Release);
+        // SAFETY: the token uniquely owns the live allocation and `_operation`
+        // prevents overlapping access while the row is materialized.
+        match unsafe { self.next_passing(cached, iterator) } {
+            Some(mut entity) => materializer
+                .materialize(&mut entity, context)
+                .map(Some)
+                .map_err(QueryExecutionError::Materialize),
+            None => {
+                token.release();
+                Ok(None)
+            }
+        }
     }
 
     /// Count matching entities, including Added/Changed filtering.
@@ -582,45 +633,37 @@ impl QueryRuntimeCore {
     }
 
     /// Guard a fresh-traversal operation (`count`/`is_empty`/`get`/`single`)
-    /// against a stored iterator: reject it while a Python `for` loop is paused
-    /// mid-iteration (its live iterator still borrows the `QueryState`), and
-    /// otherwise drop any exhausted leftover iterator so the fresh traversal
-    /// never mints a second `&mut QueryState` aliasing that borrow.
+    /// against a live Python-level iterator that still borrows the QueryState.
     fn begin_isolated_operation(&self) -> Result<(), QueryRuntimeError> {
-        if self.iterating.get() {
+        if self.live_iterators.load(Ordering::Acquire) != 0 {
             return Err(QueryRuntimeError::IterationInProgress);
         }
-        self.clear_iterator();
         Ok(())
     }
 
+    /// Return whether a live iterator exists but has not advanced yet.
+    pub fn has_unadvanced_iterator(&self) -> bool {
+        self.live_iterators.load(Ordering::Acquire) != 0
+            && !self.iteration_started.load(Ordering::Acquire)
+    }
+
     fn enter_operation(&self) -> Result<OperationGuard<'_>, QueryRuntimeError> {
-        if self.operation_active.replace(true) {
+        if self
+            .operation_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Err(QueryRuntimeError::ReentrantOperation);
         }
         Ok(OperationGuard {
             active: &self.operation_active,
         })
     }
-
-    fn clear_iterator(&self) {
-        if let Some(iterator) = self.iterator.take() {
-            // SAFETY: `self.iterator` uniquely owns this allocation.
-            unsafe { iterator.drop_allocation() };
-        }
-    }
 }
 
-// SAFETY: the raw cache/world pointers and interior-mutability cells are only
-// accessed while the owning system runs on one executor thread. The scheduler's
-// access set prevents conflicts, and `ValidityFlag` fences the run lifetime.
+// SAFETY: the raw cache/world pointers are fenced by ValidityFlag and scheduler
+// access. Cross-object operation and traversal admission use atomics.
 unsafe impl Send for QueryRuntimeCore {}
-
-impl Drop for QueryRuntimeCore {
-    fn drop(&mut self) {
-        self.clear_iterator();
-    }
-}
 
 /// RAII owner for a temporary erased iterator.
 struct ErasedIterGuard(ErasedQueryIter);
@@ -634,12 +677,12 @@ impl Drop for ErasedIterGuard {
 
 /// Resets the operation fence on normal returns, errors, and unwinding.
 struct OperationGuard<'a> {
-    active: &'a Cell<bool>,
+    active: &'a AtomicBool,
 }
 
 impl Drop for OperationGuard<'_> {
     fn drop(&mut self) {
-        self.active.set(false);
+        self.active.store(false, Ordering::Release);
     }
 }
 
@@ -698,6 +741,10 @@ mod tests {
         ) -> Result<Self::Output, Self::Error> {
             assert!(matches!(
                 self.runtime.count(),
+                Err(QueryRuntimeError::ReentrantOperation)
+            ));
+            assert!(matches!(
+                self.runtime.begin_iteration(),
                 Err(QueryRuntimeError::ReentrantOperation)
             ));
             Ok(entity.id())
@@ -822,10 +869,10 @@ mod tests {
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
 
         // Pause a `for` loop after the first entity (iteration is now in progress).
-        runtime.begin_iteration().unwrap();
+        let mut token = runtime.begin_iteration().unwrap();
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_some()
         );
@@ -856,13 +903,13 @@ mod tests {
         // The paused iteration is untouched: it resumes and then exhausts.
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_some()
         );
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_none()
         );
@@ -887,10 +934,10 @@ mod tests {
         // SAFETY: cache and world outlive `runtime` in this scope.
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
 
-        runtime.begin_iteration().unwrap();
+        let mut token = runtime.begin_iteration().unwrap();
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_some()
         );
@@ -900,15 +947,15 @@ mod tests {
         ));
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_none()
         );
 
-        runtime.begin_iteration().unwrap();
+        let mut token = runtime.begin_iteration().unwrap();
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_some()
         );
@@ -957,7 +1004,14 @@ mod tests {
             Err(QueryRuntimeError::Storage(StorageError::InvalidAccess))
         ));
         assert!(matches!(
-            runtime.next_with(&EntityMaterializer, ()),
+            runtime.advance_with(
+                &mut IterationToken {
+                    erased: None,
+                    live: Arc::clone(&runtime.live_iterators),
+                },
+                &EntityMaterializer,
+                (),
+            ),
             Err(QueryExecutionError::Runtime(QueryRuntimeError::Storage(
                 StorageError::InvalidAccess
             )))
@@ -996,10 +1050,11 @@ mod tests {
         let cache = cache(&mut world, true, false);
         // SAFETY: cache and world outlive `runtime` in this scope.
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+        let mut token = runtime.begin_iteration().unwrap();
 
         assert!(
             runtime
-                .next_with(&IsMutableMaterializer, ())
+                .advance_with(&mut token, &IsMutableMaterializer, ())
                 .unwrap()
                 .unwrap()
         );
@@ -1023,7 +1078,14 @@ mod tests {
             entity
         );
         assert_eq!(
-            runtime.next_with(&EntityMaterializer, ()).unwrap().unwrap(),
+            runtime
+                .advance_with(
+                    &mut runtime.begin_iteration().unwrap(),
+                    &EntityMaterializer,
+                    (),
+                )
+                .unwrap()
+                .unwrap(),
             entity
         );
     }
@@ -1036,16 +1098,20 @@ mod tests {
         // SAFETY: cache and world outlive `runtime` in this scope.
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
         let materializer = ReentrantMaterializer { runtime: &runtime };
+        let mut token = runtime.begin_iteration().unwrap();
 
         assert_eq!(
-            runtime.next_with(&materializer, ()).unwrap().unwrap(),
+            runtime
+                .advance_with(&mut token, &materializer, ())
+                .unwrap()
+                .unwrap(),
             entity
         );
         // Draining the open iteration proves the operation guard was released
         // (no ReentrantOperation) and lets a fresh count run afterwards.
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_none()
         );
@@ -1059,16 +1125,17 @@ mod tests {
         let cache = cache(&mut world, true, false);
         // SAFETY: cache and world outlive `runtime` in this scope.
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+        let mut token = runtime.begin_iteration().unwrap();
 
         assert!(matches!(
-            runtime.next_with(&FailingMaterializer, ()),
+            runtime.advance_with(&mut token, &FailingMaterializer, ()),
             Err(QueryExecutionError::Materialize(()))
         ));
         // The operation guard released despite the error: the follow-up call is
         // not rejected as re-entrant, and a fresh count then works.
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_none()
         );
@@ -1082,20 +1149,108 @@ mod tests {
         let cache = cache(&mut world, true, false);
         // SAFETY: cache and world outlive `runtime` in this scope.
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+        let mut token = runtime.begin_iteration().unwrap();
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = runtime.next_with(&PanickingMaterializer, ());
+            let _ = runtime.advance_with(&mut token, &PanickingMaterializer, ());
         }));
         assert!(result.is_err());
         // The operation guard released on unwind: the follow-up call is not
         // rejected as re-entrant, and a fresh count then works.
         assert!(
             runtime
-                .next_with(&EntityMaterializer, ())
+                .advance_with(&mut token, &EntityMaterializer, ())
                 .unwrap()
                 .is_none()
         );
         assert_eq!(runtime.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn token_release_is_idempotent_and_drop_releases_slot() {
+        let mut world = World::new();
+        world.spawn(A(0));
+        let cache = cache(&mut world, false, false);
+        // SAFETY: cache and world outlive `runtime` in this scope.
+        let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+
+        let mut token = runtime.begin_iteration().unwrap();
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 1);
+        token.release();
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 0);
+        token.release();
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 0);
+
+        let token = runtime.begin_iteration().unwrap();
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 1);
+        drop(token);
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn exhaustion_releases_slot_while_token_remains_live() {
+        let mut world = World::new();
+        world.spawn(A(0));
+        let cache = cache(&mut world, false, false);
+        // SAFETY: cache and world outlive `runtime` in this scope.
+        let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+        let mut token = runtime.begin_iteration().unwrap();
+
+        assert!(
+            runtime
+                .advance_with(&mut token, &EntityMaterializer, ())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            runtime
+                .advance_with(&mut token, &EntityMaterializer, ())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(runtime.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn empty_query_token_takes_no_slot() {
+        let mut world = World::new();
+        let validity = ValidityFlag::new_write();
+        let this_run = world.change_tick();
+        // SAFETY: world outlives the runtime; there is no cached state pointer.
+        let runtime = unsafe {
+            QueryRuntimeCore::new(
+                None,
+                world.as_unsafe_world_cell(),
+                validity,
+                Tick::new(0),
+                this_run,
+            )
+        };
+        let mut token = runtime.begin_iteration().unwrap();
+
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 0);
+        assert!(
+            runtime
+                .advance_with(&mut token, &EntityMaterializer, ())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(runtime.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn dropping_token_after_invalidation_does_not_touch_world() {
+        let mut world = World::new();
+        world.spawn(A(0));
+        let cache = cache(&mut world, false, false);
+        let validity = ValidityFlag::new_write();
+        // SAFETY: cache and world outlive `runtime` in this scope.
+        let runtime = unsafe { build_runtime(&cache, &mut world, validity.clone()) };
+        let token = runtime.begin_iteration().unwrap();
+
+        validity.set_invalid();
+        drop(token);
+        assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 0);
     }
 
     #[test]

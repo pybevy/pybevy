@@ -13,8 +13,8 @@
 //!
 //! ### Unified Validity and Mutability Tracking
 //!
-//! PyAssets uses `ValidityFlagWithMode` to track both runtime validity (prevents use
-//! after system execution) and mutability (enforces `Res[Assets[T]]` vs `ResMut[Assets[T]]`):
+//! PyAssets delegates runtime validity, mutability, handle identity, and live-borrow
+//! admission to the backend-neutral `AssetRuntimeCore`:
 //!
 //! - **Read-only access** (`Res[Assets[T]]`): Creates validity with `AccessMode::Read`
 //!   - `get()` allowed, `get_mut()` raises error
@@ -24,13 +24,13 @@ use std::{collections::VecDeque, sync::Arc};
 
 use bevy::{ecs::world::unsafe_world_cell::UnsafeWorldCell, prelude::World};
 use pybevy_core::{
-    AssetBorrowCounter,
+    AssetBorrowCounter, AssetRuntimeCore, AssetRuntimeError,
     handle::PyHandle,
     registry::{AssetBridge, global_registry},
 };
 use pyo3::{
     IntoPyObjectExt,
-    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError},
+    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyTuple, PyType},
@@ -38,7 +38,7 @@ use pyo3::{
 
 use super::asset_type::PyAssetTypeParam;
 use crate::ecs::{
-    helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
+    helpers::validity_guard::{AccessMode, ValidityFlag},
     resource::PyResource,
 };
 
@@ -46,16 +46,20 @@ use crate::ecs::{
 #[pyclass(name = "Assets", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyAssets {
-    type_ptr: *const PyTypeObject,
+    runtime: AssetRuntimeCore<*const PyTypeObject>,
     /// If set, the `@material`-decorated class for auto-wrapping `get_mut()` results.
     wrapper_class: Option<*const PyTypeObject>,
     /// World cell (lifetime-erased), valid only while the validity flag is active.
     /// Used only to reach the declared `Assets<T>` resource through the AssetBridge.
     cell: UnsafeWorldCell<'static>,
-    // Runtime validity check with read/write mode - prevents use after system execution
-    // and enforces Res[Assets[T]] (read-only) vs ResMut[Assets[T]] (mutable) semantics
-    validity: ValidityFlagWithMode,
-    borrow_counter: AssetBorrowCounter,
+}
+
+fn asset_runtime_py_error(error: AssetRuntimeError) -> PyErr {
+    if error.is_handle_type_mismatch() {
+        PyValueError::new_err(error.to_string())
+    } else {
+        PyRuntimeError::new_err(error.to_string())
+    }
 }
 
 // SAFETY: PyAssets is Send because:
@@ -95,48 +99,51 @@ impl PyAssets {
         // cell is only touched while `validity` is active.
         let cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(cell) };
 
+        let asset_name = global_registry::get_asset_bridge_by_py_type(type_ptr)
+            .map(|bridge| bridge.name())
+            .unwrap_or("T");
+
         Self {
-            type_ptr,
+            runtime: AssetRuntimeCore::new(
+                type_ptr,
+                asset_name,
+                validity.with_access_mode(access_mode),
+                borrow_counter,
+            ),
             wrapper_class,
             cell,
-            validity: validity.with_access_mode(access_mode),
-            borrow_counter,
         }
+    }
+
+    fn type_ptr(&self) -> *const PyTypeObject {
+        *self.runtime.type_key()
     }
 
     /// Get the AssetBridge for this asset type.
     fn bridge(&self) -> PyResult<Arc<dyn AssetBridge>> {
-        global_registry::get_asset_bridge_by_py_type(self.type_ptr)
+        global_registry::get_asset_bridge_by_py_type(self.type_ptr())
             .ok_or_else(|| PyRuntimeError::new_err("Asset bridge not found for type"))
     }
 
     /// Validate that a handle's asset type matches this collection's type.
     fn check_handle_type(&self, handle: &PyHandle) -> PyResult<()> {
-        if handle.type_ptr() != self.type_ptr {
-            let handle_name = handle.asset_type_name().unwrap_or("Unknown");
-            let self_name = self.bridge().map(|b| b.name()).unwrap_or("Unknown");
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Handle of type `{}` does not match expected type `{}`",
-                handle_name, self_name
-            )));
-        }
-        Ok(())
+        self.runtime
+            .check_handle_type(
+                &handle.type_ptr(),
+                handle.asset_type_name().unwrap_or("Unknown"),
+            )
+            .map_err(asset_runtime_py_error)
     }
 
     fn check_no_live_asset_borrows(&self) -> PyResult<()> {
-        self.validity.check_read()?;
-        if self.borrow_counter.has_active() {
-            let name = self.bridge().map(|b| b.name()).unwrap_or("T");
-            return Err(PyRuntimeError::new_err(format!(
-                "Cannot structurally mutate Assets[{name}] while borrowed asset wrappers are live"
-            )));
-        }
-        Ok(())
+        self.runtime
+            .check_no_live_asset_borrows()
+            .map_err(asset_runtime_py_error)
     }
 
     /// Get a reference to the world (read-only access)
     fn world_ref(&self) -> PyResult<&World> {
-        self.validity.check_read()?;
+        self.runtime.check_read().map_err(asset_runtime_py_error)?;
         // SAFETY: momentary derivation of a shared world reference, used only to reach
         // the declared `Assets<T>` resource through the AssetBridge. `initialize`
         // declares `Assets<T>` read access; the executor prevents a concurrent writer.
@@ -146,15 +153,7 @@ impl PyAssets {
 
     /// Get a mutable reference to the world
     fn world_mut(&mut self) -> PyResult<&mut World> {
-        // First check validity (system still executing)
-        self.validity.check_read()?;
-
-        // Then check access mode allows writing
-        if self.validity.access_mode() != AccessMode::Write {
-            return Err(PyRuntimeError::new_err(
-                "Mutable access required. Use ResMut[Assets[T]] instead of Res[Assets[T]] for mutations.",
-            ));
-        }
+        self.runtime.check_write().map_err(asset_runtime_py_error)?;
 
         // SAFETY: momentary derivation of a mutable world reference, used only to reach
         // the declared `Assets<T>` resource through the AssetBridge. `initialize`
@@ -202,7 +201,7 @@ impl PyAssets {
 
         // Validate asset type matches container type
         let asset_type_ptr = asset.get_type().as_type_ptr() as *const PyTypeObject;
-        if asset_type_ptr != self.type_ptr {
+        if asset_type_ptr != self.type_ptr() {
             let asset_bridge = global_registry::get_asset_bridge_by_py_type(asset_type_ptr);
             let asset_name = asset_bridge.as_ref().map(|b| b.name()).unwrap_or("Unknown");
             return Err(PyTypeError::new_err(format!(
@@ -214,7 +213,7 @@ impl PyAssets {
 
         let world = self.world_mut()?;
         let untyped_handle = bridge.add(world, &asset, py)?;
-        Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr))
+        Ok(PyHandle::from_untyped(untyped_handle, self.type_ptr()))
     }
 
     pub fn len(&self) -> PyResult<usize> {
@@ -252,8 +251,8 @@ impl PyAssets {
         bridge.get(
             world,
             &handle.to_untyped_handle()?,
-            self.validity.clone(),
-            self.borrow_counter.clone(),
+            self.runtime.validity().clone(),
+            self.runtime.borrow_counter().clone(),
             py,
         )
     }
@@ -262,8 +261,8 @@ impl PyAssets {
         let handle = id.extract::<PyHandle>()?;
         self.check_handle_type(&handle)?;
         let bridge = self.bridge()?;
-        let validity = self.validity.clone();
-        let borrow_counter = self.borrow_counter.clone();
+        let validity = self.runtime.validity().clone();
+        let borrow_counter = self.runtime.borrow_counter().clone();
         let untyped_handle = handle.to_untyped_handle()?;
         let world = self.world_mut()?;
         let raw = bridge.get_mut(world, &untyped_handle, validity, borrow_counter, py)?;
@@ -286,11 +285,11 @@ impl PyAssets {
         let world = self.world_ref()?;
         let pairs = bridge.iter_pairs(
             world,
-            self.validity.clone(),
-            self.borrow_counter.clone(),
+            self.runtime.validity().clone(),
+            self.runtime.borrow_counter().clone(),
             py,
         )?;
-        let type_ptr = self.type_ptr;
+        let type_ptr = self.type_ptr();
         let values = pairs
             .into_iter()
             .map(|(untyped_handle, obj)| {
