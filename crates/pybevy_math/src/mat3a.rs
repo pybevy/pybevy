@@ -174,6 +174,14 @@ impl PyMat3A {
         Ok(PyMat3A::mat3a(self.as_ref()?.mul_mat3(rhs.as_ref()?)))
     }
 
+    pub fn mul_scalar(&self, rhs: f32) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(*self.as_ref()? * rhs))
+    }
+
+    pub fn to_cols_array(&self) -> PyResult<[f32; 9]> {
+        Ok(self.as_ref()?.to_cols_array())
+    }
+
     pub fn abs(&self) -> PyResult<Self> {
         Ok(PyMat3A::mat3a(self.as_ref()?.abs()))
     }

@@ -179,6 +179,10 @@ impl PyVec3A {
         Ok(PyVec3A::from_vec3a(self.as_ref()?.normalize()))
     }
 
+    pub fn normalize_or_zero(&self) -> PyResult<Self> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.normalize_or_zero()))
+    }
+
     pub fn abs(&self) -> PyResult<Self> {
         Ok(PyVec3A::from_vec3a(self.as_ref()?.abs()))
     }

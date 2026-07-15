@@ -188,4 +188,37 @@ impl PyUVec2 {
     pub fn length_squared(&self) -> PyResult<u32> {
         Ok(self.as_ref()?.length_squared())
     }
+
+    pub fn min_element(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.min_element())
+    }
+
+    pub fn max_element(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.max_element())
+    }
+
+    pub fn element_sum(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.element_sum())
+    }
+
+    pub fn element_product(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.element_product())
+    }
+
+    pub fn with_x(&self, x: u32) -> PyResult<PyUVec2> {
+        Ok(PyUVec2::from_uvec2(self.as_ref()?.with_x(x)))
+    }
+
+    pub fn with_y(&self, y: u32) -> PyResult<PyUVec2> {
+        Ok(PyUVec2::from_uvec2(self.as_ref()?.with_y(y)))
+    }
+
+    pub fn to_array(&self) -> PyResult<(u32, u32)> {
+        let value = self.as_ref()?;
+        Ok((value.x, value.y))
+    }
+
+    pub fn as_tuple(&self) -> PyResult<(u32, u32)> {
+        self.to_array()
+    }
 }

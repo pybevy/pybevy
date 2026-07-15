@@ -59,6 +59,11 @@ impl PyAabb2d {
     fn as_ref(&self) -> PyResult<&Aabb2d> {
         Ok(self.storage.as_ref()?)
     }
+
+    #[inline(always)]
+    fn as_mut(&mut self) -> PyResult<&mut Aabb2d> {
+        Ok(self.storage.as_mut()?)
+    }
 }
 
 #[pymethods]
@@ -76,9 +81,21 @@ impl PyAabb2d {
         Ok(PyVec2::from_vec2(self.as_ref()?.min))
     }
 
+    #[setter]
+    pub fn set_min(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.min = value.into();
+        Ok(())
+    }
+
     #[getter]
     pub fn max(&self) -> PyResult<PyVec2> {
         Ok(PyVec2::from_vec2(self.as_ref()?.max))
+    }
+
+    #[setter]
+    pub fn set_max(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.max = value.into();
+        Ok(())
     }
 
     pub fn center(&self) -> PyResult<PyVec2> {

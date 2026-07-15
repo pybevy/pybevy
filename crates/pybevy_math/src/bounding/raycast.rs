@@ -63,9 +63,19 @@ impl PyRayCast2d {
         PyRay2d::from_ray2d(self.ray_cast.ray)
     }
 
+    #[setter]
+    pub fn set_ray(&mut self, ray: &PyRay2d) {
+        self.ray_cast = RayCast2d::from_ray(ray.to_ray2d(), self.ray_cast.max);
+    }
+
     #[getter]
     pub fn max(&self) -> f32 {
         self.ray_cast.max
+    }
+
+    #[setter]
+    pub fn set_max(&mut self, max: f32) {
+        self.ray_cast.max = max;
     }
 
     pub fn intersects_aabb(&self, aabb: &PyAabb2d) -> bool {
@@ -149,9 +159,19 @@ impl PyRayCast3d {
         PyRay3d::from_ray3d(ray)
     }
 
+    #[setter]
+    pub fn set_ray(&mut self, ray: &PyRay3d) {
+        self.ray_cast = RayCast3d::from_ray(ray.to_ray3d(), self.ray_cast.max);
+    }
+
     #[getter]
     pub fn max(&self) -> f32 {
         self.ray_cast.max
+    }
+
+    #[setter]
+    pub fn set_max(&mut self, max: f32) {
+        self.ray_cast.max = max;
     }
 
     pub fn intersects_aabb(&self, aabb: &PyAabb3d) -> bool {

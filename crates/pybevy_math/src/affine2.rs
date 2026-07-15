@@ -302,6 +302,11 @@ impl PyMat2 {
     }
 
     #[staticmethod]
+    pub fn from_cols_array(values: [f32; 4]) -> Self {
+        PyMat2::from_mat2(Mat2::from_cols_array(&values))
+    }
+
+    #[staticmethod]
     pub fn from_angle(angle: f32) -> Self {
         PyMat2::from_mat2(Mat2::from_angle(angle))
     }
@@ -348,6 +353,18 @@ impl PyMat2 {
 
     pub fn mul_vec2(&self, rhs: PyVec2) -> PyResult<PyVec2> {
         Ok(self.as_ref()?.mul_vec2(rhs.into()).into())
+    }
+
+    pub fn mul_mat2(&self, rhs: &PyMat2) -> PyResult<PyMat2> {
+        Ok(PyMat2::from_mat2(self.as_ref()?.mul_mat2(rhs.as_ref()?)))
+    }
+
+    pub fn mul_scalar(&self, rhs: f32) -> PyResult<PyMat2> {
+        Ok(PyMat2::from_mat2(*self.as_ref()? * rhs))
+    }
+
+    pub fn abs(&self) -> PyResult<PyMat2> {
+        Ok(PyMat2::from_mat2(self.as_ref()?.abs()))
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {
