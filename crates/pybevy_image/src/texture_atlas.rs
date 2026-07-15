@@ -15,14 +15,14 @@ pub struct PyTextureAtlas {
 #[pymethods]
 impl PyTextureAtlas {
     #[new]
-    pub fn new(layout: &Bound<'_, PyAny>, index: usize) -> PyResult<Self> {
-        let py_handle = extract_handle_from_any(layout)?;
-        let layout_handle = py_handle.try_into()?;
+    #[pyo3(signature = (layout = None, index = 0))]
+    pub fn new(layout: Option<&Bound<'_, PyAny>>, index: usize) -> PyResult<Self> {
+        let layout = match layout {
+            Some(layout) => extract_handle_from_any(layout)?.try_into()?,
+            None => Default::default(),
+        };
         Ok(Self {
-            storage: FieldStorage::owned(TextureAtlas {
-                layout: layout_handle,
-                index,
-            }),
+            storage: FieldStorage::owned(TextureAtlas { layout, index }),
         })
     }
 
