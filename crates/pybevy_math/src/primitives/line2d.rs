@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::dir2::PyDir2;
 
-#[pyclass(name = "Line2d", frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Line2d", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyLine2d {
     pub(crate) inner: Line2d,
@@ -23,6 +23,11 @@ impl PyLine2d {
     #[getter]
     pub fn direction(&self) -> PyDir2 {
         PyDir2::from_dir2(self.inner.direction)
+    }
+
+    #[setter]
+    pub fn set_direction(&mut self, direction: PyDir2) {
+        self.inner.direction = direction.into_dir2();
     }
 
     fn __repr__(&self) -> String {

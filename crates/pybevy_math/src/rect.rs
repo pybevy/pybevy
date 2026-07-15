@@ -3,12 +3,12 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Rect", frozen, from_py_object)]
+#[pyclass(name = "Rect", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRect {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     min: PyVec2,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     max: PyVec2,
 }
 

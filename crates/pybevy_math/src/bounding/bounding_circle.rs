@@ -60,6 +60,11 @@ impl PyBoundingCircle {
         Ok(self.storage.as_ref()?)
     }
 
+    #[inline(always)]
+    fn as_mut(&mut self) -> PyResult<&mut BoundingCircle> {
+        Ok(self.storage.as_mut()?)
+    }
+
     pub(crate) fn to_bounding_circle(&self) -> BoundingCircle {
         match self.storage.get() {
             Ok(val) => val,
@@ -79,6 +84,12 @@ impl PyBoundingCircle {
     #[getter]
     pub fn center(&self) -> PyResult<PyVec2> {
         Ok(PyVec2::from_vec2(self.as_ref()?.center))
+    }
+
+    #[setter]
+    pub fn set_center(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.center = value.into();
+        Ok(())
     }
 
     pub fn radius(&self) -> PyResult<f32> {

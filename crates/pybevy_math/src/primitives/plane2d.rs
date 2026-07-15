@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{dir2::PyDir2, vec2::PyVec2};
 
-#[pyclass(name = "Plane2d", frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Plane2d", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyPlane2d {
     pub(crate) inner: Plane2d,
@@ -33,6 +33,11 @@ impl PyPlane2d {
     #[getter]
     pub fn normal(&self) -> PyDir2 {
         PyDir2::from_dir2(self.inner.normal)
+    }
+
+    #[setter]
+    pub fn set_normal(&mut self, normal: PyDir2) {
+        self.inner.normal = normal.into_dir2();
     }
 
     fn __repr__(&self) -> String {

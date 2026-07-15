@@ -58,9 +58,19 @@ impl PyRay2d {
         PyVec2::from_vec2(self.0.origin)
     }
 
+    #[setter]
+    pub fn set_origin(&mut self, origin: PyVec2) {
+        self.0.origin = origin.into();
+    }
+
     #[getter]
     pub fn direction(&self) -> PyDir2 {
         PyDir2::from_dir2(self.0.direction)
+    }
+
+    #[setter]
+    pub fn set_direction(&mut self, direction: PyDir2) {
+        self.0.direction = direction.into_dir2();
     }
 
     pub fn get_point(&self, distance: f32) -> PyVec2 {
@@ -138,9 +148,19 @@ impl PyRay3d {
         PyVec3::from_vec3(self.0.origin)
     }
 
+    #[setter]
+    pub fn set_origin(&mut self, origin: PyVec3) {
+        self.0.origin = origin.into();
+    }
+
     #[getter]
     pub fn direction(&self) -> PyDir3 {
         PyDir3::from_dir3(self.0.direction)
+    }
+
+    #[setter]
+    pub fn set_direction(&mut self, direction: PyDir3) {
+        self.0.direction = direction.into_dir3();
     }
 
     pub fn get_point(&self, distance: f32) -> PyVec3 {

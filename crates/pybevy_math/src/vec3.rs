@@ -181,6 +181,15 @@ impl PyVec3 {
     pub fn neg_z() -> Self {
         Self::vec3(Vec3::NEG_Z)
     }
+    #[classattr]
+    #[pyo3(name = "AXES")]
+    pub fn axes() -> (Self, Self, Self) {
+        (
+            Self::vec3(Vec3::X),
+            Self::vec3(Vec3::Y),
+            Self::vec3(Vec3::Z),
+        )
+    }
 
     #[new]
     pub fn new(x: f32, y: f32, z: f32) -> Self {

@@ -1,8 +1,13 @@
-use bevy::math::{Vec4, Vec4Swizzles};
+use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::vec3::PyVec3;
+
+fn bool_tuple(value: BVec4A) -> (bool, bool, bool, bool) {
+    let mask = value.bitmask();
+    (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0, mask & 8 != 0)
+}
 
 #[pyclass(name = "Vec4", from_py_object)]
 #[derive(Debug, Clone)]
@@ -234,6 +239,10 @@ impl PyVec4 {
         Ok(self.as_ref()?.length_squared())
     }
 
+    pub fn length_recip(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.length_recip())
+    }
+
     pub fn normalize(&self) -> PyResult<Self> {
         Ok(PyVec4::from_vec4(self.as_ref()?.normalize()))
     }
@@ -245,6 +254,30 @@ impl PyVec4 {
     #[staticmethod]
     pub fn from_array(a: (f32, f32, f32, f32)) -> PyVec4 {
         PyVec4::from_vec4(Vec4::from_array([a.0, a.1, a.2, a.3]))
+    }
+
+    #[staticmethod]
+    pub fn from_slice(a: Vec<f32>) -> PyResult<PyVec4> {
+        if a.len() < 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "from_slice requires at least 4 elements",
+            ));
+        }
+        Ok(PyVec4::from_vec4(Vec4::from_slice(&a)))
+    }
+
+    #[staticmethod]
+    pub fn select(
+        mask: (bool, bool, bool, bool),
+        if_true: &PyVec4,
+        if_false: &PyVec4,
+    ) -> PyResult<PyVec4> {
+        let mask = BVec4A::new(mask.0, mask.1, mask.2, mask.3);
+        Ok(PyVec4::from_vec4(Vec4::select(
+            mask,
+            *if_true.as_ref()?,
+            *if_false.as_ref()?,
+        )))
     }
 
     pub fn to_array(&self) -> PyResult<(f32, f32, f32, f32)> {
@@ -326,6 +359,18 @@ impl PyVec4 {
         ))
     }
 
+    pub fn project_onto_normalized(&self, rhs: &PyVec4) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(
+            self.as_ref()?.project_onto_normalized(*rhs.as_ref()?),
+        ))
+    }
+
+    pub fn reject_from_normalized(&self, rhs: &PyVec4) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(
+            self.as_ref()?.reject_from_normalized(*rhs.as_ref()?),
+        ))
+    }
+
     pub fn normalize_or_zero(&self) -> PyResult<PyVec4> {
         Ok(PyVec4::from_vec4(self.as_ref()?.normalize_or_zero()))
     }
@@ -354,6 +399,18 @@ impl PyVec4 {
         Ok(PyVec4::from_vec4(
             self.as_ref()?.clamp(*min.as_ref()?, *max.as_ref()?),
         ))
+    }
+
+    pub fn clamp_length(&self, min: f32, max: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.clamp_length(min, max)))
+    }
+
+    pub fn clamp_length_min(&self, min: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.clamp_length_min(min)))
+    }
+
+    pub fn clamp_length_max(&self, max: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.clamp_length_max(max)))
     }
 
     pub fn element_sum(&self) -> PyResult<f32> {
@@ -390,6 +447,103 @@ impl PyVec4 {
 
     pub fn xyzw(&self) -> PyResult<PyVec4> {
         Ok(PyVec4::from_vec4(self.as_ref()?.xyzw()))
+    }
+
+    pub fn with_x(&self, x: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.with_x(x)))
+    }
+    pub fn with_y(&self, y: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.with_y(y)))
+    }
+    pub fn with_z(&self, z: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.with_z(z)))
+    }
+    pub fn with_w(&self, w: f32) -> PyResult<PyVec4> {
+        Ok(PyVec4::from_vec4(self.as_ref()?.with_w(w)))
+    }
+
+    pub fn cmpeq(&self, rhs: &PyVec4) -> PyResult<(bool, bool, bool, bool)> {
+        Ok(bool_tuple(self.as_ref()?.cmpeq(*rhs.as_ref()?)))
+    }
+    pub fn cmpne(&self, rhs: &PyVec4) -> PyResult<(bool, bool, bool, bool)> {
+        Ok(bool_tuple(self.as_ref()?.cmpne(*rhs.as_ref()?)))
+    }
+    pub fn cmplt(&self, rhs: &PyVec4) -> PyResult<(bool, bool, bool, bool)> {
+        Ok(bool_tuple(self.as_ref()?.cmplt(*rhs.as_ref()?)))
+    }
+    pub fn cmple(&self, rhs: &PyVec4) -> PyResult<(bool, bool, bool, bool)> {
+        Ok(bool_tuple(self.as_ref()?.cmple(*rhs.as_ref()?)))
+    }
+    pub fn cmpgt(&self, rhs: &PyVec4) -> PyResult<(bool, bool, bool, bool)> {
+        Ok(bool_tuple(self.as_ref()?.cmpgt(*rhs.as_ref()?)))
+    }
+    pub fn cmpge(&self, rhs: &PyVec4) -> PyResult<(bool, bool, bool, bool)> {
+        Ok(bool_tuple(self.as_ref()?.cmpge(*rhs.as_ref()?)))
+    }
+
+    pub fn xx(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.x, v.x))
+    }
+    pub fn xy(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.x, v.y))
+    }
+    pub fn xz(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.x, v.z))
+    }
+    pub fn xw(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.x, v.w))
+    }
+    pub fn yx(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.y, v.x))
+    }
+    pub fn yy(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.y, v.y))
+    }
+    pub fn yz(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.y, v.z))
+    }
+    pub fn yw(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.y, v.w))
+    }
+    pub fn zx(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.z, v.x))
+    }
+    pub fn zy(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.z, v.y))
+    }
+    pub fn zz(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.z, v.z))
+    }
+    pub fn zw(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.z, v.w))
+    }
+    pub fn wx(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.w, v.x))
+    }
+    pub fn wy(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.w, v.y))
+    }
+    pub fn wz(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.w, v.z))
+    }
+    pub fn ww(&self) -> PyResult<(f32, f32)> {
+        let v = self.as_ref()?;
+        Ok((v.w, v.w))
     }
 
     fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {

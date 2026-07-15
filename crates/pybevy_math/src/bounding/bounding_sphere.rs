@@ -59,6 +59,11 @@ impl PyBoundingSphere {
     fn as_ref(&self) -> PyResult<&BoundingSphere> {
         Ok(self.storage.as_ref()?)
     }
+
+    #[inline(always)]
+    fn as_mut(&mut self) -> PyResult<&mut BoundingSphere> {
+        Ok(self.storage.as_mut()?)
+    }
 }
 
 #[pymethods]
@@ -72,6 +77,12 @@ impl PyBoundingSphere {
     #[getter]
     pub fn center(&self) -> PyResult<PyVec3> {
         Ok(PyVec3::from_vec3(self.as_ref()?.center.into()))
+    }
+
+    #[setter]
+    pub fn set_center(&mut self, value: PyVec3) -> PyResult<()> {
+        self.as_mut()?.center = Vec3::from(value).into();
+        Ok(())
     }
 
     pub fn radius(&self) -> PyResult<f32> {

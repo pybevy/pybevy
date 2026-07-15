@@ -147,6 +147,11 @@ impl PyVec2 {
     pub fn neg_y() -> Self {
         Self::vec2(Vec2::NEG_Y)
     }
+    #[classattr]
+    #[pyo3(name = "AXES")]
+    pub fn axes() -> (Self, Self) {
+        (Self::vec2(Vec2::X), Self::vec2(Vec2::Y))
+    }
 
     #[new]
     pub fn new(x: f32, y: f32) -> Self {
