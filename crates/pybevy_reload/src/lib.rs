@@ -5,6 +5,7 @@ pub mod profiling;
 pub mod progress;
 pub mod runtime;
 pub mod state;
+pub mod system_registry;
 pub mod tracker;
 pub mod util;
 
@@ -47,6 +48,7 @@ pub use progress::{
 };
 pub use runtime::{DefsFingerprint, EscalationTracker, ReloadError, ReloadRuntime};
 pub use state::{HotReloadGeneration, ReloadMode, generation_matches, startup_or_reload};
+pub use system_registry::SystemGenerationRegistry;
 pub use tracker::{KEEP_ALIVE_GENERATIONS, PluginTracker};
 pub use util::{
     count_schedule_systems, get_current_rss_mb, is_verbose, lock_or_recover, parse_resolution,
