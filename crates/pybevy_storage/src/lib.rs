@@ -14,6 +14,7 @@
 //! - `AppStoreCore` - Backend-neutral App identity and ownership transitions
 
 pub mod app_store;
+pub mod asset_runtime;
 pub mod borrowed;
 pub mod field_storage;
 pub mod filtered_entity_access;
@@ -31,6 +32,7 @@ pub use app_store::{
     AllocatedAppId, AppId, AppLifecycle, AppOperation, AppRestoreError, AppStoreCore,
     AppStoreError, BorrowedApps, DrainOutcome, DrainedApps, allocate_id, consume_unstored_id,
 };
+pub use asset_runtime::{AssetRuntimeCore, AssetRuntimeError};
 pub use borrowed::{BorrowedMut, BorrowedRef};
 pub use field_storage::{FieldStorage, FieldStorageInner};
 pub use filtered_entity_access::FilteredEntityAccess;
