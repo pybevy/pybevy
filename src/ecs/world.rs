@@ -467,6 +467,15 @@ impl PyWorld {
         py_resource_type.insert_into_world(world, py, resource_instance)
     }
 
+    pub fn remove_resource(&self, py: Python, resource_type: Bound<'_, PyAny>) -> PyResult<()> {
+        self.check_valid()?;
+        let validity = self.validity.clone().unwrap_or_default();
+        // SAFETY: The temporary adapter is used only for this call, while the checked
+        // World pointer and its validity token remain alive.
+        let commands = unsafe { PyCommands::from_world_temporary(self.world_ptr(), validity) };
+        commands.remove_resource(py, resource_type)
+    }
+
     pub fn register_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         self.check_valid()?;
 

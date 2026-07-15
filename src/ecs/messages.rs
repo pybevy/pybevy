@@ -175,7 +175,10 @@ impl PyMessages {
             MessageType::WindowEvent => {
                 use pybevy_window::window_event::PyWindowEvent;
                 self.iter_messages::<WindowEvent, _>(py, world, cursor_state, |msg, py| {
-                    Ok(Py::new(py, PyWindowEvent::from_bevy(py, msg)?)?.into_any())
+                    Ok(PyWindowEvent::from_bevy(py, msg)?
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind())
                 })
             }
             MessageType::WorldInstanceReady => {

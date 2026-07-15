@@ -156,7 +156,7 @@ impl PyChildren {
     }
 }
 
-#[pyclass]
+#[pyclass(name = "ChildrenIterator")]
 pub struct PyChildrenIterator {
     children: Vec<PyEntity>,
     index: usize,
