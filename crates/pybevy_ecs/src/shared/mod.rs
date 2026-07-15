@@ -10,6 +10,7 @@ pub mod message_resources;
 pub mod message_store;
 pub mod observer_registry;
 pub mod param_spec;
+pub mod parity_trace;
 pub mod query_builder_ext;
 pub mod query_runtime;
 pub mod run_scaffold;
