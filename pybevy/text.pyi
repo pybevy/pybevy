@@ -2,10 +2,12 @@ from collections.abc import Iterator
 from datetime import timedelta
 from typing import ClassVar
 
+import numpy as np
+
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.color import Color
-from pybevy.ecs import Component, Resource
+from pybevy.ecs import Batchable, Component, Resource
 from pybevy.image import TextureAtlasLayout
 from pybevy.math import Vec2
 
@@ -512,6 +514,9 @@ class TextColor(Component):
     def __init__(self, color: Color = Color.WHITE) -> None:
         """Create a text color component."""
 
+    @staticmethod
+    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
+
     def __eq__(self, other: object) -> bool: ...
 
 class FontSize:
@@ -883,6 +888,9 @@ class TextBackgroundColor(Component):
             color: Background color (default: black)
         """
 
+    @staticmethod
+    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
+
     def __eq__(self, other: object) -> bool: ...
 
 class Strikethrough(Component):
@@ -897,6 +905,8 @@ class StrikethroughColor(Component):
     color: Color
 
     def __init__(self, color: Color = ...) -> None: ...
+    @staticmethod
+    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
 
 class Underline(Component):
     """Marker component for underline text decoration."""
@@ -910,6 +920,8 @@ class UnderlineColor(Component):
     color: Color
 
     def __init__(self, color: Color = ...) -> None: ...
+    @staticmethod
+    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
 
 class LetterSpacing(Component):
     """Spacing between characters. Construct via :meth:`px` or :meth:`rem`.

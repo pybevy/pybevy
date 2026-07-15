@@ -154,6 +154,8 @@ class Camera3dDepthLoadOp:
 class Camera3dDepthTextureUsage:
     """Texture usage flags for depth buffer."""
     def __init__(self, flags: int) -> None: ...
+    @property
+    def value(self) -> int: ...
 
 class Camera3d(Component):
     """3D camera component with configurable depth settings."""
@@ -276,7 +278,7 @@ class RenderTarget(Component):
             Normalized render target, or None if normalization fails
         """
 
-class Viewport(Component):
+class Viewport:
     """Viewport configuration for rendering to a specific region.
 
     Defines the rectangular region within the render target where the camera
@@ -1120,6 +1122,7 @@ class RenderLayers(Component):
             True if the layers have at least one common layer
         """
 
+    @property
     def bits(self) -> list[int]:
         """Get the bitmask representation of enabled layers.
 

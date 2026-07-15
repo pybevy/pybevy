@@ -7,9 +7,11 @@ work for both Text2d and UI Text).
 
 from typing import ClassVar
 
+import numpy as np
+
 from pybevy.assets import Handle
 from pybevy.color import Color
-from pybevy.ecs import Component, Entity, Resource
+from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image
 from pybevy.math import Rect, Rot2, Vec2
 from pybevy.sprite import TextureSlicer
@@ -2583,6 +2585,11 @@ class ScrollPosition(Component):
     @offset.setter
     def offset(self, value: Vec2) -> None: ...
 
+    @staticmethod
+    def from_numpy(  # type: ignore[override]
+        *, x: np.ndarray | None = None, y: np.ndarray | None = None
+    ) -> Batchable: ...
+
 
 class ComputedStackIndex(Component):
     """The draw order of a UI node, computed by the UI stacking system.
@@ -2644,6 +2651,14 @@ class ComputedNode(Component):
     @property
     def inverse_scale_factor(self) -> float:
         """Inverse of the UI scale factor."""
+
+    @property
+    def scrollbar_size(self) -> Vec2:
+        """Size reserved for scrollbars in physical pixels."""
+
+    @property
+    def scroll_position(self) -> Vec2:
+        """Current computed scroll position in physical pixels."""
 
     def is_empty(self) -> bool:
         """Check if the node has zero size."""

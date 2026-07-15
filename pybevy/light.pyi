@@ -113,6 +113,18 @@ class FogVolume(Component):
     light_tint: Color
     light_intensity: float
 
+    @staticmethod
+    def from_numpy(  # type: ignore[override]
+        *,
+        density_factor: np.ndarray | None = None,
+        absorption: np.ndarray | None = None,
+        scattering: np.ndarray | None = None,
+        scattering_asymmetry: np.ndarray | None = None,
+        light_intensity: np.ndarray | None = None,
+        fog_color: np.ndarray | None = None,
+        light_tint: np.ndarray | None = None,
+    ) -> Batchable: ...
+
 class GlobalAmbientLight(Resource):
     """Global ambient light resource.
 
@@ -630,6 +642,21 @@ class ClusteredDecal(Component):
         """The base color texture to project."""
     @base_color_texture.setter
     def base_color_texture(self, value: Handle[Image] | None) -> None: ...
+
+    @property
+    def normal_map_texture(self) -> Handle[Image] | None: ...
+    @normal_map_texture.setter
+    def normal_map_texture(self, value: Handle[Image] | None) -> None: ...
+
+    @property
+    def metallic_roughness_texture(self) -> Handle[Image] | None: ...
+    @metallic_roughness_texture.setter
+    def metallic_roughness_texture(self, value: Handle[Image] | None) -> None: ...
+
+    @property
+    def emissive_texture(self) -> Handle[Image] | None: ...
+    @emissive_texture.setter
+    def emissive_texture(self, value: Handle[Image] | None) -> None: ...
 
     @property
     def tag(self) -> int:
