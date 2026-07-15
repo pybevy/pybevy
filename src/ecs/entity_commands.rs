@@ -173,6 +173,18 @@ impl PyEntityCommands {
         }
     }
 
+    /// Trigger an event for this entity.
+    pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+        if let Some(source) = self.get_commands_or_world()? {
+            crate::ecs::commands::trigger_event_helper(source.as_ref(), py, event, Some(self.id))?;
+            Ok(self.clone())
+        } else {
+            Err(PyValueError::new_err(
+                "Cannot trigger event: EntityCommands not associated with a Commands or World object.",
+            ))
+        }
+    }
+
     /// Despawn this entity
     pub fn despawn(&self) -> PyResult<()> {
         if let Some(source) = self.get_commands_or_world()? {

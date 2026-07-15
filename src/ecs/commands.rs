@@ -40,6 +40,88 @@ use crate::ecs::{
     parity_trace::{canonicalize_payload, canonicalize_payload_without_root_field},
 };
 
+pub(crate) fn trigger_event_helper(
+    commands: &PyCommands,
+    py: Python,
+    event: Bound<'_, PyAny>,
+    target_entity: Option<Entity>,
+) -> PyResult<()> {
+    commands.check_valid()?;
+
+    if !event.get_type().is_subclass_of::<PyEvent>()? {
+        return Err(PyRuntimeError::new_err(
+            "trigger() requires an Event subclass instance",
+        ));
+    }
+
+    let trace_operation =
+        commands.prepare_trace_op(ParityOpKind::ObserverTrigger, &event, target_entity)?;
+    let event_clone = event.clone().unbind();
+
+    if commands.is_world {
+        let world = commands.world_mut()?;
+        let observers = world
+            .get_resource::<ObserverRegistry>()
+            .map(|registry| registry.snapshot_user_event(&event, target_entity))
+            .unwrap_or_default();
+        for observer_entry in observers {
+            if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity) {
+                continue;
+            }
+
+            let on_param = Py::new(
+                py,
+                PyOn {
+                    event_data: event_clone.clone_ref(py),
+                    entity: target_entity,
+                },
+            )?;
+            ObserverRegistry::invoke(
+                &observer_entry,
+                world,
+                &on_param,
+                target_entity,
+                ErrorPolicy::PropagateToCaller,
+            )?;
+        }
+    } else {
+        commands.execute_or_queue(move |world: &mut World| {
+            Python::attach(|py| {
+                let event_bound = event_clone.bind(py);
+                let observers = world
+                    .get_resource::<ObserverRegistry>()
+                    .map(|registry| registry.snapshot_user_event(event_bound, target_entity))
+                    .unwrap_or_default();
+                for observer_entry in observers {
+                    if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity)
+                    {
+                        continue;
+                    }
+
+                    if let Ok(on_param) = Py::new(
+                        py,
+                        PyOn {
+                            event_data: event_clone.clone_ref(py),
+                            entity: target_entity,
+                        },
+                    ) {
+                        let _ = ObserverRegistry::invoke(
+                            &observer_entry,
+                            world,
+                            &on_param,
+                            target_entity,
+                            ErrorPolicy::ReportAndContinue,
+                        );
+                    }
+                }
+            });
+        })?;
+    }
+
+    commands.record_prepared_trace_op(trace_operation);
+    Ok(())
+}
+
 #[derive(Clone)]
 pub(crate) struct CommandErrorSink {
     error_state: Arc<Mutex<Vec<PyErr>>>,
@@ -1148,109 +1230,11 @@ impl PyCommands {
     }
 
     pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<()> {
-        self.check_valid()?;
-
-        // Verify the event is a subclass of Event
-        let event_type = event.get_type();
-        if !event_type.is_subclass_of::<PyEvent>()? {
-            return Err(PyRuntimeError::new_err(
-                "trigger() requires an Event subclass instance",
-            ));
-        }
-
         let target_entity = if event.hasattr("entity")? {
             Some(event.getattr("entity")?.extract::<PyEntity>()?.0)
         } else {
             None
         };
-        let trace_operation =
-            self.prepare_trace_op(ParityOpKind::ObserverTrigger, &event, target_entity)?;
-
-        // Clone the event for the deferred command
-        let event_clone = event.clone().unbind();
-
-        if self.is_world {
-            // Direct World access - trigger immediately
-            let world = self.world_mut()?;
-
-            // This is essentially the same logic as World.trigger()
-            // Check if this is an entity-targeted event
-            let observers = world
-                .get_resource::<ObserverRegistry>()
-                .map(|registry| registry.snapshot_user_event(&event, target_entity))
-                .unwrap_or_default();
-            for observer_entry in observers {
-                if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity) {
-                    continue;
-                }
-
-                let on_param = Py::new(
-                    py,
-                    PyOn {
-                        event_data: event_clone.clone_ref(py),
-                        entity: target_entity,
-                    },
-                )?;
-                ObserverRegistry::invoke(
-                    &observer_entry,
-                    world,
-                    &on_param,
-                    target_entity,
-                    ErrorPolicy::PropagateToCaller,
-                )?;
-            }
-        } else {
-            // Commands - queue the trigger for later
-            self.execute_or_queue(move |world: &mut World| {
-                Python::attach(|py| {
-                    let event_bound = event_clone.bind(py);
-
-                    // Check if this is an entity-targeted event
-                    let target_entity = if event_bound.hasattr("entity").unwrap_or(false) {
-                        event_bound
-                            .getattr("entity")
-                            .ok()
-                            .and_then(|attr| attr.extract::<PyEntity>().ok())
-                            .map(|e| e.0)
-                    } else {
-                        None
-                    };
-
-                    let observers = world
-                        .get_resource::<ObserverRegistry>()
-                        .map(|registry| registry.snapshot_user_event(event_bound, target_entity))
-                        .unwrap_or_default();
-                    for observer_entry in observers {
-                        if !ObserverRegistry::matches_user_filter(
-                            &observer_entry,
-                            world,
-                            target_entity,
-                        ) {
-                            continue;
-                        }
-
-                        if let Ok(on_param) = Py::new(
-                            py,
-                            PyOn {
-                                event_data: event_clone.clone_ref(py),
-                                entity: target_entity,
-                            },
-                        ) {
-                            let _ = ObserverRegistry::invoke(
-                                &observer_entry,
-                                world,
-                                &on_param,
-                                target_entity,
-                                ErrorPolicy::ReportAndContinue,
-                            );
-                        }
-                    }
-                });
-            })?;
-        }
-
-        self.record_prepared_trace_op(trace_operation);
-
-        Ok(())
+        trigger_event_helper(self, py, event, target_entity)
     }
 }
