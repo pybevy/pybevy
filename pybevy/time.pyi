@@ -47,6 +47,24 @@ class TimePlugin(Plugin):
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...
 
+class TimeUpdateStrategy(Resource):
+    """Controls how Bevy advances its real and virtual clocks each frame."""
+
+    def __init__(self) -> None:
+        """Create Bevy's default automatic update strategy."""
+
+    @staticmethod
+    def Automatic() -> TimeUpdateStrategy:
+        """Advance from the render-world or system clock."""
+
+    @staticmethod
+    def ManualDuration(duration: timedelta) -> TimeUpdateStrategy:
+        """Advance by ``duration`` after Bevy's zero-delta first update."""
+
+    @staticmethod
+    def FixedTimesteps(steps: int) -> TimeUpdateStrategy:
+        """Advance by ``steps`` fixed timesteps on every app update."""
+
 class Time(Resource):
     """A generic clock resource that tracks elapsed time and delta time.
 
