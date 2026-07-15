@@ -21,6 +21,17 @@ impl PyAudioPlayer {
         Ok(Self::from_owned(component).into())
     }
 
+    #[getter]
+    pub fn source(&self) -> PyResult<PyHandle> {
+        Ok(PyHandle::from(&self.as_ref()?.0))
+    }
+
+    #[setter]
+    pub fn set_source(&mut self, handle: PyHandle) -> PyResult<()> {
+        self.as_mut()?.0 = Handle::<AudioSource>::try_from(&handle)?;
+        Ok(())
+    }
+
     fn __repr__(&self) -> String {
         "AudioPlayer(...)".to_string()
     }
