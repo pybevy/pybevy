@@ -1,7 +1,11 @@
 use bevy::mesh::skinning::SkinnedMesh;
 use pybevy_core::{ComponentStorage, PyComponent, PyEntity, PyHandle};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyList,
+};
 
 #[pycomponent(SkinnedMesh, bridge)]
 #[pyclass(name = "SkinnedMesh", extends = PyComponent)]
@@ -14,11 +18,50 @@ pub struct PySkinnedMesh {
 impl PySkinnedMesh {
     #[new]
     pub fn new(
-        inverse_bindposes: PyHandle,
-        joints: Vec<PyEntity>,
+        inverse_bindposes: &Bound<'_, PyAny>,
+        joints: &Bound<'_, PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let inverse_bindposes =
+            inverse_bindposes
+                .extract::<PyRef<'_, PyHandle>>()
+                .map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "SkinnedMesh() inverse_bindposes expects a Handle, got '{}'",
+                        inverse_bindposes
+                            .get_type()
+                            .name()
+                            .map(|name| name.to_string())
+                            .unwrap_or_else(|_| "unknown".to_string())
+                    ))
+                })?;
+        let joints = joints.cast::<PyList>().map_err(|_| {
+            PyTypeError::new_err(format!(
+                "SkinnedMesh() joints expects a list, got '{}'",
+                joints
+                    .get_type()
+                    .name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|_| "unknown".to_string())
+            ))
+        })?;
+        let joints = joints
+            .iter()
+            .map(|joint| {
+                joint.extract::<PyEntity>().map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "SkinnedMesh() joints list must contain Entity values, got '{}'",
+                        joint
+                            .get_type()
+                            .name()
+                            .map(|name| name.to_string())
+                            .unwrap_or_else(|_| "unknown".to_string())
+                    ))
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+
         Ok(Self::from_owned(SkinnedMesh {
-            inverse_bindposes: inverse_bindposes.try_into()?,
+            inverse_bindposes: (&*inverse_bindposes).try_into()?,
             joints: joints.into_iter().map(|e| e.0).collect(),
         })
         .into())
