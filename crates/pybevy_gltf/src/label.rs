@@ -4,22 +4,36 @@ use pyo3::prelude::*;
 #[pyclass(name = "GltfAssetLabel", frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyGltfAssetLabel {
-    Scene(usize),
-    Node(usize),
-    Mesh(usize),
+    Scene {
+        index: usize,
+    },
+    Node {
+        index: usize,
+    },
+    Mesh {
+        index: usize,
+    },
     Primitive {
         mesh: usize,
         primitive: usize,
     },
-    Texture(usize),
+    Texture {
+        index: usize,
+    },
     Material {
         index: usize,
         is_scale_inverted: bool,
     },
     DefaultMaterial(),
-    Animation(usize),
-    Skin(usize),
-    InverseBindMatrices(usize),
+    Animation {
+        index: usize,
+    },
+    Skin {
+        index: usize,
+    },
+    InverseBindMatrices {
+        index: usize,
+    },
 }
 
 #[pymethods]
@@ -30,13 +44,13 @@ impl PyGltfAssetLabel {
 
     pub fn __str__(&self) -> String {
         match self {
-            PyGltfAssetLabel::Scene(index) => format!("Scene{index}"),
-            PyGltfAssetLabel::Node(index) => format!("Node{index}"),
-            PyGltfAssetLabel::Mesh(index) => format!("Mesh{index}"),
+            PyGltfAssetLabel::Scene { index } => format!("Scene{index}"),
+            PyGltfAssetLabel::Node { index } => format!("Node{index}"),
+            PyGltfAssetLabel::Mesh { index } => format!("Mesh{index}"),
             PyGltfAssetLabel::Primitive { mesh, primitive } => {
                 format!("Mesh{mesh}/Primitive{primitive}")
             }
-            PyGltfAssetLabel::Texture(index) => format!("Texture{index}"),
+            PyGltfAssetLabel::Texture { index } => format!("Texture{index}"),
             PyGltfAssetLabel::Material {
                 index,
                 is_scale_inverted,
@@ -48,9 +62,9 @@ impl PyGltfAssetLabel {
                 }
             }
             PyGltfAssetLabel::DefaultMaterial() => "DefaultMaterial".to_string(),
-            PyGltfAssetLabel::Animation(index) => format!("Animation{index}"),
-            PyGltfAssetLabel::Skin(index) => format!("Skin{index}"),
-            PyGltfAssetLabel::InverseBindMatrices(index) => {
+            PyGltfAssetLabel::Animation { index } => format!("Animation{index}"),
+            PyGltfAssetLabel::Skin { index } => format!("Skin{index}"),
+            PyGltfAssetLabel::InverseBindMatrices { index } => {
                 format!("Skin{index}/InverseBindMatrices")
             }
         }

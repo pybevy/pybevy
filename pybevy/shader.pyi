@@ -1,8 +1,10 @@
 """PyBevy shader module for custom shader support."""
 
 import builtins
+from typing import ClassVar, Literal
 
-from pybevy.assets import Asset, Handle
+from pybevy.assets import Asset
+from pybevy.assets import Handle as AssetHandle
 
 class ShaderImport:
     """
@@ -13,13 +15,15 @@ class ShaderImport:
     - Custom: Named module imports (e.g., "bevy_pbr::utils")
     """
 
-    @staticmethod
-    def asset_path(path: str) -> ShaderImport:
-        """Create an import from an asset path."""
+    class AssetPath(ShaderImport):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-    @staticmethod
-    def custom(name: str) -> ShaderImport:
-        """Create a custom named import."""
+    class Custom(ShaderImport):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
     def module_name(self) -> str:
         """Get the module name for this import."""
@@ -36,22 +40,11 @@ class ValidateShader:
     By default no runtime checks will be performed.
     """
 
-    @staticmethod
-    def disabled() -> ValidateShader:
-        """
-        No runtime checks for soundness (e.g. bound checking) are performed.
+    Disabled: ClassVar[ValidateShader]
+    """Do not perform runtime shader validation."""
 
-        This is suitable for trusted shaders, written by your program or dependencies you trust.
-        """
-
-    @staticmethod
-    def enabled() -> ValidateShader:
-        """
-        Enable's runtime checks for soundness (e.g. bound checking).
-
-        While this can have a meaningful impact on performance,
-        this setting should always be enabled when loading untrusted shaders.
-        """
+    Enabled: ClassVar[ValidateShader]
+    """Perform runtime shader validation."""
 
 class ShaderDefVal:
     """
@@ -63,81 +56,33 @@ class ShaderDefVal:
     Example:
         ```python
         # Boolean flag
-        enable_shadows = ShaderDefVal.bool("ENABLE_SHADOWS", True)
+        enable_shadows = ShaderDefVal.Bool("ENABLE_SHADOWS", True)
 
         # Integer value
-        iterations = ShaderDefVal.int("ITERATIONS", 10)
+        iterations = ShaderDefVal.Int("ITERATIONS", 10)
 
         # Unsigned integer
-        array_size = ShaderDefVal.uint("ARRAY_SIZE", 256)
+        array_size = ShaderDefVal.UInt("ARRAY_SIZE", 256)
         ```
     """
 
-    @staticmethod
-    def bool(name: str, value: builtins.bool) -> ShaderDefVal:
-        """
-        Create a boolean shader define.
+    class Bool(ShaderDefVal):
+        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]]
+        name: str
+        value: builtins.bool
+        def __init__(self, name: str, value: builtins.bool) -> None: ...
 
-        Args:
-            name: Define name
-            value: Boolean value
+    class Int(ShaderDefVal):
+        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]]
+        name: str
+        value: builtins.int
+        def __init__(self, name: str, value: builtins.int) -> None: ...
 
-        Returns:
-            ShaderDefVal instance
-
-        Example:
-            ```python
-            # Enable a feature flag
-            define = ShaderDefVal.bool("ENABLE_SHADOWS", True)
-            ```
-        """
-
-    @staticmethod
-    def int(name: str, value: builtins.int) -> ShaderDefVal:
-        """
-        Create an integer shader define.
-
-        Args:
-            name: Define name
-            value: Integer value
-
-        Returns:
-            ShaderDefVal instance
-
-        Example:
-            ```python
-            # Set iteration count
-            define = ShaderDefVal.int("ITERATIONS", 10)
-            ```
-        """
-
-    @staticmethod
-    def uint(name: str, value: builtins.int) -> ShaderDefVal:
-        """
-        Create an unsigned integer shader define.
-
-        Args:
-            name: Define name
-            value: Unsigned integer value (must be non-negative)
-
-        Returns:
-            ShaderDefVal instance
-
-        Example:
-            ```python
-            # Set array size
-            define = ShaderDefVal.uint("ARRAY_SIZE", 256)
-            ```
-        """
-
-    @property
-    def name(self) -> str:
-        """
-        Get the name of this shader define.
-
-        Returns:
-            Define name as string
-        """
+    class UInt(ShaderDefVal):
+        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]]
+        name: str
+        value: builtins.int
+        def __init__(self, name: str, value: builtins.int) -> None: ...
 
     def value_as_string(self) -> str:
         """
@@ -167,12 +112,26 @@ class ShaderRef:
 
         # Reference by handle
         shader_handle = shaders.add(my_shader)
-        shader_ref = ShaderRef.from_handle(shader_handle)
+        shader_ref = ShaderRef.Handle(shader_handle)
 
         # Reference by path
-        shader_ref = ShaderRef.from_path("shaders/custom.wgsl")
+        shader_ref = ShaderRef.Path("shaders/custom.wgsl")
         ```
     """
+
+    class Default(ShaderRef):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Handle(ShaderRef):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: AssetHandle
+        def __init__(self, value: AssetHandle, /) -> None: ...
+
+    class Path(ShaderRef):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
     @staticmethod
     def default() -> ShaderRef:
@@ -188,41 +147,6 @@ class ShaderRef:
             ```
         """
 
-    @staticmethod
-    def from_handle(handle: Handle) -> ShaderRef:
-        """
-        Create a ShaderRef from a shader handle.
-
-        Args:
-            handle: Handle to a Shader asset
-
-        Returns:
-            ShaderRef.Handle instance
-
-        Example:
-            ```python
-            shader_handle = shaders.add(my_shader)
-            shader_ref = ShaderRef.from_handle(shader_handle)
-            ```
-        """
-
-    @staticmethod
-    def from_path(path: str) -> ShaderRef:
-        """
-        Create a ShaderRef from an asset path.
-
-        Args:
-            path: Path to shader asset file
-
-        Returns:
-            ShaderRef.Path instance
-
-        Example:
-            ```python
-            shader_ref = ShaderRef.from_path("shaders/custom.wgsl")
-            ```
-        """
-
 class Source:
     """
     Shader source code format.
@@ -230,79 +154,35 @@ class Source:
     Represents different shader source formats that can be used in Bevy.
     """
 
-    @staticmethod
-    def wgsl(source: str) -> Source:
-        """
-        Create WGSL (WebGPU Shading Language) shader source.
+    class Wgsl(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-        Args:
-            source: WGSL shader source code
+    class Wesl(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-        Returns:
-            Source instance with WGSL code
-        """
+    class GlslVertex(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-    @staticmethod
-    def wesl(source: str) -> Source:
-        """
-        Create WESL (WebGPU Extended Shading Language) shader source.
+    class GlslFragment(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-        WESL is an extension of WGSL with additional features.
+    class GlslCompute(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-        Args:
-            source: WESL shader source code
-
-        Returns:
-            Source instance with WESL code
-        """
-
-    @staticmethod
-    def glsl_vertex(source: str) -> Source:
-        """
-        Create GLSL vertex shader source.
-
-        Args:
-            source: GLSL vertex shader source code
-
-        Returns:
-            Source instance with GLSL vertex shader
-        """
-
-    @staticmethod
-    def glsl_fragment(source: str) -> Source:
-        """
-        Create GLSL fragment shader source.
-
-        Args:
-            source: GLSL fragment shader source code
-
-        Returns:
-            Source instance with GLSL fragment shader
-        """
-
-    @staticmethod
-    def glsl_compute(source: str) -> Source:
-        """
-        Create GLSL compute shader source.
-
-        Args:
-            source: GLSL compute shader source code
-
-        Returns:
-            Source instance with GLSL compute shader
-        """
-
-    @staticmethod
-    def spirv(bytecode: bytes) -> Source:
-        """
-        Create SPIR-V shader bytecode.
-
-        Args:
-            bytecode: SPIR-V shader bytecode
-
-        Returns:
-            Source instance with SPIR-V bytecode
-        """
+    class SpirV(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bytes
+        def __init__(self, value: bytes, /) -> None: ...
 
     def as_str(self) -> str:
         """
@@ -384,8 +264,8 @@ class Shader(Asset):
                 const ITERATIONS: u32 = #{ITERATIONS};
                 #endif
             ''', "custom_shader", [
-                ShaderDefVal.bool("ENABLE_FEATURE", True),
-                ShaderDefVal.int("ITERATIONS", 10),
+                ShaderDefVal.Bool("ENABLE_FEATURE", True),
+                ShaderDefVal.Int("ITERATIONS", 10),
             ])
             ```
         """

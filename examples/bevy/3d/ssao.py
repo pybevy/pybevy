@@ -112,7 +112,7 @@ def change_quality(
     ssao_query: Query[Mut[ScreenSpaceAmbientOcclusion]],
 ) -> None:
     """Change SSAO quality with number keys 1-4."""
-    quality = None
+    quality: ScreenSpaceAmbientOcclusionQualityLevel | None = None
 
     if keyboard.just_pressed(KeyCode.Digit1):
         quality = ScreenSpaceAmbientOcclusionQualityLevel.Low()

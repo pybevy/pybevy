@@ -9,11 +9,3 @@ pub enum PyFace {
     Front,
     Back,
 }
-
-#[pymethods]
-impl PyFace {
-    #[classattr]
-    pub const FRONT: Self = PyFace::Front;
-    #[classattr]
-    pub const BACK: Self = PyFace::Back;
-}

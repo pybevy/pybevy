@@ -4,33 +4,25 @@ use pyo3::prelude::*;
 #[pyclass(name = "ShaderImport", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PyShaderImport {
-    AssetPath(String),
-    Custom(String),
+    AssetPath { value: String },
+    Custom { value: String },
 }
 
 #[pymethods]
 impl PyShaderImport {
-    #[staticmethod]
-    pub fn asset_path(path: String) -> Self {
-        PyShaderImport::AssetPath(path)
-    }
-
-    #[staticmethod]
-    pub fn custom(name: String) -> Self {
-        PyShaderImport::Custom(name)
-    }
-
     pub fn module_name(&self) -> String {
         match self {
-            PyShaderImport::AssetPath(s) => format!("\"{s}\""),
-            PyShaderImport::Custom(s) => s.clone(),
+            PyShaderImport::AssetPath { value } => format!("\"{value}\""),
+            PyShaderImport::Custom { value } => value.clone(),
         }
     }
 
     fn __repr__(&self) -> String {
         match self {
-            PyShaderImport::AssetPath(path) => format!("ShaderImport.AssetPath(\"{}\")", path),
-            PyShaderImport::Custom(name) => format!("ShaderImport.Custom(\"{}\")", name),
+            PyShaderImport::AssetPath { value } => {
+                format!("ShaderImport.AssetPath(\"{}\")", value)
+            }
+            PyShaderImport::Custom { value } => format!("ShaderImport.Custom(\"{}\")", value),
         }
     }
 
@@ -52,8 +44,8 @@ impl PyShaderImport {
 impl From<PyShaderImport> for ShaderImport {
     fn from(py_import: PyShaderImport) -> Self {
         match py_import {
-            PyShaderImport::AssetPath(path) => ShaderImport::AssetPath(path),
-            PyShaderImport::Custom(name) => ShaderImport::Custom(name),
+            PyShaderImport::AssetPath { value } => ShaderImport::AssetPath(value),
+            PyShaderImport::Custom { value } => ShaderImport::Custom(value),
         }
     }
 }
@@ -61,8 +53,12 @@ impl From<PyShaderImport> for ShaderImport {
 impl From<&ShaderImport> for PyShaderImport {
     fn from(import: &ShaderImport) -> Self {
         match import {
-            ShaderImport::AssetPath(path) => PyShaderImport::AssetPath(path.clone()),
-            ShaderImport::Custom(name) => PyShaderImport::Custom(name.clone()),
+            ShaderImport::AssetPath(value) => PyShaderImport::AssetPath {
+                value: value.clone(),
+            },
+            ShaderImport::Custom(value) => PyShaderImport::Custom {
+                value: value.clone(),
+            },
         }
     }
 }
@@ -70,8 +66,8 @@ impl From<&ShaderImport> for PyShaderImport {
 impl From<ShaderImport> for PyShaderImport {
     fn from(import: ShaderImport) -> Self {
         match import {
-            ShaderImport::AssetPath(path) => PyShaderImport::AssetPath(path),
-            ShaderImport::Custom(name) => PyShaderImport::Custom(name),
+            ShaderImport::AssetPath(value) => PyShaderImport::AssetPath { value },
+            ShaderImport::Custom(value) => PyShaderImport::Custom { value },
         }
     }
 }

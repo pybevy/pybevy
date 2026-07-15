@@ -33,8 +33,8 @@ impl From<&AnimationGraphHandle> for PyAnimationGraphHandle {
 #[pymethods]
 impl PyAnimationGraphHandle {
     #[new]
-    pub fn new(handle: PyHandle) -> PyResult<PyClassInitializer<Self>> {
-        Ok((Self(handle), PyComponent).into())
+    pub fn new(graph_handle: PyHandle) -> PyResult<PyClassInitializer<Self>> {
+        Ok((Self(graph_handle), PyComponent).into())
     }
 
     pub fn handle(&self) -> PyResult<PyHandle> {

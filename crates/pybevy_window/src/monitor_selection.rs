@@ -7,8 +7,8 @@ use pyo3::prelude::*;
 pub enum PyMonitorSelection {
     Current(),
     Primary(),
-    Index(usize),
-    Entity(PyEntity),
+    Index { index: usize },
+    Entity { entity: PyEntity },
 }
 
 impl From<PyMonitorSelection> for MonitorSelection {
@@ -16,8 +16,8 @@ impl From<PyMonitorSelection> for MonitorSelection {
         match value {
             PyMonitorSelection::Current() => MonitorSelection::Current,
             PyMonitorSelection::Primary() => MonitorSelection::Primary,
-            PyMonitorSelection::Index(idx) => MonitorSelection::Index(idx),
-            PyMonitorSelection::Entity(entity) => MonitorSelection::Entity(entity.0),
+            PyMonitorSelection::Index { index } => MonitorSelection::Index(index),
+            PyMonitorSelection::Entity { entity } => MonitorSelection::Entity(entity.0),
         }
     }
 }
@@ -27,8 +27,10 @@ impl From<MonitorSelection> for PyMonitorSelection {
         match value {
             MonitorSelection::Current => PyMonitorSelection::Current(),
             MonitorSelection::Primary => PyMonitorSelection::Primary(),
-            MonitorSelection::Index(idx) => PyMonitorSelection::Index(idx),
-            MonitorSelection::Entity(entity) => PyMonitorSelection::Entity(PyEntity(entity)),
+            MonitorSelection::Index(index) => PyMonitorSelection::Index { index },
+            MonitorSelection::Entity(entity) => PyMonitorSelection::Entity {
+                entity: PyEntity(entity),
+            },
         }
     }
 }
@@ -39,8 +41,8 @@ impl PyMonitorSelection {
         match self {
             PyMonitorSelection::Current() => "MonitorSelection.Current()".to_string(),
             PyMonitorSelection::Primary() => "MonitorSelection.Primary()".to_string(),
-            PyMonitorSelection::Index(idx) => format!("MonitorSelection.Index({idx})"),
-            PyMonitorSelection::Entity(entity) => {
+            PyMonitorSelection::Index { index } => format!("MonitorSelection.Index({index})"),
+            PyMonitorSelection::Entity { entity } => {
                 format!("MonitorSelection.Entity({:?})", entity)
             }
         }

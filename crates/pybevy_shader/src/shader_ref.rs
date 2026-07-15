@@ -6,8 +6,8 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone)]
 pub enum PyShaderRef {
     Default(),
-    Handle(PyHandle),
-    Path(String),
+    Handle { value: PyHandle },
+    Path { value: String },
 }
 
 #[pymethods]
@@ -15,32 +15,22 @@ impl PyShaderRef {
     #[staticmethod]
     #[pyo3(name = "default")]
     pub fn default_() -> Self {
-        PyShaderRef::Default()
-    }
-
-    #[staticmethod]
-    pub fn from_handle(handle: PyHandle) -> Self {
-        PyShaderRef::Handle(handle)
-    }
-
-    #[staticmethod]
-    pub fn from_path(path: String) -> Self {
-        PyShaderRef::Path(path)
+        Self::Default()
     }
 
     fn __repr__(&self) -> String {
         match self {
             PyShaderRef::Default() => "ShaderRef.Default".to_string(),
-            PyShaderRef::Handle(handle) => format!("ShaderRef.Handle({:?})", handle),
-            PyShaderRef::Path(path) => format!("ShaderRef.Path(\"{}\")", path),
+            PyShaderRef::Handle { value } => format!("ShaderRef.Handle({:?})", value),
+            PyShaderRef::Path { value } => format!("ShaderRef.Path(\"{}\")", value),
         }
     }
 
     fn __str__(&self) -> String {
         match self {
             PyShaderRef::Default() => "Default".to_string(),
-            PyShaderRef::Handle(_) => "Handle".to_string(),
-            PyShaderRef::Path(path) => format!("Path({})", path),
+            PyShaderRef::Handle { .. } => "Handle".to_string(),
+            PyShaderRef::Path { value } => format!("Path({})", value),
         }
     }
 }
@@ -51,9 +41,9 @@ impl TryFrom<PyShaderRef> for ShaderRef {
     fn try_from(py_ref: PyShaderRef) -> PyResult<Self> {
         match py_ref {
             PyShaderRef::Default() => Ok(ShaderRef::Default),
-            PyShaderRef::Handle(handle) => Ok(ShaderRef::Handle(handle.try_into()?)),
-            PyShaderRef::Path(path) => Ok(ShaderRef::Path(AssetPath::from(
-                path.leak() as &'static str
+            PyShaderRef::Handle { value } => Ok(ShaderRef::Handle(value.try_into()?)),
+            PyShaderRef::Path { value } => Ok(ShaderRef::Path(AssetPath::from(
+                value.leak() as &'static str
             ))),
         }
     }
@@ -63,8 +53,12 @@ impl From<&ShaderRef> for PyShaderRef {
     fn from(shader_ref: &ShaderRef) -> Self {
         match shader_ref {
             ShaderRef::Default => PyShaderRef::Default(),
-            ShaderRef::Handle(handle) => PyShaderRef::Handle(handle.into()),
-            ShaderRef::Path(path) => PyShaderRef::Path(path.to_string()),
+            ShaderRef::Handle(handle) => PyShaderRef::Handle {
+                value: handle.into(),
+            },
+            ShaderRef::Path(path) => PyShaderRef::Path {
+                value: path.to_string(),
+            },
         }
     }
 }

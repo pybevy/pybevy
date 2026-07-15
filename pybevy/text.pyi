@@ -1,11 +1,12 @@
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
+from pybevy.assets import Handle as AssetHandle
 from pybevy.color import Color
 from pybevy.ecs import Batchable, Component, Resource
 from pybevy.image import TextureAtlasLayout
@@ -276,21 +277,24 @@ class FontStyle:
         >>> TextFont(font_size=24.0, style=FontStyle.Oblique(14.0))
     """
 
-    @staticmethod
-    def Normal() -> FontStyle:
+    class Normal(FontStyle):
         """A face that is neither italic nor obliqued (default)."""
 
-    @staticmethod
-    def Italic() -> FontStyle:
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Italic(FontStyle):
         """A form that is generally cursive in nature."""
 
-    @staticmethod
-    def Oblique(angle: float | None = None, /) -> FontStyle:
-        """A sloped version of the regular face, with an optional slant angle in degrees."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @property
-    def _0(self) -> float | None:
-        """The Oblique slant angle in degrees (only present on Oblique)."""
+    class Oblique(FontStyle):
+        """A sloped face with an optional slant angle in degrees."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float | None
+        def __init__(self, value: float | None = None, /) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -515,7 +519,7 @@ class TextColor(Component):
         """Create a text color component."""
 
     @staticmethod
-    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
+    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -526,32 +530,39 @@ class FontSize:
     treated as `FontSize.Px` (mirrors bevy's `From<f32> for FontSize`).
     """
 
-    value: float
-    """The numeric payload of the variant."""
+    @property
+    def value(self) -> float:
+        """The numeric payload of the variant."""
 
-    @staticmethod
-    def Px(value: float) -> FontSize:
-        """Font size in logical pixels."""
+    class Px(FontSize):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def Vw(value: float) -> FontSize:
-        """Font size as a percentage of the viewport width."""
+    class Vw(FontSize):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def Vh(value: float) -> FontSize:
-        """Font size as a percentage of the viewport height."""
+    class Vh(FontSize):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def VMin(value: float) -> FontSize:
-        """Font size as a percentage of the smaller viewport dimension."""
+    class VMin(FontSize):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def VMax(value: float) -> FontSize:
-        """Font size as a percentage of the larger viewport dimension."""
+    class VMax(FontSize):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def Rem(value: float) -> FontSize:
-        """Font size relative to the RemSize resource."""
+    class Rem(FontSize):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -565,65 +576,67 @@ class FontSource:
     `From` impls).
     """
 
-    @staticmethod
-    def Handle(value: Handle) -> FontSource:
-        """A specific font face referenced by a Font asset handle."""
+    class Handle(FontSource):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: AssetHandle
+        def __init__(self, value: AssetHandle, /) -> None: ...
 
-    @staticmethod
-    def Family(value: str) -> FontSource:
-        """Resolve the font by family name using the font database."""
+    class Family(FontSource):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str, /) -> None: ...
 
-    @staticmethod
-    def Serif() -> FontSource:
-        """Fonts with serifs."""
+    class Serif(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def SansSerif() -> FontSource:
-        """Fonts without serifs."""
+    class SansSerif(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Cursive() -> FontSource:
-        """Fonts with a cursive or handwritten style."""
+    class Cursive(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Fantasy() -> FontSource:
-        """Decorative or expressive fonts."""
+    class Fantasy(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Monospace() -> FontSource:
-        """Fonts with a fixed advance width."""
+    class Monospace(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def SystemUi() -> FontSource:
-        """The default user interface system font."""
+    class SystemUi(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def UiSerif() -> FontSource:
-        """Alternative serif font for user interfaces."""
+    class UiSerif(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def UiSansSerif() -> FontSource:
-        """Alternative sans-serif font for user interfaces."""
+    class UiSansSerif(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def UiMonospace() -> FontSource:
-        """Alternative monospace font for user interfaces."""
+    class UiMonospace(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def UiRounded() -> FontSource:
-        """Fonts with rounded features."""
+    class UiRounded(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Emoji() -> FontSource:
-        """Fonts designed to render emoji."""
+    class Emoji(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Math() -> FontSource:
-        """Fonts for mathematical notation."""
+    class Math(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def FangSong() -> FontSource:
-        """Chinese characters between Song and Kai forms."""
+    class FangSong(FontSource):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -889,7 +902,7 @@ class TextBackgroundColor(Component):
         """
 
     @staticmethod
-    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
+    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -906,7 +919,7 @@ class StrikethroughColor(Component):
 
     def __init__(self, color: Color = ...) -> None: ...
     @staticmethod
-    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
+    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
 class Underline(Component):
     """Marker component for underline text decoration."""
@@ -921,7 +934,7 @@ class UnderlineColor(Component):
 
     def __init__(self, color: Color = ...) -> None: ...
     @staticmethod
-    def from_numpy(*, color: np.ndarray | None = None) -> Batchable: ...  # type: ignore[override]
+    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
 class LetterSpacing(Component):
     """Spacing between characters. Construct via :meth:`px` or :meth:`rem`.

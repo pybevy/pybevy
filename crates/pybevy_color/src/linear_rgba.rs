@@ -123,9 +123,9 @@ impl PyLinearRgba {
         Ok(self.as_ref()?.luminance())
     }
 
-    pub fn with_luminance(&self, luminance: f32) -> PyResult<Self> {
+    pub fn with_luminance(&self, value: f32) -> PyResult<Self> {
         Ok(PyLinearRgba::linear_rgba(
-            self.as_ref()?.with_luminance(luminance),
+            self.as_ref()?.with_luminance(value),
         ))
     }
 
@@ -151,6 +151,10 @@ impl PyLinearRgba {
 
     pub fn distance_squared(&self, other: &Self) -> PyResult<f32> {
         Ok(self.as_ref()?.distance_squared(other.as_ref()?))
+    }
+
+    pub fn distance(&self, other: &Self) -> PyResult<f32> {
+        Ok(self.as_ref()?.distance(other.as_ref()?))
     }
 
     pub fn to_tuple(&self) -> PyResult<(f32, f32, f32, f32)> {

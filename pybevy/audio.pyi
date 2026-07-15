@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
@@ -20,13 +20,17 @@ class Volume:
         Volume.SILENT           # Silent (0 volume)
     """
 
-    @staticmethod
-    def Linear(value: float) -> Volume:
-        """Create volume from linear value (0.0 to 1.0+)."""
+    class Linear(Volume):
+        """Volume represented as a linear amplitude."""
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def Decibels(value: float) -> Volume:
-        """Create volume from decibels value."""
+    class Decibels(Volume):
+        """Volume represented in decibels."""
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
     SILENT: ClassVar[Volume]
     """Create a silent (zero) volume."""
@@ -214,10 +218,10 @@ class PlaybackSettings(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        speed: np.ndarray | None = None,
-        paused: np.ndarray | None = None,
-        muted: np.ndarray | None = None,
-        spatial: np.ndarray | None = None,
+        speed: np.typing.ArrayLike | None = None,
+        paused: np.typing.ArrayLike | None = None,
+        muted: np.typing.ArrayLike | None = None,
+        spatial: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
     @property

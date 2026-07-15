@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
@@ -17,13 +17,16 @@ class PbrPlugin(Plugin):
     def build(self, app: App) -> None: ...
 
 class ParallaxMappingMethod:
-    OCCLUSION: ClassVar[ParallaxMappingMethod]
-
     def __init__(self) -> None: ...
-    @staticmethod
-    def Occlusion() -> ParallaxMappingMethod: ...
-    @staticmethod
-    def Relief(max_steps: int) -> ParallaxMappingMethod: ...
+
+    class Occlusion(ParallaxMappingMethod):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Relief(ParallaxMappingMethod):
+        __match_args__: ClassVar[tuple[Literal["max_steps"]]]
+        max_steps: int
+        def __init__(self, max_steps: int) -> None: ...
 
 class StandardMaterial(Asset):
     def __init__(
@@ -130,21 +133,27 @@ class FogFalloff:
 
     REVISED_KOSCHMIEDER_CONTRAST_THRESHOLD: float
 
-    @staticmethod
-    def Linear(start: float, end: float) -> FogFalloff:
-        """Linear fog falloff between start and end distances."""
+    class Linear(FogFalloff):
+        __match_args__: ClassVar[tuple[Literal["start"], Literal["end"]]]
+        start: float
+        end: float
+        def __init__(self, start: float, end: float) -> None: ...
 
-    @staticmethod
-    def Exponential(density: float) -> FogFalloff:
-        """Exponential fog falloff with given density."""
+    class Exponential(FogFalloff):
+        __match_args__: ClassVar[tuple[Literal["density"]]]
+        density: float
+        def __init__(self, density: float) -> None: ...
 
-    @staticmethod
-    def ExponentialSquared(density: float) -> FogFalloff:
-        """Exponential squared fog falloff with given density."""
+    class ExponentialSquared(FogFalloff):
+        __match_args__: ClassVar[tuple[Literal["density"]]]
+        density: float
+        def __init__(self, density: float) -> None: ...
 
-    @staticmethod
-    def Atmospheric(extinction: Vec3, inscattering: Vec3) -> FogFalloff:
-        """Atmospheric fog with separate extinction and inscattering colors."""
+    class Atmospheric(FogFalloff):
+        __match_args__: ClassVar[tuple[Literal["extinction"], Literal["inscattering"]]]
+        extinction: Vec3
+        inscattering: Vec3
+        def __init__(self, extinction: Vec3, inscattering: Vec3) -> None: ...
 
     @staticmethod
     def from_visibility(visibility: float) -> FogFalloff:
@@ -232,9 +241,9 @@ class DistanceFog(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        directional_light_exponent: np.ndarray | None = None,
-        color: np.ndarray | None = None,
-        directional_light_color: np.ndarray | None = None,
+        directional_light_exponent: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
+        directional_light_color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ScreenSpaceAmbientOcclusionQualityLevel:
@@ -244,21 +253,27 @@ class ScreenSpaceAmbientOcclusionQualityLevel:
     at the cost of performance.
     """
 
-    LOW: ClassVar[ScreenSpaceAmbientOcclusionQualityLevel]
-    MEDIUM: ClassVar[ScreenSpaceAmbientOcclusionQualityLevel]
-    HIGH: ClassVar[ScreenSpaceAmbientOcclusionQualityLevel]
-    ULTRA: ClassVar[ScreenSpaceAmbientOcclusionQualityLevel]
+    class Low(ScreenSpaceAmbientOcclusionQualityLevel):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Low() -> ScreenSpaceAmbientOcclusionQualityLevel: ...
-    @staticmethod
-    def Medium() -> ScreenSpaceAmbientOcclusionQualityLevel: ...
-    @staticmethod
-    def High() -> ScreenSpaceAmbientOcclusionQualityLevel: ...
-    @staticmethod
-    def Ultra() -> ScreenSpaceAmbientOcclusionQualityLevel: ...
-    @staticmethod
-    def Custom(samples_per_slice_side: int, slice_count: int) -> ScreenSpaceAmbientOcclusionQualityLevel: ...
+    class Medium(ScreenSpaceAmbientOcclusionQualityLevel):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class High(ScreenSpaceAmbientOcclusionQualityLevel):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Ultra(ScreenSpaceAmbientOcclusionQualityLevel):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Custom(ScreenSpaceAmbientOcclusionQualityLevel):
+        __match_args__: ClassVar[tuple[Literal["samples_per_slice_side"], Literal["slice_count"]]]
+        samples_per_slice_side: int
+        slice_count: int
+        def __init__(self, samples_per_slice_side: int, slice_count: int) -> None: ...
 
 class ScreenSpaceAmbientOcclusion(Component):
     """Screen Space Ambient Occlusion (SSAO) component.
@@ -291,7 +306,7 @@ class ScreenSpaceAmbientOcclusion(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        constant_object_thickness: np.ndarray | None = None,
+        constant_object_thickness: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ScreenSpaceTransmissionQuality:
@@ -354,7 +369,7 @@ class WireframeColor(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        color: np.ndarray | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class NoWireframe(Component):
@@ -531,11 +546,11 @@ class ScreenSpaceReflections(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        thickness: np.ndarray | None = None,
-        linear_steps: np.ndarray | None = None,
-        linear_march_exponent: np.ndarray | None = None,
-        bisection_steps: np.ndarray | None = None,
-        use_secant: np.ndarray | None = None,
+        thickness: np.typing.ArrayLike | None = None,
+        linear_steps: np.typing.ArrayLike | None = None,
+        linear_march_exponent: np.typing.ArrayLike | None = None,
+        bisection_steps: np.typing.ArrayLike | None = None,
+        use_secant: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ContactShadows(Component):
@@ -566,9 +581,9 @@ class ContactShadows(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        linear_steps: np.ndarray | None = None,
-        thickness: np.ndarray | None = None,
-        length: np.ndarray | None = None,
+        linear_steps: np.typing.ArrayLike | None = None,
+        thickness: np.typing.ArrayLike | None = None,
+        length: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class Lightmap(Component):
@@ -602,6 +617,11 @@ class Lightmap(Component):
         """Whether to use bicubic sampling for higher quality."""
     @bicubic_sampling.setter
     def bicubic_sampling(self, value: bool) -> None: ...
+
+    @staticmethod
+    def from_numpy(  # type: ignore[override]
+        *, bicubic_sampling: np.typing.ArrayLike | None = None
+    ) -> Batchable: ...
 
 class DefaultOpaqueRendererMethod(Resource):
     """Default opaque rendering method resource.
@@ -637,8 +657,6 @@ class AtmosphereMode:
     """High-performance mode using lookup textures."""
     Raymarched: ClassVar[AtmosphereMode]
     """More accurate raymarching mode."""
-    LOOKUP_TEXTURE: ClassVar[AtmosphereMode]
-    RAYMARCHED: ClassVar[AtmosphereMode]
 
 class AtmosphereSettings(Component):
     """Configuration for atmosphere LUT (Look-Up Table) resolution and sampling.
@@ -739,13 +757,13 @@ class AtmosphereSettings(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        transmittance_lut_samples: np.ndarray | None = None,
-        multiscattering_lut_dirs: np.ndarray | None = None,
-        multiscattering_lut_samples: np.ndarray | None = None,
-        sky_view_lut_samples: np.ndarray | None = None,
-        aerial_view_lut_samples: np.ndarray | None = None,
-        aerial_view_lut_max_distance: np.ndarray | None = None,
-        sky_max_samples: np.ndarray | None = None,
+        transmittance_lut_samples: np.typing.ArrayLike | None = None,
+        multiscattering_lut_dirs: np.typing.ArrayLike | None = None,
+        multiscattering_lut_samples: np.typing.ArrayLike | None = None,
+        sky_view_lut_samples: np.typing.ArrayLike | None = None,
+        aerial_view_lut_samples: np.typing.ArrayLike | None = None,
+        aerial_view_lut_max_distance: np.typing.ArrayLike | None = None,
+        sky_max_samples: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ShaderMaterialPlugin(Plugin):
@@ -856,6 +874,7 @@ class MeshMaterial3dShader(Component):
 
     def __init__(self, handle: Handle[ShaderMaterial]) -> None: ...
 
+    @property
     def handle(self) -> Handle[ShaderMaterial]:
         """Get the shader material handle."""
 
