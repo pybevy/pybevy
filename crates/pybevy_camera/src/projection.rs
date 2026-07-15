@@ -332,6 +332,10 @@ impl PyProjection {
         Ok(self.as_ref()?.is_perspective())
     }
 
+    pub fn is_orthographic(&self) -> PyResult<bool> {
+        Ok(matches!(self.as_ref()?, Projection::Orthographic(_)))
+    }
+
     pub fn as_orthographic(&self) -> PyResult<PyOrthographicProjection> {
         match self.as_ref()? {
             Projection::Orthographic(ortho) => Ok(PyOrthographicProjection {

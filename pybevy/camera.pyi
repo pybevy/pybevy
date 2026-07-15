@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Handle
@@ -146,10 +146,15 @@ class Camera2d(Component):
 
 class Camera3dDepthLoadOp:
     """Depth load operation for 3D cameras."""
-    @staticmethod
-    def Clear(value: float) -> Camera3dDepthLoadOp: ...
-    @staticmethod
-    def Load() -> Camera3dDepthLoadOp: ...
+
+    class Clear(Camera3dDepthLoadOp):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
+
+    class Load(Camera3dDepthLoadOp):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
 class Camera3dDepthTextureUsage:
     """Texture usage flags for depth buffer."""
@@ -407,6 +412,13 @@ class Viewport:
             The resulting viewport, or None if neither input is provided
         """
 
+class MsaaWriteback:
+    """Controls how resolved MSAA data is written back to the main texture."""
+
+    Off: MsaaWriteback
+    Auto: MsaaWriteback
+    Always: MsaaWriteback
+
 class Camera(Component):
     """Camera component that configures rendering.
 
@@ -437,7 +449,7 @@ class Camera(Component):
         is_active: bool = True,
         *,
         order: int = 0,
-        msaa_writeback: str = "auto",
+        msaa_writeback: MsaaWriteback = ...,
         clear_color: ClearColorConfig | None = None,
         viewport: Viewport | None = None,
         sub_camera_view: SubCameraView | None = None,
@@ -447,7 +459,7 @@ class Camera(Component):
         Args:
             is_active: Whether the camera should be active
             order: Render order (lower renders first)
-            msaa_writeback: MSAA writeback mode ("off", "auto", or "always")
+            msaa_writeback: How resolved MSAA data is written to the main texture
             clear_color: How to clear the render target
             viewport: Optional viewport (subset of render target)
             sub_camera_view: Optional sub-camera view configuration
@@ -488,16 +500,12 @@ class Camera(Component):
         """
 
     @property
-    def msaa_writeback(self) -> str:
-        """Get the MSAA writeback mode ("off", "auto", or "always")."""
+    def msaa_writeback(self) -> MsaaWriteback:
+        """Get the MSAA writeback mode."""
 
     @msaa_writeback.setter
-    def msaa_writeback(self, value: str) -> None:
-        """Set the MSAA writeback mode.
-
-        Args:
-            value: One of "off", "auto", or "always"
-        """
+    def msaa_writeback(self, value: MsaaWriteback) -> None:
+        """Set the MSAA writeback mode."""
 
     @property
     def invert_culling(self) -> bool:
@@ -553,7 +561,7 @@ class Camera(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        is_active: np.ndarray | None = None,
+        is_active: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
     def __copy__(self) -> Camera: ...
@@ -733,7 +741,7 @@ class Visibility(Component):
     HIDDEN: ClassVar[Visibility]
     def __init__(self) -> None: ...
     @staticmethod
-    def from_numpy(visibility: np.ndarray) -> Batchable: ...  # type: ignore[override]
+    def from_numpy(visibility: np.typing.ArrayLike) -> Batchable: ...  # type: ignore[override]
     def toggle_inherited_visible(self) -> None:
         """Toggle between Inherited and Visible states."""
     def toggle_inherited_hidden(self) -> None:
@@ -802,7 +810,7 @@ class VisibilityRange(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        use_aabb: np.ndarray | None = None,
+        use_aabb: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class NoFrustumCulling(Component):
@@ -1301,7 +1309,7 @@ class Exposure(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        ev100: np.ndarray | None = None,
+        ev100: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
     @staticmethod
@@ -1399,6 +1407,9 @@ class Projection(Component):
 
     def is_perspective(self) -> bool:
         """Check if this is a perspective projection."""
+
+    def is_orthographic(self) -> bool:
+        """Check if this is an orthographic projection."""
 
     def as_orthographic(self) -> OrthographicProjection:
         """Get the orthographic projection if this is orthographic.

@@ -7,8 +7,8 @@ pub struct PyCamera3dDepthTextureUsage(pub u32);
 #[pymethods]
 impl PyCamera3dDepthTextureUsage {
     #[new]
-    pub fn new(value: u32) -> Self {
-        PyCamera3dDepthTextureUsage(value)
+    pub fn new(flags: u32) -> Self {
+        PyCamera3dDepthTextureUsage(flags)
     }
 
     #[getter]

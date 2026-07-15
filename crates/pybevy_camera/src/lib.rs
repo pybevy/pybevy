@@ -13,6 +13,7 @@ pub mod exposure;
 pub mod frustum;
 pub mod inherited_visibility;
 pub mod main_pass_resolution_override;
+pub mod msaa_writeback;
 pub mod normalized_render_target;
 pub mod physical_camera_parameters;
 pub mod plugin;
@@ -41,6 +42,7 @@ pub mod prelude {
         clear_color_config::PyClearColorConfig,
         exposure::PyExposure,
         inherited_visibility::PyInheritedVisibility,
+        msaa_writeback::PyMsaaWriteback,
         plugin::PyCameraPlugin,
         projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection},
         render_layers::PyRenderLayers,
@@ -65,6 +67,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<unit_markers::PyMotionVectorPrepass>()?;
     m.add_class::<unit_markers::PyDeferredPrepass>()?;
     m.add_class::<camera::PyCamera>()?;
+    m.add_class::<msaa_writeback::PyMsaaWriteback>()?;
     m.add_class::<camera_3d::PyCamera3d>()?;
     m.add_class::<inherited_visibility::PyInheritedVisibility>()?;
     m.add_class::<view_visibility::PyViewVisibility>()?;
