@@ -45,9 +45,13 @@ pub use profiling::{
 };
 pub use progress::{
     ReloadProgress, ReloadProgressPhase, ReloadProgressReporter, ReloadProgressSink,
+    emit_reload_progress,
 };
 pub use runtime::{DefsFingerprint, EscalationTracker, ReloadError, ReloadRuntime};
-pub use state::{HotReloadGeneration, ReloadMode, generation_matches, startup_or_reload};
+pub use state::{
+    HotReloadGeneration, ReloadGenerationSet, ReloadMode, ReloadRequestState, generation_matches,
+    startup_or_reload,
+};
 pub use system_registry::SystemGenerationRegistry;
 pub use tracker::{KEEP_ALIVE_GENERATIONS, PluginTracker};
 pub use util::{

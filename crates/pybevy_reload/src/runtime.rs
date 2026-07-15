@@ -2,6 +2,8 @@ use std::{any::TypeId, collections::HashSet};
 
 use bevy::{ecs::world::World, prelude::Resource};
 
+use crate::state::ReloadMode;
+
 /// Fingerprint of the reload-relevant parts of loaded definitions.
 ///
 /// Partial reloads swap system code in place but do not re-run Startup,
@@ -46,6 +48,13 @@ impl std::fmt::Display for ReloadError {
     }
 }
 
+fn default_reload_error_message(error: &ReloadError) -> String {
+    format!(
+        "❌ [Hot Reload] {} — old systems still running",
+        error.message
+    )
+}
+
 /// Trait for reload operations that depend on the Python runtime.
 ///
 /// The orchestrator (`perform_reload`) handles shared logic:
@@ -65,6 +74,16 @@ pub trait ReloadRuntime {
     /// Load definitions from the loader function.
     /// Called BEFORE generation increment — on failure, old systems keep running.
     fn load_definitions(&mut self, generation: u32) -> Result<Self::Defs, ReloadError>;
+
+    /// Whether a definition-load error represents adapter-owned asynchronous
+    /// work rather than a failed reload.
+    ///
+    /// Deferred errors leave the current generation running and do not update
+    /// failure statistics. The adapter is responsible for retaining its work
+    /// and requesting another attempt when ready.
+    fn load_error_is_deferred(&self, _error: &ReloadError) -> bool {
+        false
+    }
 
     /// Compute a [`DefsFingerprint`] of the pending definitions.
     /// The orchestrator compares it against the previous generation's to
@@ -91,6 +110,18 @@ pub trait ReloadRuntime {
         world: &mut World,
         defs: &Self::Defs,
     ) -> Result<(), ReloadError>;
+
+    /// Rebind interpreter-defined state classes to App-local machines.
+    ///
+    /// Backends without Python state declarations use the default no-op.
+    fn register_states(
+        &mut self,
+        _world: &mut World,
+        _defs: &Self::Defs,
+        _mode: ReloadMode,
+    ) -> Result<(), ReloadError> {
+        Ok(())
+    }
 
     /// Re-register message types with updated class pointers.
     fn register_messages(
@@ -122,6 +153,13 @@ pub trait ReloadRuntime {
 
     /// Prune old-generation message registrations.
     fn prune_messages(&mut self, world: &mut World, keep_after_generation: u32);
+
+    /// Prune request subscriptions after a reload commits successfully.
+    ///
+    /// Full reloads receive the outgoing generation. Partial reloads receive
+    /// `None` and preserve generation subscribers while pruning terminal
+    /// orphans. Backends without host request registries use the default no-op.
+    fn prune_requests(&mut self, _world: &mut World, _outgoing_generation: Option<u32>) {}
 
     /// Clear custom runtime resources from the world (Full reload only).
     fn clear_custom_resources(&mut self, world: &mut World, verbose: bool);
@@ -158,6 +196,26 @@ pub trait ReloadRuntime {
         0
     }
 
-    /// Print an error to stderr using the runtime's error formatting.
-    fn print_error(&self, error: &ReloadError);
+    /// Print an error to stderr using the shared reload-error format.
+    fn print_error(&self, error: &ReloadError) {
+        eprintln!("{}", default_reload_error_message(error));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_error_message_preserves_shared_format() {
+        let error = ReloadError {
+            message: "loader failed".to_string(),
+            is_load_failure: true,
+        };
+
+        assert_eq!(
+            default_reload_error_message(&error),
+            "❌ [Hot Reload] loader failed — old systems still running"
+        );
+    }
 }

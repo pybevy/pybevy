@@ -1,9 +1,10 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
+    collections::HashSet,
+    mem,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     thread::ThreadId,
 };
@@ -16,14 +17,15 @@ use bevy::{
         schedule::{
             Chain, IntoScheduleConfigs, ScheduleConfigs, Schedules, SingleThreadedExecutor,
         },
-        system::Res,
+        system::{Local, Res},
         world::World,
     },
     log::LogPlugin,
     time::Time,
 };
 use pybevy_core::{
-    LastSystemError, PyMessage, PyPlugin as PyPluginBase, added_plugins::AddedPythonPlugins,
+    AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, LastSystemError, PyMessage,
+    PyPlugin as PyPluginBase, added_plugins::AddedPythonPlugins, allocate_id, consume_unstored_id,
     plugin::plugin_registry, register_wrapped_reflect_types,
 };
 use pybevy_ecs::shared::schedule::{
@@ -54,15 +56,16 @@ use crate::{
     },
     ecs::{
         conditional_system::{PyConditionalSystem, build_conditional_system_config},
-        dynamic_system::{
-            DynamicSystem, LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache,
-        },
-        messages::{MessageRegistry, ensure_builtin_message_resources},
+        dynamic_system::{LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache},
+        messages::ensure_builtin_message_resources,
         observer_registry::ObserverRegistry,
+        python_message::{install_python_message_store, register_python_message},
         state::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
-            apply_state_transitions,
+            apply_state_transitions, canonicalize_state_schedule_label,
+            canonicalize_transition_schedule_label, insert_state_machine_resources,
         },
+        system_interpreter::{ObserverRuntimeSinks, new_main_system},
         world::PyWorld,
     },
 };
@@ -74,19 +77,23 @@ const DEFAULT_LOG_FILTER: &str = "bevy=warn,wgpu=error,naga=warn,winit=warn";
 /// This prevents the "already set" error when creating multiple App instances (e.g., in tests)
 static LOG_PLUGIN_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-/// Global counter for generating unique app IDs
-/// Each PyApp instance gets a unique ID to index into the thread-local HashMap
-static NEXT_APP_ID: AtomicUsize = AtomicUsize::new(0);
+pub(crate) struct PendingStateDefinition {
+    pub state_type: Py<PyType>,
+    pub initial_state: Py<PyAny>,
+}
+
+pub(crate) struct PendingStateSystems {
+    pub schedule: Py<PyAny>,
+    pub systems: Vec<Py<PyAny>>,
+}
 
 thread_local! {
-    /// Thread-local storage for Bevy Apps (since App is !Send due to WinitPlugin)
-    /// Each PyApp instance has its own entry indexed by app_id
-    /// This allows multiple PyApp instances to coexist (e.g., in Jupyter notebooks)
-    static BEVY_APPS: RefCell<HashMap<usize, App>> = RefCell::new(HashMap::new());
+    /// Thread-local storage for Bevy Apps, which are not Send when they own winit.
+    static BEVY_APPS: RefCell<AppStoreCore> = RefCell::new(AppStoreCore::new());
 }
 
 /// Cleanup function called during Python shutdown via atexit handler.
-/// This explicitly clears all Apps from thread-local storage BEFORE Python's
+/// This explicitly drains all active Apps from thread-local storage BEFORE Python's
 /// thread-local destructors run, preventing crashes when Apps with Python
 /// resources try to access already-destroyed PyO3 thread-locals during cleanup.
 ///
@@ -95,18 +102,19 @@ thread_local! {
 /// when trying to acquire the GIL or access Python state during drop.
 #[pyfunction]
 pub(crate) fn cleanup_apps_on_shutdown() {
-    BEVY_APPS.with(|apps_cell| {
-        // Clear all Apps explicitly while Python is still alive
-        // This drops each App in a controlled manner before TLS destruction
-        apps_cell.borrow_mut().clear();
-    });
+    let outcome = BEVY_APPS.with(|apps_cell| apps_cell.borrow_mut().drain_active());
+    let (apps, borrowed) = outcome.into_parts();
+    drop(apps);
+    for (app_id, operation) in borrowed {
+        eprintln!("WARNING: App {app_id} is still executing {operation} during shutdown");
+    }
 }
 
 /// TEST ONLY: Get the count of Apps currently in thread-local storage.
 /// Used to verify that atexit cleanup works correctly.
 #[pyfunction]
 pub(crate) fn _test_get_app_count() -> usize {
-    BEVY_APPS.with(|apps_cell| apps_cell.borrow().len())
+    BEVY_APPS.with(|apps_cell| apps_cell.borrow().active_count())
 }
 
 /// TEST ONLY: Force immediate cleanup of all Apps in thread-local storage.
@@ -145,6 +153,41 @@ fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) 
 #[derive(Resource)]
 struct SystemErrorCheck {
     errors: Arc<Mutex<Vec<PyErr>>>,
+}
+
+#[derive(Resource)]
+struct MaxFrames(u64);
+
+fn exit_after_max_frames(
+    max_frames: Res<MaxFrames>,
+    mut completed_frames: Local<u64>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    *completed_frames += 1;
+    if *completed_frames >= max_frames.0 {
+        exit.write(AppExit::Success);
+    }
+}
+
+fn max_frames_from_env() -> PyResult<Option<u64>> {
+    let value = match std::env::var("PYBEVY_MAX_FRAMES") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(PyValueError::new_err(
+                "PYBEVY_MAX_FRAMES must be a positive integer",
+            ));
+        }
+    };
+    let frames = value
+        .parse::<u64>()
+        .map_err(|_| PyValueError::new_err("PYBEVY_MAX_FRAMES must be a positive integer"))?;
+    if frames == 0 {
+        return Err(PyValueError::new_err(
+            "PYBEVY_MAX_FRAMES must be a positive integer",
+        ));
+    }
+    Ok(Some(frames))
 }
 
 fn check_system_errors_and_exit(
@@ -195,21 +238,86 @@ fn plugin_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<St
     }
 }
 
+fn app_store_error(error: AppStoreError) -> PyErr {
+    match error {
+        AppStoreError::Borrowed(operation) => {
+            PyRuntimeError::new_err(format!("App is already executing {operation}"))
+        }
+        AppStoreError::Consumed => {
+            PyRuntimeError::new_err("Cannot perform operation after run() has been called")
+        }
+        AppStoreError::Missing(_) | AppStoreError::Removed => PyRuntimeError::new_err(
+            "App is not initialized. This may occur if the app was accessed from a \
+             different thread, or if there was an error during app initialization.",
+        ),
+        other => PyRuntimeError::new_err(other.to_string()),
+    }
+}
+
+fn begin_main_app_operation(
+    app_id: AppId,
+    operation: AppOperation,
+) -> PyResult<MainAppOperationGuard> {
+    let app = BEVY_APPS
+        .with(|apps_cell| apps_cell.borrow_mut().begin_operation(app_id, operation))
+        .map_err(app_store_error)?;
+    Ok(MainAppOperationGuard {
+        app_id,
+        app: Some(app),
+    })
+}
+
+struct MainAppOperationGuard {
+    app_id: AppId,
+    app: Option<App>,
+}
+
+impl MainAppOperationGuard {
+    fn app_mut(&mut self) -> &mut App {
+        self.app
+            .as_mut()
+            .expect("Main App operation guard owns its App until drop")
+    }
+
+    fn finish_consumed(mut self) {
+        let app_id = self.app_id;
+        let app = self.app.take().expect("consuming operation owns one App");
+        let result =
+            BEVY_APPS.with(|apps_cell| apps_cell.borrow_mut().finish_operation_consumed(app_id));
+        if let Err(error) = result {
+            mem::forget(app);
+            mem::forget(self);
+            panic!("failed to consume App {app_id}: {error}");
+        }
+        drop(app);
+        mem::forget(self);
+    }
+}
+
+impl Drop for MainAppOperationGuard {
+    fn drop(&mut self) {
+        let app = self
+            .app
+            .take()
+            .expect("Main App operation guard cannot restore twice");
+        let restored =
+            BEVY_APPS.with(|apps_cell| apps_cell.borrow_mut().restore_operation(self.app_id, app));
+        if let Err(error) = restored {
+            let (state_error, app) = error.into_parts();
+            mem::forget(app);
+            panic!("failed to restore App {}: {state_error}", self.app_id);
+        }
+    }
+}
+
 #[pyclass(name = "App", unsendable)]
 pub struct PyApp {
-    /// Unique identifier for this PyApp instance
-    /// Used to index into the thread-local BEVY_APPS HashMap
-    app_id: usize,
+    /// Unique identifier for this PyApp instance.
+    app_id: AppId,
 
     /// Thread ID where this PyApp was created
     /// Used to detect cross-thread drops and prevent memory leaks
     creation_thread: ThreadId,
-
-    /// Tracks whether the app has been consumed by run()
-    /// true = consumed, false = active
-    /// Uses Cell for interior mutability without synchronization overhead
-    /// (safe because PyO3's GIL ensures single-threaded access)
-    is_consumed: Cell<bool>,
 
     /// Registry of plugin types that have been added (by pointer for fast lookup,
     /// by name for hot-reload resilience when Python classes get new type pointers)
@@ -240,6 +348,12 @@ pub struct PyApp {
     /// When is_reload_temp=true, resources are stored here instead of added to Bevy
     pending_resources: RefCell<Vec<Py<PyAny>>>,
 
+    /// State declarations collected from init_state/insert_state during reload.
+    pending_states: RefCell<Vec<PendingStateDefinition>>,
+
+    /// State-schedule systems collected during reload for generation-aware registration.
+    pending_state_systems: RefCell<Vec<PendingStateSystems>>,
+
     /// Storage for message types during hot reload
     /// When is_reload_temp=true, message types are stored here for re-registration
     pending_messages: RefCell<Vec<Py<PyType>>>,
@@ -255,17 +369,26 @@ pub struct PyApp {
     /// Whether @entrypoint decorator has been applied
     /// run() requires this unless PYBEVY_TESTING env var is set
     entrypoint_set: Cell<bool>,
+
+    /// Invalidates the process-level native virtual filesystem without a Python callback.
+    filesystem_active: RefCell<Option<Arc<AtomicBool>>>,
 }
 
 impl PyApp {
-    /// Helper method to check if app has been consumed
+    /// Check the authoritative store lifecycle before an adapter-only operation.
     fn ensure_active(&self) -> PyResult<()> {
-        if self.is_consumed.get() {
-            return Err(PyRuntimeError::new_err(
-                "Cannot perform operation after run() has been called",
-            ));
+        if self.is_reload_temp.get() {
+            return Ok(());
         }
-        Ok(())
+        BEVY_APPS
+            .with(|apps_cell| apps_cell.borrow().state(self.app_id))
+            .and_then(|state| match state {
+                AppLifecycle::Active => Ok(()),
+                AppLifecycle::Borrowed(operation) => Err(AppStoreError::Borrowed(operation)),
+                AppLifecycle::Consumed => Err(AppStoreError::Consumed),
+                AppLifecycle::Removed => Err(AppStoreError::Removed),
+            })
+            .map_err(app_store_error)
     }
 
     /// Helper to get SystemStage for profiling based on PyStage
@@ -277,34 +400,28 @@ impl PyApp {
         }
     }
 
-    /// Helper method to get mutable reference to the app from thread-local storage
-    /// Returns a clear error if the app is not available
-    fn get_app_mut<'a>(&self, apps: &'a mut HashMap<usize, App>) -> PyResult<&'a mut App> {
-        apps.get_mut(&self.app_id).ok_or_else(|| {
-            if self.is_consumed.get() {
-                PyRuntimeError::new_err("Cannot perform operation after run() has been called")
-            } else {
-                PyRuntimeError::new_err(
-                    "App is not initialized. This may occur if the app was accessed from a \
-                    different thread, or if there was an error during app initialization.",
-                )
-            }
-        })
+    fn begin_operation(&self, operation: AppOperation) -> PyResult<MainAppOperationGuard> {
+        self.ensure_active()?;
+        begin_main_app_operation(self.app_id, operation)
     }
 
-    /// Internal method for plugins to access the Bevy App
-    /// This allows plugins to add Bevy plugins, resources, etc.
+    /// Extract the App while a bridge may inspect Python plugin state.
+    pub(crate) fn with_bevy_app_operation<F, R>(&self, operation: AppOperation, f: F) -> PyResult<R>
+    where
+        F: FnOnce(&mut App) -> PyResult<R>,
+    {
+        let mut guard = self.begin_operation(operation)?;
+        f(guard.app_mut())
+    }
+
+    /// Compatibility entrypoint for Main-owned native plugin/configuration
+    /// bridges. These bridges may inspect Python values, so they default to
+    /// the conservative `BridgeBuild` extraction classification.
     pub(crate) fn with_bevy_app<F, R>(&self, f: F) -> PyResult<R>
     where
         F: FnOnce(&mut App) -> PyResult<R>,
     {
-        self.ensure_active()?;
-
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
-            f(app)
-        })
+        self.with_bevy_app_operation(AppOperation::BridgeBuild, f)
     }
 
     /// Internal method to create a temporary app instance for hot reload
@@ -317,13 +434,11 @@ impl PyApp {
         // This ensures systems added via this temp app get registered with the correct generation
         let temp_state = HotReloadState::with_generation(generation);
 
-        // Generate a unique app_id even for temp apps (though they don't store a Bevy App)
-        let app_id = NEXT_APP_ID.fetch_add(1, Ordering::SeqCst);
+        let app_id = consume_unstored_id(allocate_id().expect("App ID space exhausted"));
 
         PyApp {
             app_id,
             creation_thread: std::thread::current().id(),
-            is_consumed: Cell::new(false),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer: Arc::new(Mutex::new(None)),
@@ -331,10 +446,13 @@ impl PyApp {
             is_reload_temp: Cell::new(true),
             pending_systems: RefCell::new(Vec::new()),
             pending_resources: RefCell::new(Vec::new()),
+            pending_states: RefCell::new(Vec::new()),
+            pending_state_systems: RefCell::new(Vec::new()),
             pending_messages: RefCell::new(Vec::new()),
             pending_observers: RefCell::new(Vec::new()),
             pending_plugins: RefCell::new(Vec::new()),
             entrypoint_set: Cell::new(false),
+            filesystem_active: RefCell::new(None),
         }
     }
 
@@ -348,6 +466,14 @@ impl PyApp {
     /// This is called after create_app() has been called on the temp app
     pub(crate) fn take_pending_resources(&self) -> Vec<Py<PyAny>> {
         self.pending_resources.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn take_pending_states(&self) -> Vec<PendingStateDefinition> {
+        self.pending_states.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn take_pending_state_systems(&self) -> Vec<PendingStateSystems> {
+        self.pending_state_systems.borrow_mut().drain(..).collect()
     }
 
     /// Extract pending message types from a temp reload app
@@ -370,7 +496,7 @@ impl PyApp {
 
     /// Ensure the state transition system is registered (called from init_state/insert_state)
     fn ensure_state_transition_system_registered(&self) -> PyResult<()> {
-        static REGISTERED_APPS: Mutex<Option<HashSet<usize>>> = Mutex::new(None);
+        static REGISTERED_APPS: Mutex<Option<HashSet<AppId>>> = Mutex::new(None);
 
         // Check if this app has already registered the system
         {
@@ -387,10 +513,7 @@ impl PyApp {
             registered.as_mut().unwrap().insert(self.app_id);
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
-
+        self.with_bevy_app(|app| {
             // Wrap the apply_state_transitions function in a closure for PreUpdate
             let system_fn = move |py: Python, world: &mut World| apply_state_transitions(py, world);
 
@@ -416,10 +539,31 @@ impl PyApp {
 
 #[pymethods]
 impl PyApp {
+    /// Internal regression-test diagnostic. Includes Bevy infrastructure and
+    /// retired hot-reload systems still present in schedule graphs.
+    fn _debug_schedule_system_count(&self) -> PyResult<usize> {
+        self.with_bevy_app_operation(AppOperation::WorldCallback, |app| {
+            Ok(pybevy_reload::count_schedule_systems(app.world()))
+        })
+    }
+
+    /// Internal regression-test diagnostic for interpreter identity aliases.
+    fn _debug_hot_reload_alias_counts(&self) -> PyResult<(usize, usize)> {
+        self.with_bevy_app_operation(AppOperation::WorldCallback, |app| {
+            let world = app.world();
+            let components = world
+                .get_resource::<pybevy_core::custom_component::CustomComponentRegistry>()
+                .map_or(0, |registry| registry.alias_count());
+            let resources = world
+                .get_resource::<pybevy_core::custom_resource::CustomResourceRegistry>()
+                .map_or(0, |registry| registry.alias_count());
+            Ok((components, resources))
+        })
+    }
+
     #[new]
     fn new() -> PyResult<Self> {
-        // Generate a unique app ID for this instance
-        let app_id = NEXT_APP_ID.fetch_add(1, Ordering::SeqCst);
+        let allocated_app_id = allocate_id().map_err(app_store_error)?;
 
         // Create and initialize the Bevy App immediately
         let mut app = App::new();
@@ -438,6 +582,7 @@ impl PyApp {
         }
 
         configure_standard_schedules(&mut app);
+        install_python_message_store(&mut app);
 
         // Reflect-register all bridged bevy types so MCP/editor tooling can
         // resolve them by name even without bevy's reflect_auto_register
@@ -447,35 +592,41 @@ impl PyApp {
         // the drain that moves buffered errors into it each frame. Pre-inserting
         // keeps the parallel error path in run_unsafe free of structural inserts.
         let system_error_buffer: SystemErrorBuffer = Arc::new(Mutex::new(None));
+        let system_error = Arc::new(Mutex::new(Vec::new()));
         app.insert_resource(LastSystemError::default());
         app.insert_resource(LastErrorBuffer {
             buffer: system_error_buffer.clone(),
+        });
+        app.insert_resource(ObserverRuntimeSinks {
+            error_state: system_error.clone(),
+            error_buffer: system_error_buffer.clone(),
         });
         app.add_systems(Last, drain_last_system_error);
 
         // Fill any absent built-in message buffers after plugins have built.
         app.add_systems(PreStartup, ensure_builtin_message_resources);
 
-        // Store the app in thread-local HashMap indexed by app_id
-        BEVY_APPS.with(|apps_cell| {
-            apps_cell.borrow_mut().insert(app_id, app);
-        });
+        let app_id = BEVY_APPS
+            .with(|apps_cell| apps_cell.borrow_mut().insert_with_id(allocated_app_id, app))
+            .map_err(app_store_error)?;
 
         Ok(PyApp {
             app_id,
             creation_thread: std::thread::current().id(),
-            is_consumed: Cell::new(false),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
-            system_error: Arc::new(Mutex::new(Vec::new())),
+            system_error,
             system_error_buffer,
             hot_reload_state: HotReloadState::new(),
             is_reload_temp: Cell::new(false),
             pending_systems: RefCell::new(Vec::new()),
             pending_resources: RefCell::new(Vec::new()),
+            pending_states: RefCell::new(Vec::new()),
+            pending_state_systems: RefCell::new(Vec::new()),
             pending_messages: RefCell::new(Vec::new()),
             pending_observers: RefCell::new(Vec::new()),
             pending_plugins: RefCell::new(Vec::new()),
             entrypoint_set: Cell::new(false),
+            filesystem_active: RefCell::new(None),
         })
     }
     #[pyo3(signature = (schedule, *systems))]
@@ -519,11 +670,31 @@ impl PyApp {
         // Handle state schedules separately (OnEnter/OnExit/OnTransition)
         match schedule_type {
             ScheduleType::OnEnter(_) | ScheduleType::OnExit(_) | ScheduleType::OnTransition(_) => {
-                // For state schedules, add systems without hot reload support for now
-                // State schedules don't need generation tracking since they run on transitions
-                BEVY_APPS.with(|apps_cell| {
-                    let mut apps = apps_cell.borrow_mut();
-                    let app = pyself.get_app_mut(&mut apps)?;
+                if pyself.is_reload_temp.get() {
+                    let system_funcs = systems.iter().map(Bound::unbind).collect();
+                    pyself
+                        .pending_state_systems
+                        .borrow_mut()
+                        .push(PendingStateSystems {
+                            schedule: schedule.unbind(),
+                            systems: system_funcs,
+                        });
+                    return Ok(pyself.into());
+                }
+
+                pyself.with_bevy_app(|app| {
+                    let schedule_type = match schedule_type {
+                        ScheduleType::OnEnter(label) => ScheduleType::OnEnter(
+                            canonicalize_state_schedule_label(app.world(), label),
+                        ),
+                        ScheduleType::OnExit(label) => ScheduleType::OnExit(
+                            canonicalize_state_schedule_label(app.world(), label),
+                        ),
+                        ScheduleType::OnTransition(label) => ScheduleType::OnTransition(
+                            canonicalize_transition_schedule_label(app.world(), label),
+                        ),
+                        ScheduleType::Stage(stage) => ScheduleType::Stage(stage),
+                    };
 
                     // Initialize the schedule with single-threaded executor.
                     // State schedules are run via world.run_schedule() from within
@@ -556,7 +727,7 @@ impl PyApp {
 
                     // Add each system to the schedule
                     for system in systems.iter() {
-                        let dynamic_system = DynamicSystem::new(
+                        let dynamic_system = new_main_system(
                             system.unbind(),
                             current_generation,
                             error_state.clone(),
@@ -565,15 +736,18 @@ impl PyApp {
                         )?;
 
                         match &schedule_type {
-                            ScheduleType::OnEnter(lbl) => {
-                                app.add_systems(lbl.clone(), dynamic_system)
-                            }
-                            ScheduleType::OnExit(lbl) => {
-                                app.add_systems(lbl.clone(), dynamic_system)
-                            }
-                            ScheduleType::OnTransition(lbl) => {
-                                app.add_systems(lbl.clone(), dynamic_system)
-                            }
+                            ScheduleType::OnEnter(lbl) => app.add_systems(
+                                lbl.clone(),
+                                dynamic_system.run_if(generation_matches(current_generation)),
+                            ),
+                            ScheduleType::OnExit(lbl) => app.add_systems(
+                                lbl.clone(),
+                                dynamic_system.run_if(generation_matches(current_generation)),
+                            ),
+                            ScheduleType::OnTransition(lbl) => app.add_systems(
+                                lbl.clone(),
+                                dynamic_system.run_if(generation_matches(current_generation)),
+                            ),
                             _ => unreachable!(),
                         };
                     }
@@ -616,10 +790,7 @@ impl PyApp {
                 // Continue with the rest of Stage handling below...
 
                 // Add systems directly to the app with generation-based run conditions
-                BEVY_APPS.with(|apps_cell| {
-                    let mut apps = apps_cell.borrow_mut();
-                    let app = pyself.get_app_mut(&mut apps)?;
-
+                pyself.with_bevy_app(|app| {
                     for system in systems {
                         // Check if this is a ChainedSystems object
                         if let Ok(chained) = system.extract::<PyChainedSystems>() {
@@ -632,7 +803,7 @@ impl PyApp {
                             let mut dynamic_systems = Vec::new();
 
                             for sys in systems_tuple.iter() {
-                                let dynamic_system = DynamicSystem::new(
+                                let dynamic_system = new_main_system(
                                     sys.unbind(),
                                     current_generation,
                                     error_state.clone(),
@@ -691,7 +862,7 @@ impl PyApp {
 
                                 let system_stage = Self::get_system_stage(stage);
 
-                                let dynamic_system = DynamicSystem::new(
+                                let dynamic_system = new_main_system(
                                     system_func.unbind(),
                                     current_generation,
                                     error_state.clone(),
@@ -723,8 +894,9 @@ impl PyApp {
                             }
                         }
                     }
-                    Ok(pyself.into())
-                })
+                    Ok(())
+                })?;
+                Ok(pyself.into())
             }
         }
     }
@@ -908,16 +1080,17 @@ impl PyApp {
                         // Use the PluginBridge to build the plugin
                         pyself
                             .borrow(py)
-                            .with_bevy_app(|bevy_app| bridge.build(&plugin_instance, bevy_app))?;
+                            .with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
+                                bridge.build(&plugin_instance, bevy_app)
+                            })?;
                     } else {
                         // Fall back to Python build(app) method for custom plugins
                         plugin_instance.call_method1("build", (app_bound,))?;
                     }
                 } else {
                     // Reload: only run build() for custom Python plugins.
-                    // Skip bridge-backed plugins AND native Rust plugins
-                    // (both call with_bevy_app which panics on temp apps
-                    // because BEVY_APPS is already borrowed by app.update()).
+                    // Skip bridge-backed and native Rust plugins because a
+                    // collection-only reload wrapper has no live App slot.
                     let has_bridge = plugin_registry::get_by_py_type(type_ptr).is_some();
                     let is_native = plugin_type
                         .getattr("__module__")
@@ -954,15 +1127,13 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
-
+        pyself.with_bevy_app(|app| {
             PyWorld::with_temporary(app.world_mut(), py, |py_world| {
                 py_world.insert_resource(py, resource)?;
-                Ok(pyself.into())
+                Ok(())
             })
-        })
+        })?;
+        Ok(pyself.into())
     }
 
     /// Initialize a resource with default values and insert it into the app
@@ -978,15 +1149,13 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
-
+        pyself.with_bevy_app(|app| {
             PyWorld::with_temporary(app.world_mut(), py, |py_world| {
                 py_world.init_resource(py, resource)?;
-                Ok(pyself.into())
+                Ok(())
             })
-        })
+        })?;
+        Ok(pyself.into())
     }
 
     /// Register a custom message type
@@ -1006,14 +1175,12 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
+        pyself.with_bevy_app(|app| {
+            register_python_message(py, app.world_mut(), &message_type, 0)?;
 
-            MessageRegistry::register_message(py, &message_type, app)?;
-
-            Ok(pyself.into())
-        })
+            Ok(())
+        })?;
+        Ok(pyself.into())
     }
 
     pub fn add_observer(
@@ -1032,15 +1199,14 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
+        pyself.with_bevy_app(|app| {
             let world_mut = app.world_mut();
 
             ObserverRegistry::register_observer(py, &observer, world_mut)?;
 
-            Ok(pyself.into())
-        })
+            Ok(())
+        })?;
+        Ok(pyself.into())
     }
 
     pub fn init_state(
@@ -1049,11 +1215,6 @@ impl PyApp {
         state_type: Bound<'_, PyType>,
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
-
-        // States are already registered from initial load; skip during hot reload
-        if pyself.is_reload_temp.get() {
-            return Ok(pyself.into());
-        }
 
         // Validate it's a @state decorated type
         if !state_type.hasattr("__pybevy_state__")? {
@@ -1075,22 +1236,31 @@ impl PyApp {
 
         let state_type_clone = state_type.clone();
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
+        if pyself.is_reload_temp.get() {
+            pyself
+                .pending_states
+                .borrow_mut()
+                .push(PendingStateDefinition {
+                    state_type: state_type_clone.unbind(),
+                    initial_state: default_state,
+                });
+            return Ok(pyself.into());
+        }
 
+        pyself.with_bevy_app(|app| {
             // Insert State<S> resource with default value
             let state_resource = PyState::new(py, default_state.clone_ref(py))?;
 
             // Insert NextState<S> resource (starts as Unchanged)
-            let next_state_resource = PyNextState::new(py, state_type_clone.unbind())?;
+            let next_state_resource = PyNextState::new(py, state_type_clone.clone().unbind())?;
 
-            // Use PyWorld to insert the resources
-            PyWorld::with_temporary(app.world_mut(), py, |py_world| {
-                py_world.insert_resource(py, state_resource.bind(py).as_any().clone())?;
-                py_world.insert_resource(py, next_state_resource.bind(py).as_any().clone())?;
-                Ok(())
-            })
+            insert_state_machine_resources(
+                py,
+                app.world_mut(),
+                state_type_clone.clone().unbind(),
+                state_resource,
+                next_state_resource,
+            )
         })?;
 
         // Register automatic state transition system
@@ -1106,11 +1276,6 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
 
-        // States are already registered from initial load; skip during hot reload
-        if pyself.is_reload_temp.get() {
-            return Ok(pyself.into());
-        }
-
         // Get state type from the value
         let state_type = initial_state.bind(py).get_type();
 
@@ -1124,22 +1289,31 @@ impl PyApp {
 
         let state_type_unbind = state_type.unbind();
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
+        if pyself.is_reload_temp.get() {
+            pyself
+                .pending_states
+                .borrow_mut()
+                .push(PendingStateDefinition {
+                    state_type: state_type_unbind,
+                    initial_state,
+                });
+            return Ok(pyself.into());
+        }
 
+        pyself.with_bevy_app(|app| {
             // Insert State<S> resource with provided value
             let state_resource = PyState::new(py, initial_state)?;
 
             // Insert NextState<S> resource (starts as Unchanged)
             let next_state_resource = PyNextState::new(py, state_type_unbind.clone_ref(py))?;
 
-            // Use PyWorld to insert the resources
-            PyWorld::with_temporary(app.world_mut(), py, |py_world| {
-                py_world.insert_resource(py, state_resource.bind(py).as_any().clone())?;
-                py_world.insert_resource(py, next_state_resource.bind(py).as_any().clone())?;
-                Ok(())
-            })
+            insert_state_machine_resources(
+                py,
+                app.world_mut(),
+                state_type_unbind.clone_ref(py),
+                state_resource,
+                next_state_resource,
+            )
         })?;
 
         // Register automatic state transition system
@@ -1162,18 +1336,14 @@ impl PyApp {
             ));
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
-
-            PyWorld::with_temporary(app.world_mut(), py, |py_world| {
-                let world_obj = Py::new(py, py_world.duplicate())?;
-                callback
-                    .call1((world_obj.bind(py),))?
-                    .unbind()
-                    .into_py_any(py)?;
-                Ok(())
-            })
+        let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
+        PyWorld::with_temporary(guard.app_mut().world_mut(), py, |py_world| {
+            let world_obj = Py::new(py, py_world.duplicate())?;
+            callback
+                .call1((world_obj.bind(py),))?
+                .unbind()
+                .into_py_any(py)?;
+            Ok(())
         })
     }
 
@@ -1187,15 +1357,11 @@ impl PyApp {
     pub fn run_system_once<'py>(&self, py: Python<'py>, func: Bound<'py, PyAny>) -> PyResult<()> {
         self.ensure_active()?;
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
-
-            PyWorld::with_temporary(app.world_mut(), py, |py_world| {
-                let world_obj = Py::new(py, py_world.duplicate())?;
-                world_obj.borrow(py).run_system_once(func)?;
-                Ok(())
-            })
+        let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
+        PyWorld::with_temporary(guard.app_mut().world_mut(), py, |py_world| {
+            let world_obj = Py::new(py, py_world.duplicate())?;
+            world_obj.borrow(py).run_system_once(func)?;
+            Ok(())
         })
     }
 
@@ -1213,17 +1379,13 @@ impl PyApp {
     ) -> PyResult<()> {
         self.ensure_active()?;
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = self.get_app_mut(&mut apps)?;
-
-            PyWorld::with_temporary(app.world_mut(), py, |py_world| {
-                let world_obj = Py::new(py, py_world.duplicate())?;
-                for func in funcs.iter() {
-                    world_obj.borrow(py).run_system_once(func)?;
-                }
-                Ok(())
-            })
+        let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
+        PyWorld::with_temporary(guard.app_mut().world_mut(), py, |py_world| {
+            let world_obj = Py::new(py, py_world.duplicate())?;
+            for func in funcs.iter() {
+                world_obj.borrow(py).run_system_once(func)?;
+            }
+            Ok(())
         })
     }
 
@@ -1231,32 +1393,14 @@ impl PyApp {
     pub fn initialize(&self, py: Python) -> PyResult<()> {
         self.ensure_active()?;
 
-        // Capture app_id and is_consumed before detaching GIL (cannot access self inside detach closure)
         let app_id = self.app_id;
-        let is_consumed = self.is_consumed.get();
 
         // Release GIL while running initialization (required to avoid deadlock with Python systems)
         py.detach(|| {
-            // Access the thread-local App
-            BEVY_APPS.with(|apps_cell| {
-                let mut apps = apps_cell.borrow_mut();
-                let app = apps.get_mut(&app_id).ok_or_else(|| {
-                    if is_consumed {
-                        PyRuntimeError::new_err(
-                            "Cannot perform operation after run() has been called",
-                        )
-                    } else {
-                        PyRuntimeError::new_err(
-                            "App is not initialized. This may occur if the app was accessed from a \
-                            different thread, or if there was an error during app initialization.",
-                        )
-                    }
-                })?;
-                // Run the startup schedule
-                app.finish();
-                app.cleanup();
-                Ok::<(), PyErr>(())
-            })
+            let mut guard = begin_main_app_operation(app_id, AppOperation::Finish)?;
+            guard.app_mut().finish();
+            guard.app_mut().cleanup();
+            Ok::<(), PyErr>(())
         })?;
 
         Ok(())
@@ -1272,30 +1416,13 @@ impl PyApp {
             error_lock.clear();
         }
 
-        // Capture app_id and is_consumed before detaching GIL (cannot access self inside detach closure)
         let app_id = self.app_id;
-        let is_consumed = self.is_consumed.get();
 
         // Release GIL while running update (required to avoid deadlock with Python systems)
         py.detach(|| {
-            // Access the thread-local App
-            BEVY_APPS.with(|apps_cell| {
-                let mut apps = apps_cell.borrow_mut();
-                let app = apps.get_mut(&app_id).ok_or_else(|| {
-                    if is_consumed {
-                        PyRuntimeError::new_err(
-                            "Cannot perform operation after run() has been called",
-                        )
-                    } else {
-                        PyRuntimeError::new_err(
-                            "App is not initialized. This may occur if the app was accessed from a \
-                            different thread, or if there was an error during app initialization.",
-                        )
-                    }
-                })?;
-                app.update();
-                Ok::<(), PyErr>(())
-            })
+            let mut guard = begin_main_app_operation(app_id, AppOperation::Update)?;
+            guard.app_mut().update();
+            Ok::<(), PyErr>(())
         })?;
 
         // Check if any system errors occurred and raise them
@@ -1308,26 +1435,11 @@ impl PyApp {
         self.ensure_active()?;
 
         let app_id = self.app_id;
-        let is_consumed = self.is_consumed.get();
 
         py.detach(|| {
-            BEVY_APPS.with(|apps_cell| {
-                let mut apps = apps_cell.borrow_mut();
-                let app = apps.get_mut(&app_id).ok_or_else(|| {
-                    if is_consumed {
-                        PyRuntimeError::new_err(
-                            "Cannot perform operation after run() has been called",
-                        )
-                    } else {
-                        PyRuntimeError::new_err(
-                            "App is not initialized. This may occur if the app was accessed from a \
-                            different thread, or if there was an error during app initialization.",
-                        )
-                    }
-                })?;
-                app.finish();
-                Ok::<(), PyErr>(())
-            })
+            let mut guard = begin_main_app_operation(app_id, AppOperation::Finish)?;
+            guard.app_mut().finish();
+            Ok::<(), PyErr>(())
         })?;
 
         Ok(())
@@ -1337,26 +1449,11 @@ impl PyApp {
         self.ensure_active()?;
 
         let app_id = self.app_id;
-        let is_consumed = self.is_consumed.get();
 
         py.detach(|| {
-            BEVY_APPS.with(|apps_cell| {
-                let mut apps = apps_cell.borrow_mut();
-                let app = apps.get_mut(&app_id).ok_or_else(|| {
-                    if is_consumed {
-                        PyRuntimeError::new_err(
-                            "Cannot perform operation after run() has been called",
-                        )
-                    } else {
-                        PyRuntimeError::new_err(
-                            "App is not initialized. This may occur if the app was accessed from a \
-                            different thread, or if there was an error during app initialization.",
-                        )
-                    }
-                })?;
-                app.cleanup();
-                Ok::<(), PyErr>(())
-            })
+            let mut guard = begin_main_app_operation(app_id, AppOperation::Cleanup)?;
+            guard.app_mut().cleanup();
+            Ok::<(), PyErr>(())
         })?;
 
         Ok(())
@@ -1379,29 +1476,11 @@ impl PyApp {
         self.ensure_active()?;
 
         let app_id = self.app_id;
-        let is_consumed = self.is_consumed.get();
 
         py.detach(|| {
-            BEVY_APPS.with(|apps_cell| {
-                let mut apps = apps_cell.borrow_mut();
-                let app = apps.get_mut(&app_id).ok_or_else(|| {
-                    if is_consumed {
-                        PyRuntimeError::new_err(
-                            "Cannot perform operation after run() has been called",
-                        )
-                    } else {
-                        PyRuntimeError::new_err(
-                            "App is not initialized. This may occur if the app was accessed from a \
-                            different thread, or if there was an error during app initialization.",
-                        )
-                    }
-                })?;
-
-                // Use hot reload infrastructure to clear scene
-                clear_entities_and_resources(app.world_mut());
-
-                Ok::<(), PyErr>(())
-            })
+            let mut guard = begin_main_app_operation(app_id, AppOperation::Cleanup)?;
+            clear_entities_and_resources(guard.app_mut().world_mut());
+            Ok::<(), PyErr>(())
         })?;
 
         Ok(())
@@ -1435,11 +1514,18 @@ impl PyApp {
             }
         }
 
-        // Check if already consumed and mark as consumed
-        if self.is_consumed.get() {
-            return Err(PyRuntimeError::new_err("run() has already been called"));
+        match BEVY_APPS.with(|apps_cell| apps_cell.borrow().state(self.app_id)) {
+            Ok(AppLifecycle::Consumed) => {
+                return Err(PyRuntimeError::new_err("run() has already been called"));
+            }
+            Ok(AppLifecycle::Active) => {}
+            Ok(AppLifecycle::Borrowed(operation)) => {
+                return Err(app_store_error(AppStoreError::Borrowed(operation)));
+            }
+            Ok(AppLifecycle::Removed) => return Err(app_store_error(AppStoreError::Removed)),
+            Err(error) => return Err(app_store_error(error)),
         }
-        self.is_consumed.set(true);
+        let max_frames = max_frames_from_env()?;
 
         // Reset Python's SIGINT handler to default before detaching GIL
         // This allows Bevy's native TerminalCtrlCHandlerPlugin to handle Ctrl-C directly
@@ -1456,11 +1542,15 @@ impl PyApp {
         let app_id = self.app_id;
         let error_state = self.system_error.clone();
 
-        // If hot reload is NOT active, add a Last-schedule system that triggers
-        // AppExit when a system error is detected, so app.run() exits promptly.
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            if let Some(app) = apps.get_mut(&app_id) {
+        // Release GIL before running to avoid deadlock with Python systems.
+        py.detach(|| {
+            let mut guard = begin_main_app_operation(app_id, AppOperation::Run)?;
+            {
+                let app = guard.app_mut();
+                if let Some(max_frames) = max_frames {
+                    app.insert_resource(MaxFrames(max_frames));
+                    app.add_systems(Last, exit_after_max_frames);
+                }
                 let has_hot_reload = app.world().get_resource::<HotReloadGeneration>().is_some();
                 if !has_hot_reload {
                     app.insert_resource(SystemErrorCheck {
@@ -1468,27 +1558,15 @@ impl PyApp {
                     });
                     app.add_systems(Last, check_system_errors_and_exit);
                 }
+                app.run();
             }
-        });
-
-        // Release GIL before running to avoid deadlock with Python systems
-        py.detach(|| {
-            // Take the app out of thread_local HashMap and run it (consumes the app)
-            // IMPORTANT: Drop the borrow_mut BEFORE app.run() to avoid holding the
-            // RefCell for the entire game loop, which would panic if anything
-            // (GC finalizers, atexit, other PyApp instances) touches BEVY_APPS.
-            let mut app = BEVY_APPS.with(|apps_cell| {
-                apps_cell
-                    .borrow_mut()
-                    .remove(&app_id)
-                    .expect("App should exist when run() is called")
-            });
-            app.run();
+            guard.finish_consumed();
 
             // Clear the system parameter cache after the app finishes
             // to prevent stale entries when function objects are recycled
             clear_system_param_cache();
-        });
+            Ok::<(), PyErr>(())
+        })?;
 
         // After the event loop exits, check for system errors and raise them
         raise_collected_errors(py, &error_state)?;
@@ -1529,10 +1607,7 @@ impl PyApp {
         pyself.hot_reload_state.set_loader(loader.unbind());
 
         // Add the hot reload system to the app if not already added
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
-
+        pyself.with_bevy_app(|app| {
             // Add hot reload checking system
             add_hot_reload_system(
                 app,
@@ -1551,23 +1626,15 @@ impl PyApp {
     /// This allows checking exit status programmatically for conditional logic or tests.
     /// Can be called before or after run() to check the exit status.
     pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<PyAppExit>>> {
-        BEVY_APPS.with(|apps_cell| {
-            let apps = apps_cell.borrow();
-            let app = apps.get(&self.app_id).ok_or_else(|| {
-                PyRuntimeError::new_err(
-                    "App is not initialized. This may occur if the app was accessed from a \
-                    different thread, or if there was an error during app initialization.",
-                )
-            })?;
-
-            match app.should_exit() {
-                Some(exit) => {
-                    let py_exit = Py::new(py, (PyAppExit::from(exit), PyMessage))?;
-                    Ok(Some(py_exit))
-                }
-                None => Ok(None),
-            }
-        })
+        let exit = BEVY_APPS
+            .with(|apps_cell| {
+                apps_cell
+                    .borrow_mut()
+                    .with_app_leaf(self.app_id, |app| app.should_exit())
+            })
+            .map_err(app_store_error)?;
+        exit.map(|exit| Py::new(py, (PyAppExit::from(exit), PyMessage)))
+            .transpose()
     }
 
     /// Initialize a schedule and add it to the app
@@ -1585,14 +1652,12 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
-        BEVY_APPS.with(|apps_cell| {
-            let mut apps = apps_cell.borrow_mut();
-            let app = pyself.get_app_mut(&mut apps)?;
-
+        pyself.with_bevy_app(|app| {
             app.init_schedule(label.intern_label());
 
-            Ok(pyself.into())
-        })
+            Ok(())
+        })?;
+        Ok(pyself.into())
     }
 
     /// Run a specific schedule once on the app's world.
@@ -1613,29 +1678,12 @@ impl PyApp {
         }
 
         let app_id = self.app_id;
-        let is_consumed = self.is_consumed.get();
 
         // Release GIL while running schedule (required to avoid deadlock with Python systems)
         py.detach(|| {
-            BEVY_APPS.with(|apps_cell| {
-                let mut apps = apps_cell.borrow_mut();
-                let app = apps.get_mut(&app_id).ok_or_else(|| {
-                    if is_consumed {
-                        PyRuntimeError::new_err(
-                            "Cannot perform operation after run() has been called",
-                        )
-                    } else {
-                        PyRuntimeError::new_err(
-                            "App is not initialized. This may occur if the app was accessed from a \
-                            different thread, or if there was an error during app initialization.",
-                        )
-                    }
-                })?;
-
-                stage.run_on_world(app.world_mut());
-
-                Ok::<(), PyErr>(())
-            })
+            let mut guard = begin_main_app_operation(app_id, AppOperation::RunSchedule)?;
+            stage.run_on_world(guard.app_mut().world_mut());
+            Ok::<(), PyErr>(())
         })?;
 
         // Check if any system errors occurred and raise them
@@ -1669,9 +1717,10 @@ impl PyApp {
 /// to ensure task pools and worker threads are shut down before Python TLS cleanup
 impl Drop for PyApp {
     fn drop(&mut self) {
-        // Only drop the App if it hasn't been consumed by run()
-        // If run() was called, the App is already fully consumed and cleaned up
-        if !self.is_consumed.get() && !self.is_reload_temp.get() {
+        if let Some(active) = self.filesystem_active.get_mut().take() {
+            active.store(false, Ordering::Release);
+        }
+        if !self.is_reload_temp.get() {
             // Check if we're on the same thread where the PyApp was created
             let current_thread = std::thread::current().id();
             if current_thread != self.creation_thread {
@@ -1693,7 +1742,26 @@ impl Drop for PyApp {
             // Use try_borrow_mut to handle potential concurrent GC drops gracefully
             let app_to_drop = BEVY_APPS.with(|apps_cell| {
                 match apps_cell.try_borrow_mut() {
-                    Ok(mut apps) => apps.remove(&self.app_id),
+                    Ok(mut apps) => match apps.remove(self.app_id) {
+                        Ok(app) => app,
+                        Err(AppStoreError::Borrowed(operation)) => {
+                            eprintln!(
+                                "WARNING: Could not cleanup PyApp (app_id={}) while it is executing {}.",
+                                self.app_id, operation
+                            );
+                            None
+                        }
+                        Err(AppStoreError::Missing(_)
+                        | AppStoreError::Consumed
+                        | AppStoreError::Removed) => None,
+                        Err(error) => {
+                            eprintln!(
+                                "WARNING: Could not cleanup PyApp (app_id={}): {}.",
+                                self.app_id, error
+                            );
+                            None
+                        }
+                    },
                     Err(_) => {
                         // RefCell already borrowed - this can happen during Python GC
                         // when multiple PyApp objects are being collected simultaneously.

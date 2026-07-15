@@ -203,6 +203,16 @@ impl BatchSpawnCore {
         let entities = (0..plan.spawn_count)
             .map(|_| world.spawn_empty().id())
             .collect::<Vec<_>>();
+        Self::apply_to(world, plan, entities)
+    }
+
+    /// Commit into entities reserved by an interpreter command adapter.
+    pub fn apply_to(
+        world: &mut World,
+        plan: ValidatedBatchSpawn,
+        entities: Vec<Entity>,
+    ) -> CommittedBatch {
+        assert_eq!(entities.len(), plan.spawn_count);
         let mut facts = Vec::with_capacity(plan.insertion_count());
 
         for mut inserter in plan.columnar.into_iter().chain(plan.uniform) {

@@ -534,7 +534,19 @@ pub fn extract_handle_from_any(obj: &Bound<'_, PyAny>) -> PyResult<PyHandle> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
+    use pyo3::types::{PyInt, PyList};
+
     use super::*;
+
+    static INIT: Once = Once::new();
+
+    fn setup_python() {
+        INIT.call_once(|| {
+            Python::initialize();
+        });
+    }
 
     #[test]
     fn test_synthetic_uuid() {
@@ -587,5 +599,111 @@ mod tests {
     fn normalize_idempotent_for_plain_index() {
         let plain: u128 = 7;
         assert_eq!(normalize_handle_id(plain), 7);
+    }
+
+    /// Regression test: a type_ptr that does not point at a type object must
+    /// surface an error, not an unchecked cast to PyType.
+    #[test]
+    fn asset_type_class_rejects_non_type_pointer() {
+        setup_python();
+        Python::attach(|py| {
+            let not_a_type = PyList::empty(py);
+            let handle = PyHandle {
+                kind: HandleKind::WeakUuid(Uuid::from_u128(1)),
+                type_ptr: not_a_type.as_ptr() as *const PyTypeObject,
+            };
+            let result = handle.asset_type_class();
+            assert!(result.is_err(), "instance pointer must not cast to PyType");
+        });
+    }
+
+    /// The no-bridge fallback must still revive a genuine type object.
+    #[test]
+    fn asset_type_class_falls_back_to_stored_type_pointer() {
+        setup_python();
+        Python::attach(|py| {
+            let int_type = py.get_type::<PyInt>();
+            let handle = PyHandle {
+                kind: HandleKind::WeakUuid(Uuid::from_u128(2)),
+                type_ptr: int_type.as_type_ptr(),
+            };
+            let cls = handle
+                .asset_type_class()
+                .expect("real type object must revive via fallback");
+            assert!(cls.bind(py).is(&int_type));
+        });
+    }
+
+    // The following tests exercise pure-Rust dispatch logic on PyHandle that
+    // does not require a Python interpreter: kind matching, id extraction, and
+    // registry lookups with an unregistered (null) type pointer return None.
+
+    #[test]
+    fn test_weak_handle_is_not_strong() {
+        let h = PyHandle {
+            kind: HandleKind::WeakUuid(Uuid::from_u128(42)),
+            type_ptr: std::ptr::null(),
+        };
+        assert!(h.is_weak());
+        assert!(!h.is_strong());
+    }
+
+    #[test]
+    fn test_id_returns_uuid_for_weak() {
+        let h = PyHandle {
+            kind: HandleKind::WeakUuid(Uuid::from_u128(0xDEAD_BEEF)),
+            type_ptr: std::ptr::null(),
+        };
+        assert_eq!(h.id(), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn test_default_for_type_is_weak_nil_uuid() {
+        let h = PyHandle::default_for_type(std::ptr::null());
+        assert!(h.is_weak());
+        assert!(!h.is_strong());
+        assert_eq!(h.id(), 0);
+    }
+
+    #[test]
+    fn test_asset_type_id_none_for_null_ptr() {
+        let h = PyHandle {
+            kind: HandleKind::WeakUuid(Uuid::from_u128(0)),
+            type_ptr: std::ptr::null(),
+        };
+        assert!(h.asset_type_id().is_none());
+    }
+
+    #[test]
+    fn test_asset_type_name_none_for_null_ptr() {
+        let h = PyHandle {
+            kind: HandleKind::WeakUuid(Uuid::from_u128(0)),
+            type_ptr: std::ptr::null(),
+        };
+        assert!(h.asset_type_name().is_none());
+    }
+
+    #[test]
+    fn test_has_strong_handle_false_for_weak() {
+        let h = PyHandle {
+            kind: HandleKind::WeakUuid(Uuid::from_u128(0)),
+            type_ptr: std::ptr::null(),
+        };
+        assert!(!h.has_strong_handle());
+        assert!(h.try_untyped_handle().is_none());
+    }
+
+    #[test]
+    fn test_from_untyped_weak_uuid_produces_weak_handle() {
+        // from_untyped with no Python: construct an UntypedHandle::Uuid directly
+        // is not possible without an AssetRegistry, so we only verify the weak
+        // branch via the kind field. Strong handles need an Arc<AssetServer> so
+        // they cannot be built in a Python-free unit test.
+        let h = PyHandle {
+            kind: HandleKind::WeakUuid(Uuid::from_u128(7)),
+            type_ptr: std::ptr::null(),
+        };
+        assert_eq!(h.id(), 7);
+        assert!(h.is_weak());
     }
 }

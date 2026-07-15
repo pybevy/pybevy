@@ -268,6 +268,16 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
                 Ok(())
             }
 
+            fn prepare_uniform(
+                &self,
+                component: &#pyo3_path::Bound<#pyo3_path::PyAny>,
+            ) -> #pyo3_path::PyResult<Box<dyn #core_path::PreparedUniformComponent>> {
+                use #pyo3_path::prelude::PyAnyMethods;
+                let py_component = component.extract::<#pyo3_path::PyRef<#py_type>>()?;
+                let native: #bevy_type = py_component.storage.as_ref()?.clone();
+                Ok(Box::new(#core_path::PreparedNativeUniform::new(native)))
+            }
+
             fn extract_fn(&self) -> #core_path::ExtractFn {
                 #[inline(always)]
                 fn extract_impl(

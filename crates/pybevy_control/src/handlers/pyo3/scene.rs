@@ -1438,7 +1438,11 @@ fn strip_numeric_suffix(name: &str) -> String {
 pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entity, ControlError> {
     match entity_ref {
         EntityRef::Id(id) => {
-            let entity = Entity::from_bits(*id);
+            // `try_from_bits` (not `from_bits`): a caller-supplied id whose low 32
+            // bits form an invalid EntityIndex (e.g. 0) makes `from_bits` panic,
+            // which would crash the app through the exclusive control-poll system.
+            let entity = Entity::try_from_bits(*id)
+                .ok_or_else(|| ControlError::not_found(format!("Entity {id} not found")))?;
             world
                 .get_entity(entity)
                 .map(|_| entity)
@@ -1611,6 +1615,17 @@ mod tests {
         let result = resolve_entity(&mut world, &EntityRef::Name("Lamp".into()));
         assert_eq!(result.unwrap(), root);
     }
+
+    #[test]
+    fn resolve_entity_by_zero_index_returns_not_found_without_panicking() {
+        // A caller-supplied id whose low 32 bits are 0 is an invalid EntityIndex;
+        // `Entity::from_bits` would panic and crash the exclusive control-poll
+        // system. `try_from_bits` must return a NotFound error instead.
+        let mut world = World::new();
+        let err = resolve_entity(&mut world, &EntityRef::Id(0)).unwrap_err();
+        assert!(err.message.contains("not found"));
+    }
+
     #[test]
     fn strip_numeric_suffix_underscore_digits() {
         assert_eq!(strip_numeric_suffix("Cube_01"), "Cube");
@@ -2053,6 +2068,19 @@ mod tests {
         let result = resolve_entity(&mut world, &EntityRef::Id(999999));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn resolve_entity_by_id_with_zero_index_returns_not_found_without_panicking() {
+        // A caller-supplied id whose low 32 bits are zero is an invalid EntityIndex;
+        // `Entity::from_bits` would panic and unwind through the exclusive
+        // control-poll system. The handler must return NotFound instead of crashing.
+        let mut world = World::new();
+        for bits in [0u64, 1u64 << 32, 0xFFFF_FFFF_0000_0000] {
+            let err = resolve_entity(&mut world, &EntityRef::Id(bits)).unwrap_err();
+            assert!(matches!(err.code, ErrorCode::NotFound), "id {bits:#x}");
+        }
+    }
+
     #[test]
     fn query_entities_empty_world() {
         let mut world = World::new();

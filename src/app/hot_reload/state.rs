@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use bevy::prelude::Resource;
-use pybevy_reload::{HotReloadStateAccess, ReloadMode, lock_or_recover};
+use pybevy_reload::{HotReloadStateAccess, ReloadMode, ReloadRequestState, lock_or_recover};
 use pyo3::prelude::*;
 
 use super::util::is_verbose;
@@ -14,16 +14,13 @@ use super::util::is_verbose;
 #[derive(Clone)]
 pub struct HotReloadState {
     pub(crate) inner: Arc<Mutex<HotReloadStateInner>>,
+    requests: ReloadRequestState,
 }
 
 pub(crate) struct HotReloadStateInner {
     /// Function to call to get fresh systems when reload is requested
     /// This should return a new create_app() function
     pub(crate) loader_func: Option<Py<PyAny>>,
-    /// Flag indicating a reload has been requested
-    pub(crate) reload_pending: bool,
-    /// Mode for the next reload (Full or Partial)
-    pub(crate) reload_mode: ReloadMode,
     /// Default mode for file-triggered reloads (can be toggled with F6)
     pub(crate) default_reload_mode: ReloadMode,
     /// Current generation counter - systems check this to know if they should run
@@ -36,11 +33,10 @@ impl HotReloadState {
         Self {
             inner: Arc::new(Mutex::new(HotReloadStateInner {
                 loader_func: None,
-                reload_pending: false,
-                reload_mode: ReloadMode::Full,
                 default_reload_mode: ReloadMode::Partial,
                 generation: Arc::new(AtomicU32::new(0)),
             })),
+            requests: ReloadRequestState::default(),
         }
     }
 
@@ -49,11 +45,10 @@ impl HotReloadState {
         Self {
             inner: Arc::new(Mutex::new(HotReloadStateInner {
                 loader_func: None,
-                reload_pending: false,
-                reload_mode: ReloadMode::Full,
                 default_reload_mode: ReloadMode::Partial,
                 generation: Arc::new(AtomicU32::new(generation)),
             })),
+            requests: ReloadRequestState::default(),
         }
     }
 
@@ -100,12 +95,12 @@ impl HotReloadState {
     /// Check if the next reload will be in partial mode
     /// Used by CLI loader to determine whether to enable component caching
     pub fn is_partial_reload(&self) -> bool {
-        let inner = lock_or_recover(&self.inner);
-        let is_partial = inner.reload_mode == ReloadMode::Partial;
+        let mode = self.requests.last_mode();
+        let is_partial = mode == ReloadMode::Partial;
         if is_verbose() {
             eprintln!(
                 "🔍 is_partial_reload() called: reload_mode = {:?}, returning {}",
-                inner.reload_mode, is_partial
+                mode, is_partial
             );
         }
         is_partial
@@ -119,23 +114,24 @@ impl HotReloadState {
 
     /// Request a reload (called from Python watcher thread)
     pub fn request_reload(&self, mode: ReloadMode) {
-        let mut inner = lock_or_recover(&self.inner);
-        inner.reload_pending = true;
-        inner.reload_mode = mode;
+        self.requests.request(mode);
+    }
+
+    pub(crate) fn request_reload_if_idle(&self, mode: ReloadMode) -> bool {
+        self.requests.request_if_idle(mode)
+    }
+
+    pub(crate) fn is_reload_pending(&self) -> bool {
+        self.requests.is_pending()
     }
 
     /// Check if reload is pending and get the loader function and mode if available
     pub fn take_pending_reload(&self, py: Python) -> Option<(Py<PyAny>, ReloadMode)> {
-        let mut inner = lock_or_recover(&self.inner);
-        if inner.reload_pending {
-            inner.reload_pending = false;
-            inner
-                .loader_func
-                .as_ref()
-                .map(|f| (f.clone_ref(py), inner.reload_mode))
-        } else {
-            None
-        }
+        let mode = self.requests.take()?;
+        lock_or_recover(&self.inner)
+            .loader_func
+            .as_ref()
+            .map(|function| (function.clone_ref(py), mode))
     }
 }
 

@@ -1,10 +1,10 @@
 use bevy::world_serialization::WorldInstanceReady;
-use pybevy_core::PyEntity;
+use pybevy_core::{PyEntity, PyMessage};
 use pyo3::prelude::*;
 
 use crate::instance_id::PyInstanceId;
 
-#[pyclass(name = "WorldInstanceReady", frozen, eq, skip_from_py_object)]
+#[pyclass(name = "WorldInstanceReady", extends = PyMessage, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWorldInstanceReady {
     #[pyo3(get)]

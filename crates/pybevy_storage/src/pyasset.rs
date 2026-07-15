@@ -29,15 +29,21 @@
 //! - **`BorrowedRef`**: Created from `Res[Assets[T]].get()`, wraps a `BorrowedRef<T>` (`*const T`)
 //! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, wraps a `BorrowedMut<T>` (`*mut T`)
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
-use bevy::asset::{Asset, UntypedHandle};
+use bevy::{
+    asset::{Asset, AssetId, Assets, UntypedAssetId, UntypedHandle},
+    ecs::world::World,
+};
 
 use crate::{
-    ValidityFlagWithMode,
+    ValidityFlag, ValidityFlagWithMode,
     borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
 };
@@ -72,6 +78,31 @@ impl ViewCounters {
         }
         Ok(())
     }
+
+    /// Atomically claim a read view: increment `reads`, then verify no writer is
+    /// live, rolling back on conflict. Returns `true` on success. This is the
+    /// free-threaded-safe replacement for check-then-increment: under a GIL the
+    /// window it closes is unreachable, but with a free-threaded interpreter
+    /// two systems could otherwise both pass a check and both acquire.
+    pub fn try_acquire_read(&self) -> bool {
+        self.reads.fetch_add(1, Ordering::AcqRel);
+        if self.writes.load(Ordering::Acquire) > 0 {
+            self.reads.fetch_sub(1, Ordering::AcqRel);
+            return false;
+        }
+        true
+    }
+
+    /// Atomically claim the exclusive write view: increment `writes`, then verify
+    /// no reader is live and we are the only writer, rolling back on conflict.
+    pub fn try_acquire_write(&self) -> bool {
+        self.writes.fetch_add(1, Ordering::AcqRel);
+        if self.reads.load(Ordering::Acquire) > 0 || self.writes.load(Ordering::Acquire) > 1 {
+            self.writes.fetch_sub(1, Ordering::AcqRel);
+            return false;
+        }
+        true
+    }
 }
 
 /// Shared count of live Python wrappers borrowing assets from one `Assets<T>`
@@ -79,11 +110,27 @@ impl ViewCounters {
 #[derive(Debug, Clone, Default)]
 pub struct AssetBorrowCounter {
     active: Arc<AtomicUsize>,
+    // Per-asset zero-copy view counters, shared across every borrowed wrapper of
+    // the same asset within one access scope. Without this, a second
+    // `assets.get_mut()` wrapper has its own counters and could reallocate the
+    // asset's buffer while a zero-copy view over another wrapper is live.
+    views: Arc<Mutex<HashMap<UntypedAssetId, ViewCounters>>>,
 }
 
 impl AssetBorrowCounter {
     pub fn active(&self) -> usize {
         self.active.load(Ordering::Acquire)
+    }
+
+    /// The shared view counters for `asset_id` in this scope (created on first
+    /// use). All wrappers for one asset get counters sharing the same atomics.
+    pub fn views_for(&self, asset_id: UntypedAssetId) -> ViewCounters {
+        self.views
+            .lock()
+            .expect("view registry mutex poisoned")
+            .entry(asset_id)
+            .or_default()
+            .clone()
     }
 
     pub fn has_active(&self) -> bool {
@@ -101,6 +148,55 @@ impl AssetBorrowCounter {
 #[derive(Debug)]
 struct AssetBorrowLease {
     counter: AssetBorrowCounter,
+}
+
+/// Lazily queues Bevy's `AssetEvent::Modified` on the first mutable access
+/// through one Python asset wrapper.
+///
+/// Bevy 0.19's `AssetMut` does not mark an asset merely because
+/// `Assets::get_mut` was called. It marks only when the `AssetMut` is mutably
+/// dereferenced. Python needs the same split because `get_mut()` creates a
+/// wrapper whose setters and mutable view methods run later.
+#[derive(Debug)]
+struct AssetChangeTracker<T: Asset> {
+    world_ptr: *mut World,
+    asset_id: AssetId<T>,
+    validity: ValidityFlag,
+    changed: bool,
+}
+
+// SAFETY: `world_ptr` is only dereferenced after the thread-affine validity
+// check succeeds. The system executor invalidates the flag before the world
+// access scope ends.
+unsafe impl<T: Asset> Send for AssetChangeTracker<T> {}
+// SAFETY: access is still restricted to the validity flag's owning thread;
+// sharing the wrapper cannot make a dereference succeed on another thread.
+unsafe impl<T: Asset> Sync for AssetChangeTracker<T> {}
+
+impl<T: Asset> AssetChangeTracker<T> {
+    /// Queue one `Modified` event by taking a real Bevy `AssetMut` mutable
+    /// dereference. Subsequent writes through this wrapper are coalesced.
+    fn mark_changed(&mut self) -> Result<(), StorageError> {
+        if self.changed {
+            return Ok(());
+        }
+
+        self.validity.check_write()?;
+        // SAFETY: validity was checked above. The world pointer is supplied by
+        // the bridge for the active system access scope and remains stable for
+        // that scope.
+        let world = unsafe { &mut *self.world_ptr };
+        let mut assets = world
+            .get_resource_mut::<Assets<T>>()
+            .ok_or(StorageError::AssetUnavailable)?;
+        let mut asset = assets
+            .get_mut(self.asset_id)
+            .ok_or(StorageError::AssetUnavailable)?;
+        // This coercion invokes AssetMut::deref_mut, setting Bevy's notifier.
+        let _asset: &mut T = &mut asset;
+        self.changed = true;
+        Ok(())
+    }
 }
 
 impl Clone for AssetBorrowLease {
@@ -133,6 +229,7 @@ pub struct AssetStorage<T: Asset> {
     pub(crate) inner: AssetStorageInner<T>,
     views: ViewCounters,
     borrow_lease: Option<AssetBorrowLease>,
+    change_tracker: Option<AssetChangeTracker<T>>,
 }
 
 #[derive(Debug)]
@@ -195,6 +292,9 @@ impl<T: Asset + Clone> Clone for AssetStorage<T> {
             inner,
             views,
             borrow_lease,
+            // Mutable borrows clone as read-only, so the clone must not retain
+            // authority to mark or mutate the asset.
+            change_tracker: None,
         }
     }
 }
@@ -224,6 +324,7 @@ impl<T: Asset> AssetStorage<T> {
             inner: AssetStorageInner::Owned(Some(Box::new(asset))),
             views: ViewCounters::default(),
             borrow_lease: None,
+            change_tracker: None,
         }
     }
 
@@ -264,18 +365,34 @@ impl<T: Asset> AssetStorage<T> {
         handle: UntypedHandle,
     ) -> Self {
         // SAFETY: forwarded from this constructor's contract.
-        unsafe { Self::borrowed_readonly_inner(ptr, validity, handle, None) }
+        unsafe {
+            Self::borrowed_readonly_inner(ptr, validity, handle, None, ViewCounters::default())
+        }
     }
 
+    /// Create a borrow-counter-tracked read-only asset wrapper.
+    ///
+    /// # Safety
+    /// - `ptr` must point to a valid `T` in `Assets<T>` storage.
+    /// - The pointer and asset must remain valid while `validity` is active.
+    /// - No mutable reference may alias the asset during that scope.
     pub unsafe fn borrowed_readonly_tracked(
         ptr: *const T,
+        asset_id: UntypedAssetId,
         validity: ValidityFlagWithMode,
         handle: UntypedHandle,
         borrow_counter: AssetBorrowCounter,
     ) -> Self {
+        let views = borrow_counter.views_for(asset_id);
         // SAFETY: forwarded from this constructor's contract.
         unsafe {
-            Self::borrowed_readonly_inner(ptr, validity, handle, Some(borrow_counter.lease()))
+            Self::borrowed_readonly_inner(
+                ptr,
+                validity,
+                handle,
+                Some(borrow_counter.lease()),
+                views,
+            )
         }
     }
 
@@ -284,6 +401,7 @@ impl<T: Asset> AssetStorage<T> {
         validity: ValidityFlagWithMode,
         handle: UntypedHandle,
         borrow_lease: Option<AssetBorrowLease>,
+        views: ViewCounters,
     ) -> Self {
         Self {
             inner: AssetStorageInner::BorrowedRef {
@@ -291,8 +409,9 @@ impl<T: Asset> AssetStorage<T> {
                 borrow: unsafe { BorrowedRef::new(ptr, validity.flag) },
                 handle,
             },
-            views: ViewCounters::default(),
+            views,
             borrow_lease,
+            change_tracker: None,
         }
     }
 
@@ -307,17 +426,45 @@ impl<T: Asset> AssetStorage<T> {
         handle: UntypedHandle,
     ) -> Self {
         // SAFETY: forwarded from this constructor's contract.
-        unsafe { Self::borrowed_mut_inner(ptr, validity, handle, None) }
+        unsafe {
+            Self::borrowed_mut_inner(ptr, validity, handle, None, None, ViewCounters::default())
+        }
     }
 
+    /// Create a borrow-counter-tracked mutable asset wrapper with lazy Bevy
+    /// change notification.
+    ///
+    /// # Safety
+    /// - `ptr` must identify `asset_id` in `Assets<T>` inside `world_ptr`.
+    /// - `world_ptr`, the `Assets<T>` resource, and the asset must remain valid
+    ///   while `validity` is active.
+    /// - No concurrent world or asset access may occur during that scope.
     pub unsafe fn borrowed_mut_tracked(
         ptr: *mut T,
+        world_ptr: *mut World,
+        asset_id: AssetId<T>,
         validity: ValidityFlagWithMode,
         handle: UntypedHandle,
         borrow_counter: AssetBorrowCounter,
     ) -> Self {
+        let views = borrow_counter.views_for(asset_id.into());
+        let change_tracker = AssetChangeTracker {
+            world_ptr,
+            asset_id,
+            validity: validity.flag.clone(),
+            changed: false,
+        };
         // SAFETY: forwarded from this constructor's contract.
-        unsafe { Self::borrowed_mut_inner(ptr, validity, handle, Some(borrow_counter.lease())) }
+        unsafe {
+            Self::borrowed_mut_inner(
+                ptr,
+                validity,
+                handle,
+                Some(borrow_counter.lease()),
+                Some(change_tracker),
+                views,
+            )
+        }
     }
 
     unsafe fn borrowed_mut_inner(
@@ -325,6 +472,8 @@ impl<T: Asset> AssetStorage<T> {
         validity: ValidityFlagWithMode,
         handle: UntypedHandle,
         borrow_lease: Option<AssetBorrowLease>,
+        change_tracker: Option<AssetChangeTracker<T>>,
+        views: ViewCounters,
     ) -> Self {
         Self {
             inner: AssetStorageInner::BorrowedMut {
@@ -332,8 +481,9 @@ impl<T: Asset> AssetStorage<T> {
                 borrow: unsafe { BorrowedMut::new(ptr, validity.flag) },
                 handle,
             },
-            views: ViewCounters::default(),
+            views,
             borrow_lease,
+            change_tracker,
         }
     }
 
@@ -365,13 +515,53 @@ impl<T: Asset> AssetStorage<T> {
             AssetStorageInner::Owned(Some(asset)) => Ok(&mut **asset),
             AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
             AssetStorageInner::BorrowedRef { .. } => Err(StorageError::AssetReadOnly),
-            AssetStorageInner::BorrowedMut { borrow, .. } => borrow.get_mut(),
+            AssetStorageInner::BorrowedMut { borrow, .. } => {
+                if let Some(change_tracker) = &mut self.change_tracker {
+                    change_tracker.mark_changed()?;
+                }
+                borrow.get_mut()
+            }
+        }
+    }
+
+    /// Like [`as_mut`](Self::as_mut), but for a caller that has already claimed
+    /// the exclusive write via [`ViewCounters::try_acquire_write`]. That CAS
+    /// claim (writes 0->1 while verifying reads==0) already established
+    /// exclusivity, so this skips the no-views check that `as_mut` would
+    /// otherwise self-conflict on (the caller's own write count is non-zero).
+    /// Validity is still checked and the asset is still change-marked.
+    ///
+    /// The caller MUST hold a live write count claimed via `try_acquire_write`;
+    /// without it, concurrent access is not excluded.
+    #[inline(always)]
+    pub fn as_mut_write_leased(&mut self) -> Result<&mut T, StorageError> {
+        match &mut self.inner {
+            AssetStorageInner::Owned(Some(asset)) => Ok(&mut **asset),
+            AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
+            AssetStorageInner::BorrowedRef { .. } => Err(StorageError::AssetReadOnly),
+            AssetStorageInner::BorrowedMut { borrow, .. } => {
+                if let Some(change_tracker) = &mut self.change_tracker {
+                    change_tracker.mark_changed()?;
+                }
+                borrow.get_mut()
+            }
         }
     }
 
     /// Counters tracking live zero-copy NumPy views over this asset's data
     pub fn view_counters(&self) -> &ViewCounters {
         &self.views
+    }
+
+    /// The validity flag gating a borrowed asset, or `None` for an owned asset
+    /// (which is always live). Used to build liveness probes for zero-copy
+    /// bounded arrays over this asset's data.
+    pub fn validity_flag(&self) -> Option<ValidityFlag> {
+        match &self.inner {
+            AssetStorageInner::Owned(_) => None,
+            AssetStorageInner::BorrowedRef { borrow, .. } => Some(borrow.validity().clone()),
+            AssetStorageInner::BorrowedMut { borrow, .. } => Some(borrow.validity().clone()),
+        }
     }
 
     /// Check if this storage contains an owned asset
@@ -406,6 +596,23 @@ mod tests {
 
     use super::*;
     use crate::{AccessMode, ValidityFlag, ValidityGuard};
+
+    #[test]
+    fn cas_acquire_enforces_exclusion() {
+        let c = ViewCounters::default();
+        // First read succeeds; a second read coexists; a write is then rejected.
+        assert!(c.try_acquire_read());
+        assert!(c.try_acquire_read());
+        assert!(!c.try_acquire_write());
+        assert_eq!(c.writes.load(Ordering::Acquire), 0); // rolled back
+        c.reads.fetch_sub(2, Ordering::AcqRel);
+        // A write succeeds when idle; a second write and any read are rejected.
+        assert!(c.try_acquire_write());
+        assert!(!c.try_acquire_write());
+        assert!(!c.try_acquire_read());
+        assert_eq!(c.reads.load(Ordering::Acquire), 0);
+        assert_eq!(c.writes.load(Ordering::Acquire), 1);
+    }
 
     #[derive(Clone, Debug, PartialEq, bevy::reflect::TypePath)]
     struct TestAsset {

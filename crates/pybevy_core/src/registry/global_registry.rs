@@ -488,6 +488,13 @@ pub type ComponentBatchInsertFn = for<'py> fn(
     &mut bevy::ecs::world::World,
 ) -> pyo3::PyResult<()>;
 
+/// Function pointer type for macro-generated owned batch preparation.
+pub type ComponentBatchPrepareFn =
+    for<'py> fn(
+        pyo3::Python<'py>,
+        &PyRustComponentBatch,
+    ) -> pyo3::PyResult<Box<dyn super::PreparedBatchComponent>>;
+
 /// Metadata for a Rust component's batch spawning capability.
 ///
 /// Registered by macro-generated code; looked up by RustComponentBatchBridge
@@ -496,6 +503,7 @@ pub struct ComponentBatchMeta {
     pub component_name: &'static str,
     pub fields: &'static [BatchFieldMeta],
     pub insert_fn: ComponentBatchInsertFn,
+    pub prepare_fn: ComponentBatchPrepareFn,
 }
 
 // SAFETY: ComponentBatchMeta contains only static references and function pointers

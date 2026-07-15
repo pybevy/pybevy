@@ -1,9 +1,18 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
+use std::sync::{Arc, Mutex};
+
+use bevy::ecs::schedule::SystemSet;
+pub use pybevy_ecs::shared::system_runtime::{
+    HotReloadGeneration, generation_matches, startup_or_reload,
 };
 
-use bevy::prelude::Resource;
+/// Groups every Python system registered by one hot-reload generation.
+///
+/// Backends remove this set once its rollback window has elapsed. Releasing an
+/// interpreter callable alone leaves its Bevy schedule graph node behind.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReloadGenerationSet(pub u32);
+
+use crate::lock_or_recover;
 
 /// Mode for hot reload operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,94 +23,141 @@ pub enum ReloadMode {
     Partial,
 }
 
-/// Bevy resource that tracks which generation of systems should be active
-/// Systems added with a specific generation will only run when this matches
-#[derive(Resource, Clone)]
-pub struct HotReloadGeneration {
-    /// Current active generation
-    pub current: u32,
-    /// Atomic counter shared with HotReloadState
-    generation_counter: Arc<AtomicU32>,
-    /// Track which generations have already run their Startup schedule
-    /// This prevents Startup from running multiple times per generation
-    pub(crate) startup_run_for_generations: Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+#[derive(Debug)]
+struct ReloadRequestInner {
+    pending: Option<ReloadMode>,
+    last_mode: ReloadMode,
 }
 
-impl HotReloadGeneration {
-    pub fn new(generation_counter: Arc<AtomicU32>) -> Self {
+/// Thread-safe, last-request-wins mailbox for reload requests.
+///
+/// Loader functions, script sources, and completion results remain in the
+/// interpreter adapters. This type owns only the common request lifecycle.
+#[derive(Clone, Debug)]
+pub struct ReloadRequestState {
+    inner: Arc<Mutex<ReloadRequestInner>>,
+}
+
+impl Default for ReloadRequestState {
+    fn default() -> Self {
         Self {
-            current: generation_counter.load(Ordering::SeqCst),
-            generation_counter,
-            startup_run_for_generations: Arc::new(std::sync::Mutex::new(
-                std::collections::HashSet::new(),
-            )),
-        }
-    }
-
-    /// Update to the latest generation from the atomic counter
-    pub fn update(&mut self) {
-        self.current = self.generation_counter.load(Ordering::SeqCst);
-    }
-
-    /// Mark that Startup has run for the current generation
-    pub fn mark_startup_run(&self) {
-        if let Ok(mut set) = self.startup_run_for_generations.lock() {
-            set.insert(self.current);
-        }
-    }
-
-    /// Check if Startup has already run for a given generation
-    pub fn has_startup_run(&self, generation: u32) -> bool {
-        self.startup_run_for_generations
-            .lock()
-            .map(|set| set.contains(&generation))
-            .unwrap_or(false)
-    }
-}
-
-/// Run condition function that checks if the current generation matches the expected one
-/// This is used to enable/disable Update and Last systems based on hot reload generation
-/// If HotReloadGeneration resource doesn't exist (hot reload not enabled), always returns true
-pub fn generation_matches(
-    expected_generation: u32,
-) -> impl FnMut(Option<bevy::ecs::system::Res<HotReloadGeneration>>) -> bool + Clone {
-    move |generation_res: Option<bevy::ecs::system::Res<HotReloadGeneration>>| {
-        match generation_res {
-            Some(res) => res.current == expected_generation,
-            None => true, // No hot reload, all systems run
+            inner: Arc::new(Mutex::new(ReloadRequestInner {
+                pending: None,
+                last_mode: ReloadMode::Full,
+            })),
         }
     }
 }
 
-/// Run condition for Startup systems - only runs when generation matches AND hasn't run yet
-/// Startup systems should run once during their generation (at app start or after reload)
-/// If HotReloadGeneration resource doesn't exist (hot reload not enabled), always returns true
-pub fn startup_or_reload(
-    expected_generation: u32,
-) -> impl FnMut(Option<bevy::ecs::system::Res<HotReloadGeneration>>) -> bool + Clone {
-    move |generation_res: Option<bevy::ecs::system::Res<HotReloadGeneration>>| {
-        match generation_res {
-            Some(res) => {
-                // Only run if:
-                // 1. Current generation matches expected generation
-                // 2. Startup hasn't run yet for this generation
-                res.current == expected_generation && !res.has_startup_run(expected_generation)
-            }
-            None => true, // No hot reload, all systems run
+impl ReloadRequestState {
+    /// Queue a reload, replacing any request that has not yet been consumed.
+    pub fn request(&self, mode: ReloadMode) {
+        let mut inner = lock_or_recover(&self.inner);
+        inner.pending = Some(mode);
+        inner.last_mode = mode;
+    }
+
+    /// Queue a reload only if the mailbox is currently empty.
+    pub fn request_if_idle(&self, mode: ReloadMode) -> bool {
+        let mut inner = lock_or_recover(&self.inner);
+        if inner.pending.is_some() {
+            return false;
         }
+        inner.pending = Some(mode);
+        inner.last_mode = mode;
+        true
+    }
+
+    /// Consume the pending request, if any.
+    pub fn take(&self) -> Option<ReloadMode> {
+        lock_or_recover(&self.inner).pending.take()
+    }
+
+    pub fn is_pending(&self) -> bool {
+        lock_or_recover(&self.inner).pending.is_some()
+    }
+
+    /// Mode of the most recently queued request, retained after consumption.
+    pub fn last_mode(&self) -> ReloadMode {
+        lock_or_recover(&self.inner).last_mode
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU32;
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicU32, Ordering},
+    };
 
-    use bevy::ecs::{
-        schedule::{IntoScheduleConfigs, Schedule},
-        world::World,
+    use bevy::{
+        ecs::{
+            schedule::{IntoScheduleConfigs, Schedule},
+            world::World,
+        },
+        prelude::Resource,
     };
 
     use super::*;
+
+    #[test]
+    fn reload_request_defaults_to_idle_full() {
+        let requests = ReloadRequestState::default();
+        assert!(!requests.is_pending());
+        assert_eq!(requests.last_mode(), ReloadMode::Full);
+        assert_eq!(requests.take(), None);
+    }
+
+    #[test]
+    fn reload_request_is_last_request_wins_and_single_consume() {
+        let requests = ReloadRequestState::default();
+        requests.request(ReloadMode::Full);
+        requests.request(ReloadMode::Partial);
+
+        assert_eq!(requests.take(), Some(ReloadMode::Partial));
+        assert_eq!(requests.take(), None);
+        assert_eq!(requests.last_mode(), ReloadMode::Partial);
+    }
+
+    #[test]
+    fn request_if_idle_preserves_existing_request() {
+        let requests = ReloadRequestState::default();
+        assert!(requests.request_if_idle(ReloadMode::Partial));
+        assert!(!requests.request_if_idle(ReloadMode::Full));
+        assert_eq!(requests.take(), Some(ReloadMode::Partial));
+    }
+
+    #[test]
+    fn concurrent_request_if_idle_admits_exactly_one_request() {
+        let requests = ReloadRequestState::default();
+        let barrier = Arc::new(Barrier::new(8));
+        let admitted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let requests = requests.clone();
+                let barrier = barrier.clone();
+                let admitted = admitted.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mode = if index % 2 == 0 {
+                        ReloadMode::Full
+                    } else {
+                        ReloadMode::Partial
+                    };
+                    if requests.request_if_idle(mode) {
+                        admitted.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        assert_eq!(admitted.load(Ordering::SeqCst), 1);
+        assert!(requests.take().is_some());
+        assert!(!requests.is_pending());
+    }
 
     #[test]
     fn test_hot_reload_generation_new() {

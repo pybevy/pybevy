@@ -17,12 +17,15 @@ pub mod rust_batch;
 
 pub use asset_bridge::AssetBridge;
 pub use asset_input_converter::AssetInputConverter;
-pub use batch_bridge::BatchComponent;
+pub use batch_bridge::{
+    BatchComponent, PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform,
+    PreparedUniformComponent, PreparedUniformFn,
+};
 pub use batchable_field::{
     BatchFieldMeta, BatchableField, batch_field_meta_for, field_type_of, set_field_from_numpy,
 };
 pub use component_bridge::{ComponentBridge, ExtractFn};
-pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta};
+pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn};
 pub use message_bridge::MessageBridge;
 pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;

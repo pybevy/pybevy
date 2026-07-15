@@ -40,6 +40,18 @@ impl PyNumpyViewGuard {
         }
     }
 
+    /// Wrap a `counter` the caller has ALREADY incremented (e.g. via
+    /// `ViewCounters::try_acquire_read`/`try_acquire_write`, which atomically
+    /// claim the slot and verify the invariant). Decrements on release/drop; does
+    /// not increment again.
+    pub fn from_acquired(counter: Arc<AtomicUsize>, owner: Py<PyAny>) -> Self {
+        Self {
+            counter,
+            released: AtomicBool::new(false),
+            _owner: owner,
+        }
+    }
+
     /// Release the counted view early (idempotent).
     pub fn release(&self) {
         if !self.released.swap(true, Ordering::AcqRel) {

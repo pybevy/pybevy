@@ -248,6 +248,14 @@ impl AppStoreCore {
         self.slots.contains_key(&id)
     }
 
+    /// Number of Apps currently owned by active slots.
+    pub fn active_count(&self) -> usize {
+        self.slots
+            .values()
+            .filter(|slot| matches!(slot, AppSlot::Active(_)))
+            .count()
+    }
+
     pub fn state(&self, id: AppId) -> Result<AppLifecycle, AppStoreError> {
         self.slots
             .get(&id)
@@ -299,6 +307,23 @@ impl AppStoreCore {
         }
         *slot = AppSlot::Active(Box::new(app));
         Ok(())
+    }
+
+    /// Complete an extracted consuming operation without restoring its App.
+    ///
+    /// The adapter still owns the sole App value and must destroy it outside
+    /// the store borrow. This transition leaves the slot's consumed tombstone
+    /// visible to stale wrappers after `App::run` returns.
+    pub fn finish_operation_consumed(&mut self, id: AppId) -> Result<(), AppStoreError> {
+        let slot = self.slots.get_mut(&id).ok_or(AppStoreError::Missing(id))?;
+        match std::mem::replace(slot, AppSlot::Consumed) {
+            AppSlot::Borrowed(_) => Ok(()),
+            previous => {
+                let lifecycle = previous.lifecycle();
+                *slot = previous;
+                Err(AppStoreError::NotBorrowed(lifecycle))
+            }
+        }
     }
 
     pub fn take_for_run(&mut self, id: AppId) -> Result<App, AppStoreError> {
@@ -434,6 +459,7 @@ mod tests {
         let mut store = AppStoreCore::new();
         let first = store.insert(app_with(1)).unwrap();
         let second = store.insert(app_with(2)).unwrap();
+        assert_eq!(store.active_count(), 2);
 
         store
             .with_app_leaf(first, |app| app.world_mut().resource_mut::<Marker>().0 = 10)
@@ -497,6 +523,22 @@ mod tests {
     }
 
     #[test]
+    fn consuming_operation_transitions_borrowed_slot_to_consumed() {
+        let mut store = AppStoreCore::new();
+        let id = store.insert(app_with(1)).unwrap();
+        let app = store.begin_operation(id, AppOperation::Run).unwrap();
+
+        store.finish_operation_consumed(id).unwrap();
+        drop(app);
+
+        assert_eq!(store.state(id), Ok(AppLifecycle::Consumed));
+        assert_eq!(
+            store.finish_operation_consumed(id),
+            Err(AppStoreError::NotBorrowed(AppLifecycle::Consumed))
+        );
+    }
+
+    #[test]
     fn adapter_style_guard_restores_after_unwind() {
         struct Guard<'a> {
             store: &'a mut AppStoreCore,
@@ -551,6 +593,7 @@ mod tests {
         let borrowed_app = store
             .begin_operation(second, AppOperation::Cleanup)
             .unwrap();
+        assert_eq!(store.active_count(), 1);
 
         let outcome = store.drain_active();
         assert_eq!(outcome.drained().len(), 1);
@@ -563,9 +606,11 @@ mod tests {
         );
 
         store.restore_operation(second, borrowed_app).unwrap();
+        assert_eq!(store.active_count(), 1);
         let (drained, borrowed) = store.drain_active().into_parts();
         assert_eq!(drained.len(), 1);
         assert!(borrowed.is_empty());
+        assert_eq!(store.active_count(), 0);
         assert_eq!(store.state(second), Ok(AppLifecycle::Removed));
     }
 

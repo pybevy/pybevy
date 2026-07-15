@@ -4,9 +4,10 @@
 //! users receive opaque ViewColumn handles that refuse numpy conversion and can
 //! be accessed through Numba JIT compilation or JAX array interop.
 //!
-//! Safety model: Arc<AtomicBool> validity token is checked at the Numba call
-//! boundary (in the unbox() function) and in bulk read/write methods,
-//! preventing use-after-free bugs.
+//! Safety model: ECS-backed columns retain a neutral `BatchColumn` capability.
+//! Rust-side accesses check its thread-affine run validity and hold the shared
+//! View operation fence. Numba checks validity while unboxing; the native call
+//! must finish before its originating system invocation returns.
 
 use std::{
     mem,
@@ -17,7 +18,13 @@ use std::{
 };
 
 use bevy::transform::components::Transform;
-use pybevy_bytecodevm::bytecode::{read_field_value, write_field_value};
+use pybevy_bytecodevm::{
+    bytecode::{
+        python_clip, python_maximum, python_minimum, python_remainder, python_round, python_sign,
+        read_field_value, write_field_value,
+    },
+    view_runtime::{BatchColumn, ViewOperationGuard},
+};
 use pybevy_core::FieldType;
 use pyo3::{
     exceptions::PyRuntimeError,
@@ -35,8 +42,8 @@ use crate::ecs::{component_type::PyComponentType, view::view::get_component_fiel
 ///
 /// # Safety Model
 ///
-/// - The validity token is checked in the Numba unbox() function
-/// - If the token is poisoned, unbox() raises a RuntimeError
+/// - The run-scoped core validity is checked in the Numba unbox() function
+/// - Stale or cross-thread handles raise a RuntimeError before pointer exposure
 /// - Users cannot get a raw numpy array that bypasses checks
 ///
 /// # Example
@@ -63,11 +70,25 @@ pub struct PyViewColumn {
     /// Stride between elements in bytes.
     stride: usize,
 
+    /// Number of bytes reachable from `ptr` within each strided element.
+    ///
+    /// This may be smaller than `stride` for sub-columns such as Vec3 lanes or
+    /// struct slices. Bounds checks must use this value, not `stride`, because
+    /// `stride` describes the parent component's row distance.
+    element_extent: usize,
+
+    /// Whether writes are allowed by the originating View declaration.
+    writable: bool,
+
     /// Field type (`None` for opaque whole-component views with no single representable type, e.g. Transform or Quat).
     field_type: Option<FieldType>,
 
     /// Validity token shared across all views from the same batch.
     validity_token: Arc<AtomicBool>,
+
+    /// Core capability that owns ECS-backed storage and its run-scoped fences.
+    /// Test and standalone temporary columns use `None` and rely on the token.
+    owner: Option<Arc<BatchColumn>>,
 
     /// Component type for dynamic field resolution (None for primitive columns)
     component_type: Option<*const pyo3::ffi::PyTypeObject>,
@@ -80,50 +101,104 @@ pub struct PyViewColumn {
 }
 
 impl PyViewColumn {
-    /// Create a ViewColumn with component type info for dynamic field access.
-    /// Whole-component columns are always opaque structs (field_type = None).
-    ///
-    /// # Safety
-    /// `ptr` must point to the first element of a valid ECS column with `len` elements
-    /// spaced `stride` bytes apart. The pointer must remain valid for the lifetime of
-    /// the validity token (i.e. until the system finishes execution).
-    pub(crate) unsafe fn from_raw_parts_with_type(
-        ptr: *const u8,
-        len: usize,
-        stride: usize,
-        validity_token: Arc<AtomicBool>,
+    fn check_live(&self) -> PyResult<()> {
+        if !self.validity_token.load(Ordering::Acquire) {
+            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
+        }
+        if let Some(owner) = &self.owner {
+            owner.check_valid().map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "Accessing stale or cross-thread ViewColumn: {error}"
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    fn check_writable(&self) -> PyResult<()> {
+        if self.writable {
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err(
+                "Cannot write through a read-only ViewColumn; use batch.column_mut() and View[Mut[T]]",
+            ))
+        }
+    }
+
+    /// Acquire the core operation fence for one Rust-side pointer operation.
+    /// Numba is the deliberate exception: its unbox path checks validity at the
+    /// call boundary, then native code uses the retained capability directly.
+    fn enter_operation(&self) -> PyResult<Option<ViewOperationGuard>> {
+        self.check_live()?;
+        self.owner
+            .as_ref()
+            .map(|owner| {
+                owner
+                    .enter_operation()
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            })
+            .transpose()
+    }
+
+    fn enter_pair_operation(
+        &self,
+        other: &Self,
+    ) -> PyResult<(Option<ViewOperationGuard>, Option<ViewOperationGuard>)> {
+        let first = self.enter_operation()?;
+        let same_runtime = match (&self.owner, &other.owner) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left.runtime(), right.runtime()),
+            _ => false,
+        };
+        let second = if same_runtime {
+            other.check_live()?;
+            None
+        } else {
+            other.enter_operation()?
+        };
+        Ok((first, second))
+    }
+
+    /// Create an ECS-backed custom component column from a neutral core capability.
+    pub(crate) fn from_batch_column_with_type(
+        column: BatchColumn,
         component_type: *const pyo3::ffi::PyTypeObject,
     ) -> Self {
+        let column = Arc::new(column);
+        // SAFETY: this adapter retains `column` for the complete pointer lifetime
+        // and all Rust-side dereferences acquire its operation fence.
+        let ptr = unsafe { column.raw_ptr_unchecked() };
         Self {
-            ptr: ptr as *mut u8,
-            len,
-            stride,
+            ptr,
+            len: column.len(),
+            stride: column.stride(),
+            element_extent: column.stride(),
+            writable: column.is_writable(),
             field_type: None,
-            validity_token,
+            validity_token: Arc::new(AtomicBool::new(true)),
+            owner: Some(column),
             component_type: Some(component_type),
             builtin_component_type: None,
             owned_data: None,
         }
     }
 
-    /// Create a ViewColumn with built-in component type for trait-based field access.
-    /// Whole-component columns are always opaque structs (field_type = None).
-    ///
-    /// # Safety
-    /// Same requirements as `from_raw_parts_with_type`.
-    pub(crate) unsafe fn from_raw_parts_with_builtin_type(
-        ptr: *const u8,
-        len: usize,
-        stride: usize,
-        validity_token: Arc<AtomicBool>,
+    /// Create an ECS-backed built-in component column from a neutral capability.
+    pub(crate) fn from_batch_column_with_builtin_type(
+        column: BatchColumn,
         builtin_component_type: PyComponentType,
     ) -> Self {
+        let column = Arc::new(column);
+        // SAFETY: see `from_batch_column_with_type`.
+        let ptr = unsafe { column.raw_ptr_unchecked() };
         Self {
-            ptr: ptr as *mut u8,
-            len,
-            stride,
+            ptr,
+            len: column.len(),
+            stride: column.stride(),
+            element_extent: column.stride(),
+            writable: column.is_writable(),
             field_type: None,
-            validity_token,
+            validity_token: Arc::new(AtomicBool::new(true)),
+            owner: Some(column),
             component_type: None,
             builtin_component_type: Some(builtin_component_type),
             owned_data: None,
@@ -163,9 +238,7 @@ impl PyViewColumn {
 
     /// Check validity and that this is a scalar field type. Returns the `FieldType` on success.
     fn check_numeric(&self) -> PyResult<FieldType> {
-        if !self.validity_token.load(Ordering::Relaxed) {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        self.check_live()?;
         match self.field_type {
             Some(
                 ft @ (FieldType::F32
@@ -191,6 +264,7 @@ impl PyViewColumn {
         len: usize,
         field_type: FieldType,
         validity_token: &Arc<AtomicBool>,
+        owner: &Option<Arc<BatchColumn>>,
     ) -> PyResult<Self> {
         let elem_size = field_type.size_bytes();
         let mut buf = vec![0u8; len * elem_size];
@@ -204,8 +278,11 @@ impl PyViewColumn {
             ptr: buf.as_mut_ptr(),
             len,
             stride: elem_size,
+            element_extent: elem_size,
+            writable: true,
             field_type: Some(field_type),
             validity_token: validity_token.clone(),
+            owner: owner.clone(),
             component_type: None,
             builtin_component_type: None,
             owned_data: Some(buf),
@@ -214,17 +291,20 @@ impl PyViewColumn {
 
     /// Apply a unary f64→f64 function element-wise, returning an owned ViewColumn.
     fn unary_op(&self, f: impl Fn(f64) -> f64) -> PyResult<Self> {
+        let _operation = self.enter_operation()?;
         let ft = self.check_numeric()?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i))),
             self.len,
             ft,
             &self.validity_token,
+            &self.owner,
         )
     }
 
     /// Apply a binary (col, col) → col function element-wise.
     fn binary_op_col(&self, other: &Self, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
+        let _operations = self.enter_pair_operation(other)?;
         let ft = self.check_numeric()?;
         other.check_numeric()?;
         if self.len != other.len {
@@ -238,28 +318,33 @@ impl PyViewColumn {
             self.len,
             ft,
             &self.validity_token,
+            &self.owner,
         )
     }
 
     /// Apply a binary (col, scalar) → col function element-wise.
     fn binary_op_scalar(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
+        let _operation = self.enter_operation()?;
         let ft = self.check_numeric()?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i), scalar)),
             self.len,
             ft,
             &self.validity_token,
+            &self.owner,
         )
     }
 
     /// Apply a binary (scalar, col) → col function element-wise.
     fn binary_op_scalar_left(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
+        let _operation = self.enter_operation()?;
         let ft = self.check_numeric()?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(scalar, self.read_f64_at(i))),
             self.len,
             ft,
             &self.validity_token,
+            &self.owner,
         )
     }
 
@@ -271,33 +356,57 @@ impl PyViewColumn {
         offset: usize,
         field_type: Option<FieldType>,
     ) -> PyResult<Self> {
+        let _operation = self.enter_operation()?;
         if self.owned_data.is_some() {
             return Err(PyRuntimeError::new_err(
                 "Cannot access sub-columns on a temporary ViewColumn from arithmetic.\n\
                  Assign it back to an ECS-backed column first.",
             ));
         }
-        // Validate against the element extent: for typed columns use the type's byte size,
-        // for opaque struct columns fall back to the stride.
-        let extent = match self.field_type {
-            Some(ft) => ft.size_bytes(),
-            None => self.stride,
-        };
-        if extent > 0 && offset >= extent {
+        let parent_extent = self.element_extent;
+        if offset >= parent_extent {
             return Err(PyRuntimeError::new_err(format!(
                 "Offset {offset} out of bounds for '{}' ({} bytes)",
                 self.dtype(),
-                extent,
+                parent_extent,
             )));
         }
+        let child_extent = match field_type {
+            Some(ft) => {
+                let size = ft.size_bytes();
+                let end = offset.checked_add(size).ok_or_else(|| {
+                    PyRuntimeError::new_err(format!(
+                        "Offset {offset} with dtype '{}' overflows bounds for '{}' ({} bytes)",
+                        ft.to_numpy_dtype_str(),
+                        self.dtype(),
+                        parent_extent,
+                    ))
+                })?;
+                if end > parent_extent {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Offset {offset} with dtype '{}' out of bounds for '{}' ({} bytes)",
+                        ft.to_numpy_dtype_str(),
+                        self.dtype(),
+                        parent_extent,
+                    )));
+                }
+                size
+            }
+            None => parent_extent - offset,
+        };
         Ok(Self {
-            // Safety: `offset < extent <= stride`, so the resulting pointer is still within
-            // the same ECS column allocation. Validity is inherited via the shared token.
+            // Safety: `offset < parent_extent`, and parent_extent was derived
+            // from the same strided ECS element or owned buffer. The resulting
+            // pointer is still within the same allocation; validity is inherited
+            // via the shared token.
             ptr: unsafe { self.ptr.add(offset) },
             len: self.len,
             stride: self.stride,
+            element_extent: child_extent,
+            writable: self.writable,
             field_type,
             validity_token: self.validity_token.clone(),
+            owner: self.owner.clone(),
             component_type: None,
             builtin_component_type: None,
             owned_data: None,
@@ -305,10 +414,14 @@ impl PyViewColumn {
     }
 }
 
-// Safety: `ptr` is only accessed while the validity token is live (checked before every
-// read/write), and `Arc<AtomicBool>` coordinates access across threads. The raw pointer
-// is never aliased mutably while any shared reference exists.
+// SAFETY: ECS-backed columns retain `BatchColumn`, whose thread-affine validity
+// check and operation fence guard every Rust-side dereference. The Numba escape
+// hatch checks validity while unboxing and must finish native pointer use before
+// the system returns; Bevy scheduler access and exact batch ranges exclude ECS
+// aliases during that window. Test-owned buffers are never exposed across tests.
 unsafe impl Send for PyViewColumn {}
+// SAFETY: sharing the wrapper does not bypass those checks. Cross-thread Python
+// access fails the core validity check before pointer exposure or dereference.
 unsafe impl Sync for PyViewColumn {}
 
 #[pymethods]
@@ -341,7 +454,7 @@ impl PyViewColumn {
     /// Returns False if the system that created this view has finished execution.
     #[getter]
     fn is_valid(&self) -> bool {
-        self.validity_token.load(Ordering::Relaxed)
+        self.check_live().is_ok()
     }
 
     /// Get the raw pointer (for Numba unbox only).
@@ -349,7 +462,7 @@ impl PyViewColumn {
     /// This checks validity before returning the pointer.
     #[getter]
     fn ptr(&self) -> PyResult<usize> {
-        if !self.is_valid() {
+        if self.check_live().is_err() {
             return Err(PyRuntimeError::new_err(
                 "CRITICAL: Accessing stale ViewColumn!\n\
                  This view is only valid within the system that created it.\n\
@@ -374,6 +487,12 @@ impl PyViewColumn {
     #[getter]
     fn stride(&self) -> usize {
         self.stride
+    }
+
+    /// Whether this column permits writes.
+    #[getter]
+    fn writable(&self) -> bool {
+        self.writable
     }
 
     /// Get the NumPy dtype string (e.g., "f4", "i8", "u1", "struct").
@@ -402,10 +521,13 @@ impl PyViewColumn {
             "i8" => Some(FieldType::I64),
             "u4" => Some(FieldType::U32),
             "u8" => Some(FieldType::U64),
+            "vec2" => Some(FieldType::Vec2),
+            "vec3" => Some(FieldType::Vec3),
+            "vec4" => Some(FieldType::Vec4),
             "struct" => None,
             _ => {
                 return Err(PyRuntimeError::new_err(format!(
-                    "Unknown dtype '{}'. Use one of: f4, f8, i4, i8, u4, u8, u1, struct",
+                    "Unknown dtype '{}'. Use one of: f4, f8, i4, i8, u4, u8, u1, vec2, vec3, vec4, struct",
                     dtype
                 )));
             }
@@ -415,6 +537,7 @@ impl PyViewColumn {
 
     /// Helper method for debugging: peek at a single value (with safety check).
     pub fn peek(&self, index: usize) -> PyResult<f64> {
+        let _operation = self.enter_operation()?;
         self.check_numeric()?;
         if index >= self.len {
             return Err(PyRuntimeError::new_err(format!(
@@ -427,6 +550,7 @@ impl PyViewColumn {
 
     /// Helper method for debugging: convert to Python list (with copy).
     pub fn to_list(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let _operation = self.enter_operation()?;
         self.check_numeric()?;
         let values: Vec<f64> = (0..self.len).map(|i| self.read_f64_at(i)).collect();
         Ok(PyList::new(py, values)?.into_any().unbind())
@@ -581,6 +705,7 @@ impl PyViewColumn {
 
     /// Support indexing for Numba JIT compatibility.
     fn __getitem__(&self, index: isize) -> PyResult<f64> {
+        let _operation = self.enter_operation()?;
         self.check_numeric()?;
 
         let idx = if index < 0 {
@@ -608,6 +733,8 @@ impl PyViewColumn {
 
     /// Support item assignment for Numba JIT compatibility.
     fn __setitem__(&mut self, index: isize, value: f64) -> PyResult<()> {
+        let _operation = self.enter_operation()?;
+        self.check_writable()?;
         self.check_numeric()?;
 
         let idx = if index < 0 {
@@ -640,9 +767,7 @@ impl PyViewColumn {
     /// The output is tightly packed (no stride gaps), suitable for wrapping
     /// with `numpy.frombuffer()` or JAX array construction.
     pub fn to_contiguous_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        if !self.is_valid() {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        let _operation = self.enter_operation()?;
         let elem_size = self
             .field_type
             .ok_or_else(|| {
@@ -670,9 +795,8 @@ impl PyViewColumn {
     /// The input must be tightly packed data in the column's native dtype.
     /// Handles stride-aware writes for non-contiguous archetype layouts.
     pub fn write_from_buffer(&self, data: &[u8]) -> PyResult<()> {
-        if !self.validity_token.load(Ordering::Relaxed) {
-            return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
-        }
+        let _operation = self.enter_operation()?;
+        self.check_writable()?;
         let elem_size = self
             .field_type
             .ok_or_else(|| PyRuntimeError::new_err("Cannot write to a composite/struct column"))?
@@ -790,17 +914,17 @@ impl PyViewColumn {
 
     fn __mod__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a % b)?;
+            let result = self.binary_op_col(&col.borrow(), python_remainder)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a % b)?;
+        let result = self.binary_op_scalar(scalar, python_remainder)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __rmod__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar_left(scalar, |a, b| a % b)?;
+        let result = self.binary_op_scalar_left(scalar, python_remainder)?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -866,7 +990,7 @@ impl PyViewColumn {
     }
 
     fn round(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::round)?;
+        let result = self.unary_op(python_round)?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -891,7 +1015,7 @@ impl PyViewColumn {
     }
 
     fn sign(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::signum)?;
+        let result = self.unary_op(python_sign)?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -902,26 +1026,26 @@ impl PyViewColumn {
 
     fn min(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), f64::min)?;
+            let result = self.binary_op_col(&col.borrow(), python_minimum)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, f64::min)?;
+        let result = self.binary_op_scalar(scalar, python_minimum)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn max(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), f64::max)?;
+            let result = self.binary_op_col(&col.borrow(), python_maximum)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, f64::max)?;
+        let result = self.binary_op_scalar(scalar, python_maximum)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn clamp(&self, py: Python, min_val: f64, max_val: f64) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(|a| a.clamp(min_val, max_val))?;
+        let result = self.unary_op(|a| python_clip(a, min_val, max_val))?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -940,10 +1064,11 @@ impl PyViewColumn {
     /// Used by Python `__setattr__` on wrapper classes to enable:
     ///     batch.column_mut(Transform).translation.y = (col * 0.5).sin()
     pub fn set(&self, value: &Bound<PyAny>) -> PyResult<()> {
-        self.check_numeric()?;
-
+        self.check_writable()?;
         if let Ok(col) = value.cast::<PyViewColumn>() {
             let src = col.borrow();
+            let _operations = self.enter_pair_operation(&src)?;
+            self.check_numeric()?;
             src.check_numeric()?;
             if self.len != src.len {
                 return Err(PyRuntimeError::new_err(format!(
@@ -958,6 +1083,8 @@ impl PyViewColumn {
         }
 
         // Scalar broadcast
+        let _operation = self.enter_operation()?;
+        self.check_numeric()?;
         let scalar: f64 = value.extract().map_err(|_| {
             PyRuntimeError::new_err("Cannot assign: value must be a ViewColumn or a number")
         })?;

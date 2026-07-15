@@ -603,6 +603,15 @@ fn generate_bridge_tokens(
                     concat!(#component_name, " cannot be spawned from Python")
                 ))
             }
+
+            fn prepare_uniform(
+                &self,
+                _component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<Box<dyn pybevy_core::PreparedUniformComponent>> {
+                Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    concat!(#component_name, " cannot be spawned from Python")
+                ))
+            }
         }
     } else {
         quote! {
@@ -643,6 +652,15 @@ fn generate_bridge_tokens(
                     world.entity_mut(entity_id).insert(native.clone());
                 }
                 Ok(())
+            }
+
+            fn prepare_uniform(
+                &self,
+                component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<Box<dyn pybevy_core::PreparedUniformComponent>> {
+                let py_component = component.extract::<pyo3::PyRef<#py_type>>()?;
+                let native: #bevy_type = py_component.storage.as_ref()?.clone();
+                Ok(Box::new(pybevy_core::PreparedNativeUniform::new(native)))
             }
         }
     };
@@ -816,6 +834,7 @@ fn generate_bridge_tokens(
         let snake_name = to_snake_case(&bridge_name_str);
         let meta_fn_name = quote::format_ident!("{}_batch_field_meta", snake_name);
         let insert_fn_name = quote::format_ident!("{}_batch_insert", snake_name);
+        let prepare_fn_name = quote::format_ident!("{}_batch_prepare", snake_name);
         let register_fn_name = quote::format_ident!("register_{}_batch", snake_name);
         let from_numpy_fn_name = quote::format_ident!("{}_from_numpy", snake_name);
 
@@ -950,18 +969,29 @@ fn generate_bridge_tokens(
                 ]
             }
 
+            fn #prepare_fn_name(
+                py: pyo3::Python,
+                batch: &pybevy_core::PyRustComponentBatch,
+            ) -> pyo3::PyResult<Box<dyn pybevy_core::PreparedBatchComponent>> {
+                #(#array_extract_stmts)*
+                let mut values = Vec::with_capacity(batch.count);
+                for i in 0..batch.count {
+                    let mut component = <#bevy_type>::default();
+                    #(#field_assignments)*
+                    values.push(component);
+                }
+                Ok(Box::new(pybevy_core::PreparedNativeBatch::new(values)))
+            }
+
             fn #insert_fn_name(
                 py: pyo3::Python,
                 batch: &pybevy_core::PyRustComponentBatch,
                 entities: &[bevy::ecs::entity::Entity],
                 world: &mut bevy::ecs::world::World,
             ) -> pyo3::PyResult<()> {
-                #(#array_extract_stmts)*
-                for (i, &entity_id) in entities.iter().enumerate() {
-                    let mut component = <#bevy_type>::default();
-                    #(#field_assignments)*
-                    world.entity_mut(entity_id).insert(component);
-                }
+                let mut prepared = #prepare_fn_name(py, batch)?;
+                let component_id = world.register_component::<#bevy_type>();
+                prepared.insert(component_id, entities, world);
                 Ok(())
             }
 
@@ -970,6 +1000,7 @@ fn generate_bridge_tokens(
                     component_name: #component_name,
                     fields: Box::leak(#meta_fn_name().into_boxed_slice()),
                     insert_fn: #insert_fn_name,
+                    prepare_fn: #prepare_fn_name,
                 }));
 
                 pyo3::Python::attach(|py| {

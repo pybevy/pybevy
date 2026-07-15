@@ -4,7 +4,9 @@ use bevy::{
     camera::visibility::Visibility,
     ecs::{entity::Entity, world::World},
 };
-use pybevy_core::{BatchComponent, registry::global_registry};
+use pybevy_core::{
+    BatchComponent, PreparedBatchComponent, PreparedNativeBatch, registry::global_registry,
+};
 use pyo3::{PyTypeInfo, prelude::*};
 
 use crate::visibility::PyVisibility;
@@ -55,6 +57,30 @@ impl BatchComponent for VisibilityBatchBridge {
         batch.count(py)
     }
 
+    fn prepare(
+        &self,
+        py: Python,
+        batch: &Bound<PyAny>,
+    ) -> PyResult<Box<dyn PreparedBatchComponent>> {
+        let batch = batch.extract::<PyVisibilityBatch>()?;
+        let array = batch.visibility.bind(py);
+        let np = py.import("numpy")?;
+        let bool_array = array.call_method1("astype", (np.getattr("bool_")?,))?;
+        let values = bool_array
+            .call_method0("tolist")?
+            .extract::<Vec<bool>>()?
+            .into_iter()
+            .map(|visible| {
+                if visible {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                }
+            })
+            .collect();
+        Ok(Box::new(PreparedNativeBatch::new(values)))
+    }
+
     fn insert_bulk(
         &self,
         py: Python,
@@ -62,24 +88,9 @@ impl BatchComponent for VisibilityBatchBridge {
         entities: &[Entity],
         world: &mut World,
     ) -> PyResult<()> {
-        let batch = batch.extract::<PyVisibilityBatch>()?;
-        let array = batch.visibility.bind(py);
-
-        // Cast to bool dtype via numpy (handles int, bool, etc.), then extract
-        let np = py.import("numpy")?;
-        let bool_array = array.call_method1("astype", (np.getattr("bool_")?,))?;
-        let values: Vec<bool> = bool_array.call_method0("tolist")?.extract()?;
-
-        // Tight loop — pure Rust, no Python FFI per entity
-        for (&entity_id, &visible) in entities.iter().zip(values.iter()) {
-            let visibility = if visible {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            };
-            world.entity_mut(entity_id).insert(visibility);
-        }
-
+        let mut prepared = self.prepare(py, batch)?;
+        let component_id = world.register_component::<Visibility>();
+        prepared.insert(component_id, entities, world);
         Ok(())
     }
 }

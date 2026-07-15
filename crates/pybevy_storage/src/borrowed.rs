@@ -78,6 +78,11 @@ impl<T> BorrowedRef<T> {
     }
 
     #[inline(always)]
+    /// The validity flag gating this borrow (expires at system end).
+    pub fn validity(&self) -> &ValidityFlag {
+        &self.validity
+    }
+
     pub fn as_ptr(&self) -> *const T {
         self.ptr
     }
@@ -163,6 +168,11 @@ impl<T> BorrowedMut<T> {
     }
 
     #[inline(always)]
+    /// The validity flag gating this borrow (expires at system end).
+    pub fn validity(&self) -> &ValidityFlag {
+        &self.validity
+    }
+
     pub fn as_ptr(&self) -> *const T {
         self.ptr as *const T
     }
@@ -377,6 +387,7 @@ impl RevalidatingField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value_storage::ValueStorage;
 
     /// get_mut requires the flag to be in Write state, even though mutability
     /// is otherwise encoded in the type: a master flag downgraded to Read
@@ -402,5 +413,152 @@ mod tests {
 
         flag.set_invalid();
         assert!(matches!(borrow.get_mut(), Err(StorageError::InvalidAccess)));
+    }
+
+    #[test]
+    fn test_borrowed_ref_get_returns_value() {
+        let value = 42u32;
+        let flag = ValidityFlag::new_read();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedRef::new(&value, flag) };
+        assert_eq!(*borrow.get().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_borrowed_ref_get_rejects_when_invalid() {
+        let value = 42u32;
+        let flag = ValidityFlag::new();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedRef::new(&value, flag) };
+        assert!(borrow.get().is_err());
+    }
+
+    #[test]
+    fn test_borrowed_ref_clone_shares_validity() {
+        let value = 7u32;
+        let flag = ValidityFlag::new_read();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedRef::new(&value, flag.clone()) };
+        let cloned = borrow.clone();
+        assert_eq!(*cloned.get().unwrap(), 7);
+        flag.set_invalid();
+        assert!(cloned.get().is_err());
+        assert!(borrow.get().is_err());
+    }
+
+    #[test]
+    fn test_borrowed_ref_borrow_field_returns_borrowed_storage() {
+        let pair = (1u32, 2u32);
+        let flag = ValidityFlag::new_read();
+        // SAFETY: pair outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedRef::new(&pair, flag) };
+        let field: ValueStorage<u32> = borrow.borrow_field(|p| &p.1).unwrap();
+        assert_eq!(field.get().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_borrowed_ref_borrow_optional_field_some() {
+        let opt: Option<u32> = Some(99);
+        let flag = ValidityFlag::new_read();
+        // SAFETY: opt outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedRef::new(&opt, flag) };
+        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
+        assert!(field.is_some());
+        assert_eq!(field.unwrap().get().unwrap(), 99);
+    }
+
+    #[test]
+    fn test_borrowed_ref_borrow_optional_field_none() {
+        let opt: Option<u32> = None;
+        let flag = ValidityFlag::new_read();
+        // SAFETY: opt outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedRef::new(&opt, flag) };
+        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
+        assert!(field.is_none());
+    }
+
+    #[test]
+    fn test_borrowed_mut_get_reads_value() {
+        let mut value = 7u32;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut value, flag) };
+        assert_eq!(*borrow.get().unwrap(), 7);
+    }
+
+    #[test]
+    fn test_borrowed_mut_get_mut_modifies_value() {
+        let mut value = 7u32;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value outlives the borrow within this test scope
+        let mut borrow = unsafe { BorrowedMut::new(&mut value, flag) };
+        *borrow.get_mut().unwrap() = 8;
+        assert_eq!(value, 8);
+    }
+
+    #[test]
+    fn test_borrowed_mut_share_aliases() {
+        let mut value = 7u32;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut value, flag) };
+        let mut shared = borrow.share();
+        *shared.get_mut().unwrap() = 42;
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn test_borrowed_mut_share_shares_validity() {
+        let mut value = 7u32;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut value, flag.clone()) };
+        let mut shared = borrow.share();
+        flag.set_invalid();
+        assert!(shared.get_mut().is_err());
+    }
+
+    #[test]
+    fn test_borrowed_mut_clone_as_ref_is_readonly() {
+        let mut value = 7u32;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut value, flag) };
+        let reff = borrow.clone_as_ref();
+        assert_eq!(*reff.get().unwrap(), 7);
+    }
+
+    #[test]
+    fn test_borrowed_mut_borrow_field_returns_mutable_storage() {
+        let mut pair = (1u32, 2u32);
+        let flag = ValidityFlag::new_write();
+        // SAFETY: pair outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut pair, flag) };
+        let mut field: ValueStorage<u32> = borrow.borrow_field(|p| &p.1).unwrap();
+        *field.as_mut().unwrap() = 99;
+        assert_eq!(pair.1, 99);
+    }
+
+    #[test]
+    fn test_borrowed_mut_borrow_optional_field_some() {
+        let mut opt: Option<u32> = Some(5);
+        let flag = ValidityFlag::new_write();
+        // SAFETY: opt outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut opt, flag) };
+        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
+        assert!(field.is_some());
+        let mut f = field.unwrap();
+        *f.as_mut().unwrap() = 77;
+        assert_eq!(opt, Some(77));
+    }
+
+    #[test]
+    fn test_borrowed_mut_borrow_optional_field_none() {
+        let mut opt: Option<u32> = None;
+        let flag = ValidityFlag::new_write();
+        // SAFETY: opt outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut opt, flag) };
+        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
+        assert!(field.is_none());
     }
 }

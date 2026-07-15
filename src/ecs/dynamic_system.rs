@@ -20,10 +20,12 @@ use pybevy_ecs::shared::access_audit::assert_query_access_declared;
 use pybevy_ecs::shared::{
     access_validation::{self as shared_validation},
     command_queue_helpers::create_commands_from_queue,
+    message_store::{MessageRegistryCore, MessageTypeKey},
     param_spec::{
         BackendKeys, ComponentSpec, FilterSpec, KeyResolver, ParamSpec, QuerySpec, ResolvedMessage,
         ResolvedResource, build_declared_access, conflict_error_message, to_param_accesses,
     },
+    parity_trace::ParityRunHandle,
     run_scaffold::{RunScaffoldResult, run_scaffold},
 };
 use pybevy_reload::{HotReloadGeneration, SystemProfiler, SystemStage};
@@ -38,17 +40,17 @@ use smallvec::SmallVec;
 use crate::{
     assets::assets::PyAssets,
     ecs::{
-        commands::PyCommands,
+        commands::{CommandErrorSink, PyCommands},
         component_type::{PyComponentType, register_component_id, register_custom_component},
         filter::QueryFilter,
-        helpers::{
-            type_utils::get_python_type_name,
-            validity_guard::{ValidityFlag, ValidityGuard},
-        },
-        message::{PyMessageReader, PyMessageWriter},
-        messages::{CursorStorage, MessageRegistry, MessageType, MessageWorld, PyMessages},
+        helpers::{type_utils::get_python_type_name, validity_guard::ValidityFlag},
+        message::{PyMessageMutator, PyMessageReader, PyMessageWriter, python_message_cursor},
+        messages::{CursorStorage, MessageType, MessageWorld, PyMessages},
         mutable::PyMut,
         observer::PyOn,
+        python_message::{
+            PythonMessageClassTable, PythonMessageStore, resolve_from_cell, resolve_from_world,
+        },
         query::{
             query_param::QueryData,
             query_runtime::{CachedQuery, PyQueryIter},
@@ -56,6 +58,7 @@ use crate::{
         },
         resource::PyResource,
         resource_type::{PyResourceStorage, PyResourceType, ResourceRegistry},
+        state::{PyStateMachineRegistry, untyped_state_resource_name},
         system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType},
         view::{cached_view::CachedPyView, view::PyView, view_param::ViewParamType},
         world::PyWorld,
@@ -70,7 +73,7 @@ fn is_verbose() -> bool {
 }
 
 /// Helper to lock a mutex, recovering from poison if a thread panicked while holding it.
-fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| {
         bevy::log::warn!("Recovered from poisoned DynamicSystemInner mutex");
         poisoned.into_inner()
@@ -79,7 +82,9 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// Handle to a DynamicSystem's Python-holding inner state.
 /// Used by DynamicSystemRegistry to release Python references from old-generation systems.
-pub(crate) type DynamicSystemHandle = Arc<Mutex<DynamicSystemInner>>;
+pub(crate) type DynamicSystemHandle = pybevy_ecs::shared::system_runtime::SystemHandle<
+    crate::ecs::system_interpreter::MainInterpreter,
+>;
 
 /// One buffered Python system error awaiting transfer into `LastSystemError`.
 /// Kept off the world so `run_unsafe`'s parallel error path performs no
@@ -115,24 +120,7 @@ pub(crate) struct DynamicSystemInner {
 unsafe impl Send for DynamicSystemInner {}
 unsafe impl Sync for DynamicSystemInner {}
 
-impl DynamicSystemInner {
-    /// Release all Python references held by this system.
-    /// Called when the generation is no longer needed.
-    ///
-    /// SAFETY: Caller MUST hold the GIL (via Python::attach) before calling.
-    /// This ensures consistent lock ordering: GIL → per-system Mutex, matching
-    /// the order used by DynamicSystem::run_unsafe. The previous implementation
-    /// acquired the GIL inside gut() (Mutex → GIL), which was an inversion.
-    pub(crate) fn gut(&mut self) {
-        if self.gutted {
-            return;
-        }
-        self.system_func = None;
-        self.cached_func = None;
-        self.message_cursor_storage.clear();
-        self.gutted = true;
-    }
-}
+impl DynamicSystemInner {}
 
 /// Clear the system parameter cache.
 /// Called when apps are dropped to prevent stale cache entries.
@@ -140,6 +128,7 @@ pub fn clear_system_param_cache() {
     SystemFunction::clear_cache();
 }
 
+#[allow(dead_code)]
 pub struct DynamicSystem {
     resources_to_read: Vec<ComponentId>,
     resources_to_write: Vec<ComponentId>,
@@ -339,6 +328,9 @@ pub(crate) fn lower_param_type(ty: &SystemParamType) -> ParamSpec<MainKeys> {
         SystemParamType::MessageReader { message_type } => ParamSpec::MessageReader {
             key: message_type.clone(),
         },
+        SystemParamType::MessageMutator { message_type } => ParamSpec::MessageMutator {
+            key: message_type.clone(),
+        },
         SystemParamType::On { .. } => ParamSpec::Observer,
     }
 }
@@ -355,7 +347,11 @@ pub(crate) fn lower_params(params: &[SystemParam]) -> Vec<ParamSpec<MainKeys>> {
 /// directly, since observers skip the `add_systems` gate.
 pub(crate) fn validate_system_params(params: &[SystemParam], func_name: &str) -> PyResult<()> {
     let specs = lower_params(params);
-    let accesses = to_param_accesses(&specs, |comp_type| comp_type.to_string());
+    let accesses = to_param_accesses(
+        &specs,
+        |comp_type| comp_type.to_string(),
+        MessageType::validation_identity,
+    );
     shared_validation::validate_access(&accesses)
         .map_err(|conflict| PyRuntimeError::new_err(conflict_error_message(func_name, &conflict)))
 }
@@ -365,8 +361,8 @@ pub(crate) fn validate_system_params(params: &[SystemParam], func_name: &str) ->
 /// Borrows the system's custom-component cache so custom components are
 /// registered on first sight and reused by the runtime (`PyQueryIter::new`
 /// reads this cache).
-struct MainResolver<'a> {
-    custom_component_ids: &'a mut HashMap<*const PyTypeObject, ComponentId>,
+pub(crate) struct MainResolver<'a> {
+    pub(crate) custom_component_ids: &'a mut HashMap<*const PyTypeObject, ComponentId>,
 }
 
 impl KeyResolver<MainKeys> for MainResolver<'_> {
@@ -387,9 +383,12 @@ impl KeyResolver<MainKeys> for MainResolver<'_> {
     }
 
     fn resource_ids(&mut self, world: &mut World, key: &Py<PyType>) -> ResolvedResource {
-        let resource_type = Python::attach(|py| {
+        let (resource_type, untyped_state) = Python::attach(|py| {
             let type_bound = key.bind(py);
-            PyResourceType::try_from((type_bound, py)).ok()
+            (
+                PyResourceType::try_from((type_bound, py)).ok(),
+                untyped_state_resource_name(type_bound).is_some(),
+            )
         });
         let Some(rt) = resource_type else {
             return ResolvedResource::default();
@@ -409,6 +408,9 @@ impl KeyResolver<MainKeys> for MainResolver<'_> {
             aux_reads.push(world.register_component::<ResourceRegistry>());
             aux_reads.push(world.register_component::<PyResourceStorage>());
         }
+        if untyped_state {
+            aux_reads.push(world.register_component::<PyStateMachineRegistry>());
+        }
         ResolvedResource { primary, aux_reads }
     }
 
@@ -426,6 +428,36 @@ impl KeyResolver<MainKeys> for MainResolver<'_> {
         write: bool,
     ) -> ResolvedMessage {
         let mut resolved = ResolvedMessage::default();
+        if let MessageType::Custom(py_type) = key {
+            resolved
+                .reads
+                .push(world.register_component::<PythonMessageStore>());
+            resolved
+                .reads
+                .push(world.register_component::<MessageRegistryCore>());
+            resolved
+                .reads
+                .push(world.register_component::<PythonMessageClassTable>());
+            let type_key =
+                Python::attach(|py| MessageTypeKey::new(py_type.bind(py).as_type_ptr() as usize));
+            if let Some(access_id) =
+                world
+                    .get_resource::<MessageRegistryCore>()
+                    .and_then(|registry| {
+                        registry
+                            .channel_for_type(type_key)
+                            .and_then(|channel| registry.metadata(channel))
+                            .map(|metadata| metadata.access_id)
+                    })
+            {
+                if write {
+                    resolved.writes.push(access_id);
+                } else {
+                    resolved.reads.push(access_id);
+                }
+            }
+            return resolved;
+        }
         if write {
             // Message buffers are resources; register (not just look up) the
             // id so access is declared even before the first write. Custom
@@ -438,14 +470,6 @@ impl KeyResolver<MainKeys> for MainResolver<'_> {
             // reader_resource_ids returns the primary Messages<T> id plus any
             // auxiliary read (KeyboardInput also reads ButtonInput<KeyCode>).
             resolved.reads.extend(key.reader_resource_ids(world));
-        }
-        // Custom message paths resolve their message number through the
-        // MessageRegistry resource at run time; declare that read so declared
-        // access covers the actual access.
-        if matches!(key, MessageType::Custom(_)) {
-            resolved
-                .reads
-                .push(world.register_component::<MessageRegistry>());
         }
         resolved
     }
@@ -464,6 +488,7 @@ impl KeyResolver<MainKeys> for MainResolver<'_> {
     }
 }
 
+#[allow(dead_code)]
 impl DynamicSystem {
     pub(crate) fn new(
         func: Py<PyAny>,
@@ -514,11 +539,16 @@ impl DynamicSystem {
             .iter()
             .any(|p| matches!(p.ty, SystemParamType::Commands));
 
-        // Allocate one cursor storage slot per MessageReader parameter
+        // Allocate one cursor storage slot per reader-like message parameter.
         let message_reader_count = system_func
             .params
             .iter()
-            .filter(|p| matches!(p.ty, SystemParamType::MessageReader { .. }))
+            .filter(|p| {
+                matches!(
+                    p.ty,
+                    SystemParamType::MessageReader { .. } | SystemParamType::MessageMutator { .. }
+                )
+            })
             .count();
         let message_cursor_storage: Vec<_> = (0..message_reader_count)
             .map(|_| Arc::new(Mutex::new(None)))
@@ -600,11 +630,12 @@ impl DynamicSystem {
     }
 }
 
+#[allow(dead_code)]
 impl DynamicSystem {
     /// Build the Python argument list for one run of a non-observer system.
     ///
     /// The shared run scaffold calls this as its `build_args` hook; the
-    /// rustpython backend's `build_system_args` is the counterpart. Fills
+    /// adapter-specific argument construction is the counterpart. Fills
     /// `args_buffer` in parameter order and returns `Some(err)` on the first
     /// parameter that fails to resolve (e.g. a missing resource), leaving the
     /// remaining parameters unbuilt.
@@ -616,7 +647,7 @@ impl DynamicSystem {
     /// parameter; the executor prevents a conflicting system from running
     /// concurrently, so the cell's unchecked borrows are unique.
     #[allow(clippy::too_many_arguments)]
-    unsafe fn build_run_args<'w, 'c1, 'c2>(
+    pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
         py: Python<'_>,
         params: &[SystemParam],
         query_caches: &[CachedQuery],
@@ -629,6 +660,8 @@ impl DynamicSystem {
         last_run: Tick,
         this_run: Tick,
         func_name: &str,
+        command_error_sink: &CommandErrorSink,
+        parity_trace: Option<ParityRunHandle>,
     ) -> Option<PyErr> {
         let mut message_reader_idx = 0usize;
         let mut query_cache_idx = 0usize;
@@ -641,6 +674,17 @@ impl DynamicSystem {
                 SystemParamType::Resource { type_obj, mutable } => {
                     // Fetch resource from world using PyResourceType
                     let type_bound = type_obj.bind(py);
+                    if let Some(state_name) = untyped_state_resource_name(type_bound) {
+                        // SAFETY: initialize declared a read of PyStateMachineRegistry
+                        // for untyped State/NextState parameters.
+                        let ambiguous = unsafe { world.get_resource::<PyStateMachineRegistry>() }
+                            .is_some_and(|registry| registry.is_ambiguous());
+                        if ambiguous {
+                            return Some(PyTypeError::new_err(format!(
+                                "System `{func_name}`: untyped {state_name} resource is ambiguous; use {state_name}[YourState]",
+                            )));
+                        }
+                    }
                     let resource_type = match PyResourceType::try_from((type_bound, py)) {
                         Ok(rt) => rt,
                         Err(e) => {
@@ -765,48 +809,114 @@ impl DynamicSystem {
                     let commands = commands_storage
                         .as_mut()
                         .expect("Commands should be pre-created");
-                    let py_commands = unsafe { PyCommands::new(commands, validity.clone()) };
+                    let py_commands = unsafe {
+                        PyCommands::new(
+                            commands,
+                            validity.clone(),
+                            command_error_sink.clone(),
+                            parity_trace.clone(),
+                        )
+                    };
                     let obj = Py::new(py, py_commands).expect("Failed to create PyCommands");
                     args_buffer.push(obj.into_any());
                 }
                 SystemParamType::MessageWriter { message_type } => {
+                    if let MessageType::Custom(py_type) = message_type {
+                        // SAFETY: KeyResolver declared reads for the neutral store,
+                        // registry, and class table plus this channel's synthetic write.
+                        let resolved = match unsafe {
+                            resolve_from_cell(world, py_type.bind(py).as_type_ptr())
+                        } {
+                            Ok(resolved) => resolved,
+                            Err(error) => return Some(error),
+                        };
+                        let py_writer = PyMessageWriter::python(
+                            message_type.clone(),
+                            resolved,
+                            validity.clone(),
+                            parity_trace.clone(),
+                        );
+                        let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
+                        args_buffer.push(obj.into_any());
+                        continue;
+                    }
                     // Create PyMessageWriter with narrow cell-based world access.
                     // SAFETY: `initialize` declares write access for this
                     // writer's Messages<T> id; the writer only reaches that buffer.
                     let mw = unsafe { MessageWorld::new(world, validity.clone()) };
-                    let py_writer = PyMessageWriter {
-                        message_type: message_type.clone(),
-                        world: mw,
-                    };
+                    let py_writer =
+                        PyMessageWriter::native(message_type.clone(), mw, parity_trace.clone());
                     let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
                     args_buffer.push(obj.into_any());
                 }
                 SystemParamType::MessageReader { message_type } => {
+                    let cursor = message_cursor_storage.get(message_reader_idx).cloned();
+                    message_reader_idx += 1;
+                    if let MessageType::Custom(py_type) = message_type {
+                        // SAFETY: KeyResolver declared all resources read by resolution.
+                        let resolved = match unsafe {
+                            resolve_from_cell(world, py_type.bind(py).as_type_ptr())
+                        } {
+                            Ok(resolved) => resolved,
+                            Err(error) => return Some(error),
+                        };
+                        let cursor = match python_message_cursor(cursor) {
+                            Ok(cursor) => cursor,
+                            Err(error) => return Some(error),
+                        };
+                        let py_reader = PyMessageReader::python(resolved, cursor, validity.clone());
+                        let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
+                        args_buffer.push(obj.into_any());
+                        continue;
+                    }
                     // Create PyMessageReader with narrow cell-based world access.
                     // SAFETY: `initialize` declares reads for this reader's
                     // resource ids (Messages<T>, plus ButtonInput<KeyCode> for
                     // KeyboardInput); the reader only reaches those.
                     let mw_1 = unsafe { MessageWorld::new(world, validity.clone()) };
-                    let mw_2 = unsafe { MessageWorld::new(world, validity.clone()) };
-                    let cursor = message_cursor_storage.get(message_reader_idx).cloned();
-                    message_reader_idx += 1;
                     let py_messages = PyMessages {
                         message_type: message_type.clone(),
                         world: mw_1,
                         cursor_storage: cursor,
                     };
-                    let py_reader = PyMessageReader {
-                        world: mw_2,
-                        messages: py_messages,
-                    };
+                    let py_reader = PyMessageReader::native(py_messages);
                     let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
+                    args_buffer.push(obj.into_any());
+                }
+                SystemParamType::MessageMutator { message_type } => {
+                    let cursor = message_cursor_storage.get(message_reader_idx).cloned();
+                    message_reader_idx += 1;
+                    let MessageType::Custom(py_type) = message_type else {
+                        return Some(PyTypeError::new_err(
+                            "MessageMutator currently supports custom Python messages only",
+                        ));
+                    };
+                    // SAFETY: the shared access walk declares store/registry/class-table
+                    // reads and this channel's synthetic write access.
+                    let resolved =
+                        match unsafe { resolve_from_cell(world, py_type.bind(py).as_type_ptr()) } {
+                            Ok(resolved) => resolved,
+                            Err(error) => return Some(error),
+                        };
+                    let cursor = match python_message_cursor(cursor) {
+                        Ok(cursor) => cursor,
+                        Err(error) => return Some(error),
+                    };
+                    let py_mutator = PyMessageMutator::python(
+                        message_type.clone(),
+                        resolved,
+                        cursor,
+                        validity.clone(),
+                        parity_trace.clone(),
+                    );
+                    let obj = Py::new(py, py_mutator).expect("Failed to create PyMessageMutator");
                     args_buffer.push(obj.into_any());
                 }
                 SystemParamType::On { .. } => {
                     // On parameters are only valid in observer contexts.
-                    // Observer dispatch uses execute_system_func() instead of run_unsafe().
+                    // Observer dispatch uses the shared trigger-aware shell.
                     unreachable!(
-                        "On parameter in non-observer system — observers use execute_system_func()"
+                        "On parameter in non-observer system — observers use the trigger-aware runtime"
                     )
                 }
                 SystemParamType::Assets {
@@ -938,7 +1048,7 @@ impl System for DynamicSystem {
                         };
 
                         // Build the Python argument list via `build_run_args` (the
-                        // rustpython backend's `build_system_args` is the counterpart).
+                        // adapter-specific argument construction is the counterpart).
                         // SAFETY: `world` is this run's valid cell and `validity` stays
                         // active for the whole attach block.
                         let param_error = {
@@ -955,6 +1065,12 @@ impl System for DynamicSystem {
                                 ctx.ticks.last_run,
                                 ctx.ticks.this_run,
                                 &self.func_name,
+                                &CommandErrorSink::new(
+                                    self.error_state.clone(),
+                                    self.error_buffer.clone(),
+                                    ctx.world.get_resource::<HotReloadGeneration>().is_none(),
+                                ),
+                                None,
                             )
                         };
 
@@ -1139,8 +1255,8 @@ impl System for DynamicSystem {
                 self.command_queue.append(&mut local_queue);
 
                 // Profiler epilogue: record this run's duration if a profiler is present.
-                // Shared with the rustpython backend so the profiler + Time read cannot
-                // drift. SAFETY: `world` is valid; the SystemProfiler read is declared.
+                // Kept in the shared ordering so profiler and Time reads cannot drift.
+                // SAFETY: `world` is valid; the SystemProfiler read is declared.
                 let world_ref = unsafe { world.world() };
                 SystemProfiler::record_run(world_ref, &self.func_name, duration, self.stage);
 
@@ -1233,9 +1349,11 @@ impl System for DynamicSystem {
 
         // Conflict validation needs `&mut World` for ComponentId lookups, so it
         // runs here; run_unsafe only reads the stored result.
-        let accesses = to_param_accesses(&specs, |comp_type| {
-            self.get_component_id_for_validation(world, comp_type)
-        });
+        let accesses = to_param_accesses(
+            &specs,
+            |comp_type| self.get_component_id_for_validation(world, comp_type),
+            MessageType::validation_identity,
+        );
         self.precomputed_validation =
             shared_validation::validate_access(&accesses)
                 .err()
@@ -1291,6 +1409,7 @@ impl System for DynamicSystem {
     }
 }
 
+#[allow(dead_code)]
 impl DynamicSystem {
     /// Return the parameter-conflict error precomputed in `initialize`, if any.
     fn validate_params(&self) -> Result<(), SystemParamValidationError> {
@@ -1346,25 +1465,27 @@ impl DynamicSystem {
     }
 }
 
-/// Execute a system function with full parameter injection.
+/// Build arguments and invoke one observer callable using the caller's
+/// validity window and callback-local command queue.
 ///
-/// This is used by the observer dispatch to inject all system parameters
-/// (Commands, Query, Res, etc.) alongside the On trigger parameter.
-///
-/// # Arguments
-/// * `py` - Python GIL token
-/// Get or create a synthetic ComponentId for an asset type, keyed by Python type pointer.
-/// Used to register `Res[Assets[T]]`/`ResMut[Assets[T]]` access in FilteredAccessSet
-/// so Bevy's scheduler prevents cross-system data races on the same asset type.
-/// * `system_func` - The parsed system function with parameters
-/// * `world` - Mutable world reference
-/// * `on_param` - The On trigger parameter (required for observer dispatch)
-pub(crate) fn execute_system_func(
+/// # Safety
+/// `world` must be held exclusively for the complete call and `validity` must
+/// remain active until every argument and transient query cache has dropped.
+pub(crate) unsafe fn execute_prepared_observer(
     py: Python,
-    system_func: &SystemFunction,
-    world: &mut World,
+    callable: &Bound<'_, PyAny>,
+    params: &[SystemParam],
+    world_cell: UnsafeWorldCell<'_>,
+    command_queue: &mut CommandQueue,
     on_param: Py<PyOn>,
+    validity: &ValidityFlag,
+    command_error_sink: &CommandErrorSink,
+    message_cursor_storage: &[CursorStorage],
+    parity_trace: Option<ParityRunHandle>,
 ) -> PyResult<()> {
+    // SAFETY: the observer core supplies exclusive access for this callback;
+    // every derived wrapper is fenced by `validity` and drops before return.
+    let world = unsafe { world_cell.world_mut() };
     // Transient per-Query cached states for this observer dispatch. Observers have no
     // DynamicSystem cache (they run outside the schedule), but they hold an exclusive
     // `&mut World`, so building a CachedQuery here is sound. Boxed so each state has a
@@ -1373,10 +1494,19 @@ pub(crate) fn execute_system_func(
     // these caches are freed, so any leaked PyQueryIter sees "invalid" before use.
     let mut transient_caches: Vec<Box<CachedQuery>> = Vec::new();
 
-    let validity = ValidityFlag::new();
-    let _validity_guard = ValidityGuard::new(validity.clone());
-
-    let mut args_buffer: Vec<Py<PyAny>> = Vec::with_capacity(system_func.params.len());
+    let needs_commands = params
+        .iter()
+        .any(|param| matches!(param.ty, SystemParamType::Commands));
+    // Keep the Commands façade alive through argument construction and the
+    // Python call: PyCommands stores a validity-fenced pointer to this value.
+    let mut commands =
+        needs_commands.then(|| create_commands_from_queue(command_queue, world_cell));
+    // Declared after `commands` and transient caches so Python argument
+    // destruction (including reentrant finalizers) happens while every raw
+    // pointer target is still alive. The core invalidates immediately after
+    // this helper returns.
+    let mut args_buffer: Vec<Py<PyAny>> = Vec::with_capacity(params.len());
+    let mut message_reader_idx = 0usize;
 
     // Build the executor's ptr-keyed custom_component_ids cache from the neutral
     // (usize-keyed) registry, recovering each `*const PyTypeObject` from its
@@ -1395,14 +1525,25 @@ pub(crate) fn execute_system_func(
         }
     };
 
-    for param in &system_func.params {
+    for param in params {
         match &param.ty {
             SystemParamType::On { .. } => {
                 args_buffer.push(on_param.clone_ref(py).into_any());
             }
             SystemParamType::Commands => {
+                // SAFETY: the neutral observer core owns this callback-local
+                // queue and matching exclusive World cell until all arguments
+                // have dropped; it applies the queue only after invalidation.
+                let commands = commands
+                    .as_mut()
+                    .expect("Commands parameter requires a local Commands façade");
                 let py_commands = unsafe {
-                    PyCommands::from_world_temporary(world as *mut World, validity.clone())
+                    PyCommands::new(
+                        commands,
+                        validity.clone(),
+                        command_error_sink.clone(),
+                        parity_trace.clone(),
+                    )
                 };
                 let obj = Py::new(py, py_commands).expect("Failed to create PyCommands");
                 args_buffer.push(obj.into_any());
@@ -1447,6 +1588,15 @@ pub(crate) fn execute_system_func(
             }
             SystemParamType::Resource { type_obj, mutable } => {
                 let type_bound = type_obj.bind(py);
+                if let Some(state_name) = untyped_state_resource_name(type_bound)
+                    && world
+                        .get_resource::<PyStateMachineRegistry>()
+                        .is_some_and(|registry| registry.is_ambiguous())
+                {
+                    return Err(PyTypeError::new_err(format!(
+                        "untyped {state_name} resource is ambiguous; use {state_name}[YourState]",
+                    )));
+                }
                 let resource_type = PyResourceType::try_from((type_bound, py))?;
                 let resource = if *mutable {
                     resource_type.get_from_world_mut(world, py, validity.clone())?
@@ -1528,34 +1678,69 @@ pub(crate) fn execute_system_func(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::MessageWriter { message_type } => {
+                if let MessageType::Custom(py_type) = message_type {
+                    let resolved = resolve_from_world(world, py_type.bind(py).as_type_ptr())?;
+                    let py_writer = PyMessageWriter::python(
+                        message_type.clone(),
+                        resolved,
+                        validity.clone(),
+                        parity_trace.clone(),
+                    );
+                    let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
+                    args_buffer.push(obj.into_any());
+                    continue;
+                }
                 // SAFETY: observer dispatch holds an exclusive `&mut World`; the cell
                 // derived from it is fenced by `validity`.
                 let mw =
                     unsafe { MessageWorld::new(world.as_unsafe_world_cell(), validity.clone()) };
-                let py_writer = PyMessageWriter {
-                    message_type: message_type.clone(),
-                    world: mw,
-                };
+                let py_writer =
+                    PyMessageWriter::native(message_type.clone(), mw, parity_trace.clone());
                 let obj = Py::new(py, py_writer).expect("Failed to create PyMessageWriter");
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::MessageReader { message_type } => {
+                let cursor = message_cursor_storage.get(message_reader_idx).cloned();
+                message_reader_idx += 1;
+                if let MessageType::Custom(py_type) = message_type {
+                    let resolved = resolve_from_world(world, py_type.bind(py).as_type_ptr())?;
+                    let cursor = python_message_cursor(cursor)?;
+                    let py_reader = PyMessageReader::python(resolved, cursor, validity.clone());
+                    let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
+                    args_buffer.push(obj.into_any());
+                    continue;
+                }
                 // SAFETY: observer dispatch holds an exclusive `&mut World`; the cells
                 // derived from it are fenced by `validity`.
                 let mw_1 =
                     unsafe { MessageWorld::new(world.as_unsafe_world_cell(), validity.clone()) };
-                let mw_2 =
-                    unsafe { MessageWorld::new(world.as_unsafe_world_cell(), validity.clone()) };
                 let py_messages = PyMessages {
                     message_type: message_type.clone(),
                     world: mw_1,
-                    cursor_storage: None,
+                    cursor_storage: cursor,
                 };
-                let py_reader = PyMessageReader {
-                    world: mw_2,
-                    messages: py_messages,
-                };
+                let py_reader = PyMessageReader::native(py_messages);
                 let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
+                args_buffer.push(obj.into_any());
+            }
+            SystemParamType::MessageMutator { message_type } => {
+                let cursor = message_cursor_storage.get(message_reader_idx).cloned();
+                message_reader_idx += 1;
+                let MessageType::Custom(py_type) = message_type else {
+                    return Err(PyTypeError::new_err(
+                        "MessageMutator currently supports custom Python messages only",
+                    ));
+                };
+                let resolved = resolve_from_world(world, py_type.bind(py).as_type_ptr())?;
+                let cursor = python_message_cursor(cursor)?;
+                let py_mutator = PyMessageMutator::python(
+                    message_type.clone(),
+                    resolved,
+                    cursor,
+                    validity.clone(),
+                    parity_trace.clone(),
+                );
+                let obj = Py::new(py, py_mutator).expect("Failed to create PyMessageMutator");
                 args_buffer.push(obj.into_any());
             }
         }
@@ -1563,10 +1748,10 @@ pub(crate) fn execute_system_func(
 
     // Call the Python function
     if args_buffer.is_empty() {
-        system_func.func.bind(py).call0()?;
+        callable.call0()?;
     } else {
         let tuple = PyTuple::new(py, &args_buffer).expect("Failed to create PyTuple");
-        system_func.func.bind(py).call1(tuple)?;
+        callable.call1(tuple)?;
     }
 
     Ok(())

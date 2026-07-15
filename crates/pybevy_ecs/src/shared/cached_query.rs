@@ -222,9 +222,9 @@ impl CachedQueryCore {
         Self::with_state(state, spec)
     }
 
-    /// Build with a `FilteredEntityMut` state unconditionally. The RustPython
-    /// backend uses this because its per-entity extraction paths are not yet
-    /// variant-aware; migrating it to [`Self::build_auto`] is a known
+    /// Build with a `FilteredEntityMut` state unconditionally. This preserves
+    /// compatibility with adapter extraction paths that are not yet
+    /// variant-aware; migrating them to [`Self::build_auto`] is a known
     /// follow-up of the extraction campaign.
     pub fn build_mut(world: &mut World, spec: &QueryBuildSpec) -> Self {
         Self::with_state(

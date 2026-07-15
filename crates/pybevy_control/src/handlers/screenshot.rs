@@ -102,6 +102,12 @@ pub struct TimelineCaptures {
 /// Compute capture schedule as frame deltas.
 ///
 /// For count=6, total=60: targets [0,12,24,36,48,60], deltas [0,12,12,12,12,12]
+/// Upper bound on timeline captures. Beyond this a contact sheet is unwieldy and
+/// the capture cost balloons; below 1 the schedule is a single frame while
+/// total_captures stays 0, so the completion check never matches and the request
+/// hangs until it times out.
+pub const MAX_TIMELINE_CAPTURES: u32 = 20;
+
 pub fn compute_schedule(total_frames: u32, capture_count: u32) -> VecDeque<u32> {
     if capture_count <= 1 {
         return VecDeque::from([0]);

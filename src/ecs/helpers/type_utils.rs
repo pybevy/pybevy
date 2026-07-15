@@ -19,6 +19,7 @@ use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 /// The type_ptr must be a valid PyTypeObject pointer that remains
 /// valid for the duration of this call.
 pub fn get_python_type_name(py: Python, type_ptr: *const PyTypeObject) -> String {
+    // SAFETY: registered type pointers live for the interpreter lifetime
     unsafe {
         let type_obj = pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject);
         type_obj

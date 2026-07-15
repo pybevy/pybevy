@@ -239,6 +239,15 @@ pub(crate) fn generate_newtype_bridge_tokens(
                 Ok(())
             }
 
+            fn prepare_uniform(
+                &self,
+                component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<Box<dyn pybevy_core::PreparedUniformComponent>> {
+                let py_component = component.extract::<pyo3::PyRef<#py_type>>()?;
+                let native: #bevy_type = py_component.0.clone();
+                Ok(Box::new(pybevy_core::PreparedNativeUniform::new(native)))
+            }
+
             fn extract_fn(&self) -> pybevy_core::ExtractFn {
                 #[inline(always)]
                 fn extract_impl(

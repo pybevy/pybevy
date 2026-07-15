@@ -12,7 +12,10 @@ use crate::handlers::{
         ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
         SharedScheduleRegistryResource, SharedScheduleState,
     },
-    screenshot::{ActiveTimeline, PendingTimelines, compute_schedule, setup_debug_camera},
+    screenshot::{
+        ActiveTimeline, MAX_TIMELINE_CAPTURES, PendingTimelines, compute_schedule,
+        setup_debug_camera,
+    },
     turnaround::{ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints},
 };
 
@@ -686,6 +689,16 @@ pub fn push_pending_timeline(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     world: &mut World,
 ) {
+    // capture_count == 0 makes compute_schedule emit a single frame while
+    // total_captures stays 0, so the completion check never matches and the
+    // request hangs until timeout; above the max the contact sheet is unusable.
+    if params.capture_count < 1 || params.capture_count > MAX_TIMELINE_CAPTURES {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "capture_count must be between 1 and {MAX_TIMELINE_CAPTURES}"
+        ))));
+        return;
+    }
+
     let mut schedule = compute_schedule(params.total_frames, params.capture_count);
 
     let debug_cleanup = params.position.map(|pos| {
@@ -723,8 +736,9 @@ pub fn push_pending_reload(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     world: &mut World,
 ) {
-    // Surface validation errors (e.g. an out-of-range time_scale) directly
-    // instead of dropping the bad param and reporting a false success later.
+    // Surface validation errors (e.g. an out-of-range time_scale) directly.
+    // Otherwise the caller would silently drop the bad param and still receive
+    // a false "reload_completed" from the deferred response waiter below.
     if let Err(e) = handlers::reload::trigger_reload(
         world,
         params.mode.clone(),
@@ -754,9 +768,8 @@ pub fn push_pending_reload_and_capture(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     world: &mut World,
 ) {
-    // Surface validation errors (e.g. an out-of-range time_scale) directly.
-    // Otherwise the caller would silently drop the bad param and still receive
-    // a false "reload_completed" from the deferred response waiter below.
+    // Surface validation errors (e.g. an out-of-range time_scale) directly
+    // instead of dropping the bad param and reporting a false success later.
     if let Err(e) = handlers::reload::trigger_reload(
         world,
         params.mode.clone(),
@@ -1242,6 +1255,55 @@ mod tests {
             .resource::<bevy::time::Time<bevy::time::Virtual>>()
             .relative_speed();
         assert!((speed - 2.0).abs() < 1e-6);
+    }
+
+    fn timeline_params(capture_count: u32) -> CaptureTimelineParams {
+        CaptureTimelineParams {
+            total_frames: 6,
+            capture_count,
+            max_width: None,
+            columns: 3,
+            position: None,
+            look_at: None,
+        }
+    }
+
+    #[test]
+    fn push_pending_timeline_rejects_out_of_range_capture_count() {
+        // Regression: capture_count == 0 made compute_schedule emit one frame
+        // while total_captures stayed 0, so the completion check never matched
+        // and the request hung until the 120s timeout. Out-of-range counts must
+        // be rejected up front with no timeline queued.
+        for bad in [0, MAX_TIMELINE_CAPTURES + 1] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            push_pending_timeline(timeline_params(bad), tx, &mut world);
+            let result = rx.try_recv().expect("caller should receive a response");
+            let err = result.expect_err("out-of-range capture_count must be an error");
+            assert!(err.message.contains("between 1 and"));
+            let queued = world
+                .get_resource::<PendingTimelines>()
+                .map(|p| p.active.len())
+                .unwrap_or(0);
+            assert_eq!(queued, 0);
+        }
+    }
+
+    #[test]
+    fn push_pending_timeline_accepts_valid_capture_count() {
+        // A valid count queues the timeline and defers the response.
+        let mut world = World::new();
+        let (tx, mut rx) = oneshot::channel();
+        push_pending_timeline(timeline_params(6), tx, &mut world);
+        assert!(
+            rx.try_recv().is_err(),
+            "response is deferred, not immediate"
+        );
+        let queued = world
+            .get_resource::<PendingTimelines>()
+            .map(|p| p.active.len())
+            .unwrap_or(0);
+        assert_eq!(queued, 1);
     }
 
     #[test]

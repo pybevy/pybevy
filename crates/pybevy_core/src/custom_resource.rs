@@ -16,7 +16,7 @@ use crate::custom_component::PythonObjectDescriptor;
 
 /// Interpreter-neutral identity for a Python type object.
 ///
-/// PyO3 uses `PyTypeObject* as usize`; RustPython uses `PyObjectRef::get_id()`.
+/// Adapters map their stable type-object identity to this integer key.
 pub type TypeKey = usize;
 
 /// Neutral registry of custom Python resource types.
@@ -27,6 +27,7 @@ pub type TypeKey = usize;
 #[derive(Resource, Default)]
 pub struct CustomResourceRegistry {
     by_type: HashMap<TypeKey, ComponentId>,
+    alias_generations: HashMap<TypeKey, u32>,
     by_qualified_name: HashMap<String, ComponentId>,
 }
 
@@ -45,6 +46,26 @@ impl CustomResourceRegistry {
     /// Look up a logical resource channel by its full `module.qualname`.
     pub fn id_by_qualified_name(&self, qualified_name: &str) -> Option<ComponentId> {
         self.by_qualified_name.get(qualified_name).copied()
+    }
+
+    /// Number of interpreter type identities retained for live/rollback generations.
+    pub fn alias_count(&self) -> usize {
+        self.by_type.len()
+    }
+
+    /// Remove exact type identities older than the hot-reload rollback window.
+    pub fn prune_aliases(&mut self, minimum_generation: u32) {
+        let removed = self
+            .alias_generations
+            .iter()
+            .filter_map(|(type_key, generation)| {
+                (*generation < minimum_generation).then_some(*type_key)
+            })
+            .collect::<Vec<_>>();
+        for type_key in removed {
+            self.by_type.remove(&type_key);
+            self.alias_generations.remove(&type_key);
+        }
     }
 }
 
@@ -82,12 +103,17 @@ pub fn register_custom_resource_guarded<D: PythonObjectDescriptor>(
     type_key: TypeKey,
     name: &str,
     qualified_name: Option<&str>,
+    generation: u32,
 ) -> ResourceRegisterOutcome {
     if !world.contains_resource::<CustomResourceRegistry>() {
         world.insert_resource(CustomResourceRegistry::default());
     }
 
     if let Some(id) = world.resource::<CustomResourceRegistry>().get(type_key) {
+        world
+            .resource_mut::<CustomResourceRegistry>()
+            .alias_generations
+            .insert(type_key, generation);
         return ResourceRegisterOutcome::Reused(id);
     }
 
@@ -100,6 +126,10 @@ pub fn register_custom_resource_guarded<D: PythonObjectDescriptor>(
                 .resource_mut::<CustomResourceRegistry>()
                 .by_type
                 .insert(type_key, id);
+            world
+                .resource_mut::<CustomResourceRegistry>()
+                .alias_generations
+                .insert(type_key, generation);
             return ResourceRegisterOutcome::Aliased(id);
         }
     }
@@ -109,6 +139,7 @@ pub fn register_custom_resource_guarded<D: PythonObjectDescriptor>(
 
     let mut registry = world.resource_mut::<CustomResourceRegistry>();
     registry.by_type.insert(type_key, id);
+    registry.alias_generations.insert(type_key, generation);
     if let Some(qualified_name) = qualified_name {
         registry
             .by_qualified_name
@@ -156,6 +187,7 @@ mod tests {
             type_key,
             "Settings",
             qualified_name,
+            0,
         )
     }
 
@@ -218,5 +250,23 @@ mod tests {
         let second = register(&mut world, 0x2000, None);
 
         assert_ne!(first.id(), second.id());
+    }
+
+    #[test]
+    fn hot_reload_aliases_are_bounded_by_generation() {
+        let mut world = World::new();
+        for generation in 0..100 {
+            register_custom_resource_guarded::<TestObjectDescriptor>(
+                &mut world,
+                0x1000 + generation as usize,
+                "Settings",
+                Some("game.Settings"),
+                generation,
+            );
+            world
+                .resource_mut::<CustomResourceRegistry>()
+                .prune_aliases(generation.saturating_sub(1));
+        }
+        assert_eq!(world.resource::<CustomResourceRegistry>().alias_count(), 2);
     }
 }

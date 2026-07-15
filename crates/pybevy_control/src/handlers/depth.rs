@@ -399,7 +399,7 @@ mod tests {
 
         let samples = result["samples"].as_array().unwrap();
         let sample = &samples[0];
-        assert_eq!(sample["hit"].as_bool().unwrap(), false);
+        assert!(!sample["hit"].as_bool().unwrap());
         assert!(sample["distance"].is_null());
     }
 

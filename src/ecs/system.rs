@@ -287,7 +287,7 @@ impl SystemFunction {
             } else if annotation.is(PyCommands::type_object(py)) {
                 SystemParamType::Commands
             } else if annotation.get_type().is(MessageTypeParam::type_object(py)) {
-                // MessageWriter[T] or MessageReader[T] - extract the message type
+                // MessageWriter[T], MessageReader[T], or MessageMutator[T]
                 let message_param = annotation.extract::<MessageTypeParam>()?;
                 match message_param.ty {
                     super::message::MessageClass::Writer => SystemParamType::MessageWriter {
@@ -296,6 +296,16 @@ impl SystemFunction {
                     super::message::MessageClass::Reader => SystemParamType::MessageReader {
                         message_type: message_param.message_type,
                     },
+                    super::message::MessageClass::Mutator => {
+                        if !matches!(message_param.message_type, MessageType::Custom(_)) {
+                            return Err(PyTypeError::new_err(
+                                "MessageMutator currently supports custom Python messages only; native message wrappers are snapshots and cannot be mutated in place",
+                            ));
+                        }
+                        SystemParamType::MessageMutator {
+                            message_type: message_param.message_type,
+                        }
+                    }
                 }
             } else if annotation
                 .get_type()
@@ -397,6 +407,9 @@ pub enum SystemParamType {
     MessageReader {
         message_type: MessageType,
     },
+    MessageMutator {
+        message_type: MessageType,
+    },
     On {
         event_type: EventType,
         bundle_filter: Option<Vec<PyComponentType>>,
@@ -432,6 +445,9 @@ impl Clone for SystemParamType {
                 message_type: message_type.clone(),
             },
             SystemParamType::MessageReader { message_type } => SystemParamType::MessageReader {
+                message_type: message_type.clone(),
+            },
+            SystemParamType::MessageMutator { message_type } => SystemParamType::MessageMutator {
                 message_type: message_type.clone(),
             },
             SystemParamType::On {

@@ -8,9 +8,8 @@ use bevy::ecs::{
 };
 /// Registry of custom Python components (Bevy resource).
 ///
-/// The concrete type is the backend-neutral [`CustomComponentRegistry`], shared
-/// key-for-key with the RustPython backend and re-exported here under the
-/// crate-local name used throughout the PyO3 code. It is keyed by
+/// The concrete type is the interpreter-neutral [`CustomComponentRegistry`],
+/// re-exported under the crate-local name used throughout this adapter. It is keyed by
 /// `type_ptr as usize`; call `.get(type_ptr as usize)` to look a component up.
 pub use pybevy_core::custom_component::CustomComponentRegistry as ComponentRegistry;
 use pybevy_core::{
@@ -24,7 +23,7 @@ use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, t
 use crate::ecs::{component::PyComponent, helpers::type_utils::get_python_type_name};
 
 /// All components use dynamic dispatch via feature crate bridges or custom Python components.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PyComponentType {
     /// Dynamically registered component from a feature crate
     /// Stores the Python type pointer for lookup in the global bridge registry
@@ -157,21 +156,6 @@ impl PyComponentType {
         }
 
         Ok(PyComponentType::Custom(type_ptr))
-    }
-
-    /// Check if an entity has this component type.
-    /// Used by observer lifecycle events (Add, Insert, etc).
-    pub fn entity_contains(&self, entity: &bevy::ecs::world::EntityRef) -> bool {
-        match self {
-            PyComponentType::Dynamic(type_ptr) => {
-                if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr) {
-                    bridge.entity_contains(entity)
-                } else {
-                    false
-                }
-            }
-            PyComponentType::Custom(_) => false,
-        }
     }
 
     /// Extract component from entity and convert to Python object.
@@ -394,12 +378,16 @@ pub(crate) fn register_custom_component(
     });
 
     // The shared storage-flip guard + hot-reload aliasing lives in pybevy_core.
+    let generation = world
+        .get_resource::<pybevy_reload::HotReloadGeneration>()
+        .map_or(0, |generation| generation.current);
     let outcome = register_custom_component_guarded::<Pyo3ObjectDescriptor>(
         world,
         type_id,
         &name,
         qualified_name.as_deref(),
         storage_type,
+        generation,
     );
 
     // Mirror the guard's decision into the MCP-facing CustomComponentInfo.
@@ -447,22 +435,4 @@ pub fn register_component_id(
     custom_component_ids: &HashMap<*const PyTypeObject, ComponentId>,
 ) -> ComponentId {
     comp_type.register_with_world(world, custom_component_ids)
-}
-
-/// Simplified helper for registering components without a pre-built HashMap.
-///
-/// This is used by View API where custom components are registered on-demand
-/// using register_custom_component instead of pre-registered in a HashMap.
-///
-/// # Arguments
-/// * `world` - The Bevy world to register the component in
-/// * `comp_type` - The PyComponentType to register
-///
-/// # Returns
-/// The ComponentId of the registered component
-pub(crate) fn register_component_id_simple(
-    world: &mut World,
-    comp_type: &PyComponentType,
-) -> ComponentId {
-    comp_type.register_simple(world)
 }

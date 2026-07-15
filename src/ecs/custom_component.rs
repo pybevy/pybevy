@@ -9,7 +9,8 @@
 //! system execution. After system completes, ValidityFlag is invalidated and any access
 //! to borrowed components will raise a runtime error.
 
-use bevy::ecs::{entity::Entity, world::World};
+use bevy::ecs::{entity::Entity, world::unsafe_world_cell::UnsafeWorldCell};
+use pybevy_ecs::shared::run_scaffold::RunTicks;
 use pyo3::{prelude::*, types::PyAny};
 
 use crate::ecs::{component::PyComponent, helpers::validity_guard::ValidityFlagWithMode};
@@ -21,8 +22,10 @@ struct CustomComponentStorage {
     component_id: bevy::ecs::component::ComponentId,
     /// Entity this component belongs to (for change tracking outside iteration context)
     entity: Entity,
-    /// World pointer (for change tracking outside iteration context)
-    world_ptr: *mut World,
+    /// Validity-fenced cell used for narrow change-tick writeback.
+    world_cell: UnsafeWorldCell<'static>,
+    /// Captured scheduled-run ticks, or `None` for `World.get_mut`.
+    run_ticks: Option<RunTicks>,
 }
 
 // SAFETY: PyObject pointers are stable (GC doesn't move objects),
@@ -95,8 +98,9 @@ impl PyCustomComponent {
         unsafe {
             pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
                 slf.storage.entity,
-                slf.storage.world_ptr,
+                slf.storage.world_cell,
                 slf.storage.component_id,
+                slf.storage.run_ticks,
             );
         }
 
@@ -114,21 +118,27 @@ impl PyCustomComponent {
     /// - ValidityFlag is invalidated when system execution completes
     /// - `component_id` is the correct ComponentId for this component type
     /// - `entity` is valid in the world for the duration of `validity`
-    /// - `world_ptr` points to a valid World for the duration of `validity`
+    /// - `world_cell` references the matching World for the duration of `validity`
     pub fn from_borrowed(
         py_obj_ptr: *mut pyo3::ffi::PyObject,
         validity: ValidityFlagWithMode,
         component_id: bevy::ecs::component::ComponentId,
         entity: Entity,
-        world_ptr: *mut World,
+        world_cell: UnsafeWorldCell<'_>,
+        run_ticks: Option<RunTicks>,
     ) -> Self {
+        // SAFETY: the caller fences this lifetime-erased cell with `validity`.
+        let world_cell = unsafe {
+            std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell)
+        };
         PyCustomComponent {
             storage: CustomComponentStorage {
                 ptr: py_obj_ptr,
                 validity,
                 component_id,
                 entity,
-                world_ptr,
+                world_cell,
+                run_ticks,
             },
         }
     }

@@ -57,6 +57,9 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     let defs = match runtime.load_definitions(next_generation) {
         Ok(defs) => defs,
         Err(e) => {
+            if runtime.load_error_is_deferred(&e) {
+                return Err(e);
+            }
             runtime.print_error(&e);
 
             let current_time = world
@@ -288,6 +291,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         ReloadProgress::new(ReloadProgressPhase::Registering, new_generation, mode),
     );
 
+    if let Err(e) = runtime.register_states(world, &defs, mode) {
+        flag_reload_failure(world, e.message.clone());
+        return Err(e);
+    }
+
     if mode == ReloadMode::Full {
         if let Err(e) = runtime.register_resources(world, &defs) {
             flag_reload_failure(world, e.message.clone());
@@ -427,9 +435,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                     // If we leave it, the next reload that reuses this
                     // generation number will skip Startup entirely.
                     let gen_res = world.resource::<HotReloadGeneration>();
-                    if let Ok(mut set) = gen_res.startup_run_for_generations.lock() {
-                        set.remove(&new_generation);
-                    }
+                    gen_res.forget_startup_run(new_generation);
                 }
 
                 let error_msg = format!("Startup panicked: {}", panic_msg);
@@ -522,9 +528,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         {
             // Remove new_generation (not old_generation) - see panic path comment.
             let gen_res = world.resource::<HotReloadGeneration>();
-            if let Ok(mut set) = gen_res.startup_run_for_generations.lock() {
-                set.remove(&new_generation);
-            }
+            gen_res.forget_startup_run(new_generation);
         }
 
         let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
@@ -550,9 +554,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     {
         let gen_res = world.resource::<HotReloadGeneration>();
-        if let Ok(mut set) = gen_res.startup_run_for_generations.lock() {
-            set.retain(|&g| g >= new_generation.saturating_sub(2));
-        }
+        gen_res.retain_startup_runs_since(new_generation.saturating_sub(2));
     }
 
     // Register handles and gut old-generation systems
@@ -562,6 +564,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     }
 
     runtime.prune_messages(world, new_generation);
+    runtime.prune_requests(world, (mode == ReloadMode::Full).then_some(old_generation));
 
     // Post-reload cleanup
     runtime.clear_param_cache();
@@ -661,6 +664,9 @@ mod tests {
     /// Minimal mock runtime that succeeds immediately with no systems.
     struct MockRuntime;
 
+    #[derive(Default, Resource)]
+    struct RequestPruneCalls(Vec<Option<u32>>);
+
     impl ReloadRuntime for MockRuntime {
         type Defs = ();
         type SystemHandle = ();
@@ -708,6 +714,12 @@ mod tests {
         }
         fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
         fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn prune_requests(&mut self, world: &mut World, outgoing_generation: Option<u32>) {
+            world
+                .get_resource_or_insert_with(RequestPruneCalls::default)
+                .0
+                .push(outgoing_generation);
+        }
         fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
         fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
             HashSet::new()
@@ -833,6 +845,12 @@ mod tests {
             }
         }
         fn prune_messages(&mut self, _world: &mut World, _gen: u32) {}
+        fn prune_requests(&mut self, world: &mut World, outgoing_generation: Option<u32>) {
+            world
+                .get_resource_or_insert_with(RequestPruneCalls::default)
+                .0
+                .push(outgoing_generation);
+        }
         fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
         fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
             HashSet::new()
@@ -960,6 +978,35 @@ mod tests {
                 ReloadProgressPhase::Complete,
             ]
         );
+    }
+
+    #[test]
+    fn successful_reloads_prune_requests_with_the_committed_mode() {
+        let (mut full_world, full_generation) = setup_world();
+        let full_state = MockState::new(full_generation);
+        assert!(
+            perform_reload(
+                &mut full_world,
+                &mut MockRuntime,
+                ReloadMode::Full,
+                &full_state,
+            )
+            .is_ok()
+        );
+        assert_eq!(full_world.resource::<RequestPruneCalls>().0, vec![Some(0)]);
+
+        let (mut partial_world, partial_generation) = setup_world();
+        let partial_state = MockState::new(partial_generation);
+        assert!(
+            perform_reload(
+                &mut partial_world,
+                &mut MockRuntime,
+                ReloadMode::Partial,
+                &partial_state,
+            )
+            .is_ok()
+        );
+        assert_eq!(partial_world.resource::<RequestPruneCalls>().0, vec![None]);
     }
 
     /// Runtime with a configurable fingerprint, for escalation tests.
@@ -1134,6 +1181,10 @@ mod tests {
         assert!(
             retired.load(Ordering::SeqCst),
             "systems from the rejected generation must be retired"
+        );
+        assert!(
+            !world.contains_resource::<RequestPruneCalls>(),
+            "a rejected generation must not prune requests owned by the running generation"
         );
     }
 

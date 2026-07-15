@@ -14,9 +14,9 @@ use bevy::{
 
 /// Exact identity of one interpreter-defined state type.
 ///
-/// PyO3 adapters use `PyTypeObject* as usize`; RustPython adapters use the
-/// corresponding interpreter object id. The value is opaque to the shared
-/// schedule layer and is only meaningful for one interpreter lifetime.
+/// Adapters map their stable type-object identity to this integer key. The
+/// value is opaque to the shared schedule layer and is only meaningful for one
+/// interpreter lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StateMachineId(usize);
 

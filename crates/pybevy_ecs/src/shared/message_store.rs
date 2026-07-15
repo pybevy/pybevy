@@ -32,9 +32,9 @@ impl MessageChannelId {
 
 /// Exact interpreter identity of one Python message class.
 ///
-/// PyO3 adapters use `PyTypeObject* as usize`; RustPython adapters use the
-/// corresponding object identity. The backend must retain a strong class handle
-/// while this key exists so the interpreter cannot recycle the identity.
+/// Adapters map their stable class-object identity to this integer key and must
+/// retain a strong class handle while it exists, so the interpreter cannot
+/// recycle the identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MessageTypeKey(usize);
 

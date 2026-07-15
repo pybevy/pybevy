@@ -44,7 +44,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{AssetBorrowCounter, registry::global_registry};
-use pybevy_ecs::shared::observer_registry::LifecycleKind;
+use pybevy_ecs::shared::system_runtime::ErrorPolicy;
 use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     PyTypeInfo,
@@ -63,7 +63,6 @@ use crate::{
         component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
         component_type::{ComponentRegistry, PyComponentType, register_custom_component},
         custom_component::PyCustomComponent,
-        dynamic_system::{DynamicSystem, execute_system_func},
         entity_commands::PyEntityCommands,
         helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard},
         lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
@@ -72,7 +71,11 @@ use crate::{
         resource_type::{
             PyResourceStorage, PyResourceType, ResourceRegistry, register_custom_resource,
         },
-        state::{PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule},
+        state::{
+            PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
+            canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
+        },
+        system_interpreter::new_main_system,
     },
 };
 
@@ -323,6 +326,7 @@ impl PyWorld {
 
                 let mutable = validity.access_mode() == AccessMode::Write;
                 let world_ptr = self.world_ptr();
+                let world_cell = world.as_unsafe_world_cell();
                 let proxy = unsafe {
                     PyLazyWrapperProxy::new(
                         data_ptr,
@@ -333,6 +337,8 @@ impl PyWorld {
                         component_id,
                         entity_id,
                         world_ptr,
+                        world_cell,
+                        None,
                         // Long-lived proxy: the caller may hold it across structural
                         // mutations, so re-resolve on every access.
                         ProxyKind::WorldGet,
@@ -343,7 +349,6 @@ impl PyWorld {
                 Ok(Some(py_obj.into_any()))
             }
             ComponentStorageType::PyObject => {
-                let world_ptr = self.world_ptr();
                 let entity_ref = world.entity(entity_id);
                 let untyped_ptr = entity_ref
                     .get_by_id(component_id)
@@ -354,13 +359,15 @@ impl PyWorld {
                     let py_any_ref = &*(untyped_ptr as *const Py<PyAny>);
                     py_any_ref.as_ptr()
                 };
+                let world_cell = world.as_unsafe_world_cell();
 
                 let custom_comp = PyCustomComponent::from_borrowed(
                     py_obj_ptr,
                     validity,
                     component_id,
                     entity_id,
-                    world_ptr,
+                    world_cell,
+                    None,
                 );
 
                 let py_obj = Py::new(py, (custom_comp, crate::ecs::component::PyComponent))
@@ -415,21 +422,8 @@ impl PyWorld {
     /// Despawn an entity
     pub fn despawn(&self, entity: &PyEntity) -> PyResult<()> {
         self.check_valid()?;
-        let world_ptr = self.world_ptr();
-        let component_types = {
-            let world = self.world_mut()?;
-            Self::get_entity_data_names(world, entity.0)
-        };
-
-        // Dispatch while the entity, its components, and target observers are
-        // still present. Reacquire the World only after callbacks finish.
-        if !component_types.is_empty() {
-            Self::trigger_lifecycle_events_for_despawn(world_ptr, entity.0, &component_types);
-        }
-
         let world = self.world_mut()?;
-        ObserverRegistry::cleanup_on_entity_despawn(entity.0, world);
-        world.despawn(entity.0);
+        crate::ecs::lifecycle_mutation::despawn_recursive(world, entity.0);
 
         Ok(())
     }
@@ -763,10 +757,13 @@ impl PyWorld {
                 },
             )?;
 
-            execute_system_func(py, &observer_entry.prepared.system_func, world, on_param)
-                .inspect_err(|e| {
-                    e.print(py);
-                })?;
+            ObserverRegistry::invoke(
+                &observer_entry,
+                world,
+                &on_param,
+                target_entity,
+                ErrorPolicy::PropagateToCaller,
+            )?;
         }
 
         Ok(())
@@ -907,14 +904,25 @@ impl PyWorld {
         let world = self.world_mut()?;
 
         if let Ok(on_enter) = label.cast::<PyOnEnterSchedule>() {
-            let bevy_label = on_enter.borrow().to_bevy_label(py)?;
-            world.run_schedule(bevy_label);
+            let bevy_label =
+                canonicalize_state_schedule_label(world, on_enter.borrow().to_bevy_label(py)?);
+            world.try_run_schedule(bevy_label).map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to run state schedule: {error}"))
+            })?;
         } else if let Ok(on_exit) = label.cast::<PyOnExitSchedule>() {
-            let bevy_label = on_exit.borrow().to_bevy_label(py)?;
-            world.run_schedule(bevy_label);
+            let bevy_label =
+                canonicalize_state_schedule_label(world, on_exit.borrow().to_bevy_label(py)?);
+            world.try_run_schedule(bevy_label).map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to run state schedule: {error}"))
+            })?;
         } else if let Ok(on_transition) = label.cast::<PyOnTransitionSchedule>() {
-            let bevy_label = on_transition.borrow().to_bevy_label(py)?;
-            world.run_schedule(bevy_label);
+            let bevy_label = canonicalize_transition_schedule_label(
+                world,
+                on_transition.borrow().to_bevy_label(py)?,
+            );
+            world.try_run_schedule(bevy_label).map_err(|error| {
+                PyRuntimeError::new_err(format!("Failed to run state schedule: {error}"))
+            })?;
         } else {
             return Err(PyTypeError::new_err(
                 "run_schedule() requires a Stage, OnEnter, OnExit, or OnTransition schedule label",
@@ -962,7 +970,7 @@ impl PyWorld {
         // Use SystemStage::UpdateOrLast as a default since this is a one-shot execution
         // One-shot exclusive execution; errors return directly to the caller, so a
         // throwaway error buffer (no LastSystemError drain) is sufficient.
-        let mut system = DynamicSystem::new(
+        let mut system = new_main_system(
             func.unbind(),
             generation,
             error_state.clone(),
@@ -1029,17 +1037,21 @@ impl PyWorld {
         world: &World,
         entity: bevy::ecs::entity::Entity,
     ) -> Vec<PyComponentType> {
-        let mut component_types = Vec::new();
+        let mut component_types: Vec<(bevy::ecs::component::ComponentId, PyComponentType)> =
+            Vec::new();
 
         // Get entity reference
         let Ok(entity_ref) = world.get_entity(entity) else {
-            return component_types; // Entity doesn't exist
+            return Vec::new(); // Entity doesn't exist
         };
 
         // Check all registered component bridges
         for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
-            if bridge.entity_contains(&entity_ref) {
-                component_types.push(PyComponentType::Dynamic(bridge.py_type_ptr()));
+            if bridge.entity_contains(&entity_ref)
+                && let Some(component_id) = world.components().get_id(bridge.bevy_type_id())
+            {
+                component_types
+                    .push((component_id, PyComponentType::Dynamic(bridge.py_type_ptr())));
             }
         }
 
@@ -1049,114 +1061,20 @@ impl PyWorld {
         if let Some(custom_info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
             for (component_id, entry) in custom_info.iter() {
                 if entity_ref.contains_id(component_id) {
-                    component_types.push(PyComponentType::Custom(entry.type_ptr));
+                    component_types.push((component_id, PyComponentType::Custom(entry.type_ptr)));
                 }
             }
         }
 
+        // Inventory and hash-backed registry iteration are not ordering
+        // contracts. ComponentId is World-local and deterministic for the
+        // registration sequence, so it gives recursive/event-major snapshots
+        // one stable order across repeated processes.
+        component_types.sort_by_key(|(component_id, _)| component_id.index());
+        component_types.dedup_by_key(|(component_id, _)| *component_id);
         component_types
-    }
-
-    /// Generic helper to trigger lifecycle events for a list of components
-    fn trigger_lifecycle_events(
-        world_ptr: *mut World,
-        entity: bevy::ecs::entity::Entity,
-        component_types: &[PyComponentType],
-        lifecycle: LifecycleKind,
-    ) {
-        Python::attach(|py| {
-            // For each component, trigger the lifecycle event
-            for comp_type in component_types {
-                // SAFETY: the caller provides exclusive World access for the
-                // complete lifecycle dispatch. This shared borrow ends before
-                // any callback obtains the mutable World below.
-                let world_ref = unsafe { &*world_ptr };
-                let Some(component_id) = ObserverRegistry::component_id(world_ref, comp_type)
-                else {
-                    continue;
-                };
-                let observers = world_ref
-                    .get_resource::<ObserverRegistry>()
-                    .map(|registry| {
-                        registry.snapshot_lifecycle(lifecycle, comp_type, component_id, entity)
-                    })
-                    .unwrap_or_default();
-
-                for observer_entry in observers {
-                    // For lifecycle events, there is no event payload.
-                    if let Ok(on_param) = Py::new(
-                        py,
-                        PyOn {
-                            event_data: py.None(),
-                            entity: Some(entity),
-                        },
-                    ) {
-                        // SAFETY: the registry snapshot and shared World borrow
-                        // above have ended. The caller still owns exclusive
-                        // access, and execute_system_func invalidates borrowed
-                        // parameters before applying deferred commands.
-                        let world = unsafe { &mut *world_ptr };
-                        if let Err(error) = execute_system_func(
-                            py,
-                            &observer_entry.prepared.system_func,
-                            world,
-                            on_param,
-                        ) {
-                            error.print(py);
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    /// Trigger lifecycle events for components added to an entity.
-    /// This is called internally after components are added.
-    pub(crate) fn trigger_lifecycle_events_for_add(
-        world_ptr: *mut World,
-        entity: bevy::ecs::entity::Entity,
-        component_types: &[PyComponentType],
-    ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Add);
-    }
-
-    /// Trigger lifecycle events for components inserted to an entity.
-    /// Insert triggers on both initial add and replacement.
-    pub(crate) fn trigger_lifecycle_events_for_insert(
-        world_ptr: *mut World,
-        entity: bevy::ecs::entity::Entity,
-        component_types: &[PyComponentType],
-    ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Insert);
-    }
-
-    /// Trigger lifecycle events for components removed from an entity.
-    pub(crate) fn trigger_lifecycle_events_for_remove(
-        world_ptr: *mut World,
-        entity: bevy::ecs::entity::Entity,
-        component_types: &[PyComponentType],
-    ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Remove);
-    }
-
-    /// Trigger lifecycle events for entity despawn.
-    /// This triggers Despawn for each component type on the entity.
-    pub(crate) fn trigger_lifecycle_events_for_despawn(
-        world_ptr: *mut World,
-        entity: bevy::ecs::entity::Entity,
-        component_types: &[PyComponentType],
-    ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Despawn);
-    }
-
-    /// Trigger lifecycle events for component values discarded on an entity.
-    /// This triggers when a component is inserted onto an entity that already has it,
-    /// before the old value is replaced.
-    pub(crate) fn trigger_lifecycle_events_for_discard(
-        world_ptr: *mut World,
-        entity: bevy::ecs::entity::Entity,
-        component_types: &[PyComponentType],
-    ) {
-        Self::trigger_lifecycle_events(world_ptr, entity, component_types, LifecycleKind::Discard);
+            .into_iter()
+            .map(|(_, component_type)| component_type)
+            .collect()
     }
 }

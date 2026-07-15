@@ -70,7 +70,19 @@ pub trait LifecycleMutationAdapter {
         component: Self::Component,
     );
 
-    fn insert_component(&mut self, entity: Self::Entity, component: Self::Component);
+    fn insert_component(&mut self, entity: Self::Entity, component: Self::Component) -> bool;
+
+    /// Commit one already-classified bundle. Backends with a native/binding
+    /// bulk insertion override this so structural hooks run in their real
+    /// bundle commit shape; the default preserves single-component adapters.
+    fn insert_components(&mut self, entity: Self::Entity, components: &[Self::Component]) -> bool {
+        for component in components {
+            if !self.insert_component(entity, *component) {
+                return false;
+            }
+        }
+        true
+    }
 
     fn remove_component(&mut self, entity: Self::Entity, component: Self::Component);
 
@@ -137,7 +149,9 @@ impl LifecycleMutationCore {
         }
         let is_add = !adapter.component_exists(entity, component);
 
-        adapter.insert_component(entity, component);
+        if !adapter.insert_component(entity, component) {
+            return LifecycleMutationOutcome::ComponentGone;
+        }
         if !adapter.entity_exists(entity) {
             return LifecycleMutationOutcome::EntityGone;
         }
@@ -156,6 +170,95 @@ impl LifecycleMutationCore {
         }
 
         Self::dispatch_event(adapter, LifecycleEvent::Insert, entity, component);
+        LifecycleMutationOutcome::Complete
+    }
+
+    /// Insert or replace a duplicate-free component bundle.
+    ///
+    /// Discard and post-commit emissions are event-kind-major, matching the
+    /// binding batch paths: all readable old values are discarded, Add is
+    /// classified from the post-callback state, the bundle commits once, then
+    /// Add and Insert run only for still-live committed values.
+    pub fn insert_many<A: LifecycleMutationAdapter>(
+        &self,
+        adapter: &mut A,
+        entity: A::Entity,
+        components: &[A::Component],
+    ) -> LifecycleMutationOutcome {
+        if !adapter.entity_exists(entity) {
+            return LifecycleMutationOutcome::EntityGone;
+        }
+
+        for component in components {
+            if adapter.component_exists(entity, *component) {
+                Self::dispatch_event(adapter, LifecycleEvent::Discard, entity, *component);
+            }
+            if !adapter.entity_exists(entity) {
+                return LifecycleMutationOutcome::EntityGone;
+            }
+        }
+
+        let additions = components
+            .iter()
+            .copied()
+            .filter(|component| !adapter.component_exists(entity, *component))
+            .collect::<Vec<_>>();
+        if !adapter.insert_components(entity, components) {
+            return LifecycleMutationOutcome::ComponentGone;
+        }
+        if !adapter.entity_exists(entity) {
+            return LifecycleMutationOutcome::EntityGone;
+        }
+
+        for component in additions {
+            if adapter.component_exists(entity, component) {
+                Self::dispatch_event(adapter, LifecycleEvent::Add, entity, component);
+            }
+            if !adapter.entity_exists(entity) {
+                return LifecycleMutationOutcome::EntityGone;
+            }
+        }
+        for component in components {
+            if adapter.component_exists(entity, *component) {
+                Self::dispatch_event(adapter, LifecycleEvent::Insert, entity, *component);
+            }
+            if !adapter.entity_exists(entity) {
+                return LifecycleMutationOutcome::EntityGone;
+            }
+        }
+
+        LifecycleMutationOutcome::Complete
+    }
+
+    /// Finish a successful bulk commit into an entity known to have been empty
+    /// when the operation began. This is the post-commit half used by native
+    /// batch insertion APIs whose fallible preparation and structural commit
+    /// cannot be decomposed into per-component adapter calls.
+    pub fn finish_new_bundle<A: LifecycleMutationAdapter>(
+        &self,
+        adapter: &mut A,
+        entity: A::Entity,
+        components: &[A::Component],
+    ) -> LifecycleMutationOutcome {
+        if !adapter.entity_exists(entity) {
+            return LifecycleMutationOutcome::EntityGone;
+        }
+        for component in components {
+            if adapter.component_exists(entity, *component) {
+                Self::dispatch_event(adapter, LifecycleEvent::Add, entity, *component);
+            }
+            if !adapter.entity_exists(entity) {
+                return LifecycleMutationOutcome::EntityGone;
+            }
+        }
+        for component in components {
+            if adapter.component_exists(entity, *component) {
+                Self::dispatch_event(adapter, LifecycleEvent::Insert, entity, *component);
+            }
+            if !adapter.entity_exists(entity) {
+                return LifecycleMutationOutcome::EntityGone;
+            }
+        }
         LifecycleMutationOutcome::Complete
     }
 
@@ -461,10 +564,11 @@ mod tests {
             }
         }
 
-        fn insert_component(&mut self, entity: Entity, component: Component) {
+        fn insert_component(&mut self, entity: Entity, component: Component) -> bool {
             assert!(self.entity_exists(entity));
             self.steps.push(Step::Insert(component));
             self.components.insert(component);
+            true
         }
 
         fn remove_component(&mut self, entity: Entity, component: Component) {
@@ -509,6 +613,42 @@ mod tests {
                 Step::Dispatch {
                     event: LifecycleEvent::Insert,
                     component: 10,
+                    readable: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn bundle_insert_uses_event_major_post_commit_order() {
+        let mut adapter = FakeAdapter::new(7, []);
+
+        let outcome = LifecycleMutationCore.insert_many(&mut adapter, 7, &[10, 20]);
+
+        assert_eq!(outcome, LifecycleMutationOutcome::Complete);
+        assert_eq!(
+            adapter.steps,
+            [
+                Step::Insert(10),
+                Step::Insert(20),
+                Step::Dispatch {
+                    event: LifecycleEvent::Add,
+                    component: 10,
+                    readable: true,
+                },
+                Step::Dispatch {
+                    event: LifecycleEvent::Add,
+                    component: 20,
+                    readable: true,
+                },
+                Step::Dispatch {
+                    event: LifecycleEvent::Insert,
+                    component: 10,
+                    readable: true,
+                },
+                Step::Dispatch {
+                    event: LifecycleEvent::Insert,
+                    component: 20,
                     readable: true,
                 },
             ]
@@ -859,7 +999,9 @@ mod tests {
             panic!("fake observer panic");
         }
 
-        fn insert_component(&mut self, _entity: Entity, _component: Component) {}
+        fn insert_component(&mut self, _entity: Entity, _component: Component) -> bool {
+            true
+        }
 
         fn remove_component(&mut self, _entity: Entity, _component: Component) {}
 
@@ -1018,8 +1160,9 @@ mod tests {
             }
         }
 
-        fn insert_component(&mut self, entity: Entity, component: Component) {
+        fn insert_component(&mut self, entity: Entity, component: Component) -> bool {
             self.components.entry(entity).or_default().insert(component);
+            true
         }
 
         fn remove_component(&mut self, entity: Entity, component: Component) {

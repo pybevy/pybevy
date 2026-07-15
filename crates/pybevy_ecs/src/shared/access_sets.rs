@@ -65,7 +65,7 @@ impl QueryParamAccess {
 
 /// Build the shared `FilteredAccess` for a system's resource-like access.
 ///
-/// Covers `Res`/`ResMut`, `Assets`, `MessageReader`/`MessageWriter`, and the
+/// Covers `Res`/`ResMut`, `Assets`, `MessageReader`/`MessageWriter`/`MessageMutator`, and the
 /// HotReloadGeneration read. These carry no archetype filters; conflict detection
 /// relies purely on the read/write sets. `FilteredAccess::add_read`/`add_write`
 /// also add a `With` on the resource's id, which is harmless: two accesses to the

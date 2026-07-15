@@ -8,18 +8,21 @@ use bevy::{
     ecs::schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
 };
 use pybevy_core::PyPlugin;
+use pybevy_ecs::shared::system_runtime::RunProfileSinkResource;
 use pybevy_reload::{
     HotReloadGeneration, HotReloadStats, MemoryOverlayVisible, MemoryProfile, PluginTracker,
-    ReloadMode, StartPaused, SystemMonitor, SystemProfiler, is_verbose, lock_or_recover,
-    parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
-    update_system_stats,
+    ReloadMode, StartPaused, SystemMonitor, SystemProfiler, is_verbose, parse_resolution,
+    render_hot_reload_overlay, spawn_hot_reload_overlay_system, update_system_stats,
 };
 use pyo3::prelude::*;
 
 use super::{
     registry::DynamicSystemRegistry,
     state::{HotReloadResource, HotReloadState},
-    systems::{check_hot_reload_system, handle_f5_reload_system},
+    systems::{
+        PendingScheduleCompaction, check_hot_reload_system, compact_retired_generation_systems,
+        handle_f5_reload_system,
+    },
     util::detect_gil_status,
 };
 use crate::{
@@ -58,18 +61,8 @@ impl PyAppReloadState {
     /// Only triggers reload if one isn't already pending (e.g., from F5)
     /// Uses the current default_reload_mode (which can be toggled with F6)
     pub fn trigger_reload_if_needed(&self, _default_mode_is_partial: bool) {
-        let mut inner = lock_or_recover(&self.state.inner);
-
-        // If reload already pending (e.g., F5 just pressed), don't override it
-        if inner.reload_pending {
-            return;
-        }
-
-        // No reload pending, trigger one with the current default mode
-        let mode = inner.default_reload_mode;
-
-        inner.reload_pending = true;
-        inner.reload_mode = mode;
+        let mode = self.state.get_default_mode();
+        self.state.request_reload_if_idle(mode);
     }
 
     /// Get the current default reload mode
@@ -162,6 +155,7 @@ pub fn add_hot_reload_system(
 
     // Insert the DynamicSystem registry for tracking system handles by generation
     app.insert_resource(DynamicSystemRegistry::default());
+    app.insert_resource(PendingScheduleCompaction::default());
 
     // Initialize system monitor
     let mut system = sysinfo::System::new();
@@ -267,7 +261,9 @@ pub fn add_hot_reload_system(
 
     // Insert the system profiler for performance tracking
     // Uses 60-frame rolling average (1 second at 60fps)
-    app.insert_resource(SystemProfiler::new(60));
+    let profiler = SystemProfiler::new(60);
+    app.insert_resource(RunProfileSinkResource(Arc::new(profiler.clone())));
+    app.insert_resource(profiler);
     if verbose {
         eprintln!("   → System profiler enabled (60-frame rolling average)");
     }
@@ -382,6 +378,14 @@ pub fn add_hot_reload_system(
         )
             .chain(),
     );
+    app.init_schedule(CompactRetiredReloadSystems);
+    app.world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_after(Last, CompactRetiredReloadSystems);
+    app.add_systems(
+        CompactRetiredReloadSystems,
+        compact_retired_generation_systems,
+    );
 
     // Spawn the overlay UI entity immediately (plugins are already initialized at this point)
     spawn_hot_reload_overlay_system(app.world_mut());
@@ -426,6 +430,9 @@ pub fn add_hot_reload_system(
 /// created at event-loop start into the `BaseEntitySet` baseline.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 struct ExtendBaseEntitySet;
+
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct CompactRetiredReloadSystems;
 
 /// PyO3 plugin for enabling hot reload functionality
 ///

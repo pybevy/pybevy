@@ -4901,6 +4901,7 @@ dependencies = [
  "image",
  "pybevy_control",
  "pybevy_core",
+ "pybevy_ecs",
  "sysinfo",
 ]
 

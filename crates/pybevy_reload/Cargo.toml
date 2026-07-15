@@ -13,6 +13,7 @@ mcp = ["dep:pybevy_control"]
 
 [dependencies]
 pybevy_core = { path = "../pybevy_core", version = "=0.2.1" }
+pybevy_ecs = { path = "../pybevy_ecs", version = "=0.2.1", default-features = false }
 pybevy_control = { path = "../pybevy_control", version = "=0.2.1", optional = true }
 sysinfo = "0.37"
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -31,3 +32,4 @@ features = [
     "bevy_world_serialization",
     "bevy_log",
 ]
+

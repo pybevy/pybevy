@@ -1347,7 +1347,7 @@ mod tests {
         assert!(body.max_width.is_none());
         assert_eq!(body.position, Some([1.0, 2.0, 3.0]));
         assert!(body.look_at.is_none());
-        assert_eq!(body.hide_ui, false);
+        assert!(!body.hide_ui);
     }
 
     #[test]
@@ -1356,7 +1356,7 @@ mod tests {
         let body: ScreenshotBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.delay_frames, 5);
         assert_eq!(body.max_width, Some(800));
-        assert_eq!(body.hide_ui, true);
+        assert!(body.hide_ui);
     }
 
     #[test]
@@ -1409,28 +1409,28 @@ mod tests {
         let json = r#"{"seconds": 5.0}"#;
         let body: SeekTimeBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.seconds, 5.0);
-        assert_eq!(body.pause, true);
+        assert!(body.pause);
     }
 
     #[test]
     fn seek_time_body_pause_explicit_false_honored() {
         let json = r#"{"seconds": 5.0, "pause": false}"#;
         let body: SeekTimeBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.pause, false);
+        assert!(!body.pause);
     }
 
     #[test]
     fn seek_time_body_pause_explicit_true_honored() {
         let json = r#"{"seconds": 5.0, "pause": true}"#;
         let body: SeekTimeBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.pause, true);
+        assert!(body.pause);
     }
 
     #[test]
     fn check_overlaps_body_deserialize_defaults() {
         let json = r#"{"entity": 42}"#;
         let body: CheckOverlapsBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.include_siblings, false);
+        assert!(!body.include_siblings);
         assert_eq!(body.max_float_gap, 0.0);
     }
 
@@ -1452,8 +1452,8 @@ mod tests {
             api_discovery_enabled: false,
         };
         let cloned = config.clone();
-        assert_eq!(cloned.screenshot_enabled, true);
-        assert_eq!(cloned.manipulation_enabled, false);
+        assert!(cloned.screenshot_enabled);
+        assert!(!cloned.manipulation_enabled);
     }
 
     #[test]
@@ -1461,7 +1461,7 @@ mod tests {
         let json = "{}";
         let body: ReloadBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.mode, ReloadMode::Full);
-        assert_eq!(body.pause, false);
+        assert!(!body.pause);
         assert!(body.time_scale.is_none());
     }
 
@@ -1535,7 +1535,7 @@ mod tests {
         let json = r#"{"position": [0, 5, 10]}"#;
         let body: ReloadAndCaptureBody = serde_json::from_str(json).unwrap();
         assert_eq!(body.mode, ReloadMode::Full);
-        assert_eq!(body.pause, false);
+        assert!(!body.pause);
         assert!(body.position.is_some());
     }
 

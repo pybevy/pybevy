@@ -1,8 +1,8 @@
 //! Interpreter-neutral execution primitives for dynamic Python systems.
 //!
 //! This module owns the Bevy-facing system shell and the unsafe contract that
-//! interpreter adapters must satisfy. It deliberately contains no PyO3 or
-//! RustPython types. Main continues to use its existing `DynamicSystem` until
+//! interpreter adapters must satisfy. It deliberately contains no
+//! interpreter-specific types. Main continues to use its existing `DynamicSystem` until
 //! the adapter migration; the core here is exercised with a fake interpreter
 //! so its ordering and safety boundaries can be reviewed independently.
 
@@ -32,7 +32,11 @@ use bevy::{
 };
 use pybevy_storage::{ValidityFlag, ValidityGuard};
 
-use super::{run_scaffold::RunTicks, system_flags::compute_system_flags};
+use super::{
+    parity_trace::{ParityOpSink, ParityRunHandle, ParityTraceResource},
+    run_scaffold::RunTicks,
+    system_flags::compute_system_flags,
+};
 
 /// Stage in which a dynamic system was registered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,6 +193,7 @@ pub struct InterpreterCallContext<'w, 'a, Event> {
     pub output: OutputMode,
     pub kind: InvocationKind,
     pub error_policy: ErrorPolicy,
+    pub parity_trace: Option<&'a ParityRunHandle>,
 }
 
 pub struct InitializedRunState<State, Sink> {
@@ -243,6 +248,9 @@ pub unsafe trait SystemInterpreter: Send + Sync + 'static {
         persistent: &Self::ObserverPersistentState,
         world: &mut World,
     ) -> Self::ObserverRunState;
+
+    /// Return the stable Python-visible type name for one observer event.
+    fn observer_event_type_name(&self, event: &Self::Event) -> String;
 
     /// Build scheduled arguments and invoke one prepared call.
     ///
@@ -360,6 +368,9 @@ pub struct DynamicSystemCore<B: SystemInterpreter, O: OutputPolicy> {
     failure_sink: Option<B::FailureSink>,
     profiler: Option<Arc<dyn RunProfileSink>>,
     world_id: Option<WorldId>,
+    parity_trace: Option<Arc<ParityOpSink>>,
+    pending_trace_runs: Vec<ParityRunHandle>,
+    next_trace_run_index: u64,
     _output: PhantomData<O>,
 }
 
@@ -380,12 +391,25 @@ impl<B: SystemInterpreter, O: OutputPolicy> DynamicSystemCore<B, O> {
             failure_sink: None,
             profiler: None,
             world_id: None,
+            parity_trace: None,
+            pending_trace_runs: Vec::new(),
+            next_trace_run_index: 0,
             _output: PhantomData,
         }
     }
 
     pub fn handle(&self) -> &SystemHandle<B> {
         &self.retained
+    }
+
+    /// Update the profiling stage before this system is inserted into a schedule.
+    pub fn set_stage(&mut self, stage: SystemStage) {
+        self.stage = stage;
+    }
+
+    /// Add the defense-in-depth generation guard before schedule insertion.
+    pub fn set_expected_generation(&mut self, generation: u32) {
+        self.expected_generation = Some(generation);
     }
 
     fn sink(&self) -> &B::FailureSink {
@@ -452,12 +476,23 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
             }
         };
 
-        let this_run = world.increment_change_tick();
+        world.increment_change_tick();
+        let this_run = world.change_tick();
         let ticks = RunTicks {
             last_run: self.last_run,
             this_run,
         };
         let mut local_queue = CommandQueue::default();
+        let trace_run = if self.metadata.kind == InvocationKind::System {
+            self.parity_trace.as_ref().map(|sink| {
+                let run_index = self.next_trace_run_index;
+                self.next_trace_run_index += 1;
+                sink.start_run(&self.metadata.name, run_index)
+                    .unwrap_or_else(|error| panic!("{error}"))
+            })
+        } else {
+            None
+        };
         let started = Instant::now();
 
         let call_result = {
@@ -476,6 +511,7 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
                 output: O::MODE,
                 kind: self.metadata.kind,
                 error_policy: ErrorPolicy::RaiseAfterUpdate,
+                parity_trace: trace_run.as_ref(),
             };
             // SAFETY: the scheduler enforces the access returned by initialize;
             // this core owns the single validity flag and local queue for the
@@ -491,6 +527,9 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
         let duration = started.elapsed();
 
         self.command_queue.append(&mut local_queue);
+        if let Some(trace_run) = trace_run {
+            self.pending_trace_runs.push(trace_run);
+        }
 
         let output = match call_result {
             Ok(outcome) => O::finish(outcome),
@@ -514,7 +553,17 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
     }
 
     fn apply_deferred(&mut self, world: &mut World) {
+        let resolved = self
+            .parity_trace
+            .as_ref()
+            .map(|sink| sink.resolve_before_flush(&self.pending_trace_runs, world));
         self.command_queue.apply(world);
+        if let (Some(sink), Some(resolved)) = (&self.parity_trace, resolved) {
+            let resolved = resolved.unwrap_or_else(|error| panic!("{error}"));
+            sink.record_flushed(&resolved)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+        self.pending_trace_runs.clear();
     }
 
     fn queue_deferred(&mut self, _world: DeferredWorld) {}
@@ -528,6 +577,8 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
             );
         }
         self.world_id = Some(world.id());
+
+        self.parity_trace = parity_trace_sink(world);
 
         let initialized = self.interpreter.initialize_scheduled(&self.params, world);
         self.state = Some(initialized.state);
@@ -659,6 +710,12 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
         this_run: world.change_tick(),
     };
     let mut local_queue = CommandQueue::default();
+    let trace_sink = parity_trace_sink(world);
+    let trace_run = trace_sink.as_ref().map(|sink| {
+        let trigger_type = interpreter.observer_event_type_name(event);
+        sink.start_observer(&metadata.name, &trigger_type, target, world)
+            .unwrap_or_else(|error| panic!("{error}"))
+    });
 
     let call_result = {
         let validity = ValidityFlag::new();
@@ -672,6 +729,7 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
             output: OutputMode::Unit,
             kind: InvocationKind::Observer,
             error_policy: policy,
+            parity_trace: trace_run.as_ref().map(|trace| trace.run_handle()),
         };
         // SAFETY: the caller supplies exclusive World access, this function
         // owns the fresh state/validity/queue, and the backend contract requires
@@ -682,13 +740,41 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
         result
     };
 
+    let resolved = trace_sink
+        .as_ref()
+        .zip(trace_run.as_ref())
+        .map(|(sink, trace)| {
+            sink.resolve_observer_before_flush(trace, world)
+                .unwrap_or_else(|error| panic!("{error}"))
+        });
     local_queue.apply(world);
+    if let (Some(sink), Some(trace), Some(resolved)) =
+        (trace_sink.as_ref(), trace_run.as_ref(), resolved.as_ref())
+    {
+        sink.record_observer_flushed(trace, resolved)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
     match call_result {
         Ok(_) => Ok(()),
         Err(failure) => {
             finish_observer_failure(interpreter, failure_sink, metadata, policy, failure)
         }
     }
+}
+
+fn parity_trace_sink(world: &mut World) -> Option<Arc<ParityOpSink>> {
+    if !world.contains_resource::<ParityTraceResource>() {
+        match ParityOpSink::from_env() {
+            Ok(Some(sink)) => {
+                world.insert_resource(ParityTraceResource(Arc::new(sink)));
+            }
+            Ok(None) => {}
+            Err(error) => panic!("{error}"),
+        }
+    }
+    world
+        .get_resource::<ParityTraceResource>()
+        .map(|resource| Arc::clone(&resource.0))
 }
 
 fn finish_observer_failure<B: SystemInterpreter>(
@@ -724,6 +810,7 @@ fn finish_observer_failure<B: SystemInterpreter>(
 #[cfg(test)]
 mod tests {
     use std::{
+        io::Write,
         panic::{AssertUnwindSafe, catch_unwind},
         sync::atomic::{AtomicBool, AtomicUsize},
     };
@@ -734,6 +821,23 @@ mod tests {
 
     #[derive(Resource, Default)]
     struct Counter(u32);
+
+    #[derive(Clone)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[derive(Clone, Copy)]
     enum FakeCall {
@@ -782,6 +886,7 @@ mod tests {
     struct FakeInterpreter {
         sink: FailureLog,
         last_validity: Arc<Mutex<Option<ValidityFlag>>>,
+        last_ticks: Arc<Mutex<Option<RunTicks>>>,
         observer_state_ids: Arc<Mutex<Vec<usize>>>,
         next_observer_state: AtomicUsize,
         observer_depth: AtomicUsize,
@@ -793,6 +898,7 @@ mod tests {
             Self {
                 sink,
                 last_validity,
+                last_ticks: Arc::new(Mutex::new(None)),
                 observer_state_ids: Arc::new(Mutex::new(Vec::new())),
                 next_observer_state: AtomicUsize::new(0),
                 observer_depth: AtomicUsize::new(0),
@@ -883,6 +989,10 @@ mod tests {
             }
         }
 
+        fn observer_event_type_name(&self, _event: &Self::Event) -> String {
+            "FakeEvent".to_string()
+        }
+
         unsafe fn build_args_and_call_scheduled(
             &self,
             prepared: Self::PreparedCall,
@@ -895,6 +1005,10 @@ mod tests {
                 .last_validity
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()) = Some(ctx.validity.clone());
+            *self
+                .last_ticks
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) = Some(ctx.ticks);
             state.runs += 1;
             if params.queue_counter {
                 ctx.commands.push(|world: &mut World| {
@@ -1002,6 +1116,7 @@ mod tests {
         sink: FailureLog,
         validity: Arc<Mutex<Option<ValidityFlag>>>,
         observer_ids: Arc<Mutex<Vec<usize>>>,
+        ticks: Arc<Mutex<Option<RunTicks>>>,
     }
 
     fn fixture(call: FakeCall, params: FakePlan, kind: InvocationKind) -> FakeFixture {
@@ -1009,6 +1124,7 @@ mod tests {
         let validity = Arc::new(Mutex::new(None));
         let interpreter = FakeInterpreter::new(sink.clone(), validity.clone());
         let observer_ids = interpreter.observer_state_ids.clone();
+        let ticks = interpreter.last_ticks.clone();
         let retained = Arc::new(Mutex::new(FakeRetained::Ready(call)));
         *interpreter
             .observer_handle
@@ -1030,6 +1146,7 @@ mod tests {
             sink,
             validity,
             observer_ids,
+            ticks,
         }
     }
 
@@ -1049,6 +1166,32 @@ mod tests {
         let mut condition = DynamicConditionCore::new(condition.prepared).unwrap();
         condition.initialize(&mut world);
         assert!(condition.run((), &mut world).unwrap());
+    }
+
+    #[test]
+    fn traced_system_records_run_before_its_flush_boundary() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let mut world = World::new();
+        world.insert_resource(ParityTraceResource(Arc::new(ParityOpSink::new(Box::new(
+            SharedWriter(output.clone()),
+        )))));
+        let fixture = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        let mut system = DynamicSystemCore::<_, UnitOutput>::new(fixture.prepared);
+        system.initialize(&mut world);
+        system.run((), &mut world).unwrap();
+        system.apply_deferred(&mut world);
+
+        let text = String::from_utf8(
+            output
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone(),
+        )
+        .unwrap();
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"record\":\"system_run\""));
+        assert!(lines[1].contains("\"record\":\"flush_boundary\""));
     }
 
     #[test]
@@ -1078,6 +1221,24 @@ mod tests {
         system.run((), &mut world).unwrap();
         assert_eq!(world.change_tick(), before);
         assert!(validity.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn run_uses_the_freshly_incremented_tick_as_this_run_and_last_run() {
+        let mut world = World::new();
+        let fixture = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        let ticks = fixture.ticks.clone();
+        let mut system = DynamicSystemCore::<_, UnitOutput>::new(fixture.prepared);
+        system.initialize(&mut world);
+
+        let before = world.change_tick();
+        system.run((), &mut world).unwrap();
+        let after = world.change_tick();
+        let captured = ticks.lock().unwrap().expect("run ticks captured");
+
+        assert_ne!(after, before);
+        assert_eq!(captured.this_run, after);
+        assert_eq!(system.get_last_run(), after);
     }
 
     #[test]
@@ -1199,6 +1360,62 @@ mod tests {
                 ErrorPolicy::RaiseAfterUpdate => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn observer_trace_wraps_callback_and_private_queue_flush() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let mut world = World::new();
+        world.insert_resource(Counter::default());
+        world.insert_resource(ParityTraceResource(Arc::new(ParityOpSink::new(Box::new(
+            SharedWriter(output.clone()),
+        )))));
+        let fixture = fixture(
+            FakeCall::Unit,
+            FakePlan {
+                queue_counter: true,
+                ..Default::default()
+            },
+            InvocationKind::Observer,
+        );
+        let PreparedSystem {
+            interpreter,
+            retained,
+            params,
+            metadata,
+            ..
+        } = fixture.prepared;
+        // SAFETY: the fake handle and plan match the interpreter, and this test
+        // owns the World exclusively for the full callback and queue flush.
+        unsafe {
+            execute_observer(
+                &interpreter,
+                &retained,
+                &params,
+                &(),
+                &fixture.sink,
+                &metadata,
+                None,
+                &(),
+                None,
+                ErrorPolicy::ReportAndContinue,
+                &mut world,
+            )
+        }
+        .unwrap();
+
+        assert_eq!(world.resource::<Counter>().0, 1);
+        let text = String::from_utf8(
+            output
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone(),
+        )
+        .unwrap();
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"record\":\"observer_entry\""));
+        assert!(lines[1].contains("\"record\":\"observer_flush\""));
     }
 
     #[test]

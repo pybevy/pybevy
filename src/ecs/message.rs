@@ -1,61 +1,65 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
-use bevy::ecs::message::Messages;
 use pybevy_core::registry::global_registry;
 // Re-export base classes from pybevy_core
 pub use pybevy_core::{PyMessage, PyMessageId};
+use pybevy_ecs::shared::{
+    message_store::{
+        MessageConsumeOutcome, MessageRecord, MessageStoreError, SharedMessageCursor,
+        new_message_cursor,
+    },
+    parity_trace::{ParityOpKind, ParityRunHandle, PendingParityOp},
+};
 use pyo3::{
     IntoPyObjectExt,
-    exceptions::{PyStopIteration, PyTypeError},
+    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError},
     prelude::*,
     types::PyType,
 };
 
 use super::{
-    messages::{
-        CustomMessage1, CustomMessage2, CustomMessage3, CustomMessage4, CustomMessage5,
-        CustomMessage6, CustomMessage7, CustomMessage8, CustomMessage9, CustomMessage10,
-        CustomMessage11, CustomMessage12, CustomMessage13, CustomMessage14, CustomMessage15,
-        CustomMessage16, CustomMessage17, CustomMessage18, CustomMessage19, CustomMessage20,
-        MessageRegistry, MessageType, MessageWorld, PyMessages,
-    },
+    messages::{MessageType, MessageWorld, PyMessages},
+    python_message::{PythonMessageValue, ResolvedPythonMessage, resolve_from_world},
     world::PyWorld,
 };
-use crate::ecs::messages::PyMessageType;
+use crate::ecs::{
+    helpers::validity_guard::ValidityFlag,
+    messages::{CursorStorage, PyMessageType},
+    parity_trace::canonicalize_payload,
+};
 
-// Macro to generate match arms for writing messages
-macro_rules! write_message_arms {
-    ($message_num:expr, $world:expr, $py:expr, $message:expr, $($idx:literal => $type_num:literal),+ $(,)?) => {
-        paste::paste! {
-            match $message_num {
-                $(
-                    $idx => {
-                        // Writers never insert: a structural world mutation from a
-                        // possibly-parallel system is unsound. app.add_message(T)
-                        // inserts the buffer, so a missing one is a registration error.
-                        match $world.get_resource_mut::<Messages<[<CustomMessage $type_num>]>>() {
-                            Some(mut messages) => {
-                                Box::new(messages.write([<CustomMessage $type_num>]($message.clone_ref($py))))
-                            }
-                            None => {
-                                return Err(PyTypeError::new_err(
-                                    "Messages resource not initialized for this message type. \
-                                     Call app.add_message(T) to register the message before writing.",
-                                ));
-                            }
-                        }
-                    }
-                )+
-                _ => return Err(PyTypeError::new_err("Invalid message number")),
-            }
-        }
+fn store_error(error: MessageStoreError) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
+}
+
+pub(crate) fn python_message_cursor(
+    storage: Option<CursorStorage>,
+) -> PyResult<SharedMessageCursor> {
+    let Some(storage) = storage else {
+        return Ok(new_message_cursor());
     };
+    let mut state = storage
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(existing) = state.as_ref() {
+        return existing
+            .downcast_ref::<SharedMessageCursor>()
+            .cloned()
+            .ok_or_else(|| PyRuntimeError::new_err("message cursor state has the wrong type"));
+    }
+    let cursor = new_message_cursor();
+    *state = Some(Box::new(Arc::clone(&cursor)));
+    Ok(cursor)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MessageClass {
     Reader,
     Writer,
+    Mutator,
 }
 
 #[pyclass(frozen, from_py_object)]
@@ -71,11 +75,73 @@ pub struct MessageTypeParam {
 #[pyclass(name = "MessageWriter", frozen)]
 pub struct PyMessageWriter {
     pub(crate) message_type: MessageType,
-    pub(crate) world: MessageWorld,
+    world: Option<MessageWorld>,
+    python: Option<PythonMessageWriter>,
+    parity_trace: Option<ParityRunHandle>,
 }
 
 impl PyMessageWriter {
-    // TODO: Add constructor when needed by system integration
+    pub(crate) fn native(
+        message_type: MessageType,
+        world: MessageWorld,
+        parity_trace: Option<ParityRunHandle>,
+    ) -> Self {
+        Self {
+            message_type,
+            world: Some(world),
+            python: None,
+            parity_trace,
+        }
+    }
+
+    pub(crate) fn python(
+        message_type: MessageType,
+        resolved: ResolvedPythonMessage,
+        validity: ValidityFlag,
+        parity_trace: Option<ParityRunHandle>,
+    ) -> Self {
+        Self {
+            message_type,
+            world: None,
+            python: Some(PythonMessageWriter { resolved, validity }),
+            parity_trace,
+        }
+    }
+
+    fn native_world(&self) -> PyResult<&MessageWorld> {
+        self.world.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("native message writer is missing its World access")
+        })
+    }
+
+    fn python_writer(&self) -> PyResult<&PythonMessageWriter> {
+        self.python.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("custom message writer is missing its store context")
+        })
+    }
+
+    fn prepare_trace_op(&self, message: &Bound<'_, PyAny>) -> PyResult<Option<PendingParityOp>> {
+        if self.parity_trace.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(PendingParityOp {
+            kind: ParityOpKind::MessageWrite,
+            type_name: Some(message.get_type().name()?.to_string()),
+            payload_digest: canonicalize_payload(message)?.digest(),
+            target: None,
+        }))
+    }
+
+    fn record_trace_op(&self, operation: Option<PendingParityOp>) {
+        if let (Some(trace), Some(operation)) = (&self.parity_trace, operation) {
+            trace.record_op(operation);
+        }
+    }
+}
+
+struct PythonMessageWriter {
+    resolved: ResolvedPythonMessage,
+    validity: ValidityFlag,
 }
 
 #[pymethods]
@@ -123,10 +189,16 @@ impl PyMessageWriter {
             MessageType::AssetEventMesh => {
                 Err(PyTypeError::new_err("AssetEvent<Mesh> not yet implemented"))
             }
-            MessageType::Custom(py_type) => {
+            MessageType::Custom(_) => {
+                let trace_operation = self.prepare_trace_op(bound_message)?;
+                let writer = self.python_writer()?;
+                writer
+                    .validity
+                    .check_read()
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
                 // Verify the message is an instance of the registered type
                 let msg_type = bound_message.get_type();
-                let expected_type = py_type.bind(py);
+                let expected_type = writer.resolved.class.bind(py);
                 if !msg_type.is(expected_type) {
                     return Err(PyTypeError::new_err(format!(
                         "Expected message of type {}, got {}",
@@ -135,30 +207,16 @@ impl PyMessageWriter {
                     )));
                 }
 
-                // Look up the message number from registry
-                let world = self.world.world_mut()?;
-                let type_ptr = expected_type.as_type_ptr();
-                let message_num = {
-                    let registry = world.get_resource::<MessageRegistry>().ok_or_else(|| {
-                        PyTypeError::new_err(
-                            "MessageRegistry not initialized. Call app.add_message(T) to register message types.",
-                        )
-                    })?;
-                    registry
-                        .get(type_ptr)
-                        .ok_or_else(|| PyTypeError::new_err("Message type not registered"))?
-                        .message_num
-                };
-
-                // Write to the appropriate CustomMessageN resource
-                let event_id: Box<dyn std::any::Any + Send + Sync> = write_message_arms!(message_num, world, py, message,
-                    0=>1, 1=>2, 2=>3, 3=>4, 4=>5, 5=>6, 6=>7, 7=>8, 8=>9, 9=>10,
-                    10=>11, 11=>12, 12=>13, 13=>14, 14=>15, 15=>16, 16=>17, 17=>18, 18=>19, 19=>20
-                );
-
-                Ok(PyMessageId::from_boxed(event_id))
+                let id = writer
+                    .resolved
+                    .store
+                    .append(writer.resolved.channel, Arc::new(message))
+                    .map_err(store_error)?;
+                self.record_trace_op(trace_operation);
+                Ok(PyMessageId::new(id))
             }
             MessageType::Dynamic(type_ptr) => {
+                let trace_operation = self.prepare_trace_op(bound_message)?;
                 // Use global registry for dynamic dispatch (most message types use this)
                 let bridge =
                     global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
@@ -172,14 +230,48 @@ impl PyMessageWriter {
                     )));
                 }
 
-                let world = self.world.world_mut()?;
+                let world = self.native_world()?.world_mut()?;
                 let event_id = bridge.write_message(py, world, bound_message)?;
+                self.record_trace_op(trace_operation);
                 Ok(PyMessageId::from_boxed(event_id))
             }
         }
     }
 
     pub fn write_batch(&self, py: Python, messages: Vec<Py<PyAny>>) -> PyResult<Vec<PyMessageId>> {
+        if matches!(self.message_type, MessageType::Custom(_)) {
+            let trace_operations = messages
+                .iter()
+                .map(|message| self.prepare_trace_op(message.bind(py)))
+                .collect::<PyResult<Vec<_>>>()?;
+            let writer = self.python_writer()?;
+            writer
+                .validity
+                .check_read()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let expected_type = writer.resolved.class.bind(py);
+            for message in &messages {
+                let actual_type = message.bind(py).get_type();
+                if !actual_type.is(expected_type) {
+                    return Err(PyTypeError::new_err(format!(
+                        "Expected message of type {}, got {}",
+                        expected_type.name()?,
+                        actual_type.name()?,
+                    )));
+                }
+            }
+            let values = messages.into_iter().map(Arc::new).collect();
+            let ids = writer
+                .resolved
+                .store
+                .append_batch(writer.resolved.channel, values)
+                .map_err(store_error)
+                .map(|ids| ids.into_iter().map(PyMessageId::new).collect())?;
+            for operation in trace_operations {
+                self.record_trace_op(operation);
+            }
+            return Ok(ids);
+        }
         let mut message_ids = Vec::new();
         for message in messages {
             let message_id = self.write(py, message)?;
@@ -208,9 +300,14 @@ impl PyMessageWriter {
             MessageType::AssetEventMesh => Err(PyTypeError::new_err(
                 "AssetEvent<Mesh> has no default value",
             )),
-            MessageType::Custom(type_obj) => {
+            MessageType::Custom(_) => {
                 // Call the type with no arguments to create a default instance
-                let instance = type_obj.bind(py).call0()?;
+                let writer = self.python_writer()?;
+                writer
+                    .validity
+                    .check_read()
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                let instance = writer.resolved.class.bind(py).call0()?;
                 self.write(py, instance.unbind())
             }
             MessageType::Dynamic(type_ptr) => {
@@ -242,13 +339,56 @@ impl PyMessageWriter {
 /// Usage: `def my_system(reader: MessageReader[DamageEvent])`
 #[pyclass(name = "MessageReader", frozen)]
 pub struct PyMessageReader {
-    #[allow(dead_code)] // retained for potential future direct-world access
-    pub(crate) world: MessageWorld,
-    pub(crate) messages: PyMessages,
+    messages: Option<PyMessages>,
+    python: Option<PythonMessageReader>,
 }
 
 impl PyMessageReader {
-    // TODO: Add constructor when needed by system integration
+    pub(crate) fn native(messages: PyMessages) -> Self {
+        Self {
+            messages: Some(messages),
+            python: None,
+        }
+    }
+
+    pub(crate) fn python(
+        resolved: ResolvedPythonMessage,
+        cursor: SharedMessageCursor,
+        validity: ValidityFlag,
+    ) -> Self {
+        Self {
+            messages: None,
+            python: Some(PythonMessageReader {
+                resolved,
+                cursor,
+                validity,
+            }),
+        }
+    }
+
+    fn native_messages(&self) -> PyResult<&PyMessages> {
+        self.messages.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("native message reader is missing its Messages access")
+        })
+    }
+
+    fn python_reader(&self) -> Option<&PythonMessageReader> {
+        self.python.as_ref()
+    }
+}
+
+struct PythonMessageReader {
+    resolved: ResolvedPythonMessage,
+    cursor: SharedMessageCursor,
+    validity: ValidityFlag,
+}
+
+impl PythonMessageReader {
+    fn check(&self) -> PyResult<()> {
+        self.validity
+            .check_read()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
 }
 
 #[pymethods]
@@ -275,24 +415,71 @@ impl PyMessageReader {
     }
 
     pub fn clear(&self) -> PyResult<()> {
-        self.messages.clear()
+        if let Some(reader) = self.python_reader() {
+            reader.check()?;
+            return reader
+                .resolved
+                .store
+                .clear_reader(reader.resolved.channel, &reader.cursor)
+                .map_err(store_error);
+        }
+        self.native_messages()?.clear()
     }
 
     pub fn is_empty(&self) -> PyResult<bool> {
-        self.messages.is_empty()
+        if let Some(reader) = self.python_reader() {
+            reader.check()?;
+            return reader
+                .resolved
+                .store
+                .is_empty(reader.resolved.channel, &reader.cursor)
+                .map_err(store_error);
+        }
+        self.native_messages()?.is_empty()
     }
 
     pub fn len(&self) -> PyResult<usize> {
-        self.messages.len()
+        if let Some(reader) = self.python_reader() {
+            reader.check()?;
+            let len = reader
+                .resolved
+                .store
+                .unread_len(reader.resolved.channel, &reader.cursor)
+                .map_err(store_error)?;
+            return usize::try_from(len)
+                .map_err(|_| PyRuntimeError::new_err("unread message count exceeds usize"));
+        }
+        self.native_messages()?.len()
     }
 
     pub fn read(&self, py: Python) -> PyResult<PyMessageReaderIter> {
-        // Collect all messages at iterator creation time using persistent cursor
-        let cached_messages = self.messages.iter_to_python(py)?;
+        if let Some(reader) = self.python_reader() {
+            reader.check()?;
+            let snapshot = reader
+                .resolved
+                .store
+                .snapshot_unread(reader.resolved.channel, &reader.cursor)
+                .map_err(store_error)?;
+            return Ok(PyMessageReaderIter {
+                cursor: AtomicUsize::new(0),
+                cached_messages: Vec::new(),
+                python: Some(PythonMessageIterator {
+                    store: reader.resolved.store.clone(),
+                    channel: reader.resolved.channel,
+                    cursor: Arc::clone(&reader.cursor),
+                    records: snapshot.records,
+                    validity: reader.validity.clone(),
+                }),
+            });
+        }
+
+        // Native Bevy messages retain their existing eager adapter behavior.
+        let cached_messages = self.native_messages()?.iter_to_python(py)?;
 
         Ok(PyMessageReaderIter {
             cursor: AtomicUsize::new(0),
             cached_messages,
+            python: None,
         })
     }
 
@@ -306,6 +493,15 @@ pub struct PyMessageReaderIter {
     cursor: AtomicUsize,
     // Cache all messages at creation time for iteration
     cached_messages: Vec<Py<PyAny>>,
+    python: Option<PythonMessageIterator>,
+}
+
+struct PythonMessageIterator {
+    store: crate::ecs::python_message::PythonMessageStore,
+    channel: pybevy_ecs::shared::message_store::MessageChannelId,
+    cursor: SharedMessageCursor,
+    records: Vec<MessageRecord<PythonMessageValue>>,
+    validity: ValidityFlag,
 }
 
 #[pymethods]
@@ -315,6 +511,28 @@ impl PyMessageReaderIter {
     }
 
     pub fn __next__(&self, py: Python) -> PyResult<Py<PyAny>> {
+        if let Some(iterator) = &self.python {
+            iterator
+                .validity
+                .check_read()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            loop {
+                let index = self.cursor.fetch_add(1, Ordering::Relaxed);
+                let Some(record) = iterator.records.get(index) else {
+                    return Err(PyStopIteration::new_err(""));
+                };
+                match iterator
+                    .store
+                    .consume_snapshot_record(iterator.channel, &iterator.cursor, record.sequence)
+                    .map_err(store_error)?
+                {
+                    MessageConsumeOutcome::Consumed => {
+                        return Ok(record.value.as_ref().clone_ref(py));
+                    }
+                    MessageConsumeOutcome::AlreadyConsumed => continue,
+                }
+            }
+        }
         let index = self.cursor.fetch_add(1, Ordering::Relaxed);
 
         if index < self.cached_messages.len() {
@@ -325,32 +543,101 @@ impl PyMessageReaderIter {
     }
 }
 
-/// Write a Python message to the appropriate CustomMessage slot.
+/// Combined read/write handle for a custom Python message channel.
+///
+/// This is intentionally limited to custom messages: native bridges currently
+/// materialize owned Python snapshots, which cannot provide Bevy's in-place
+/// mutation semantics.
+#[pyclass(name = "MessageMutator", frozen)]
+pub struct PyMessageMutator {
+    writer: PyMessageWriter,
+    reader: PyMessageReader,
+}
+
+impl PyMessageMutator {
+    pub(crate) fn python(
+        message_type: MessageType,
+        resolved: ResolvedPythonMessage,
+        cursor: SharedMessageCursor,
+        validity: ValidityFlag,
+        parity_trace: Option<ParityRunHandle>,
+    ) -> Self {
+        Self {
+            writer: PyMessageWriter::python(
+                message_type,
+                resolved.clone(),
+                validity.clone(),
+                parity_trace,
+            ),
+            reader: PyMessageReader::python(resolved, cursor, validity),
+        }
+    }
+}
+
+#[pymethods]
+impl PyMessageMutator {
+    #[classmethod]
+    #[pyo3(signature = (key, /))]
+    pub fn __class_getitem__(
+        _cls: &Bound<'_, PyType>,
+        key: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let py = key.py();
+        let type_obj = key.cast::<PyType>()?;
+        let py_message_type = PyMessageType::from_message_type(type_obj)?;
+        MessageTypeParam {
+            ty: MessageClass::Mutator,
+            message_type: py_message_type.0,
+        }
+        .into_py_any(py)
+    }
+
+    pub fn write(&self, py: Python, message: Py<PyAny>) -> PyResult<PyMessageId> {
+        self.writer.write(py, message)
+    }
+
+    pub fn write_batch(&self, py: Python, messages: Vec<Py<PyAny>>) -> PyResult<Vec<PyMessageId>> {
+        self.writer.write_batch(py, messages)
+    }
+
+    pub fn write_default(&self, py: Python) -> PyResult<PyMessageId> {
+        self.writer.write_default(py)
+    }
+
+    pub fn clear(&self) -> PyResult<()> {
+        self.reader.clear()
+    }
+
+    pub fn is_empty(&self) -> PyResult<bool> {
+        self.reader.is_empty()
+    }
+
+    pub fn len(&self) -> PyResult<usize> {
+        self.reader.len()
+    }
+
+    pub fn read(&self, py: Python) -> PyResult<PyMessageReaderIter> {
+        self.reader.read(py)
+    }
+
+    pub fn __iter__(&self, py: Python) -> PyResult<PyMessageReaderIter> {
+        self.read(py)
+    }
+}
+
+/// Write a Python message to its App-local custom channel.
 /// Called from external crates via `global_registry::write_python_message`.
 fn write_custom_python_message(
     world: &mut bevy::ecs::world::World,
-    py: Python,
+    _py: Python,
     msg: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    use pyo3::types::PyTypeMethods;
-
     let type_ptr = msg.get_type().as_type_ptr();
-    let message_num = {
-        let registry = world
-            .get_resource::<MessageRegistry>()
-            .ok_or_else(|| PyTypeError::new_err("MessageRegistry not found in world"))?;
-        registry
-            .get(type_ptr)
-            .ok_or_else(|| PyTypeError::new_err("Message type not registered"))?
-            .message_num
-    };
-
-    // Write to the appropriate CustomMessageN slot
-    let msg_py: Py<PyAny> = msg.clone().unbind();
-    let _: Box<dyn std::any::Any + Send + Sync> = write_message_arms!(message_num, world, py, msg_py,
-        0=>1, 1=>2, 2=>3, 3=>4, 4=>5, 5=>6, 6=>7, 7=>8, 8=>9, 9=>10,
-        10=>11, 11=>12, 12=>13, 13=>14, 14=>15, 15=>16, 16=>17, 17=>18, 18=>19, 19=>20
-    );
+    let resolved = resolve_from_world(world, type_ptr)?;
+    resolved
+        .store
+        .append(resolved.channel, Arc::new(msg.clone().unbind()))
+        .map_err(store_error)?;
     Ok(())
 }
 

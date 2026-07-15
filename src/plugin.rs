@@ -61,7 +61,7 @@ use crate::{
             systems::{check_hot_reload_system, handle_f5_reload_system},
         },
     },
-    ecs::dynamic_system::DynamicSystem,
+    ecs::system_interpreter::{MainDynamicSystem as DynamicSystem, new_main_system},
 };
 
 /// Global flag to ensure Python is initialized only once
@@ -183,7 +183,7 @@ impl PySystemBuilder {
 
             // Native-plugin systems run on a separate mini-app with no LastSystemError
             // drain; a throwaway buffer keeps the error path off the world.
-            let dynamic_system = DynamicSystem::new(
+            let dynamic_system = new_main_system(
                 func.unbind(),
                 generation,
                 error_state,

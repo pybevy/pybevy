@@ -48,7 +48,7 @@ pub struct ComponentSpec<K: BackendKeys> {
     pub name: String,
     /// Label used in intra-system disjointness filters. Must come from the
     /// same namespace as the filter labels below; the backend chooses it
-    /// (class-name strings on pyo3, type-pointer strings on RustPython).
+    /// (for example, class-name or type-identity strings).
     pub label: String,
     pub mutable: bool,
     pub optional: bool,
@@ -97,7 +97,7 @@ pub enum ParamSpec<K: BackendKeys> {
         key: K::ResourceKey,
         /// Conflict-validation key. `None` opts the parameter out of the
         /// intra-system conflict check (used for infrastructure resources
-        /// that are only ever read, e.g. the RustPython AssetServer arm).
+        /// that are only ever read by an adapter-specific runtime path).
         vkey: Option<usize>,
         /// Display name for conflict messages.
         name: String,
@@ -116,6 +116,9 @@ pub enum ParamSpec<K: BackendKeys> {
         key: K::MessageKey,
     },
     MessageWriter {
+        key: K::MessageKey,
+    },
+    MessageMutator {
         key: K::MessageKey,
     },
     World,
@@ -284,8 +287,13 @@ pub fn build_declared_access<K: BackendKeys>(
                     }
                 }
             }
-            ParamSpec::MessageReader { key } | ParamSpec::MessageWriter { key } => {
-                let write = matches!(param, ParamSpec::MessageWriter { .. });
+            ParamSpec::MessageReader { key }
+            | ParamSpec::MessageWriter { key }
+            | ParamSpec::MessageMutator { key } => {
+                let write = matches!(
+                    param,
+                    ParamSpec::MessageWriter { .. } | ParamSpec::MessageMutator { .. }
+                );
                 let resolved = resolver.message_ids(world, key, write);
                 for id in resolved.writes {
                     push_unique(&mut resources_to_write, id);
@@ -336,6 +344,7 @@ pub fn build_declared_access<K: BackendKeys>(
 /// `component_vkey` maps a component key to the validation key: a stable
 /// pre-world key at construction/registration time (name string or type
 /// pointer), or the resolved `ComponentId` when a `World` is available.
+/// `message_vkey` supplies the corresponding channel identity and display name.
 ///
 /// Disjointness filters include an implicit `With` for every queried
 /// component (matching Bevy, where `Query<&T>` implies `With<T>` for access
@@ -344,6 +353,7 @@ pub fn build_declared_access<K: BackendKeys>(
 pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
     params: &[ParamSpec<K>],
     mut component_vkey: impl FnMut(&K::ComponentKey) -> VK,
+    mut message_vkey: impl FnMut(&K::MessageKey) -> (String, String),
 ) -> Vec<ParamAccess<VK>> {
     params
         .iter()
@@ -396,25 +406,42 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 name: name.clone(),
                 mutable: *mutable,
             },
+            ParamSpec::MessageReader { key }
+            | ParamSpec::MessageWriter { key }
+            | ParamSpec::MessageMutator { key } => {
+                let (key, name) = message_vkey(key);
+                ParamAccess::Message {
+                    key,
+                    name,
+                    mutable: matches!(
+                        param,
+                        ParamSpec::MessageWriter { .. } | ParamSpec::MessageMutator { .. }
+                    ),
+                }
+            }
             ParamSpec::World => ParamAccess::World,
-            ParamSpec::MessageReader { .. }
-            | ParamSpec::MessageWriter { .. }
-            | ParamSpec::Commands
-            | ParamSpec::Local
-            | ParamSpec::Observer => ParamAccess::None,
+            ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => ParamAccess::None,
         })
         .collect()
 }
 
 /// The user-facing conflict message, identical on both backends.
 pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflict) -> String {
+    let category = if conflict.comp_name.starts_with("Message<")
+        || conflict.existing_name.starts_with("Message<")
+    {
+        "message"
+    } else {
+        "component"
+    };
     format!(
-        "System '{}' has conflicting component access:\n\
+        "System '{}' has conflicting {} access:\n\
          - Parameter {} requests {} access to {}\n\
          - Parameter {} already has {} access to {}\n\
          Rust's borrowing rules forbid multiple mutable references or \
          mixing mutable and immutable references to the same data.",
         func_name,
+        category,
         conflict.param_idx,
         if conflict.mutable {
             "mutable"
@@ -442,6 +469,9 @@ pub fn condition_param_rejection<K: BackendKeys>(param: &ParamSpec<K>) -> Option
         ParamSpec::Commands => Some("Commands (queued mutations are never applied to conditions)"),
         ParamSpec::MessageWriter { .. } => {
             Some("MessageWriter (writing messages mutates the world)")
+        }
+        ParamSpec::MessageMutator { .. } => {
+            Some("MessageMutator (reading, mutating, and writing messages mutates the world)")
         }
         ParamSpec::MessageReader { .. } => Some(
             "MessageReader (advancing the read cursor mutates reader state; \
@@ -479,7 +509,7 @@ pub fn condition_rejection_message(
 /// differential tests: both backends lower the same Python system signature
 /// and must render identically. Component names are Python class names (or
 /// bridge names) and are comparable across backends; filter and message keys
-/// are backend-specific (pointer-based on RustPython), so filters render as
+/// are adapter-specific, so filters render as
 /// counts and resource/asset/message names are omitted.
 pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<String> {
     params
@@ -495,6 +525,7 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
             ParamSpec::Assets { mutable, .. } => format!("assets mutable={mutable}"),
             ParamSpec::MessageReader { .. } => "message_reader".to_string(),
             ParamSpec::MessageWriter { .. } => "message_writer".to_string(),
+            ParamSpec::MessageMutator { .. } => "message_mutator".to_string(),
             ParamSpec::World => "world".to_string(),
             ParamSpec::Commands => "commands".to_string(),
             ParamSpec::Local => "local".to_string(),
@@ -516,10 +547,11 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
 /// 4. Assets (mutable)
 /// 5. MessageReader
 /// 6. MessageWriter
-/// 7. World
-/// 8. Commands
-/// 9. Local
-/// 10. On (observer)
+/// 7. MessageMutator
+/// 8. World
+/// 9. Commands
+/// 10. Local
+/// 11. On (observer)
 ///
 /// The test lowers the list and asserts [`describe_param_specs`] equals this
 /// golden. Both branches carry this file byte-identically, so a change that
@@ -533,6 +565,7 @@ pub const LOWERING_CORPUS_GOLDEN: &[&str] = &[
     "assets mutable=true",
     "message_reader",
     "message_writer",
+    "message_mutator",
     "world",
     "commands",
     "local",
@@ -895,6 +928,128 @@ mod tests {
     }
 
     #[test]
+    fn cross_system_same_message_reader_writer_are_scheduler_incompatible() {
+        let mut world = World::new();
+        let store = world.register_component::<R1>();
+        let channel = world.register_component::<R2>();
+        let mut reader_resolver = MockResolver::default();
+        reader_resolver.messages.insert(
+            "Tick",
+            ResolvedMessage {
+                reads: vec![store, channel],
+                writes: vec![],
+            },
+        );
+        let reader = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageReader { key: "Tick" }],
+            &mut reader_resolver,
+        );
+        let mut writer_resolver = MockResolver::default();
+        writer_resolver.messages.insert(
+            "Tick",
+            ResolvedMessage {
+                reads: vec![store],
+                writes: vec![channel],
+            },
+        );
+        let writer = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageWriter { key: "Tick" }],
+            &mut writer_resolver,
+        );
+
+        assert!(!reader.set.is_compatible(&writer.set));
+    }
+
+    #[test]
+    fn message_mutator_is_exclusive_per_channel() {
+        let mut world = World::new();
+        let store = world.register_component::<R1>();
+        let channel = world.register_component::<R2>();
+        let mut mutator_resolver = MockResolver::default();
+        mutator_resolver.messages.insert(
+            "Tick",
+            ResolvedMessage {
+                reads: vec![store],
+                writes: vec![channel],
+            },
+        );
+        let mutator = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageMutator { key: "Tick" }],
+            &mut mutator_resolver,
+        );
+        let mut reader_resolver = MockResolver::default();
+        reader_resolver.messages.insert(
+            "Tick",
+            ResolvedMessage {
+                reads: vec![store, channel],
+                writes: vec![],
+            },
+        );
+        let reader = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageReader { key: "Tick" }],
+            &mut reader_resolver,
+        );
+
+        assert!(mutator.set.combined_access().has_write(channel));
+        assert!(!mutator.set.is_compatible(&reader.set));
+
+        let mut second_mutator_resolver = MockResolver::default();
+        second_mutator_resolver.messages.insert(
+            "Tick",
+            ResolvedMessage {
+                reads: vec![store],
+                writes: vec![channel],
+            },
+        );
+        let second_mutator = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageMutator { key: "Tick" }],
+            &mut second_mutator_resolver,
+        );
+        assert!(!mutator.set.is_compatible(&second_mutator.set));
+    }
+
+    #[test]
+    fn cross_system_unrelated_message_channels_are_scheduler_compatible() {
+        let mut world = World::new();
+        let store = world.register_component::<R1>();
+        let channel_a = world.register_component::<R2>();
+        let channel_b = world.register_component::<A>();
+        let mut first_resolver = MockResolver::default();
+        first_resolver.messages.insert(
+            "A",
+            ResolvedMessage {
+                reads: vec![store],
+                writes: vec![channel_a],
+            },
+        );
+        let first = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageWriter { key: "A" }],
+            &mut first_resolver,
+        );
+        let mut second_resolver = MockResolver::default();
+        second_resolver.messages.insert(
+            "B",
+            ResolvedMessage {
+                reads: vec![store],
+                writes: vec![channel_b],
+            },
+        );
+        let second = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageWriter { key: "B" }],
+            &mut second_resolver,
+        );
+
+        assert!(first.set.is_compatible(&second.set));
+    }
+
+    #[test]
     fn world_param_returns_empty_set_but_walk_still_runs() {
         let (mut world, mut resolver) = setup();
         let r1 = world.register_component::<R1>();
@@ -948,7 +1103,7 @@ mod tests {
             mut_query("T", QuerySpec::default()),
             mut_query("T", QuerySpec::default()),
         ];
-        let accesses = to_param_accesses(&params, |k| *k);
+        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
         assert!(validate_access(&accesses).is_err());
     }
 
@@ -970,7 +1125,7 @@ mod tests {
                 },
             ),
         ];
-        let accesses = to_param_accesses(&params, |k| *k);
+        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
         assert!(validate_access(&accesses).is_ok());
     }
 
@@ -994,7 +1149,7 @@ mod tests {
                 },
             ),
         ];
-        let accesses = to_param_accesses(&params, |k| *k);
+        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
         assert!(validate_access(&accesses).is_ok());
     }
 
@@ -1009,7 +1164,7 @@ mod tests {
             },
             ParamSpec::<MockKeys>::World,
         ];
-        let accesses = to_param_accesses(&params, |k| *k);
+        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
         // vkey: None lowers to ParamAccess::None, so World sees no conflict.
         assert!(validate_access(&accesses).is_ok());
     }
@@ -1020,18 +1175,19 @@ mod tests {
             ParamSpec::<MockKeys>::World,
             mut_query("T", QuerySpec::default()),
         ];
-        let accesses = to_param_accesses(&params, |k| *k);
+        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
         let err = validate_access(&accesses).unwrap_err();
         assert_eq!(err.existing_name, "World");
     }
 
     #[test]
     fn condition_rejects_world_commands_messages_and_mut_access() {
-        let rejected: [ParamSpec<MockKeys>; 6] = [
+        let rejected: [ParamSpec<MockKeys>; 7] = [
             ParamSpec::World,
             ParamSpec::Commands,
             ParamSpec::MessageWriter { key: "M" },
             ParamSpec::MessageReader { key: "M" },
+            ParamSpec::MessageMutator { key: "M" },
             ParamSpec::Res {
                 key: "r",
                 vkey: Some(1),
@@ -1070,7 +1226,7 @@ mod tests {
 
     #[test]
     fn describe_renders_canonical_strings() {
-        let params: [ParamSpec<MockKeys>; 5] = [
+        let params: [ParamSpec<MockKeys>; 6] = [
             ParamSpec::Query(QuerySpec {
                 components: vec![comp("Position", true, false), comp("Velocity", false, true)],
                 with: vec![filter("Player")],
@@ -1091,6 +1247,7 @@ mod tests {
                 mutable: true,
             },
             ParamSpec::MessageReader { key: "Collision" },
+            ParamSpec::MessageMutator { key: "Collision" },
             ParamSpec::Commands,
         ];
         assert_eq!(
@@ -1101,6 +1258,7 @@ mod tests {
                 "res mutable=false vkey=present",
                 "assets mutable=true",
                 "message_reader",
+                "message_mutator",
                 "commands",
             ]
         );
