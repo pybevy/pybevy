@@ -71,6 +71,7 @@ impl PyRenderTarget {
         }
     }
 
+    #[pyo3(signature = (primary_window = None))]
     pub fn normalize(
         &self,
         primary_window: Option<&PyEntity>,

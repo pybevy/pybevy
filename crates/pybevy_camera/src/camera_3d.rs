@@ -34,7 +34,7 @@ impl PartialEq for PyCamera3d {
 impl PyCamera3d {
     #[new]
     #[pyo3(signature = (
-        depth_load_op = PyCamera3dDepthLoadOp::Clear(DEFAULT_DEPTH_CLEAR_VALUE),
+        depth_load_op = PyCamera3dDepthLoadOp::Clear { value: DEFAULT_DEPTH_CLEAR_VALUE },
         depth_texture_usages = PyCamera3dDepthTextureUsage(DEFAULT_DEPTH_TEXTURE_USAGE)
     ))]
     pub fn new(

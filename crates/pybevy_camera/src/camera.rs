@@ -1,4 +1,4 @@
-use bevy::camera::{Camera, MsaaWriteback};
+use bevy::camera::Camera;
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
@@ -9,7 +9,8 @@ use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{
-    clear_color_config::PyClearColorConfig, sub_camera_view::PySubCameraView, viewport::PyViewport,
+    clear_color_config::PyClearColorConfig, msaa_writeback::PyMsaaWriteback,
+    sub_camera_view::PySubCameraView, viewport::PyViewport,
 };
 
 #[pycomponent(Camera, bridge, view_fields = [is_active])]
@@ -34,6 +35,7 @@ impl PyCamera {
         is_active = true,
         *,
         order = 0,
+        msaa_writeback = PyMsaaWriteback::Auto,
         clear_color = None,
         viewport = None,
         sub_camera_view = None,
@@ -41,6 +43,7 @@ impl PyCamera {
     pub fn new(
         is_active: bool,
         order: isize,
+        msaa_writeback: PyMsaaWriteback,
         clear_color: Option<PyClearColorConfig>,
         viewport: Option<&PyViewport>,
         sub_camera_view: Option<PySubCameraView>,
@@ -48,6 +51,7 @@ impl PyCamera {
         let mut camera = Camera {
             is_active,
             order,
+            msaa_writeback: msaa_writeback.into(),
             ..Default::default()
         };
         if let Some(cc) = clear_color {
@@ -103,26 +107,13 @@ impl PyCamera {
     }
 
     #[getter]
-    pub fn msaa_writeback(&self) -> PyResult<String> {
-        Ok(match self.as_ref()?.msaa_writeback {
-            MsaaWriteback::Off => "off".to_string(),
-            MsaaWriteback::Auto => "auto".to_string(),
-            MsaaWriteback::Always => "always".to_string(),
-        })
+    pub fn msaa_writeback(&self) -> PyResult<PyMsaaWriteback> {
+        Ok(self.as_ref()?.msaa_writeback.into())
     }
 
     #[setter]
-    pub fn set_msaa_writeback(&mut self, value: &str) -> PyResult<()> {
-        self.as_mut()?.msaa_writeback = match value {
-            "off" => MsaaWriteback::Off,
-            "auto" => MsaaWriteback::Auto,
-            "always" => MsaaWriteback::Always,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "msaa_writeback must be 'off', 'auto', or 'always'",
-                ));
-            }
-        };
+    pub fn set_msaa_writeback(&mut self, value: PyMsaaWriteback) -> PyResult<()> {
+        self.as_mut()?.msaa_writeback = value.into();
         Ok(())
     }
 
