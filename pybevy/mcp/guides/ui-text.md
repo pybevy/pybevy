@@ -192,14 +192,14 @@ def fade_text(
         bg_color.color = Color.srgba(0.0, 0.0, 0.0, alpha * 0.5)
 ```
 
-## World-Space Text (Text2d) — 2D scenes only
+## World-Space Text (Text2d) - 2D scenes only
 
 **Only use `Text2d` in scenes with `Camera2d`.** It will not render with `Camera3d`. For 3D scenes, use UI `Text` + `Node` (see above).
 
 ```python
 from pybevy.text import Text2d, TextFont, TextColor
 
-# ONLY works with Camera2d — do NOT use in 3D scenes
+# ONLY works with Camera2d - do NOT use in 3D scenes
 commands.spawn(
     Text2d("Player Name"),
     TextFont.from_font_size(50.0),

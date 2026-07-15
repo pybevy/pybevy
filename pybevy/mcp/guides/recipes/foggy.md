@@ -32,7 +32,7 @@ def setup(
         Name("camera"),
     )
 
-    # Dim sun — partially obscured by fog
+    # Dim sun - partially obscured by fog
     commands.spawn(
         DirectionalLight(
             illuminance=4000.0,
@@ -75,8 +75,8 @@ if __name__ == "__main__":
 
 ## Key points
 
-- **DistanceFog** is a camera component — spawn it on the same entity as `Camera3d`
-- **FogFalloff.Exponential(density)** — 0.002 subtle haze, 0.005 moderate, 0.04 thick
+- **DistanceFog** is a camera component - spawn it on the same entity as `Camera3d`
+- **FogFalloff.Exponential(density)** - 0.002 subtle haze, 0.005 moderate, 0.04 thick
 - **directional_light_color/exponent** creates god-ray effect through fog
 - Lower sun **illuminance** (3000–5000) works better with fog than full 10000
-- Fog density that looks fine in daylight may be invisible at night — test both
+- Fog density that looks fine in daylight may be invisible at night - test both

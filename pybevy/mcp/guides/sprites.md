@@ -164,7 +164,7 @@ sprite.custom_size = (new_width, new_height)
 
 ## Procedural Sprite Sheets
 
-Generate sprite sheets from code using the `Image` API — no image files needed.
+Generate sprite sheets from code using the `Image` API - no image files needed.
 
 ```python
 from pybevy.image import TextureAtlas, TextureAtlasLayout

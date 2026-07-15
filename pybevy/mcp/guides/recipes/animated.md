@@ -113,10 +113,10 @@ if __name__ == "__main__":
 
 ## Key points
 
-- **`time.delta_secs()`** — seconds since last frame; use for velocity-based motion
-- **`time.elapsed_secs()`** — total seconds since start; use for periodic/sine-wave motion
+- **`time.delta_secs()`** - seconds since last frame; use for velocity-based motion
+- **`time.elapsed_secs()`** - total seconds since start; use for periodic/sine-wave motion
 - **Custom components** need `@component` decorator and extend `Component`
-- **`add_systems(Update, (sys1, sys2))`** — tuple registers multiple systems in one call
-- **`Query[tuple[Mut[Transform], Velocity]]`** — `Mut` for writable, bare type for read-only
+- **`add_systems(Update, (sys1, sys2))`** - tuple registers multiple systems in one call
+- **`Query[tuple[Mut[Transform], Velocity]]`** - `Mut` for writable, bare type for read-only
 - Assign a whole new `Vec3` to `transform.translation` for reliable updates
-- **Verify numerically**: Use `run_code` + `get_logs()` to print transform values at a paused moment — see the "Animation Verification" section in the scene-editing guide
+- **Verify numerically**: Use `run_code` + `get_logs()` to print transform values at a paused moment - see the "Animation Verification" section in the scene-editing guide

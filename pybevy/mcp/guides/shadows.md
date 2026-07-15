@@ -28,10 +28,10 @@ commands.insert_resource(PointLightShadowMap(size=2048))        # Default: 1024
 
 | Size | Quality | VRAM cost |
 |------|---------|-----------|
-| `512` | Low — visible stairstepping | Minimal |
+| `512` | Low - visible stairstepping | Minimal |
 | `1024` | Default for point lights | Low |
 | `2048` | Default for directional lights, good for most scenes | Medium |
-| `4096` | High quality — sharp shadows up close | High |
+| `4096` | High quality - sharp shadows up close | High |
 
 ## Shadow Filtering
 
@@ -40,7 +40,7 @@ Controls how shadow edges look. Added to the camera entity:
 ```python
 commands.spawn(
     Camera3d(),
-    ShadowFilteringMethod.GAUSSIAN,  # Default — good without TAA
+    ShadowFilteringMethod.GAUSSIAN,  # Default - good without TAA
 )
 ```
 
@@ -93,11 +93,11 @@ DirectionalLight(shadow_maps_enabled=True, shadow_depth_bias=0.05)
 PointLight(shadow_maps_enabled=True, shadow_normal_bias=0.3)
 ```
 
-**Rule of thumb:** Increase `depth_bias` to fix acne; decrease `normal_bias` to fix peter panning. They trade off against each other — find the balance for your scene.
+**Rule of thumb:** Increase `depth_bias` to fix acne; decrease `normal_bias` to fix peter panning. They trade off against each other - find the balance for your scene.
 
 ## Cascade Shadow Config (Directional Lights)
 
-Directional lights use cascaded shadow maps — multiple shadow maps at different distances. Closer cascades have higher resolution.
+Directional lights use cascaded shadow maps - multiple shadow maps at different distances. Closer cascades have higher resolution.
 
 ```python
 from pybevy.light import CascadeShadowConfig
@@ -119,10 +119,10 @@ Each value is the maximum distance (in world units) that cascade covers:
 
 | Cascade | Bounds `[10, 28, 78, 150]` | Coverage |
 |---------|---------------------------|----------|
-| 0 | 0–10 | Near objects — highest detail |
+| 0 | 0–10 | Near objects - highest detail |
 | 1 | 10–28 | Mid-range |
 | 2 | 28–78 | Far |
-| 3 | 78–150 | Very far — lowest detail |
+| 3 | 78–150 | Very far - lowest detail |
 
 ### Scene-Specific Tuning
 

@@ -4,7 +4,7 @@ Clearcoat, anisotropy, normal maps, parallax mapping, UV tiling, texture loading
 
 ## Clearcoat (Car Paint / Wet Surfaces)
 
-Adds a second specular layer on top of the base material — simulates lacquer, varnish, or water film.
+Adds a second specular layer on top of the base material - simulates lacquer, varnish, or water film.
 
 | Parameter | What it does | Range |
 |-----------|-------------|-------|
@@ -12,7 +12,7 @@ Adds a second specular layer on top of the base material — simulates lacquer, 
 | `clearcoat_perceptual_roughness` | Smoothness of the coat | `0.0–1.0` |
 
 ```python
-# Car paint — metallic base with smooth clear coat
+# Car paint - metallic base with smooth clear coat
 car_paint = materials.add(StandardMaterial(
     base_color=Color.srgb(0.7, 0.0, 0.0),
     metallic=0.8,
@@ -21,7 +21,7 @@ car_paint = materials.add(StandardMaterial(
     clearcoat_perceptual_roughness=0.1,  # Very smooth coat
 ))
 
-# Wet stone — rough base with glossy water layer
+# Wet stone - rough base with glossy water layer
 wet_stone = materials.add(StandardMaterial(
     base_color=Color.srgb(0.3, 0.3, 0.3),
     metallic=0.0,
@@ -35,7 +35,7 @@ wet_stone = materials.add(StandardMaterial(
 
 ## Anisotropy (Brushed Metal)
 
-Makes reflections stretch in one direction — for brushed metal, hair, silk.
+Makes reflections stretch in one direction - for brushed metal, hair, silk.
 
 | Parameter | What it does |
 |-----------|-------------|
@@ -68,7 +68,7 @@ brick_wall = materials.add(StandardMaterial(
 
 **`flip_normal_map_y`**: Set to `True` if your normal map uses OpenGL convention (green channel points up). Bevy expects DirectX convention by default.
 
-**Tangents required:** Normal maps need tangent data on the mesh. Primitive meshes (Cuboid, Sphere, etc.) include tangents by default. For custom meshes, call `mesh.generate_tangents()` after setting positions, normals, UVs, and indices — otherwise normal mapping will look wrong.
+**Tangents required:** Normal maps need tangent data on the mesh. Primitive meshes (Cuboid, Sphere, etc.) include tangents by default. For custom meshes, call `mesh.generate_tangents()` after setting positions, normals, UVs, and indices - otherwise normal mapping will look wrong.
 
 ## Parallax Mapping
 
@@ -102,7 +102,7 @@ tiled_floor = materials.add(StandardMaterial(
 
 ## Texture Loading with Repeat Sampler
 
-By default, Bevy textures clamp to edge — UV coordinates outside `[0, 1]` repeat the edge pixel. To make textures tile (repeat), load them with `ImageAddressMode.Repeat`:
+By default, Bevy textures clamp to edge - UV coordinates outside `[0, 1]` repeat the edge pixel. To make textures tile (repeat), load them with `ImageAddressMode.Repeat`:
 
 ```python
 from pybevy.image import (
@@ -133,12 +133,12 @@ wall_mat = materials.add(StandardMaterial(
 ```
 
 **Key points:**
-- `asset_server.load_image_with_settings(path, settings)` — convenience for images
-- `asset_server.load_with_settings(path, Image, settings)` — generic version (same result)
+- `asset_server.load_image_with_settings(path, settings)` - convenience for images
+- `asset_server.load_with_settings(path, Image, settings)` - generic version (same result)
 - `ImageAddressMode.Repeat` makes the texture repeat when UVs exceed `[0, 1]`
-- `ImageAddressMode.MirrorRepeat` — repeats but mirrors every other tile (avoids visible seams)
-- `ImageAddressMode.ClampToEdge` — default, stretches edge pixels
-- `uv_transform` scales UVs but does **not** change the sampler — you need both for tiling
+- `ImageAddressMode.MirrorRepeat` - repeats but mirrors every other tile (avoids visible seams)
+- `ImageAddressMode.ClampToEdge` - default, stretches edge pixels
+- `uv_transform` scales UVs but does **not** change the sampler - you need both for tiling
 - Create `repeat_settings` once and reuse for all textures in the same material (color, normal, depth)
 
 | Address Mode | Effect | Use case |

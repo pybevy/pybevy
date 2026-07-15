@@ -20,13 +20,13 @@ def setup(
     asset_server: Res[AssetServer],
     graphs: ResMut[Assets[AnimationGraph]],
 ) -> None:
-    # Load animation clip — #Animation0, #Animation1, etc.
+    # Load animation clip - #Animation0, #Animation1, etc.
     clip = asset_server.load(
         GltfAssetLabel.Animation(0).from_asset("models/fox.glb"),
         AnimationClip,
     )
 
-    # Build graph — returns (graph, node_index) tuple
+    # Build graph - returns (graph, node_index) tuple
     graph, index = AnimationGraph.from_clip(clip)
     graph_handle = graphs.add(graph)
 
@@ -92,7 +92,7 @@ GLB files use index-based naming:
 - `GltfAssetLabel.Animation(1)` → second animation
 - `GltfAssetLabel.Animation(2)` → third animation
 
-There's no way to discover animation names from Python — you need to know the index or inspect the GLB file externally (e.g., with Blender or `gltf-transform`).
+There's no way to discover animation names from Python - you need to know the index or inspect the GLB file externally (e.g., with Blender or `gltf-transform`).
 
 ## ActiveAnimation API
 
@@ -131,7 +131,7 @@ Use `AnimationTransitions` to cross-fade between animations (e.g., idle → walk
 # Spawn with AnimationTransitions alongside AnimationPlayer
 commands.entity(player_entity).insert(AnimationTransitions())
 
-# In a system — fade to new animation over 0.3 seconds
+# In a system - fade to new animation over 0.3 seconds
 def switch_animation(
     query: Query[tuple[Mut[AnimationPlayer], Mut[AnimationTransitions]]],
 ) -> None:
@@ -171,5 +171,5 @@ graph, _root_index = AnimationGraph.from_clips(clips)
 
 ## See Also
 
-- `guide://3d-models` — Loading GLB models, scale, origin gotchas
-- `guide://patterns` — System parameter patterns, hierarchy traversal
+- `guide://3d-models` - Loading GLB models, scale, origin gotchas
+- `guide://patterns` - System parameter patterns, hierarchy traversal

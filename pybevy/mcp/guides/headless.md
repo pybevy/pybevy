@@ -1,6 +1,6 @@
 # Headless Rendering Guide
 
-GPU rendering without a window or display server — for CI, remote servers, containers, and automated testing.
+GPU rendering without a window or display server - for CI, remote servers, containers, and automated testing.
 
 ## When to Use Headless
 
@@ -73,19 +73,19 @@ if __name__ == "__main__":
 
 ## Three Required Changes
 
-1. **Disable WinitPlugin** — it requires a display server:
+1. **Disable WinitPlugin** - it requires a display server:
    ```python
    DefaultPlugins()
        .set(WindowPlugin(primary_window=None, exit_condition=ExitCondition.DontExit))
        .disable(WinitPlugin)
    ```
 
-2. **Add ScheduleRunnerPlugin** — provides the frame loop without a window:
+2. **Add ScheduleRunnerPlugin** - provides the frame loop without a window:
    ```python
    app.add_plugins(ScheduleRunnerPlugin.run_loop(16))  # 16ms ≈ 60fps
    ```
 
-3. **Use offscreen render target** — camera must render to an image, not the screen:
+3. **Use offscreen render target** - camera must render to an image, not the screen:
    ```python
    render_target = Image.new_render_target(width=256, height=256)
    handle = images.add(render_target)
@@ -108,8 +108,8 @@ All MCP tools work in headless mode:
 ## Troubleshooting
 
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
-- **Black screenshots**: Ensure the camera has `RenderTarget.image(handle)` — without it, the camera targets a non-existent window
-- **No frames captured**: Increase `delay_frames` in `capture_screenshot` — headless rendering may need more warmup frames
+- **Black screenshots**: Ensure the camera has `RenderTarget.image(handle)` - without it, the camera targets a non-existent window
+- **No frames captured**: Increase `delay_frames` in `capture_screenshot` - headless rendering may need more warmup frames
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
 
 ## Reference Example

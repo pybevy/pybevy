@@ -6,9 +6,9 @@ Metallic-roughness PBR workflow: the two most important parameters for realistic
 
 | `metallic` | What it means | Examples |
 |------------|---------------|---------|
-| `0.0` | Dielectric (non-metal) — reflects environment at grazing angles only | Plastic, wood, stone, skin |
-| `1.0` | Metal — reflects colored light at all angles | Gold, copper, steel, aluminum |
-| `0.0–1.0` | Blend — useful for worn/oxidized metals | Rusty iron, tarnished silver |
+| `0.0` | Dielectric (non-metal) - reflects environment at grazing angles only | Plastic, wood, stone, skin |
+| `1.0` | Metal - reflects colored light at all angles | Gold, copper, steel, aluminum |
+| `0.0–1.0` | Blend - useful for worn/oxidized metals | Rusty iron, tarnished silver |
 
 **Rule of thumb:** Real materials are almost always 0.0 or 1.0. Values between indicate mixed surfaces (dirt on metal, etc.).
 
@@ -18,7 +18,7 @@ Metallic-roughness PBR workflow: the two most important parameters for realistic
 |------------|----------------------|--------|
 | 0.0 | 0.7–0.9 | Matte plastic, rubber, concrete |
 | 0.0 | 0.3–0.5 | Smooth plastic, varnished wood |
-| 0.3–0.5 | 0.3–0.4 | Semi-metallic (ground/floor — adds depth vs flat matte) |
+| 0.3–0.5 | 0.3–0.4 | Semi-metallic (ground/floor - adds depth vs flat matte) |
 | 0.8 | 0.15–0.25 | Polished metal |
 | 0.9 | 0.1–0.15 | Shiny metal (sweet spot for "metal but not mirror") |
 | 0.95+ | 0.05 | Mirror-like chrome |
@@ -84,7 +84,7 @@ wood = materials.add(StandardMaterial(
 ))
 ```
 
-Wood with a clear coat finish (varnished table) — use `clearcoat` instead. See `guide://materials/advanced`.
+Wood with a clear coat finish (varnished table) - use `clearcoat` instead. See `guide://materials/advanced`.
 
 ## Base Color Reference
 
@@ -137,7 +137,7 @@ leaves = materials.add(StandardMaterial(
 
 | Mode | Use for |
 |------|---------|
-| `AlphaMode.Opaque()` | Default — fully solid |
+| `AlphaMode.Opaque()` | Default - fully solid |
 | `AlphaMode.Blend()` | Smooth transparency (glass, water, ghosts) |
 | `AlphaMode.Mask(threshold)` | Binary cutoff (foliage, fences, decals) |
 | `AlphaMode.Add()` | Additive blending (particles, laser beams) |

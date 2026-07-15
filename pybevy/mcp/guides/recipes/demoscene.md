@@ -70,7 +70,7 @@ for ring_idx, cells in ring_buckets.items():
 # === Helpers ===
 
 def smoothstep(t: float) -> float:
-    """Hermite interpolation — ease-in-out between 0 and 1."""
+    """Hermite interpolation - ease-in-out between 0 and 1."""
     t = max(0.0, min(1.0, t))
     return t * t * (3.0 - 2.0 * t)
 
@@ -144,7 +144,7 @@ def setup(
 ) -> None:
     ox = -COLS * CELL / 2.0 + CELL / 2.0
 
-    # Camera — high bloom for neon glow, tight dark fog
+    # Camera - high bloom for neon glow, tight dark fog
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(0.0, ROWS * 0.45, COLS * 1.4)
@@ -179,7 +179,7 @@ def setup(
             metallic=0.05, perceptual_roughness=0.25,
         ))
 
-    # Spawn blocks above their targets — they'll drop in
+    # Spawn blocks above their targets - they'll drop in
     idx = 0
     for row in range(ROWS):
         for col in range(COLS):
@@ -349,7 +349,7 @@ t * t                            # ease-in (slow start)
 Only ~75 blocks exist, but the tunnel feels infinite. Modular arithmetic wraps ring Z positions ahead of the camera as it advances:
 ```python
 ahead = (cam_z - base_z) % TUNNEL_LEN
-if ahead < 1.0:       # too close — push to next cycle
+if ahead < 1.0:       # too close - push to next cycle
     ahead += TUNNEL_LEN
 ring_z = cam_z - ahead
 ```

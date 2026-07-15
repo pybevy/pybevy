@@ -19,7 +19,7 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    # Camera — bloom helps glass reflections pop
+    # Camera - bloom helps glass reflections pop
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(6, 4, 6).looking_at(Vec3(0, 1, 0), Vec3.Y),
@@ -120,5 +120,5 @@ if __name__ == "__main__":
 - **Leaf:** `diffuse_transmission=0.5` + `double_sided=True` + `cull_mode=None`
 - **TransmittedShadowReceiver** shows shadows on the back side of leaves
 - Place objects behind glass so refraction is visible
-- Bright lighting is essential — transmission needs plenty of light to look good
+- Bright lighting is essential - transmission needs plenty of light to look good
 - Refraction quality is per-camera: `ScreenSpaceTransmission(steps=2, quality=ScreenSpaceTransmissionQuality.High)` (pybevy.pbr) on the camera; `steps=0` disables refraction

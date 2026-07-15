@@ -170,7 +170,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 | Procedural planets, LED screens, toon shaders with custom lighting | Non-PBR | PBR lighting would fight your output |
 | `base_color` is BLACK and all visual output comes from emissive/procedural color | Non-PBR | PBR path attenuates emissive unexpectedly |
 
-**Why PBR emissive appears dim:** Bevy's PBR pipeline computes `emissive * mix(1.0, exposure, emissive_exposure_weight)`. The default `emissive_exposure_weight=0.0` means emissive is NOT scaled by camera exposure — so values like `vec4(10.0, 0.0, 0.0, 1.0)` get compressed to near-invisible by tone mapping. Fixes:
+**Why PBR emissive appears dim:** Bevy's PBR pipeline computes `emissive * mix(1.0, exposure, emissive_exposure_weight)`. The default `emissive_exposure_weight=0.0` means emissive is NOT scaled by camera exposure - so values like `vec4(10.0, 0.0, 0.0, 1.0)` get compressed to near-invisible by tone mapping. Fixes:
 - Set `base=StandardMaterial(emissive_exposure_weight=1.0)` so emissive scales with exposure
 - Or use much larger emissive values (500+)
 - Or use the non-PBR pattern which bypasses `apply_pbr_lighting` entirely
@@ -338,7 +338,7 @@ Output goes directly to the HDR framebuffer. A separate post-processing pass app
 
 | Output range | On-screen result |
 |--------------|------------------|
-| `[0, 1]` | Normal surface colors — rendered at roughly face value |
+| `[0, 1]` | Normal surface colors - rendered at roughly face value |
 | `> 1.0` | Triggers bloom glow (requires `Bloom` on the camera). The further above 1.0, the stronger the glow |
 
 Reference values for common colors:
@@ -372,7 +372,7 @@ app.add_plugins(ShaderMaterialPlugin())
 ## Examples
 
 See `examples/bevy/shaders/` for complete working examples:
-- `shader_material.py` — basic uniform tint + emissive
-- `shader_defs.py` — bool fields → `#ifdef` conditional compilation
-- `extended_material.py` — PBR extension with posterize effect
-- `animate_shader.py` — time-based animation via `globals.time`
+- `shader_material.py` - basic uniform tint + emissive
+- `shader_defs.py` - bool fields → `#ifdef` conditional compilation
+- `extended_material.py` - PBR extension with posterize effect
+- `animate_shader.py` - time-based animation via `globals.time`
