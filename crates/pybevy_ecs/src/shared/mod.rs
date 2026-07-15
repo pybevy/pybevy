@@ -6,6 +6,7 @@ pub mod cached_query;
 pub mod change_tracking;
 pub mod command_queue_helpers;
 pub mod lifecycle_mutation;
+pub mod message_resources;
 pub mod message_store;
 pub mod observer_registry;
 pub mod param_spec;
