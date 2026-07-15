@@ -1,10 +1,11 @@
-"""This example shows how to send and receive messages.
+"""PyBevy adaptation of Bevy 0.19's message example.
 
 It demonstrates how to control system ordering so that messages are processed
 in a specific order. It simulates a damage over time effect with armor.
 
-Note: PyBevy doesn't yet have MessageMutator, so armor application is done
-by reading damage messages and writing modified ones.
+The Rust example uses MessageMutator[DealDamage] to read, write, and mutate one
+channel. PyBevy does not expose MessageMutator yet, so this adaptation uses
+distinct attempted-damage and approved-damage channels instead.
 """
 
 from dataclasses import dataclass
@@ -13,8 +14,15 @@ from pybevy.prelude import *
 
 
 @dataclass
-class DealDamage(Message):
+class AttemptDamage(Message):
     """Message sent when something attempts to deal damage."""
+
+    amount: int
+
+
+@dataclass
+class DealDamage(Message):
+    """Damage approved after armor processing."""
 
     amount: int
 
@@ -24,11 +32,9 @@ class DamageReceived(Message):
     """Message sent when an entity receives damage."""
 
 
-
 @dataclass
 class ArmorBlockedDamage(Message):
     """Message sent when an entity blocks damage with armor."""
-
 
 
 @resource
@@ -40,23 +46,25 @@ class DamageTimer(Resource):
 
 
 def deal_damage_over_time(
-    time: Res[Time], state: ResMut[DamageTimer], deal_damage_writer: MessageWriter[DealDamage]
+    time: Res[Time],
+    state: ResMut[DamageTimer],
+    attempt_writer: MessageWriter[AttemptDamage],
 ) -> None:
-    """Read DamageTimer, update it, then send DealDamage message if finished."""
+    """Read DamageTimer, update it, then attempt damage if finished."""
     state.timer.tick(time.delta_secs())
     if state.timer.just_finished():
-        deal_damage_writer.write(DealDamage(amount=10))
+        attempt_writer.write(AttemptDamage(amount=10))
 
 
 def apply_armor_to_damage(
-    dmg_reader: MessageReader[DealDamage],
+    dmg_reader: MessageReader[AttemptDamage],
     dmg_writer: MessageWriter[DealDamage],
     armor_writer: MessageWriter[ArmorBlockedDamage],
 ) -> None:
     """Apply armor to damage messages.
 
-    Note: Since PyBevy doesn't have MessageMutator, we read damage messages
-    and write modified ones. This requires system ordering to ensure proper processing.
+    AttemptDamage and DealDamage are separate channels so this system has no
+    same-channel reader/writer conflict.
     """
     for message in dmg_reader:
         reduced_amount = message.amount - 1
@@ -100,23 +108,25 @@ def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
         # Messages must be added to the app before they can be used
+        .add_message(AttemptDamage)
         .add_message(DealDamage)
         .add_message(ArmorBlockedDamage)
         .add_message(DamageReceived)
         .insert_resource(DamageTimer())
-        # Note: Without MessageMutator, we need careful system ordering.
-        # deal_damage_over_time writes DealDamage
-        # apply_armor_to_damage reads and writes modified DealDamage
-        # apply_damage_to_health reads the modified DealDamage
+        # Ordering makes the three-stage message pipeline visible in one pass.
+        # deal_damage_over_time writes AttemptDamage
+        # apply_armor_to_damage reads AttemptDamage and writes DealDamage
+        # apply_damage_to_health reads DealDamage
         .add_systems(
             Update,
-            (
+            chain(
                 deal_damage_over_time,
                 apply_armor_to_damage,
                 apply_damage_to_health,
             ),
         )
-        # These systems may run in any order and may have a one frame delay
+        # These readers are unordered relative to the producer chain and may
+        # run before it. In that case they process its messages next update.
         .add_systems(
             Update,
             (
