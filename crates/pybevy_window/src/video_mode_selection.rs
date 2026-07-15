@@ -7,7 +7,7 @@ use super::video_mode::PyVideoMode;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyVideoModeSelection {
     Current(),
-    Specific(PyVideoMode),
+    Specific { video_mode: PyVideoMode },
 }
 
 impl Default for PyVideoModeSelection {
@@ -20,7 +20,9 @@ impl From<PyVideoModeSelection> for VideoModeSelection {
     fn from(value: PyVideoModeSelection) -> Self {
         match value {
             PyVideoModeSelection::Current() => VideoModeSelection::Current,
-            PyVideoModeSelection::Specific(vm) => VideoModeSelection::Specific(vm.into()),
+            PyVideoModeSelection::Specific { video_mode } => {
+                VideoModeSelection::Specific(video_mode.into())
+            }
         }
     }
 }
@@ -29,7 +31,9 @@ impl From<VideoModeSelection> for PyVideoModeSelection {
     fn from(value: VideoModeSelection) -> Self {
         match value {
             VideoModeSelection::Current => PyVideoModeSelection::Current(),
-            VideoModeSelection::Specific(vm) => PyVideoModeSelection::Specific(vm.into()),
+            VideoModeSelection::Specific(video_mode) => PyVideoModeSelection::Specific {
+                video_mode: video_mode.into(),
+            },
         }
     }
 }
@@ -39,8 +43,8 @@ impl PyVideoModeSelection {
     fn __repr__(&self) -> String {
         match self {
             PyVideoModeSelection::Current() => "VideoModeSelection.Current()".to_string(),
-            PyVideoModeSelection::Specific(vm) => {
-                format!("VideoModeSelection.Specific({})", vm.__repr__())
+            PyVideoModeSelection::Specific { video_mode } => {
+                format!("VideoModeSelection.Specific({})", video_mode.__repr__())
             }
         }
     }

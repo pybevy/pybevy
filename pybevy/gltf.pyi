@@ -1,3 +1,5 @@
+from typing import ClassVar, Literal
+
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, AssetPath, Handle
 from pybevy.ecs import Component
@@ -204,31 +206,62 @@ class GltfLoaderSettings:
     @override_sampler.setter
     def override_sampler(self, value: bool) -> None: ...
 class GltfAssetLabel:
-    @staticmethod
-    def Scene(index: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def Node(index: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def Mesh(index: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def Primitive(mesh: int, primitive: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def Texture(index: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def Material(index: int, is_scale_inverted: bool) -> GltfAssetLabel:
-        """Label for the GltfMaterial sub-asset of a glTF file.
+    class Scene(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
 
-        The processed StandardMaterial lives under the "/std" suffix; load it
-        with an explicit label, e.g.
-        ``AssetPath(path, label=f"{GltfAssetLabel.Material(0, False)}/std")``.
-        """
-    @staticmethod
-    def DefaultMaterial() -> GltfAssetLabel: ...
-    @staticmethod
-    def Animation(index: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def Skin(index: int) -> GltfAssetLabel: ...
-    @staticmethod
-    def InverseBindMatrices(index: int) -> GltfAssetLabel: ...
+    class Node(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
+
+    class Mesh(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
+
+    class Primitive(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["mesh"], Literal["primitive"]]]
+        mesh: int
+        primitive: int
+        def __init__(self, mesh: int, primitive: int) -> None: ...
+
+    class Texture(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
+
+    class Material(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"], Literal["is_scale_inverted"]]]
+        index: int
+        is_scale_inverted: bool
+        def __init__(self, index: int, is_scale_inverted: bool) -> None:
+            """Label for the GltfMaterial sub-asset of a glTF file.
+
+            The processed StandardMaterial lives under the "/std" suffix; load it
+            with an explicit label, e.g.
+            ``AssetPath(path, label=f"{GltfAssetLabel.Material(0, False)}/std")``.
+            """
+
+    class DefaultMaterial(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Animation(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
+
+    class Skin(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
+
+    class InverseBindMatrices(GltfAssetLabel):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
+
     def from_asset(self, path: str) -> AssetPath: ...
     def __str__(self) -> str: ...

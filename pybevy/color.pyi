@@ -181,6 +181,7 @@ class LinearRgba:
         """Mix with another color in place."""
 
     # EuclideanDistance trait methods
+    def distance(self, other: LinearRgba) -> float: ...
     def distance_squared(self, other: LinearRgba) -> float: ...
 
     # Alpha trait methods (alpha is directly writable on LinearRgba)
@@ -325,6 +326,9 @@ class Srgba:
     @staticmethod
     def from_vec3(color: Vec3) -> Srgba:
         """Create from Vec3(r, g, b), alpha defaults to 1.0."""
+
+    def to_linear(self) -> LinearRgba:
+        """Convert from gamma-encoded sRGB to linear RGBA."""
 
     # ColorToPacked trait methods
     def to_u8_array(self) -> list[int]:

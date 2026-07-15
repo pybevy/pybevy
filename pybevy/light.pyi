@@ -116,13 +116,13 @@ class FogVolume(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        density_factor: np.ndarray | None = None,
-        absorption: np.ndarray | None = None,
-        scattering: np.ndarray | None = None,
-        scattering_asymmetry: np.ndarray | None = None,
-        light_intensity: np.ndarray | None = None,
-        fog_color: np.ndarray | None = None,
-        light_tint: np.ndarray | None = None,
+        density_factor: np.typing.ArrayLike | None = None,
+        absorption: np.typing.ArrayLike | None = None,
+        scattering: np.typing.ArrayLike | None = None,
+        scattering_asymmetry: np.typing.ArrayLike | None = None,
+        light_intensity: np.typing.ArrayLike | None = None,
+        fog_color: np.typing.ArrayLike | None = None,
+        light_tint: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class GlobalAmbientLight(Resource):
@@ -162,9 +162,9 @@ class AmbientLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        brightness: np.ndarray | None = None,
-        affects_lightmapped_meshes: np.ndarray | None = None,
-        color: np.ndarray | None = None,
+        brightness: np.typing.ArrayLike | None = None,
+        affects_lightmapped_meshes: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class PointLight(Component):
@@ -196,16 +196,16 @@ class PointLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        range: np.ndarray | None = None,
-        radius: np.ndarray | None = None,
-        shadow_depth_bias: np.ndarray | None = None,
-        shadow_normal_bias: np.ndarray | None = None,
-        shadow_map_near_z: np.ndarray | None = None,
-        shadow_maps_enabled: np.ndarray | None = None,
-        contact_shadows_enabled: np.ndarray | None = None,
-        affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
-        color: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        range: np.typing.ArrayLike | None = None,
+        radius: np.typing.ArrayLike | None = None,
+        shadow_depth_bias: np.typing.ArrayLike | None = None,
+        shadow_normal_bias: np.typing.ArrayLike | None = None,
+        shadow_map_near_z: np.typing.ArrayLike | None = None,
+        shadow_maps_enabled: np.typing.ArrayLike | None = None,
+        contact_shadows_enabled: np.typing.ArrayLike | None = None,
+        affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class SpotLight(Component):
@@ -241,18 +241,18 @@ class SpotLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        range: np.ndarray | None = None,
-        radius: np.ndarray | None = None,
-        shadow_depth_bias: np.ndarray | None = None,
-        shadow_normal_bias: np.ndarray | None = None,
-        shadow_map_near_z: np.ndarray | None = None,
-        outer_angle: np.ndarray | None = None,
-        inner_angle: np.ndarray | None = None,
-        shadow_maps_enabled: np.ndarray | None = None,
-        contact_shadows_enabled: np.ndarray | None = None,
-        affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
-        color: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        range: np.typing.ArrayLike | None = None,
+        radius: np.typing.ArrayLike | None = None,
+        shadow_depth_bias: np.typing.ArrayLike | None = None,
+        shadow_normal_bias: np.typing.ArrayLike | None = None,
+        shadow_map_near_z: np.typing.ArrayLike | None = None,
+        outer_angle: np.typing.ArrayLike | None = None,
+        inner_angle: np.typing.ArrayLike | None = None,
+        shadow_maps_enabled: np.typing.ArrayLike | None = None,
+        contact_shadows_enabled: np.typing.ArrayLike | None = None,
+        affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class DirectionalLight(Component):
@@ -278,13 +278,13 @@ class DirectionalLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        illuminance: np.ndarray | None = None,
-        shadow_depth_bias: np.ndarray | None = None,
-        shadow_normal_bias: np.ndarray | None = None,
-        shadow_maps_enabled: np.ndarray | None = None,
-        contact_shadows_enabled: np.ndarray | None = None,
-        affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
-        color: np.ndarray | None = None,
+        illuminance: np.typing.ArrayLike | None = None,
+        shadow_depth_bias: np.typing.ArrayLike | None = None,
+        shadow_normal_bias: np.typing.ArrayLike | None = None,
+        shadow_maps_enabled: np.typing.ArrayLike | None = None,
+        contact_shadows_enabled: np.typing.ArrayLike | None = None,
+        affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class RectLight(Component):
@@ -315,11 +315,11 @@ class RectLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        range: np.ndarray | None = None,
-        width: np.ndarray | None = None,
-        height: np.ndarray | None = None,
-        color: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        range: np.typing.ArrayLike | None = None,
+        width: np.typing.ArrayLike | None = None,
+        height: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ParallaxCorrection(Component):
@@ -354,8 +354,8 @@ class EnvironmentMapLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class VolumetricFog(Component):
@@ -375,10 +375,10 @@ class VolumetricFog(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        ambient_intensity: np.ndarray | None = None,
-        step_count: np.ndarray | None = None,
-        jitter: np.ndarray | None = None,
-        ambient_color: np.ndarray | None = None,
+        ambient_intensity: np.typing.ArrayLike | None = None,
+        step_count: np.typing.ArrayLike | None = None,
+        jitter: np.typing.ArrayLike | None = None,
+        ambient_color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class CascadeShadowConfig(Component):
@@ -406,8 +406,8 @@ class CascadeShadowConfig(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        overlap_proportion: np.ndarray | None = None,
-        minimum_distance: np.ndarray | None = None,
+        overlap_proportion: np.typing.ArrayLike | None = None,
+        minimum_distance: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class Cascade:
@@ -468,8 +468,8 @@ class IrradianceVolume(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        affects_lightmapped_meshes: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        affects_lightmapped_meshes: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class SunDisk(Component):
@@ -503,8 +503,8 @@ class SunDisk(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        angular_size: np.ndarray | None = None,
-        intensity: np.ndarray | None = None,
+        angular_size: np.typing.ArrayLike | None = None,
+        intensity: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class DirectionalLightTexture(Component):
@@ -586,8 +586,8 @@ class GeneratedEnvironmentMapLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class AtmosphereEnvironmentMapLight(Component):
@@ -616,8 +616,8 @@ class AtmosphereEnvironmentMapLight(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        affects_lightmapped_mesh_diffuse: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ClusteredDecal(Component):
@@ -627,13 +627,18 @@ class ClusteredDecal(Component):
     and are blended with the underlying surface.
 
     Args:
-        image: The 2D image to project. If it has an alpha channel,
-               it will be alpha blended.
+        base_color_texture: The base color image to project.
+        normal_map_texture: The optional normal map image.
+        metallic_roughness_texture: The optional metallic-roughness image.
+        emissive_texture: The optional emissive image.
         tag: An application-specific tag for custom filtering.
     """
     def __init__(
         self,
         base_color_texture: Handle[Image] | None = None,
+        normal_map_texture: Handle[Image] | None = None,
+        metallic_roughness_texture: Handle[Image] | None = None,
+        emissive_texture: Handle[Image] | None = None,
         tag: int = 0,
     ) -> None: ...
 
@@ -667,7 +672,7 @@ class ClusteredDecal(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        tag: np.ndarray | None = None,
+        tag: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class ScatteringMedium(Asset):
@@ -891,5 +896,5 @@ class Skybox(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        brightness: np.ndarray | None = None,
+        brightness: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...

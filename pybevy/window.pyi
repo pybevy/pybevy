@@ -1,10 +1,11 @@
 from enum import Enum
+from typing import ClassVar, Literal
 
 import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.ecs import Batchable, Component, Entity, Message
-from pybevy.input import (  # noqa: F401
+from pybevy.input import (
     ButtonState,
     MouseButton,
     MouseScrollUnit,
@@ -145,13 +146,16 @@ class VideoModeSelection:
 
     """
 
-    @staticmethod
-    def Current() -> VideoModeSelection:
+    class Current(VideoModeSelection):
         """Use the video mode that the monitor is already in."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Specific(video_mode: VideoMode) -> VideoModeSelection:
+    class Specific(VideoModeSelection):
         """Use a specific video mode from the monitor's supported modes."""
+        __match_args__: ClassVar[tuple[Literal["video_mode"]]]
+        video_mode: VideoMode
+        def __init__(self, video_mode: VideoMode, /) -> None: ...
 
 
 class WindowMode:
@@ -175,39 +179,20 @@ class WindowMode:
         ```
     """
 
-    @staticmethod
-    def Windowed() -> WindowMode:
-        """Create windowed mode (default).
+    class Windowed(WindowMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-        The window takes a portion of the screen using its resolution size.
-        """
+    class BorderlessFullscreen(WindowMode):
+        __match_args__: ClassVar[tuple[Literal["monitor"]]]
+        monitor: MonitorSelection
+        def __init__(self, monitor: MonitorSelection, /) -> None: ...
 
-    @staticmethod
-    def BorderlessFullscreen(monitor: MonitorSelection) -> WindowMode:
-        """Create borderless fullscreen mode.
-
-        The window appears fullscreen by being borderless and using the full
-        size of the screen on the given monitor. The window's physical size
-        will be modified to match the current monitor resolution.
-
-        Args:
-            monitor: Which monitor to use for fullscreen
-        """
-
-    @staticmethod
-    def Fullscreen(
-        monitor: MonitorSelection,
-        video_mode: VideoModeSelection,
-    ) -> WindowMode:
-        """Create true/exclusive fullscreen mode.
-
-        The window is in "true"/"legacy"/"exclusive" fullscreen mode.
-        The resolution and refresh rate are selected based on the video mode.
-
-        Args:
-            monitor: Which monitor to use for fullscreen
-            video_mode: Which video mode (resolution/refresh) to use
-        """
+    class Fullscreen(WindowMode):
+        __match_args__: ClassVar[tuple[Literal["monitor"], Literal["video_mode"]]]
+        monitor: MonitorSelection
+        video_mode: VideoModeSelection
+        def __init__(self, monitor: MonitorSelection, video_mode: VideoModeSelection) -> None: ...
 
 class WindowLevel:
     """Window z-order level relative to other windows.
@@ -621,9 +606,9 @@ class Window(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        decorations: np.ndarray | None = None,
-        resizable: np.ndarray | None = None,
-        transparent: np.ndarray | None = None,
+        decorations: np.typing.ArrayLike | None = None,
+        resizable: np.typing.ArrayLike | None = None,
+        transparent: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class PrimaryWindow(Component):
@@ -1043,29 +1028,23 @@ class MonitorSelection:
         window.monitor_selection = MonitorSelection.Index(1)
         ```
     """
-    @staticmethod
-    def Current() -> MonitorSelection:
-        """Select the current monitor (the one with keyboard focus)."""
+    class Current(MonitorSelection):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Primary() -> MonitorSelection:
-        """Select the primary monitor."""
+    class Primary(MonitorSelection):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Index(index: int) -> MonitorSelection:
-        """Select a monitor by its index.
+    class Index(MonitorSelection):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: int
+        def __init__(self, index: int, /) -> None: ...
 
-        Args:
-            index: Zero-based index of the monitor
-        """
-
-    @staticmethod
-    def Entity(entity: Entity) -> MonitorSelection:
-        """Select a monitor by its entity.
-
-        Args:
-            entity: Entity representing the monitor
-        """
+    class Entity(MonitorSelection):
+        __match_args__: ClassVar[tuple[Literal["entity"]]]
+        entity: Entity
+        def __init__(self, entity: Entity, /) -> None: ...
 
 
 class EnabledButtons:
@@ -1530,7 +1509,7 @@ class RequestRedraw(Message):
     def __init__(self) -> None: ...
 
 
-class WindowEvent(Enum):
+class WindowEvent:
     """Window event union type (read-only).
 
     A unified event type that wraps all window-related events, allowing you to
@@ -1587,84 +1566,187 @@ class WindowEvent(Enum):
         ```
     """
 
-    # Enum variants - access fields via pattern matching
-    AppLifecycle = ...
-    """AppLifecycle event. Fields: lifecycle: AppLifecycle"""
+    class AppLifecycle(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["lifecycle"]]]
+        lifecycle: AppLifecycle
+        def __init__(self, lifecycle: AppLifecycle) -> None: ...
 
-    CursorEntered = ...
-    """Cursor entered window. Fields: window: Entity"""
+    class CursorEntered(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    CursorLeft = ...
-    """Cursor left window. Fields: window: Entity"""
+    class CursorLeft(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    CursorMoved = ...
-    """Cursor moved. Fields: position: Vec2, window: Entity, delta: Vec2 | None"""
+    class CursorMoved(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[Literal["position"], Literal["window"], Literal["delta"]]
+        ]
+        position: Vec2
+        window: Entity
+        delta: Vec2 | None
+        def __init__(
+            self, position: Vec2, window: Entity, delta: Vec2 | None = None
+        ) -> None: ...
 
-    FileDragAndDrop = ...
-    """File drag and drop. Fields: window: Entity, path: str | None"""
+    class FileDragAndDrop(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"], Literal["path"]]]
+        window: Entity
+        path: str | None
+        def __init__(self, window: Entity, path: str | None = None) -> None: ...
 
-    Ime = ...
-    """IME event. Fields: window: Entity"""
+    class Ime(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    RequestRedraw = ...
-    """Request redraw event (no fields)."""
+    class RequestRedraw(WindowEvent):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    WindowCloseRequested = ...
-    """Window close requested. Fields: window: Entity"""
+    class WindowCloseRequested(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    WindowFocused = ...
-    """Window focus changed. Fields: focused: bool, window: Entity"""
+    class WindowFocused(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["focused"], Literal["window"]]]
+        focused: bool
+        window: Entity
+        def __init__(self, focused: bool, window: Entity) -> None: ...
 
-    WindowResized = ...
-    """Window resized. Fields: width: float, height: float, window: Entity"""
+    class WindowResized(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[Literal["width"], Literal["height"], Literal["window"]]
+        ]
+        width: float
+        height: float
+        window: Entity
+        def __init__(self, width: float, height: float, window: Entity) -> None: ...
 
-    MouseButtonInput = ...
-    """Mouse button input. Fields: button: MouseButton, state: ButtonState, window: Entity"""
+    class MouseButtonInput(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[Literal["button"], Literal["state"], Literal["window"]]
+        ]
+        button: MouseButton
+        state: ButtonState
+        window: Entity
+        def __init__(
+            self, button: MouseButton, state: ButtonState, window: Entity
+        ) -> None: ...
 
-    MouseMotion = ...
-    """Mouse motion. Fields: delta: Vec2"""
+    class MouseMotion(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["delta"]]]
+        delta: Vec2
+        def __init__(self, delta: Vec2) -> None: ...
 
-    MouseWheel = ...
-    """Mouse wheel. Fields: unit: MouseScrollUnit, x: float, y: float, window: Entity"""
+    class MouseWheel(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[Literal["unit"], Literal["x"], Literal["y"], Literal["window"]]
+        ]
+        unit: MouseScrollUnit
+        x: float
+        y: float
+        window: Entity
+        def __init__(
+            self, unit: MouseScrollUnit, x: float, y: float, window: Entity
+        ) -> None: ...
 
-    PinchGesture = ...
-    """Pinch gesture. Fields: value: float"""
+    class PinchGesture(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float) -> None: ...
 
-    RotationGesture = ...
-    """Rotation gesture. Fields: value: float"""
+    class RotationGesture(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float) -> None: ...
 
-    DoubleTapGesture = ...
-    """Double tap gesture (no fields)."""
+    class DoubleTapGesture(WindowEvent):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    PanGesture = ...
-    """Pan gesture. Fields: x: float, y: float"""
+    class PanGesture(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["x"], Literal["y"]]]
+        x: float
+        y: float
+        def __init__(self, x: float, y: float) -> None: ...
 
-    TouchInput = ...
-    """Touch input. Fields: phase: TouchPhase, position: Vec2, id: int, window: Entity, force: float | None"""
+    class TouchInput(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[
+                Literal["phase"],
+                Literal["position"],
+                Literal["id"],
+                Literal["window"],
+                Literal["force"],
+            ]
+        ]
+        phase: TouchPhase
+        position: Vec2
+        id: int
+        window: Entity
+        force: float | None
+        def __init__(
+            self,
+            phase: TouchPhase,
+            position: Vec2,
+            id: int,
+            window: Entity,
+            force: float | None = None,
+        ) -> None: ...
 
-    KeyboardFocusLost = ...
-    """Keyboard focus lost (no fields)."""
+    class KeyboardFocusLost(WindowEvent):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    WindowCreated = ...
-    """Window created. Fields: window: Entity"""
+    class WindowCreated(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    WindowDestroyed = ...
-    """Window destroyed. Fields: window: Entity"""
+    class WindowDestroyed(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    WindowMoved = ...
-    """Window moved. Fields: position: IVec2, window: Entity"""
+    class WindowMoved(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["position"], Literal["window"]]]
+        position: IVec2
+        window: Entity
+        def __init__(self, position: IVec2, window: Entity) -> None: ...
 
-    WindowOccluded = ...
-    """Window occluded state changed. Fields: occluded: bool, window: Entity"""
+    class WindowOccluded(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["occluded"], Literal["window"]]]
+        occluded: bool
+        window: Entity
+        def __init__(self, occluded: bool, window: Entity) -> None: ...
 
-    WindowScaleFactorChanged = ...
-    """Window scale factor changed. Fields: scale_factor: float, window: Entity"""
+    class WindowScaleFactorChanged(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[Literal["scale_factor"], Literal["window"]]
+        ]
+        scale_factor: float
+        window: Entity
+        def __init__(self, scale_factor: float, window: Entity) -> None: ...
 
-    WindowBackendScaleFactorChanged = ...
-    """Window backend scale factor changed. Fields: scale_factor: float, window: Entity"""
+    class WindowBackendScaleFactorChanged(WindowEvent):
+        __match_args__: ClassVar[
+            tuple[Literal["scale_factor"], Literal["window"]]
+        ]
+        scale_factor: float
+        window: Entity
+        def __init__(self, scale_factor: float, window: Entity) -> None: ...
 
-    WindowThemeChanged = ...
-    """Window theme changed. Fields: theme: WindowTheme, window: Entity"""
+    class WindowThemeChanged(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["theme"], Literal["window"]]]
+        theme: WindowTheme
+        window: Entity
+        def __init__(self, theme: WindowTheme, window: Entity) -> None: ...
 
-    KeyboardInput = ...
-    """Keyboard input (no data - use MessageReader[KeyboardInput] for full keyboard support)."""
+    class KeyboardInput(WindowEvent):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...

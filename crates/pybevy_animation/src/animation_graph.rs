@@ -140,7 +140,7 @@ impl PyAnimationGraph {
 #[pyclass(name = "AnimationNodeType", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyAnimationNodeType {
-    Clip(PyHandle),
+    Clip { handle: PyHandle },
     Blend(),
     Add(),
 }
@@ -148,7 +148,9 @@ pub enum PyAnimationNodeType {
 impl From<&AnimationNodeType> for PyAnimationNodeType {
     fn from(node_type: &AnimationNodeType) -> Self {
         match node_type {
-            AnimationNodeType::Clip(handle) => PyAnimationNodeType::Clip(PyHandle::from(handle)),
+            AnimationNodeType::Clip(handle) => PyAnimationNodeType::Clip {
+                handle: PyHandle::from(handle),
+            },
             AnimationNodeType::Blend => PyAnimationNodeType::Blend(),
             AnimationNodeType::Add => PyAnimationNodeType::Add(),
         }
@@ -159,7 +161,7 @@ impl From<&AnimationNodeType> for PyAnimationNodeType {
 impl PyAnimationNodeType {
     pub fn __repr__(&self) -> String {
         match self {
-            PyAnimationNodeType::Clip(handle) => {
+            PyAnimationNodeType::Clip { handle } => {
                 format!("AnimationNodeType.Clip({:?})", handle)
             }
             PyAnimationNodeType::Blend() => "AnimationNodeType.Blend".to_string(),

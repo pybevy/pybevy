@@ -14,9 +14,6 @@ impl PyParallaxMappingMethod {
     pub fn new() -> Self {
         PyParallaxMappingMethod::Occlusion()
     }
-
-    #[classattr]
-    pub const OCCLUSION: Self = PyParallaxMappingMethod::Occlusion();
 }
 
 impl From<ParallaxMappingMethod> for PyParallaxMappingMethod {

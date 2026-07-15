@@ -31,6 +31,16 @@ impl PyRenderPlugin {
             .into()
     }
 
+    #[getter]
+    pub fn power_preference(&self) -> Option<PyPowerPreference> {
+        self.power_preference
+    }
+
+    #[getter]
+    pub fn synchronous_pipeline_compilation(&self) -> Option<bool> {
+        self.synchronous_pipeline_compilation
+    }
+
     pub fn __repr__(&self) -> String {
         let mut parts = Vec::new();
         if let Some(ref pp) = self.power_preference {

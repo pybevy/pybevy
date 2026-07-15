@@ -55,6 +55,18 @@ pub fn extract_font_size_from_any(obj: &Bound<'_, PyAny>) -> PyResult<FontSize> 
 
 #[pymethods]
 impl PyFontSize {
+    #[getter]
+    pub fn value(&self) -> f32 {
+        match self {
+            PyFontSize::Px { value }
+            | PyFontSize::Vw { value }
+            | PyFontSize::Vh { value }
+            | PyFontSize::VMin { value }
+            | PyFontSize::VMax { value }
+            | PyFontSize::Rem { value } => *value,
+        }
+    }
+
     fn __repr__(&self) -> String {
         match self {
             PyFontSize::Px { value } => format!("FontSize.Px({value})"),

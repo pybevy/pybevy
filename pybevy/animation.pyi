@@ -1,3 +1,4 @@
+from typing import ClassVar, Literal
 from uuid import UUID
 
 from pybevy.app import App, Plugin
@@ -78,12 +79,19 @@ class AnimatedField:
     def __init__(self) -> None: ...
 
 class AnimationNodeType:
-    @staticmethod
-    def Clip(handle: Handle[AnimationClip]) -> AnimationNodeType: ...
-    @staticmethod
-    def Blend() -> AnimationNodeType: ...
-    @staticmethod
-    def Add() -> AnimationNodeType: ...
+    class Clip(AnimationNodeType):
+        __match_args__: ClassVar[tuple[Literal["handle"]]]
+        handle: Handle[AnimationClip]
+        def __init__(self, handle: Handle[AnimationClip], /) -> None: ...
+
+    class Blend(AnimationNodeType):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Add(AnimationNodeType):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
     def __repr__(self) -> str: ...
 
 class AnimationNodeIndex:
@@ -91,14 +99,20 @@ class AnimationNodeIndex:
     def index(self) -> int: ...
 
 class RepeatAnimation:
-    def __init__(self) -> None: ...
-    @staticmethod
-    def Never() -> RepeatAnimation: ...
-    @staticmethod
-    def Count(count: int) -> RepeatAnimation: ...
-    @staticmethod
-    def Forever() -> RepeatAnimation: ...
-    def count(self) -> int | None: ...
+    class Never(RepeatAnimation):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Count(RepeatAnimation):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int, /) -> None: ...
+
+    class Forever(RepeatAnimation):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    def __repr__(self) -> str: ...
 
 class ActiveAnimation:
     @property

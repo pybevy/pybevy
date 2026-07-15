@@ -19,18 +19,6 @@ pub enum PyScreenSpaceAmbientOcclusionQualityLevel {
     },
 }
 
-#[pymethods]
-impl PyScreenSpaceAmbientOcclusionQualityLevel {
-    #[classattr]
-    pub const LOW: Self = PyScreenSpaceAmbientOcclusionQualityLevel::Low();
-    #[classattr]
-    pub const MEDIUM: Self = PyScreenSpaceAmbientOcclusionQualityLevel::Medium();
-    #[classattr]
-    pub const HIGH: Self = PyScreenSpaceAmbientOcclusionQualityLevel::High();
-    #[classattr]
-    pub const ULTRA: Self = PyScreenSpaceAmbientOcclusionQualityLevel::Ultra();
-}
-
 impl From<ScreenSpaceAmbientOcclusionQualityLevel> for PyScreenSpaceAmbientOcclusionQualityLevel {
     fn from(level: ScreenSpaceAmbientOcclusionQualityLevel) -> Self {
         match level {

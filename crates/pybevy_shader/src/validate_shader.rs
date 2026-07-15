@@ -11,16 +11,6 @@ pub enum PyValidateShader {
 
 #[pymethods]
 impl PyValidateShader {
-    #[staticmethod]
-    pub fn disabled() -> Self {
-        PyValidateShader::Disabled
-    }
-
-    #[staticmethod]
-    pub fn enabled() -> Self {
-        PyValidateShader::Enabled
-    }
-
     fn __repr__(&self) -> &'static str {
         match self {
             PyValidateShader::Disabled => "ValidateShader.Disabled",

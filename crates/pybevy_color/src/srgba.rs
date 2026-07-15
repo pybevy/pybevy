@@ -1,11 +1,11 @@
 use bevy::{
-    color::{Alpha, Gray, Luminance, Mix, Srgba, color_difference::EuclideanDistance},
+    color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, color_difference::EuclideanDistance},
     math::StableInterpolate,
 };
 use pybevy_core::ValueStorage;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use super::common::fmt_f32;
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba};
 
 #[pyclass(name = "Srgba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
@@ -198,8 +198,8 @@ impl PySrgba {
         Ok(self.as_ref()?.luminance())
     }
 
-    pub fn with_luminance(&self, luminance: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.with_luminance(luminance)))
+    pub fn with_luminance(&self, value: f32) -> PyResult<Self> {
+        Ok(PySrgba::srgba(self.as_ref()?.with_luminance(value)))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
@@ -226,6 +226,10 @@ impl PySrgba {
 
     pub fn distance_squared(&self, other: &Self) -> PyResult<f32> {
         Ok(self.as_ref()?.distance_squared(other.as_ref()?))
+    }
+
+    pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
+        Ok(LinearRgba::from(*self.as_ref()?).into())
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {

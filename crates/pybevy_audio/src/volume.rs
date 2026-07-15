@@ -4,15 +4,15 @@ use pyo3::prelude::*;
 #[pyclass(name = "Volume", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyVolume {
-    Linear(f32),
-    Decibels(f32),
+    Linear { value: f32 },
+    Decibels { value: f32 },
 }
 
 impl From<Volume> for PyVolume {
     fn from(volume: Volume) -> Self {
         match volume {
-            Volume::Linear(v) => PyVolume::Linear(v),
-            Volume::Decibels(v) => PyVolume::Decibels(v),
+            Volume::Linear(value) => PyVolume::Linear { value },
+            Volume::Decibels(value) => PyVolume::Decibels { value },
         }
     }
 }
@@ -20,8 +20,8 @@ impl From<Volume> for PyVolume {
 impl From<PyVolume> for Volume {
     fn from(volume: PyVolume) -> Self {
         match volume {
-            PyVolume::Linear(v) => Volume::Linear(v),
-            PyVolume::Decibels(v) => Volume::Decibels(v),
+            PyVolume::Linear { value } => Volume::Linear(value),
+            PyVolume::Decibels { value } => Volume::Decibels(value),
         }
     }
 }
@@ -80,8 +80,8 @@ impl PyVolume {
 
     fn __repr__(&self) -> String {
         match self {
-            PyVolume::Linear(v) => format!("Volume.Linear({v})"),
-            PyVolume::Decibels(v) => format!("Volume.Decibels({v})"),
+            PyVolume::Linear { value } => format!("Volume.Linear({value})"),
+            PyVolume::Decibels { value } => format!("Volume.Decibels({value})"),
         }
     }
 }

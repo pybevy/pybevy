@@ -3,10 +3,10 @@ use pyo3::prelude::*;
 #[pyclass(name = "AnimationEvent", eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyAnimationEvent {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub name: String,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub data: Option<String>,
 }
 
@@ -29,10 +29,10 @@ impl PyAnimationEvent {
 #[pyclass(name = "AnimationEventData", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAnimationEventData {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub time: f32,
 
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub event: Py<PyAnimationEvent>,
 }
 

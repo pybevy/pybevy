@@ -5,7 +5,7 @@ TextFont, TextColor, and TextLayout from pybevy.text (same components
 work for both Text2d and UI Text).
 """
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
@@ -1684,55 +1684,44 @@ class NodeImageMode:
         from pybevy.sprite import TextureSlicer, BorderRect
 
         # Auto sizing
-        auto_mode = NodeImageMode.auto()
+        auto_mode = NodeImageMode.Auto()
 
         # Stretch to fill
-        stretch_mode = NodeImageMode.stretch()
+        stretch_mode = NodeImageMode.Stretch()
 
         # 9-slice for UI panels
         slicer = TextureSlicer(BorderRect.all(16.0))
-        sliced_mode = NodeImageMode.sliced(slicer)
+        sliced_mode = NodeImageMode.Sliced(slicer)
 
         # Tiled background
-        tiled_mode = NodeImageMode.tiled(tile_x=True, tile_y=True, stretch_value=1.0)
+        tiled_mode = NodeImageMode.Tiled(tile_x=True, tile_y=True, stretch_value=1.0)
         ```
     """
 
-    # Enum variants (for isinstance checks)
-    Auto: NodeImageMode
-    Stretch: NodeImageMode
-    Sliced: NodeImageMode
-    Tiled: NodeImageMode
+    class Auto(NodeImageMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def auto() -> NodeImageMode:
-        """Create Auto mode - image sized based on source."""
+    class Stretch(NodeImageMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def stretch() -> NodeImageMode:
-        """Create Stretch mode - image stretched to fill node."""
+    class Sliced(NodeImageMode):
+        __match_args__: ClassVar[tuple[Literal["slicer"]]]
+        slicer: TextureSlicer
+        def __init__(self, slicer: TextureSlicer, /) -> None: ...
 
-    @staticmethod
-    def sliced(slicer: TextureSlicer) -> NodeImageMode:
-        """Create Sliced mode for 9-slice scaling.
-
-        Args:
-            slicer: TextureSlicer defining the 9-slice borders
-        """
-
-    @staticmethod
-    def tiled(
-        tile_x: bool = True,
-        tile_y: bool = True,
-        stretch_value: float = 1.0,
-    ) -> NodeImageMode:
-        """Create Tiled mode for repeating texture.
-
-        Args:
-            tile_x: Whether to tile horizontally
-            tile_y: Whether to tile vertically
-            stretch_value: Threshold ratio for when tiling starts
-        """
+    class Tiled(NodeImageMode):
+        __match_args__: ClassVar[tuple[Literal["tile_x"], Literal["tile_y"], Literal["stretch_value"]]]
+        tile_x: bool
+        tile_y: bool
+        stretch_value: float
+        def __init__(
+            self,
+            tile_x: bool = True,
+            tile_y: bool = True,
+            stretch_value: float = 1.0,
+        ) -> None: ...
 
     def uses_slices(self) -> bool:
         """Returns true if this mode uses slices (Sliced or Tiled)."""
@@ -2478,9 +2467,15 @@ class RelativeCursorPosition(Component):
     def cursor_over(self) -> bool:
         """True if the cursor is over an unclipped area of this node."""
 
+    @cursor_over.setter
+    def cursor_over(self, value: bool) -> None: ...
+
     @property
     def normalized(self) -> Vec2 | None:
         """Cursor position normalized to node bounds (0-1), or None if unknown."""
+
+    @normalized.setter
+    def normalized(self, value: Vec2 | None) -> None: ...
 
     def is_cursor_over(self) -> bool:
         """Helper function to check if cursor is over the node."""
@@ -2587,7 +2582,7 @@ class ScrollPosition(Component):
 
     @staticmethod
     def from_numpy(  # type: ignore[override]
-        *, x: np.ndarray | None = None, y: np.ndarray | None = None
+        *, x: np.typing.ArrayLike | None = None, y: np.typing.ArrayLike | None = None
     ) -> Batchable: ...
 
 
@@ -3446,6 +3441,7 @@ __all__ = [
     "Checked",
     "ColorStop",
     "ComputedNode",
+    "ComputedStackIndex",
     "ConicGradient",
     "Display",
     "FlexDirection",

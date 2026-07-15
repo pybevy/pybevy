@@ -15,17 +15,12 @@ class PowerPreference:
     None_: ClassVar[PowerPreference]
     LowPower: ClassVar[PowerPreference]
     HighPerformance: ClassVar[PowerPreference]
-    NONE: ClassVar[PowerPreference]
-    LOW_POWER: ClassVar[PowerPreference]
-    HIGH_PERFORMANCE: ClassVar[PowerPreference]
 
 class Face:
     """Face culling mode."""
 
     Front: ClassVar[Face]
     Back: ClassVar[Face]
-    FRONT: ClassVar[Face]
-    BACK: ClassVar[Face]
 
 PyFace = Face
 
@@ -67,6 +62,12 @@ class RenderPlugin(Plugin):
         """
 
     def build(self, app: App) -> None: ...
+
+    @property
+    def power_preference(self) -> PowerPreference | None: ...
+
+    @property
+    def synchronous_pipeline_compilation(self) -> bool | None: ...
 
 class ColorGradingSection:
     """Color grading values applied to a specific tonal range (shadows, midtones, or highlights).

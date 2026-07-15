@@ -1,34 +1,37 @@
 from collections.abc import Callable
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 class AlphaMode:
-    """Alpha blending mode for materials.
+    """Alpha blending mode for materials."""
 
-    Can be used either as callable constructors (``AlphaMode.Blend()``) or
-    pre-built class attributes (``AlphaMode.BLEND``).
-    """
+    class Opaque(AlphaMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    OPAQUE: AlphaMode
-    BLEND: AlphaMode
-    PREMULTIPLIED: AlphaMode
-    ADD: AlphaMode
-    MULTIPLY: AlphaMode
-    ALPHA_TO_COVERAGE: AlphaMode
+    class Mask(AlphaMode):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float, /) -> None: ...
 
-    @staticmethod
-    def Opaque() -> AlphaMode: ...
-    @staticmethod
-    def Mask(alpha: float) -> AlphaMode: ...
-    @staticmethod
-    def Blend() -> AlphaMode: ...
-    @staticmethod
-    def Premultiplied() -> AlphaMode: ...
-    @staticmethod
-    def Add() -> AlphaMode: ...
-    @staticmethod
-    def Multiply() -> AlphaMode: ...
-    @staticmethod
-    def AlphaToCoverage() -> AlphaMode: ...
+    class Blend(AlphaMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Premultiplied(AlphaMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Add(AlphaMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Multiply(AlphaMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AlphaToCoverage(AlphaMode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
 class OpaqueRendererMethod:
     """Opaque rendering method selection."""
@@ -36,9 +39,6 @@ class OpaqueRendererMethod:
     Forward: ClassVar[OpaqueRendererMethod]
     Deferred: ClassVar[OpaqueRendererMethod]
     Auto: ClassVar[OpaqueRendererMethod]
-    FORWARD: ClassVar[OpaqueRendererMethod]
-    DEFERRED: ClassVar[OpaqueRendererMethod]
-    AUTO: ClassVar[OpaqueRendererMethod]
 
 def material(
     fragment_shader: str | None = None,

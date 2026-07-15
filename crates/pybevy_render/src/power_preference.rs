@@ -11,13 +11,3 @@ pub enum PyPowerPreference {
     LowPower,
     HighPerformance,
 }
-
-#[pymethods]
-impl PyPowerPreference {
-    #[classattr]
-    pub const NONE: Self = PyPowerPreference::None;
-    #[classattr]
-    pub const LOW_POWER: Self = PyPowerPreference::LowPower;
-    #[classattr]
-    pub const HIGH_PERFORMANCE: Self = PyPowerPreference::HighPerformance;
-}
