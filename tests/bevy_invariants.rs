@@ -27,6 +27,7 @@ enum TransitionContractState {
     #[default]
     Alpha,
     Beta,
+    Gamma,
 }
 
 #[derive(Resource, Debug, Default)]
@@ -57,6 +58,60 @@ fn record_contract_initial_enter(mut trace: ResMut<TransitionContractTrace>) {
     trace
         .0
         .push(("initial_enter", TransitionContractState::Alpha));
+}
+
+fn nested_enter_from_exit(world: &mut World) {
+    world
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .push(("exit_start", TransitionContractState::Beta));
+    world.run_schedule(OnEnter(TransitionContractState::Beta));
+    world
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .push(("exit_end", TransitionContractState::Beta));
+}
+
+fn queue_gamma_during_exit(
+    mut next: ResMut<NextState<TransitionContractState>>,
+    mut trace: ResMut<TransitionContractTrace>,
+) {
+    trace.0.push(("queue_gamma", TransitionContractState::Beta));
+    next.set(TransitionContractState::Gamma);
+}
+
+fn try_reenter_active_exit(world: &mut World) {
+    world
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .push(("exit_start", TransitionContractState::Beta));
+    let result = world.try_run_schedule(OnExit(TransitionContractState::Alpha));
+    world.resource_mut::<TransitionContractTrace>().0.push((
+        if result.is_err() {
+            "nested_error"
+        } else {
+            "nested_ok"
+        },
+        TransitionContractState::Beta,
+    ));
+    world
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .push(("exit_end", TransitionContractState::Beta));
+}
+
+fn record_contract_exit_beta(
+    state: Res<State<TransitionContractState>>,
+    mut trace: ResMut<TransitionContractTrace>,
+) {
+    trace.0.push(("exit_beta", state.get().clone()));
+}
+
+fn record_contract_enter_gamma(
+    state: Res<State<TransitionContractState>>,
+    mut trace: ResMut<TransitionContractTrace>,
+) {
+    trace.0.push(("enter_gamma", state.get().clone()));
 }
 
 #[test]
@@ -1015,6 +1070,172 @@ fn test_pending_transition_before_first_update_supersedes_initial_enter() {
         app.world().resource::<TransitionContractTrace>().0,
         [
             ("exit", TransitionContractState::Beta),
+            ("transition", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+        ]
+    );
+}
+
+#[test]
+fn test_state_schedule_can_run_nested_from_transition_callback() {
+    //! BEHAVIOR: A state callback may synchronously run a different state
+    //! schedule. The nested schedule observes the already-committed state and
+    //! the outer exit schedule resumes afterward. The normal enter phase still
+    //! runs that OnEnter schedule again later in the same transition pass.
+    //!
+    //! Relied on by: PyBevy must snapshot its machine registry before invoking
+    //! callbacks and must not retain a World/resource borrow across a nested
+    //! `World.run_schedule(OnEnter(...))` call.
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<TransitionContractState>()
+        .insert_resource(TransitionContractTrace::default())
+        .add_systems(
+            OnExit(TransitionContractState::Alpha),
+            nested_enter_from_exit,
+        )
+        .add_systems(
+            OnTransition {
+                exited: TransitionContractState::Alpha,
+                entered: TransitionContractState::Beta,
+            },
+            record_contract_transition,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Beta),
+            record_contract_enter,
+        );
+
+    app.update();
+    app.world_mut()
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .clear();
+    app.world_mut()
+        .resource_mut::<NextState<TransitionContractState>>()
+        .set(TransitionContractState::Beta);
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [
+            ("exit_start", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+            ("exit_end", TransitionContractState::Beta),
+            ("transition", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+        ]
+    );
+}
+
+#[test]
+fn test_transition_queued_by_callback_waits_for_next_transition_pass() {
+    //! BEHAVIOR: A callback that writes another `NextState` does not recurse
+    //! into the transition planner. The request remains pending and is applied
+    //! the next time `StateTransition` runs.
+    //!
+    //! Relied on by: PyBevy takes one pending value before callback execution
+    //! and processes each machine at most once per transition pass.
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<TransitionContractState>()
+        .insert_resource(TransitionContractTrace::default())
+        .add_systems(
+            OnExit(TransitionContractState::Alpha),
+            queue_gamma_during_exit,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Beta),
+            record_contract_enter,
+        )
+        .add_systems(
+            OnExit(TransitionContractState::Beta),
+            record_contract_exit_beta,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Gamma),
+            record_contract_enter_gamma,
+        );
+
+    app.update();
+    app.world_mut()
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .clear();
+    app.world_mut()
+        .resource_mut::<NextState<TransitionContractState>>()
+        .set(TransitionContractState::Beta);
+
+    app.update();
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [
+            ("queue_gamma", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+        ]
+    );
+
+    app.update();
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [
+            ("queue_gamma", TransitionContractState::Beta),
+            ("enter", TransitionContractState::Beta),
+            ("exit_beta", TransitionContractState::Gamma),
+            ("enter_gamma", TransitionContractState::Gamma),
+        ]
+    );
+}
+
+#[test]
+fn test_reentering_active_state_schedule_returns_error_and_outer_pass_continues() {
+    //! BEHAVIOR: `World::try_run_schedule` cannot re-enter the exact schedule
+    //! currently being executed. Schedule scope temporarily removes it from
+    //! `Schedules`, so the nested call returns `ScheduleNotFound`. Handling the
+    //! error locally lets the outer transition continue normally.
+    //!
+    //! Relied on by: Python `World.run_schedule(OnExit(...))` must translate
+    //! this expected Bevy error into `RuntimeError`, never invoke Bevy's
+    //! panicking `World::run_schedule` API.
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<TransitionContractState>()
+        .insert_resource(TransitionContractTrace::default())
+        .add_systems(
+            OnExit(TransitionContractState::Alpha),
+            try_reenter_active_exit,
+        )
+        .add_systems(
+            OnTransition {
+                exited: TransitionContractState::Alpha,
+                entered: TransitionContractState::Beta,
+            },
+            record_contract_transition,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Beta),
+            record_contract_enter,
+        );
+
+    app.update();
+    app.world_mut()
+        .resource_mut::<TransitionContractTrace>()
+        .0
+        .clear();
+    app.world_mut()
+        .resource_mut::<NextState<TransitionContractState>>()
+        .set(TransitionContractState::Beta);
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [
+            ("exit_start", TransitionContractState::Beta),
+            ("nested_error", TransitionContractState::Beta),
+            ("exit_end", TransitionContractState::Beta),
             ("transition", TransitionContractState::Beta),
             ("enter", TransitionContractState::Beta),
         ]
