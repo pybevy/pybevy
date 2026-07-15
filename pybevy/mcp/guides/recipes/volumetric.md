@@ -101,7 +101,8 @@ if __name__ == "__main__":
 
 - **VolumetricFog** on camera enables the volumetric pass
 - **VolumetricLight** on the directional light makes it create god rays
-- **FogVolume** creates localized fog — `Transform` scale controls its size
+- **FogVolume** creates localized fog - `Transform` scale controls its size
 - **jitter=1.0** reduces banding artifacts (best with TAA)
 - Columns/geometry break up the light for visible shafts
-- **absorption** should be low (0.02–0.05) for bright white mist. Higher values (0.2+) create dark/smoky fog — see `guide://lighting` for the full parameter reference
+- **absorption** should be low (0.02–0.05) for bright white mist. Higher values (0.2+) create dark/smoky fog - see `guide://lighting` for the full parameter reference
+- **Performance:** cost scales with `step_count`, resolution, and the number of shadowed `VolumetricLight`s. Large fog volumes with several shadowed lights run below 30 FPS on mid-range GPUs; prefer `step_count=16-32` and one volumetric light, and check `get_performance` after enabling

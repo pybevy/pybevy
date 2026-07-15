@@ -1,6 +1,6 @@
 # Visual Effects Recipes
 
-Material + lighting combinations for specific visual effects. These go beyond surface realism — they're techniques for achieving a *look*.
+Material + lighting combinations for specific visual effects. These go beyond surface realism - they're techniques for achieving a *look*.
 
 ## Rim Lighting (Fresnel Silhouettes)
 
@@ -72,7 +72,7 @@ beacon_mat = materials.add(StandardMaterial(
 
 ## Dark Fog Atmosphere
 
-Intentionally near-black fog for horror/mystery/silhouette scenes. Different from typical gray fog — the goal is to *hide* the world and reveal only lit edges.
+Intentionally near-black fog for horror/mystery/silhouette scenes. Different from typical gray fog - the goal is to *hide* the world and reveal only lit edges.
 
 ```python
 DistanceFog(
@@ -149,13 +149,13 @@ def animate_mist(query: Query[tuple[Mut[Transform], MistDrift]], time: Res[Time]
 ```
 
 **Tips:**
-- Alpha 0.04–0.08 for additive blend — higher looks like solid planes
+- Alpha 0.04–0.08 for additive blend - higher looks like solid planes
 - These look best at mid-range. Up close, the flat geometry is visible. Use FogVolumes for the heavy lifting, mesh puffs for texture
 - Vary `base_y` so lower puffs are denser (more opaque material) and higher puffs use a lighter material
 
 ## Burst Particle Effects
 
-Event-driven particles (sparks, explosions, impacts) — spawn a batch, animate with gravity, despawn on timeout.
+Event-driven particles (sparks, explosions, impacts) - spawn a batch, animate with gravity, despawn on timeout.
 
 ### Components
 

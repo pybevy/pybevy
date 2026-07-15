@@ -1,4 +1,4 @@
-# Platformer Recipe — Gravity, Jumping & Collectibles
+# Platformer Recipe - Gravity, Jumping & Collectibles
 
 Side-scrolling platformer with keyboard movement, gravity/jump physics, camera follow, collectible pickups, and a HUD score counter. Good for action games, endless runners, or any scene with continuous physics-style movement.
 
@@ -104,7 +104,7 @@ def move_player(
 
 **Key points:**
 - `just_pressed` for jump (one-shot), `pressed` for movement (continuous)
-- Ground collision is a simple Y-floor check — for platforms at different heights, compare against each platform's Y + height
+- Ground collision is a simple Y-floor check - for platforms at different heights, compare against each platform's Y + height
 - `on_ground` uses float (1.0/0.0) for compatibility with View batch expressions, but `bool` fields also work with `@component`
 
 ## Camera Follow System
@@ -167,7 +167,7 @@ def collect_gems(
 
 ## HUD Score Counter
 
-Uses UI `Text` (not `Text2d` — `Text2d` requires `Camera2d`). See `guide://ui-text` for full UI text details.
+Uses UI `Text` (not `Text2d` - `Text2d` requires `Camera2d`). See `guide://ui-text` for full UI text details.
 
 ```python
 from pybevy.ui import Node, Text, BackgroundColor

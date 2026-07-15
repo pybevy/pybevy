@@ -130,14 +130,14 @@ Gradients default to sRGB interpolation. For perceptually smoother transitions:
 smooth = LinearGradient.to_right([
     ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
     ColorStop.auto(Color.srgb(0.0, 0.0, 1.0)),
-]).in_oklaba()  # Perceptually uniform — no muddy middle
+]).in_oklaba()  # Perceptually uniform - no muddy middle
 ```
 
 Options: `.in_oklaba()`, `.in_srgb()`, `.in_linear_rgb()`
 
 ## TextShadow
 
-Drop shadow on text — added as a component on text entities:
+Drop shadow on text - added as a component on text entities:
 
 ```python
 from pybevy.ui import TextShadow

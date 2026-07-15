@@ -4,7 +4,7 @@ For Python query syntax (`Query[T]`, `Mut[T]`, filters, `Optional`, borrow rules
 
 ## MCP Query Tools
 
-### query_entities — Filter by component presence
+### query_entities - Filter by component presence
 ```
 query_entities {"with": ["Transform", "PointLight"]}
 → All entities that have both Transform AND PointLight
@@ -16,13 +16,13 @@ query_entities {"with": ["Name"]}
 → All named entities (useful for finding addressable objects)
 ```
 
-### scene://entities — List everything
+### scene://entities - List everything
 ```
 resources/read scene://entities
 → All entities with their component type lists
 ```
 
-### scene://entity/{id_or_name} — Single entity detail
+### scene://entity/{id_or_name} - Single entity detail
 ```
 resources/read scene://entity/42
 resources/read scene://entity/MainCamera
@@ -53,10 +53,10 @@ View is 30-50x faster than Query for bulk operations. See `guide://performance`.
 
 ## Common MCP Workflow
 
-1. `query_entities {"with": ["Transform"]}` — Find entities
-2. `get_component_schema {"name": "Transform"}` — See available fields
-3. `set_component {"entity_id": N, "component": "Transform", "fields": {...}}` — Modify
-4. `capture_screenshot` — Verify visually
+1. `query_entities {"with": ["Transform"]}` - Find entities
+2. `get_component_schema {"name": "Transform"}` - See available fields
+3. `set_component {"entity_id": N, "component": "Transform", "fields": {...}}` - Modify
+4. `capture_screenshot` - Verify visually
 
 ## Gotcha: Resource Entities
 

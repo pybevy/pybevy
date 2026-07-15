@@ -9,14 +9,14 @@ Three parameters work together:
 | Parameter | What it does | Typical range |
 |-----------|-------------|---------------|
 | `specular_transmission` | How see-through (0 = opaque, 1 = fully transparent) | `0.5–1.0` |
-| `ior` | Index of refraction — how much light bends | See table below |
+| `ior` | Index of refraction - how much light bends | See table below |
 | `thickness` | Optical thickness for refraction/attenuation | `0.1–5.0` |
 
 ### IOR Reference
 
 | Material | `ior` | `specular_transmission` | `thickness` | Visual |
 |----------|-------|----------------------|-----------|--------|
-| Air | `1.0` | — | — | No refraction |
+| Air | `1.0` | - | - | No refraction |
 | Water | `1.33` | 0.9 | 0.5 | Slight distortion, clear |
 | Glass | `1.5` | 0.95 | 0.3 | Visible refraction, transparent |
 | Crystal | `1.8` | 0.85 | 0.5 | Strong refraction, sparkle |
@@ -76,7 +76,7 @@ Thicker regions appear more saturated. Good for stained glass, colored bottles, 
 
 ## Diffuse Transmission (Leaves / Paper)
 
-`diffuse_transmission` scatters light through the surface. Unlike specular transmission, it doesn't distort — light just passes through diffusely.
+`diffuse_transmission` scatters light through the surface. Unlike specular transmission, it doesn't distort - light just passes through diffusely.
 
 | Material | `diffuse_transmission` |
 |----------|----------------------|

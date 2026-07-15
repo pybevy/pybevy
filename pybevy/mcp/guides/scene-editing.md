@@ -6,27 +6,27 @@ MCP workflow for spawning, editing, screenshotting, time control, and field valu
 
 The typical MCP scene editing workflow:
 
-1. **Pause time** — Freeze the scene for inspection
-2. **Inspect** — List entities, query by component
-3. **Edit** — Spawn, modify, or remove entities/components
-4. **Screenshot** — Capture visual result
-5. **Resume** — Unpause to see animation
+1. **Pause time** - Freeze the scene for inspection
+2. **Inspect** - List entities, query by component
+3. **Edit** - Spawn, modify, or remove entities/components
+4. **Screenshot** - Capture visual result
+5. **Resume** - Unpause to see animation
 
 ## Time Control
 
 Control game time without affecting rendering:
 
 ```
-pause_time           — Freeze all time-dependent systems
-resume_time          — Unpause
-set_time_scale {"scale": 0.1}  — Slow-motion (0.1 = 10% speed)
-set_time_scale {"scale": 2.0}  — Fast-forward (2x speed)
-get_time_status      — Check paused state, speed, elapsed time
+pause_time           - Freeze all time-dependent systems
+resume_time          - Unpause
+set_time_scale {"scale": 0.1}  - Slow-motion (0.1 = 10% speed)
+set_time_scale {"scale": 2.0}  - Fast-forward (2x speed)
+get_time_status      - Check paused state, speed, elapsed time
 ```
 
 **Key:** Pausing freezes `Time<Virtual>` which controls game logic. Rendering continues so you can still take screenshots of the frozen scene.
 
-**Tip:** You can combine pause and scale — e.g., `pause_time`, then `set_time_scale {"scale": 1.0}` to reset speed while paused, then `resume_time` to continue at the new speed.
+**Tip:** You can combine pause and scale - e.g., `pause_time`, then `set_time_scale {"scale": 1.0}` to reset speed while paused, then `resume_time` to continue at the new speed.
 
 ### Slow-Motion Capture Technique
 
@@ -66,7 +66,7 @@ get_component_schema {"name": "PointLight"}
 
 ## Modifying Components
 
-Partial updates — only specify fields to change:
+Partial updates - only specify fields to change:
 ```
 set_component {
     "name": "warm_light",
@@ -127,10 +127,10 @@ set_component {
 ## Screenshots
 
 ```
-capture_screenshot                              — Standard capture (768px wide)
-capture_screenshot {"max_width": 1280}          — Higher resolution
-capture_screenshot {"delay_frames": 5}          — Wait 5 frames first
-capture_screenshot {"gizmos": true}             — With entity ID/Name overlays
+capture_screenshot                              - Standard capture (768px wide)
+capture_screenshot {"max_width": 1280}          - Higher resolution
+capture_screenshot {"delay_frames": 5}          - Wait 5 frames first
+capture_screenshot {"gizmos": true}             - With entity ID/Name overlays
 ```
 
 ### One-Shot Edit-and-Verify
@@ -185,7 +185,7 @@ schedule_actions {"actions": [
 
 ### Atomic Edit + Verify
 
-Mutate an entity and capture in the same batch — no intermediate frames:
+Mutate an entity and capture in the same batch - no intermediate frames:
 ```
 schedule_actions {"actions": [
     {"tool": "set_component", "args": {"name": "sun", "component": "PointLight", "fields": {"intensity": 5000}}},
@@ -206,8 +206,8 @@ schedule_actions {"actions": [
 
 ### Error Handling
 
-- `stop_on_error: true` — abort remaining actions on first failure
-- `skip_if_error: "label"` — skip this action if the labeled action errored
+- `stop_on_error: true` - abort remaining actions on first failure
+- `skip_if_error: "label"` - skip this action if the labeled action errored
 
 ```
 schedule_actions {"stop_on_error": true, "actions": [
@@ -238,7 +238,7 @@ All engine-side tools work: `pause_time`, `resume_time`, `seek_time`, `set_time_
 **Make one change at a time**, then screenshot to verify before moving on. Do NOT batch multiple changes into a single edit.
 
 Why this matters:
-- Particle sizes, lighting values, and positions are hard to predict — you'll often need to adjust
+- Particle sizes, lighting values, and positions are hard to predict - you'll often need to adjust
 - A single screenshot catches sizing/positioning bugs immediately
 - Batching 5 changes makes it impossible to tell which one caused a visual problem
 
@@ -252,14 +252,14 @@ Why this matters:
 ## Complete Example Session
 
 ```
-1. pause_time                                    — Freeze scene
-2. resources/read scene://entities               — See all entities
-3. query_entities {"with": ["PointLight"]}        — Find lights
-4. set_component {"name": "sun", ...}             — Adjust light
-5. spawn_entity {"components": {...}}             — Add new object
-6. capture_screenshot                             — Check result
-7. resume_time                                    — Unpause
-8. capture_screenshot {"delay_frames": 30}        — See animation
+1. pause_time                                    - Freeze scene
+2. resources/read scene://entities               - See all entities
+3. query_entities {"with": ["PointLight"]}        - Find lights
+4. set_component {"name": "sun", ...}             - Adjust light
+5. spawn_entity {"components": {...}}             - Add new object
+6. capture_screenshot                             - Check result
+7. resume_time                                    - Unpause
+8. capture_screenshot {"delay_frames": 30}        - See animation
 ```
 
 ## Animation Verification
@@ -278,7 +278,7 @@ schedule_actions {"actions": [
 
 Then call `get_logs()` to read the printed values.
 
-**Multi-time comparison** — seek to different times and capture each:
+**Multi-time comparison** - seek to different times and capture each:
 
 ```
 schedule_actions {"actions": [
@@ -325,7 +325,7 @@ spawn_entity {"components": {
 # Update light intensity
 set_component {"name": "my_light", "component": "PointLight", "fields": {"intensity": 8000.0}}
 
-# Set camera viewport (Option<Viewport> — omit depth for defaults)
+# Set camera viewport (Option<Viewport> - omit depth for defaults)
 set_component {"name": "my_camera", "component": "Camera",
     "fields": {"viewport": {"physical_position": [700, 0], "physical_size": [580, 720]}}}
 
@@ -362,12 +362,12 @@ run_code {"code": "e = Entity.from_bits(123456); print(world.entity(e))"}
 
 **Note:** `run_code` with `world.run_system_once()` queries against the live world state. Prior MCP mutations (spawn, set_component) are automatically flushed before the system runs, so queries should see all entities.
 
-**Messages cannot be registered from `run_code`.** `World` exposes `register_resource` and `register_component`, but there is no `world.register_message()` because `app.add_message(MyMessage)` also installs the per-frame `update_messages` system, which can only be added through `App`. To add a new message type, edit the scene's `@entrypoint` and reload. See `guide://patterns` (Messages section) for details.
+**Messages cannot be registered from `run_code`.** `World` exposes `register_resource` and `register_component`, but there is no `world.register_message()`; `app.add_message(MyMessage)` creates the App-local channel identity and scheduler metadata. To add a new message type, edit the scene's `@entrypoint` and reload. See `guide://patterns` (Messages section) for details.
 
 ## Troubleshooting
 
 - **Entity not found**: IDs change after full reload. Use `Name` or re-query.
 - **Component not on entity**: Use `scene://entity/{id}` to see what components exist.
-- **Field update fails**: Check field name/type with `get_component_schema`. Use `get_component_schema` to check the `editable` flag — some components (like `Text`) require code-side updates rather than MCP field mutation.
+- **Field update fails**: Check field name/type with `get_component_schema`. Use `get_component_schema` to check the `editable` flag - some components (like `Text`) require code-side updates rather than MCP field mutation.
 - **Screenshot blank**: Wait more frames with `delay_frames` parameter.
 - **Entity counts differ**: `get_scene_summary` counts user-visible entities only. `get_performance` reports the full ECS entity count including render internals, so the two numbers will differ.

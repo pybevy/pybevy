@@ -8,7 +8,7 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - Clears all entities and custom Python resources
 - Preserves built-in resources (Time, AssetServer, WireframeConfig, GlobalVolume)
 - Re-runs ALL systems including Startup (re-creates the scene)
-- Entity IDs will change — use `Name` component for stable references
+- Entity IDs will change - use `Name` component for stable references
 - Custom `@component` and `@resource` types are re-aliased by name (no new ComponentId if structure unchanged)
 - Observers are re-registered automatically
 - Old DynamicSystems are cleaned up to prevent memory leaks
@@ -23,16 +23,16 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 ## MCP Reload Commands
 
 ```
-reload {"mode": "full"}    — Full reload (default)
-reload {"mode": "partial"} — Partial reload
+reload {"mode": "full"}    - Full reload (default)
+reload {"mode": "partial"} - Partial reload
 
 # Atomic time control with reload (avoids timing drift between separate calls):
-reload {"mode": "full", "pause": true}                — Reload and freeze immediately
-reload {"mode": "full", "time_scale": 0.1}            — Reload at slow-motion
-reload {"mode": "full", "pause": true, "time_scale": 0.1} — Both: frozen at 0.1x, resume when ready
+reload {"mode": "full", "pause": true}                - Reload and freeze immediately
+reload {"mode": "full", "time_scale": 0.1}            - Reload at slow-motion
+reload {"mode": "full", "pause": true, "time_scale": 0.1} - Both: frozen at 0.1x, resume when ready
 
-get_reload_status                  — Check if reload is pending/complete
-get_last_error                     — Get Python error traceback if reload failed
+get_reload_status                  - Check if reload is pending/complete
+get_last_error                     - Get Python error traceback if reload failed
 ```
 
 ## Workflow: Edit and Reload
@@ -74,7 +74,7 @@ commands.spawn(Transform(), PointLight(intensity=1000), Name("sun"))
 ```
 
 ```
-# In MCP — address by name
+# In MCP - address by name
 set_component {"name": "sun", "component": "PointLight", "fields": {"intensity": 2000}}
 ```
 
@@ -94,7 +94,7 @@ Custom Python types defined with `@component` or `@resource` survive hot reloads
 
 - After reload, Python classes get new `PyTypeObject` pointers
 - The reload system matches new types to existing `ComponentId`s by qualified name (e.g., `__main__.Player`)
-- If the structure matches (same storage mode, same fields), the existing `ComponentId` is reused — no data loss
+- If the structure matches (same storage mode, same fields), the existing `ComponentId` is reused - no data loss
 - If the structure changes (e.g., added a field, switched storage mode), a fresh `ComponentId` is allocated
 
 This means `reload` with Full mode handles most `@component`/`@resource` changes. Use `run_scene` only when you need a guaranteed clean-slate restart.
@@ -105,7 +105,7 @@ When plugins are added or removed across reloads, the reload system detects the 
 
 - **New plugins**: Reported in `get_reload_status` as `plugins_added`
 - **Removed plugins**: Reported as `plugins_removed` (restart may be required)
-- Core Bevy plugins (DefaultPlugins, etc.) cannot be hot-removed — a restart is needed
+- Core Bevy plugins (DefaultPlugins, etc.) cannot be hot-removed - a restart is needed
 
 ## Plugin.build() During Reload
 
@@ -121,8 +121,8 @@ class MyGamePlugin(Plugin):
 ```
 
 **What is NOT re-executed during reload:**
-- `DefaultPlugins` and other `PluginGroup` types — these persist from the initial load
-- Bridge-backed plugins (built-in Rust plugins) — they call `with_bevy_app()` which temp apps lack
+- `DefaultPlugins` and other `PluginGroup` types - these persist from the initial load
+- Bridge-backed plugins (built-in Rust plugins) - they call `with_bevy_app()` which temp apps lack
 - For new plugin *types* added mid-development (not just new instances), `run_scene` restart may still be needed
 
 ## Selective Module Flushing
@@ -146,7 +146,7 @@ Press **F7** to toggle the memory overlay, which shows:
 
 Memory data is also available via MCP:
 ```
-get_performance  — includes memory_growth_mb, memory_peak_mb, memory_warning, reload_memory_snapshots
+get_performance  - includes memory_growth_mb, memory_peak_mb, memory_warning, reload_memory_snapshots
 ```
 
 ## System Rename/Removal Detection
@@ -172,13 +172,13 @@ Partial reload (when it doesn't escalate) preserves all of these.
 
 ### "resource not found in world"
 
-- **Startup crashed before `insert_resource()`** — If setup errors mid-execution (e.g., wrong attribute name), resources inserted after the error line are never created. Check `get_last_error` or `get_logs(errors_only=true)` for tracebacks. Fix the error and use `run_scene` (not `reload`) to get a clean start.
-- **Missing `app.insert_resource()`** — If your Startup system takes `ResMut[MyResource]`, the resource must already exist. Add `app.insert_resource(MyResource())` in your `@entrypoint` before `.add_systems(Startup, setup)`.
-- **Used `reload` after changing `@component` field structure** — Adding/removing fields or changing storage mode allocates a new `ComponentId`. Full reload handles this (entities are recreated), but if behavior is unexpected, use `run_scene` for a clean restart.
+- **Startup crashed before `insert_resource()`** - If setup errors mid-execution (e.g., wrong attribute name), resources inserted after the error line are never created. Check `get_last_error` or `get_logs(errors_only=true)` for tracebacks. Fix the error and use `run_scene` (not `reload`) to get a clean start.
+- **Missing `app.insert_resource()`** - If your Startup system takes `ResMut[MyResource]`, the resource must already exist. Add `app.insert_resource(MyResource())` in your `@entrypoint` before `.add_systems(Startup, setup)`.
+- **Used `reload` after changing `@component` field structure** - Adding/removing fields or changing storage mode allocates a new `ComponentId`. Full reload handles this (entities are recreated), but if behavior is unexpected, use `run_scene` for a clean restart.
 
 ### Stale entities after failed reload
 
-After a failed reload, entities from the previous run may still exist. Don't use entity counts to judge whether Startup succeeded — always check `get_last_error` first. A full `run_scene` gives a guaranteed clean state.
+After a failed reload, entities from the previous run may still exist. Don't use entity counts to judge whether Startup succeeded - always check `get_last_error` first. A full `run_scene` gives a guaranteed clean state.
 
 ### GLB textures not loaded after reload_and_capture
 

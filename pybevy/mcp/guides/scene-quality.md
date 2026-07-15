@@ -1,6 +1,6 @@
 # Scene Quality Guide
 
-Composition, lighting, color, and common mistakes that produce dark or flat results. Consult when refining visuals — not necessarily before writing the first line of code.
+Composition, lighting, color, and common mistakes that produce dark or flat results. Consult when refining visuals - not necessarily before writing the first line of code.
 
 ## Lighting Quick-Reference
 
@@ -12,12 +12,16 @@ For paste-ready lighting recipes by scene type (outdoor, interior, cave, industr
 |---------|---------|---------------|------------|
 | GlobalAmbientLight brightness | 300 | 500 | 400 |
 | Key light illuminance | 8000 | N/A (use PointLights) | 6000 |
-| PointLight intensity (interior) | — | 150,000 | 100,000 |
+| PointLight intensity (interior) | - | 150,000 | 100,000 |
 | base_color (walls, floors, platforms) | 0.20 | 0.25 | 0.20 |
 | base_color (darkest element) | 0.10 | 0.15 | 0.10 |
 | DistanceFog density max | 0.005 | 0.004 | 0.006 |
 
-**Never set base_color below 0.08** — it's indistinguishable from black.
+**Never set base_color below 0.08** - it's indistinguishable from black.
+
+**Fog density is scale-dependent:** the DistanceFog maxima above assume long outdoor
+sightlines (100m+). For enclosed spaces ~50m across, `FogFalloff.Exponential(0.01-0.03)`
+is fine; judge by whether the far wall still reads, not by the number.
 
 **Dark/moody exceptions:** For intentionally dark scenes (galleries, space, underwater), ambient can go as low as 100 if emissive sources provide sufficient readability. The key test: can you distinguish midground subjects from background?
 
@@ -42,9 +46,9 @@ Every scene needs at minimum a **key light** (shadows) + **fill light** (~40% in
 ## Color Palette Guidance
 
 ### The 60/30/10 Rule
-- **60% Dominant** — overall mood (blue cave, green forest, warm stone interior)
-- **30% Secondary** — complementary or analogous hue for key features
-- **10% Accent** — contrasting pop color for focal points (emissive glow, character)
+- **60% Dominant** - overall mood (blue cave, green forest, warm stone interior)
+- **30% Secondary** - complementary or analogous hue for key features
+- **10% Accent** - contrasting pop color for focal points (emissive glow, character)
 
 ### Recommended Pairings
 
@@ -59,7 +63,7 @@ Every scene needs at minimum a **key light** (shadows) + **fill light** (~40% in
 ### Material Variation Rule
 Use 2-3 shades within each hue family. Never use one color for all surfaces of a type:
 ```python
-# Stone family — 3 variants
+# Stone family - 3 variants
 stone_light = materials.add(StandardMaterial(base_color=Color.srgb(0.50, 0.45, 0.38)))
 stone_mid   = materials.add(StandardMaterial(base_color=Color.srgb(0.40, 0.36, 0.30)))
 stone_dark  = materials.add(StandardMaterial(base_color=Color.srgb(0.30, 0.27, 0.22)))
@@ -88,16 +92,16 @@ stone_dark  = materials.add(StandardMaterial(base_color=Color.srgb(0.30, 0.27, 0
 
 ### Three Depth Layers (mandatory)
 Every scene MUST have:
-1. **Foreground** (0–3m from camera) — framing elements, nearby props, ground detail
-2. **Midground** (3–10m) — main subject matter, key architecture, characters
-3. **Background** (10m+) — distant context, walls, terrain, fog fade
+1. **Foreground** (0–3m from camera) - framing elements, nearby props, ground detail
+2. **Midground** (3–10m) - main subject matter, key architecture, characters
+3. **Background** (10m+) - distant context, walls, terrain, fog fade
 
 If the background is pure black, add a back wall, distant terrain, or set fog color above pure black.
 
 ### Element Placement
 - **Accents:** each platform/surface gets AT MOST one decorative accent. Leave some bare.
 - **Clusters of 2–3, not 1 or 10.** Group decorations in small intentional clusters.
-- **Anchored, not floating.** Decorations grow FROM surfaces — never hover unless explicitly magical.
+- **Anchored, not floating.** Decorations grow FROM surfaces - never hover unless explicitly magical.
 - **Varied repetition.** N copies of something → vary at least 2 of: scale (0.6x–1.4x), rotation, color tint.
 
 ### Prompt Fidelity
@@ -108,7 +112,7 @@ Before writing code, extract every noun from the user's prompt:
 - Style references (e.g., "Silksong style") → research and include 3+ visual traits
 
 ### Guide Reading
-Start with `guide://patterns` + one matching recipe. Read topic guides (lighting, materials, shadows, etc.) iteratively as you add those features — not all upfront.
+Start with `guide://patterns` + one matching recipe. Read topic guides (lighting, materials, shadows, etc.) iteratively as you add those features - not all upfront.
 
 ---
 
@@ -125,16 +129,16 @@ Start with `guide://patterns` + one matching recipe. Read topic guides (lighting
 ### Architecture / Interior
 - [ ] Multiple PointLights (4+) to eliminate dark corners
 - [ ] DirectionalLight as fill only (shadow_maps_enabled=False)
-- [ ] Material base_colors 0.25+ (brighter than outdoor — no sky bounce)
+- [ ] Material base_colors 0.25+ (brighter than outdoor - no sky bounce)
 - [ ] Furniture/props to define spaces
 - [ ] Bloom intensity low (0.05–0.12)
 
 ### Game Level / Platformer
 - [ ] Camera at character height, looking horizontally
-- [ ] Platforms form a CLEAR PATH — eye follows the route
+- [ ] Platforms form a CLEAR PATH - eye follows the route
 - [ ] Back wall or backdrop to frame the level
 - [ ] Accent lighting marks the path (glow near platforms, point lights at waypoints)
-- [ ] Platform surfaces clean — minimal clutter on playable areas
+- [ ] Platform surfaces clean - minimal clutter on playable areas
 
 ### Atmospheric / Mood
 - [ ] Midground subjects distinguishable from background (>= 20% brightness difference)
@@ -218,11 +222,12 @@ mat = StandardMaterial(base_color_texture=images.add(texture))
 ### Vertex Colors (Gradient a Single Mesh)
 ```python
 wall = Cuboid(4.0, 3.0, 0.3).mesh().build()
-with wall.attribute(Mesh.ATTRIBUTE_POSITION) as positions:
-    colors = np.zeros((len(positions), 4), dtype=np.float32)
-    for i, pos in enumerate(positions):
-        y_norm = (pos[1] + 1.5) / 3.0
-        colors[i] = [0.4 + 0.4 * y_norm, 0.35 + 0.35 * y_norm, 0.3 + 0.2 * y_norm, 1.0]
+positions = wall.attribute(Mesh.ATTRIBUTE_POSITION)  # bounded array, shape (N, 3)
+n = positions.shape[0]
+colors = np.zeros((n, 4), dtype=np.float32)
+for i in range(n):
+    y_norm = (positions[i, 1] + 1.5) / 3.0
+    colors[i] = [0.4 + 0.4 * y_norm, 0.35 + 0.35 * y_norm, 0.3 + 0.2 * y_norm, 1.0]
 wall.insert_attribute(Mesh.ATTRIBUTE_COLOR, colors)
 ```
 
@@ -290,7 +295,7 @@ commands.spawn(
 
 ## Performance Tip: Visibility Toggling
 
-Prefer `Visibility.set_hidden()` over despawn for object pooling. Toggling visibility on hundreds of entities has zero measurable FPS cost — the GPU simply skips hidden entities. Pre-spawn objects, hide them at startup, and show/hide as needed.
+Prefer `Visibility.set_hidden()` over despawn for object pooling. Toggling visibility on hundreds of entities has zero measurable FPS cost - the GPU simply skips hidden entities. Pre-spawn objects, hide them at startup, and show/hide as needed.
 
 ## Actually Missing Features
 

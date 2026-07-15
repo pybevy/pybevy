@@ -4,7 +4,7 @@ Handling keyboard, mouse, and gamepad input in PyBevy.
 
 ## Keyboard Input
 
-Use `Res[ButtonInput]` to read keyboard state. **Important:** the type is `ButtonInput` (not generic `ButtonInput[KeyCode]`) — PyBevy bridges this as a concrete resource.
+Use `Res[ButtonInput]` to read keyboard state. **Important:** the type is `ButtonInput` (not generic `ButtonInput[KeyCode]`) - PyBevy bridges this as a concrete resource.
 
 ```python
 from pybevy.input import ButtonInput, KeyCode
@@ -126,7 +126,7 @@ def scroll_system(scroll: MessageReader[MouseWheel]) -> None:
 
 ## Gamepad Input
 
-Gamepads are entity-based — each connected gamepad is an entity with a `Gamepad` component:
+Gamepads are entity-based - each connected gamepad is an entity with a `Gamepad` component:
 
 ```python
 from pybevy.input import Gamepad, GamepadButton, GamepadAxis

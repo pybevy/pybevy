@@ -1,4 +1,4 @@
-# Game Logic Recipe — Grid Movement + Simple AI
+# Game Logic Recipe - Grid Movement + Simple AI
 
 Grid-based movement with smooth interpolation, BFS pathfinding, and flee/chase AI. Good for maze games, puzzle games, tactics, or any tile-based scene.
 
@@ -139,7 +139,7 @@ def bfs_next_step(fx: int, fz: int, tx: int, tz: int) -> tuple:
 
 A chaser needs to read prey positions, but both share `GridMover`. You **cannot** mix `Mut[GridMover]` and `GridMover` in one system without `Without` filters.
 
-**Simple case (2 entity types):** Add `Without` filters to prove disjointness — keeps everything in one system:
+**Simple case (2 entity types):** Add `Without` filters to prove disjointness - keeps everything in one system:
 
 ```python
 # ✅ Without filters → zero-cost, no extra systems
@@ -161,13 +161,13 @@ class GameState(Resource):
     # Chaser position (written by sync, read by prey AI)
     chaser_gx: int = 1
     chaser_gz: int = 1
-    # Prey positions — flat fields (convenient for small fixed counts)
+    # Prey positions - flat fields (convenient for small fixed counts)
     p0x: int = 0
     p0z: int = 0
     p1x: int = 0
     p1z: int = 0
 
-# System 1: Sync all positions into resource (two IMMUTABLE queries — OK)
+# System 1: Sync all positions into resource (two IMMUTABLE queries - OK)
 def sync_positions(
     chaser_q: Query[GridMover, With[Chaser]],
     prey_q: Query[GridMover, With[Prey]],
@@ -186,7 +186,7 @@ def sync_positions(
         state.p1x = positions[1][0]
         state.p1z = positions[1][1]
 
-# System 2: Chaser AI — BFS toward nearest prey
+# System 2: Chaser AI - BFS toward nearest prey
 def chaser_ai(
     query: Query[Mut[GridMover], With[Chaser]],
     state: Res[GameState],
@@ -211,7 +211,7 @@ def chaser_ai(
         mover.target_gz = next_gz
         mover.progress = 0.0
 
-# System 3: Prey AI — flee when close, wander otherwise
+# System 3: Prey AI - flee when close, wander otherwise
 def prey_ai(
     query: Query[Mut[GridMover], With[Prey]],
     state: Res[GameState],
@@ -283,10 +283,10 @@ def check_catch(
 
 | Chaser speed | Prey speed | Feel |
 |--------------|------------|------|
-| 2.5 | 2.5 | Fair — chaser wins via BFS but prey can escape |
+| 2.5 | 2.5 | Fair - chaser wins via BFS but prey can escape |
 | 3.0 | 2.2 | Chaser has clear advantage, catches frequently |
 | 3.5 | 2.0 | Quick catches, more arcade feel |
-| 2.2 | 2.5 | Prey faster — chaser must corner them |
+| 2.2 | 2.5 | Prey faster - chaser must corner them |
 
 **Tip:** BFS gives the chaser a huge advantage even at equal speeds since it always takes the optimal path. Make the prey slightly faster or add flee distance to compensate.
 
@@ -294,5 +294,5 @@ def check_catch(
 
 - Always leave column 1 and column N-2 open as side corridors for circulation
 - Bottom and top rows (inside walls) open as cross-corridors
-- Avoid dead-end pockets longer than 2 cells — prey gets trapped easily
+- Avoid dead-end pockets longer than 2 cells - prey gets trapped easily
 - Verify connectivity: every open cell should be reachable from every other

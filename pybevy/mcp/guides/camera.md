@@ -9,7 +9,7 @@ Every scene needs at least one camera. `Camera3d` for 3D scenes, `Camera2d` for 
 ```python
 from pybevy.prelude import *
 
-# Simple 3D camera — look at Y=1 (not ZERO) to avoid ground-centered framing
+# Simple 3D camera - look at Y=1 (not ZERO) to avoid ground-centered framing
 commands.spawn(
     Camera3d(),
     Transform.from_xyz(8, 6, 8).looking_at(Vec3(0, 1, 0), Vec3.Y),
@@ -54,24 +54,24 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 ```
 
 **Bloom fields:**
-- `intensity` — Overall bloom strength (0.0–1.0, default ~0.15)
-- `low_frequency_boost` — Enhances large soft glow (0.0–1.0). `0.0–0.2` = sharp point-source glow (neon). `0.4–0.6` = soft atmospheric haze (fog, dreamy).
-- `prefilter` — `BloomPrefilter(threshold, threshold_softness)` — minimum brightness to bloom
+- `intensity` - Overall bloom strength (0.0–1.0, default ~0.15)
+- `low_frequency_boost` - Enhances large soft glow (0.0–1.0). `0.0–0.2` = sharp point-source glow (neon). `0.4–0.6` = soft atmospheric haze (fog, dreamy).
+- `prefilter` - `BloomPrefilter(threshold, threshold_softness)` - minimum brightness to bloom
 
 **Bloom presets by scene style:**
 
 | Style | Code | When to use |
 |-------|------|-------------|
 | Subtle | `Bloom(intensity=0.08, low_frequency_boost=0.2)` | Clean/architectural scenes |
-| Standard | `Bloom(intensity=0.12, low_frequency_boost=0.4)` | General purpose — good default |
+| Standard | `Bloom(intensity=0.12, low_frequency_boost=0.4)` | General purpose - good default |
 | Atmospheric | `Bloom(intensity=0.15, low_frequency_boost=0.5)` | Foggy, moody, dreamy scenes |
 | Neon/Sci-fi | `Bloom(intensity=0.20, low_frequency_boost=0.6)` | Cyberpunk, sci-fi, neon signs |
 
 **Presets:**
-- `Bloom.NATURAL` — Subtle, physically-based glow
-- `Bloom.ANAMORPHIC` — Wide horizontal streaks (cinematic lens flare look)
-- `Bloom.OLD_SCHOOL` — Hard threshold glow (retro/arcade look)
-- `Bloom.SCREEN_BLUR` — Blurs the whole screen (dream/flashback effect)
+- `Bloom.NATURAL` - Subtle, physically-based glow
+- `Bloom.ANAMORPHIC` - Wide horizontal streaks (cinematic lens flare look)
+- `Bloom.OLD_SCHOOL` - Hard threshold glow (retro/arcade look)
+- `Bloom.SCREEN_BLUR` - Blurs the whole screen (dream/flashback effect)
 
 **Anamorphic bloom (manual):** Use `scale=Vec2(0.2, 1.0)` to stretch bloom horizontally:
 
@@ -79,7 +79,7 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 Bloom(intensity=0.3, scale=Vec2(0.2, 1.0))  # Wide horizontal streaks
 ```
 
-**Bloom threshold** — only bloom bright pixels:
+**Bloom threshold** - only bloom bright pixels:
 
 ```python
 Bloom(intensity=0.3, prefilter=BloomPrefilter(threshold=1.5, threshold_softness=0.3))
@@ -90,7 +90,7 @@ Bloom(intensity=0.3, prefilter=BloomPrefilter(threshold=1.5, threshold_softness=
 See `guide://lighting` for full details:
 - `DistanceFog(color=..., falloff=FogFalloff.Exponential(0.002))`: camera component, distance-based fog
 - `Atmosphere.earth(medium_handle)`: physically-based sky. Spawn on its own entity (it is the planet); the camera opts in with `AtmosphereSettings()`, without which the sky silently does not render
-- `Atmosphere.mars(medium_handle)` — Mars variant (use with `ScatteringMedium.mars(...)` for dusty red sky)
+- `Atmosphere.mars(medium_handle)` - Mars variant (use with `ScatteringMedium.mars(...)` for dusty red sky)
 
 ### Tonemapping
 
@@ -119,7 +119,7 @@ commands.spawn(Camera3d(), Exposure.INDOOR)  # SUNLIGHT, INDOOR, OVERCAST, BLEND
 
 ### Screen-Space Effects
 
-**SSAO** darkens crevices between nearby geometry. **Requires `Msaa.Off`** on the camera — without it, SSAO silently doesn't activate.
+**SSAO** darkens crevices between nearby geometry. **Requires `Msaa.Off`** on the camera - without it, SSAO silently doesn't activate.
 
 ```python
 from pybevy.pbr import ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel, ScreenSpaceReflections
@@ -166,28 +166,28 @@ commands.spawn(
 )
 ```
 
-Or with atmosphere (no texture needed): use `AtmosphereEnvironmentMapLight` — see `guide://lighting` (Environment Lighting section).
+Or with atmosphere (no texture needed): use `AtmosphereEnvironmentMapLight` - see `guide://lighting` (Environment Lighting section).
 
 ### Anti-Aliasing (MSAA)
 
-MSAA is a **per-camera component** — add it directly to the camera entity:
+MSAA is a **per-camera component** - add it directly to the camera entity:
 
 ```python
-commands.spawn(Camera3d(), Msaa.Sample4)  # Default — good balance
+commands.spawn(Camera3d(), Msaa.Sample4)  # Default - good balance
 ```
 
 | Option | When to use |
 |--------|------------|
 | `Msaa.Off` | Required for SSAO, SSR, deferred rendering |
 | `Msaa.Sample2` | Light AA, better performance |
-| `Msaa.Sample4` | Default — smooth edges |
+| `Msaa.Sample4` | Default - smooth edges |
 | `Msaa.Sample8` | Maximum quality, higher GPU cost |
 
 **Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`. If using those effects, rely on TAA or FXAA instead.
 
 ### RenderLayers
 
-Selective rendering — assign cameras and objects to layers so only matching layers are visible:
+Selective rendering - assign cameras and objects to layers so only matching layers are visible:
 
 ```python
 from pybevy.camera import RenderLayers
@@ -240,7 +240,7 @@ commands.spawn(
 
 ### VisibilityRange (Distance LOD)
 
-Hide or fade objects based on camera distance — simple level-of-detail:
+Hide or fade objects based on camera distance - simple level-of-detail:
 
 ```python
 from pybevy.camera import VisibilityRange
@@ -323,12 +323,12 @@ def cinematic_camera(query: Query[Mut[Transform], With[OrbitCamera]], time: Res[
     for i, shot in enumerate(SHOTS):
         hold, trans = shot[6], shot[7]
         if elapsed < acc + hold:
-            # In hold phase — static position
+            # In hold phase - static position
             pos = Vec3(float(shot[0]), float(shot[1]), float(shot[2]))
             look = Vec3(float(shot[3]), float(shot[4]), float(shot[5]))
             break
         elif elapsed < acc + hold + trans:
-            # In transition — lerp to next shot
+            # In transition - lerp to next shot
             t = _smoothstep((elapsed - acc - hold) / trans)
             nxt = SHOTS[(i + 1) % len(SHOTS)]
             pos = Vec3(float(shot[0]), float(shot[1]), float(shot[2])).lerp(
@@ -357,7 +357,7 @@ def camera_follow_path(
     t = time.elapsed_secs()
     speed = 8.0
 
-    # Procedural path — camera position
+    # Procedural path - camera position
     z = -speed * t
     x = math.sin(z * 0.1 + t * 0.5) * 3.0
     y = math.cos(z * 0.08 + t * 0.3) * 2.0 + 5.0
@@ -426,7 +426,7 @@ def orbit(
 
 When using `capture_screenshot` or `capture_turnaround` with `position`/`look_at` overrides, the debug camera renders geometry from the specified viewpoint. However, **shader view uniforms** (`view.world_position` from `mesh_view_bindings`) may still reflect the scene camera's position due to render pipeline timing.
 
-This means **view-dependent shader effects** — Fresnel, specular highlights, parallax, atmosphere rims — will appear incorrect in debug captures. All turnaround angles may show the same Fresnel/specular distribution.
+This means **view-dependent shader effects** - Fresnel, specular highlights, parallax, atmosphere rims - will appear incorrect in debug captures. All turnaround angles may show the same Fresnel/specular distribution.
 
 - Use debug cameras for **geometry and layout verification**
 - Use the **scene camera** (no position override) for **shader visual validation**

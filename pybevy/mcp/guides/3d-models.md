@@ -23,7 +23,7 @@ def main(app):
 
     @app.main_system
     def setup(commands: Commands, asset_server: Res[AssetServer]):
-        # Load model — note the #Scene0 suffix
+        # Load model - note the #Scene0 suffix
         model_handle = asset_server.load("models/rabbit.glb#Scene0", WorldAsset)
         commands.spawn(
             WorldAssetRoot(model_handle),
@@ -42,7 +42,7 @@ After spawning, a WorldAssetRoot entity becomes a **parent** with auto-generated
   └─ "geometry_1.PBRMaterial" (Mesh3d, Aabb, GlobalTransform)  ← auto-generated
 ```
 
-**Key insight:** The parent entity has `Name` but **no `Aabb`**. The children have `Aabb` but generic names. Spatial tools (`get_bounding_box`, `check_overlaps`, `query_spatial`) automatically resolve through the hierarchy — querying the parent will merge child AABBs.
+**Key insight:** The parent entity has `Name` but **no `Aabb`**. The children have `Aabb` but generic names. Spatial tools (`get_bounding_box`, `check_overlaps`, `query_spatial`) automatically resolve through the hierarchy - querying the parent will merge child AABBs.
 
 ## Origin-at-Center Gotcha
 
@@ -86,15 +86,15 @@ GLB models can contain skeletal animations. See `guide://animation` for the full
 ## Verification Workflow
 
 1. Spawn model at origin, reload
-2. `get_bounding_box(name="rabbit")` — check `world.min_y`
+2. `get_bounding_box(name="rabbit")` - check `world.min_y`
 3. If `world.min_y < 0`: model is sunk, apply y_offset
-4. `check_overlaps(ground_y=0.0)` — verify no sunken entities
+4. `check_overlaps(ground_y=0.0)` - verify no sunken entities
 
 **Note:** Sunken detection uses a minimum penetration threshold of 0.001 units. Very small negative `min_y` values below this threshold won't be flagged.
 
 ## Known Limitations
 
-- `check_overlaps` without `ground_y` does **not** detect ground penetration — it only detects entity-vs-entity AABB overlaps and floating entities
+- `check_overlaps` without `ground_y` does **not** detect ground penetration - it only detects entity-vs-entity AABB overlaps and floating entities
 - Use `ground_y` parameter to explicitly check for models sunk below a ground plane
 - Generic child names (e.g., `geometry_0.PBRMaterial`) are annotated with `[parent: ...]` in spatial tool output for easier identification
 - `get_bounding_box` requires child mesh entities to have rendered at least one frame (Aabb is computed by the render pipeline). If it returns 404 immediately after spawn, increase `delay_frames` or wait for a reload cycle.
@@ -123,9 +123,9 @@ AI-generated models (Ludo, Meshy, Tripo) commonly face +Z.
 
 ## Troubleshooting: Model Not Visible After Spawn
 
-1. `capture_depth` at expected position — check if entity name appears in samples
-2. `query_entities` with `["WorldAssetRoot"]` — confirm entity exists
-3. `get_component(name="...", component="Transform")` — verify position/scale
+1. `capture_depth` at expected position - check if entity name appears in samples
+2. `query_entities` with `["WorldAssetRoot"]` - confirm entity exists
+3. `get_component(name="...", component="Transform")` - verify position/scale
 4. Check mesh children: `query_entities` with `["Mesh3d", "Aabb"]`
 5. If model is dark: temporarily increase `GlobalAmbientLight(brightness=1000.0)`
 6. Use `check_overlaps(ground_y=0.0)` to verify model isn't buried

@@ -1,6 +1,6 @@
 # Contrib Plugins
 
-Ready-made camera controllers and utilities in `pybevy.contrib`. Import and add to your app — no custom systems needed.
+Ready-made camera controllers and utilities in `pybevy.contrib`. Import and add to your app - no custom systems needed.
 
 ## OrbitCameraPlugin
 
@@ -144,5 +144,5 @@ This gives you finer control over which systems are registered and allows mixing
 
 ## See Also
 
-- `guide://camera` — Camera positioning, post-processing, and manual camera movement patterns
-- `guide://hot-reload` — How plugin build() works with hot reload
+- `guide://camera` - Camera positioning, post-processing, and manual camera movement patterns
+- `guide://hot-reload` - How plugin build() works with hot reload

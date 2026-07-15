@@ -26,7 +26,7 @@ def setup(
         Name("camera"),
     )
 
-    # Very dim ambient — torches provide most light
+    # Very dim ambient - torches provide most light
     commands.insert_resource(GlobalAmbientLight(brightness=30.0))
 
     # Floor
@@ -90,6 +90,6 @@ if __name__ == "__main__":
 ## Key points
 
 - **Low ambient** (20–50) keeps areas outside light range dark
-- **PointLight range** controls falloff distance — 8–12 for torches
+- **PointLight range** controls falloff distance - 8–12 for torches
 - **Emissive + unlit** spheres make visible light sources that glow with bloom
-- **Shadows** are critical indoors — enable on at least one light
+- **Shadows** are critical indoors - enable on at least one light
