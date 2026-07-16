@@ -199,15 +199,18 @@ impl PySystemBuilder {
 /// Python source for the native plugin hot reload loader.
 ///
 /// Self-contained — no dependency on the pybevy Python package so that
-/// `cargo test` works without a matching install. Uses the same
-/// `runpy.run_path` technique as the CLI hot reload (no .pyc issues).
+/// `cargo test` works without a matching install. Loads the scene module
+/// via `importlib.util.spec_from_file_location` so that the module is
+/// registered in `sys.modules` (unlike `runpy.run_path`, which only
+/// returns a globals dict). This makes `import <stem>` work, keeps
+/// pickle round-trips functional, and preserves reload identity.
 ///
 /// Protocol (matches `perform_reload` in hot_reload.rs):
 ///   1. `loader()` → re-imports module from source, returns `configurator`
 ///   2. `configurator(app)` → calls `app.add_systems(stage, (func,))` for each system
 const NATIVE_LOADER_PY: &str = r#"
 def _make_native_loader(module_name, systems):
-    import importlib, importlib.util, os, runpy, sys, sysconfig
+    import importlib, importlib.util, os, sys, sysconfig
 
     def _flush_user_modules(project_dir):
         """Remove all user project modules from sys.modules."""
@@ -241,7 +244,36 @@ def _make_native_loader(module_name, systems):
         project_dir = os.path.dirname(os.path.realpath(spec.origin))
         _flush_user_modules(project_dir)
 
-        mod_globals = runpy.run_path(spec.origin, run_name=module_name)
+        # Re-resolve the spec after flushing so importlib re-reads the source
+        # file from disk rather than reusing a cached spec.
+        fresh_spec = importlib.util.spec_from_file_location(module_name, spec.origin)
+        if fresh_spec is None or fresh_spec.loader is None:
+            raise ImportError(
+                f"Cannot build spec for module '{module_name}' at {spec.origin}"
+            )
+
+        module = importlib.util.module_from_spec(fresh_spec)
+        # Register in sys.modules BEFORE exec_module so that the module can
+        # reference itself during execution (e.g. dataclasses, pickle, and
+        # circular intra-module imports all rely on this).
+        sys.modules[module_name] = module
+        try:
+            # Compile the current source directly instead of delegating to
+            # exec_module(), which may reuse timestamp-based bytecode for a
+            # same-second, same-size hot-reload edit.
+            source = fresh_spec.loader.get_source(module_name)
+            if source is None:
+                raise ImportError(
+                    f"Cannot read source for module '{module_name}' at {spec.origin}"
+                )
+            code = compile(source, fresh_spec.origin, "exec")
+            exec(code, module.__dict__)
+        except BaseException:
+            # If execution fails, leave no half-initialised module behind.
+            sys.modules.pop(module_name, None)
+            raise
+
+        mod_globals = module.__dict__
 
         def configurator(app):
             for func_name, stage in systems:
@@ -601,7 +633,8 @@ impl PyBevyPlugin {
         app.insert_resource(HotReloadGeneration::new(generation_counter));
 
         // Create and register the Python loader function.
-        // Uses the same runpy.run_path approach as the CLI hot reload.
+        // Loads the scene module via importlib.util so it ends up in
+        // sys.modules (see NATIVE_LOADER_PY for details).
         let module_name = self.module_name.clone();
         Python::attach(|py| {
             // Define _make_native_loader in a temporary namespace
