@@ -24,3 +24,4 @@ pybevy_math = { workspace = true }
 wgpu-types = "29"
 wgpu = { version = "29", default-features = false }
 tracing = "0.1"
+crossbeam-channel = "0.5"
