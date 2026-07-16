@@ -486,6 +486,8 @@ struct ScreenshotBody {
     look_at: Option<[f32; 3]>,
     #[serde(default)]
     hide_ui: bool,
+    #[serde(default)]
+    gizmos: bool,
 }
 
 fn default_delay_frames() -> u32 {
@@ -499,18 +501,20 @@ async fn capture_screenshot(
     if !state.config.screenshot_enabled {
         return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
     }
-    match send_operation(
-        &state.sender,
-        ControlOperation::CaptureScreenshot(CaptureScreenshotParams {
-            delay_frames: body.delay_frames,
-            max_width: body.max_width,
-            position: body.position,
-            look_at: body.look_at,
-            hide_ui: body.hide_ui,
-        }),
-    )
-    .await
-    {
+    let params = CaptureScreenshotParams {
+        delay_frames: body.delay_frames,
+        max_width: body.max_width,
+        position: body.position,
+        look_at: body.look_at,
+        hide_ui: body.hide_ui,
+        gizmos: body.gizmos,
+    };
+    let op = if body.gizmos {
+        ControlOperation::CaptureWithGizmos(params)
+    } else {
+        ControlOperation::CaptureScreenshot(params)
+    };
+    match send_operation(&state.sender, op).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -531,6 +535,7 @@ async fn capture_with_gizmos(
             position: body.position,
             look_at: body.look_at,
             hide_ui: body.hide_ui,
+            gizmos: true,
         }),
     )
     .await
@@ -1098,6 +1103,8 @@ async fn get_config(State(state): State<AppState>, Path(key): Path<String>) -> i
 #[derive(Deserialize)]
 struct SearchQuery {
     q: String,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 async fn stubs_index(State(state): State<AppState>) -> impl IntoResponse {
@@ -1123,10 +1130,15 @@ async fn stubs_search(
             Json(serde_json::json!({ "error": "API discovery disabled" })),
         );
     }
-    let results = state.api_index.search(&params.q);
+    let (results, total) = state.api_index.search(&params.q, params.limit);
+    let truncated = results.len() < total;
     (
         StatusCode::OK,
-        Json(serde_json::to_value(&results).unwrap_or_default()),
+        Json(serde_json::json!({
+            "results": results,
+            "total": total,
+            "truncated": truncated,
+        })),
     )
 }
 
@@ -1544,6 +1556,15 @@ mod tests {
         let json = r#"{"q": "Transform"}"#;
         let q: SearchQuery = serde_json::from_str(json).unwrap();
         assert_eq!(q.q, "Transform");
+        assert_eq!(q.limit, None);
+    }
+
+    #[test]
+    fn search_query_deserialize_with_limit() {
+        let json = r#"{"q": "Transform", "limit": 25}"#;
+        let q: SearchQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.q, "Transform");
+        assert_eq!(q.limit, Some(25));
     }
 
     fn test_state_enabled() -> (AppState, ControlReceiver) {

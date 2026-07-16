@@ -8,10 +8,12 @@ use pyo3::{
     types::{PyDict, PyList, PyModule, PyType},
 };
 
-use super::scene::resolve_entity;
 use crate::{
     bridge::{ControlError, EntityRef},
-    handlers::reflect_mutate::{self, ReflectError},
+    handlers::{
+        entity::resolve_entity,
+        reflect_mutate::{self, ReflectError},
+    },
 };
 
 /// Find a component bridge by name.

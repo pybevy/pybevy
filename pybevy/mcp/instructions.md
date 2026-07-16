@@ -12,7 +12,7 @@
 8. **Scene style defaults (3D)** - new 3D scenes MUST include: Bloom on the camera, DistanceFog for atmospheric depth, a warm key directional light (shadows) + cool fill directional light (no shadows, ~40% intensity), ClearColor matching fog color, and lighting above the minimum floors (see Scene Generation below). For 2D scenes, see `guide://2d`. Start bright, dim later.
 9. **Interior camera placement** - for enclosed scenes, use `get_bounding_box` on walls/objects to calculate safe debug camera positions instead of guessing coordinates.
 10. **Use `guide://scene-quality` as a reference** - consult its lighting floors and color palette rules when refining visuals, not necessarily before writing the first line of code.
-11. **After first load with GLB models** - run `check_overlaps(ground_y=0)` to detect sunken models in one pass, before any visual iteration.
+11. **After first load with GLB models** - run `check_all_overlaps(ground_y=0)` to detect sunken models scene-wide in one pass, before any visual iteration.
 
 ## API Lookup Guide
 
@@ -36,8 +36,10 @@
 
 ## Spatial Intelligence Tools
 
-- `query_spatial` - Pairwise: distance/direction/overlap between two entities. Neighborhood: find entities within radius.
-- `check_overlaps` - Single entity or scene-wide AABB overlap detection + floating entity detection. Use `ground_y` parameter to detect models sunk below a ground plane (AABB overlap alone won't catch this).
+- `query_spatial` - Pairwise distance/direction/overlap between two entities (`entity_a`, `entity_b`).
+- `query_spatial_neighborhood` - Find all entities within `radius` of a center `entity`.
+- `check_overlaps` - AABB overlap + floating/sunken detection for one `entity` against all others. Use `ground_y` to flag models sunk below a ground plane.
+- `check_all_overlaps` - Scene-wide AABB overlap + floating/sunken detection across every entity. Use `ground_y` for first-load GLB sweeps.
 - `reload_and_capture` - One round-trip: reload → error check → screenshot. Replaces 3 separate calls.
 - `capture_turnaround` - Multi-viewpoint orbit capture composited into one contact sheet. Auto-fits to scene bounds.
 - `capture_depth` - RGB screenshot + ray-AABB depth samples. Returns **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
@@ -46,9 +48,9 @@
 
 When geometry looks wrong (wrong size, shape, missing, or occluded), follow this diagnostic protocol in order. Do NOT skip to screenshots - spatial tools give definitive answers faster.
 
-1. **`check_overlaps(ground_y=0)`** - run scene-wide first. Catches: interpenetrating entities, models sunken below ground, floating objects. If this returns problems, fix them before anything else. This is the single highest-value diagnostic call.
+1. **`check_all_overlaps(ground_y=0)`** - run scene-wide first. Catches: interpenetrating entities, models sunken below ground, floating objects. If this returns problems, fix them before anything else. This is the single highest-value diagnostic call. For follow-up on one entity, use `check_overlaps(entity=...)`.
 2. **`get_bounding_box`** on suspect entities - compare actual dimensions vs intended. A "table" with height 0.01 is a plane, not a table. A "wall" with equal X/Y/Z is a cube, not a wall. Mismatched dimensions are the #1 cause of "it doesn't look right."
-3. **`query_spatial`** between entity pairs - check distance and direction. "The chair should face the desk" becomes: is the direction vector from chair to desk aligned with the chair's forward? Answers relative positioning questions without visual ambiguity.
+3. **`query_spatial`** between entity pairs - check distance and direction. "The chair should face the desk" becomes: is the direction vector from chair to desk aligned with the chair's forward? Answers relative positioning questions without visual ambiguity. Use `query_spatial_neighborhood(entity=..., radius=...)` when you need every nearby entity.
 4. **`capture_depth`** - when you suspect occlusion or visibility issues. Returns entity names at screen-space sample points. If you expect to see `lamp_1` at screen center but depth reports `wall_east`, the lamp is occluded. Diagnoses "wrong entity showing" without guessing from pixels.
 5. **`capture_screenshot`** - last, for visual polish only. Colors, lighting, bloom, material appearance. By this point, structural issues should already be resolved.
 

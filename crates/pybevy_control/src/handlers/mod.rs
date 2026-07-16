@@ -1,5 +1,6 @@
 pub mod depth;
 pub mod diagnostics;
+pub mod entity;
 pub mod entity_count;
 pub mod pyo3;
 pub mod reflect_mutate;
@@ -197,6 +198,7 @@ mod tests {
                 position: None,
                 look_at: None,
                 hide_ui: false,
+                gizmos: false,
             }),
             &mut runtime(),
         );
