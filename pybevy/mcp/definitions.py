@@ -50,13 +50,21 @@ def bridge_local_tools() -> list[JsonDict]:
             "description": (
                 "Search across .pyi stub files for type/function names. Returns matching lines (not structured). "
                 "Use for discovery when you don't know the class name. "
-                "If you already know the type name, use get_type_definition instead."
+                "If you already know the type name, use get_type_definition instead. "
+                "When more matches exist than `limit`, the response notes how many were omitted."
             ),
             "feature_gate": "api_discovery",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Case-insensitive substring match"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of matches to return (default 50, max 200).",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 200,
+                    },
                 },
                 "required": ["query"],
             },

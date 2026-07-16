@@ -941,9 +941,40 @@ class McpBridge:
         if not self._api_index:
             return self._error(req_id, -32603, "ApiIndex not available")
 
-        results = self._api_index.search(query)
-        text = results
-        if results and results.strip() not in ("[]", ""):
+        # Default 50, hard ceiling 200. Reject obviously bad values rather than
+        # silently coercing — the caller likely wants to know.
+        default_limit = 50
+        max_limit = 200
+        raw_limit = arguments.get("limit", default_limit)
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return self._error(req_id, -32602, "'limit' must be an integer")
+        if limit < 1:
+            return self._error(req_id, -32602, "'limit' must be >= 1")
+        if limit > max_limit:
+            limit = max_limit
+
+        raw = self._api_index.search(query, limit)
+        try:
+            payload = json.loads(raw)
+            results_json = json.dumps(payload.get("results", []), indent=2)
+            total = int(payload.get("total", 0))
+            truncated = bool(payload.get("truncated", False))
+        except (ValueError, TypeError, AttributeError):
+            # Defensive fallback: treat the raw string as the displayed results.
+            results_json = raw
+            total = 0
+            truncated = False
+
+        text = results_json
+        if truncated:
+            omitted = total - limit
+            text += (
+                f"\n\n... {omitted} more result(s) omitted (total {total}; "
+                f"refine query or pass limit up to {max_limit})."
+            )
+        if results_json and results_json.strip() not in ("[]", ""):
             text += "\n\nTip: Check guide://index for curated topic guides (faster than API search). Most types available via `from pybevy.prelude import *`. Use get_type_definition('ClassName') for full definitions."
         return self._success(req_id, {"content": [{"type": "text", "text": text}]})
 

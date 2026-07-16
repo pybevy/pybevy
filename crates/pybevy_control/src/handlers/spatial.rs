@@ -4,7 +4,7 @@ use bevy::{
     prelude::*,
 };
 
-use super::pyo3::scene::resolve_entity;
+use super::entity::resolve_entity;
 use crate::bridge::{
     CheckAllOverlapsParams, CheckOverlapsParams, ControlError, QuerySpatialNeighborhoodParams,
     QuerySpatialParams,

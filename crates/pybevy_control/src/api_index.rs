@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -158,8 +158,12 @@ impl ApiIndex {
         self.instructions.as_deref()
     }
 
-    /// Search for a pattern across all .pyi files
-    pub fn search(&self, query: &str) -> Vec<SearchResult> {
+    /// Search for a pattern across all .pyi files.
+    ///
+    /// Returns the (possibly truncated) result list along with the total
+    /// number of matches before truncation. When `limit` is `None` the full
+    /// result set is returned.
+    pub fn search(&self, query: &str, limit: Option<usize>) -> (Vec<SearchResult>, usize) {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
 
@@ -175,8 +179,11 @@ impl ApiIndex {
             }
         }
 
-        results.truncate(100); // Limit results
-        results
+        let total = results.len();
+        if let Some(cap) = limit {
+            results.truncate(cap);
+        }
+        (results, total)
     }
 
     /// Get a single type definition from stubs
@@ -223,24 +230,37 @@ pub struct SearchResult {
     pub text: String,
 }
 
-/// Parse a .pyi file to extract class and function names
+/// Parse a .pyi file to extract class and function names.
+///
+/// Only collects top-level (unindented) definitions and deduplicates names so
+/// `@overload` stubs and other repeated declarations appear once. Indented
+/// `class Foo:` text inside docstrings or method bodies is ignored.
 fn parse_stub_definitions(content: &str) -> (Vec<String>, Vec<String>) {
     let mut classes = Vec::new();
     let mut functions = Vec::new();
+    let mut seen_classes: HashSet<String> = HashSet::new();
+    let mut seen_functions: HashSet<String> = HashSet::new();
 
     for line in content.lines() {
-        let trimmed = line.trim();
+        // Only consider top-level definitions; skip indented lines so
+        // class-shaped text inside docstrings or method bodies doesn't leak in.
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("class ") {
             if let Some(name) = rest.split(['(', ':']).next() {
-                classes.push(name.trim().to_string());
+                let name = name.trim().to_string();
+                if !name.is_empty() && seen_classes.insert(name.clone()) {
+                    classes.push(name);
+                }
             }
-        } else if let Some(rest) = trimmed.strip_prefix("def ") {
-            // Only top-level functions (no indentation)
-            if !line.starts_with(' ')
-                && !line.starts_with('\t')
-                && let Some(name) = rest.split('(').next()
-            {
-                functions.push(name.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("def ")
+            && let Some(name) = rest.split('(').next()
+        {
+            let name = name.trim().to_string();
+            if !name.is_empty() && seen_functions.insert(name.clone()) {
+                functions.push(name);
             }
         }
     }
@@ -589,10 +609,19 @@ impl PyApiIndex {
         PyApiIndex { inner: index }
     }
 
-    /// Search .pyi stub files for a pattern. Returns JSON string of results.
-    fn search(&self, query: &str) -> String {
-        let results = self.inner.search(query);
-        serde_json::to_string_pretty(&results).unwrap_or_default()
+    /// Search .pyi stub files for a pattern. Returns JSON string with
+    /// `{ "results": [...], "total": N, "truncated": bool }`. When `limit`
+    /// is omitted the full result set is returned.
+    #[pyo3(signature = (query, limit = None))]
+    fn search(&self, query: &str, limit: Option<usize>) -> String {
+        let (results, total) = self.inner.search(query, limit);
+        let truncated = results.len() < total;
+        let payload = serde_json::json!({
+            "results": results,
+            "total": total,
+            "truncated": truncated,
+        });
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
     }
 
     /// Get the full class definition from stubs. Returns None if not found.
@@ -677,6 +706,54 @@ class Beta:
         let (classes, functions) = parse_stub_definitions(content);
         assert_eq!(classes, vec!["Alpha", "Beta"]);
         assert_eq!(functions, vec!["utility"]);
+    }
+
+    #[test]
+    fn parse_stub_definitions_skips_class_in_docstring() {
+        // class-shaped text inside a docstring (or any indented block) must not
+        // be treated as a real top-level class.
+        let content = "\
+class Real(Base):
+    \"\"\"Doc with a fake declaration:
+
+        class GameState(Resource):
+            pass
+    \"\"\"
+    pass
+";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["Real"]);
+        assert!(functions.is_empty());
+    }
+
+    #[test]
+    fn parse_stub_definitions_dedupes_overload_stubs() {
+        // @overload produces multiple top-level def stubs with the same name;
+        // they should collapse to a single entry.
+        let content = "\
+@overload
+def component(cls: type) -> type: ...
+@overload
+def component(*, name: str) -> Callable[[type], type]: ...
+@overload
+def component(cls: None = None, *, name: str | None = None) -> Callable[[type], type]: ...
+
+def resource(cls: type) -> type: ...
+";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert!(classes.is_empty());
+        assert_eq!(functions, vec!["component", "resource"]);
+    }
+
+    #[test]
+    fn parse_stub_definitions_dedupes_repeated_classes() {
+        let content = "\
+class GameState(Resource): ...
+class Velocity(Component): ...
+class GameState(Resource): ...
+";
+        let (classes, _functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["GameState", "Velocity"]);
     }
 
     #[test]
@@ -1053,9 +1130,10 @@ class Bloom(Component):
         .unwrap();
 
         let index = ApiIndex::build(&dir);
-        let results = index.search("transform");
+        let (results, total) = index.search("transform", Some(100));
         assert!(!results.is_empty());
         assert!(results[0].text.contains("Transform"));
+        assert_eq!(total, results.len());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1073,8 +1151,17 @@ class Bloom(Component):
         fs::write(dir.join("many.pyi"), content).unwrap();
 
         let index = ApiIndex::build(&dir);
-        let results = index.search("Item");
-        assert!(results.len() <= 100);
+
+        // Explicit limit caps the result list but `total` reports the true count.
+        let (results, total) = index.search("Item", Some(50));
+        assert_eq!(results.len(), 50);
+        assert_eq!(total, 200);
+        assert!(total > results.len(), "expected truncation");
+
+        // No limit returns the full set with matching `total`.
+        let (all, all_total) = index.search("Item", None);
+        assert_eq!(all.len(), 200);
+        assert_eq!(all_total, 200);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1173,11 +1260,12 @@ class Bloom(Component):
         );
 
         // Search should find contrib classes
-        let results = index.search("OrbitCamera");
+        let (results, total) = index.search("OrbitCamera", Some(100));
         assert!(
             !results.is_empty(),
             "search_api should find OrbitCamera from .py fallback"
         );
+        assert_eq!(total, results.len());
 
         // __init__.py should not be indexed
         assert!(!index.contents.contains_key("contrib.__init__"));

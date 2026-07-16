@@ -4,7 +4,6 @@ use bevy::{
     ecs::{
         component::ComponentId,
         entity::Entity,
-        hierarchy::ChildOf,
         name::Name,
         reflect::{AppTypeRegistry, ReflectComponent},
         schedule::Schedules,
@@ -22,7 +21,10 @@ use pyo3::{
     types::{PyDict, PyType},
 };
 
-use crate::bridge::{ControlError, EntityRef};
+use crate::{
+    bridge::{ControlError, EntityRef},
+    handlers::entity::resolve_entity,
+};
 
 /// Extract custom component names for an entity using the CustomComponentInfo registry.
 /// Returns a list of component names that are NOT covered by bridge components.
@@ -1432,39 +1434,6 @@ fn strip_numeric_suffix(name: &str) -> String {
         name.to_string()
     } else {
         trimmed.to_string()
-    }
-}
-
-pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entity, ControlError> {
-    match entity_ref {
-        EntityRef::Id(id) => {
-            // `try_from_bits` (not `from_bits`): a caller-supplied id whose low 32
-            // bits form an invalid EntityIndex (e.g. 0) makes `from_bits` panic,
-            // which would crash the app through the exclusive control-poll system.
-            let entity = Entity::try_from_bits(*id)
-                .ok_or_else(|| ControlError::not_found(format!("Entity {id} not found")))?;
-            world
-                .get_entity(entity)
-                .map(|_| entity)
-                .map_err(|_| ControlError::not_found(format!("Entity {id} not found")))
-        }
-        EntityRef::Name(name) => {
-            let mut query_state = world.query::<(Entity, &Name)>();
-            let mut first_child_match: Option<Entity> = None;
-            for (entity, entity_name) in query_state.iter(world) {
-                if entity_name.as_str() == name {
-                    if world.get::<ChildOf>(entity).is_none() {
-                        return Ok(entity); // Root entity — return immediately
-                    }
-                    if first_child_match.is_none() {
-                        first_child_match = Some(entity); // Remember first child as fallback
-                    }
-                }
-            }
-            first_child_match.ok_or_else(|| {
-                ControlError::not_found(format!("Entity with name '{name}' not found"))
-            })
-        }
     }
 }
 

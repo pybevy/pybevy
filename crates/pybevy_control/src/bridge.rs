@@ -132,6 +132,9 @@ pub struct CaptureScreenshotParams {
     /// Hide authored UI Node entities during capture (default true). Internal overlays (hot reload status) are always hidden regardless.
     #[serde(default = "default_true")]
     pub hide_ui: bool,
+    /// Overlay entity ID/Name gizmo labels on the captured image (default false). Useful for identifying entities visually.
+    #[serde(default)]
+    pub gizmos: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
