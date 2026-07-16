@@ -54,8 +54,8 @@ impl PyMut {
         self.value.bind(py).setattr(name, value)
     }
 
-    /// Get the underlying value
-    pub fn get(&self, py: Python) -> PyResult<Py<PyAny>> {
+    /// Return the underlying value without shadowing wrapped `get` methods.
+    pub fn unwrap(&self, py: Python) -> PyResult<Py<PyAny>> {
         Ok(self.value.clone_ref(py))
     }
 }

@@ -3,7 +3,7 @@ use pyo3::{
     PyTypeInfo,
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyTuple, PyType},
+    types::{PyList, PyTuple, PyType},
 };
 
 /// Descriptor returned by `Res[T]` or `ResMut[T]`.
@@ -96,6 +96,18 @@ impl PyRes {
             name
         )))
     }
+
+    /// Expose wrapped resource attrs to dir() so REPL/IDE introspection works.
+    pub fn __dir__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let inner = self.value.bind(py);
+        let mut names = py
+            .import("builtins")?
+            .getattr("dir")?
+            .call1((inner,))?
+            .extract::<Vec<String>>()?;
+        names.push("resource_type".into());
+        PyList::new(py, names)
+    }
 }
 
 /// Mutable access to a Bevy resource
@@ -148,5 +160,17 @@ impl PyResMut {
     /// Proxy attribute setting to the wrapped resource
     pub fn __setattr__(&mut self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
         self.value.bind(py).setattr(name, value)
+    }
+
+    /// Expose wrapped resource attrs to dir() so REPL/IDE introspection works.
+    pub fn __dir__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let inner = self.value.bind(py);
+        let mut names = py
+            .import("builtins")?
+            .getattr("dir")?
+            .call1((inner,))?
+            .extract::<Vec<String>>()?;
+        names.push("resource_type".into());
+        PyList::new(py, names)
     }
 }

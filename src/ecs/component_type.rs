@@ -115,9 +115,18 @@ impl PyComponentType {
     /// Returns Custom variant for decorated Python-defined components.
     pub fn try_from_py_type(ty: &Bound<'_, PyType>, py: Python<'_>) -> PyResult<Self> {
         if !ty.is_subclass_of::<PyComponent>()? {
+            let name = ty
+                .qualname()
+                .ok()
+                .and_then(|name| name.extract::<String>().ok())
+                .or_else(|| {
+                    ty.name()
+                        .ok()
+                        .and_then(|name| name.extract::<String>().ok())
+                })
+                .unwrap_or_else(|| "<unknown>".to_string());
             return Err(PyErr::new::<PyTypeError, _>(format!(
-                "Expected a subclass of Component, but got: {:?} which is not a subclass of Component",
-                ty
+                "expected a Component subclass, not {name}"
             )));
         }
 
