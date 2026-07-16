@@ -5,6 +5,7 @@ pub mod mip_bias;
 pub mod msaa;
 pub mod plugin;
 pub mod power_preference;
+pub mod readback;
 pub mod temporal_jitter;
 pub mod unit_markers;
 pub mod wgpu_error_handler;

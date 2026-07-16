@@ -4910,6 +4910,7 @@ name = "pybevy_render"
 version = "0.2.1"
 dependencies = [
  "bevy",
+ "crossbeam-channel",
  "pybevy_color",
  "pybevy_core",
  "pybevy_image",
