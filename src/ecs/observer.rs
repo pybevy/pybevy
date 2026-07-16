@@ -112,9 +112,11 @@ impl PyOn {
         if let Ok(tuple) = key.cast_exact::<pyo3::types::PyTuple>() {
             // On[E, B] - could be event type with bundle filter OR lifecycle event with component
             if tuple.len() != 2 {
-                return Err(PyTypeError::new_err(
-                    "On expects 1 or 2 type parameters: On[EventType] or On[EventType, BundleType] or On[LifecycleEvent, ComponentType]",
-                ));
+                return Err(PyTypeError::new_err(format!(
+                    "On[Event, A, B] (or more) is not a valid form; use \
+                     On[Event, tuple[A, B]] for multi-component filters. Got {} items.",
+                    tuple.len()
+                )));
             }
 
             let first_key = tuple.get_item(0)?;
