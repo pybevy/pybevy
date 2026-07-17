@@ -11,8 +11,10 @@ pub mod cubemap_layout;
 pub mod cubemap_visible_entities;
 pub mod exposure;
 pub mod frustum;
+pub mod image_render_target;
 pub mod inherited_visibility;
 pub mod main_pass_resolution_override;
+pub mod manual_texture_view_handle;
 pub mod msaa_writeback;
 pub mod normalized_render_target;
 pub mod physical_camera_parameters;
@@ -41,7 +43,9 @@ pub mod prelude {
         clear_color::PyClearColor,
         clear_color_config::PyClearColorConfig,
         exposure::PyExposure,
+        image_render_target::PyImageRenderTarget,
         inherited_visibility::PyInheritedVisibility,
+        manual_texture_view_handle::PyManualTextureViewHandle,
         msaa_writeback::PyMsaaWriteback,
         plugin::PyCameraPlugin,
         projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection},
@@ -79,12 +83,16 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<cubemap_visible_entities::PyCubemapVisibleEntities>()?;
     m.add_class::<frustum::PyFrustum>()?;
     m.add_class::<projection::PyProjection>()?;
+    projection::register_projection_variants(&m)?;
     m.add_class::<visibility::PyVisibility>()?;
     m.add_class::<visibility_batch::PyVisibilityBatch>()?;
     m.add_class::<visibility_class::PyVisibilityClass>()?;
     m.add_class::<visible_mesh_entities::PyVisibleMeshEntities>()?;
     m.add_class::<render_target::PyRenderTarget>()?;
+    render_target::register_render_target_variants(&m)?;
     m.add_class::<normalized_render_target::PyNormalizedRenderTarget>()?;
+    m.add_class::<image_render_target::PyImageRenderTarget>()?;
+    m.add_class::<manual_texture_view_handle::PyManualTextureViewHandle>()?;
     m.add_class::<physical_camera_parameters::PyPhysicalCameraParameters>()?;
     m.add_class::<sphere::PySphere>()?;
     m.add_class::<scaling_mode::PyScalingMode>()?;

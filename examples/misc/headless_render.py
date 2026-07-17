@@ -3,14 +3,14 @@
 Demonstrates:
 - Disabling WinitPlugin for environments without a display server
 - ScheduleRunnerPlugin as the event loop (replaces winit)
-- Camera rendering to an offscreen Image via RenderTarget.image()
+- Camera rendering to an offscreen image target
 - A rotating cube to verify the update loop works
 
 Usage with MCP: run_scene(path=..., headless=True) then capture_screenshot().
 """
 
 from pybevy.app import ScheduleRunnerPlugin
-from pybevy.camera import RenderTarget
+from pybevy.camera import ImageRenderTarget, RenderTarget
 from pybevy.prelude import *
 from pybevy.window import ExitCondition
 from pybevy.winit import WinitPlugin
@@ -44,7 +44,7 @@ def setup(
     commands.spawn(
         Camera3d(),
         Camera(),
-        RenderTarget.image(handle),
+        RenderTarget.Image(ImageRenderTarget(handle)),
         Transform.from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
 

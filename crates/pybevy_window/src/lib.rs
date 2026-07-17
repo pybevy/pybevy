@@ -27,6 +27,7 @@ pub mod window_level;
 pub mod window_mode;
 pub mod window_plugin;
 pub mod window_position;
+pub mod window_ref;
 pub mod window_resized;
 pub mod window_resolution;
 pub mod window_theme;
@@ -48,6 +49,7 @@ pub mod prelude {
         window::PyWindow,
         window_plugin::PyWindowPlugin,
         window_position::PyWindowPosition,
+        window_ref::{PyNormalizedWindowRef, PyWindowRef},
     };
 }
 
@@ -71,6 +73,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<window_position::PyWindowPosition>()?;
     m.add_class::<resize_constraints::PyWindowResizeConstraints>()?;
     m.add_class::<window_resolution::PyWindowResolution>()?;
+    m.add_class::<window_ref::PyWindowRef>()?;
+    m.add_class::<window_ref::PyNormalizedWindowRef>()?;
     m.add_class::<window_theme::PyWindowTheme>()?;
 
     m.add_class::<cursor_icon::PyCursorIcon>()?;

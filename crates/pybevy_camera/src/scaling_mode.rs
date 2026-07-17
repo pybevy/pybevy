@@ -1,90 +1,109 @@
 use bevy::camera::ScalingMode;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ScalingMode", from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyScalingMode {
-    pub(crate) inner: ScalingMode,
+#[pyenum(ScalingMode, manual)]
+#[pyclass(name = "ScalingMode", frozen, eq, from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PyScalingMode {
+    WindowSize(),
+    Fixed { width: f32, height: f32 },
+    AutoMin { min_width: f32, min_height: f32 },
+    AutoMax { max_width: f32, max_height: f32 },
+    FixedVertical { viewport_height: f32 },
+    FixedHorizontal { viewport_width: f32 },
 }
 
 impl From<ScalingMode> for PyScalingMode {
     fn from(mode: ScalingMode) -> Self {
-        Self { inner: mode }
+        match mode {
+            ScalingMode::WindowSize => Self::WindowSize(),
+            ScalingMode::Fixed { width, height } => Self::Fixed { width, height },
+            ScalingMode::AutoMin {
+                min_width,
+                min_height,
+            } => Self::AutoMin {
+                min_width,
+                min_height,
+            },
+            ScalingMode::AutoMax {
+                max_width,
+                max_height,
+            } => Self::AutoMax {
+                max_width,
+                max_height,
+            },
+            ScalingMode::FixedVertical { viewport_height } => {
+                Self::FixedVertical { viewport_height }
+            }
+            ScalingMode::FixedHorizontal { viewport_width } => {
+                Self::FixedHorizontal { viewport_width }
+            }
+        }
     }
 }
 
 impl From<PyScalingMode> for ScalingMode {
     fn from(mode: PyScalingMode) -> Self {
-        mode.inner
+        match mode {
+            PyScalingMode::WindowSize() => Self::WindowSize,
+            PyScalingMode::Fixed { width, height } => Self::Fixed { width, height },
+            PyScalingMode::AutoMin {
+                min_width,
+                min_height,
+            } => Self::AutoMin {
+                min_width,
+                min_height,
+            },
+            PyScalingMode::AutoMax {
+                max_width,
+                max_height,
+            } => Self::AutoMax {
+                max_width,
+                max_height,
+            },
+            PyScalingMode::FixedVertical { viewport_height } => {
+                Self::FixedVertical { viewport_height }
+            }
+            PyScalingMode::FixedHorizontal { viewport_width } => {
+                Self::FixedHorizontal { viewport_width }
+            }
+        }
     }
 }
 
 #[pymethods]
 impl PyScalingMode {
-    #[new]
-    pub fn new() -> Self {
-        Self {
-            inner: ScalingMode::WindowSize,
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "WindowSize")]
-    pub fn window_size() -> Self {
-        Self {
-            inner: ScalingMode::WindowSize,
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "Fixed")]
-    pub fn fixed(width: f32, height: f32) -> Self {
-        Self {
-            inner: ScalingMode::Fixed { width, height },
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "AutoMin")]
-    pub fn auto_min(min_width: f32, min_height: f32) -> Self {
-        Self {
-            inner: ScalingMode::AutoMin {
+    fn __repr__(&self) -> String {
+        match self {
+            Self::WindowSize() => "ScalingMode.WindowSize()".to_string(),
+            Self::Fixed { width, height } => {
+                format!("ScalingMode.Fixed(width={width}, height={height})")
+            }
+            Self::AutoMin {
                 min_width,
                 min_height,
-            },
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "AutoMax")]
-    pub fn auto_max(max_width: f32, max_height: f32) -> Self {
-        Self {
-            inner: ScalingMode::AutoMax {
+            } => {
+                format!("ScalingMode.AutoMin(min_width={min_width}, min_height={min_height})")
+            }
+            Self::AutoMax {
                 max_width,
                 max_height,
-            },
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "FixedVertical")]
-    pub fn fixed_vertical(viewport_height: f32) -> Self {
-        Self {
-            inner: ScalingMode::FixedVertical { viewport_height },
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "FixedHorizontal")]
-    pub fn fixed_horizontal(viewport_width: f32) -> Self {
-        Self {
-            inner: ScalingMode::FixedHorizontal { viewport_width },
+            } => {
+                format!("ScalingMode.AutoMax(max_width={max_width}, max_height={max_height})")
+            }
+            Self::FixedVertical { viewport_height } => {
+                format!("ScalingMode.FixedVertical(viewport_height={viewport_height})")
+            }
+            Self::FixedHorizontal { viewport_width } => {
+                format!("ScalingMode.FixedHorizontal(viewport_width={viewport_width})")
+            }
         }
     }
 }
 
 impl Default for PyScalingMode {
     fn default() -> Self {
-        Self::new()
+        Self::WindowSize()
     }
 }

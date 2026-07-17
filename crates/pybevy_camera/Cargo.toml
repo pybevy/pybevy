@@ -17,6 +17,7 @@ pybevy_math = { workspace = true }
 pybevy_render = { workspace = true }
 pybevy_sprite = { workspace = true }
 pybevy_transform = { workspace = true }
+pybevy_window = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
@@ -26,3 +27,4 @@ features = [
     "bevy_image",
     "bevy_camera",
 ]
+

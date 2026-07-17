@@ -4697,6 +4697,7 @@ dependencies = [
  "pybevy_render",
  "pybevy_sprite",
  "pybevy_transform",
+ "pybevy_window",
  "pyo3",
 ]
 
