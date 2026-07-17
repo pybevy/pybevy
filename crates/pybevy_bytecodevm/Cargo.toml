@@ -24,3 +24,12 @@ criterion = "0.5"
 [[bench]]
 name = "vm_pool"
 harness = false
+
+[[bench]]
+name = "tiled_vs_scalar"
+harness = false
+
+[[bench]]
+name = "view_assignment"
+harness = false
+

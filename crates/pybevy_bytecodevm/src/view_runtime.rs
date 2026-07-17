@@ -461,6 +461,7 @@ impl ViewRuntimeCore {
         validate_bytecode_spans(&bytecode, &spec.component_strides)?;
         validate_write_effects(&bytecode, intent, &spec.mutable_components)?;
         validate_stack_effects(&bytecode, intent)?;
+        validate_integer_arithmetic_types(&bytecode)?;
 
         Ok(ValidatedViewProgram {
             bytecode,
@@ -575,6 +576,7 @@ pub struct BatchColumn {
     ptr: *mut u8,
     len: usize,
     stride: usize,
+    element_extent: usize,
     writable: bool,
 }
 
@@ -1131,6 +1133,7 @@ impl BatchSlice {
             ptr,
             len: self.entity_count,
             stride,
+            element_extent: stride,
             writable: mutable,
         })
     }
@@ -1152,6 +1155,11 @@ impl BatchColumn {
         self.stride
     }
 
+    /// Number of bytes reachable from the column pointer within each element.
+    pub fn element_extent(&self) -> usize {
+        self.element_extent
+    }
+
     /// Whether this capability came from declared mutable View access.
     pub fn is_writable(&self) -> bool {
         self.writable
@@ -1170,6 +1178,43 @@ impl BatchColumn {
     /// Check run lifetime and thread affinity without touching storage.
     pub fn check_valid(&self) -> Result<(), ViewRuntimeError> {
         self.lease.runtime.check_valid()
+    }
+
+    /// Derive a bounded field or nested-struct column at `offset` bytes.
+    ///
+    /// Typed children are restricted to the requested field size. An untyped
+    /// child inherits only the bytes remaining after `offset`, so repeated
+    /// subcolumn creation can never recover its root component's full stride.
+    pub fn subcolumn(
+        &self,
+        offset: usize,
+        field_type: Option<FieldType>,
+    ) -> Result<Self, ViewRuntimeError> {
+        self.check_valid()?;
+        let requested_size = field_type
+            .map(|field_type| field_type.size_bytes())
+            .unwrap_or_else(|| self.element_extent.saturating_sub(offset));
+        let end = offset.checked_add(requested_size);
+        if offset >= self.element_extent || end.is_none_or(|end| end > self.element_extent) {
+            return Err(ViewRuntimeError::SubcolumnOutOfBounds {
+                offset,
+                type_size: requested_size,
+                element_extent: self.element_extent,
+            });
+        }
+
+        // SAFETY: the checked span is wholly inside the current element
+        // capability. The child retains the same lease, scheduler access,
+        // validity fence, row range, and lifetime endpoint as its parent.
+        let ptr = unsafe { self.ptr.add(offset) };
+        Ok(Self {
+            lease: Arc::clone(&self.lease),
+            ptr,
+            len: self.len,
+            stride: self.stride,
+            element_extent: requested_size,
+            writable: self.writable,
+        })
     }
 
     /// Return the first element pointer for an interpreter backend.
@@ -1327,6 +1372,13 @@ pub enum ViewRuntimeError {
         /// Stack type actually present.
         actual: &'static str,
     },
+    /// An exact integer-preserving operation combined different integer lane
+    /// widths, which the VM would otherwise coerce through f64.
+    MixedIntegerArithmetic {
+        instruction_index: usize,
+        instruction: &'static str,
+        field_types: Vec<FieldType>,
+    },
     /// A program leaves the wrong number of values after execution.
     InvalidFinalStackDepth {
         /// Program intent whose result shape was checked.
@@ -1373,6 +1425,15 @@ pub enum ViewRuntimeError {
         table_id: TableId,
         /// Declared component requested by the adapter.
         component_id: ComponentId,
+    },
+    /// A requested field span escapes its current per-element capability.
+    SubcolumnOutOfBounds {
+        /// Byte offset relative to the current column pointer.
+        offset: usize,
+        /// Number of bytes requested at that offset.
+        type_size: usize,
+        /// Number of bytes reachable in the current element.
+        element_extent: usize,
     },
     /// A gathered tick mask does not match its row range.
     TickMaskLengthMismatch {
@@ -1493,7 +1554,16 @@ impl fmt::Display for ViewRuntimeError {
             } => write!(
                 f,
                 "View bytecode instruction {instruction_index} ({instruction}) expects {expected}, \
-                 but found {actual}"
+                but found {actual}"
+            ),
+            Self::MixedIntegerArithmetic {
+                instruction_index,
+                instruction,
+                field_types,
+            } => write!(
+                f,
+                "View bytecode instruction {instruction_index} ({instruction}) mixes integer \
+                 field types {field_types:?}; cast fields to one shared width first"
             ),
             Self::InvalidFinalStackDepth {
                 intent,
@@ -1544,6 +1614,15 @@ impl fmt::Display for ViewRuntimeError {
             } => write!(
                 f,
                 "View batch component {component_id:?} is absent from table {table_id:?}"
+            ),
+            Self::SubcolumnOutOfBounds {
+                offset,
+                type_size,
+                element_extent,
+            } => write!(
+                f,
+                "View subcolumn span offset={offset} size={type_size} exceeds element extent \
+                 {element_extent}"
             ),
             Self::TickMaskLengthMismatch {
                 table_id,
@@ -1626,9 +1705,18 @@ fn validate_spec_world_metadata(
     Ok(())
 }
 
-fn validate_instruction_indices(bytecode: &CompiledBytecode) -> Result<(), ViewRuntimeError> {
+pub(crate) fn validate_instruction_indices(
+    bytecode: &CompiledBytecode,
+) -> Result<(), ViewRuntimeError> {
     for op in &bytecode.bytecode {
         match *op {
+            Op::PushInput(index) => {
+                return Err(ViewRuntimeError::InvalidFieldIndex {
+                    instruction: "PushInput",
+                    index,
+                    field_count: 0,
+                });
+            }
             Op::PushField(index) | Op::StoreField(index)
                 if usize::from(index) >= bytecode.field_map.len() =>
             {
@@ -1755,7 +1843,7 @@ impl StackKind {
     }
 }
 
-fn validate_stack_effects(
+pub(crate) fn validate_stack_effects(
     bytecode: &CompiledBytecode,
     intent: ProgramIntent,
 ) -> Result<(), ViewRuntimeError> {
@@ -1767,6 +1855,13 @@ fn validate_stack_effects(
                 Op::PushField(_) => {
                     stack.push(StackKind::Float);
                     continue;
+                }
+                Op::PushInput(index) => {
+                    return Err(ViewRuntimeError::InvalidFieldIndex {
+                        instruction: "PushInput",
+                        index: *index,
+                        field_count: 0,
+                    });
                 }
                 Op::PushConst(_) => {
                     stack.push(StackKind::Float);
@@ -1936,6 +2031,188 @@ fn validate_stack_effects(
     Ok(())
 }
 
+const TYPE_F32: u16 = 1 << 0;
+const TYPE_F64: u16 = 1 << 1;
+const TYPE_I32: u16 = 1 << 2;
+const TYPE_I64: u16 = 1 << 3;
+const TYPE_U8: u16 = 1 << 4;
+const TYPE_U32: u16 = 1 << 5;
+const TYPE_U64: u16 = 1 << 6;
+const INTEGER_TYPES: u16 = TYPE_I32 | TYPE_I64 | TYPE_U8 | TYPE_U32 | TYPE_U64;
+
+#[derive(Clone, Copy)]
+enum TrackedValue {
+    Numeric(u16),
+    Bool,
+}
+
+fn field_type_mask(field_type: FieldType) -> u16 {
+    match field_type {
+        FieldType::F32 => TYPE_F32,
+        FieldType::F64 => TYPE_F64,
+        FieldType::I32 => TYPE_I32,
+        FieldType::I64 => TYPE_I64,
+        FieldType::U8 => TYPE_U8,
+        FieldType::U32 => TYPE_U32,
+        FieldType::U64 => TYPE_U64,
+        FieldType::Bool | FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => 0,
+    }
+}
+
+fn mask_field_types(mask: u16) -> Vec<FieldType> {
+    [
+        (TYPE_I32, FieldType::I32),
+        (TYPE_I64, FieldType::I64),
+        (TYPE_U8, FieldType::U8),
+        (TYPE_U32, FieldType::U32),
+        (TYPE_U64, FieldType::U64),
+    ]
+    .into_iter()
+    .filter_map(|(bit, field_type)| (mask & bit != 0).then_some(field_type))
+    .collect()
+}
+
+fn preserving_numeric_result(
+    left: u16,
+    right: u16,
+    instruction_index: usize,
+    instruction: &'static str,
+) -> Result<u16, ViewRuntimeError> {
+    let integer_types = (left | right) & INTEGER_TYPES;
+    if integer_types.count_ones() > 1 {
+        return Err(ViewRuntimeError::MixedIntegerArithmetic {
+            instruction_index,
+            instruction,
+            field_types: mask_field_types(integer_types),
+        });
+    }
+    Ok(match (left, right) {
+        (0, value) | (value, 0) => value,
+        (left, right) if left == right => left,
+        _ => TYPE_F64,
+    })
+}
+
+/// Track primitive field origins through the already stack-valid program and
+/// reject only operations whose VM fallback would silently route differing
+/// integer widths through f64. Constants remain polymorphic (`mask == 0`).
+fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), ViewRuntimeError> {
+    let mut stack: Vec<TrackedValue> = Vec::new();
+    for (instruction_index, op) in bytecode.bytecode.iter().enumerate() {
+        match *op {
+            Op::PushField(index) => stack.push(TrackedValue::Numeric(field_type_mask(
+                bytecode.field_map[usize::from(index)].field_type,
+            ))),
+            Op::PushConst(_) | Op::Random => stack.push(TrackedValue::Numeric(0)),
+            Op::StoreField(_) => {
+                stack.pop();
+            }
+            Op::Add | Op::Sub | Op::Mul | Op::Min | Op::Max => {
+                let TrackedValue::Numeric(right) = stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("numeric operation stack type already validated")
+                };
+                let TrackedValue::Numeric(left) = stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("numeric operation stack type already validated")
+                };
+                let instruction = match op {
+                    Op::Add => "Add",
+                    Op::Sub => "Sub",
+                    Op::Mul => "Mul",
+                    Op::Min => "Min",
+                    Op::Max => "Max",
+                    _ => unreachable!(),
+                };
+                stack.push(TrackedValue::Numeric(preserving_numeric_result(
+                    left,
+                    right,
+                    instruction_index,
+                    instruction,
+                )?));
+            }
+            Op::Clamp => {
+                let TrackedValue::Numeric(max) = stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("clamp stack type already validated")
+                };
+                let TrackedValue::Numeric(min) = stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("clamp stack type already validated")
+                };
+                let TrackedValue::Numeric(value) = stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("clamp stack type already validated")
+                };
+                let bounds = preserving_numeric_result(min, max, instruction_index, "Clamp")?;
+                stack.push(TrackedValue::Numeric(preserving_numeric_result(
+                    value,
+                    bounds,
+                    instruction_index,
+                    "Clamp",
+                )?));
+            }
+            Op::Neg | Op::Abs | Op::Floor | Op::Ceil | Op::Round | Op::Sign => {}
+            Op::Div
+            | Op::Pow
+            | Op::Mod
+            | Op::Sin
+            | Op::Cos
+            | Op::Tan
+            | Op::Asin
+            | Op::Acos
+            | Op::Atan
+            | Op::Sqrt
+            | Op::Exp
+            | Op::Ln
+            | Op::Log10
+            | Op::Log2
+            | Op::Fract
+            | Op::Lerp
+            | Op::RandomRange => {
+                let arity = if matches!(op, Op::Lerp) {
+                    3
+                } else if matches!(op, Op::Div | Op::Pow | Op::Mod | Op::RandomRange) {
+                    2
+                } else {
+                    1
+                };
+                for _ in 0..arity {
+                    stack.pop();
+                }
+                stack.push(TrackedValue::Numeric(TYPE_F64));
+            }
+            Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                stack.pop();
+                stack.pop();
+                stack.push(TrackedValue::Bool);
+            }
+            Op::And | Op::Or => {
+                stack.pop();
+                stack.pop();
+                stack.push(TrackedValue::Bool);
+            }
+            Op::Not => {}
+            Op::Where => {
+                let TrackedValue::Numeric(false_value) =
+                    stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("where branch stack type already validated")
+                };
+                let TrackedValue::Numeric(true_value) =
+                    stack.pop().expect("stack already validated")
+                else {
+                    unreachable!("where branch stack type already validated")
+                };
+                stack.pop();
+                stack.push(TrackedValue::Numeric(true_value | false_value));
+            }
+            Op::PushInput(_) => unreachable!("instruction indices already validated"),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Deref;
@@ -1955,6 +2232,10 @@ mod tests {
     #[derive(Component)]
     #[repr(transparent)]
     struct RuntimeOther(u32);
+
+    #[derive(Component)]
+    #[repr(transparent)]
+    struct RuntimeWide([u8; 16]);
 
     #[derive(Component)]
     #[component(storage = "SparseSet")]
@@ -1981,6 +2262,12 @@ mod tests {
     struct TestRuntime {
         // Drop the runtime/cell before freeing the allocation it references.
         runtime: Arc<ViewRuntimeCore>,
+        _world: Box<World>,
+    }
+
+    struct LiveBatchColumn {
+        column: BatchColumn,
+        // Drop the column and its run-scoped lease before freeing the World.
         _world: Box<World>,
     }
 
@@ -2037,6 +2324,119 @@ mod tests {
             runtime: Arc::new(runtime),
             _world: world,
         }
+    }
+
+    fn live_batch_column(mutable: bool) -> LiveBatchColumn {
+        let mut world = Box::new(World::new());
+        world.spawn(RuntimeWide([0; 16]));
+        let component_id = world.components().component_id::<RuntimeWide>().unwrap();
+        let mutable_components = if mutable {
+            HashSet::from([component_id])
+        } else {
+            HashSet::new()
+        };
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            mutable_components,
+            HashMap::new(),
+        );
+        // SAFETY: the boxed World remains live and structurally unchanged until
+        // after the returned column releases its lease.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let lease = Arc::new(runtime.gather_batches().unwrap());
+        let slices = lease.contiguous_slices().unwrap();
+        let column = slices[0].column(component_id, mutable).unwrap();
+        LiveBatchColumn {
+            column,
+            _world: world,
+        }
+    }
+
+    #[test]
+    fn batch_column_root_extent_matches_component_stride() {
+        let live = live_batch_column(false);
+
+        assert_eq!(live.column.len(), 1);
+        assert_eq!(live.column.stride(), 16);
+        assert_eq!(live.column.element_extent(), 16);
+        assert!(!live.column.is_writable());
+    }
+
+    #[test]
+    fn batch_column_typed_subcolumn_preserves_capabilities() {
+        let live = live_batch_column(true);
+        let child = live.column.subcolumn(8, Some(FieldType::F64)).unwrap();
+
+        assert_eq!(child.len(), live.column.len());
+        assert_eq!(child.stride(), live.column.stride());
+        assert_eq!(child.element_extent(), FieldType::F64.size_bytes());
+        assert!(child.is_writable());
+        assert!(Arc::ptr_eq(child.runtime(), live.column.runtime()));
+        // SAFETY: both pointers are inspected as addresses only; neither is
+        // dereferenced, and the shared live lease remains retained.
+        let parent_ptr = unsafe { live.column.raw_ptr_unchecked() };
+        // SAFETY: same as above; the shared constructor bounded this offset.
+        let child_ptr = unsafe { child.raw_ptr_unchecked() };
+        assert_eq!(child_ptr.addr(), parent_ptr.addr() + 8);
+    }
+
+    #[test]
+    fn batch_column_rejects_typed_span_past_extent() {
+        let live = live_batch_column(false);
+
+        assert!(matches!(
+            live.column.subcolumn(12, Some(FieldType::F64)),
+            Err(ViewRuntimeError::SubcolumnOutOfBounds {
+                offset: 12,
+                type_size: 8,
+                element_extent: 16,
+            })
+        ));
+        assert!(matches!(
+            live.column.subcolumn(usize::MAX, Some(FieldType::F32)),
+            Err(ViewRuntimeError::SubcolumnOutOfBounds {
+                offset: usize::MAX,
+                type_size: 4,
+                element_extent: 16,
+            })
+        ));
+    }
+
+    #[test]
+    fn batch_column_nested_subcolumns_keep_remaining_extent() {
+        let live = live_batch_column(false);
+        let nested = live.column.subcolumn(12, None).unwrap();
+
+        assert_eq!(nested.element_extent(), 4);
+        assert!(nested.subcolumn(0, Some(FieldType::F32)).is_ok());
+        assert!(matches!(
+            nested.subcolumn(0, Some(FieldType::F64)),
+            Err(ViewRuntimeError::SubcolumnOutOfBounds {
+                offset: 0,
+                type_size: 8,
+                element_extent: 4,
+            })
+        ));
+        assert!(matches!(
+            nested.subcolumn(4, Some(FieldType::F32)),
+            Err(ViewRuntimeError::SubcolumnOutOfBounds {
+                offset: 4,
+                type_size: 4,
+                element_extent: 4,
+            })
+        ));
+    }
+
+    #[test]
+    fn batch_column_subcolumn_rejects_stale_runtime() {
+        let live = live_batch_column(false);
+        live.column.runtime().validity().set_invalid();
+
+        assert!(matches!(
+            live.column.subcolumn(0, Some(FieldType::F32)),
+            Err(ViewRuntimeError::Storage(StorageError::InvalidAccess))
+        ));
     }
 
     fn read_program(field: FieldId) -> Arc<CompiledBytecode> {
@@ -2456,6 +2856,23 @@ mod tests {
             Err(ViewRuntimeError::InvalidConstantIndex {
                 index: 0,
                 constant_count: 0,
+            })
+        ));
+
+        let result = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::PushInput(0)],
+                constants: Vec::new(),
+                field_map: Vec::new(),
+            }),
+            ProgramIntent::ReadOnly,
+        );
+        assert!(matches!(
+            result,
+            Err(ViewRuntimeError::InvalidFieldIndex {
+                instruction: "PushInput",
+                index: 0,
+                field_count: 0,
             })
         ));
     }
@@ -3483,5 +3900,33 @@ mod tests {
 
         assert_eq!(dense_value_and_tick(&world, first), (123, this_run));
         assert_eq!(dense_value_and_tick(&world, second), (2, this_run));
+    }
+
+    #[test]
+    fn mixed_integer_width_arithmetic_is_rejected_before_execution() {
+        let component_id = ComponentId::new(1);
+        let bytecode = CompiledBytecode {
+            bytecode: vec![Op::PushField(0), Op::PushField(1), Op::Add],
+            constants: vec![],
+            field_map: vec![
+                field(component_id, 0, FieldType::I64),
+                field(component_id, 8, FieldType::U32),
+            ],
+        };
+        assert!(matches!(
+            validate_integer_arithmetic_types(&bytecode),
+            Err(ViewRuntimeError::MixedIntegerArithmetic { .. })
+        ));
+    }
+
+    #[test]
+    fn integer_field_and_constant_keep_the_field_width() {
+        let component_id = ComponentId::new(1);
+        let bytecode = CompiledBytecode {
+            bytecode: vec![Op::PushField(0), Op::PushConst(0), Op::Add],
+            constants: vec![1.0],
+            field_map: vec![field(component_id, 0, FieldType::I64)],
+        };
+        assert!(validate_integer_arithmetic_types(&bytecode).is_ok());
     }
 }

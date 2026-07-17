@@ -25,25 +25,47 @@
 //! StoreField(0)     // Store to pos.x
 //! ```
 
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use bevy_ecs::component::ComponentId;
 
 /// Value types that can be stored on the VM stack
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StackValue {
-    /// Floating-point number (f64 for precision; f32 fields widen losslessly)
+    /// Native 32-bit floating-point number.
+    F32(f32),
+    /// 64-bit floating-point number.
     Float(f64),
+    /// Constant-pool number. Kept distinct so exact integer constants can be
+    /// specialized to the other operand's lane type without treating a runtime
+    /// floating-point field the same way.
+    Constant(f64),
+    /// Signed 32-bit integer.
+    I32(i32),
+    /// Signed 64-bit integer.
+    I64(i64),
+    /// Unsigned 8-bit integer.
+    U8(u8),
+    /// Unsigned 32-bit integer.
+    U32(u32),
+    /// Unsigned 64-bit integer.
+    U64(u64),
     /// Boolean value
     Bool(bool),
 }
 
 impl StackValue {
-    /// Unwrap as float, panic if not a float
+    /// Convert a numeric value to f64, panicking for booleans.
     #[inline]
     pub fn as_float(&self) -> f64 {
         match self {
-            StackValue::Float(f) => *f,
+            StackValue::F32(f) => f64::from(*f),
+            StackValue::Float(f) | StackValue::Constant(f) => *f,
+            StackValue::I32(v) => f64::from(*v),
+            StackValue::I64(v) => *v as f64,
+            StackValue::U8(v) => f64::from(*v),
+            StackValue::U32(v) => f64::from(*v),
+            StackValue::U64(v) => *v as f64,
             StackValue::Bool(_) => panic!("Expected float, got bool"),
         }
     }
@@ -53,8 +75,209 @@ impl StackValue {
     pub fn as_bool(&self) -> bool {
         match self {
             StackValue::Bool(b) => *b,
-            StackValue::Float(_) => panic!("Expected bool, got float"),
+            StackValue::F32(_)
+            | StackValue::Float(_)
+            | StackValue::Constant(_)
+            | StackValue::I32(_)
+            | StackValue::I64(_)
+            | StackValue::U8(_)
+            | StackValue::U32(_)
+            | StackValue::U64(_) => panic!("Expected bool, got number"),
         }
+    }
+
+    #[inline]
+    fn coerce_constant(self, template: Self) -> Option<Self> {
+        let StackValue::Constant(value) = self else {
+            return None;
+        };
+        if matches!(template, StackValue::F32(_)) {
+            return Some(StackValue::F32(value as f32));
+        }
+        if !value.is_finite() || value.fract() != 0.0 {
+            return None;
+        }
+        match template {
+            StackValue::I32(_) if value >= f64::from(i32::MIN) && value <= f64::from(i32::MAX) => {
+                Some(StackValue::I32(value as i32))
+            }
+            StackValue::I64(_) if value >= i64::MIN as f64 && value < -(i64::MIN as f64) => {
+                Some(StackValue::I64(value as i64))
+            }
+            StackValue::U8(_) if value >= 0.0 && value <= f64::from(u8::MAX) => {
+                Some(StackValue::U8(value as u8))
+            }
+            StackValue::U32(_) if value >= 0.0 && value <= f64::from(u32::MAX) => {
+                Some(StackValue::U32(value as u32))
+            }
+            StackValue::U64(_) if value >= 0.0 && value < 2_f64.powi(64) => {
+                Some(StackValue::U64(value as u64))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[inline]
+fn specialize_constants(a: StackValue, b: StackValue) -> (StackValue, StackValue) {
+    if let Some(a) = a.coerce_constant(b) {
+        (a, b)
+    } else if let Some(b) = b.coerce_constant(a) {
+        (a, b)
+    } else {
+        (a, b)
+    }
+}
+
+#[inline]
+fn cmp_i64_f64(integer: i64, float: f64) -> Option<Ordering> {
+    if float.is_nan() {
+        return None;
+    }
+    if float < i64::MIN as f64 {
+        return Some(Ordering::Greater);
+    }
+    if float >= -(i64::MIN as f64) {
+        return Some(Ordering::Less);
+    }
+
+    let truncated = float as i64;
+    match integer.cmp(&truncated) {
+        Ordering::Equal if float.fract().is_sign_positive() && float.fract() != 0.0 => {
+            Some(Ordering::Less)
+        }
+        Ordering::Equal if float.fract().is_sign_negative() && float.fract() != 0.0 => {
+            Some(Ordering::Greater)
+        }
+        ordering => Some(ordering),
+    }
+}
+
+#[inline]
+fn cmp_u64_f64(integer: u64, float: f64) -> Option<Ordering> {
+    if float.is_nan() {
+        return None;
+    }
+    if float < 0.0 {
+        return Some(Ordering::Greater);
+    }
+    if float >= 2_f64.powi(64) {
+        return Some(Ordering::Less);
+    }
+
+    let truncated = float as u64;
+    match integer.cmp(&truncated) {
+        Ordering::Equal if float.fract() != 0.0 => Some(Ordering::Less),
+        ordering => Some(ordering),
+    }
+}
+
+macro_rules! integer_binary {
+    ($a:expr, $b:expr, $method:ident, $float:expr) => {{
+        let (a, b) = specialize_constants($a, $b);
+        match (a, b) {
+            (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32($float(a, b)),
+            (StackValue::I32(a), StackValue::I32(b)) => StackValue::I32(a.$method(b)),
+            (StackValue::I64(a), StackValue::I64(b)) => StackValue::I64(a.$method(b)),
+            (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.$method(b)),
+            (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.$method(b)),
+            (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.$method(b)),
+            (a, b) => StackValue::Float($float(a.as_float(), b.as_float())),
+        }
+    }};
+}
+
+macro_rules! float_binary {
+    ($a:expr, $b:expr, $f32:expr, $f64:expr) => {{
+        let (a, b) = specialize_constants($a, $b);
+        match (a, b) {
+            (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32($f32(a, b)),
+            (a, b) => StackValue::Float($f64(a.as_float(), b.as_float())),
+        }
+    }};
+}
+
+macro_rules! float_unary {
+    ($value:expr, $f32:expr, $f64:expr) => {{
+        match $value {
+            StackValue::F32(value) => StackValue::F32($f32(value)),
+            value => StackValue::Float($f64(value.as_float())),
+        }
+    }};
+}
+
+#[derive(Clone, Copy)]
+enum ExactInteger {
+    Signed(i64),
+    Unsigned(u64),
+}
+
+impl ExactInteger {
+    #[inline]
+    fn from_stack(value: StackValue) -> Option<Self> {
+        match value {
+            StackValue::I32(value) => Some(Self::Signed(i64::from(value))),
+            StackValue::I64(value) => Some(Self::Signed(value)),
+            StackValue::U8(value) => Some(Self::Unsigned(u64::from(value))),
+            StackValue::U32(value) => Some(Self::Unsigned(u64::from(value))),
+            StackValue::U64(value) => Some(Self::Unsigned(value)),
+            StackValue::F32(_)
+            | StackValue::Float(_)
+            | StackValue::Constant(_)
+            | StackValue::Bool(_) => None,
+        }
+    }
+
+    #[inline]
+    fn cmp(self, other: Self) -> Ordering {
+        match (self, other) {
+            (Self::Signed(a), Self::Signed(b)) => a.cmp(&b),
+            (Self::Unsigned(a), Self::Unsigned(b)) => a.cmp(&b),
+            (Self::Signed(a), Self::Unsigned(_)) if a < 0 => Ordering::Less,
+            (Self::Signed(a), Self::Unsigned(b)) => (a as u64).cmp(&b),
+            (Self::Unsigned(_), Self::Signed(b)) if b < 0 => Ordering::Greater,
+            (Self::Unsigned(a), Self::Signed(b)) => a.cmp(&(b as u64)),
+        }
+    }
+
+    #[inline]
+    fn cmp_float(self, float: f64) -> Option<Ordering> {
+        match self {
+            Self::Signed(value) => cmp_i64_f64(value, float),
+            Self::Unsigned(value) => cmp_u64_f64(value, float),
+        }
+    }
+}
+
+#[inline]
+fn numeric_cmp(a: StackValue, b: StackValue) -> Option<Ordering> {
+    let (a, b) = specialize_constants(a, b);
+    let a_integer = ExactInteger::from_stack(a);
+    let b_integer = ExactInteger::from_stack(b);
+    if let (Some(a), Some(b)) = (a_integer, b_integer) {
+        return Some(a.cmp(b));
+    }
+
+    match (a, b) {
+        (StackValue::Bool(a), StackValue::Bool(b)) => a.partial_cmp(&b),
+        (StackValue::F32(a), StackValue::F32(b)) => a.partial_cmp(&b),
+        (StackValue::F32(a), StackValue::Float(b) | StackValue::Constant(b)) => {
+            f64::from(a).partial_cmp(&b)
+        }
+        (StackValue::Float(a) | StackValue::Constant(a), StackValue::F32(b)) => {
+            a.partial_cmp(&f64::from(b))
+        }
+        (
+            StackValue::Float(a) | StackValue::Constant(a),
+            StackValue::Float(b) | StackValue::Constant(b),
+        ) => a.partial_cmp(&b),
+        (_, StackValue::Float(b) | StackValue::Constant(b)) => a_integer?.cmp_float(b),
+        (_, StackValue::F32(b)) => a_integer?.cmp_float(f64::from(b)),
+        (StackValue::Float(a) | StackValue::Constant(a), _) => {
+            b_integer?.cmp_float(a).map(Ordering::reverse)
+        }
+        (StackValue::F32(a), _) => b_integer?.cmp_float(f64::from(a)).map(Ordering::reverse),
+        (a, b) => a.as_float().partial_cmp(&b.as_float()),
     }
 }
 
@@ -64,6 +287,10 @@ pub enum Op {
     /// Push a component field value onto the stack
     /// u16 is an index into the field map
     PushField(u16),
+
+    /// Push a dense input column value onto the stack.
+    /// u16 is an index into the caller-provided input columns.
+    PushInput(u16),
 
     /// Push a constant from the constant pool onto the stack
     /// u16 is an index into the constants array
@@ -388,6 +615,17 @@ pub fn python_sign(x: f64) -> f64 {
     }
 }
 
+#[inline]
+fn python_sign_f32(x: f32) -> f32 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        x
+    }
+}
+
 /// Return Python's `%` result for floating-point operands.
 ///
 /// Rust's remainder keeps the dividend's sign, while Python and array
@@ -396,6 +634,19 @@ pub fn python_sign(x: f64) -> f64 {
 /// naturally remain NaN, which is appropriate for element-wise evaluation.
 #[inline]
 pub fn python_remainder(dividend: f64, divisor: f64) -> f64 {
+    let remainder = dividend % divisor;
+    if remainder == 0.0 {
+        return remainder.copysign(divisor);
+    }
+    if (remainder < 0.0) != (divisor < 0.0) {
+        remainder + divisor
+    } else {
+        remainder
+    }
+}
+
+#[inline]
+fn python_remainder_f32(dividend: f32, divisor: f32) -> f32 {
     let remainder = dividend % divisor;
     if remainder == 0.0 {
         return remainder.copysign(divisor);
@@ -428,9 +679,31 @@ pub fn python_minimum(a: f64, b: f64) -> f64 {
     }
 }
 
+#[inline]
+fn python_minimum_f32(a: f32, b: f32) -> f32 {
+    if a.is_nan() {
+        a
+    } else if b.is_nan() {
+        b
+    } else {
+        a.min(b)
+    }
+}
+
 /// Return the element-wise maximum while propagating NaN.
 #[inline]
 pub fn python_maximum(a: f64, b: f64) -> f64 {
+    if a.is_nan() {
+        a
+    } else if b.is_nan() {
+        b
+    } else {
+        a.max(b)
+    }
+}
+
+#[inline]
+fn python_maximum_f32(a: f32, b: f32) -> f32 {
     if a.is_nan() {
         a
     } else if b.is_nan() {
@@ -449,7 +722,16 @@ pub fn python_clip(value: f64, min: f64, max: f64) -> f64 {
     python_minimum(python_maximum(value, min), max)
 }
 
-/// Read a field value from a raw pointer based on its type, returning f64.
+#[inline]
+fn python_clip_f32(value: f32, min: f32, max: f32) -> f32 {
+    python_minimum_f32(python_maximum_f32(value, min), max)
+}
+
+/// Read a field through the explicit f64 conversion path.
+///
+/// This helper serves APIs whose result domain is already f64 and the f64
+/// tiled executor. The scalar VM uses [`read_field_stack_value`] so integer
+/// fields do not pass through this conversion.
 ///
 /// Uses `read_unaligned` for types wider than 4 bytes because ECS column
 /// storage may not guarantee 8-byte alignment on 32-bit platforms.
@@ -458,23 +740,33 @@ pub fn python_clip(value: f64, min: f64, max: f64) -> f64 {
 /// The pointer must be valid and not concurrently mutated.
 #[inline(always)]
 pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
-    match field_type {
-        FieldType::F32 => unsafe { (ptr as *const f32).read_unaligned() as f64 },
-        FieldType::F64 => unsafe { (ptr as *const f64).read_unaligned() },
-        FieldType::I32 => unsafe { (ptr as *const i32).read_unaligned() as f64 },
-        FieldType::I64 => unsafe { (ptr as *const i64).read_unaligned() as f64 },
-        FieldType::U8 => unsafe { ptr.read_unaligned() as f64 },
-        FieldType::U32 => unsafe { (ptr as *const u32).read_unaligned() as f64 },
-        FieldType::U64 => unsafe { (ptr as *const u64).read_unaligned() as f64 },
-        // Read the byte as `u8`, not `bool`: a `bool` whose byte is not 0/1 is an
-        // invalid bit pattern (instant UB). `validate_bytecode_field_types` should
-        // already reject a `Bool` field aimed at non-bool bytes, but keep this read
-        // sound on its own. Any non-zero byte reads as true.
-        FieldType::Bool => unsafe { if ptr.read_unaligned() != 0 { 1.0 } else { 0.0 } },
-        // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
-        // before execution, so these should never appear in read_field_value
-        FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
-            unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
+    // SAFETY: the caller guarantees that `ptr` is valid for the primitive layout
+    // selected by `field_type`; unaligned reads avoid imposing extra alignment.
+    unsafe {
+        match field_type {
+            FieldType::F32 => (ptr as *const f32).read_unaligned() as f64,
+            FieldType::F64 => (ptr as *const f64).read_unaligned(),
+            FieldType::I32 => (ptr as *const i32).read_unaligned() as f64,
+            FieldType::I64 => (ptr as *const i64).read_unaligned() as f64,
+            FieldType::U8 => f64::from(ptr.read_unaligned()),
+            FieldType::U32 => (ptr as *const u32).read_unaligned() as f64,
+            FieldType::U64 => (ptr as *const u64).read_unaligned() as f64,
+            // Read the byte as `u8`, not `bool`: a `bool` whose byte is not 0/1 is an
+            // invalid bit pattern (instant UB). `validate_bytecode_field_types` should
+            // already reject a `Bool` field aimed at non-bool bytes, but keep this read
+            // sound on its own. Any non-zero byte reads as true.
+            FieldType::Bool => {
+                if ptr.read_unaligned() != 0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
+            // before execution, so these should never appear in read_field_value
+            FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
+                unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
+            }
         }
     }
 }
@@ -487,45 +779,106 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
 /// The pointer must be valid and not concurrently read.
 #[inline(always)]
 pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType) {
-    match field_type {
-        FieldType::F32 => unsafe {
-            (ptr as *mut f32).write_unaligned(value as f32);
-        },
-        FieldType::F64 => unsafe {
-            (ptr as *mut f64).write_unaligned(value);
-        },
-        FieldType::I32 => unsafe {
-            (ptr as *mut i32).write_unaligned(value as i32);
-        },
-        FieldType::I64 => unsafe {
-            (ptr as *mut i64).write_unaligned(value as i64);
-        },
-        FieldType::U8 => unsafe {
-            ptr.write_unaligned(value as u8);
-        },
-        FieldType::U32 => unsafe {
-            (ptr as *mut u32).write_unaligned(value as u32);
-        },
-        FieldType::U64 => unsafe {
-            (ptr as *mut u64).write_unaligned(value as u64);
-        },
-        FieldType::Bool => unsafe {
-            // Write through `u8` (mirrors the `u8` read) so the store never depends
-            // on `*mut bool` provenance; a bool is stored as 1/0.
-            ptr.write_unaligned(u8::from(value >= 0.5));
-        },
-        FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
-            unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
+    // SAFETY: the caller guarantees that `ptr` is valid and uniquely writable
+    // for the primitive layout selected by `field_type`.
+    unsafe {
+        match field_type {
+            FieldType::F32 => (ptr as *mut f32).write_unaligned(value as f32),
+            FieldType::F64 => (ptr as *mut f64).write_unaligned(value),
+            FieldType::I32 => (ptr as *mut i32).write_unaligned(value as i32),
+            FieldType::I64 => (ptr as *mut i64).write_unaligned(value as i64),
+            FieldType::U8 => ptr.write_unaligned(value as u8),
+            FieldType::U32 => (ptr as *mut u32).write_unaligned(value as u32),
+            FieldType::U64 => (ptr as *mut u64).write_unaligned(value as u64),
+            FieldType::Bool => {
+                // Write through `u8` (mirrors the `u8` read) so the store never depends
+                // on `*mut bool` provenance; a bool is stored as 1/0.
+                ptr.write_unaligned(u8::from(value >= 0.5));
+            }
+            FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
+                unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
+            }
+        }
+    }
+}
+
+/// Read a primitive field into its exact VM execution domain.
+///
+/// The scalar VM evaluates floating-point fields in f64; native-f32 tiled
+/// programs bypass this helper. Integers remain in their declared width so
+/// identity, arithmetic, and comparisons do not silently round through f64.
+///
+/// # Safety
+/// The pointer must be valid for a value of `field_type` and not concurrently mutated.
+#[inline(always)]
+pub unsafe fn read_field_stack_value(ptr: *const u8, field_type: FieldType) -> StackValue {
+    // SAFETY: the caller guarantees that `ptr` points to a live value whose layout
+    // matches `field_type`; every wider access is deliberately unaligned.
+    unsafe {
+        match field_type {
+            FieldType::F32 => StackValue::Float(f64::from((ptr as *const f32).read_unaligned())),
+            FieldType::F64 => StackValue::Float((ptr as *const f64).read_unaligned()),
+            FieldType::I32 => StackValue::I32((ptr as *const i32).read_unaligned()),
+            FieldType::I64 => StackValue::I64((ptr as *const i64).read_unaligned()),
+            FieldType::U8 => StackValue::U8(ptr.read_unaligned()),
+            FieldType::U32 => StackValue::U32((ptr as *const u32).read_unaligned()),
+            FieldType::U64 => StackValue::U64((ptr as *const u64).read_unaligned()),
+            FieldType::Bool => StackValue::Bool(ptr.read_unaligned() != 0),
+            FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
+                unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
+            }
+        }
+    }
+}
+
+/// Write a VM value without losing exact same-domain integer values.
+///
+/// Cross-domain stores are explicit conversions at the destination boundary;
+/// integer operations themselves remain typed.
+///
+/// # Safety
+/// The pointer must be valid for a value of `field_type` and not concurrently read.
+#[inline(always)]
+pub unsafe fn write_field_stack_value(ptr: *mut u8, value: StackValue, field_type: FieldType) {
+    // SAFETY: the caller guarantees exclusive writable access to a live value whose
+    // layout matches `field_type`; conversion stores preserve that same contract.
+    unsafe {
+        match (field_type, value) {
+            (FieldType::I32, StackValue::I32(value)) => {
+                (ptr as *mut i32).write_unaligned(value);
+            }
+            (FieldType::I64, StackValue::I64(value)) => {
+                (ptr as *mut i64).write_unaligned(value);
+            }
+            (FieldType::U8, StackValue::U8(value)) => ptr.write_unaligned(value),
+            (FieldType::U32, StackValue::U32(value)) => {
+                (ptr as *mut u32).write_unaligned(value);
+            }
+            (FieldType::U64, StackValue::U64(value)) => {
+                (ptr as *mut u64).write_unaligned(value);
+            }
+            (FieldType::Bool, StackValue::Bool(value)) => {
+                ptr.write_unaligned(u8::from(value));
+            }
+            (FieldType::Bool, value) => {
+                ptr.write_unaligned(u8::from(value.as_float() >= 0.5));
+            }
+            (field_type, StackValue::Bool(_)) => {
+                panic!("cannot store bool in numeric field {field_type:?}")
+            }
+            (field_type, value) => write_field_value(ptr, value.as_float(), field_type),
         }
     }
 }
 
 /// Stack-based virtual machine for executing bytecode
 pub struct VM {
-    /// Evaluation stack (supports both floats and booleans)
+    /// Evaluation stack for typed numeric and boolean values.
     pub(crate) stack: Vec<StackValue>,
     /// Current entity index for deterministic random number generation
     entity_index: usize,
+    /// Execution domain for dense programs whose numeric inputs are all f32.
+    native_f32: bool,
 }
 
 impl Default for VM {
@@ -586,6 +939,7 @@ impl VM {
         Self {
             stack: Vec::with_capacity(32), // Most expressions need < 32 stack slots
             entity_index: 0,
+            native_f32: false,
         }
     }
 
@@ -594,6 +948,12 @@ impl VM {
     pub fn reset(&mut self) {
         self.stack.clear();
         self.entity_index = 0;
+        self.native_f32 = false;
+    }
+
+    #[inline]
+    pub(crate) fn set_native_f32(&mut self, native_f32: bool) {
+        self.native_f32 = native_f32;
     }
 
     /// Simple hash-based random number generator for deterministic per-entity randomness
@@ -610,250 +970,322 @@ impl VM {
         (x as f64) / (u32::MAX as f64)
     }
 
-    /// Dispatch a single stack-only operation (everything except PushField/StoreField).
+    /// Dispatch a single stack-only operation (everything except external loads/stores).
     ///
-    /// Returns `false` for PushField and StoreField, which require pointer-dependent
-    /// handling by the caller. Returns `true` for all other ops.
+    /// Returns `false` for component fields, dense inputs, and stores, whose
+    /// storage is supplied by the caller. Returns `true` for all other ops.
     #[inline(always)]
     pub(crate) fn dispatch_stack_op(&mut self, op: &Op, bytecode: &CompiledBytecode) -> bool {
         match op {
-            Op::PushField(_) | Op::StoreField(_) => return false,
+            Op::PushField(_) | Op::PushInput(_) | Op::StoreField(_) => return false,
 
             Op::PushConst(const_idx) => {
-                self.stack
-                    .push(StackValue::Float(bytecode.constants[*const_idx as usize]));
+                let value = bytecode.constants[*const_idx as usize];
+                self.stack.push(if self.native_f32 {
+                    StackValue::F32(value as f32)
+                } else {
+                    StackValue::Constant(value)
+                });
             }
 
             Op::Add => {
-                let b = self.stack.pop().expect("Stack underflow on Add").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Add").as_float();
-                self.stack.push(StackValue::Float(a + b));
+                let b = self.stack.pop().expect("Stack underflow on Add");
+                let a = self.stack.pop().expect("Stack underflow on Add");
+                self.stack
+                    .push(integer_binary!(a, b, wrapping_add, |a, b| a + b));
             }
             Op::Sub => {
-                let b = self.stack.pop().expect("Stack underflow on Sub").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Sub").as_float();
-                self.stack.push(StackValue::Float(a - b));
+                let b = self.stack.pop().expect("Stack underflow on Sub");
+                let a = self.stack.pop().expect("Stack underflow on Sub");
+                self.stack
+                    .push(integer_binary!(a, b, wrapping_sub, |a, b| a - b));
             }
             Op::Mul => {
-                let b = self.stack.pop().expect("Stack underflow on Mul").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Mul").as_float();
-                self.stack.push(StackValue::Float(a * b));
+                let b = self.stack.pop().expect("Stack underflow on Mul");
+                let a = self.stack.pop().expect("Stack underflow on Mul");
+                self.stack
+                    .push(integer_binary!(a, b, wrapping_mul, |a, b| a * b));
             }
             Op::Div => {
-                let b = self.stack.pop().expect("Stack underflow on Div").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Div").as_float();
-                self.stack.push(StackValue::Float(a / b));
+                let b = self.stack.pop().expect("Stack underflow on Div");
+                let a = self.stack.pop().expect("Stack underflow on Div");
+                self.stack
+                    .push(float_binary!(a, b, |a, b| a / b, |a, b| a / b));
             }
             Op::Pow => {
-                let b = self.stack.pop().expect("Stack underflow on Pow").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Pow").as_float();
-                self.stack.push(StackValue::Float(a.powf(b)));
+                let b = self.stack.pop().expect("Stack underflow on Pow");
+                let a = self.stack.pop().expect("Stack underflow on Pow");
+                self.stack
+                    .push(float_binary!(a, b, |a: f32, b| a.powf(b), |a: f64, b| a.powf(b)));
             }
             Op::Mod => {
-                let b = self.stack.pop().expect("Stack underflow on Mod").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Mod").as_float();
-                self.stack.push(StackValue::Float(python_remainder(a, b)));
+                let b = self.stack.pop().expect("Stack underflow on Mod");
+                let a = self.stack.pop().expect("Stack underflow on Mod");
+                self.stack
+                    .push(float_binary!(a, b, python_remainder_f32, python_remainder));
             }
             Op::Neg => {
-                let a = self.stack.pop().expect("Stack underflow on Neg").as_float();
-                self.stack.push(StackValue::Float(-a));
+                let a = self.stack.pop().expect("Stack underflow on Neg");
+                self.stack.push(match a {
+                    StackValue::F32(value) => StackValue::F32(-value),
+                    StackValue::I32(v) => StackValue::I32(v.wrapping_neg()),
+                    StackValue::I64(v) => StackValue::I64(v.wrapping_neg()),
+                    StackValue::U8(v) => StackValue::U8(v.wrapping_neg()),
+                    StackValue::U32(v) => StackValue::U32(v.wrapping_neg()),
+                    StackValue::U64(v) => StackValue::U64(v.wrapping_neg()),
+                    value => StackValue::Float(-value.as_float()),
+                });
             }
 
             // Trigonometric
             Op::Sin => {
-                let x = self.stack.pop().expect("Stack underflow on Sin").as_float();
-                self.stack.push(StackValue::Float(x.sin()));
+                let x = self.stack.pop().expect("Stack underflow on Sin");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.sin(), |x: f64| x.sin()));
             }
             Op::Cos => {
-                let x = self.stack.pop().expect("Stack underflow on Cos").as_float();
-                self.stack.push(StackValue::Float(x.cos()));
+                let x = self.stack.pop().expect("Stack underflow on Cos");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.cos(), |x: f64| x.cos()));
             }
             Op::Tan => {
-                let x = self.stack.pop().expect("Stack underflow on Tan").as_float();
-                self.stack.push(StackValue::Float(x.tan()));
+                let x = self.stack.pop().expect("Stack underflow on Tan");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.tan(), |x: f64| x.tan()));
             }
             Op::Asin => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Asin")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.asin()));
+                let x = self.stack.pop().expect("Stack underflow on Asin");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.asin(), |x: f64| x.asin()));
             }
             Op::Acos => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Acos")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.acos()));
+                let x = self.stack.pop().expect("Stack underflow on Acos");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.acos(), |x: f64| x.acos()));
             }
             Op::Atan => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Atan")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.atan()));
+                let x = self.stack.pop().expect("Stack underflow on Atan");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.atan(), |x: f64| x.atan()));
             }
 
             // Math
             Op::Sqrt => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Sqrt")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.sqrt()));
+                let x = self.stack.pop().expect("Stack underflow on Sqrt");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.sqrt(), |x: f64| x.sqrt()));
             }
             Op::Abs => {
-                let x = self.stack.pop().expect("Stack underflow on Abs").as_float();
-                self.stack.push(StackValue::Float(x.abs()));
+                let x = self.stack.pop().expect("Stack underflow on Abs");
+                self.stack.push(match x {
+                    StackValue::F32(value) => StackValue::F32(value.abs()),
+                    StackValue::I32(v) => StackValue::I32(v.wrapping_abs()),
+                    StackValue::I64(v) => StackValue::I64(v.wrapping_abs()),
+                    StackValue::U8(v) => StackValue::U8(v),
+                    StackValue::U32(v) => StackValue::U32(v),
+                    StackValue::U64(v) => StackValue::U64(v),
+                    value => StackValue::Float(value.as_float().abs()),
+                });
             }
             Op::Floor => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Floor")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.floor()));
+                let x = self.stack.pop().expect("Stack underflow on Floor");
+                self.stack.push(match x {
+                    StackValue::I32(_)
+                    | StackValue::I64(_)
+                    | StackValue::U8(_)
+                    | StackValue::U32(_)
+                    | StackValue::U64(_) => x,
+                    StackValue::F32(value) => StackValue::F32(value.floor()),
+                    value => StackValue::Float(value.as_float().floor()),
+                });
             }
             Op::Ceil => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Ceil")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.ceil()));
+                let x = self.stack.pop().expect("Stack underflow on Ceil");
+                self.stack.push(match x {
+                    StackValue::I32(_)
+                    | StackValue::I64(_)
+                    | StackValue::U8(_)
+                    | StackValue::U32(_)
+                    | StackValue::U64(_) => x,
+                    StackValue::F32(value) => StackValue::F32(value.ceil()),
+                    value => StackValue::Float(value.as_float().ceil()),
+                });
             }
             Op::Round => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Round")
-                    .as_float();
-                self.stack.push(StackValue::Float(python_round(x)));
+                let x = self.stack.pop().expect("Stack underflow on Round");
+                self.stack.push(match x {
+                    StackValue::I32(_)
+                    | StackValue::I64(_)
+                    | StackValue::U8(_)
+                    | StackValue::U32(_)
+                    | StackValue::U64(_) => x,
+                    StackValue::F32(value) => StackValue::F32(value.round_ties_even()),
+                    value => StackValue::Float(python_round(value.as_float())),
+                });
             }
             Op::Exp => {
-                let x = self.stack.pop().expect("Stack underflow on Exp").as_float();
-                self.stack.push(StackValue::Float(x.exp()));
+                let x = self.stack.pop().expect("Stack underflow on Exp");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.exp(), |x: f64| x.exp()));
             }
             Op::Ln => {
-                let x = self.stack.pop().expect("Stack underflow on Ln").as_float();
-                self.stack.push(StackValue::Float(x.ln()));
+                let x = self.stack.pop().expect("Stack underflow on Ln");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.ln(), |x: f64| x.ln()));
             }
             Op::Log10 => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Log10")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.log10()));
+                let x = self.stack.pop().expect("Stack underflow on Log10");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.log10(), |x: f64| x.log10()));
             }
             Op::Log2 => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Log2")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.log2()));
+                let x = self.stack.pop().expect("Stack underflow on Log2");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.log2(), |x: f64| x.log2()));
             }
             Op::Sign => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Sign")
-                    .as_float();
-                self.stack.push(StackValue::Float(python_sign(x)));
+                let x = self.stack.pop().expect("Stack underflow on Sign");
+                self.stack.push(match x {
+                    StackValue::I32(v) => StackValue::I32(v.signum()),
+                    StackValue::I64(v) => StackValue::I64(v.signum()),
+                    StackValue::U8(v) => StackValue::U8(u8::from(v != 0)),
+                    StackValue::U32(v) => StackValue::U32(u32::from(v != 0)),
+                    StackValue::U64(v) => StackValue::U64(u64::from(v != 0)),
+                    StackValue::F32(value) => StackValue::F32(python_sign_f32(value)),
+                    value => StackValue::Float(python_sign(value.as_float())),
+                });
             }
             Op::Fract => {
-                let x = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Fract")
-                    .as_float();
-                self.stack.push(StackValue::Float(x.fract()));
+                let x = self.stack.pop().expect("Stack underflow on Fract");
+                self.stack
+                    .push(float_unary!(x, |x: f32| x.fract(), |x: f64| x.fract()));
             }
             Op::Lerp => {
-                let t = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Lerp")
-                    .as_float();
-                let b = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Lerp")
-                    .as_float();
-                let a = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Lerp")
-                    .as_float();
-                self.stack.push(StackValue::Float(a + t * (b - a)));
+                let t = self.stack.pop().expect("Stack underflow on Lerp");
+                let b = self.stack.pop().expect("Stack underflow on Lerp");
+                let a = self.stack.pop().expect("Stack underflow on Lerp");
+                let (a, b) = specialize_constants(a, b);
+                let (a, t) = specialize_constants(a, t);
+                let (b, t) = specialize_constants(b, t);
+                self.stack.push(match (a, b, t) {
+                    (StackValue::F32(a), StackValue::F32(b), StackValue::F32(t)) => {
+                        StackValue::F32(a + t * (b - a))
+                    }
+                    (a, b, t) => {
+                        let (a, b, t) = (a.as_float(), b.as_float(), t.as_float());
+                        StackValue::Float(a + t * (b - a))
+                    }
+                });
             }
 
             // Min/Max/Clamp
             Op::Min => {
-                let b = self.stack.pop().expect("Stack underflow on Min").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Min").as_float();
-                self.stack.push(StackValue::Float(python_minimum(a, b)));
+                let b = self.stack.pop().expect("Stack underflow on Min");
+                let a = self.stack.pop().expect("Stack underflow on Min");
+                let (a, b) = specialize_constants(a, b);
+                self.stack.push(match (a, b) {
+                    (StackValue::I32(a), StackValue::I32(b)) => StackValue::I32(a.min(b)),
+                    (StackValue::I64(a), StackValue::I64(b)) => StackValue::I64(a.min(b)),
+                    (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.min(b)),
+                    (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.min(b)),
+                    (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.min(b)),
+                    (StackValue::F32(a), StackValue::F32(b)) => {
+                        StackValue::F32(python_minimum_f32(a, b))
+                    }
+                    (a, b) => StackValue::Float(python_minimum(a.as_float(), b.as_float())),
+                });
             }
             Op::Max => {
-                let b = self.stack.pop().expect("Stack underflow on Max").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Max").as_float();
-                self.stack.push(StackValue::Float(python_maximum(a, b)));
+                let b = self.stack.pop().expect("Stack underflow on Max");
+                let a = self.stack.pop().expect("Stack underflow on Max");
+                let (a, b) = specialize_constants(a, b);
+                self.stack.push(match (a, b) {
+                    (StackValue::I32(a), StackValue::I32(b)) => StackValue::I32(a.max(b)),
+                    (StackValue::I64(a), StackValue::I64(b)) => StackValue::I64(a.max(b)),
+                    (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.max(b)),
+                    (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.max(b)),
+                    (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.max(b)),
+                    (StackValue::F32(a), StackValue::F32(b)) => {
+                        StackValue::F32(python_maximum_f32(a, b))
+                    }
+                    (a, b) => StackValue::Float(python_maximum(a.as_float(), b.as_float())),
+                });
             }
             Op::Clamp => {
-                let max = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Clamp")
-                    .as_float();
-                let min = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Clamp")
-                    .as_float();
-                let value = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Clamp")
-                    .as_float();
-                self.stack
-                    .push(StackValue::Float(python_clip(value, min, max)));
+                let max = self.stack.pop().expect("Stack underflow on Clamp");
+                let min = self.stack.pop().expect("Stack underflow on Clamp");
+                let value = self.stack.pop().expect("Stack underflow on Clamp");
+                let (value, min) = specialize_constants(value, min);
+                let (value, max) = specialize_constants(value, max);
+                let (min, max) = specialize_constants(min, max);
+                self.stack.push(match (value, min, max) {
+                    (StackValue::I32(v), StackValue::I32(min), StackValue::I32(max)) => {
+                        StackValue::I32(v.max(min).min(max))
+                    }
+                    (StackValue::I64(v), StackValue::I64(min), StackValue::I64(max)) => {
+                        StackValue::I64(v.max(min).min(max))
+                    }
+                    (StackValue::U8(v), StackValue::U8(min), StackValue::U8(max)) => {
+                        StackValue::U8(v.max(min).min(max))
+                    }
+                    (StackValue::U32(v), StackValue::U32(min), StackValue::U32(max)) => {
+                        StackValue::U32(v.max(min).min(max))
+                    }
+                    (StackValue::U64(v), StackValue::U64(min), StackValue::U64(max)) => {
+                        StackValue::U64(v.max(min).min(max))
+                    }
+                    (StackValue::F32(value), StackValue::F32(min), StackValue::F32(max)) => {
+                        StackValue::F32(python_clip_f32(value, min, max))
+                    }
+                    (value, min, max) => StackValue::Float(python_clip(
+                        value.as_float(),
+                        min.as_float(),
+                        max.as_float(),
+                    )),
+                });
             }
 
             // Comparison (exact equality — consistent across all execution modes)
             Op::Eq => {
-                let b = self.stack.pop().expect("Stack underflow on Eq").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Eq").as_float();
-                self.stack.push(StackValue::Bool(a == b));
+                let b = self.stack.pop().expect("Stack underflow on Eq");
+                let a = self.stack.pop().expect("Stack underflow on Eq");
+                self.stack
+                    .push(StackValue::Bool(numeric_cmp(a, b) == Some(Ordering::Equal)));
             }
             Op::Ne => {
-                let b = self.stack.pop().expect("Stack underflow on Ne").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Ne").as_float();
-                self.stack.push(StackValue::Bool(a != b));
+                let b = self.stack.pop().expect("Stack underflow on Ne");
+                let a = self.stack.pop().expect("Stack underflow on Ne");
+                self.stack
+                    .push(StackValue::Bool(numeric_cmp(a, b) != Some(Ordering::Equal)));
             }
             Op::Lt => {
-                let b = self.stack.pop().expect("Stack underflow on Lt").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Lt").as_float();
-                self.stack.push(StackValue::Bool(a < b));
+                let b = self.stack.pop().expect("Stack underflow on Lt");
+                let a = self.stack.pop().expect("Stack underflow on Lt");
+                self.stack
+                    .push(StackValue::Bool(numeric_cmp(a, b) == Some(Ordering::Less)));
             }
             Op::Le => {
-                let b = self.stack.pop().expect("Stack underflow on Le").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Le").as_float();
-                self.stack.push(StackValue::Bool(a <= b));
+                let b = self.stack.pop().expect("Stack underflow on Le");
+                let a = self.stack.pop().expect("Stack underflow on Le");
+                self.stack.push(StackValue::Bool(matches!(
+                    numeric_cmp(a, b),
+                    Some(Ordering::Less | Ordering::Equal)
+                )));
             }
             Op::Gt => {
-                let b = self.stack.pop().expect("Stack underflow on Gt").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Gt").as_float();
-                self.stack.push(StackValue::Bool(a > b));
+                let b = self.stack.pop().expect("Stack underflow on Gt");
+                let a = self.stack.pop().expect("Stack underflow on Gt");
+                self.stack.push(StackValue::Bool(
+                    numeric_cmp(a, b) == Some(Ordering::Greater),
+                ));
             }
             Op::Ge => {
-                let b = self.stack.pop().expect("Stack underflow on Ge").as_float();
-                let a = self.stack.pop().expect("Stack underflow on Ge").as_float();
-                self.stack.push(StackValue::Bool(a >= b));
+                let b = self.stack.pop().expect("Stack underflow on Ge");
+                let a = self.stack.pop().expect("Stack underflow on Ge");
+                self.stack.push(StackValue::Bool(matches!(
+                    numeric_cmp(a, b),
+                    Some(Ordering::Greater | Ordering::Equal)
+                )));
             }
 
             // Logical
@@ -874,45 +1306,38 @@ impl VM {
 
             // Conditional
             Op::Where => {
-                let false_val = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Where")
-                    .as_float();
-                let true_val = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on Where")
-                    .as_float();
+                let false_val = self.stack.pop().expect("Stack underflow on Where");
+                let true_val = self.stack.pop().expect("Stack underflow on Where");
                 let condition = self
                     .stack
                     .pop()
                     .expect("Stack underflow on Where")
                     .as_bool();
-                self.stack.push(StackValue::Float(if condition {
-                    true_val
-                } else {
-                    false_val
-                }));
+                self.stack
+                    .push(if condition { true_val } else { false_val });
             }
 
             // Random
             Op::Random => {
-                self.stack.push(StackValue::Float(self.random()));
+                let random = self.random();
+                self.stack.push(if self.native_f32 {
+                    StackValue::F32(random as f32)
+                } else {
+                    StackValue::Float(random)
+                });
             }
             Op::RandomRange => {
-                let max = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on RandomRange")
-                    .as_float();
-                let min = self
-                    .stack
-                    .pop()
-                    .expect("Stack underflow on RandomRange")
-                    .as_float();
                 let rand = self.random();
-                self.stack.push(StackValue::Float(min + rand * (max - min)));
+                let max = self.stack.pop().expect("Stack underflow on RandomRange");
+                let min = self.stack.pop().expect("Stack underflow on RandomRange");
+                self.stack.push(if self.native_f32 {
+                    let (min, max, rand) =
+                        (min.as_float() as f32, max.as_float() as f32, rand as f32);
+                    StackValue::F32(min + rand * (max - min))
+                } else {
+                    let (min, max) = (min.as_float(), max.as_float());
+                    StackValue::Float(min + rand * (max - min))
+                });
             }
         }
         true
@@ -944,18 +1369,16 @@ impl VM {
                 Op::PushField(field_idx) => {
                     let field_id = &bytecode.field_map[*field_idx as usize];
                     let ptr = field_ptrs[*field_idx as usize];
-                    let value = unsafe { read_field_value(ptr, field_id.field_type) };
-                    self.stack.push(StackValue::Float(value));
+                    // SAFETY: forwarded from `execute`'s pointer/layout contract.
+                    let value = unsafe { read_field_stack_value(ptr, field_id.field_type) };
+                    self.stack.push(value);
                 }
                 Op::StoreField(field_idx) => {
                     let field_id = &bytecode.field_map[*field_idx as usize];
-                    let value = self
-                        .stack
-                        .pop()
-                        .expect("Stack underflow on StoreField")
-                        .as_float();
+                    let value = self.stack.pop().expect("Stack underflow on StoreField");
                     let ptr = field_ptrs[*field_idx as usize];
-                    unsafe { write_field_value(ptr, value, field_id.field_type) };
+                    // SAFETY: forwarded from `execute`'s exclusive pointer contract.
+                    unsafe { write_field_stack_value(ptr, value, field_id.field_type) };
                 }
                 _ => unreachable!(),
             }
@@ -990,8 +1413,9 @@ impl VM {
                 Op::PushField(field_idx) => {
                     let field_id = &bytecode.field_map[*field_idx as usize];
                     let ptr = field_ptrs[*field_idx as usize];
-                    let value = unsafe { read_field_value(ptr, field_id.field_type) };
-                    self.stack.push(StackValue::Float(value));
+                    // SAFETY: forwarded from `execute_and_reduce`'s pointer contract.
+                    let value = unsafe { read_field_stack_value(ptr, field_id.field_type) };
+                    self.stack.push(value);
                 }
                 // In reduction mode, we don't store - just pop the value
                 Op::StoreField(_) => {
@@ -1007,7 +1431,13 @@ impl VM {
         // Convert bool to float (true=1.0, false=0.0) for reduction operations
         let result = self.stack.pop().expect("Stack empty after reduction");
         match result {
-            StackValue::Float(f) => f,
+            StackValue::F32(f) => f64::from(f),
+            StackValue::Float(f) | StackValue::Constant(f) => f,
+            StackValue::I32(v) => f64::from(v),
+            StackValue::I64(v) => v as f64,
+            StackValue::U8(v) => f64::from(v),
+            StackValue::U32(v) => f64::from(v),
+            StackValue::U64(v) => v as f64,
             StackValue::Bool(b) => {
                 if b {
                     1.0
@@ -1040,6 +1470,8 @@ impl VM {
         component_stride: usize,
         count: usize,
     ) -> bool {
+        // SAFETY: this block performs only the pointer arithmetic and typed
+        // loads/stores covered by this function's batch-storage contract.
         unsafe {
             let ops = &bytecode.bytecode;
 
@@ -1184,6 +1616,8 @@ impl VM {
         component_stride: usize,
         count: usize,
     ) {
+        // SAFETY: every derived entity and field pointer stays within the
+        // caller-provided `count` by `component_stride` storage region.
         unsafe {
             // Try fast paths for common patterns (bypasses bytecode interpreter)
             if self.try_fast_path(bytecode, base_ptr, component_stride, count) {
@@ -1206,18 +1640,14 @@ impl VM {
                         Op::PushField(field_idx) => {
                             let field_id = &bytecode.field_map[*field_idx as usize];
                             let ptr = entity_base.add(field_id.offset);
-                            let value = read_field_value(ptr, field_id.field_type);
-                            self.stack.push(StackValue::Float(value));
+                            let value = read_field_stack_value(ptr, field_id.field_type);
+                            self.stack.push(value);
                         }
                         Op::StoreField(field_idx) => {
                             let field_id = &bytecode.field_map[*field_idx as usize];
-                            let value = self
-                                .stack
-                                .pop()
-                                .expect("Stack underflow on StoreField")
-                                .as_float();
+                            let value = self.stack.pop().expect("Stack underflow on StoreField");
                             let ptr = entity_base.add(field_id.offset);
-                            write_field_value(ptr, value, field_id.field_type);
+                            write_field_stack_value(ptr, value, field_id.field_type);
                         }
                         _ => unreachable!(),
                     }
@@ -1248,6 +1678,8 @@ impl VM {
         field_strides: &[usize],
         count: usize,
     ) {
+        // SAFETY: the caller provides one correctly typed base and stride for
+        // every bytecode field, each spanning all `count` entities.
         unsafe {
             debug_assert_eq!(field_bases.len(), bytecode.field_map.len());
             debug_assert_eq!(field_strides.len(), bytecode.field_map.len());
@@ -1265,19 +1697,15 @@ impl VM {
                             let idx = *field_idx as usize;
                             let field_id = &bytecode.field_map[idx];
                             let ptr = field_bases[idx].add(entity_idx * field_strides[idx]);
-                            let value = read_field_value(ptr, field_id.field_type);
-                            self.stack.push(StackValue::Float(value));
+                            let value = read_field_stack_value(ptr, field_id.field_type);
+                            self.stack.push(value);
                         }
                         Op::StoreField(field_idx) => {
                             let idx = *field_idx as usize;
                             let field_id = &bytecode.field_map[idx];
-                            let value = self
-                                .stack
-                                .pop()
-                                .expect("Stack underflow on StoreField")
-                                .as_float();
+                            let value = self.stack.pop().expect("Stack underflow on StoreField");
                             let ptr = field_bases[idx].add(entity_idx * field_strides[idx]);
-                            write_field_value(ptr, value, field_id.field_type);
+                            write_field_stack_value(ptr, value, field_id.field_type);
                         }
                         _ => unreachable!(),
                     }
@@ -2023,7 +2451,7 @@ mod tests {
         };
         let field_idx = compiler.add_field(field_id);
 
-        // Load bool, push to stack — true should become 1.0
+        // Load bool into its native boolean stack domain.
         compiler.emit(Op::PushField(field_idx));
 
         let bytecode = compiler.finalize();
@@ -2036,7 +2464,7 @@ mod tests {
             vm.execute(&bytecode, &[field_ptr], 0);
         }
 
-        assert_eq!(vm.stack[0].as_float(), 1.0);
+        assert!(vm.stack[0].as_bool());
 
         // Now test store: value >= 0.5 → true, < 0.5 → false
         let mut compiler = Compiler::new();
@@ -2554,5 +2982,123 @@ mod tests {
         assert!(python_clip(f64::NAN, 0.0, 1.0).is_nan());
         assert!(python_clip(0.5, f64::NAN, 1.0).is_nan());
         assert!(python_clip(0.5, 0.0, f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn integer_identity_does_not_round_through_f64() {
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::I64,
+        });
+        compiler.emit(Op::PushField(field));
+        compiler.emit(Op::StoreField(field));
+        let bytecode = compiler.finalize();
+
+        let mut value = (1_i64 << 53) + 1;
+        let pointers = [(&mut value as *mut i64).cast::<u8>()];
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &pointers, 0) };
+
+        assert_eq!(value, (1_i64 << 53) + 1);
+    }
+
+    #[test]
+    fn u8_arithmetic_uses_wrapping_native_lane_semantics() {
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::U8,
+        });
+        let ten = compiler.add_constant(10.0);
+        compiler.emit(Op::PushField(field));
+        compiler.emit(Op::PushConst(ten));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field));
+        let bytecode = compiler.finalize();
+
+        let mut value = 250_u8;
+        let pointers = [(&mut value as *mut u8).cast::<u8>()];
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &pointers, 0) };
+
+        assert_eq!(value, 4);
+    }
+
+    #[test]
+    fn i64_comparison_is_exact_above_f64_integer_precision() {
+        let mut compiler = Compiler::new();
+        let left = compiler.add_field(FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::I64,
+        });
+        let right = compiler.add_field(FieldId {
+            component_id: ComponentId::new(1),
+            offset: 0,
+            field_type: FieldType::I64,
+        });
+        compiler.emit(Op::PushField(left));
+        compiler.emit(Op::PushField(right));
+        compiler.emit(Op::Gt);
+        let bytecode = compiler.finalize();
+
+        let mut left_value = (1_i64 << 53) + 1;
+        let mut right_value = 1_i64 << 53;
+        let pointers = [
+            (&mut left_value as *mut i64).cast::<u8>(),
+            (&mut right_value as *mut i64).cast::<u8>(),
+        ];
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &pointers, 0) };
+
+        assert!(vm.stack[0].as_bool());
+    }
+
+    #[test]
+    fn integer_float_comparison_is_exact_at_domain_boundaries() {
+        assert_eq!(
+            numeric_cmp(
+                StackValue::U64(u64::MAX),
+                StackValue::Constant(2_f64.powi(64))
+            ),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            numeric_cmp(
+                StackValue::I64(i64::MAX),
+                StackValue::Constant(2_f64.powi(63))
+            ),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            numeric_cmp(
+                StackValue::I64(i64::MIN),
+                StackValue::Constant(-2_f64.powi(63))
+            ),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            numeric_cmp(StackValue::I64(-1), StackValue::Float(-1.5)),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            numeric_cmp(StackValue::U64(1), StackValue::Float(1.5)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            numeric_cmp(StackValue::I64(-1), StackValue::U64(0)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            numeric_cmp(StackValue::U64(u64::MAX), StackValue::I64(i64::MAX)),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            numeric_cmp(StackValue::U64(u64::MAX), StackValue::Float(f64::NAN)),
+            None
+        );
     }
 }
