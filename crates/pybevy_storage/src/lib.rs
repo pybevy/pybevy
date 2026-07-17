@@ -15,6 +15,7 @@
 
 pub mod app_store;
 pub mod asset_runtime;
+pub mod batch_columns;
 pub mod borrowed;
 pub mod field_storage;
 pub mod filtered_entity_access;

@@ -13,3 +13,4 @@ bevy = { workspace = true, features = ["bevy_asset"] }
 [dependencies.pyo3]
 workspace = true
 optional = true
+

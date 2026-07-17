@@ -29,13 +29,13 @@
 //! - **`BorrowedRef`**: Created from `Res[Assets[T]].get()`, wraps a `BorrowedRef<T>` (`*const T`)
 //! - **`BorrowedMut`**: Created from `ResMut[Assets[T]].get_mut()`, wraps a `BorrowedMut<T>` (`*mut T`)
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
+
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 use bevy::{
     asset::{Asset, AssetId, Assets, UntypedAssetId, UntypedHandle},
@@ -85,9 +85,9 @@ impl ViewCounters {
     /// window it closes is unreachable, but with a free-threaded interpreter
     /// two systems could otherwise both pass a check and both acquire.
     pub fn try_acquire_read(&self) -> bool {
-        self.reads.fetch_add(1, Ordering::AcqRel);
-        if self.writes.load(Ordering::Acquire) > 0 {
-            self.reads.fetch_sub(1, Ordering::AcqRel);
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        if self.writes.load(Ordering::SeqCst) > 0 {
+            self.reads.fetch_sub(1, Ordering::SeqCst);
             return false;
         }
         true
@@ -96,9 +96,9 @@ impl ViewCounters {
     /// Atomically claim the exclusive write view: increment `writes`, then verify
     /// no reader is live and we are the only writer, rolling back on conflict.
     pub fn try_acquire_write(&self) -> bool {
-        self.writes.fetch_add(1, Ordering::AcqRel);
-        if self.reads.load(Ordering::Acquire) > 0 || self.writes.load(Ordering::Acquire) > 1 {
-            self.writes.fetch_sub(1, Ordering::AcqRel);
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        if self.reads.load(Ordering::SeqCst) > 0 || self.writes.load(Ordering::SeqCst) > 1 {
+            self.writes.fetch_sub(1, Ordering::SeqCst);
             return false;
         }
         true
