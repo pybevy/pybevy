@@ -3,6 +3,8 @@
 //! This module provides an Abstract Syntax Tree (AST) for mathematical expressions
 //! that can be compiled to bytecode for efficient execution.
 
+use std::fmt;
+
 use bevy_ecs::component::ComponentId;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
@@ -138,6 +140,9 @@ pub enum RustExpr {
         field_type: FieldType,
     },
 
+    /// Interpreter-neutral dense input column.
+    Input { index: u16, field_type: FieldType },
+
     /// Constant value
     Const(f64),
 }
@@ -207,6 +212,16 @@ impl RustExpr {
                     field_type: bt,
                 },
             ) => ac == bc && ao == bo && at == bt,
+            (
+                Input {
+                    index: ai,
+                    field_type: at,
+                },
+                Input {
+                    index: bi,
+                    field_type: bt,
+                },
+            ) => ai == bi && at == bt,
             (Const(a), Const(b)) => a.to_bits() == b.to_bits(),
             _ => false,
         }
@@ -217,8 +232,27 @@ impl RustExpr {
     /// The Python object should have:
     /// - `op`: string describing the operation ("add", "mul", "field", "const", etc.)
     /// - `args`: list of arguments (child expressions or values)
-    #[allow(clippy::only_used_in_recursion)]
     pub fn from_py_object(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let mut resolver = |_: &Bound<'_, PyAny>| Ok(None);
+        Self::from_py_object_with(py, obj, &mut resolver)
+    }
+
+    /// Parse a Python expression while allowing an adapter to resolve its own
+    /// leaf objects into neutral fields before the generic expression protocol
+    /// is inspected.
+    #[allow(clippy::only_used_in_recursion)]
+    pub fn from_py_object_with<F>(
+        py: Python,
+        obj: &Bound<'_, PyAny>,
+        resolver: &mut F,
+    ) -> PyResult<Self>
+    where
+        F: FnMut(&Bound<'_, PyAny>) -> PyResult<Option<RustExpr>>,
+    {
+        if let Some(resolved) = resolver(obj)? {
+            return Ok(resolved);
+        }
+
         // Check if it's a simple numeric type (int or float)
         if let Ok(val) = obj.extract::<f64>() {
             return Ok(RustExpr::Const(val));
@@ -248,8 +282,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Add(Box::new(left), Box::new(right)))
             }
 
@@ -262,8 +296,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Sub(Box::new(left), Box::new(right)))
             }
 
@@ -276,8 +310,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Mul(Box::new(left), Box::new(right)))
             }
 
@@ -290,8 +324,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Div(Box::new(left), Box::new(right)))
             }
 
@@ -304,8 +338,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Pow(Box::new(left), Box::new(right)))
             }
 
@@ -318,7 +352,7 @@ impl RustExpr {
                     )));
                 }
 
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Neg(Box::new(expr)))
             }
 
@@ -330,7 +364,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Sin(Box::new(expr)))
             }
 
@@ -342,7 +376,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Cos(Box::new(expr)))
             }
 
@@ -354,7 +388,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Tan(Box::new(expr)))
             }
 
@@ -366,7 +400,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Asin(Box::new(expr)))
             }
 
@@ -378,7 +412,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Acos(Box::new(expr)))
             }
 
@@ -390,7 +424,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Atan(Box::new(expr)))
             }
 
@@ -402,7 +436,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Sqrt(Box::new(expr)))
             }
 
@@ -414,7 +448,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Abs(Box::new(expr)))
             }
 
@@ -426,7 +460,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Floor(Box::new(expr)))
             }
 
@@ -438,7 +472,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Ceil(Box::new(expr)))
             }
 
@@ -450,7 +484,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Round(Box::new(expr)))
             }
 
@@ -462,8 +496,8 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Min(Box::new(left), Box::new(right)))
             }
 
@@ -475,8 +509,8 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Max(Box::new(left), Box::new(right)))
             }
 
@@ -488,9 +522,9 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let value = Self::from_py_object(py, &args_list[0])?;
-                let min = Self::from_py_object(py, &args_list[1])?;
-                let max = Self::from_py_object(py, &args_list[2])?;
+                let value = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let min = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let max = Self::from_py_object_with(py, &args_list[2], resolver)?;
                 Ok(RustExpr::Clamp(
                     Box::new(value),
                     Box::new(min),
@@ -500,43 +534,43 @@ impl RustExpr {
 
             "eq" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Eq(Box::new(left), Box::new(right)))
             }
 
             "ne" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Ne(Box::new(left), Box::new(right)))
             }
 
             "lt" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Lt(Box::new(left), Box::new(right)))
             }
 
             "le" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Le(Box::new(left), Box::new(right)))
             }
 
             "gt" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Gt(Box::new(left), Box::new(right)))
             }
 
             "ge" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Ge(Box::new(left), Box::new(right)))
             }
 
@@ -548,9 +582,9 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let condition = Self::from_py_object(py, &args_list[0])?;
-                let true_value = Self::from_py_object(py, &args_list[1])?;
-                let false_value = Self::from_py_object(py, &args_list[2])?;
+                let condition = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let true_value = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let false_value = Self::from_py_object_with(py, &args_list[2], resolver)?;
                 Ok(RustExpr::Where(
                     Box::new(condition),
                     Box::new(true_value),
@@ -560,64 +594,64 @@ impl RustExpr {
 
             "and" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::And(Box::new(left), Box::new(right)))
             }
 
             "or" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Or(Box::new(left), Box::new(right)))
             }
 
             "not" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Not(Box::new(expr)))
             }
 
             "exp" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Exp(Box::new(expr)))
             }
 
             "ln" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Ln(Box::new(expr)))
             }
 
             "log10" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Log10(Box::new(expr)))
             }
 
             "log2" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Log2(Box::new(expr)))
             }
 
             "sign" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Sign(Box::new(expr)))
             }
 
             "fract" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object(py, &args_list[0])?;
+                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
                 Ok(RustExpr::Fract(Box::new(expr)))
             }
 
             "mod" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object(py, &args_list[0])?;
-                let right = Self::from_py_object(py, &args_list[1])?;
+                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::Mod(Box::new(left), Box::new(right)))
             }
 
@@ -629,9 +663,9 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let a = Self::from_py_object(py, &args_list[0])?;
-                let b = Self::from_py_object(py, &args_list[1])?;
-                let t = Self::from_py_object(py, &args_list[2])?;
+                let a = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let b = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let t = Self::from_py_object_with(py, &args_list[2], resolver)?;
                 Ok(RustExpr::Lerp(Box::new(a), Box::new(b), Box::new(t)))
             }
 
@@ -646,8 +680,8 @@ impl RustExpr {
                     )));
                 }
 
-                let min = Self::from_py_object(py, &args_list[0])?;
-                let max = Self::from_py_object(py, &args_list[1])?;
+                let min = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let max = Self::from_py_object_with(py, &args_list[1], resolver)?;
                 Ok(RustExpr::RandomRange(Box::new(min), Box::new(max)))
             }
 
@@ -673,6 +707,7 @@ impl RustExpr {
                     "F64" => FieldType::F64,
                     "I32" => FieldType::I32,
                     "I64" => FieldType::I64,
+                    "U8" => FieldType::U8,
                     "U32" => FieldType::U32,
                     "U64" => FieldType::U64,
                     "Bool" => FieldType::Bool,
@@ -949,11 +984,39 @@ impl RustExpr {
                 compiler.emit(Op::PushField(field_idx));
             }
 
+            RustExpr::Input { index, .. } => {
+                compiler.emit(Op::PushInput(*index));
+            }
+
             RustExpr::Const(value) => {
                 let const_idx = compiler.add_constant(*value);
                 compiler.emit(Op::PushConst(const_idx));
             }
         }
+    }
+
+    /// Compile a component-independent expression that produces one value per row.
+    pub fn compile_map(expr: &RustExpr) -> Result<CompiledMap, MapCompileError> {
+        let mut compiler = Compiler::new();
+        expr.compile(&mut compiler);
+        let compiled = compiler.finalize();
+        if !compiled.field_map.is_empty() {
+            return Err(MapCompileError::ComponentField);
+        }
+        let input_count = compiled
+            .bytecode
+            .iter()
+            .filter_map(|operation| match operation {
+                Op::PushInput(index) => Some(usize::from(*index) + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        Ok(CompiledMap {
+            bytecode: compiled.bytecode,
+            constants: compiled.constants,
+            input_count,
+        })
     }
 
     /// Compile an assignment expression: dest = expr
@@ -972,9 +1035,45 @@ impl RustExpr {
         // Optimize before finalizing
         compiler.optimize();
 
-        Ok(compiler.finalize())
+        let compiled = compiler.finalize();
+        if compiled
+            .bytecode
+            .iter()
+            .any(|operation| matches!(operation, Op::PushInput(_)))
+        {
+            return Err(PyTypeError::new_err(
+                "dense input cannot be used in an ECS assignment",
+            ));
+        }
+
+        Ok(compiled)
     }
 }
+
+/// Store-free bytecode over numbered dense input columns.
+#[derive(Debug, Clone)]
+pub struct CompiledMap {
+    pub bytecode: Vec<Op>,
+    pub constants: Vec<f64>,
+    pub input_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapCompileError {
+    ComponentField,
+}
+
+impl fmt::Display for MapCompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MapCompileError::ComponentField => {
+                write!(f, "dense expressions cannot reference ECS component fields")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MapCompileError {}
 
 #[cfg(test)]
 mod tests {
@@ -1041,6 +1140,70 @@ mod tests {
         let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
         // PushField(0), PushConst(10.0), Add, StoreField(0)
         assert_eq!(bytecode.bytecode.len(), 4);
+    }
+
+    #[test]
+    fn compile_map_preserves_expression_order_without_a_store() {
+        let left = RustExpr::Input {
+            index: 0,
+            field_type: FieldType::F32,
+        };
+        let right = RustExpr::Input {
+            index: 1,
+            field_type: FieldType::F32,
+        };
+        let expression = RustExpr::Add(
+            Box::new(left),
+            Box::new(RustExpr::Mul(Box::new(right), c(2.0))),
+        );
+
+        let compiled = RustExpr::compile_map(&expression).unwrap();
+
+        assert_eq!(compiled.bytecode.len(), 5);
+        assert!(matches!(compiled.bytecode[0], Op::PushInput(0)));
+        assert!(matches!(compiled.bytecode[1], Op::PushInput(1)));
+        assert!(matches!(compiled.bytecode[2], Op::PushConst(0)));
+        assert!(matches!(compiled.bytecode[3], Op::Mul));
+        assert!(matches!(compiled.bytecode[4], Op::Add));
+        assert_eq!(compiled.constants, vec![2.0]);
+        assert_eq!(compiled.input_count, 2);
+        assert!(
+            compiled
+                .bytecode
+                .iter()
+                .all(|operation| !matches!(operation, Op::StoreField(_)))
+        );
+    }
+
+    #[test]
+    fn compile_map_rejects_ecs_component_fields() {
+        let expression = RustExpr::Field {
+            component_id: ComponentId::new(3),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+
+        assert_eq!(
+            RustExpr::compile_map(&expression).unwrap_err(),
+            MapCompileError::ComponentField
+        );
+    }
+
+    #[test]
+    fn compile_assignment_rejects_dense_inputs() {
+        Python::initialize();
+        let destination = FieldId {
+            component_id: ComponentId::new(3),
+            offset: 0,
+            field_type: FieldType::F32,
+        };
+        let expression = RustExpr::Input {
+            index: 0,
+            field_type: FieldType::F32,
+        };
+
+        let error = RustExpr::compile_assignment(destination, &expression).unwrap_err();
+        assert!(error.to_string().contains("dense input"));
     }
 
     #[test]

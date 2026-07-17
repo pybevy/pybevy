@@ -22,6 +22,7 @@ use smallvec::SmallVec;
 use crate::{
     bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op, VM},
     expr::RustExpr,
+    tiled::{TiledScratch, execute_assignment_tiled, supported_program},
 };
 
 /// Maximum field pointers to stack-allocate before heap fallback.
@@ -34,7 +35,11 @@ type FieldPtrVec = SmallVec<[*mut u8; 8]>;
 /// using proper rayon semantics (no aliasing writes).
 #[derive(Clone, Copy)]
 struct SendPtr(*mut u8);
+// SAFETY: scheduling guarantees that a pointer is sent only with the live batch
+// it belongs to and that parallel tasks never alias mutable row ranges.
 unsafe impl Send for SendPtr {}
+// SAFETY: shared access to the address value is harmless; dereferencing remains
+// restricted to the scheduler-disjoint batch operations described above.
 unsafe impl Sync for SendPtr {}
 
 /// A contiguous range of rows in one ECS table.
@@ -657,6 +662,8 @@ pub unsafe fn build_entity_field_ptrs(
     for (i, field_id) in bytecode.field_map.iter().enumerate() {
         let base = component_bases[&field_id.component_id];
         let stride = field_strides[i];
+        // SAFETY: the caller guarantees that each component base spans the
+        // requested entity, and compiled field offsets match its layout.
         ptrs.push(unsafe { base.add(field_id.offset).add(entity_idx * stride) });
     }
     ptrs
@@ -673,9 +680,13 @@ pub unsafe fn execute_on_ptr(data_ptr: *mut u8, bytecode: &CompiledBytecode) {
     let mut vm = VM::new();
     let mut field_ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
     for field_id in &bytecode.field_map {
+        // SAFETY: the caller guarantees every compiled offset lies within the
+        // component allocation rooted at `data_ptr`.
         field_ptrs.push(unsafe { data_ptr.add(field_id.offset) });
     }
     let entity_seed = data_ptr as usize;
+    // SAFETY: the derived pointers cover the primitive layouts described by
+    // `bytecode`, and the caller grants write access for this execution.
     unsafe { vm.execute(bytecode, field_ptrs.as_slice(), entity_seed) };
 }
 
@@ -690,9 +701,13 @@ pub unsafe fn evaluate_on_ptr(data_ptr: *const u8, bytecode: &CompiledBytecode) 
     let mut vm = VM::new();
     let mut field_ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
     for field_id in &bytecode.field_map {
+        // SAFETY: the caller guarantees every compiled offset lies within the
+        // read-only component allocation rooted at `data_ptr`.
         field_ptrs.push(unsafe { data_ptr.add(field_id.offset) as *mut u8 });
     }
     let entity_seed = data_ptr as usize;
+    // SAFETY: the bytecode is reduction-only here; the derived pointers are
+    // valid for reads of their declared primitive layouts.
     unsafe { vm.execute_and_reduce(bytecode, field_ptrs.as_slice(), entity_seed) }
 }
 
@@ -770,12 +785,30 @@ pub unsafe fn execute_batch_assignment(
         })
         .collect();
 
+    let tiled_ok = tiled_assignment_supported(bytecode);
     let process_chunk = |chunk: &ChunkInfo| {
-        // PERF: consider PooledVM::acquire() to reuse stack allocation
-        let mut vm = VM::new();
         let bases: Vec<*mut u8> = chunk.field_bases.iter().map(|p| p.0).collect();
-        unsafe {
-            vm.execute_batch_multi(bytecode, &bases, &chunk.field_strides, chunk.count);
+        if tiled_ok {
+            let mut scratch = TiledScratch::new();
+            // SAFETY: same pointer-validity contract as execute_batch_multi below; the
+            // field bases/strides span the chunk's rows.
+            unsafe {
+                execute_assignment_tiled(
+                    bytecode,
+                    &bases,
+                    &chunk.field_strides,
+                    chunk.count,
+                    &mut scratch,
+                )
+            }
+            .expect("tiled_assignment_supported checked above");
+        } else {
+            let mut vm = VM::new();
+            // SAFETY: chunk bases and strides were derived from live table
+            // columns and span exactly `chunk.count` scheduler-disjoint rows.
+            unsafe {
+                vm.execute_batch_multi(bytecode, &bases, &chunk.field_strides, chunk.count);
+            }
         }
     };
 
@@ -790,6 +823,11 @@ pub unsafe fn execute_batch_assignment(
     for chunk in &chunks {
         process_chunk(chunk);
     }
+}
+
+#[inline]
+fn tiled_assignment_supported(bytecode: &CompiledBytecode) -> bool {
+    supported_program(bytecode)
 }
 
 /// Execute bytecode assignment on tick-filtered entities only.
@@ -868,6 +906,8 @@ pub unsafe fn execute_filtered_assignment(
         // PERF: consider PooledVM::acquire() to reuse stack allocation
         let mut vm = VM::new();
         let ptrs: Vec<*mut u8> = work.field_ptrs.iter().map(|p| p.0).collect();
+        // SAFETY: each work item owns pointers for one selected live entity;
+        // parallel construction keeps mutable entity rows disjoint.
         unsafe {
             vm.execute(bytecode, &ptrs, work.entity_seed);
         }
@@ -1118,6 +1158,9 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
             let idx = c.add_field(fid);
             c.emit(Op::PushField(idx));
         }
+        RustExpr::Input { index, .. } => {
+            c.emit(Op::PushInput(*index));
+        }
         RustExpr::Const(v) => {
             let idx = c.add_constant(*v);
             c.emit(Op::PushConst(idx));
@@ -1316,7 +1359,12 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
 ///
 /// Prefer this over `execute_batch_assignment` for single-component views —
 /// it avoids `gather_table_batches` overhead and parallelizes automatically.
-pub fn execute_query_assignment(
+/// # Safety
+///
+/// Every field in `bytecode` must have been validated against the registered
+/// layout of `component_id`, all reads must name components declared by
+/// `filter`, and the sole store must target `component_id` with mutable access.
+pub unsafe fn execute_query_assignment(
     world: &mut World,
     component_id: ComponentId,
     filter: &ViewFilter,
@@ -1341,6 +1389,9 @@ pub fn execute_query_assignment(
     qs.par_iter_mut(world).for_each(|mut em| {
         if let Some(mut untyped) = em.get_mut_by_id(component_id) {
             let ptr = untyped.as_mut().as_ptr();
+            // SAFETY: `untyped` keeps this component allocation mutably borrowed
+            // for the synchronous execution, and bytecode offsets were compiled
+            // for the same registered component layout.
             unsafe { execute_on_ptr(ptr, bytecode) };
         }
     });
@@ -1387,6 +1438,8 @@ impl ViewExecutionContext {
         dest_component_id: ComponentId,
     ) {
         let has_tick_masks = self.batches.iter().any(|b| b.tick_mask.is_some());
+        // SAFETY: the caller guarantees the cached batches still refer to the
+        // unchanged World layout for the duration of this synchronous call.
         unsafe {
             if has_tick_masks {
                 execute_filtered_assignment(
@@ -1414,7 +1467,10 @@ impl ViewExecutionContext {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::{
+        collections::{HashMap, HashSet},
+        mem::size_of,
+    };
 
     use bevy_ecs::{component::ComponentId, entity::Entity, prelude::Component};
 
@@ -1594,6 +1650,80 @@ mod tests {
         assert_eq!(data[0], 11.0);
         assert_eq!(data[1], 21.0);
         assert_eq!(data[2], 31.0);
+    }
+
+    #[test]
+    fn contiguous_iter_oracle_tiled_view_assignment() {
+        let mut world = World::new();
+        let cid = world.register_component::<DenseValue>();
+        let orig: Vec<f32> = (0..300).map(|i| i as f32 * 0.5 - 40.0).collect();
+        for &v in &orig {
+            world.spawn(DenseValue(v));
+        }
+
+        let filter = ViewFilter {
+            component_ids: HashSet::from([cid]),
+            with_ids: Vec::new(),
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let bytecode = make_add_bytecode(cid, 0, 2.5);
+        assert!(tiled_assignment_supported(&bytecode));
+        let batches = gather_table_batches(&mut world, &filter, Tick::new(0), Tick::new(1));
+        let strides = resolve_component_strides(&world, &filter.component_ids).unwrap();
+        // SAFETY: batches point into live, exclusively-held table columns.
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+
+        // Read through Bevy's dense contiguous query API.
+        let mut state = world.query::<&DenseValue>();
+        let mut got: Vec<f32> = Vec::new();
+        for slice in state
+            .contiguous_iter(&world)
+            .expect("dense query is contiguous")
+        {
+            got.extend(slice.iter().map(|dv| dv.0));
+        }
+        // Tiled path widens f32 -> f64, adds, narrows back; mirror that exactly.
+        let mut want: Vec<f32> = orig.iter().map(|v| (*v as f64 + 2.5) as f32).collect();
+        got.sort_by(f32::total_cmp);
+        want.sort_by(f32::total_cmp);
+        assert_eq!(
+            got, want,
+            "tiled View results must match via contiguous_iter"
+        );
+    }
+
+    #[test]
+    fn tiled_view_assignment_supports_homogeneous_integer_fields() {
+        let mut compiler = Compiler::new();
+        let component_id = ComponentId::new(0);
+        let field = compiler.add_field(FieldId {
+            component_id,
+            offset: 0,
+            field_type: FieldType::U64,
+        });
+        let one = compiler.add_constant(1.0);
+        compiler.emit(Op::PushField(field));
+        compiler.emit(Op::PushConst(one));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field));
+        let bytecode = compiler.finalize();
+        assert!(tiled_assignment_supported(&bytecode));
+
+        let mut values = [(1_u64 << 53) + 1, u64::MAX];
+        let batches = [TableBatch {
+            table_id: TableId::from_u32(0),
+            component_bases: HashMap::from([(component_id, values.as_mut_ptr().cast::<u8>())]),
+            start_row: 0,
+            entity_count: values.len(),
+            tick_mask: None,
+        }];
+        let strides = HashMap::from([(component_id, size_of::<u64>())]);
+        // SAFETY: the batch points to one live, exclusively held u64 run.
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+
+        assert_eq!(values, [(1_u64 << 53) + 2, 0]);
     }
 
     #[test]

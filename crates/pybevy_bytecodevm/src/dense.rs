@@ -3,7 +3,7 @@
 //! This is the array-side entry point into the VM. It reuses the existing
 //! stack machine ([`VM::dispatch_stack_op`]) and every `python_*` semantic
 //! helper unchanged, but replaces the ECS-coupled field boundary with plain
-//! typed slices: `Op::PushField(i)` reads dense input column `i`, and the
+//! typed slices: `Op::PushInput(i)` reads dense input column `i`, and the
 //! program's final stack value is written to the output for that row. No
 //! `FieldId`, `ComponentId`, component stride, raw World pointer, or forged ECS
 //! identity appears here.
@@ -14,9 +14,9 @@
 //! forbidden by construction, since inputs are shared slices and the output is
 //! a mutable slice.
 //!
-//! Profile 1 dense numeric execution is float32/float64. Integer arrays are
-//! stored, indexed, compared, and cast elsewhere; they never route through this
-//! `f64` stack.
+//! Dense numeric execution is float32/float64. Inputs retain their native
+//! floating-point stack domain, including f32 rounding after every operation.
+//! Integer arrays are stored, indexed, compared, and cast elsewhere.
 
 use std::fmt;
 
@@ -53,7 +53,7 @@ pub enum DenseError {
         expected: StackKind,
         found: StackKind,
     },
-    /// `PushField` referenced an input column that does not exist.
+    /// `PushInput` referenced an input column that does not exist.
     InputIndexOutOfRange { index: usize, num_inputs: usize },
     /// `PushConst` referenced a constant that does not exist.
     ConstIndexOutOfRange { index: usize, num_constants: usize },
@@ -130,8 +130,8 @@ impl fmt::Display for DenseError {
 
 impl std::error::Error for DenseError {}
 
-/// One input column feeding `PushField`. Slices convert to `f64` per element;
-/// `Scalar` reads the same value on every row (scalar broadcast).
+/// One input column feeding `PushInput`. Slices retain their native float
+/// domain; `Scalar` is cast once to an all-f32 program's execution domain.
 #[derive(Debug, Clone, Copy)]
 pub enum DenseInput<'a> {
     F32(&'a [f32]),
@@ -141,11 +141,12 @@ pub enum DenseInput<'a> {
 
 impl DenseInput<'_> {
     #[inline]
-    fn read(&self, row: usize) -> f64 {
+    fn read_stack_value(&self, row: usize, native_f32: bool) -> StackValue {
         match self {
-            DenseInput::F32(s) => f64::from(s[row]),
-            DenseInput::F64(s) => s[row],
-            DenseInput::Scalar(v) => *v,
+            DenseInput::F32(s) => StackValue::F32(s[row]),
+            DenseInput::F64(s) => StackValue::Float(s[row]),
+            DenseInput::Scalar(v) if native_f32 => StackValue::F32(*v as f32),
+            DenseInput::Scalar(v) => StackValue::Constant(*v),
         }
     }
 
@@ -155,6 +156,10 @@ impl DenseInput<'_> {
             DenseInput::F64(s) => Some(s.len()),
             DenseInput::Scalar(_) => None,
         }
+    }
+
+    fn is_f32_compatible(&self) -> bool {
+        matches!(self, DenseInput::F32(_) | DenseInput::Scalar(_))
     }
 }
 
@@ -217,7 +222,7 @@ impl DenseProgram {
 }
 
 /// Pop-order operand kinds and the result kind for an op (excluding
-/// `PushField`/`PushConst`, which are handled inline).
+/// `PushInput`/`PushConst`, which are handled inline).
 fn stack_effect(op: &Op) -> Result<(&'static [StackKind], StackKind), &'static str> {
     use StackKind::{Bool, Float};
     const F: StackKind = Float;
@@ -255,7 +260,8 @@ fn stack_effect(op: &Op) -> Result<(&'static [StackKind], StackKind), &'static s
         Op::StoreField(_) => return Err("StoreField"),
         Op::Random => return Err("Random"),
         Op::RandomRange => return Err("RandomRange"),
-        Op::PushField(_) | Op::PushConst(_) => unreachable!("handled before stack_effect"),
+        Op::PushInput(_) | Op::PushConst(_) => unreachable!("handled before stack_effect"),
+        Op::PushField(_) => return Err("PushField"),
     })
 }
 
@@ -263,7 +269,7 @@ fn validate(ops: &[Op], num_constants: usize, num_inputs: usize) -> Result<Stack
     let mut kinds: Vec<StackKind> = Vec::new();
     for (op_index, op) in ops.iter().enumerate() {
         match op {
-            Op::PushField(i) => {
+            Op::PushInput(i) => {
                 let idx = *i as usize;
                 if idx >= num_inputs {
                     return Err(DenseError::InputIndexOutOfRange {
@@ -313,7 +319,7 @@ const PARALLEL_THRESHOLD: usize = 8192;
 
 /// Execute a validated dense program element-wise into `output`.
 ///
-/// `inputs[i]` feeds `Op::PushField(i)`. The iteration domain is the output
+/// `inputs[i]` feeds `Op::PushInput(i)`. The iteration domain is the output
 /// length; every non-scalar input must be at least that long. Results are
 /// identical on the serial and (feature-gated) parallel paths.
 pub fn execute_dense(
@@ -333,8 +339,9 @@ pub fn execute_dense(
             required: program.num_inputs,
         });
     }
+    let program_inputs = &inputs[..program.num_inputs];
     let domain = output.len();
-    for (index, input) in inputs.iter().enumerate().take(program.num_inputs) {
+    for (index, input) in program_inputs.iter().enumerate() {
         if let Some(len) = input.len()
             && len < domain
         {
@@ -349,17 +356,36 @@ pub fn execute_dense(
         constants: program.constants.clone(),
         field_map: Vec::new(),
     };
+    let has_f32_input = program_inputs
+        .iter()
+        .any(|input| matches!(input, DenseInput::F32(_)));
+    let all_f32_compatible = program_inputs.iter().all(DenseInput::is_f32_compatible);
 
     match output {
-        DenseOutput::F64(out) => run(&program.ops, &compiled, inputs, out, |sv, dst| {
-            *dst = sv.as_float()
-        }),
-        DenseOutput::F32(out) => run(&program.ops, &compiled, inputs, out, |sv, dst| {
-            *dst = sv.as_float() as f32
-        }),
-        DenseOutput::Bool(out) => run(&program.ops, &compiled, inputs, out, |sv, dst| {
-            *dst = sv.as_bool()
-        }),
+        DenseOutput::F64(out) => run(
+            &program.ops,
+            &compiled,
+            program_inputs,
+            out,
+            |sv, dst| *dst = sv.as_float(),
+            has_f32_input && all_f32_compatible,
+        ),
+        DenseOutput::F32(out) => run(
+            &program.ops,
+            &compiled,
+            program_inputs,
+            out,
+            |sv, dst| *dst = sv.as_float() as f32,
+            all_f32_compatible,
+        ),
+        DenseOutput::Bool(out) => run(
+            &program.ops,
+            &compiled,
+            program_inputs,
+            out,
+            |sv, dst| *dst = sv.as_bool(),
+            has_f32_input && all_f32_compatible,
+        ),
     }
     Ok(())
 }
@@ -371,12 +397,14 @@ fn eval_row(
     compiled: &CompiledBytecode,
     inputs: &[DenseInput<'_>],
     row: usize,
+    native_f32: bool,
 ) -> StackValue {
     vm.stack.clear();
+    vm.set_native_f32(native_f32);
     for op in ops {
-        if let Op::PushField(i) = op {
+        if let Op::PushInput(i) = op {
             vm.stack
-                .push(StackValue::Float(inputs[*i as usize].read(row)));
+                .push(inputs[*i as usize].read_stack_value(row, native_f32));
         } else {
             vm.dispatch_stack_op(op, compiled);
         }
@@ -390,6 +418,7 @@ fn run<T: Send, W>(
     inputs: &[DenseInput<'_>],
     out: &mut [T],
     write: W,
+    native_f32: bool,
 ) where
     W: Fn(StackValue, &mut T) + Sync,
 {
@@ -403,7 +432,7 @@ fn run<T: Send, W>(
                 let mut vm = VM::new();
                 let base = ci * chunk;
                 for (local, dst) in slice.iter_mut().enumerate() {
-                    let sv = eval_row(&mut vm, ops, compiled, inputs, base + local);
+                    let sv = eval_row(&mut vm, ops, compiled, inputs, base + local, native_f32);
                     write(sv, dst);
                 }
             });
@@ -412,7 +441,7 @@ fn run<T: Send, W>(
 
     let mut vm = VM::new();
     for (row, dst) in out.iter_mut().enumerate() {
-        let sv = eval_row(&mut vm, ops, compiled, inputs, row);
+        let sv = eval_row(&mut vm, ops, compiled, inputs, row, native_f32);
         write(sv, dst);
     }
 }
@@ -432,7 +461,7 @@ mod tests {
         let a = [1.0, 2.0, 3.0];
         let b = [10.0, 20.0, 30.0];
         let program =
-            DenseProgram::new(vec![Op::PushField(0), Op::PushField(1), Op::Add], vec![], 2)
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::Add], vec![], 2)
                 .unwrap();
         let out = run_f64(&program, &[DenseInput::F64(&a), DenseInput::F64(&b)], 3);
         assert_eq!(out, vec![11.0, 22.0, 33.0]);
@@ -443,7 +472,7 @@ mod tests {
         let a: Vec<f64> = (0..8).map(|i| i as f64).collect();
         // sin(a * 0.5)
         let program = DenseProgram::new(
-            vec![Op::PushField(0), Op::PushConst(0), Op::Mul, Op::Sin],
+            vec![Op::PushInput(0), Op::PushConst(0), Op::Mul, Op::Sin],
             vec![0.5],
             1,
         )
@@ -459,7 +488,7 @@ mod tests {
         let a = [1.0, 2.0, 3.0, 4.0];
         // a * 10.0 via a scalar input column
         let program =
-            DenseProgram::new(vec![Op::PushField(0), Op::PushField(1), Op::Mul], vec![], 2)
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::Mul], vec![], 2)
                 .unwrap();
         let out = run_f64(
             &program,
@@ -474,7 +503,7 @@ mod tests {
         let a = [1.0, 5.0, 3.0];
         let b = [2.0, 2.0, 3.0];
         let program =
-            DenseProgram::new(vec![Op::PushField(0), Op::PushField(1), Op::Lt], vec![], 2).unwrap();
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::Lt], vec![], 2).unwrap();
         assert_eq!(program.result_kind(), StackKind::Bool);
         let mut out = vec![false; 3];
         execute_dense(
@@ -494,11 +523,11 @@ mod tests {
         // push order (bottom->top): condition=(a<b), true_value=a, false_value=b
         let program = DenseProgram::new(
             vec![
-                Op::PushField(0),
-                Op::PushField(1),
+                Op::PushInput(0),
+                Op::PushInput(1),
                 Op::Lt,
-                Op::PushField(0),
-                Op::PushField(1),
+                Op::PushInput(0),
+                Op::PushInput(1),
                 Op::Where,
             ],
             vec![],
@@ -515,7 +544,7 @@ mod tests {
         let a = [-3.0, 3.0, -3.0, 3.0];
         let b = [2.0, -2.0, -2.0, 2.0];
         let program =
-            DenseProgram::new(vec![Op::PushField(0), Op::PushField(1), Op::Mod], vec![], 2)
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::Mod], vec![], 2)
                 .unwrap();
         let out = run_f64(&program, &[DenseInput::F64(&a), DenseInput::F64(&b)], 4);
         assert_eq!(out, vec![1.0, -1.0, -1.0, 1.0]);
@@ -524,7 +553,7 @@ mod tests {
     #[test]
     fn round_is_ties_to_even() {
         let a = [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5];
-        let program = DenseProgram::new(vec![Op::PushField(0), Op::Round], vec![], 1).unwrap();
+        let program = DenseProgram::new(vec![Op::PushInput(0), Op::Round], vec![], 1).unwrap();
         let out = run_f64(&program, &[DenseInput::F64(&a)], 6);
         assert_eq!(out, vec![-2.0, -2.0, -0.0, 0.0, 2.0, 2.0]);
     }
@@ -534,7 +563,7 @@ mod tests {
         let a = [f64::NAN, 1.0];
         let b = [2.0, f64::NAN];
         let prog_min =
-            DenseProgram::new(vec![Op::PushField(0), Op::PushField(1), Op::Min], vec![], 2)
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::Min], vec![], 2)
                 .unwrap();
         let out = run_f64(&prog_min, &[DenseInput::F64(&a), DenseInput::F64(&b)], 2);
         assert!(out[0].is_nan() && out[1].is_nan());
@@ -544,7 +573,7 @@ mod tests {
     fn f32_output_narrows() {
         let a = [1.0f32, 2.0, 3.0];
         let program = DenseProgram::new(
-            vec![Op::PushField(0), Op::PushConst(0), Op::Mul],
+            vec![Op::PushInput(0), Op::PushConst(0), Op::Mul],
             vec![2.0],
             1,
         )
@@ -552,6 +581,81 @@ mod tests {
         let mut out = vec![0.0f32; 3];
         execute_dense(&program, &[DenseInput::F32(&a)], DenseOutput::F32(&mut out)).unwrap();
         assert_eq!(out, vec![2.0f32, 4.0, 6.0]);
+    }
+
+    #[test]
+    fn f32_dense_stack_rounds_after_each_operation() {
+        let input = [16_777_216.0_f32];
+        let program = DenseProgram::new(
+            vec![
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::PushConst(0),
+                Op::Add,
+            ],
+            vec![1.0],
+            1,
+        )
+        .unwrap();
+        let mut output = [0.0_f32];
+        execute_dense(
+            &program,
+            &[DenseInput::F32(&input)],
+            DenseOutput::F32(&mut output),
+        )
+        .unwrap();
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn f64_input_keeps_f64_intermediates_when_output_is_f32() {
+        let input = [16_777_216.0_f64];
+        let program = DenseProgram::new(
+            vec![
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::PushConst(0),
+                Op::Add,
+            ],
+            vec![1.0],
+            1,
+        )
+        .unwrap();
+        let mut output = [0.0_f32];
+        execute_dense(
+            &program,
+            &[DenseInput::F64(&input)],
+            DenseOutput::F32(&mut output),
+        )
+        .unwrap();
+        assert_eq!(output, [16_777_218.0_f32]);
+    }
+
+    #[test]
+    fn f32_input_keeps_f32_intermediates_when_output_is_f64() {
+        let input = [16_777_216.0_f32];
+        let program = DenseProgram::new(
+            vec![
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::PushConst(0),
+                Op::Add,
+            ],
+            vec![1.0],
+            1,
+        )
+        .unwrap();
+        let mut output = [0.0_f64];
+        execute_dense(
+            &program,
+            &[DenseInput::F32(&input)],
+            DenseOutput::F64(&mut output),
+        )
+        .unwrap();
+        assert_eq!(output, [16_777_216.0]);
     }
 
     #[test]
@@ -564,10 +668,10 @@ mod tests {
         // a * b + sin(a)
         let program = DenseProgram::new(
             vec![
-                Op::PushField(0),
-                Op::PushField(1),
+                Op::PushInput(0),
+                Op::PushInput(1),
                 Op::Mul,
-                Op::PushField(0),
+                Op::PushInput(0),
                 Op::Sin,
                 Op::Add,
             ],
@@ -591,7 +695,7 @@ mod tests {
     #[test]
     fn rejects_type_mismatch() {
         // And expects two bools, gets two floats.
-        let err = DenseProgram::new(vec![Op::PushField(0), Op::PushField(1), Op::And], vec![], 2)
+        let err = DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::And], vec![], 2)
             .unwrap_err();
         assert!(matches!(err, DenseError::TypeMismatch { .. }));
     }
@@ -599,7 +703,7 @@ mod tests {
     #[test]
     fn rejects_unbalanced_stack() {
         let err =
-            DenseProgram::new(vec![Op::PushField(0), Op::PushField(1)], vec![], 2).unwrap_err();
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1)], vec![], 2).unwrap_err();
         assert!(matches!(
             err,
             DenseError::UnbalancedStack { final_depth: 2 }
@@ -608,14 +712,14 @@ mod tests {
 
     #[test]
     fn rejects_input_index_out_of_range() {
-        let err = DenseProgram::new(vec![Op::PushField(3)], vec![], 1).unwrap_err();
+        let err = DenseProgram::new(vec![Op::PushInput(3)], vec![], 1).unwrap_err();
         assert!(matches!(err, DenseError::InputIndexOutOfRange { .. }));
     }
 
     #[test]
     fn rejects_store_and_random() {
         assert!(matches!(
-            DenseProgram::new(vec![Op::PushField(0), Op::StoreField(0)], vec![], 1),
+            DenseProgram::new(vec![Op::PushInput(0), Op::StoreField(0)], vec![], 1),
             Err(DenseError::UnsupportedOp {
                 op: "StoreField",
                 ..
@@ -628,9 +732,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ecs_component_field_opcode() {
+        assert!(matches!(
+            DenseProgram::new(vec![Op::PushField(0)], vec![], 1),
+            Err(DenseError::UnsupportedOp {
+                op: "PushField",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn rejects_output_kind_mismatch() {
         // Float result into a bool output.
-        let program = DenseProgram::new(vec![Op::PushField(0)], vec![], 1).unwrap();
+        let program = DenseProgram::new(vec![Op::PushInput(0)], vec![], 1).unwrap();
         let a = [1.0];
         let mut out = vec![false; 1];
         let err = execute_dense(
@@ -644,7 +759,7 @@ mod tests {
 
     #[test]
     fn rejects_short_input() {
-        let program = DenseProgram::new(vec![Op::PushField(0)], vec![], 1).unwrap();
+        let program = DenseProgram::new(vec![Op::PushInput(0)], vec![], 1).unwrap();
         let a = [1.0, 2.0];
         let mut out = vec![0.0f64; 4];
         let err = execute_dense(&program, &[DenseInput::F64(&a)], DenseOutput::F64(&mut out))
