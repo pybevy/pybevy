@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircularSegmentMeshBuilder,
 };
 
-#[pyclass(name = "CircularSegment", extends = PyMeshable, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "CircularSegment", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyCircularSegment(pub(crate) CircularSegment);
 
@@ -72,6 +72,11 @@ impl PyCircularSegment {
     #[getter]
     pub fn arc(&self) -> PyArc2d {
         self.0.arc.into()
+    }
+
+    #[setter]
+    pub fn set_arc(&mut self, value: PyArc2d) {
+        self.0.arc = value.into();
     }
 
     pub fn half_angle(&self) -> f32 {

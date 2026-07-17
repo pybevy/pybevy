@@ -159,8 +159,10 @@ MessageTypeVar = TypeVar("MessageTypeVar", bound=Message)
 class MessageWriter(Generic[M]):
     """System parameter for writing messages to the ECS.
 
-    Messages use double-buffering: messages written in frame N
-    can be read by MessageReader in frame N+1.
+    Messages written before a reader runs are visible in the same schedule pass.
+    Buffered messages are retained across two admitted message-update cycles.
+    A system cannot contain a writer and another reader or writer for the same
+    message channel; split that work into ordered systems or distinct message types.
 
     Example:
         def my_system(writer: MessageWriter[AppExit]) -> None:
@@ -169,15 +171,16 @@ class MessageWriter(Generic[M]):
     def write(self, message: M) -> MessageId:
         """Write a message to the message buffer."""
     def write_batch(self, messages: list[M]) -> list[MessageId]:
-        """Write multiple messages at once."""
+        """Validate and write a batch atomically, returning contiguous channel IDs."""
     def write_default(self) -> MessageId:
         """Write a default instance of the message type."""
 
 class MessageReader(Generic[M]):
     """System parameter for reading messages from the ECS.
 
-    Messages use double-buffering: messages written in frame N
-    can be read in frame N+1.
+    Each reader parameter owns an independent cursor. Inspection methods report
+    unread values without consuming them; iteration consumes values as yielded.
+    Dropping a partially consumed iterator leaves its remaining values unread.
 
     Example:
         def my_system(reader: MessageReader[AppExit]) -> None:
@@ -185,15 +188,44 @@ class MessageReader(Generic[M]):
                 print(f"Received: {msg}")
     """
     def clear(self) -> None:
-        """Clear all messages in the buffer."""
+        """Mark all currently retained messages read for this reader only."""
     def is_empty(self) -> bool:
         """Check if there are any messages."""
     def len(self) -> int:
-        """Get the number of messages in the buffer."""
+        """Get this reader's unread message count without consuming it."""
     def read(self) -> Iterator[M]:
         """Get an iterator over messages."""
     def __iter__(self) -> Iterator[M]:
         """Iterate over messages."""
+
+class MessageMutator(Generic[M]):
+    """Combined reader/writer for a custom Python message channel.
+
+    Each parameter owns an independent cursor. Messages yielded by ``read()``
+    are the retained Python objects, so field mutations are visible to later
+    readers. A write before ``read()`` is visible immediately; a write after it
+    remains unread by this mutator until its next run.
+
+    This initial surface supports Python-defined custom messages only. Native
+    Bevy message wrappers are snapshots and are rejected rather than pretending
+    that field mutations persist.
+    """
+    def write(self, message: M) -> MessageId:
+        """Write a message and return its channel-local ID."""
+    def write_batch(self, messages: list[M]) -> list[MessageId]:
+        """Validate and write a batch atomically."""
+    def write_default(self) -> MessageId:
+        """Write a default instance of the custom message type."""
+    def clear(self) -> None:
+        """Mark all currently retained messages read for this mutator only."""
+    def is_empty(self) -> bool:
+        """Return whether this mutator has no unread messages."""
+    def len(self) -> int:
+        """Return this mutator's unread count without consuming it."""
+    def read(self) -> Iterator[M]:
+        """Iterate over unread retained messages mutably."""
+    def __iter__(self) -> Iterator[M]:
+        """Iterate over unread retained messages mutably."""
 
 class MessageReaderIter(Iterator[Any]):
     """Iterator over messages from MessageReader.
@@ -307,10 +339,9 @@ class Discard:
     """Lifecycle event marker for component discard.
 
     Use with On[Discard, ComponentType] to observe when a component value is
-    discarded (a new value is inserted while the entity already has the
-    component). Fires before the value is replaced, so observers can still
-    read the original component data. Named after bevy's Discard event
-    (formerly Replace).
+    discarded because it is replaced, removed, or despawned. Fires before the
+    value is dropped, so observers can still read the original component data.
+    Named after bevy's Discard event (formerly Replace).
     """
 
 class Despawn:
@@ -346,9 +377,9 @@ class ConditionalSystem:
         app.add_systems(Update, run_if(my_system, should_run).not_())
         ```
     """
-    def __init__(self, system: Any, condition: Callable[..., bool]) -> None: ...
+    def __init__(self, system: Any, condition: Callable[..., object]) -> None: ...
 
-    def and_(self, condition: Callable[..., bool]) -> ConditionalSystem:
+    def and_(self, condition: Callable[..., object]) -> ConditionalSystem:
         """Combine with another condition using AND logic.
 
         Args:
@@ -358,7 +389,7 @@ class ConditionalSystem:
             New ConditionalSystem that runs only if both conditions are true
         """
 
-    def or_(self, condition: Callable[..., bool]) -> ConditionalSystem:
+    def or_(self, condition: Callable[..., object]) -> ConditionalSystem:
         """Combine with another condition using OR logic.
 
         Args:
@@ -375,7 +406,7 @@ class ConditionalSystem:
             New ConditionalSystem that runs when the condition is false
         """
 
-def run_if(system: SystemFn, condition: Callable[..., bool]) -> ConditionalSystem:
+def run_if(system: SystemFn, condition: Callable[..., object]) -> ConditionalSystem:
     """Create a conditional system that only runs when condition returns true.
 
     Args:
@@ -554,6 +585,10 @@ class ViewColumn:
     @property
     def stride(self) -> int:
         """Get stride in bytes."""
+
+    @property
+    def writable(self) -> bool:
+        """Whether writes are allowed by the originating View declaration."""
 
     @property
     def dtype(self) -> str:
@@ -915,10 +950,12 @@ class QuatExpr:
     def from_jax(self, x_or_obj: Any, y: Any = ..., z: Any = ..., w: Any = ...) -> None: ...  # type: ignore[misc]
 
 class TransformViewColumn(ViewColumn):
-    """View column accessor for Transform component.
+    """Static typing facade for Transform columns returned by View and Batch.
 
-    Provides field-level access for batch operations.
-    For method access (look_at, rotate, etc.), use Query iteration instead.
+    The runtime object remains the native ``ViewColumn``/View column proxy and
+    resolves these structured fields dynamically. This facade exists so type
+    checkers and IDEs retain the concrete field types without requiring an
+    extra runtime wrapper.
     """
 
     translation: Vec3Expr
@@ -1114,14 +1151,14 @@ class View(Generic[QueryParam_T, *Qs]):
 
     def iter_batches(self) -> Iterator[Batch]:
         """
-        Iterate over archetype-sized batches (PyArrow-style chunked iteration).
+        Iterate over contiguous filtered batches (PyArrow-style chunked iteration).
 
         This provides a PyArrow-style chunked API where data is processed in
-        archetype-sized batches. Each batch represents entities from a single
-        archetype with contiguous component storage.
+        maximal contiguous row runs from one ECS table. Changed/Added filters
+        may split a table so filtered-out rows are never exposed.
 
         Returns:
-            Iterator of Batch objects, one per archetype
+            Iterator of Batch objects, one per contiguous passing row run
 
         Example:
             ```python
@@ -1153,7 +1190,7 @@ class View(Generic[QueryParam_T, *Qs]):
             - Each batch is processed in native code via Numba
             - Better cache locality (archetypes have similar components)
             - Can parallelize across batches in the future
-            - Typical batch sizes: 100-10,000 entities per archetype
+            - Typical batch sizes: 100-10,000 entities per table
 
         Note:
             This API is designed to match PyArrow's batching pattern, familiar
@@ -1163,9 +1200,9 @@ class View(Generic[QueryParam_T, *Qs]):
 
 class Batch:
     """
-    A batch of entities from a single archetype (PyArrow-style chunk).
+    A contiguous batch of selected entities from one ECS table.
 
-    Represents a contiguous slice of component data from one archetype.
+    Represents a contiguous slice of selected component data from one table.
     Provides numpy array views for zero-copy access to ECS data.
 
     This is the ECS equivalent of PyArrow's RecordBatch - a chunk of
@@ -1244,6 +1281,8 @@ class EntityCommands:
     def id(self) -> Entity: ...
     def insert(self, *components: Component) -> EntityCommands: ...
     def remove(self, *components: type[Component]) -> EntityCommands: ...
+    def trigger(self, event: Event) -> EntityCommands:
+        """Trigger an event for this entity."""
     def despawn(self) -> None:
         """Despawn this entity.
 
@@ -1369,6 +1408,7 @@ class World:
     def register_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def init_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def insert_resource(self, resource: Resource) -> None: ...
+    def remove_resource(self, resource_type: type[ResourceType]) -> None: ...
     def component_id(self, component: type[Component]) -> ComponentId | None: ...
     def contains_resource(self, resource: type[ResourceType]) -> bool: ...
     def _get_last_error(self) -> tuple[str, str | None] | None:
@@ -1445,8 +1485,6 @@ class World:
             if transform is not None:
                 transform.translation.x += 10.0
         """
-    def get_assets_resource(self, asset_type: Any) -> Any:
-        """Internal method to get the Assets resource for a specific asset type."""
     def run_schedule(self, label: Stage | Any) -> None:
         """Run a specific schedule on this World.
 
@@ -1564,7 +1602,7 @@ class Mut(Generic[T]):
     def inner_type(self) -> type[T]: ...
     @property
     def value(self) -> T: ...
-    def get(self) -> T: ...
+    def unwrap(self) -> T: ...
 
 # Type variables for tuple unwrapping
 T1 = TypeVar("T1", bound="Component | Entity")
@@ -1577,13 +1615,12 @@ T5 = TypeVar("T5", bound="Component | Entity")
 QueryParam_T = TypeVar("QueryParam_T")
 
 class QueryIter:
-    """Iterator for query results.
+    """Runtime Query object injected into systems.
 
-    Internal implementation class returned by Query.__iter__(). Users typically
-    don't need to reference this type directly.
+    Iterating this object returns a fresh QueryIterator. Users typically don't
+    need to reference either implementation type directly.
     """
-    def __iter__(self) -> QueryIter: ...
-    def __next__(self) -> Any: ...
+    def __iter__(self) -> QueryIterator: ...
     def single(self) -> Any:
         """Get exactly one entity from the query.
 
@@ -1595,6 +1632,11 @@ class QueryIter:
         """Get a specific entity's components if it matches the query."""
     def iter_many(self, entities: Iterable[Entity]) -> list[Any]:
         """Iterate over specific entities that match the query."""
+
+class QueryIterator(Iterator[Any]):
+    """Iterator for one fresh Query traversal."""
+    def __iter__(self) -> QueryIterator: ...
+    def __next__(self) -> Any: ...
 
 class SingleQuery:
     """Wrapper for Single queries (exactly one matching entity).
@@ -2073,7 +2115,7 @@ class State(Generic[StateType], Resource):
     Created automatically by app.init_state() or app.insert_state().
 
     Example:
-        def check_state(current: Res[State]) -> None:
+        def check_state(current: Res[State[GameState]]) -> None:
             if current.get() == GameState.MENU:
                 print("In menu")
     """
@@ -2093,7 +2135,7 @@ class NextState(Generic[StateType], Resource):
     by the StateTransition schedule (or manually via Commands).
 
     Example:
-        def start_game(next_state: ResMut[NextState]) -> None:
+        def start_game(next_state: ResMut[NextState[GameState]]) -> None:
             next_state.set(GameState.IN_GAME)
     """
     def set(self, state: StateType) -> None:
@@ -2118,7 +2160,7 @@ def state(cls: type[StateType]) -> type[StateType]:
             IN_GAME = auto()
     """
 
-def in_state(state: StateType) -> Callable[[Res[State]], bool]:
+def in_state(state: StateType) -> Callable[[Res[State[StateType]]], bool]:
     """Create a run condition that checks if current state matches target state.
 
     Args:
@@ -2168,7 +2210,7 @@ def OnExit(state: StateType) -> OnExitSchedule:
         app.add_systems(OnExit(GameState.MENU), cleanup_menu)
     """
 
-def OnTransition(from_state: StateType, to_state: StateType) -> OnTransitionSchedule:
+def OnTransition(exited: StateType, entered: StateType) -> OnTransitionSchedule:
     """Create a schedule label for systems that run on a specific state transition.
 
     Example:
@@ -2215,13 +2257,15 @@ class Children(Component):
     """
     def entities(self) -> list[Entity]:
         """Get all child entities as a list."""
+    def len(self) -> int: ...
     def __len__(self) -> int: ...
     def is_empty(self) -> bool: ...
     def __iter__(self) -> Iterator[Entity]: ...
     def __getitem__(self, index: int) -> Entity: ...
 
 class MessageId:
-    """A unique identifier for a sent message.
+    """A channel-qualified identifier for a sent message.
 
-    Returned by MessageWriter.write() and can be used to track message delivery.
+    Custom-message sequence numbers are contiguous within one channel and may
+    repeat across message types; the opaque ID also retains the channel identity.
     """

@@ -164,9 +164,9 @@ class Transform(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        translation: np.ndarray | None = None,
-        rotation: np.ndarray | None = None,
-        scale: np.ndarray | None = None,
+        translation: np.typing.ArrayLike | None = None,
+        rotation: np.typing.ArrayLike | None = None,
+        scale: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
     def rotate_x(self, angle: float) -> None: ...
     def rotate_y(self, angle: float) -> None: ...

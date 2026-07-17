@@ -1,8 +1,41 @@
-use std::ptr;
+use std::{
+    hash::{Hash, Hasher},
+    ptr,
+};
 
 use bevy::mesh::{MeshVertexAttribute, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
+use pybevy_wgpu::vertex_format::PyVertexFormat;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
+
+#[derive(Default)]
+struct AttributeIdHasher(u64);
+
+impl Hasher for AttributeIdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut value = [0_u8; 8];
+        let count = bytes.len().min(value.len());
+        value[..count].copy_from_slice(&bytes[..count]);
+        self.0 = u64::from_ne_bytes(value);
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+}
+
+pub(crate) fn attribute_id(attribute: &MeshVertexAttribute) -> u64 {
+    // Bevy keeps MeshVertexAttributeId's u64 payload private. Its derived Hash
+    // implementation writes that payload directly, so this recovers the public
+    // attribute ID without depending on Debug formatting.
+    let mut hasher = AttributeIdHasher::default();
+    attribute.id.hash(&mut hasher);
+    hasher.finish()
+}
 
 #[pyclass(name = "MeshVertexAttribute", frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
@@ -22,13 +55,13 @@ impl PyMeshVertexAttribute {
     }
 
     #[getter]
-    pub fn id(&self) -> String {
-        format!("{:?}", self.0.id)
+    pub fn id(&self) -> u64 {
+        attribute_id(&self.0)
     }
 
     #[getter]
-    pub fn format(&self) -> String {
-        format!("{:?}", self.0.format)
+    pub fn format(&self) -> PyVertexFormat {
+        self.0.format.into()
     }
 
     fn __repr__(&self) -> String {

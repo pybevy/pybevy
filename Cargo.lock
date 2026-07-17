@@ -4799,7 +4799,7 @@ version = "0.2.1"
 dependencies = [
  "bevy",
  "image",
- "numpy",
+ "pybevy_array",
  "pybevy_color",
  "pybevy_core",
  "pybevy_macros",
@@ -4869,11 +4869,14 @@ version = "0.2.1"
 dependencies = [
  "bevy",
  "numpy",
+ "pybevy_array",
  "pybevy_core",
  "pybevy_image",
  "pybevy_macros",
  "pybevy_math",
  "pybevy_render",
+ "pybevy_transform",
+ "pybevy_wgpu",
  "pyo3",
 ]
 

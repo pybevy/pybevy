@@ -132,7 +132,7 @@ impl BatchableField for Quat {
     const ELEMENT_COUNT: usize = 4;
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 4;
-    const VIEW_FIELD_TYPE: FieldType = FieldType::F32;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::Vec4;
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -300,6 +300,11 @@ mod tests {
     fn vec4_metadata() {
         assert_eq!(Vec4::ELEMENT_COUNT, 4);
         assert_eq!(Vec4::NUMPY_COLUMNS, 4);
+    }
+
+    #[test]
+    fn quat_view_metadata_preserves_all_four_lanes() {
+        assert_eq!(Quat::VIEW_FIELD_TYPE, FieldType::Vec4);
     }
 
     #[test]

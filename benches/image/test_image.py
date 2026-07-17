@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
+import pybevy.array as xp
 from pybevy.app import App, MinimalPlugins, Startup, Update
 from pybevy.assets import AssetPlugin, Assets
 from pybevy.ecs import Commands, Query, ResMut
@@ -101,8 +103,9 @@ def test_image_data_mutable_context(benchmark: BenchmarkFixture) -> None:
     benchmark(app.update)
 
 
+@pytest.mark.timeout(60)
 def test_image_data_readonly_with_computation(benchmark: BenchmarkFixture) -> None:
-    """Benchmark readonly access with actual NumPy computation."""
+    """Benchmark readonly access with a full-image array reduction."""
     def update_system(assets: Assets[Image], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -112,7 +115,7 @@ def test_image_data_readonly_with_computation(benchmark: BenchmarkFixture) -> No
 
         with image.data() as pixels:
             # Simulate some computation
-            mean = np.mean(pixels)
+            mean = pixels.astype(xp.float32).mean()
             assert mean >= 0
 
     app = create_app().add_systems(Update, update_system)
@@ -121,8 +124,9 @@ def test_image_data_readonly_with_computation(benchmark: BenchmarkFixture) -> No
     benchmark(app.update)
 
 
+@pytest.mark.timeout(60)
 def test_image_data_mutable_with_modification(benchmark: BenchmarkFixture) -> None:
-    """Benchmark mutable access with actual pixel modification."""
+    """Benchmark mutable access with a full-image pixel modification."""
     def update_system(assets: ResMut[Assets[Image]], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -132,7 +136,7 @@ def test_image_data_mutable_with_modification(benchmark: BenchmarkFixture) -> No
 
         with image.data_mut() as pixels:
             # Simulate some modification (increase brightness)
-            pixels[:] = np.clip(pixels + 10, 0, 255).astype(np.uint8)
+            pixels[:] = xp.clip(pixels.astype(xp.float32) + 10.0, 0.0, 255.0).astype(xp.uint8)
 
     app = create_app().add_systems(Update, update_system)
 

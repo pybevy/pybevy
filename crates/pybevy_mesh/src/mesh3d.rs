@@ -25,8 +25,8 @@ impl From<&Mesh3d> for PyMesh3d {
 #[pymethods]
 impl PyMesh3d {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(handle)?;
+    pub fn new(mesh: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let handle = extract_handle_from_any(mesh)?;
 
         // Validate asset type
         if let Some(name) = handle.asset_type_name()

@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -6,14 +6,11 @@ use bevy::{
     render::render_resource::{Extent3d, TextureFormat, TextureUsages},
 };
 use image::{ImageFormat as RustImageFormat, codecs::jpeg::JpegEncoder};
-use numpy::{
-    PyArray1, PyArrayMethods, PyReadonlyArray1,
-    ndarray::{ArrayView1, ArrayViewMut1},
-};
+use pybevy_array::{BorrowProbe, PyArray, borrowed_mut_u8, borrowed_read_only_u8, owned_u8};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
-    AssetStorage, PyAsset,
-    numpy_view_guard::{PyNumpyViewGuard, release_array_guard},
+    AssetStorage, PyAsset, StorageError, borrowed_array_anchor::AssetBorrowAnchorMut,
+    content_hash::CanonicalContentHasher, numpy_view_guard::PyNumpyViewGuard,
 };
 use pybevy_macros::pyasset;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
@@ -23,10 +20,30 @@ use pybevy_wgpu::{
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
-    types::IntoPyDict,
 };
 
 use crate::{image_format::PyImageFormat, loader_settings::PyImageSampler};
+
+fn image_payload_hash(image: &Image) -> String {
+    let descriptor = &image.texture_descriptor;
+    let mut hasher = CanonicalContentHasher::new("pybevy.image.payload", 1);
+    hasher.write("extent.width", &descriptor.size.width.to_le_bytes());
+    hasher.write("extent.height", &descriptor.size.height.to_le_bytes());
+    hasher.write(
+        "extent.depth_or_array_layers",
+        &descriptor.size.depth_or_array_layers.to_le_bytes(),
+    );
+    hasher.write(
+        "dimension",
+        format!("{:?}", descriptor.dimension).as_bytes(),
+    );
+    hasher.write("format", format!("{:?}", descriptor.format).as_bytes());
+    match &image.data {
+        Some(data) => hasher.write("data.some", data),
+        None => hasher.write("data.none", &[]),
+    }
+    hasher.finish()
+}
 
 // Convert PyImageFormat to image crate's ImageFormat
 fn py_format_to_rust(format: PyImageFormat) -> RustImageFormat {
@@ -130,80 +147,73 @@ impl PyRenderAssetUsages {
 
 #[pyclass(name = "ImageDataContext")]
 pub struct ImageDataContext {
-    array: Py<PyArray1<u8>>,
+    array: Py<PyArray>,
+    anchor: Arc<AssetBorrowAnchorMut>,
 }
 
 #[pymethods]
 impl ImageDataContext {
-    fn __enter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        Ok(slf.array.clone_ref(py).into_any())
+    fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
+        self.array.clone_ref(py)
     }
 
+    #[pyo3(signature = (_exc_type=None, _exc_value=None, _traceback=None))]
     fn __exit__(
         &self,
-        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        // The with-block is the safety scope: release the view count now; the
-        // guard's Drop is only the backstop for arrays used without a context.
-        release_array_guard(self.array.bind(py));
-        Ok(false) // Don't suppress exceptions
+    ) -> bool {
+        self.anchor.close();
+        false
     }
 }
 
 #[pyclass(name = "ImageDataContextMut")]
 pub struct ImageDataContextMut {
-    array: Py<PyArray1<u8>>,
+    array: Py<PyArray>,
+    anchor: Arc<AssetBorrowAnchorMut>,
 }
 
 #[pymethods]
 impl ImageDataContextMut {
-    fn __enter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        Ok(slf.array.clone_ref(py).into_any())
+    fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
+        self.array.clone_ref(py)
     }
 
+    #[pyo3(signature = (_exc_type=None, _exc_value=None, _traceback=None))]
     fn __exit__(
         &self,
-        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        let array = self.array.bind(py);
-        // A reference kept past the with-block must not stay writable
-        let kwargs = [("write", false)].into_py_dict(py)?;
-        let _ = array.call_method("setflags", (), Some(&kwargs));
-        release_array_guard(array);
-        Ok(false)
+    ) -> bool {
+        self.anchor.close();
+        false
     }
 }
 
 #[pyclass(name = "ImagePixelContextMut")]
 pub struct ImagePixelContextMut {
-    array: Py<PyArray1<u8>>,
+    array: Py<PyArray>,
+    anchor: Arc<AssetBorrowAnchorMut>,
 }
 
 #[pymethods]
 impl ImagePixelContextMut {
-    fn __enter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        Ok(slf.array.clone_ref(py).into_any())
+    fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
+        self.array.clone_ref(py)
     }
 
+    #[pyo3(signature = (_exc_type=None, _exc_value=None, _traceback=None))]
     fn __exit__(
         &self,
-        py: Python<'_>,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<bool> {
-        let array = self.array.bind(py);
-        // A reference kept past the with-block must not stay writable
-        let kwargs = [("write", false)].into_py_dict(py)?;
-        let _ = array.call_method("setflags", (), Some(&kwargs));
-        release_array_guard(array);
-        Ok(false)
+    ) -> bool {
+        self.anchor.close();
+        false
     }
 }
 
@@ -233,7 +243,7 @@ impl PyImage {
     pub fn new(
         size: PyExtent3d,
         dimension: Option<PyTextureDimension>,
-        data: Option<Vec<u8>>,
+        data: Option<&Bound<'_, PyAny>>,
         format: Option<PyTextureFormat>,
         asset_usage: Option<PyRenderAssetUsages>,
     ) -> PyResult<PyClassInitializer<Self>> {
@@ -242,6 +252,25 @@ impl PyImage {
         let pixel_count = (extent.width * extent.height * extent.depth_or_array_layers) as usize;
         let data = match data {
             Some(data) => {
+                if data
+                    .getattr("dtype")
+                    .and_then(|dtype| dtype.str())
+                    .is_ok_and(|dtype| dtype.to_string() == "bool")
+                {
+                    let error = pyo3::exceptions::PyTypeError::new_err(
+                        "'numpy.bool' object cannot be interpreted as an integer",
+                    );
+                    let _ = error
+                        .value(data.py())
+                        .call_method1("add_note", ("while processing 'data'",));
+                    return Err(error);
+                }
+                let data = data.extract::<Vec<u8>>().map_err(|error| {
+                    let _ = error
+                        .value(data.py())
+                        .call_method1("add_note", ("while processing 'data'",));
+                    error
+                })?;
                 if let Ok(pixel_size) = format.pixel_size() {
                     let expected = pixel_count * pixel_size;
                     if data.len() != expected {
@@ -379,78 +408,88 @@ impl PyImage {
         Ok(self.as_ref()?.data.as_ref().map(|d| d.len()).unwrap_or(0))
     }
 
+    /// Return the versioned SHA-256 digest of the image descriptor and pixel payload.
+    pub fn _content_hash(&self) -> PyResult<String> {
+        Ok(image_payload_hash(self.as_ref()?))
+    }
+
     pub fn data(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<ImageDataContext>> {
         let this = slf.borrow();
-        let guard = PyNumpyViewGuard::acquire(
+        if !this.storage.view_counters().try_acquire_read() {
+            return Err(StorageError::AssetViewsLive.into());
+        }
+        let guard = PyNumpyViewGuard::from_acquired(
             this.storage.view_counters().reads.clone(),
             slf.clone().unbind().into_any(),
         );
-        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
+        let validity = this.storage.validity_flag();
         let image = this.storage.as_ref()?;
         let image_data = image
             .data
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
-
-        let view = ArrayView1::from(&image_data[..]);
-        // SAFETY: borrows image.data behind as_ref(); the guard base object
-        // blocks image mutation (and thus reallocation) while the array lives
-        let np_array = unsafe { PyArray1::borrow_from_array(&view, guard_obj) }
-            .readwrite()
-            .make_nonwriteable();
-
-        let context = ImageDataContext {
-            array: Bound::clone(&np_array).unbind(),
-        };
-
-        Py::new(py, context)
+        let ptr = image_data.as_ptr();
+        let len = image_data.len();
+        let anchor = Arc::new(AssetBorrowAnchorMut::new(validity, guard));
+        let probe: Arc<dyn BorrowProbe> = anchor.clone();
+        // SAFETY: the pointer and length come from a live contiguous `Vec<u8>`.
+        // The anchor holds the read lease, owner, and validity fence for every
+        // operation; the returned storage is read-only.
+        let bounded = unsafe { borrowed_read_only_u8(ptr, len, &[len], probe)? };
+        let array = Py::new(py, bounded)?;
+        Py::new(py, ImageDataContext { array, anchor })
     }
 
     pub fn data_mut(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<ImageDataContextMut>> {
         let mut this = slf.borrow_mut();
-        // as_mut() below requires zero live views, so acquire the write count
-        // only after it succeeds.
-        let counters = this.storage.view_counters().clone();
-        let image = this.storage.as_mut()?;
+        let writes = this.storage.view_counters().writes.clone();
+        let validity = this.storage.validity_flag();
+        if !this.storage.view_counters().try_acquire_write() {
+            return Err(StorageError::AssetViewsLive.into());
+        }
+        let guard = PyNumpyViewGuard::from_acquired(writes, slf.clone().unbind().into_any());
+        let anchor = Arc::new(AssetBorrowAnchorMut::new(validity, guard));
+        let image = this.storage.as_mut_write_leased()?;
         let image_data = image
             .data
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
-
-        let view = ArrayViewMut1::from(&mut image_data[..]);
-        let guard =
-            PyNumpyViewGuard::acquire(counters.writes.clone(), slf.clone().unbind().into_any());
-        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
-        // SAFETY: writable alias of image.data behind as_mut(); the guard base
-        // object blocks any other image access while this view lives
-        let np_array = unsafe { PyArray1::borrow_from_array(&view, guard_obj) };
-
-        let context = ImageDataContextMut {
-            array: np_array.clone().unbind(),
-        };
-
-        Py::new(py, context)
+        let ptr = image_data.as_mut_ptr();
+        let len = image_data.len();
+        let probe: Arc<dyn BorrowProbe> = anchor.clone();
+        // SAFETY: the pointer is the unique alias obtained under the exclusive
+        // write lease. The anchor gates every read/write and blocks mutation or
+        // reallocation until it closes.
+        let bounded = unsafe { borrowed_mut_u8(ptr, len, &[len], probe)? };
+        let array = Py::new(py, bounded)?;
+        Py::new(py, ImageDataContextMut { array, anchor })
     }
 
-    pub fn data_copy(&self, py: Python<'_>) -> PyResult<Py<PyArray1<u8>>> {
+    pub fn data_copy(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
         image_with!(self, |image: &Image| {
             let image_data = image
                 .data
                 .as_ref()
                 .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
-
-            let array = PyArray1::from_slice(py, image_data);
-            Ok(array.unbind())
+            let len = image_data.len();
+            Py::new(py, owned_u8(image_data.to_vec(), &[len])?)
         })
     }
 
-    pub fn set_data(&mut self, data: PyReadonlyArray1<u8>) -> PyResult<()> {
+    pub fn set_data(&mut self, data: Vec<u8>) -> PyResult<()> {
         image_with_mut!(self, |image: &mut Image| {
-            let data_slice = data.as_slice().map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to access array data: {}", e))
-            })?;
-
-            image.data = Some(data_slice.to_vec());
+            let image_data = image
+                .data
+                .as_mut()
+                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+            if data.len() != image_data.len() {
+                return Err(PyValueError::new_err(format!(
+                    "pixel data length {} does not match image data length {}",
+                    data.len(),
+                    image_data.len()
+                )));
+            }
+            image_data.copy_from_slice(&data);
             Ok(())
         })
     }
@@ -476,28 +515,26 @@ impl PyImage {
         coords: PyUVec3,
     ) -> PyResult<Py<ImagePixelContextMut>> {
         let mut this = slf.borrow_mut();
-        // as_mut() below requires zero live views, so acquire the write count
-        // only after it succeeds.
-        let counters = this.storage.view_counters().clone();
-        let image = this.storage.as_mut()?;
+        let writes = this.storage.view_counters().writes.clone();
+        let validity = this.storage.validity_flag();
+        if !this.storage.view_counters().try_acquire_write() {
+            return Err(StorageError::AssetViewsLive.into());
+        }
+        let guard = PyNumpyViewGuard::from_acquired(writes, slf.clone().unbind().into_any());
+        let anchor = Arc::new(AssetBorrowAnchorMut::new(validity, guard));
+        let image = this.storage.as_mut_write_leased()?;
         let bevy_coords = coords.into();
         let pixel_bytes = image
             .pixel_bytes_mut(bevy_coords)
             .map_err(|_| PyRuntimeError::new_err("Invalid pixel coordinates or no image data"))?;
-
-        let view = ArrayViewMut1::from(&mut pixel_bytes[..]);
-        let guard =
-            PyNumpyViewGuard::acquire(counters.writes.clone(), slf.clone().unbind().into_any());
-        let guard_obj = Py::new(py, guard)?.into_bound(py).into_any();
-        // SAFETY: writable alias of one pixel's bytes behind as_mut(); the guard
-        // base object blocks any other image access while this view lives
-        let np_array = unsafe { PyArray1::borrow_from_array(&view, guard_obj) };
-
-        let context = ImagePixelContextMut {
-            array: np_array.clone().unbind(),
-        };
-
-        Py::new(py, context)
+        let ptr = pixel_bytes.as_mut_ptr();
+        let len = pixel_bytes.len();
+        let probe: Arc<dyn BorrowProbe> = anchor.clone();
+        // SAFETY: this uniquely borrowed pixel subslice remains part of the live
+        // image buffer while the exclusive lease is held by the anchor.
+        let bounded = unsafe { borrowed_mut_u8(ptr, len, &[len], probe)? };
+        let array = Py::new(py, bounded)?;
+        Py::new(py, ImagePixelContextMut { array, anchor })
     }
 
     #[getter]

@@ -68,8 +68,8 @@ def test_mesh_system_get_ref_vertices(benchmark: BenchmarkFixture) -> None:
             mesh = assets.get(mesh_3d.handle)
             assert mesh is not None
 
-            with mesh.attribute(Mesh.ATTRIBUTE_POSITION) as v:
-                assert v.shape == (vertex_count, 3)
+            v = mesh.attribute(Mesh.ATTRIBUTE_POSITION)
+            assert v.shape == (vertex_count, 3)
 
     app = create_app().add_systems(Update, update_system)
 
