@@ -26,6 +26,7 @@ pub enum FieldType {
     F64,
     I32,
     I64,
+    U8,
     U32,
     U64,
     Bool,
@@ -42,6 +43,7 @@ impl FieldType {
             FieldType::F64 => 8,
             FieldType::I32 => 4,
             FieldType::I64 => 8,
+            FieldType::U8 => 1,
             FieldType::U32 => 4,
             FieldType::U64 => 8,
             FieldType::Bool => 1,
@@ -58,6 +60,7 @@ impl FieldType {
             FieldType::F64 => "f8",
             FieldType::I32 => "i4",
             FieldType::I64 => "i8",
+            FieldType::U8 => "u1",
             FieldType::U32 => "u4",
             FieldType::U64 => "u8",
             FieldType::Bool => "u1",
@@ -173,6 +176,7 @@ mod tests {
         assert_eq!(FieldType::F64.size_bytes(), 8);
         assert_eq!(FieldType::I32.size_bytes(), 4);
         assert_eq!(FieldType::I64.size_bytes(), 8);
+        assert_eq!(FieldType::U8.size_bytes(), 1);
         assert_eq!(FieldType::U32.size_bytes(), 4);
         assert_eq!(FieldType::U64.size_bytes(), 8);
         assert_eq!(FieldType::Bool.size_bytes(), 1);

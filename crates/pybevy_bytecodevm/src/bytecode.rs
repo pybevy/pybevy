@@ -463,6 +463,7 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
         FieldType::F64 => unsafe { (ptr as *const f64).read_unaligned() },
         FieldType::I32 => unsafe { (ptr as *const i32).read_unaligned() as f64 },
         FieldType::I64 => unsafe { (ptr as *const i64).read_unaligned() as f64 },
+        FieldType::U8 => unsafe { ptr.read_unaligned() as f64 },
         FieldType::U32 => unsafe { (ptr as *const u32).read_unaligned() as f64 },
         FieldType::U64 => unsafe { (ptr as *const u64).read_unaligned() as f64 },
         // Read the byte as `u8`, not `bool`: a `bool` whose byte is not 0/1 is an
@@ -498,6 +499,9 @@ pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType)
         },
         FieldType::I64 => unsafe {
             (ptr as *mut i64).write_unaligned(value as i64);
+        },
+        FieldType::U8 => unsafe {
+            ptr.write_unaligned(value as u8);
         },
         FieldType::U32 => unsafe {
             (ptr as *mut u32).write_unaligned(value as u32);

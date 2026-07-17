@@ -245,6 +245,7 @@ impl PyViewColumn {
                 | FieldType::F64
                 | FieldType::I32
                 | FieldType::I64
+                | FieldType::U8
                 | FieldType::U32
                 | FieldType::U64
                 | FieldType::Bool),
