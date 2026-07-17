@@ -1,10 +1,12 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemEnum, Token, Type,
+    Ident, Item, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
+
+use crate::enum_spec::{EnumSpec, VariantShape};
 
 /// Arguments for pyenum attribute macro
 struct BevyEnumArgs {
@@ -12,6 +14,8 @@ struct BevyEnumArgs {
     bevy_type: Type,
     /// If true, map empty tuple variants Variant() to Bevy's unit variants Variant
     empty_tuple: bool,
+    /// Only declare the Bevy enum relationship; the adapter supplies its own implementation.
+    manual: bool,
 }
 
 impl Parse for BevyEnumArgs {
@@ -19,15 +23,20 @@ impl Parse for BevyEnumArgs {
         let bevy_type: Type = input.parse()?;
 
         let mut empty_tuple = false;
+        let mut manual = false;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let option: Ident = input.parse()?;
             match option.to_string().as_str() {
                 "empty_tuple" => empty_tuple = true,
+                "manual" => manual = true,
                 other => {
                     return Err(syn::Error::new_spanned(
                         option,
-                        format!("unknown option '{}', expected: empty_tuple", other),
+                        format!(
+                            "unknown option '{}', expected: empty_tuple or manual",
+                            other
+                        ),
                     ));
                 }
             }
@@ -36,6 +45,7 @@ impl Parse for BevyEnumArgs {
         Ok(BevyEnumArgs {
             bevy_type,
             empty_tuple,
+            manual,
         })
     }
 }
@@ -63,34 +73,6 @@ impl Parse for BevyEnumArgs {
 /// }
 /// ```
 ///
-/// The macro assumes variant names match between the Py and Bevy types.
-/// Extract the pyo3 name from variant attributes if present
-/// Looks for #[pyo3(name = "...")] attribute
-fn get_pyo3_variant_name(variant: &syn::Variant) -> Option<String> {
-    for attr in &variant.attrs {
-        if attr.path().is_ident("pyo3")
-            && let syn::Meta::List(meta_list) = &attr.meta
-        {
-            let tokens = meta_list.tokens.to_string();
-            // Parse "name = \"SomeName\""
-            if let Some(start) = tokens.find("name") {
-                let rest = &tokens[start..];
-                if let Some(eq_pos) = rest.find('=') {
-                    let after_eq = rest[eq_pos + 1..].trim();
-                    // Extract string between quotes
-                    if let Some(first_quote) = after_eq.find('"') {
-                        let after_first = &after_eq[first_quote + 1..];
-                        if let Some(second_quote) = after_first.find('"') {
-                            return Some(after_first[..second_quote].to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Variant kind for pyenum processing
 enum VariantKind {
     /// Unit variant: `Variant`
@@ -102,14 +84,47 @@ enum VariantKind {
         /// Field is `Option<T>`; repr prints the inner value or `None`
         is_option: bool,
     },
+    /// Single named Python field mapped to a single-field Bevy tuple variant.
+    DataStruct {
+        field: Ident,
+        /// Field is `Option<T>`; repr prints the inner value or `None`
+        is_option: bool,
+    },
 }
 
 pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as BevyEnumArgs);
-    let input = parse_macro_input!(item as ItemEnum);
+    let input = parse_macro_input!(item as Item);
+
+    // Complex enum adapters may need handwritten conversions, nested Python variant
+    // registration, or storage that the generated implementation cannot express. In
+    // that case the attribute remains as machine-readable contract metadata for
+    // pybevy_lint and deliberately leaves the item unchanged.
+    if args.manual {
+        return quote!(#input).into();
+    }
+
+    let Item::Enum(input) = input else {
+        return syn::Error::new_spanned(
+            input,
+            "pyenum requires an enum; use `manual` for a handwritten enum adapter",
+        )
+        .to_compile_error()
+        .into();
+    };
 
     let py_type = &input.ident;
     let bevy_type = &args.bevy_type;
+    let spec = match EnumSpec::parse(&input, bevy_type) {
+        Ok(spec) => spec,
+        Err(error) => return error.to_compile_error().into(),
+    };
+    debug_assert_eq!(spec.wrapper_name, py_type);
+    let spec_inner_type = spec.inner_type;
+    debug_assert_eq!(
+        quote!(#bevy_type).to_string(),
+        quote!(#spec_inner_type).to_string()
+    );
 
     // Collect variant info (name, optional pyo3 rename, and variant kind)
     struct VariantInfo<'a> {
@@ -119,40 +134,38 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let mut variants: Vec<VariantInfo> = Vec::new();
-    for variant in &input.variants {
-        let repr_name = get_pyo3_variant_name(variant).unwrap_or_else(|| variant.ident.to_string());
-
-        let kind = match &variant.fields {
-            syn::Fields::Unit => Some(VariantKind::Unit),
-            syn::Fields::Unnamed(f) if f.unnamed.is_empty() && args.empty_tuple => {
-                Some(VariantKind::EmptyTuple)
-            }
-            syn::Fields::Unnamed(f) if f.unnamed.len() == 1 => {
-                // Auto-detect single-field tuple variants like Other(u16)
-                let is_option = matches!(
-                    &f.unnamed.first().expect("checked len").ty,
-                    Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Option")
-                );
-                Some(VariantKind::DataTuple { is_option })
-            }
+    for variant in &spec.variants {
+        let kind = match &variant.shape {
+            VariantShape::Unit => Some(VariantKind::Unit),
+            VariantShape::EmptyTuple if args.empty_tuple => Some(VariantKind::EmptyTuple),
+            VariantShape::Tuple(fields) if fields.len() == 1 => Some(VariantKind::DataTuple {
+                is_option: is_option(fields[0].rust_type),
+            }),
+            VariantShape::Struct(fields) if fields.len() == 1 => Some(VariantKind::DataStruct {
+                field: fields[0]
+                    .rust_name
+                    .expect("struct fields have Rust names")
+                    .clone(),
+                is_option: is_option(fields[0].rust_type),
+            }),
             _ => None,
         };
 
         match kind {
             Some(k) => {
                 variants.push(VariantInfo {
-                    ident: &variant.ident,
-                    repr_name,
+                    ident: variant.rust_name,
+                    repr_name: variant.python_name.clone(),
                     kind: k,
                 });
             }
             None => {
                 let msg = if args.empty_tuple {
-                    "pyenum only supports unit, empty tuple, and single-field tuple variants"
+                    "pyenum only supports unit, empty tuple, and single-field tuple or struct variants"
                 } else {
-                    "pyenum only supports unit and single-field tuple variants (use empty_tuple for Variant() style)"
+                    "pyenum only supports unit and single-field tuple or struct variants (use empty_tuple for Variant() style)"
                 };
-                return syn::Error::new_spanned(variant, msg)
+                return syn::Error::new_spanned(variant.rust_name, msg)
                     .to_compile_error()
                     .into();
             }
@@ -162,20 +175,26 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Generate From<BevyType> for PyType
     let from_bevy_arms = variants.iter().map(|v| {
         let name = v.ident;
-        match v.kind {
+        match &v.kind {
             VariantKind::Unit => quote! { #bevy_type::#name => #py_type::#name },
             VariantKind::EmptyTuple => quote! { #bevy_type::#name => #py_type::#name() },
             VariantKind::DataTuple { .. } => quote! { #bevy_type::#name(v) => #py_type::#name(v) },
+            VariantKind::DataStruct { field, .. } => {
+                quote! { #bevy_type::#name(v) => #py_type::#name { #field: v } }
+            }
         }
     });
 
     // Generate From<PyType> for BevyType
     let from_py_arms = variants.iter().map(|v| {
         let name = v.ident;
-        match v.kind {
+        match &v.kind {
             VariantKind::Unit => quote! { #py_type::#name => #bevy_type::#name },
             VariantKind::EmptyTuple => quote! { #py_type::#name() => #bevy_type::#name },
             VariantKind::DataTuple { .. } => quote! { #py_type::#name(v) => #bevy_type::#name(v) },
+            VariantKind::DataStruct { field, .. } => {
+                quote! { #py_type::#name { #field: v } => #bevy_type::#name(v) }
+            }
         }
     });
 
@@ -186,7 +205,7 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Generate __repr__ match arms (using pyo3 name if present)
     let repr_arms = variants.iter().map(|v| {
         let ident = v.ident;
-        match v.kind {
+        match &v.kind {
             VariantKind::Unit => {
                 let repr_str = format!("{}.{}", type_repr_name, v.repr_name);
                 quote! { #py_type::#ident => #repr_str.to_string() }
@@ -197,13 +216,26 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             VariantKind::DataTuple { is_option } => {
                 let repr_prefix = format!("{}.{}(", type_repr_name, v.repr_name);
-                if is_option {
+                if *is_option {
                     quote! {
                         #py_type::#ident(Some(v)) => format!("{}{})", #repr_prefix, v),
                         #py_type::#ident(None) => format!("{}None)", #repr_prefix)
                     }
                 } else {
                     quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, v) }
+                }
+            }
+            VariantKind::DataStruct { field, is_option } => {
+                let repr_prefix = format!("{}.{}(", type_repr_name, v.repr_name);
+                if *is_option {
+                    quote! {
+                        #py_type::#ident { #field: Some(v) } => format!("{}{})", #repr_prefix, v),
+                        #py_type::#ident { #field: None } => format!("{}None)", #repr_prefix)
+                    }
+                } else {
+                    quote! {
+                        #py_type::#ident { #field: v } => format!("{}{})", #repr_prefix, v)
+                    }
                 }
             }
         }
@@ -217,6 +249,10 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
                 match self {
                     #(#repr_arms,)*
                 }
+            }
+
+            pub fn __copy__(&self) -> Self {
+                self.clone()
             }
         }
     };
@@ -244,4 +280,12 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+fn is_option(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Path(path)
+            if path.path.segments.last().is_some_and(|segment| segment.ident == "Option")
+    )
 }
