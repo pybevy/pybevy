@@ -200,6 +200,17 @@ pub struct PyGamepadSettings {
 
 #[pymethods]
 impl PyGamepadSettings {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        (
+            Self {
+                storage: ComponentStorage::owned(GamepadSettings::default()),
+            },
+            PyComponent,
+        )
+            .into()
+    }
+
     pub fn button_settings_for(&self, button: PyGamepadButton) -> PyResult<PyButtonSettings> {
         let settings = self.as_ref()?;
         Ok(settings.get_button_settings(button.into()).into())

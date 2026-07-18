@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(GamepadButton, empty_tuple)]
-#[pyclass(name = "GamepadButton", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "GamepadButton",
+    module = "pybevy.input",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGamepadButton {
     South(),
@@ -25,7 +31,7 @@ pub enum PyGamepadButton {
     DPadDown(),
     DPadLeft(),
     DPadRight(),
-    Other(u8),
+    Other { value: u8 },
 }
 
 #[pymethods]
@@ -56,7 +62,7 @@ impl PyGamepadButton {
             PyGamepadButton::DPadDown() => "DPadDown".to_string(),
             PyGamepadButton::DPadLeft() => "DPadLeft".to_string(),
             PyGamepadButton::DPadRight() => "DPadRight".to_string(),
-            PyGamepadButton::Other(v) => format!("Other({})", v),
+            PyGamepadButton::Other { value } => format!("Other({})", value),
         }
     }
 }

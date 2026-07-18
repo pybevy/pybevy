@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(MouseButton, empty_tuple)]
-#[pyclass(name = "MouseButton", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "MouseButton",
+    module = "pybevy.input",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyMouseButton {
     Left(),
@@ -11,5 +17,5 @@ pub enum PyMouseButton {
     Middle(),
     Back(),
     Forward(),
-    Other(u16),
+    Other { value: u16 },
 }

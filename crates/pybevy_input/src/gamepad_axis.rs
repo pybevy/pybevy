@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(GamepadAxis, empty_tuple)]
-#[pyclass(name = "GamepadAxis", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "GamepadAxis",
+    module = "pybevy.input",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGamepadAxis {
     LeftStickX(),
@@ -12,7 +18,7 @@ pub enum PyGamepadAxis {
     RightStickX(),
     RightStickY(),
     RightZ(),
-    Other(u8),
+    Other { value: u8 },
 }
 
 #[pymethods]
@@ -30,7 +36,7 @@ impl PyGamepadAxis {
             PyGamepadAxis::RightStickX() => "RightStickX".to_string(),
             PyGamepadAxis::RightStickY() => "RightStickY".to_string(),
             PyGamepadAxis::RightZ() => "RightZ".to_string(),
-            PyGamepadAxis::Other(v) => format!("Other({})", v),
+            PyGamepadAxis::Other { value } => format!("Other({})", value),
         }
     }
 }
