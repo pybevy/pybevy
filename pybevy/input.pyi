@@ -1,6 +1,7 @@
 """Input handling for PyBevy - keyboard, mouse, and gamepad input."""
 
 from enum import Enum
+from typing import ClassVar, Literal
 
 from pybevy.app import App, Plugin
 from pybevy.ecs import Component, Entity, Message, Resource
@@ -48,6 +49,27 @@ class KeyCode(Enum):
     Backspace = ...
     Tab = ...
     Delete = ...
+    Insert = ...
+    Home = ...
+    End = ...
+    PageUp = ...
+    PageDown = ...
+    CapsLock = ...
+    ScrollLock = ...
+    NumLock = ...
+
+    # Punctuation keys
+    Backquote = ...
+    Backslash = ...
+    BracketLeft = ...
+    BracketRight = ...
+    Comma = ...
+    Equal = ...
+    Minus = ...
+    Period = ...
+    Quote = ...
+    Semicolon = ...
+    Slash = ...
 
     # Arrow keys
     ArrowUp = ...
@@ -245,16 +267,30 @@ class ButtonInput(Resource):
 class MouseButton:
     """Mouse button codes for input detection."""
 
-    @staticmethod
-    def Left() -> MouseButton: ...
-    @staticmethod
-    def Right() -> MouseButton: ...
-    @staticmethod
-    def Middle() -> MouseButton: ...
-    @staticmethod
-    def Back() -> MouseButton: ...
-    @staticmethod
-    def Forward() -> MouseButton: ...
+    class Left(MouseButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Right(MouseButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Middle(MouseButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Back(MouseButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Forward(MouseButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Other(MouseButton):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
 
 class MouseInput(Resource):
     """
@@ -563,44 +599,67 @@ class GamepadButton:
     - West: X button on Xbox, Square on PlayStation
     """
 
-    @staticmethod
-    def South() -> GamepadButton: ...
-    @staticmethod
-    def East() -> GamepadButton: ...
-    @staticmethod
-    def North() -> GamepadButton: ...
-    @staticmethod
-    def West() -> GamepadButton: ...
-    @staticmethod
-    def C() -> GamepadButton: ...
-    @staticmethod
-    def Z() -> GamepadButton: ...
-    @staticmethod
-    def LeftTrigger() -> GamepadButton: ...
-    @staticmethod
-    def LeftTrigger2() -> GamepadButton: ...
-    @staticmethod
-    def RightTrigger() -> GamepadButton: ...
-    @staticmethod
-    def RightTrigger2() -> GamepadButton: ...
-    @staticmethod
-    def Select() -> GamepadButton: ...
-    @staticmethod
-    def Start() -> GamepadButton: ...
-    @staticmethod
-    def Mode() -> GamepadButton: ...
-    @staticmethod
-    def LeftThumb() -> GamepadButton: ...
-    @staticmethod
-    def RightThumb() -> GamepadButton: ...
-    @staticmethod
-    def DPadUp() -> GamepadButton: ...
-    @staticmethod
-    def DPadDown() -> GamepadButton: ...
-    @staticmethod
-    def DPadLeft() -> GamepadButton: ...
-    @staticmethod
-    def DPadRight() -> GamepadButton: ...
+    class South(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class East(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class North(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class West(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class C(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class Z(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class LeftTrigger(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class LeftTrigger2(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class RightTrigger(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class RightTrigger2(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class Select(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class Start(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class Mode(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class LeftThumb(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class RightThumb(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class DPadUp(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class DPadDown(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class DPadLeft(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class DPadRight(GamepadButton):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class Other(GamepadButton):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
     @staticmethod
     def all() -> list[GamepadButton]:
         """Returns a list of all standard gamepad buttons (excluding Other)."""
@@ -608,18 +667,28 @@ class GamepadButton:
 class GamepadAxis:
     """Gamepad axis codes for analog input detection."""
 
-    @staticmethod
-    def LeftStickX() -> GamepadAxis: ...
-    @staticmethod
-    def LeftStickY() -> GamepadAxis: ...
-    @staticmethod
-    def LeftZ() -> GamepadAxis: ...
-    @staticmethod
-    def RightStickX() -> GamepadAxis: ...
-    @staticmethod
-    def RightStickY() -> GamepadAxis: ...
-    @staticmethod
-    def RightZ() -> GamepadAxis: ...
+    class LeftStickX(GamepadAxis):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class LeftStickY(GamepadAxis):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class LeftZ(GamepadAxis):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class RightStickX(GamepadAxis):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class RightStickY(GamepadAxis):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class RightZ(GamepadAxis):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+    class Other(GamepadAxis):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
     @staticmethod
     def all() -> list[GamepadAxis]:
         """Returns a list of all standard gamepad axes (excluding Other)."""
@@ -631,25 +700,15 @@ class GamepadInput:
     Used for generic gamepad input operations where the input type may vary.
     """
 
-    @staticmethod
-    def from_axis(axis: GamepadAxis) -> GamepadInput:
-        """Create a GamepadInput from a GamepadAxis."""
+    class Axis(GamepadInput):
+        __match_args__: ClassVar[tuple[Literal["axis"]]]
+        axis: GamepadAxis
+        def __init__(self, axis: GamepadAxis) -> None: ...
 
-    @staticmethod
-    def from_button(button: GamepadButton) -> GamepadInput:
-        """Create a GamepadInput from a GamepadButton."""
-
-    def axis(self) -> GamepadAxis | None:
-        """Returns the axis if this is an Axis variant, None otherwise."""
-
-    def button(self) -> GamepadButton | None:
-        """Returns the button if this is a Button variant, None otherwise."""
-
-    def is_axis(self) -> bool:
-        """Returns True if this is an Axis variant."""
-
-    def is_button(self) -> bool:
-        """Returns True if this is a Button variant."""
+    class Button(GamepadInput):
+        __match_args__: ClassVar[tuple[Literal["button"]]]
+        button: GamepadButton
+        def __init__(self, button: GamepadButton) -> None: ...
 
 class Gamepad(Component):
     """
@@ -670,7 +729,6 @@ class Gamepad(Component):
         ```
     """
 
-    def __init__(self) -> None: ...
     def just_pressed(self, button_type: GamepadButton) -> bool:
         """Returns true if the button was just pressed this frame."""
 
@@ -1013,17 +1071,39 @@ class GamepadEvent:
     Use pattern matching to handle different event types.
     """
 
-    @staticmethod
-    def Connection(
-        connected: bool,
-        name: str | None = None,
-        vendor_id: int | None = None,
-        product_id: int | None = None,
-    ) -> GamepadEvent: ...
-    @staticmethod
-    def Button(button: GamepadButton, value: float) -> GamepadEvent: ...
-    @staticmethod
-    def Axis(axis: GamepadAxis, value: float) -> GamepadEvent: ...
+    class Connection(GamepadEvent):
+        __match_args__: ClassVar[
+            tuple[
+                Literal["connected"],
+                Literal["name"],
+                Literal["vendor_id"],
+                Literal["product_id"],
+            ]
+        ]
+        connected: bool
+        name: str | None
+        vendor_id: int | None
+        product_id: int | None
+
+        def __init__(
+            self,
+            connected: bool,
+            name: str | None = None,
+            vendor_id: int | None = None,
+            product_id: int | None = None,
+        ) -> None: ...
+
+    class Button(GamepadEvent):
+        __match_args__: ClassVar[tuple[Literal["button"], Literal["value"]]]
+        button: GamepadButton
+        value: float
+        def __init__(self, button: GamepadButton, value: float) -> None: ...
+
+    class Axis(GamepadEvent):
+        __match_args__: ClassVar[tuple[Literal["axis"], Literal["value"]]]
+        axis: GamepadAxis
+        value: float
+        def __init__(self, axis: GamepadAxis, value: float) -> None: ...
 
 class KeyboardFocusLost(Message):
     """

@@ -3,9 +3,10 @@ use pyo3::prelude::*;
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
-#[pyclass(name = "GamepadEvent", skip_from_py_object)]
+#[pyclass(name = "GamepadEvent", module = "pybevy.input", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyGamepadEvent {
+    #[pyo3(constructor = (connected, name = None, vendor_id = None, product_id = None))]
     Connection {
         connected: bool,
         name: Option<String>,
