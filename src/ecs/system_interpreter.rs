@@ -215,6 +215,30 @@ pub(crate) fn new_main_condition(
     MainDynamicCondition::new(prepared).map_err(PyRuntimeError::new_err)
 }
 
+/// Prepare a condition whose schedule node survives hot-reload generations.
+///
+/// Set configuration is structural and remains in Bevy's schedule graph while
+/// generation-scoped systems are replaced. The interpreter still refreshes a
+/// module-level callable when the generation changes, but the condition itself
+/// must not be skipped merely because it was configured in generation zero.
+pub(crate) fn new_main_persistent_condition(
+    func: Py<PyAny>,
+    generation: u32,
+    error_state: Arc<Mutex<Vec<PyErr>>>,
+    stage: pybevy_reload::SystemStage,
+) -> PyResult<MainDynamicCondition> {
+    let mut prepared = prepare_callable(
+        func,
+        generation,
+        stage,
+        error_state,
+        Arc::new(Mutex::new(None)),
+        InvocationKind::Condition,
+    )?;
+    prepared.expected_generation = None;
+    MainDynamicCondition::new(prepared).map_err(PyRuntimeError::new_err)
+}
+
 /// Prepare an observer once at registration, retaining the same callable and
 /// immutable parameter plan used by the scheduled interpreter path.
 pub(crate) fn new_main_observer(

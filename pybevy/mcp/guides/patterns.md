@@ -303,6 +303,60 @@ app.add_systems(Update, run_if(game_logic, cond_a).or_(cond_b))
 app.add_systems(Update, run_if(game_logic, cond_a).not_())
 ```
 
+#### System Sets and Fine-Grained Ordering
+
+Use a `SystemSetEnum` family for ordering within one schedule. `@system_set`
+preserves the enum class and gives each member a stable fully qualified
+identity that survives hot reload. `system()` returns an immutable fluent
+wrapper; plain callables remain valid in `add_systems()`.
+
+```python
+from enum import auto
+
+from pybevy import system_set
+from pybevy.ecs import SystemSetEnum
+
+@system_set
+class GameplaySet(SystemSetEnum):
+    Input = auto()
+    Movement = auto()
+
+app.configure_sets(Update, GameplaySet.Input.before(GameplaySet.Movement))
+app.add_systems(Update, system(read_input).in_set(GameplaySet.Input))
+app.add_systems(
+    Update,
+    system(move_player)
+        .in_set(GameplaySet.Movement)
+        .after(read_input)
+        .run_if(is_game_active),
+)
+```
+
+Use `SystemSet("my_game.Standalone")` when a set does not belong to an enum
+family or its name is selected dynamically.
+
+Set-level conditions are evaluated once for the whole set:
+
+```python
+app.configure_sets(Update, MovementSystems.run_if(is_game_active))
+```
+
+Use `chain(first, second, third)` when the systems form one simple sequential
+pipeline. Use sets when multiple systems share a phase or other code needs a
+stable ordering target.
+
+The same helper chains system-set configurations:
+
+```python
+app.configure_sets(
+    Update,
+    chain(GameplaySet.Input, GameplaySet.Movement, GameplaySet.Audit),
+)
+```
+
+Keep one `chain(...)` homogeneous: use only systems or only system sets. Python
+tuple literals do not support Bevy's Rust-only `(a, b, c).chain()` spelling.
+
 ### Queries
 
 #### Single Component

@@ -3,6 +3,7 @@ import os
 import sys
 
 from .. import _pybevy  # type: ignore
+from ._system_sets import install_system_set_api as _install_system_set_api
 
 _native = _pybevy.ecs
 _ecs_dir = os.path.dirname(__file__)
@@ -10,6 +11,7 @@ _native.__name__ = __name__  # type: ignore
 _native.__path__ = [_ecs_dir]  # type: ignore
 _native.__package__ = __name__  # type: ignore
 sys.modules[__name__] = _native  # type: ignore
+_install_system_set_api(_native)
 
 # Register Python submodules so `from pybevy.ecs import <submod>` works.
 # The sys.modules replacement above breaks normal submodule discovery because

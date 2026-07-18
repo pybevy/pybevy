@@ -14,9 +14,7 @@ use bevy::{
     ecs::{
         message::MessageWriter,
         resource::Resource,
-        schedule::{
-            Chain, IntoScheduleConfigs, ScheduleConfigs, Schedules, SingleThreadedExecutor,
-        },
+        schedule::{Chain, ScheduleConfigs, Schedules, SingleThreadedExecutor},
         system::{Local, Res},
         world::World,
     },
@@ -31,7 +29,7 @@ use pybevy_core::{
 use pybevy_ecs::shared::schedule::{
     StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
 };
-use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
+use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     IntoPyObjectExt,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
@@ -44,7 +42,7 @@ use crate::{
     app::{
         PyStage,
         app_exit::PyAppExit,
-        chained_systems::PyChainedSystems,
+        chained_systems::{PyChainedSystemSets, PyChainedSystems},
         error_messages,
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
@@ -55,7 +53,6 @@ use crate::{
         plugins::{PyDefaultPlugins, PyPluginGroupBuilder},
     },
     ecs::{
-        conditional_system::{PyConditionalSystem, build_conditional_system_config},
         dynamic_system::{LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache},
         messages::ensure_builtin_message_resources,
         observer_registry::ObserverRegistry,
@@ -65,7 +62,8 @@ use crate::{
             apply_state_transitions, canonicalize_state_schedule_label,
             canonicalize_transition_schedule_label, insert_state_machine_resources,
         },
-        system_interpreter::{ObserverRuntimeSinks, new_main_system},
+        system_config::{build_scheduled_system, build_set_config},
+        system_interpreter::ObserverRuntimeSinks,
         world::PyWorld,
     },
 };
@@ -725,29 +723,21 @@ impl PyApp {
                         _ => unreachable!(),
                     }
 
-                    // Add each system to the schedule
+                    // Add each system to the schedule.
                     for system in systems.iter() {
-                        let dynamic_system = new_main_system(
-                            system.unbind(),
+                        let (config, _) = build_scheduled_system(
+                            &system,
                             current_generation,
                             error_state.clone(),
                             error_buffer.clone(),
                             SystemStage::UpdateOrLast, // State systems treated like Update
+                            false,
                         )?;
 
                         match &schedule_type {
-                            ScheduleType::OnEnter(lbl) => app.add_systems(
-                                lbl.clone(),
-                                dynamic_system.run_if(generation_matches(current_generation)),
-                            ),
-                            ScheduleType::OnExit(lbl) => app.add_systems(
-                                lbl.clone(),
-                                dynamic_system.run_if(generation_matches(current_generation)),
-                            ),
-                            ScheduleType::OnTransition(lbl) => app.add_systems(
-                                lbl.clone(),
-                                dynamic_system.run_if(generation_matches(current_generation)),
-                            ),
+                            ScheduleType::OnEnter(lbl) => app.add_systems(lbl.clone(), config),
+                            ScheduleType::OnExit(lbl) => app.add_systems(lbl.clone(), config),
+                            ScheduleType::OnTransition(lbl) => app.add_systems(lbl.clone(), config),
                             _ => unreachable!(),
                         };
                     }
@@ -797,41 +787,26 @@ impl PyApp {
                             // Handle chained systems
                             let system_stage = Self::get_system_stage(stage);
 
-                            // Create DynamicSystem for each system in the chain
+                            // Create a complete config for each system in the chain.
                             let py = system.py();
                             let systems_tuple = chained.systems.bind(py);
-                            let mut dynamic_systems = Vec::new();
+                            let mut configs = Vec::new();
 
                             for sys in systems_tuple.iter() {
-                                let dynamic_system = new_main_system(
-                                    sys.unbind(),
+                                let (config, _) = build_scheduled_system(
+                                    &sys,
                                     current_generation,
                                     error_state.clone(),
                                     error_buffer.clone(),
                                     system_stage,
+                                    stage.is_startup(),
                                 )?;
-                                dynamic_systems.push(dynamic_system);
+                                configs.push(config);
                             }
 
-                            // Add run conditions and chain the systems
-
-                            if dynamic_systems.is_empty() {
+                            if configs.is_empty() {
                                 return Err(PyRuntimeError::new_err("Empty chained systems"));
                             }
-
-                            let is_startup = stage.is_startup();
-
-                            // Build chained SystemConfigs directly — supports any number of systems
-                            let configs: Vec<ScheduleConfigs<_>> = dynamic_systems
-                                .into_iter()
-                                .map(|sys| {
-                                    if is_startup {
-                                        sys.run_if(startup_or_reload(current_generation))
-                                    } else {
-                                        sys.run_if(generation_matches(current_generation))
-                                    }
-                                })
-                                .collect();
 
                             let chained = ScheduleConfigs::Configs {
                                 configs,
@@ -848,49 +823,16 @@ impl PyApp {
                             };
 
                             for sys in system_list {
-                                // Check if this is a conditional system (run_if)
-                                let (system_func, condition_func) =
-                                    if let Ok(conditional) = sys.extract::<PyConditionalSystem>() {
-                                        let py = sys.py();
-                                        (
-                                            conditional.system.bind(py).clone(),
-                                            Some(conditional.condition),
-                                        )
-                                    } else {
-                                        (sys.clone(), None)
-                                    };
-
                                 let system_stage = Self::get_system_stage(stage);
-
-                                let dynamic_system = new_main_system(
-                                    system_func.unbind(),
+                                let (config, _) = build_scheduled_system(
+                                    &sys,
                                     current_generation,
                                     error_state.clone(),
                                     error_buffer.clone(),
                                     system_stage,
+                                    stage.is_startup(),
                                 )?;
-
-                                if let Some(cond) = condition_func {
-                                    let is_startup = stage.is_startup();
-                                    let config = build_conditional_system_config(
-                                        dynamic_system,
-                                        cond,
-                                        current_generation,
-                                        error_state.clone(),
-                                        system_stage,
-                                        is_startup,
-                                    )?;
-                                    add_to_schedule!(app, stage, config);
-                                } else {
-                                    // No user condition - just use generation condition
-                                    let run_condition = if stage.is_startup() {
-                                        dynamic_system.run_if(startup_or_reload(current_generation))
-                                    } else {
-                                        dynamic_system
-                                            .run_if(generation_matches(current_generation))
-                                    };
-                                    add_to_schedule!(app, stage, run_condition);
-                                }
+                                add_to_schedule!(app, stage, config);
                             }
                         }
                     }
@@ -1692,23 +1634,69 @@ impl PyApp {
         Ok(())
     }
 
-    /// Configure system set ordering and relationships
-    ///
-    /// STUB: This method is not yet implemented. Full implementation requires:
-    /// - System set type wrappers
-    /// - Before/after relationship tracking
-    /// - Integration with DynamicSystem
-    ///
-    /// For now, use schedule labels (First, PreUpdate, Update, PostUpdate, Last)
-    /// to control execution order at a coarse granularity.
-    ///
-    /// Future usage will be:
-    ///   app.configure_sets(Stage.Update, MySet.before(OtherSet))
-    pub fn configure_sets(&self, _schedule: PyStage, _sets: &Bound<'_, PyAny>) -> PyResult<()> {
-        Err(PyRuntimeError::new_err(
-            "configure_sets() is not yet implemented. Use schedule labels (First, PreUpdate, \
-            Update, PostUpdate, Last) for coarse-grained execution ordering.",
-        ))
+    /// Configure system-set hierarchy, ordering, and shared run conditions.
+    #[pyo3(signature = (schedule, *sets))]
+    pub fn configure_sets(
+        pyself: PyRef<'_, Self>,
+        schedule: PyStage,
+        sets: Bound<'_, PyTuple>,
+    ) -> PyResult<Py<PyApp>> {
+        pyself.ensure_active()?;
+        if sets.is_empty() {
+            return Err(PyValueError::new_err(
+                "configure_sets() requires at least one SystemSet or SystemSetConfig",
+            ));
+        }
+
+        // The live schedule graph survives hot reload. Its labels are stable
+        // qualified names and persistent conditions refresh module-level
+        // callables themselves, so replaying configuration would only create
+        // duplicate graph edges and condition nodes.
+        if pyself.is_reload_temp.get() {
+            return Ok(pyself.into());
+        }
+
+        let generation = pyself.hot_reload_state.current_generation();
+        let error_state = pyself.system_error.clone();
+        let system_stage = Self::get_system_stage(schedule);
+        pyself.with_bevy_app(|app| {
+            let label = schedule.intern_label();
+            if !app.world().resource::<Schedules>().contains(label) {
+                app.init_schedule(label);
+            }
+            for set in sets.iter() {
+                if let Ok(chained) = set.extract::<PyChainedSystemSets>() {
+                    let mut configs = Vec::new();
+                    for member in chained.sets.bind(set.py()).iter() {
+                        configs.push(build_set_config(
+                            &member,
+                            generation,
+                            error_state.clone(),
+                            system_stage,
+                        )?);
+                    }
+                    if configs.is_empty() {
+                        return Err(PyValueError::new_err(
+                            "ChainedSystemSets requires at least one set",
+                        ));
+                    }
+                    app.configure_sets(
+                        label,
+                        ScheduleConfigs::Configs {
+                            configs,
+                            collective_conditions: Vec::new(),
+                            metadata: Chain::Chained(Default::default()),
+                        },
+                    );
+                } else {
+                    let config =
+                        build_set_config(&set, generation, error_state.clone(), system_stage)?;
+                    app.configure_sets(label, config);
+                }
+            }
+            Ok(())
+        })?;
+        Ok(pyself.into())
     }
 }
 

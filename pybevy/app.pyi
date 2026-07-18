@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar, overload
 
 from pybevy.ecs import (
     ConditionalSystem,
@@ -11,28 +11,45 @@ from pybevy.ecs import (
     OnTransitionSchedule,
     Resource,
     ResourceType,
+    SystemConfig,
+    SystemSet,
+    SystemSetConfig,
+    SystemSetEnum,
 )
 
 type SystemFn = Callable[..., None]
-type SystemFns = tuple[SystemFn, ...] | SystemFn | ChainedSystems | ConditionalSystem
+type SystemFns = tuple[SystemFn, ...] | SystemFn | ChainedSystems | ConditionalSystem | SystemConfig
+type SystemChainItem = SystemFn | ConditionalSystem | SystemConfig
+type SystemSetChainItem = SystemSet | SystemSetEnum | SystemSetConfig
 
 T = TypeVar("T")
 
 class ChainedSystems:
     """Wrapper for a sequence of systems that should be executed sequentially."""
-    def __init__(self, *systems: SystemFn) -> None: ...
+    def __init__(self, *systems: SystemChainItem) -> None: ...
 
-def chain(*systems: SystemFn) -> ChainedSystems:
-    """Chain multiple systems to run sequentially.
+class ChainedSystemSets:
+    """Wrapper for a sequence of system sets configured in order."""
+    def __init__(self, *sets: SystemSetChainItem) -> None: ...
+
+@overload
+def chain(*systems: SystemChainItem) -> ChainedSystems: ...
+@overload
+def chain(*sets: SystemSetChainItem) -> ChainedSystemSets: ...
+
+def chain(  # type: ignore[misc]
+    *systems: SystemChainItem | SystemSetChainItem,
+) -> ChainedSystems | ChainedSystemSets:
+    """Chain multiple systems or system sets to run sequentially.
 
     Chained systems will execute in the order they are provided, with each
     system completing before the next one starts.
 
     Args:
-        *systems: Variable number of system functions to chain together
+        *systems: Homogeneous system configurations or system-set configurations.
 
     Returns:
-        ChainedSystems object that can be passed to add_systems()
+        A chain accepted by `add_systems()` or `configure_sets()`.
 
     Example:
         ```python
@@ -44,10 +61,10 @@ def chain(*systems: SystemFn) -> ChainedSystems:
 
         # These systems will run in order: system1 -> system2 -> system3
         app.add_systems(Update, chain(system1, system2, system3))
-        ```
 
-    Note:
-        Currently supports chaining up to 4 systems.
+        # Set-family ordering: Input -> Movement -> Audit
+        app.configure_sets(Update, chain(Sets.Input, Sets.Movement, Sets.Audit))
+        ```
     """
 
 def _test_get_app_count() -> int:
@@ -538,38 +555,12 @@ class App:
             initialization order.
         """
 
-    def configure_sets(self, schedule: Stage, sets: Any) -> None:
-        """Configure system set ordering and relationships.
-
-        **STUB**: This method is not yet implemented. Full implementation requires:
-        - System set type wrappers
-        - Before/after relationship tracking
-        - Integration with DynamicSystem
-
-        For now, use schedule labels (First, PreUpdate, Update, PostUpdate, Last)
-        to control execution order at a coarse granularity.
-
-        Args:
-            schedule: The schedule to configure sets in
-            sets: System set configuration (not yet supported)
-
-        Raises:
-            RuntimeError: Always raises - method not yet implemented
-
-        Future usage will be:
-            ```python
-            # This will work when implemented:
-            app.configure_sets(Update, MySet.before(OtherSet))
-            ```
-
-        Workaround:
-            ```python
-            # Use different schedules for ordering:
-            app.add_systems(PreUpdate, input_systems)   # Runs first
-            app.add_systems(Update, game_logic)         # Runs second
-            app.add_systems(PostUpdate, render_prep)    # Runs third
-            ```
-        """
+    def configure_sets(
+        self,
+        schedule: Stage,
+        *sets: SystemSetChainItem | ChainedSystemSets,
+    ) -> App:
+        """Configure set hierarchy, ordering, and shared run conditions."""
 
     def cleanup(self) -> None:
         """Clean up app resources."""
