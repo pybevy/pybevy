@@ -1,10 +1,7 @@
 use bevy::ui::Node;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::prelude::*;
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
@@ -34,26 +31,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_position_type(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        // Accept both PyPositionType enum and raw integer for backward compatibility
-        let pos = if let Ok(v) = value.extract::<PyPositionType>() {
-            v.into()
-        } else if let Ok(v) = value.extract::<i64>() {
-            match v {
-                0 => bevy::ui::PositionType::Relative,
-                1 => bevy::ui::PositionType::Absolute,
-                _ => {
-                    return Err(PyValueError::new_err(format!(
-                        "invalid PositionType value: {v}, expected 0 (Relative) or 1 (Absolute)"
-                    )));
-                }
-            }
-        } else {
-            return Err(PyTypeError::new_err(
-                "position_type accepts PositionType enum or integer (0=Relative, 1=Absolute)",
-            ));
-        };
-        self.as_mut()?.position_type = pos;
+    pub fn set_position_type(&mut self, value: PyPositionType) -> PyResult<()> {
+        self.as_mut()?.position_type = value.into();
         Ok(())
     }
 

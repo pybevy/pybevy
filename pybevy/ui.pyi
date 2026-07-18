@@ -150,7 +150,6 @@ class Val:
         """Returns a UiRect with top and bottom set to this value, left/right ZERO."""
 
     def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
 
 
 class UiRect:
@@ -952,13 +951,13 @@ class Text(Component):
 
     Example:
         ```python
-        from pybevy.ui import Text, Node
+        from pybevy.ui import Node, PositionType, Text
         from pybevy.text import TextFont, TextColor, TextLayout, Justify
         from pybevy.color import Color
 
         # Spawn UI text with styling
         node = Node()
-        node.position_type = 1  # Absolute
+        node.position_type = PositionType.Absolute
         node.top = Val.Px(10.0)
         node.left = Val.Px(10.0)
         commands.spawn((
@@ -991,14 +990,14 @@ class Node(Component):
 
     Example:
         ```python
-        from pybevy.ui import Node, Text, FlexDirection, Display
+        from pybevy.ui import Node, Text, FlexDirection, Display, PositionType
 
         # Default node (relative positioning)
         commands.spawn((Node(), Text("Centered")))
 
         # Absolutely positioned node
         node = Node()
-        node.position_type = 1  # Absolute
+        node.position_type = PositionType.Absolute
         node.top = Val.Px(10.0)
         node.left = Val.Px(10.0)
         commands.spawn((node, Text("Top Left")))
@@ -1013,14 +1012,14 @@ class Node(Component):
 
         # Custom positioning
         node = Node()
-        node.position_type = 1  # Absolute
+        node.position_type = PositionType.Absolute
         node.top = Val.Px(50.0)
         node.left = Val.Px(100.0)
         commands.spawn((node, Text("Custom Position")))
         ```
 
     Attributes:
-        position_type: 0 = Relative, 1 = Absolute
+        position_type: PositionType enum (Relative or Absolute)
         flex_direction: FlexDirection enum (Row, Column, RowReverse, ColumnReverse)
         display: Display enum (Flex, Grid, Block, None_)
         align_items: AlignItems enum for cross-axis alignment
@@ -1035,11 +1034,11 @@ class Node(Component):
     def __init__(self) -> None: ...
 
     @property
-    def position_type(self) -> int:
-        """Position type: 0=Relative, 1=Absolute."""
+    def position_type(self) -> PositionType:
+        """Whether positioning is relative or absolute."""
 
     @position_type.setter
-    def position_type(self, value: int | PositionType) -> None: ...
+    def position_type(self, value: PositionType) -> None: ...
 
     @property
     def top(self) -> Val:

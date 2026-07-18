@@ -430,7 +430,7 @@ def setup(
 
     # Status text (UI overlay)
     root_node = Node()
-    root_node.position_type = 1  # Absolute
+    root_node.position_type = PositionType.Absolute
     root_node.width = Val.px(800.0)
     root_node.top = Val.px(40.0)
     root_node.left = Val.px(400.0)
