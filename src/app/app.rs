@@ -53,7 +53,9 @@ use crate::{
         plugins::{PyDefaultPlugins, PyPluginGroupBuilder},
     },
     ecs::{
-        dynamic_system::{LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache},
+        dynamic_system::{
+            LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache, lock_or_recover,
+        },
         messages::ensure_builtin_message_resources,
         observer_registry::ObserverRegistry,
         python_message::{install_python_message_store, register_python_message},
@@ -330,6 +332,12 @@ pub struct PyApp {
     /// resource; the `Last`-schedule drain moves it into `LastSystemError`.
     system_error_buffer: SystemErrorBuffer,
 
+    /// Last exit requested by an update or returned by the consuming runner.
+    ///
+    /// This is kept outside the Bevy App so `should_exit()` remains available
+    /// after `run()` moves the App into its runner and consumes the store slot.
+    last_exit: Arc<Mutex<Option<AppExit>>>,
+
     /// Hot reload state for development mode
     /// Allows CLI watcher to trigger reloads
     hot_reload_state: HotReloadState,
@@ -440,6 +448,7 @@ impl PyApp {
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer: Arc::new(Mutex::new(None)),
+            last_exit: Arc::new(Mutex::new(None)),
             hot_reload_state: temp_state,
             is_reload_temp: Cell::new(true),
             pending_systems: RefCell::new(Vec::new()),
@@ -614,6 +623,7 @@ impl PyApp {
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             system_error,
             system_error_buffer,
+            last_exit: Arc::new(Mutex::new(None)),
             hot_reload_state: HotReloadState::new(),
             is_reload_temp: Cell::new(false),
             pending_systems: RefCell::new(Vec::new()),
@@ -1359,11 +1369,19 @@ impl PyApp {
         }
 
         let app_id = self.app_id;
+        let last_exit = self.last_exit.clone();
 
         // Release GIL while running update (required to avoid deadlock with Python systems)
         py.detach(|| {
             let mut guard = begin_main_app_operation(app_id, AppOperation::Update)?;
-            guard.app_mut().update();
+            let exit = {
+                let app = guard.app_mut();
+                app.update();
+                app.should_exit()
+            };
+            if let Some(exit) = exit {
+                *lock_or_recover(&last_exit) = Some(exit);
+            }
             Ok::<(), PyErr>(())
         })?;
 
@@ -1483,6 +1501,7 @@ impl PyApp {
         // Capture app_id before detaching GIL
         let app_id = self.app_id;
         let error_state = self.system_error.clone();
+        let last_exit = self.last_exit.clone();
 
         // Release GIL before running to avoid deadlock with Python systems.
         py.detach(|| {
@@ -1500,7 +1519,8 @@ impl PyApp {
                     });
                     app.add_systems(Last, check_system_errors_and_exit);
                 }
-                app.run();
+                let exit = app.run();
+                *lock_or_recover(&last_exit) = Some(exit);
             }
             guard.finish_consumed();
 
@@ -1568,6 +1588,10 @@ impl PyApp {
     /// This allows checking exit status programmatically for conditional logic or tests.
     /// Can be called before or after run() to check the exit status.
     pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<PyAppExit>>> {
+        if let Some(exit) = lock_or_recover(&self.last_exit).clone() {
+            return Py::new(py, (PyAppExit::from(exit), PyMessage)).map(Some);
+        }
+
         let exit = BEVY_APPS
             .with(|apps_cell| {
                 apps_cell
@@ -1575,6 +1599,9 @@ impl PyApp {
                     .with_app_leaf(self.app_id, |app| app.should_exit())
             })
             .map_err(app_store_error)?;
+        if let Some(exit) = &exit {
+            *lock_or_recover(&self.last_exit) = Some(exit.clone());
+        }
         exit.map(|exit| Py::new(py, (PyAppExit::from(exit), PyMessage)))
             .transpose()
     }
