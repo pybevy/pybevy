@@ -1,7 +1,7 @@
 use bevy::render::view::Msaa;
 use pybevy_core::PyComponent;
 use pybevy_macros::pywrap;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pywrap(Msaa, bridge, copy)]
 #[pyclass(name = "Msaa", extends = PyComponent, frozen, eq, skip_from_py_object)]
@@ -45,7 +45,18 @@ impl PyMsaa {
 
     #[staticmethod]
     pub fn from_samples(py: Python, samples: u32) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(Msaa::from_samples(samples)))
+        let msaa = match samples {
+            1 => Msaa::Off,
+            2 => Msaa::Sample2,
+            4 => Msaa::Sample4,
+            8 => Msaa::Sample8,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unsupported MSAA sample count: {samples}"
+                )));
+            }
+        };
+        Py::new(py, Self::from_owned(msaa))
     }
 
     pub fn __repr__(&self) -> &'static str {
