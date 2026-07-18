@@ -1,17 +1,14 @@
-use bevy::sprite::TextureSlicer;
+use bevy::sprite::{SliceScaleMode, TextureSlicer};
 use pyo3::prelude::*;
 
-use crate::{
-    border_rect::PyBorderRect,
-    slice_scale_mode::{PySliceScaleMode, PySliceScaleModeInner},
-};
+use crate::{border_rect::PyBorderRect, slice_scale_mode::PySliceScaleMode};
 
 #[pyclass(name = "TextureSlicer", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyTextureSlicer {
     border: PyBorderRect,
-    center_scale_mode: PySliceScaleModeInner,
-    sides_scale_mode: PySliceScaleModeInner,
+    center_scale_mode: SliceScaleMode,
+    sides_scale_mode: SliceScaleMode,
     max_corner_scale: f32,
 }
 
@@ -40,23 +37,23 @@ impl PyTextureSlicer {
         sides_scale_mode: Option<PySliceScaleMode>,
     ) -> Self {
         let center_scale_mode = if let Some(mode) = center_scale_mode {
-            mode.inner
+            mode.into()
         } else if center_tile {
-            PySliceScaleModeInner::Tile {
+            SliceScaleMode::Tile {
                 stretch_value: center_stretch_value,
             }
         } else {
-            PySliceScaleModeInner::Stretch
+            SliceScaleMode::Stretch
         };
 
         let sides_scale_mode = if let Some(mode) = sides_scale_mode {
-            mode.inner
+            mode.into()
         } else if sides_tile {
-            PySliceScaleModeInner::Tile {
+            SliceScaleMode::Tile {
                 stretch_value: sides_stretch_value,
             }
         } else {
-            PySliceScaleModeInner::Stretch
+            SliceScaleMode::Stretch
         };
 
         Self {
@@ -79,16 +76,12 @@ impl PyTextureSlicer {
 
     #[getter]
     pub fn center_scale_mode(&self) -> PySliceScaleMode {
-        PySliceScaleMode {
-            inner: self.center_scale_mode,
-        }
+        self.center_scale_mode.into()
     }
 
     #[getter]
     pub fn sides_scale_mode(&self) -> PySliceScaleMode {
-        PySliceScaleMode {
-            inner: self.sides_scale_mode,
-        }
+        self.sides_scale_mode.into()
     }
 
     pub fn __repr__(&self) -> String {

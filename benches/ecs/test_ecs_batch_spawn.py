@@ -79,7 +79,7 @@ def _spawn_batch_with_uniforms(entity_count: int) -> None:
         t_batch = Transform.from_numpy(translation=positions)
         world.commands().spawn_batch(
             t_batch,
-            Visibility.VISIBLE,
+            Visibility.Visible,
             Marker(),
         )
 

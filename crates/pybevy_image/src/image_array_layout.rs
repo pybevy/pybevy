@@ -1,67 +1,78 @@
 use bevy::image::ImageArrayLayout;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ImageArrayLayout", frozen, skip_from_py_object)]
+#[pyenum(ImageArrayLayout, manual)]
+#[pyclass(name = "ImageArrayLayout", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
-pub struct PyImageArrayLayout(pub(crate) ImageArrayLayout);
+pub enum PyImageArrayLayout {
+    RowCount {
+        rows: u32,
+    },
+    RowHeight {
+        pixels: u32,
+    },
+    GridCount {
+        columns: u32,
+        rows: u32,
+    },
+    GridSize {
+        tile_width_pixels: u32,
+        tile_height_pixels: u32,
+    },
+}
 
 impl From<ImageArrayLayout> for PyImageArrayLayout {
-    fn from(val: ImageArrayLayout) -> Self {
-        PyImageArrayLayout(val)
+    fn from(value: ImageArrayLayout) -> Self {
+        match value {
+            ImageArrayLayout::RowCount { rows } => Self::RowCount { rows },
+            ImageArrayLayout::RowHeight { pixels } => Self::RowHeight { pixels },
+            ImageArrayLayout::GridCount { columns, rows } => Self::GridCount { columns, rows },
+            ImageArrayLayout::GridSize {
+                tile_width_pixels,
+                tile_height_pixels,
+            } => Self::GridSize {
+                tile_width_pixels,
+                tile_height_pixels,
+            },
+        }
     }
 }
 
 impl From<PyImageArrayLayout> for ImageArrayLayout {
-    fn from(val: PyImageArrayLayout) -> Self {
-        val.0
+    fn from(value: PyImageArrayLayout) -> Self {
+        match value {
+            PyImageArrayLayout::RowCount { rows } => Self::RowCount { rows },
+            PyImageArrayLayout::RowHeight { pixels } => Self::RowHeight { pixels },
+            PyImageArrayLayout::GridCount { columns, rows } => Self::GridCount { columns, rows },
+            PyImageArrayLayout::GridSize {
+                tile_width_pixels,
+                tile_height_pixels,
+            } => Self::GridSize {
+                tile_width_pixels,
+                tile_height_pixels,
+            },
+        }
     }
 }
 
 #[pymethods]
 impl PyImageArrayLayout {
-    #[staticmethod]
-    pub fn row_count(rows: u32) -> Self {
-        PyImageArrayLayout(ImageArrayLayout::RowCount { rows })
-    }
-
-    #[staticmethod]
-    pub fn row_height(pixels: u32) -> Self {
-        PyImageArrayLayout(ImageArrayLayout::RowHeight { pixels })
-    }
-
-    #[staticmethod]
-    pub fn grid_count(columns: u32, rows: u32) -> Self {
-        PyImageArrayLayout(ImageArrayLayout::GridCount { columns, rows })
-    }
-
-    #[staticmethod]
-    pub fn grid_size(tile_width_pixels: u32, tile_height_pixels: u32) -> Self {
-        PyImageArrayLayout(ImageArrayLayout::GridSize {
-            tile_width_pixels,
-            tile_height_pixels,
-        })
-    }
-
     pub fn __repr__(&self) -> String {
-        match self.0 {
-            ImageArrayLayout::RowCount { rows } => {
-                format!("ImageArrayLayout.row_count({})", rows)
+        match self {
+            Self::RowCount { rows } => format!("ImageArrayLayout.RowCount(rows={rows})"),
+            Self::RowHeight { pixels } => {
+                format!("ImageArrayLayout.RowHeight(pixels={pixels})")
             }
-            ImageArrayLayout::RowHeight { pixels } => {
-                format!("ImageArrayLayout.row_height({})", pixels)
+            Self::GridCount { columns, rows } => {
+                format!("ImageArrayLayout.GridCount(columns={columns}, rows={rows})")
             }
-            ImageArrayLayout::GridCount { columns, rows } => {
-                format!("ImageArrayLayout.grid_count({}, {})", columns, rows)
-            }
-            ImageArrayLayout::GridSize {
+            Self::GridSize {
                 tile_width_pixels,
                 tile_height_pixels,
-            } => {
-                format!(
-                    "ImageArrayLayout.grid_size({}, {})",
-                    tile_width_pixels, tile_height_pixels
-                )
-            }
+            } => format!(
+                "ImageArrayLayout.GridSize(tile_width_pixels={tile_width_pixels}, tile_height_pixels={tile_height_pixels})"
+            ),
         }
     }
 }

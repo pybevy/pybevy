@@ -1829,14 +1829,14 @@ class FocusPolicy(Component):
         commands.spawn((
             Node(),
             Button(),
-            Interaction.none(),
-            FocusPolicy.block(),  # Blocks input, doesn't pass to nodes behind
+            Interaction.None_,
+            FocusPolicy.Block,  # Blocks input, doesn't pass to nodes behind
         ))
 
         # Transparent panel that passes input through
         commands.spawn((
             Node(),
-            FocusPolicy.pass_(),  # Allows input to pass to nodes behind
+            FocusPolicy.Pass,  # Allows input to pass to nodes behind
         ))
 
         # Change policy at runtime
@@ -1848,21 +1848,11 @@ class FocusPolicy(Component):
     """
     def __init__(self) -> None: ...
 
-    @staticmethod
-    def block() -> FocusPolicy:
-        """Create a blocking focus policy (captures all input).
+    Block: ClassVar[FocusPolicy]
+    """Blocking focus policy that captures input."""
 
-        Returns:
-            FocusPolicy that blocks input from passing through
-        """
-
-    @staticmethod
-    def pass_() -> FocusPolicy:
-        """Create a passing focus policy (allows input through).
-
-        Returns:
-            FocusPolicy that allows input to pass to nodes behind
-        """
+    Pass: ClassVar[FocusPolicy]
+    """Passing focus policy that allows input through."""
 
     @property
     def is_block(self) -> bool:
@@ -1895,7 +1885,7 @@ class Interaction(Component):
         # Create interactive button
         commands.spawn((
             Node(),
-            Interaction.none(),
+            Interaction.None_,
             BackgroundColor(Color.srgb(0.5, 0.5, 0.5)),
         ))
 
@@ -1916,17 +1906,14 @@ class Interaction(Component):
     def __init__(self) -> None:
         """Create Interaction in None state."""
 
-    @staticmethod
-    def none() -> Interaction:
-        """Create Interaction in None state (not being interacted with)."""
+    None_: ClassVar[Interaction]
+    """No pointer interaction."""
 
-    @staticmethod
-    def hovered() -> Interaction:
-        """Create Interaction in Hovered state."""
+    Hovered: ClassVar[Interaction]
+    """Pointer is hovering over the node."""
 
-    @staticmethod
-    def pressed() -> Interaction:
-        """Create Interaction in Pressed state."""
+    Pressed: ClassVar[Interaction]
+    """Pointer is pressing the node."""
 
     @property
     def is_none(self) -> bool:
@@ -1962,7 +1949,7 @@ class Button(Component):
         commands.spawn((
             Node(),
             Button(),
-            Interaction.none(),
+            Interaction.None_,
             BackgroundColor(Color.srgb(0.2, 0.2, 0.2)),
         ))
 
@@ -2446,7 +2433,7 @@ class RelativeCursorPosition(Component):
         def setup(commands: Commands) -> None:
             commands.spawn((
                 Node(),
-                Interaction.none(),
+                Interaction.None_,
                 RelativeCursorPosition(),
             ))
 

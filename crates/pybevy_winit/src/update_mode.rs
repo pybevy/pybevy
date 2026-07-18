@@ -2,45 +2,51 @@ use std::time::Duration;
 
 use bevy::winit::UpdateMode;
 use pyo3::prelude::*;
-#[pyclass(name = "UpdateMode", frozen, from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyUpdateMode(pub(crate) UpdateMode);
+
+#[pyclass(
+    name = "UpdateMode",
+    module = "pybevy.winit",
+    frozen,
+    eq,
+    from_py_object
+)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum PyUpdateMode {
+    Continuous(),
+    Reactive {
+        wait: f64,
+        react_to_device_events: bool,
+        react_to_user_events: bool,
+        react_to_window_events: bool,
+    },
+}
 
 #[pymethods]
 impl PyUpdateMode {
     #[staticmethod]
-    pub fn continuous() -> Self {
-        PyUpdateMode(UpdateMode::Continuous)
-    }
-
-    #[staticmethod]
     #[pyo3(signature = (wait = 1.0))]
     pub fn reactive(wait: f64) -> Self {
-        PyUpdateMode(UpdateMode::reactive(Duration::from_secs_f64(wait)))
+        UpdateMode::reactive(Duration::from_secs_f64(wait)).into()
     }
 
     #[staticmethod]
     #[pyo3(signature = (wait = 1.0))]
     pub fn reactive_low_power(wait: f64) -> Self {
-        PyUpdateMode(UpdateMode::reactive_low_power(Duration::from_secs_f64(
-            wait,
-        )))
+        UpdateMode::reactive_low_power(Duration::from_secs_f64(wait)).into()
     }
 
     pub fn __repr__(&self) -> String {
-        match &self.0 {
-            UpdateMode::Continuous => "UpdateMode.continuous()".to_string(),
-            UpdateMode::Reactive {
+        match self {
+            Self::Continuous() => "UpdateMode.Continuous()".to_string(),
+            Self::Reactive {
                 wait,
                 react_to_device_events,
-                ..
+                react_to_user_events,
+                react_to_window_events,
             } => {
-                let secs = wait.as_secs_f64();
-                if *react_to_device_events {
-                    format!("UpdateMode.reactive(wait={secs})")
-                } else {
-                    format!("UpdateMode.reactive_low_power(wait={secs})")
-                }
+                format!(
+                    "UpdateMode.Reactive(wait={wait}, react_to_device_events={react_to_device_events}, react_to_user_events={react_to_user_events}, react_to_window_events={react_to_window_events})"
+                )
             }
         }
     }
@@ -48,12 +54,38 @@ impl PyUpdateMode {
 
 impl From<PyUpdateMode> for UpdateMode {
     fn from(val: PyUpdateMode) -> Self {
-        val.0
+        match val {
+            PyUpdateMode::Continuous() => UpdateMode::Continuous,
+            PyUpdateMode::Reactive {
+                wait,
+                react_to_device_events,
+                react_to_user_events,
+                react_to_window_events,
+            } => UpdateMode::Reactive {
+                wait: Duration::from_secs_f64(wait),
+                react_to_device_events,
+                react_to_user_events,
+                react_to_window_events,
+            },
+        }
     }
 }
 
 impl From<UpdateMode> for PyUpdateMode {
     fn from(val: UpdateMode) -> Self {
-        PyUpdateMode(val)
+        match val {
+            UpdateMode::Continuous => PyUpdateMode::Continuous(),
+            UpdateMode::Reactive {
+                wait,
+                react_to_device_events,
+                react_to_user_events,
+                react_to_window_events,
+            } => PyUpdateMode::Reactive {
+                wait: wait.as_secs_f64(),
+                react_to_device_events,
+                react_to_user_events,
+                react_to_window_events,
+            },
+        }
     }
 }

@@ -24,19 +24,19 @@ impl PartialEq for PyVisibility {
 #[pymethods]
 impl PyVisibility {
     #[staticmethod]
-    #[pyo3(name = "INHERITED")]
+    #[pyo3(name = "Inherited")]
     pub fn inherited(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, (Visibility::Inherited.into(), PyComponent))
     }
 
     #[staticmethod]
-    #[pyo3(name = "VISIBLE")]
+    #[pyo3(name = "Visible")]
     pub fn visible(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, (Visibility::Visible.into(), PyComponent))
     }
 
     #[staticmethod]
-    #[pyo3(name = "HIDDEN")]
+    #[pyo3(name = "Hidden")]
     pub fn hidden(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, (Visibility::Hidden.into(), PyComponent))
     }
@@ -86,6 +86,6 @@ impl PyVisibility {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Visibility({:?})", self.as_ref()?))
+        Ok(format!("Visibility.{:?}", self.as_ref()?))
     }
 }

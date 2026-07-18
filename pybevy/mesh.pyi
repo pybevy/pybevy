@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from enum import Enum
 from types import TracebackType
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
@@ -293,14 +293,19 @@ class Segment2dMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
 
 class SphereKind:
-    def __init__(self) -> None: ...
+    class Ico(SphereKind):
+        __match_args__: ClassVar[tuple[Literal["subdivisions"]]]
+        subdivisions: int
 
-    @staticmethod
-    def ico(subdivisions: int) -> SphereKind:
+        def __init__(self, subdivisions: int) -> None: ...
         """Icosphere mesh kind with the given number of subdivisions."""
 
-    @staticmethod
-    def uv(sectors: int, stacks: int) -> SphereKind:
+    class Uv(SphereKind):
+        __match_args__: ClassVar[tuple[Literal["sectors"], Literal["stacks"]]]
+        sectors: int
+        stacks: int
+
+        def __init__(self, sectors: int, stacks: int) -> None: ...
         """UV sphere mesh kind with the given number of sectors and stacks."""
 
 class Mesh2d(Component):

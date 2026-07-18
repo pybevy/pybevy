@@ -1,34 +1,28 @@
 use bevy::mesh::SphereKind;
 use pyo3::prelude::*;
 
-#[pyclass(name = "SphereKind", frozen)]
-#[derive(Debug)]
-pub struct PySphereKind(pub(crate) SphereKind);
+#[pyclass(
+    name = "SphereKind",
+    module = "pybevy.mesh",
+    frozen,
+    eq,
+    from_py_object
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PySphereKind {
+    Ico { subdivisions: u32 },
+    Uv { sectors: u32, stacks: u32 },
+}
 
 #[pymethods]
 impl PySphereKind {
-    #[new]
-    pub fn new() -> Self {
-        Self(SphereKind::default())
-    }
-
-    #[staticmethod]
-    pub fn ico(subdivisions: u32) -> Self {
-        Self(SphereKind::Ico { subdivisions })
-    }
-
-    #[staticmethod]
-    pub fn uv(sectors: u32, stacks: u32) -> Self {
-        Self(SphereKind::Uv { sectors, stacks })
-    }
-
     pub fn __repr__(&self) -> String {
-        match self.0 {
-            SphereKind::Ico { subdivisions } => {
-                format!("SphereKind.ico(subdivisions={})", subdivisions)
+        match self {
+            Self::Ico { subdivisions } => {
+                format!("SphereKind.Ico(subdivisions={subdivisions})")
             }
-            SphereKind::Uv { sectors, stacks } => {
-                format!("SphereKind.uv(sectors={}, stacks={})", sectors, stacks)
+            Self::Uv { sectors, stacks } => {
+                format!("SphereKind.Uv(sectors={sectors}, stacks={stacks})")
             }
         }
     }
@@ -36,18 +30,24 @@ impl PySphereKind {
 
 impl From<PySphereKind> for SphereKind {
     fn from(kind: PySphereKind) -> Self {
-        kind.0
+        match kind {
+            PySphereKind::Ico { subdivisions } => SphereKind::Ico { subdivisions },
+            PySphereKind::Uv { sectors, stacks } => SphereKind::Uv { sectors, stacks },
+        }
     }
 }
 
 impl From<SphereKind> for PySphereKind {
     fn from(kind: SphereKind) -> Self {
-        PySphereKind(kind)
+        match kind {
+            SphereKind::Ico { subdivisions } => Self::Ico { subdivisions },
+            SphereKind::Uv { sectors, stacks } => Self::Uv { sectors, stacks },
+        }
     }
 }
 
 impl Default for PySphereKind {
     fn default() -> Self {
-        Self::new()
+        SphereKind::default().into()
     }
 }

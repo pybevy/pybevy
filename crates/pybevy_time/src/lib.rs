@@ -27,6 +27,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<time::PyTimeVirtual>()?;
     m.add_class::<time::PyTimeReal>()?;
     m.add_class::<time_update_strategy::PyTimeUpdateStrategy>()?;
+    time_update_strategy::register_time_update_strategy_variants(&m)?;
 
     m.add_class::<timer::PyTimer>()?;
     m.add_class::<timer::PyTimerMode>()?;

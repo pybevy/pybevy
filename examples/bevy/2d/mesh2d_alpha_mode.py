@@ -28,7 +28,7 @@ def setup(
         Mesh2d(mesh_handle),
         MeshMaterial2d(materials.add(ColorMaterial(
             color=Color.WHITE,
-            alpha_mode=AlphaMode2d.opaque(),
+            alpha_mode=AlphaMode2d.Opaque(),
             texture=texture_handle,
         ))),
         Transform.from_xyz(-400.0, 0.0, 0.0),
@@ -38,7 +38,7 @@ def setup(
         Mesh2d(mesh_handle),
         MeshMaterial2d(materials.add(ColorMaterial(
             color=Color.linear_rgb(0.0, 0.0, 1.0),
-            alpha_mode=AlphaMode2d.opaque(),
+            alpha_mode=AlphaMode2d.Opaque(),
             texture=texture_handle,
         ))),
         Transform.from_xyz(-300.0, 0.0, 1.0),
@@ -48,7 +48,7 @@ def setup(
         Mesh2d(mesh_handle),
         MeshMaterial2d(materials.add(ColorMaterial(
             color=Color.linear_rgb(0.0, 1.0, 0.0),
-            alpha_mode=AlphaMode2d.opaque(),
+            alpha_mode=AlphaMode2d.Opaque(),
             texture=texture_handle,
         ))),
         Transform.from_xyz(-200.0, 0.0, -1.0),
@@ -58,7 +58,7 @@ def setup(
         Mesh2d(mesh_handle),
         MeshMaterial2d(materials.add(ColorMaterial(
             color=Color.WHITE,
-            alpha_mode=AlphaMode2d.mask(0.5),
+            alpha_mode=AlphaMode2d.Mask(0.5),
             texture=texture_handle,
         ))),
         Transform.from_xyz(200.0, 0.0, 0.0),
@@ -68,7 +68,7 @@ def setup(
         Mesh2d(mesh_handle),
         MeshMaterial2d(materials.add(ColorMaterial(
             color=Color.linear_rgba(0.0, 0.0, 1.0, 0.7),
-            alpha_mode=AlphaMode2d.blend(),
+            alpha_mode=AlphaMode2d.Blend(),
             texture=texture_handle,
         ))),
         Transform.from_xyz(300.0, 0.0, 1.0),
@@ -78,7 +78,7 @@ def setup(
         Mesh2d(mesh_handle),
         MeshMaterial2d(materials.add(ColorMaterial(
             color=Color.linear_rgba(0.0, 1.0, 0.0, 0.7),
-            alpha_mode=AlphaMode2d.blend(),
+            alpha_mode=AlphaMode2d.Blend(),
             texture=texture_handle,
         ))),
         Transform.from_xyz(400.0, 0.0, -1.0),

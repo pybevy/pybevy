@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
@@ -43,242 +43,80 @@ class SpritePlugin(Plugin):
     def build(self, app: App) -> None: ...
 
 class AlphaMode2d:
-    """Transparency mode for 2D sprites and materials.
+    """Transparency mode for 2D sprites and materials."""
 
-    Controls how the alpha channel is interpreted when rendering 2D sprites
-    and materials. Different modes provide different trade-offs between
-    performance and visual quality.
+    class Opaque(AlphaMode2d):
+        """Ignore base-color alpha and render fully opaque."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    Examples:
-        ```python
-        from pybevy.sprite import AlphaMode2d
-        from pybevy.pbr import ColorMaterial
+    class Mask(AlphaMode2d):
+        """Use binary transparency at ``threshold``."""
+        __match_args__: ClassVar[tuple[Literal["threshold"]]]
+        threshold: float
+        def __init__(self, threshold: float) -> None: ...
 
-        # Fully opaque material - no transparency
-        mat = ColorMaterial(
-            color=Color.srgb(1.0, 0.0, 0.0),
-            alpha_mode=AlphaMode2d.opaque()
-        )
-
-        # Standard alpha blending for smooth transparency
-        mat = ColorMaterial(
-            color=Color.srgba(1.0, 1.0, 1.0, 0.5),
-            alpha_mode=AlphaMode2d.blend()
-        )
-
-        # Binary transparency - pixels either fully visible or invisible
-        mat = ColorMaterial(
-            color=Color.srgba(1.0, 1.0, 1.0, 0.8),
-            alpha_mode=AlphaMode2d.mask(0.5)  # Threshold at 50%
-        )
-        ```
-
-    Notes:
-        - `opaque()` is fastest but ignores alpha channel completely
-        - `blend()` provides smooth transparency but requires depth sorting
-        - `mask()` is good for sharp edges like vegetation or text
-    """
-
-    @staticmethod
-    def opaque() -> AlphaMode2d:
-        """Create an opaque alpha mode with no transparency.
-
-        Alpha values are ignored and the material is treated as fully opaque.
-        This is the fastest option and prevents depth-sorting issues.
-
-        Returns:
-            AlphaMode2d configured for fully opaque rendering
-        """
-
-    @staticmethod
-    def blend() -> AlphaMode2d:
-        """Create a blend alpha mode for smooth transparency.
-
-        Standard alpha blending where the alpha channel controls opacity.
-        Sprites will blend smoothly with the background based on their
-        alpha values.
-
-        Returns:
-            AlphaMode2d configured for standard alpha blending
-
-        Notes:
-            Requires proper depth sorting for correct rendering order.
-            May have performance impact compared to opaque mode.
-        """
-
-    @staticmethod
-    def mask(threshold: float) -> AlphaMode2d:
-        """Create a mask alpha mode for binary transparency.
-
-        Pixels are either fully visible or fully invisible based on whether
-        their alpha value meets the threshold. Good for sharp edges without
-        the depth-sorting requirements of blend mode.
-
-        Args:
-            threshold: Alpha cutoff value (0.0 to 1.0). Pixels with alpha
-                      below this value become fully transparent, pixels at
-                      or above become fully opaque.
-
-        Returns:
-            AlphaMode2d configured for threshold-based masking
-
-        Examples:
-            ```python
-            # Sharp edges for vegetation textures
-            alpha_mode = AlphaMode2d.mask(0.1)  # Almost any alpha visible
-
-            # Crisp text rendering
-            alpha_mode = AlphaMode2d.mask(0.5)  # 50% threshold
-            ```
-        """
+    class Blend(AlphaMode2d):
+        """Use standard alpha blending."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
 class SpriteImageMode:
     """Sprite image rendering mode configuration.
 
-    Determines how a sprite's texture is displayed - as a simple image,
-    scaled, nine-patch sliced, or tiled. This controls the stretching
-    and tiling behavior when the sprite's size differs from its texture size.
-
-    **Modes:**
-    - **AUTO**: Default behavior - simple image rendering (ClassVar)
-    - **scale()**: Fit or fill with alignment control
-    - **sliced()**: Nine-patch for scalable UI elements
-    - **tiled()**: Repeat texture pattern
+    The nested subclasses mirror Bevy's ``Auto``, ``Scale``, ``Sliced``, and
+    ``Tiled`` variants. Their fields are available for inspection and Python
+    structural pattern matching.
 
     Examples:
         ```python
-        from pybevy.sprite import Sprite, SpriteImageMode, SpriteScalingMode
-        from pybevy.sprite import TextureSlicer, BorderRect
+        from pybevy.sprite import BorderRect, SpriteImageMode, SpriteScalingMode, TextureSlicer
 
-        # Simple sprite - auto mode (default)
-        sprite = Sprite.from_image(image_handle)
-        sprite.image_mode = SpriteImageMode.AUTO
+        auto = SpriteImageMode.Auto()
+        scaled = SpriteImageMode.Scale(SpriteScalingMode.FitCenter)
+        sliced = SpriteImageMode.Sliced(TextureSlicer(BorderRect.all(10.0)))
+        tiled = SpriteImageMode.Tiled(tile_y=False, stretch_value=2.0)
 
-        # Scale to fit while maintaining aspect ratio
-        sprite.image_mode = SpriteImageMode.scale(SpriteScalingMode.FitCenter)
-
-        # Nine-patch UI button
-        border = BorderRect.all(10.0)  # 10px border on all sides
-        slicer = TextureSlicer(border)
-        sprite.image_mode = SpriteImageMode.sliced(slicer)
-
-        # Tiled background pattern
-        sprite.image_mode = SpriteImageMode.tiled(
-            tile_x=True,
-            tile_y=True,
-            stretch_value=1.0
-        )
+        match scaled:
+            case SpriteImageMode.Scale(mode):
+                print(mode)
         ```
     """
 
-    def __init__(self) -> None: ...
+    class Auto(SpriteImageMode):
+        """Render the image without explicit scaling or slicing."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    AUTO: ClassVar[SpriteImageMode]
-    """Automatic mode - default sprite rendering. The texture is rendered
-    directly without special scaling or tiling behavior."""
+    class Scale(SpriteImageMode):
+        """Scale the image according to ``mode``."""
+        __match_args__: ClassVar[tuple[Literal["mode"]]]
+        mode: SpriteScalingMode
+        def __init__(self, mode: SpriteScalingMode) -> None: ...
 
+    class Sliced(SpriteImageMode):
+        """Apply nine-patch slicing using ``slicer``."""
+        __match_args__: ClassVar[tuple[Literal["slicer"]]]
+        slicer: TextureSlicer
+        def __init__(self, slicer: TextureSlicer) -> None: ...
 
-    @staticmethod
-    def scaled(mode: SpriteScalingMode) -> SpriteImageMode:
-        """Create a scaled sprite image mode using the specified scaling mode.
-
-        Scales the texture to fit or fill the sprite's size while
-        maintaining aspect ratio. Useful for responsive UI elements.
-
-        Args:
-            mode: Scaling strategy controlling how the image fits:
-                  - FillCenter/Start/End: Scale to fill, may crop
-                  - FitCenter/Start/End: Scale to fit, may letterbox
-
-        Returns:
-            SpriteImageMode configured for scaled rendering
-
-        Examples:
-            ```python
-            # Fit image within sprite bounds (letterbox if needed)
-            mode = SpriteImageMode.scaled(SpriteScalingMode.FitCenter)
-
-            # Fill sprite bounds (crop if needed)
-            mode = SpriteImageMode.scaled(SpriteScalingMode.FillCenter)
-            ```
-        """
-
-    @staticmethod
-    def sliced(slicer: TextureSlicer) -> SpriteImageMode:
-        """Nine-patch slicing for scalable UI elements.
-
-        Divides the texture into 9 regions (corners, edges, center) that
-        scale independently. Corners maintain size, edges stretch in one
-        direction, center stretches in both. Perfect for resizable UI.
-
-        Args:
-            slicer: TextureSlicer defining border regions and how each
-                   region scales (stretch or tile)
-
-        Returns:
-            SpriteImageMode configured for nine-patch rendering
-
-        Examples:
-            ```python
-            # UI button with 10px borders
-            border = BorderRect.all(10.0)
-            slicer = TextureSlicer(border)
-            sprite.image_mode = SpriteImageMode.sliced(slicer)
-
-            # Panel with tiled center
-            slicer = TextureSlicer(
-                border=BorderRect.all(16.0),
-                center_tile=True  # Tile center instead of stretch
-            )
-            sprite.image_mode = SpriteImageMode.sliced(slicer)
-            ```
-
-        Notes:
-            Nine-patch slicing is commonly used for:
-            - Resizable UI buttons and panels
-            - Dialog boxes and windows
-            - Progress bars and borders
-        """
-
-    @staticmethod
-    def tiled(tile_x: bool = True, tile_y: bool = True, stretch_value: float = 1.0) -> SpriteImageMode:
-        """Tile the sprite image horizontally and/or vertically.
-
-        Repeats the texture pattern to fill the sprite's area instead of
-        stretching. Good for backgrounds and repeating patterns.
-
-        Args:
-            tile_x: Enable horizontal tiling (repeat along X axis)
-            tile_y: Enable vertical tiling (repeat along Y axis)
-            stretch_value: Texture stretching factor before tiling (default: 1.0).
-                          Values > 1.0 make tiles larger (fewer repeats).
-                          Values < 1.0 make tiles smaller (more repeats).
-
-        Returns:
-            SpriteImageMode configured for tiled rendering
-
-        Examples:
-            ```python
-            # Tiled background pattern
-            sprite.image_mode = SpriteImageMode.tiled()
-
-            # Horizontal stripe pattern (no vertical tiling)
-            sprite.image_mode = SpriteImageMode.tiled(
-                tile_x=True,
-                tile_y=False
-            )
-
-            # Larger tiles (2x size)
-            sprite.image_mode = SpriteImageMode.tiled(
-                stretch_value=2.0
-            )
-            ```
-        """
+    class Tiled(SpriteImageMode):
+        """Repeat the image along the enabled axes."""
+        __match_args__: ClassVar[tuple[Literal["tile_x"], Literal["tile_y"], Literal["stretch_value"]]]
+        tile_x: bool
+        tile_y: bool
+        stretch_value: float
+        def __init__(
+            self,
+            tile_x: bool = True,
+            tile_y: bool = True,
+            stretch_value: float = 1.0,
+        ) -> None: ...
 
     def uses_slices(self) -> bool:
         """Check if this mode uses slices internally.
 
-        Returns True if the mode is `sliced()` or `tiled()`, which both use
+        Returns True if the mode is ``Sliced`` or ``Tiled``, which both use
         internal slicing for rendering.
 
         Returns:
@@ -286,12 +124,12 @@ class SpriteImageMode:
 
         Examples:
             ```python
-            assert not SpriteImageMode.AUTO.uses_slices()
+            assert not SpriteImageMode.Auto().uses_slices()
 
-            sliced = SpriteImageMode.sliced(TextureSlicer(BorderRect.all(10.0)))
+            sliced = SpriteImageMode.Sliced(TextureSlicer(BorderRect.all(10.0)))
             assert sliced.uses_slices()
 
-            tiled = SpriteImageMode.tiled()
+            tiled = SpriteImageMode.Tiled()
             assert tiled.uses_slices()
             ```
         """
@@ -307,10 +145,10 @@ class SpriteImageMode:
 
         Examples:
             ```python
-            mode = SpriteImageMode.scaled(SpriteScalingMode.FillCenter)
+            mode = SpriteImageMode.Scale(SpriteScalingMode.FillCenter)
             assert mode.scale() == SpriteScalingMode.FillCenter
 
-            assert SpriteImageMode.AUTO.scale() is None
+            assert SpriteImageMode.Auto().scale() is None
             ```
         """
 
@@ -489,7 +327,7 @@ class BorderRect:
         """
 
 class SpriteScalingMode:
-    """Image scaling modes for `SpriteImageMode.scale()`.
+    """Image scaling modes for `SpriteImageMode.Scale()`.
 
     Controls how a sprite's image scales to fit its display size while
     maintaining aspect ratio. Choose between filling the area (may crop)
@@ -509,16 +347,16 @@ class SpriteScalingMode:
         from pybevy.sprite import Sprite, SpriteImageMode, SpriteScalingMode
 
         # Fit image within bounds, centered (letterbox if needed)
-        sprite.image_mode = SpriteImageMode.scale(SpriteScalingMode.FitCenter)
+        sprite.image_mode = SpriteImageMode.Scale(SpriteScalingMode.FitCenter)
 
         # Fill entire area, may crop edges
-        sprite.image_mode = SpriteImageMode.scale(SpriteScalingMode.FillCenter)
+        sprite.image_mode = SpriteImageMode.Scale(SpriteScalingMode.FillCenter)
 
         # Fit with top-left alignment
-        sprite.image_mode = SpriteImageMode.scale(SpriteScalingMode.FitStart)
+        sprite.image_mode = SpriteImageMode.Scale(SpriteScalingMode.FitStart)
 
         # Fill with bottom-right alignment
-        sprite.image_mode = SpriteImageMode.scale(SpriteScalingMode.FillEnd)
+        sprite.image_mode = SpriteImageMode.Scale(SpriteScalingMode.FillEnd)
         ```
 
     Notes:
@@ -528,7 +366,7 @@ class SpriteScalingMode:
         - Start/End alignment useful for multi-image layouts
 
     See Also:
-        - SpriteImageMode.scale(): Applies scaling mode to sprite rendering
+        - SpriteImageMode.Scale(): Applies scaling mode to sprite rendering
     """
 
     FillCenter: ClassVar[SpriteScalingMode]
@@ -550,85 +388,20 @@ class SpriteScalingMode:
     """Scale to fit within sprite area, aligned to bottom-right. May add letterboxing."""
 
 class SliceScaleMode:
-    """Scaling mode for nine-patch texture slices.
+    """Scaling mode for nine-patch texture slices."""
 
-    Controls how individual slices of a nine-patch texture are scaled
-    when the sprite is resized. Choose between stretching slices to fit
-    or tiling them to fill the area.
+    class Stretch(SliceScaleMode):
+        """Stretch the slice to fit the target area."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    **Modes:**
-    - **STRETCH**: Scale slice uniformly (ClassVar)
-    - **tile()**: Repeat slice pattern (static method)
+    class Tile(SliceScaleMode):
+        """Repeat the slice after the drawing-to-source ratio reaches the threshold."""
+        __match_args__: ClassVar[tuple[Literal["stretch_value"]]]
+        stretch_value: float
+        def __init__(self, stretch_value: float = 1.0) -> None: ...
 
-    Examples:
-        ```python
-        from pybevy.sprite import SliceScaleMode, TextureSlicer, BorderRect
-
-        # Stretch all regions (default behavior)
-        slicer = TextureSlicer(
-            border=BorderRect.all(10.0),
-            center_tile=False,  # Stretch center
-            sides_tile=False    # Stretch sides
-        )
-
-        # Reference stretch and tile modes
-        stretch = SliceScaleMode.STRETCH
-        tile = SliceScaleMode.tile(1.0)
-        ```
-
-    Notes:
-        - Stretching is simpler but may distort detailed textures
-        - Tiling maintains texture appearance but requires tileable patterns
-        - Center region often tiled, edges often stretched
-        - Corners always maintain their original size
-
-    See Also:
-        - TextureSlicer: Configures which regions use stretch vs tile
-        - SpriteImageMode.sliced(): Applies nine-patch rendering
-    """
-
-    def __init__(self) -> None: ...
-
-    STRETCH: ClassVar[SliceScaleMode]
-    """Stretch mode - scale the slice uniformly to fill its designated area.
-    Good for borders and corners that should scale smoothly."""
-
-
-    @staticmethod
-    def tile(stretch_value: float = 1.0) -> SliceScaleMode:
-        """Tile the slice to fill the target area.
-
-        The slice will be repeated (tiled) instead of stretched.
-        Good for patterns that should maintain their aspect ratio.
-
-        Args:
-            stretch_value: Repeat threshold ratio (default: 1.0).
-                1.0 = repeat at 1:1 ratio (10px texture → repeat every 10px)
-                2.0 = repeat at 2:1 ratio (10px texture → repeat every 20px)
-                Lower values (<1.0) may cause quality loss.
-
-        Returns:
-            SliceScaleMode configured for tiling
-
-        Examples:
-            ```python
-            # Perfect 1:1 tiling
-            mode = SliceScaleMode.tile(1.0)
-
-            # Larger tiles (2x texture size)
-            mode = SliceScaleMode.tile(2.0)
-            ```
-        """
-
-    def __eq__(self, other: object) -> bool:
-        """Compare two SliceScaleMode instances for equality.
-
-        Args:
-            other: Another SliceScaleMode to compare against
-
-        Returns:
-            True if both have the same mode and parameters, False otherwise
-        """
+    def __eq__(self, other: object) -> bool: ...
 
 class TextureSlicer:
     """Configuration for nine-patch texture slicing.
@@ -661,7 +434,7 @@ class TextureSlicer:
         # Simple button with 10px borders, stretch all regions
         border = BorderRect.all(10.0)
         slicer = TextureSlicer(border)
-        sprite.image_mode = SpriteImageMode.sliced(slicer)
+        sprite.image_mode = SpriteImageMode.Sliced(slicer)
 
         # Panel with tiled center for patterned background
         slicer = TextureSlicer(
@@ -694,7 +467,7 @@ class TextureSlicer:
     See Also:
         - BorderRect: Defines the border dimensions
         - SliceScaleMode: Controls stretch vs tile behavior
-        - SpriteImageMode.sliced(): Applies nine-patch rendering to sprites
+        - SpriteImageMode.Sliced(): Applies nine-patch rendering to sprites
     """
 
     border: BorderRect

@@ -28,7 +28,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
 
     # Create sprite with tiled image mode
     sprite = Sprite(image=image_handle)
-    sprite.image_mode = SpriteImageMode.tiled(
+    sprite.image_mode = SpriteImageMode.Tiled(
         tile_x=True,
         tile_y=True,
         stretch_value=0.5,  # The image will tile every 128px
