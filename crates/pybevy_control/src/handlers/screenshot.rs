@@ -936,7 +936,7 @@ pub fn read_headless_frame(world: &World) -> Result<RgbImage, ControlError> {
     let buffer = world.get_resource::<HeadlessFrameBuffer>().ok_or_else(|| {
         ControlError::internal(
             "No primary window and no HeadlessFrameBuffer registered. \
-             Add ImageCopyPlugin and a camera with RenderTarget.image() for headless screenshots."
+             Add ImageCopyPlugin and a camera with RenderTarget.Image(ImageRenderTarget(...)) for headless screenshots."
                 .to_string(),
         )
     })?;

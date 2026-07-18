@@ -23,6 +23,10 @@ impl From<DependencyLoadState> for PyDependencyLoadState {
 
 #[pymethods]
 impl PyDependencyLoadState {
+    pub fn is_not_loaded(&self) -> bool {
+        matches!(self, Self::NotLoaded())
+    }
+
     pub fn is_loading(&self) -> bool {
         matches!(self, Self::Loading())
     }

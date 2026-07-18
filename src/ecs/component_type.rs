@@ -138,8 +138,9 @@ impl PyComponentType {
 
         // Check dynamic registry for feature crate components
         let type_ptr = ty.as_type_ptr();
-        if global_registry::contains_py_type(type_ptr) {
-            return Ok(PyComponentType::Dynamic(type_ptr));
+        if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) {
+            // Native subclasses share the canonical Bevy component identity.
+            return Ok(PyComponentType::Dynamic(bridge.py_type_ptr()));
         }
 
         // Check for special Python-only built-in components (DespawnOnExit, DespawnOnEnter)

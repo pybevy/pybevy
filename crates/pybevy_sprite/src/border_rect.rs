@@ -2,12 +2,12 @@ use bevy::{math::Vec2, sprite::BorderRect};
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pyclass(name = "BorderRect", frozen, eq, from_py_object)]
+#[pyclass(name = "BorderRect", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyBorderRect {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub min_inset: PyVec2,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub max_inset: PyVec2,
 }
 

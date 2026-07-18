@@ -82,9 +82,19 @@ impl PyIsometry3d {
         v.into()
     }
 
+    #[setter]
+    pub fn set_translation(&mut self, value: PyVec3) {
+        self.translation = Vec3A::from(Vec3::from(value));
+    }
+
     #[getter]
     pub fn rotation(&self) -> crate::quat::PyQuat {
         self.rotation.into()
+    }
+
+    #[setter]
+    pub fn set_rotation(&mut self, value: crate::quat::PyQuat) {
+        self.rotation = value.into();
     }
 
     pub fn inverse(&self) -> Self {

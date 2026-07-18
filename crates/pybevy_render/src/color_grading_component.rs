@@ -83,10 +83,10 @@ impl PyColorGrading {
     #[staticmethod]
     pub fn with_identical_sections(
         py: Python,
-        global: PyColorGradingGlobal,
+        global_: PyColorGradingGlobal,
         section: PyColorGradingSection,
     ) -> PyResult<Py<Self>> {
-        let bevy_global: ColorGradingGlobal = global.try_into()?;
+        let bevy_global: ColorGradingGlobal = global_.try_into()?;
         let bevy_section: ColorGradingSection = section.try_into()?;
         let color_grading = ColorGrading::with_identical_sections(bevy_global, bevy_section);
         Py::new(py, Self::from_owned(color_grading))

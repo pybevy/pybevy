@@ -23,6 +23,10 @@ impl From<RecursiveDependencyLoadState> for PyRecursiveDependencyLoadState {
 
 #[pymethods]
 impl PyRecursiveDependencyLoadState {
+    pub fn is_not_loaded(&self) -> bool {
+        matches!(self, Self::NotLoaded())
+    }
+
     pub fn is_loading(&self) -> bool {
         matches!(self, Self::Loading())
     }
