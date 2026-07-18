@@ -9,10 +9,12 @@
 //! Per-run iterator erasure and lookup orchestration live in the sibling
 //! `query_runtime` module; each backend keeps only its row materializer.
 
+#[cfg(debug_assertions)]
+use bevy::ecs::query::FilteredAccess;
 use bevy::ecs::{
     change_detection::{ComponentTicks, Tick},
     component::ComponentId,
-    query::{FilteredAccess, QueryState},
+    query::QueryState,
     world::{FilteredEntityMut, FilteredEntityRef, World, unsafe_world_cell::UnsafeWorldCell},
 };
 

@@ -16,6 +16,7 @@
 //! guard complementing the static per-parameter tests in `access_sets` and
 //! `param_spec`.
 
+#[cfg(debug_assertions)]
 use bevy::ecs::query::{FilteredAccess, FilteredAccessSet};
 
 /// Assert the declared access set covers one query parameter's actual access.
