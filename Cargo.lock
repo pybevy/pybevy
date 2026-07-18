@@ -4565,6 +4565,7 @@ dependencies = [
  "paste",
  "pybevy_a11y",
  "pybevy_animation",
+ "pybevy_array",
  "pybevy_audio",
  "pybevy_bytecodevm",
  "pybevy_camera",
@@ -4645,6 +4646,16 @@ dependencies = [
  "pybevy_mesh",
  "pyo3",
  "uuid",
+]
+
+[[package]]
+name = "pybevy_array"
+version = "0.2.1"
+dependencies = [
+ "criterion",
+ "numpy",
+ "pybevy_bytecodevm",
+ "pyo3",
 ]
 
 [[package]]

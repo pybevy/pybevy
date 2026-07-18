@@ -51,6 +51,7 @@ pybevy_core = { path = "./crates/pybevy_core", version = "=0.2.1" }
 pybevy_math = { path = "./crates/pybevy_math", version = "=0.2.1" }
 pybevy_color = { path = "./crates/pybevy_color", version = "=0.2.1" }
 pybevy_audio = { path = "./crates/pybevy_audio", version = "=0.2.1" }
+pybevy_array = { path = "./crates/pybevy_array", version = "=0.2.1", default-features = false }
 pybevy_transform = { path = "./crates/pybevy_transform", version = "=0.2.1" }
 pybevy_a11y = { path = "./crates/pybevy_a11y", version = "=0.2.1" }
 pybevy_input = { path = "./crates/pybevy_input", version = "=0.2.1" }
@@ -87,6 +88,7 @@ pybevy_core = { path = "./crates/pybevy_core", version = "=0.2.1" }
 pybevy_math = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_audio = { workspace = true }
+pybevy_array = { workspace = true, features = ["pyo3"] }
 pybevy_transform = { workspace = true }
 pybevy_a11y = { workspace = true }
 pybevy_input = { workspace = true }
