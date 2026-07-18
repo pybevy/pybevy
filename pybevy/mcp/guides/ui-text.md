@@ -22,7 +22,7 @@ PyBevy has two text systems:
 ### Basic Usage
 
 ```python
-from pybevy.ui import Node, Text, BackgroundColor
+from pybevy.ui import BackgroundColor, Node, PositionType, Text
 from pybevy.text import TextFont, TextColor, TextLayout, Justify
 
 # Simple text at default position (top-left)
@@ -64,11 +64,11 @@ commands.spawn(
 
 ### Absolute Positioning
 
-Use `position_type = 1` (Absolute) to place text anywhere on screen:
+Use `PositionType.Absolute` to place text anywhere on screen:
 
 ```python
 node = Node()
-node.position_type = 1   # Absolute
+node.position_type = PositionType.Absolute
 node.bottom = 50.0       # 50px from bottom
 node.left = 0.0          # Flush left
 
@@ -88,7 +88,7 @@ For centered text like movie subtitles, set a wide width and use `Justify.Center
 
 ```python
 node = Node()
-node.position_type = 1
+node.position_type = PositionType.Absolute
 node.bottom = 50.0
 node.left = 0.0
 node.width = 1920.0  # Wide enough for any screen
@@ -212,7 +212,7 @@ commands.spawn(
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `position_type` | `0` or `1` | 0 = Relative (flow), 1 = Absolute |
+| `position_type` | `PositionType` | `.Relative` (flow) or `.Absolute` |
 | `top`, `bottom`, `left`, `right` | `float` or `Val` | Offset (float = pixels, or `Val.px()` / `Val.percent()`) |
 | `width`, `height` | `float` or `Val` | Size (float = pixels, or `Val.px()` / `Val.percent()`) |
 | `flex_direction` | `FlexDirection` | `.Row`, `.Column`, `.RowReverse`, `.ColumnReverse` |
@@ -224,13 +224,13 @@ For percentage-based values, use `Val.percent(50.0)` on properties that accept `
 ## Complete HUD Example
 
 ```python
-from pybevy.ui import Node, Text, BackgroundColor
+from pybevy.ui import BackgroundColor, Node, PositionType, Text
 from pybevy.text import TextFont, TextColor
 
 def setup_hud(commands: Commands):
     # Top-left score
     score_node = Node()
-    score_node.position_type = 1
+    score_node.position_type = PositionType.Absolute
     score_node.top = 10.0
     score_node.left = 10.0
     commands.spawn(
@@ -243,7 +243,7 @@ def setup_hud(commands: Commands):
 
     # Bottom-center narration
     narration_node = Node()
-    narration_node.position_type = 1
+    narration_node.position_type = PositionType.Absolute
     narration_node.bottom = 50.0
     narration_node.left = 0.0
     narration_node.width = 1920.0

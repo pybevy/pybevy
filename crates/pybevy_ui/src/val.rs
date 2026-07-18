@@ -143,55 +143,7 @@ impl PyVal {
     }
 
     pub fn __eq__(&self, other: &Self) -> bool {
-        match (&self.inner, &other.inner) {
-            (Val::Px(a), Val::Px(b)) => (a - b).abs() < f32::EPSILON,
-            (Val::Percent(a), Val::Percent(b)) => (a - b).abs() < f32::EPSILON,
-            (Val::Auto, Val::Auto) => true,
-            (Val::Vw(a), Val::Vw(b)) => (a - b).abs() < f32::EPSILON,
-            (Val::Vh(a), Val::Vh(b)) => (a - b).abs() < f32::EPSILON,
-            (Val::VMin(a), Val::VMin(b)) => (a - b).abs() < f32::EPSILON,
-            (Val::VMax(a), Val::VMax(b)) => (a - b).abs() < f32::EPSILON,
-            _ => false,
-        }
-    }
-
-    pub fn __hash__(&self) -> u64 {
-        use std::{
-            collections::hash_map::DefaultHasher,
-            hash::{Hash, Hasher},
-        };
-
-        let mut hasher = DefaultHasher::new();
-        match self.inner {
-            Val::Px(v) => {
-                0u8.hash(&mut hasher);
-                v.to_bits().hash(&mut hasher);
-            }
-            Val::Percent(v) => {
-                1u8.hash(&mut hasher);
-                v.to_bits().hash(&mut hasher);
-            }
-            Val::Auto => {
-                2u8.hash(&mut hasher);
-            }
-            Val::Vw(v) => {
-                3u8.hash(&mut hasher);
-                v.to_bits().hash(&mut hasher);
-            }
-            Val::Vh(v) => {
-                4u8.hash(&mut hasher);
-                v.to_bits().hash(&mut hasher);
-            }
-            Val::VMin(v) => {
-                5u8.hash(&mut hasher);
-                v.to_bits().hash(&mut hasher);
-            }
-            Val::VMax(v) => {
-                6u8.hash(&mut hasher);
-                v.to_bits().hash(&mut hasher);
-            }
-        }
-        hasher.finish()
+        self.inner == other.inner
     }
 
     #[getter]

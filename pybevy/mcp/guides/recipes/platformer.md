@@ -170,12 +170,12 @@ def collect_gems(
 Uses UI `Text` (not `Text2d` - `Text2d` requires `Camera2d`). See `guide://ui-text` for full UI text details.
 
 ```python
-from pybevy.ui import Node, Text, BackgroundColor
+from pybevy.ui import BackgroundColor, Node, PositionType, Text
 from pybevy.text import TextFont, TextColor
 
 def setup_hud(commands: Commands, score: Res[GameScore]) -> None:
     node = Node()
-    node.position_type = 1  # Absolute
+    node.position_type = PositionType.Absolute
     node.top = 12.0
     node.right = 16.0
     commands.spawn(
