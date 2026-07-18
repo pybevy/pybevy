@@ -65,7 +65,7 @@ class AnimationConfig(Component):
         Returns:
             Timer that fires at the specified FPS
         """
-        return Timer(1.0 / float(fps), TimerMode.ONCE)
+        return Timer(1.0 / float(fps), TimerMode.Once)
 
 
 @component

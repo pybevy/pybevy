@@ -40,7 +40,7 @@ class PrintMessagePlugin(Plugin):
         """
         state = PrintMessageState(
             message=self.message,
-            timer=Timer(self.wait_duration, TimerMode.REPEATING)
+            timer=Timer(self.wait_duration, TimerMode.Repeating)
         )
         app.insert_resource(state)
         app.add_systems(Update, print_message_system)

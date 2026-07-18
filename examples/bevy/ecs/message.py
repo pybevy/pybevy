@@ -42,7 +42,7 @@ class DamageTimer(Resource):
     """Timer used to determine when to deal damage."""
 
     def __init__(self):
-        self.timer: Timer = Timer(1.0, TimerMode.REPEATING)
+        self.timer: Timer = Timer(1.0, TimerMode.Repeating)
 
 
 def deal_damage_over_time(

@@ -1,4 +1,4 @@
-use bevy::image::{ImageFormat, ImageFormatSetting};
+use bevy::image::ImageFormatSetting;
 use pyo3::prelude::*;
 
 use crate::image_format::PyImageFormat;
@@ -7,6 +7,7 @@ use crate::image_format::PyImageFormat;
 pub enum PyImageFormatSetting {
     FromExtension(),
     Guess(),
+    Format { value: PyImageFormat },
 }
 
 impl From<ImageFormatSetting> for PyImageFormatSetting {
@@ -14,10 +15,9 @@ impl From<ImageFormatSetting> for PyImageFormatSetting {
         match setting {
             ImageFormatSetting::FromExtension => PyImageFormatSetting::FromExtension(),
             ImageFormatSetting::Guess => PyImageFormatSetting::Guess(),
-            ImageFormatSetting::Format(_) => {
-                // Format variant loses the specific format info but we map to FromExtension
-                PyImageFormatSetting::FromExtension()
-            }
+            ImageFormatSetting::Format(value) => PyImageFormatSetting::Format {
+                value: value.into(),
+            },
         }
     }
 }
@@ -27,44 +27,20 @@ impl From<PyImageFormatSetting> for ImageFormatSetting {
         match setting {
             PyImageFormatSetting::FromExtension() => ImageFormatSetting::FromExtension,
             PyImageFormatSetting::Guess() => ImageFormatSetting::Guess,
+            PyImageFormatSetting::Format { value } => ImageFormatSetting::Format(value.into()),
         }
     }
 }
 
 #[pymethods]
 impl PyImageFormatSetting {
-    #[staticmethod]
-    pub fn from_extension() -> Self {
-        PyImageFormatSetting::FromExtension()
-    }
-    #[staticmethod]
-    pub fn guess() -> Self {
-        PyImageFormatSetting::Guess()
-    }
-    #[staticmethod]
-    pub fn format(format: PyImageFormat) -> PyImageFormatSettingWithFormat {
-        PyImageFormatSettingWithFormat {
-            format: format.into(),
-        }
-    }
-
     pub fn __repr__(&self) -> String {
         match self {
             PyImageFormatSetting::FromExtension() => "ImageFormatSetting.FromExtension".to_string(),
             PyImageFormatSetting::Guess() => "ImageFormatSetting.Guess".to_string(),
+            PyImageFormatSetting::Format { value } => {
+                format!("ImageFormatSetting.Format({value:?})")
+            }
         }
-    }
-}
-
-/// Image format setting with a specific format.
-#[pyclass(name = "ImageFormatSettingWithFormat", skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyImageFormatSettingWithFormat {
-    pub(crate) format: ImageFormat,
-}
-
-impl From<PyImageFormatSettingWithFormat> for ImageFormatSetting {
-    fn from(setting: PyImageFormatSettingWithFormat) -> Self {
-        ImageFormatSetting::Format(setting.format)
     }
 }

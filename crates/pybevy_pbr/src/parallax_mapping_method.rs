@@ -8,14 +8,6 @@ pub enum PyParallaxMappingMethod {
     Relief { max_steps: u32 },
 }
 
-#[pymethods]
-impl PyParallaxMappingMethod {
-    #[new]
-    pub fn new() -> Self {
-        PyParallaxMappingMethod::Occlusion()
-    }
-}
-
 impl From<ParallaxMappingMethod> for PyParallaxMappingMethod {
     fn from(method: ParallaxMappingMethod) -> Self {
         match method {
@@ -35,11 +27,5 @@ impl From<PyParallaxMappingMethod> for ParallaxMappingMethod {
                 ParallaxMappingMethod::Relief { max_steps }
             }
         }
-    }
-}
-
-impl Default for PyParallaxMappingMethod {
-    fn default() -> Self {
-        Self::new()
     }
 }

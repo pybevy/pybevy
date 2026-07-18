@@ -112,7 +112,7 @@ from pybevy.image import (
 from pybevy.math import Affine2
 
 # Create repeat sampler settings (reuse for all tiling textures)
-repeat_settings = ImageLoaderSettings(sampler=ImageSampler.descriptor(
+repeat_settings = ImageLoaderSettings(sampler=ImageSampler.Descriptor(
     ImageSamplerDescriptor(
         address_mode_u=ImageAddressMode.Repeat,
         address_mode_v=ImageAddressMode.Repeat,

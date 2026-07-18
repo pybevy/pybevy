@@ -96,7 +96,7 @@ def setup(
         ),
         Transform.from_scale(Vec3.splat(6.0)),
         animation_indices,
-        AnimationTimer(timer=Timer(0.1, TimerMode.REPEATING)),
+        AnimationTimer(timer=Timer(0.1, TimerMode.Repeating)),
     )
 
 

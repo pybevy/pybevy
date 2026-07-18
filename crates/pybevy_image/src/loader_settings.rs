@@ -20,12 +20,6 @@ pub enum PyImageSampler {
 #[pymethods]
 impl PyImageSampler {
     #[staticmethod]
-    #[pyo3(name = "default")]
-    pub fn default_sampler() -> Self {
-        PyImageSampler::Default()
-    }
-
-    #[staticmethod]
     pub fn linear() -> Self {
         PyImageSampler::Descriptor {
             desc: PyImageSamplerDescriptor::linear(),
@@ -37,11 +31,6 @@ impl PyImageSampler {
         PyImageSampler::Descriptor {
             desc: PyImageSamplerDescriptor::nearest(),
         }
-    }
-
-    #[staticmethod]
-    pub fn descriptor(desc: PyImageSamplerDescriptor) -> Self {
-        PyImageSampler::Descriptor { desc }
     }
 
     #[getter]
