@@ -1,14 +1,22 @@
 use bevy::ui::Node;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::prelude::*;
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
     PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyPositionType, grid_placement::PyGridPlacement, grid_track::PyGridTrack, overflow::PyOverflow,
-    overflow_clip_margin::PyOverflowClipMargin, repeated_grid_track::PyRepeatedGridTrack,
-    ui_rect::PyUiRect, val::PyVal,
+    PyPositionType,
+    grid_placement::PyGridPlacement,
+    grid_track::PyGridTrack,
+    overflow::PyOverflow,
+    overflow_clip_margin::PyOverflowClipMargin,
+    repeated_grid_track::PyRepeatedGridTrack,
+    ui_rect::PyUiRect,
+    val::{PyVal, extract_val_from_any},
 };
 
 #[pycomponent(Node, bridge)]
@@ -30,13 +38,18 @@ impl PyNode {
         // Accept both PyPositionType enum and raw integer for backward compatibility
         let pos = if let Ok(v) = value.extract::<PyPositionType>() {
             v.into()
-        } else if let Ok(v) = value.extract::<u8>() {
+        } else if let Ok(v) = value.extract::<i64>() {
             match v {
+                0 => bevy::ui::PositionType::Relative,
                 1 => bevy::ui::PositionType::Absolute,
-                _ => bevy::ui::PositionType::Relative,
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "invalid PositionType value: {v}, expected 0 (Relative) or 1 (Absolute)"
+                    )));
+                }
             }
         } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
+            return Err(PyTypeError::new_err(
                 "position_type accepts PositionType enum or integer (0=Relative, 1=Absolute)",
             ));
         };
@@ -55,8 +68,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_top(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.top = value.into();
+    pub fn set_top(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.top = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -66,8 +79,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_left(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.left = value.into();
+    pub fn set_left(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.left = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -77,8 +90,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_width(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.width = value.into();
+    pub fn set_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.width = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -88,8 +101,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_height(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.height = value.into();
+    pub fn set_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.height = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -99,8 +112,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_right(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.right = value.into();
+    pub fn set_right(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.right = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -110,8 +123,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_bottom(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.bottom = value.into();
+    pub fn set_bottom(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.bottom = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -121,8 +134,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_min_width(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.min_width = value.into();
+    pub fn set_min_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.min_width = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -132,8 +145,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_max_width(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.max_width = value.into();
+    pub fn set_max_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.max_width = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -143,8 +156,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_min_height(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.min_height = value.into();
+    pub fn set_min_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.min_height = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -154,8 +167,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_max_height(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.max_height = value.into();
+    pub fn set_max_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.max_height = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -352,8 +365,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_flex_basis(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.flex_basis = value.into();
+    pub fn set_flex_basis(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.flex_basis = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -363,8 +376,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_row_gap(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.row_gap = value.into();
+    pub fn set_row_gap(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.row_gap = extract_val_from_any(value)?;
         Ok(())
     }
 
@@ -374,8 +387,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_column_gap(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.column_gap = value.into();
+    pub fn set_column_gap(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.column_gap = extract_val_from_any(value)?;
         Ok(())
     }
 

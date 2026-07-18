@@ -1,5 +1,5 @@
 use bevy::ui::Val;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::ui_rect::PyUiRect;
 
@@ -25,6 +25,19 @@ impl From<PyVal> for Val {
     fn from(py_val: PyVal) -> Self {
         py_val.inner
     }
+}
+
+/// Extract a [`Val`] from its wrapper or a pixel value.
+///
+/// Bare numbers mirror PyBevy's documented `float -> Val::Px` adaptation.
+pub fn extract_val_from_any(value: &Bound<'_, PyAny>) -> PyResult<Val> {
+    if let Ok(value) = value.extract::<PyVal>() {
+        return Ok(value.into());
+    }
+    if let Ok(value) = value.extract::<f32>() {
+        return Ok(Val::Px(value));
+    }
+    Err(PyTypeError::new_err("expected Val or float"))
 }
 
 #[pymethods]

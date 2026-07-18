@@ -1067,49 +1067,49 @@ class Node(Component):
         """Height."""
 
     @height.setter
-    def height(self, value: Val) -> None: ...
+    def height(self, value: Val | float) -> None: ...
 
     @property
     def right(self) -> Val:
         """Right position (for absolute positioning)."""
 
     @right.setter
-    def right(self, value: Val) -> None: ...
+    def right(self, value: Val | float) -> None: ...
 
     @property
     def bottom(self) -> Val:
         """Bottom position (for absolute positioning)."""
 
     @bottom.setter
-    def bottom(self, value: Val) -> None: ...
+    def bottom(self, value: Val | float) -> None: ...
 
     @property
     def min_width(self) -> Val:
         """Minimum width."""
 
     @min_width.setter
-    def min_width(self, value: Val) -> None: ...
+    def min_width(self, value: Val | float) -> None: ...
 
     @property
     def max_width(self) -> Val:
         """Maximum width."""
 
     @max_width.setter
-    def max_width(self, value: Val) -> None: ...
+    def max_width(self, value: Val | float) -> None: ...
 
     @property
     def min_height(self) -> Val:
         """Minimum height."""
 
     @min_height.setter
-    def min_height(self, value: Val) -> None: ...
+    def min_height(self, value: Val | float) -> None: ...
 
     @property
     def max_height(self) -> Val:
         """Maximum height."""
 
     @max_height.setter
-    def max_height(self, value: Val) -> None: ...
+    def max_height(self, value: Val | float) -> None: ...
 
     @property
     def flex_direction(self) -> FlexDirection:
@@ -1256,21 +1256,21 @@ class Node(Component):
         """Initial size of item before growing/shrinking."""
 
     @flex_basis.setter
-    def flex_basis(self, value: Val) -> None: ...
+    def flex_basis(self, value: Val | float) -> None: ...
 
     @property
     def row_gap(self) -> Val:
         """Gap between rows in flex/grid layout."""
 
     @row_gap.setter
-    def row_gap(self, value: Val) -> None: ...
+    def row_gap(self, value: Val | float) -> None: ...
 
     @property
     def column_gap(self) -> Val:
         """Gap between columns in flex/grid layout."""
 
     @column_gap.setter
-    def column_gap(self, value: Val) -> None: ...
+    def column_gap(self, value: Val | float) -> None: ...
 
     @property
     def aspect_ratio(self) -> float | None:
