@@ -127,7 +127,7 @@ commands.spawn(
 
 ### Ambient Light
 
-Flat light applied everywhere — prevents pure-black shadows.
+Flat light applied everywhere - prevents pure-black shadows.
 
 ```python
 # GlobalAmbientLight (resource, recommended)
@@ -140,11 +140,11 @@ commands.insert_resource(GlobalAmbientLight(
 commands.insert_resource(AmbientLight(color=Color.WHITE, brightness=200.0))
 ```
 
-**Brightness 100–300** is typical for outdoor scenes. **Indoor/cave scenes need 500+** since there's no sky bounce. Higher values wash out shadows — but invisible scenes are worse than washed-out ones. Start bright, dim later.
+**Brightness 100–300** is typical for outdoor scenes. **Indoor/cave scenes need 500+** since there's no sky bounce. Higher values wash out shadows - but invisible scenes are worse than washed-out ones. Start bright, dim later.
 
 ## ClearColor (Background)
 
-`ClearColor` is a resource that sets the background color behind everything. Essential for dark/night scenes — without it, the default gray sky breaks the mood:
+`ClearColor` is a resource that sets the background color behind everything. Essential for dark/night scenes - without it, the default gray sky breaks the mood:
 
 ```python
 # Near-black for night/industrial scenes
@@ -167,7 +167,7 @@ commands.insert_resource(ClearColor(Color.srgb(0.0, 0.05, 0.15)))
 | Daytime | Use `Atmosphere` instead | Sky fills background |
 | 2D game | `(0.015, 0.015, 0.03)` | Very dark blue-black |
 
-Set it in your Startup system alongside `GlobalAmbientLight`. For outdoor daytime scenes using `Atmosphere`, you don't need it — the sky fills the background.
+Set it in your Startup system alongside `GlobalAmbientLight`. For outdoor daytime scenes using `Atmosphere`, you don't need it - the sky fills the background.
 
 ## Fog
 
@@ -196,11 +196,11 @@ commands.spawn(
 | 0.002 | Light fog, good for outdoor scenes |
 | 0.003–0.005 | Interior haze / moody indoor atmosphere |
 | 0.005–0.008 | Thick fog, objects fade quickly |
-| 0.01+ | Pea soup — very short visibility |
+| 0.01+ | Pea soup - very short visibility |
 
 **Interior vs outdoor:** Indoor scenes need lower density than you'd expect. Walls constrain the camera to short distances, so even 0.005 can feel thick. Start with **0.003–0.004** for interior fog and adjust up. For outdoor scenes, 0.002 is a good default.
 
-**Gotcha:** Fog interacts with lighting. A density that looks fine in daylight can make nighttime scenes nearly invisible. Dark interiors with low ambient light amplify fog opacity — if your scene looks washed out, reduce density before increasing light intensity. If you have a day/night cycle, keep density at 0.002 or lower.
+**Gotcha:** Fog interacts with lighting. A density that looks fine in daylight can make nighttime scenes nearly invisible. Dark interiors with low ambient light amplify fog opacity - if your scene looks washed out, reduce density before increasing light intensity. If you have a day/night cycle, keep density at 0.002 or lower.
 
 **Top-down / overhead cameras:** Fog compounds with camera distance. An overhead camera at y=20 looking down sees every object through 15–20 units of fog, so densities that work for eye-level cameras (0.03–0.05) will black out the scene. Use **3–4x lower density** for top-down views (e.g., 0.01–0.015 instead of 0.04). Also boost ambient light (80+ instead of 20) to compensate.
 
@@ -224,7 +224,7 @@ commands.spawn(
 
 Putting `Atmosphere` on the camera entity also renders, but then the planet center follows the camera (altitude never changes); prefer the separate entity, as in Bevy's own examples.
 
-Atmosphere responds to the DirectionalLight direction — the sky color changes as the "sun" moves.
+Atmosphere responds to the DirectionalLight direction - the sky color changes as the "sun" moves.
 
 **Exposure:** physically plausible sun values (85,000 to 130,000 lux, as in Bevy's own atmosphere examples) blow out to white at default exposure. Pair them with `Exposure` from `pybevy.camera` on the camera: `Exposure(ev100=13.0)` to `Exposure(ev100=15.0)`, or the `Exposure.OVERCAST` / `Exposure.SUNLIGHT` presets. The 3,000 to 15,000 lux values used elsewhere in this guide are tuned for default exposure instead.
 
@@ -257,10 +257,10 @@ window_mat = materials.add(StandardMaterial(
 
 **Emissive values:** 1.0–5.0 for subtle glow, 5.0–50.0 for bright glow, 100+ for intense bloom. Requires `Bloom` on the camera to be visible.
 
-**`unlit=True` gotcha:** With `unlit=True`, `base_color` is the **visible surface color** — it's what you actually see on the mesh. `emissive` only adds the bloom halo around it. If `base_color` is dark (e.g., `0.02, 0.0, 0.04`), the object will appear as a dark silhouette with a glow halo. **Set `base_color` bright** to make the object itself visible:
+**`unlit=True` gotcha:** With `unlit=True`, `base_color` is the **visible surface color** - it's what you actually see on the mesh. `emissive` only adds the bloom halo around it. If `base_color` is dark (e.g., `0.02, 0.0, 0.04`), the object will appear as a dark silhouette with a glow halo. **Set `base_color` bright** to make the object itself visible:
 
 ```python
-# ❌ Dark pillar with bloom halo — looks like a silhouette
+# ❌ Dark pillar with bloom halo - looks like a silhouette
 StandardMaterial(base_color=Color.srgb(0.02, 0.0, 0.04), emissive=LinearRgba.rgb(18.0, 3.0, 40.0), unlit=True)
 
 # ✅ Bright visible pillar with bloom halo
@@ -281,7 +281,7 @@ Thin meshes (torus rings, thin cylinders) bloom faster than solid shapes. Reduce
 **Metallic alternative for rings/torus shapes:** When reducing emissive still blooms rings into solid discs (especially multiple overlapping rings), use metallic materials lit by a nearby PointLight instead of emissive. The specular highlights follow the ring geometry without bloom blowout:
 
 ```python
-# Metallic ring + nearby colored light — preserves ring shape
+# Metallic ring + nearby colored light - preserves ring shape
 ring_mat = materials.add(StandardMaterial(
     base_color=Color.srgb(0.5, 0.35, 0.75),
     metallic=0.95, perceptual_roughness=0.08,
@@ -415,7 +415,7 @@ commands.spawn(
 
 ### Industrial Interior (Spotlights + Fog)
 ```python
-# Cool ambient — 500+ for enclosed spaces (no sky bounce)
+# Cool ambient - 500+ for enclosed spaces (no sky bounce)
 commands.insert_resource(GlobalAmbientLight(brightness=500.0, color=Color.srgb(0.5, 0.5, 0.6)))
 commands.insert_resource(ClearColor(Color.srgb(0.04, 0.03, 0.05)))
 # Weak directional for general fill
@@ -448,9 +448,16 @@ DistanceFog(
 
 Volumetric fog renders light shafts (god rays) and localized fog volumes. Requires three parts:
 
-1. **`VolumetricFog`** on the camera — enables the volumetric rendering pass
-2. **`VolumetricLight`** on lights — marks which lights contribute to the fog
-3. **`FogVolume`** (optional) — localized fog regions with custom density
+1. **`VolumetricFog`** on the camera - enables the volumetric rendering pass
+2. **`VolumetricLight`** on lights - marks which lights contribute to the fog
+3. **`FogVolume`** (optional) - localized fog regions with custom density
+
+**Performance warning:** the pass raymarches every pixel against every shadowed
+`VolumetricLight`. A scene-sized `FogVolume` with 2-3 shadowed volumetric lights can
+drop mid-range GPUs below 30 FPS at high resolutions. Start with `step_count=16-32`,
+ONE volumetric light, and small volumes; verify with `get_performance` before adding
+more. For cheap fake light shafts, use tall additive unlit cones instead
+(`AlphaMode.Add()`, `unlit=True`, alpha 0.02-0.05).
 
 ```python
 from pybevy.light import VolumetricFog, VolumetricLight, FogVolume
@@ -527,13 +534,13 @@ commands.spawn(
               fog_color=Color.srgb(0.75, 0.8, 0.85)),
     Transform.from_xyz(0, 0.5, 0).with_scale(Vec3(8.0, 1.2, 8.0)),
 )
-# Mid layer — wider, less dense
+# Mid layer - wider, less dense
 commands.spawn(
     FogVolume(density_factor=0.2, absorption=0.015, scattering=0.5, scattering_asymmetry=0.4,
               fog_color=Color.srgb(0.7, 0.75, 0.8)),
     Transform.from_xyz(0, 2.0, 0).with_scale(Vec3(13.0, 3.0, 13.0)),
 )
-# Upper haze — very wide, barely visible
+# Upper haze - very wide, barely visible
 commands.spawn(
     FogVolume(density_factor=0.08, absorption=0.01, scattering=0.25,
               fog_color=Color.srgb(0.6, 0.65, 0.7)),
@@ -548,7 +555,7 @@ commands.spawn(
 
 ## Light Cookies
 
-Project a texture pattern through a light — for window shadows, stained glass, gobos.
+Project a texture pattern through a light - for window shadows, stained glass, gobos.
 
 ```python
 from pybevy.light import DirectionalLightTexture, SpotLightTexture, PointLightTexture
@@ -587,7 +594,7 @@ commands.spawn(
 )
 ```
 
-Custom size: `SunDisk(angular_size=0.02, intensity=1.0)` — larger `angular_size` = bigger sun.
+Custom size: `SunDisk(angular_size=0.02, intensity=1.0)` - larger `angular_size` = bigger sun.
 
 ## Environment Lighting
 
@@ -597,7 +604,7 @@ Three approaches, from easiest to most control:
 
 ### 1. AtmosphereEnvironmentMapLight (Easiest)
 
-Derives environment lighting from the atmosphere sky. Just add to camera — no texture loading needed.
+Derives environment lighting from the atmosphere sky. Just add to camera - no texture loading needed.
 
 ```python
 from pybevy.light import AtmosphereEnvironmentMapLight
@@ -685,6 +692,6 @@ The `Transform` scale defines the volume the probes cover.
 
 ## Related Guides
 
-- **Materials:** `guide://materials` — PBR surfaces, transmission, clearcoat
-- **Shadows:** `guide://shadows` — Shadow maps, cascades, bias tuning
-- **Camera:** `guide://camera` — Bloom (needed for emissive glow), color grading
+- **Materials:** `guide://materials` - PBR surfaces, transmission, clearcoat
+- **Shadows:** `guide://shadows` - Shadow maps, cascades, bias tuning
+- **Camera:** `guide://camera` - Bloom (needed for emissive glow), color grading

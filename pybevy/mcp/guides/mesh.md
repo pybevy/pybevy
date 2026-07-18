@@ -7,7 +7,7 @@ Creating 3D and 2D meshes from primitives, custom vertices, and zero-copy NumPy 
 **Two patterns** for creating meshes:
 
 ### Direct Pass (Simple)
-Pass shapes directly — PyBevy auto-converts to Mesh:
+Pass shapes directly - PyBevy auto-converts to Mesh:
 ```python
 cube_mesh = meshes.add(Cuboid(1.0, 1.0, 1.0))
 sphere_mesh = meshes.add(Sphere(radius=0.5))
@@ -50,7 +50,7 @@ meshes.add(Plane3d(Vec3.Y, Vec2(5.0, 5.0)).mesh().subdivisions(4).build())
 Some builders have extra configuration:
 
 ```python
-# Sphere variants — .ico() and .uv() return Mesh directly (no .build())
+# Sphere variants - .ico() and .uv() return Mesh directly (no .build())
 Sphere(0.5).mesh().ico(3)     # Icosphere with 3 subdivisions
 Sphere(0.5).mesh().uv(32, 18) # UV sphere with sectors/stacks
 
@@ -144,7 +144,7 @@ mesh = (
 | `Mesh.ATTRIBUTE_UV_0` | float32 | (N, 2) |
 | `Mesh.ATTRIBUTE_UV_1` | float32 | (N, 2) |
 | `Mesh.ATTRIBUTE_TANGENT` | float32 | (N, 4) |
-| `Mesh.ATTRIBUTE_COLOR` | float32 | (N, 4) — RGBA |
+| `Mesh.ATTRIBUTE_COLOR` | float32 | (N, 4) - RGBA |
 | `Mesh.ATTRIBUTE_JOINT_WEIGHT` | float32 | (N, 4) |
 | `Mesh.ATTRIBUTE_JOINT_INDEX` | uint16 | (N, 4) |
 
@@ -164,9 +164,14 @@ Use with a material that respects vertex colors (e.g., `StandardMaterial` with d
 
 ## Zero-Copy Mesh Access
 
-For high-performance mesh manipulation, use context managers that provide direct NumPy array views without copying.
+For high-performance mesh manipulation, use bounded arrays that borrow mesh
+memory without copying.
 
 ### Read-Only Access
+
+`mesh.positions()` returns a read-only bounded `pybevy.array` array directly (no
+`with` block). It borrows the mesh data zero-copy: mutating the mesh is blocked
+while the array is alive, and access after the owning system ends raises.
 
 ```python
 def analyze_mesh(
@@ -176,12 +181,15 @@ def analyze_mesh(
     for mesh3d in query:
         mesh = meshes.get(mesh3d.handle)
         if mesh:
-            with mesh.positions() as positions:
-                center = positions.mean(axis=0)
-                max_y = positions[:, 1].max()
+            positions = mesh.positions()
+            center = positions.mean(axis=0)
+            max_y = positions[:, 1].max()
 ```
 
 ### Mutable Access
+
+`mesh.positions_mut()` yields an in-place mutable bounded array via a `with`
+block. Writes land directly in the mesh; the array is closed on exit.
 
 ```python
 def deform_mesh(
@@ -194,31 +202,38 @@ def deform_mesh(
         if mesh:
             t = time.elapsed_secs()
             with mesh.positions_mut() as positions:
-                positions[:, 1] += np.sin(positions[:, 0] + t) * 0.01
+                pos = positions.lens()
+                pos[1] = pos[1] + (pos[0] + t).sin() * 0.01
 ```
 
-### Available Context Managers
+`positions.lens()` builds one fused in-place expression over the borrowed
+buffer. Numeric subscripts select final-axis lanes, so positions use `0`, `1`,
+and `2`. The lens becomes invalid when the `with` block closes.
 
-| Method | Access | Shape |
-|--------|--------|-------|
-| `mesh.positions()` | read-only | (N, 3) |
-| `mesh.positions_mut()` | mutable | (N, 3) |
-| `mesh.normals()` | read-only | (N, 3) |
-| `mesh.normals_mut()` | mutable | (N, 3) |
-| `mesh.uvs()` | read-only | (N, 2) |
-| `mesh.uvs_mut()` | mutable | (N, 2) |
-| `mesh.attribute(attr)` | read-only | varies |
-| `mesh.attribute_mut(attr)` | mutable | varies |
+### Available Accessors
 
-### Copy Methods (Safe Alternative)
+| Method | Access | Returns | Shape |
+|--------|--------|---------|-------|
+| `mesh.positions()` | read-only | bounded array | (N, 3) |
+| `mesh.positions_mut()` | mutable | `with` context | (N, 3) |
+| `mesh.normals()` | read-only | bounded array | (N, 3) |
+| `mesh.normals_mut()` | mutable | `with` context | (N, 3) |
+| `mesh.uvs()` | read-only | bounded array | (N, 2) |
+| `mesh.uvs_mut()` | mutable | `with` context | (N, 2) |
+| `mesh.attribute(attr)` | read-only | bounded array | varies |
+| `mesh.attribute_mut(attr)` | mutable | `with` context | varies |
 
-When you don't need zero-copy performance:
+### Detached Copies (Safe Alternative)
+
+When you need an independent snapshot (e.g. to keep past the system), call
+`.copy()` on the read array. `.to_numpy()` additionally forces a concrete NumPy
+array on CPython (e.g. to hand to SciPy):
 
 ```python
-positions = mesh.positions_copy()     # Returns owned np.ndarray
-mesh.set_positions(new_positions)     # Copies data into mesh
+positions = mesh.positions().copy()   # detached, independent snapshot
+mesh.set_positions(new_positions)      # copies data into mesh
 
-normals = mesh.normals_copy()
+normals = mesh.normals().copy()
 mesh.set_normals(new_normals)
 ```
 
@@ -283,4 +298,4 @@ asset_server.load("models/character.glb")     # assets/models/character.glb
 asset_server.load("bevy/textures/ground.png")       # assets/textures/ground.png
 ```
 
-Paths are always relative to `assets/` — do not include `assets/` in the path string.
+Paths are always relative to `assets/` - do not include `assets/` in the path string.

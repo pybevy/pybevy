@@ -53,7 +53,7 @@ The `@material` decorator accepts optional parameters to configure the underlyin
 ```python
 @material(
     fragment_shader="shaders/glass.wgsl",
-    alpha_mode=AlphaMode.BLEND,    # transparency blending
+    alpha_mode=AlphaMode.Blend(),  # transparency blending
     double_sided=True,              # render both faces
     cull_mode=None,                 # disable face culling
     unlit=True,                     # ignore lighting

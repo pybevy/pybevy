@@ -14,7 +14,7 @@ GPU rendering without a window or display server - for CI, remote servers, conta
 ```python
 from pybevy.prelude import *
 from pybevy.app import ScheduleRunnerPlugin
-from pybevy.camera import RenderTarget
+from pybevy.camera import ImageRenderTarget, RenderTarget
 from pybevy.image import Image
 from pybevy.window import ExitCondition, WindowPlugin
 from pybevy.winit import WinitPlugin
@@ -40,7 +40,7 @@ def setup(
     commands.spawn(
         Camera3d(),
         Camera(),
-        RenderTarget.image(handle),
+        RenderTarget.Image(ImageRenderTarget(handle)),
         Transform.from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
 
@@ -68,7 +68,7 @@ if __name__ == "__main__":
 |---------|-------------------|----------|
 | Window | `WindowPlugin` default | `WindowPlugin(primary_window=None, exit_condition=ExitCondition.DontExit)` |
 | Event loop | WinitPlugin (display-driven) | `ScheduleRunnerPlugin.run_loop(16)` (timer-driven, ~60fps) |
-| Camera target | Screen (automatic) | `RenderTarget.image(handle)` (explicit offscreen) |
+| Camera target | Screen (automatic) | `RenderTarget.Image(ImageRenderTarget(handle))` (explicit offscreen) |
 | WinitPlugin | Enabled | `.disable(WinitPlugin)` |
 
 ## Three Required Changes
@@ -89,7 +89,7 @@ if __name__ == "__main__":
    ```python
    render_target = Image.new_render_target(width=256, height=256)
    handle = images.add(render_target)
-   commands.spawn(Camera3d(), Camera(), RenderTarget.image(handle), transform)
+   commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle)), transform)
    ```
 
 ## MCP Usage
@@ -108,7 +108,7 @@ All MCP tools work in headless mode:
 ## Troubleshooting
 
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
-- **Black screenshots**: Ensure the camera has `RenderTarget.image(handle)` - without it, the camera targets a non-existent window
+- **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle))` - without it, the camera targets a non-existent window
 - **No frames captured**: Increase `delay_frames` in `capture_screenshot` - headless rendering may need more warmup frames
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
 

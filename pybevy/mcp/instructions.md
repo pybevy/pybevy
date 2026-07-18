@@ -133,7 +133,7 @@ Before presenting to the user, verify: all geometry visible (no pure-black areas
 
 For environments without a display server (CI, remote servers, containers), PyBevy supports headless GPU rendering:
 
-1. **Scene setup** - disable WinitPlugin, use `ScheduleRunnerPlugin`, and render to `RenderTarget.image()`:
+1. **Scene setup** - disable WinitPlugin, use `ScheduleRunnerPlugin`, and render to `RenderTarget.Image(ImageRenderTarget(...))`:
    ```python
    app.add_plugins(
        DefaultPlugins()
@@ -146,7 +146,7 @@ For environments without a display server (CI, remote servers, containers), PyBe
    ```python
    render_target = Image.new_render_target(width=256, height=256)
    handle = images.add(render_target)
-   commands.spawn(Camera3d(), Camera(), RenderTarget.image(handle), transform)
+   commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle)), transform)
    ```
 
 2. **Launch with MCP** - use `run_scene(path=..., headless=True)` to bypass the display check.
