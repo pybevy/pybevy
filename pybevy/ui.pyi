@@ -1709,7 +1709,7 @@ class NodeImageMode:
     class Sliced(NodeImageMode):
         __match_args__: ClassVar[tuple[Literal["slicer"]]]
         slicer: TextureSlicer
-        def __init__(self, slicer: TextureSlicer, /) -> None: ...
+        def __init__(self, slicer: TextureSlicer) -> None: ...
 
     class Tiled(NodeImageMode):
         __match_args__: ClassVar[tuple[Literal["tile_x"], Literal["tile_y"], Literal["stretch_value"]]]

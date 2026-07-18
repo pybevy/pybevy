@@ -11,7 +11,7 @@ class AlphaMode:
     class Mask(AlphaMode):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
-        def __init__(self, value: float, /) -> None: ...
+        def __init__(self, value: float) -> None: ...
 
     class Blend(AlphaMode):
         __match_args__: ClassVar[tuple[()]]
