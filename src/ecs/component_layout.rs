@@ -1,7 +1,7 @@
 use pybevy_bytecodevm::bytecode::FieldType;
 // Re-export backend-agnostic types from pybevy_core
 pub use pybevy_core::component_layout::{
-    ComponentLayout, ComponentSerializationError, ComponentStorageType, FieldInfo, PrimitiveType,
+    ComponentLayout, ComponentSerializationError, ComponentStorageType, PrimitiveType,
     PrimitiveValue,
 };
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};

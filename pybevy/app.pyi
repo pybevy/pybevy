@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any, ClassVar, TypeVar, overload
+from typing import Any, ClassVar, Literal, TypeVar, overload
 
 from pybevy.ecs import (
     ConditionalSystem,
@@ -613,47 +613,16 @@ class RunMode:
         ```
     """
 
-    @staticmethod
-    def Loop(wait: int | None = None) -> RunMode:
-        """Run the schedule repeatedly in a loop.
+    class Loop(RunMode):
+        """Run the schedule repeatedly, optionally waiting between frames."""
+        __match_args__: ClassVar[tuple[Literal["wait"]]]
+        wait: int | None
+        def __init__(self, wait: int | None = None) -> None: ...
 
-        Args:
-            wait: Optional wait time in milliseconds between schedule executions.
-                  If None, the schedule runs continuously without waiting.
-                  Use this to cap the frame rate (e.g., 16ms for ~60 FPS).
-
-        Returns:
-            RunMode configured for continuous execution
-
-        Example:
-            ```python
-            # No wait - run as fast as possible
-            mode = RunMode.Loop()
-
-            # Wait 16ms between frames (~60 FPS)
-            mode = RunMode.Loop(wait=16)
-            ```
-        """
-
-    @staticmethod
-    def Once() -> RunMode:
-        """Run the schedule exactly once then exit.
-
-        This is the preferred mode for testing, as it runs all schedules
-        (Startup, Update, etc.) through one complete cycle then stops.
-
-        Returns:
-            RunMode configured for single execution
-
-        Example:
-            ```python
-            # Typical test setup
-            app = App()
-            app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
-            app.add_systems(Update, my_test_system)
-            app.run()  # Runs once and exits
-            ```
-        """
+    class Once(RunMode):
+        """Run the schedule exactly once and then exit."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
 class ScheduleRunnerPlugin(Plugin):
     """Configures an App to run its schedule according to a given RunMode.

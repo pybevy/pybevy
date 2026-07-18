@@ -290,6 +290,9 @@ class DependencyLoadState:
     @staticmethod
     def Failed() -> DependencyLoadState: ...
 
+    def is_not_loaded(self) -> bool:
+        """Returns True if dependencies have not started loading."""
+
     def is_loading(self) -> bool:
         """Returns True if dependencies are loading."""
 
@@ -310,6 +313,9 @@ class RecursiveDependencyLoadState:
     def Loaded() -> RecursiveDependencyLoadState: ...
     @staticmethod
     def Failed() -> RecursiveDependencyLoadState: ...
+
+    def is_not_loaded(self) -> bool:
+        """Returns True if recursive dependencies have not started loading."""
 
     def is_loading(self) -> bool:
         """Returns True if recursive dependencies are loading."""

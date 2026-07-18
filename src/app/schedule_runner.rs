@@ -15,7 +15,10 @@ pub struct PyScheduleRunnerPlugin {
 #[pyclass(name = "RunMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyRunMode {
-    Loop { wait: Option<u64> },
+    #[pyo3(constructor = (wait = None))]
+    Loop {
+        wait: Option<u64>,
+    },
     Once(),
 }
 
@@ -50,6 +53,7 @@ impl PyScheduleRunnerPlugin {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (wait_duration = None))]
     pub fn run_loop(py: Python, wait_duration: Option<u64>) -> PyResult<Py<Self>> {
         Py::new(
             py,
