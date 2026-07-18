@@ -54,25 +54,23 @@ def my_system(
 
 ### iter_batches()
 
-`view.iter_batches()` yields one `Batch` per archetype. Each batch contains
-entities with identical component sets, stored contiguously in memory.
-
-Typically there is **one batch** for all entities of the same type (same
-components). Multiple batches occur when entities have different component
-combinations.
+`view.iter_batches()` yields maximal contiguous runs of rows that pass every
+View filter. A table normally produces one batch; `Changed[T]` and `Added[T]`
+can split it into several batches so filtered-out rows are never exposed.
+Every yielded batch is contiguous in component storage.
 
 ### Batch.column() / Batch.column_mut()
 
 ```python
-batch.column(Transform)      # read-only TransformViewColumn
-batch.column_mut(Transform)  # mutable TransformViewColumn
+batch.column(Transform)      # read-only ViewColumn
+batch.column_mut(Transform)  # mutable ViewColumn
 batch.column(MyComponent)    # read-only ViewColumn with dynamic field access
 batch.column_mut(MyComponent)  # mutable ViewColumn
 ```
 
 ### Accessing Fields
 
-**Transform** (returns Vec3ViewColumn / QuatViewColumn):
+**Transform** (the `ViewColumn` dynamically exposes Vec3/Quat field wrappers):
 ```python
 pos = batch.column_mut(Transform)
 pos.translation.x   # ViewColumn for x coordinates
@@ -103,15 +101,15 @@ def kernel(col):
 ```
 
 **Do NOT:**
-- `np.asarray(col)` — raises RuntimeError
-- `col.to_numpy()` — does not exist on ViewColumn
-- `col[0]` in Python — only works inside Numba JIT
-- Cache ViewColumns in globals — they become stale after the system returns
+- `np.asarray(col)` - raises RuntimeError
+- `col.to_numpy()` - does not exist on ViewColumn
+- `col[0]` in Python - only works inside Numba JIT
+- Cache ViewColumns in globals - they become stale after the system returns
 
 **Debugging (Python-side):**
-- `col.peek(0)` — read single value (safe, with validity check)
-- `col.to_list()` — convert to Python list (copies data, for debugging only)
-- `col.is_valid` — check if handle is still alive
+- `col.peek(0)` - read single value (safe, with validity check)
+- `col.to_list()` - convert to Python list (copies data, for debugging only)
+- `col.is_valid` - check if handle is still alive
 
 ## Numba JIT Options
 
@@ -130,7 +128,7 @@ def kernel(x, y, z, t, dt):
 - `parallel=True` + `numba.prange`: biggest win for 100k+ entities
 - `fastmath=True`: ~10-20% faster trig, invisible precision loss for games
 - `cache=True`: first call compiles (~1-2s), subsequent app starts use cache
-- Always use `range()` or `numba.prange()` — never iterate ViewColumn directly
+- Always use `range()` or `numba.prange()` - never iterate ViewColumn directly
 
 ## Complete Example: Murmuration
 
@@ -212,7 +210,7 @@ The `.pyi` stubs have some inaccuracies for the batch path:
   `ViewColumn` types at runtime, not `FieldExpr`/`Vec3Expr`.
 - The `iter_batches()` docstring references `batch.column_numpy()` which
   **does not exist** on the `Batch` class.
-- The `ViewColumn` docstring references `batch.col()` — the correct method
+- The `ViewColumn` docstring references `batch.col()` - the correct method
   name is `batch.column()` / `batch.column_mut()`.
 
 The working pattern is always: extract scalar ViewColumns -> pass to Numba kernel -> use `[]` indexing.

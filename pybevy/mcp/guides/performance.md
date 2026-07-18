@@ -4,10 +4,10 @@ Batch operations, View API, material caching, and strategy comparison for large 
 
 ## Asset Handle Caching
 
-**NEVER** call `meshes.add()` or `materials.add()` inside Update systems. Each call creates a new GPU asset that persists after the entity is despawned — a memory leak that grows every cycle.
+**NEVER** call `meshes.add()` or `materials.add()` inside Update systems. Each call creates a new GPU asset that persists after the entity is despawned - a memory leak that grows every cycle.
 
 ```python
-# ❌ BAD — leaks assets every spawn cycle
+# ❌ BAD - leaks assets every spawn cycle
 def spawn_effect(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -47,7 +47,7 @@ def setup(
         unlit=True, alpha_mode=AlphaMode.Add(),
     ))
 
-# ✅ GOOD — reuses cached handles, zero asset growth
+# ✅ GOOD - reuses cached handles, zero asset growth
 def spawn_effect(commands: Commands, assets: Res[VfxAssets]) -> None:
     commands.spawn(Mesh3d(assets.bolt_mesh), MeshMaterial3d(assets.bolt_mat), ...)
 
@@ -62,11 +62,11 @@ def main(app: App) -> App:
 ```
 
 **Key points:**
-- `app.insert_resource(VfxAssets())` is **required** — without it, `ResMut[VfxAssets]` in Startup will error with "resource not found in world"
+- `app.insert_resource(VfxAssets())` is **required** - without it, `ResMut[VfxAssets]` in Startup will error with "resource not found in world"
 - Asset handles are stored as `int` (the handle ID returned by `meshes.add()`)
 - Alternative: use `commands.insert_resource(VfxAssets(...))` in Startup instead of `ResMut[VfxAssets]`, but then the resource is only available in Update (not Startup)
 
-**Applies to:** projectiles, VFX, particles, pooled enemies — anything spawned more than once.
+**Applies to:** projectiles, VFX, particles, pooled enemies - anything spawned more than once.
 
 **Verify:** `get_performance` → Assets line. Mesh/Material counts should stay flat after Startup.
 
@@ -75,12 +75,12 @@ def main(app: App) -> App:
 **NEVER** call `materials.get_mut(handle)` every frame on a shared material. This re-prepares bind groups and re-batches ALL entities using that material.
 
 ```python
-# ❌ BAD — 50ms/frame for 150k entities
+# ❌ BAD - 50ms/frame for 150k entities
 def animate(materials: ResMut[Assets[StandardMaterial]], handle: Res[MatHandle]):
     mat = materials.get_mut(handle.0)
     mat.base_color = Color.linear_rgb(...)  # Every frame!
 
-# ✅ GOOD — only update on change
+# ✅ GOOD - only update on change
 def animate(materials: ResMut[Assets[StandardMaterial]], handle: Res[MatHandle]):
     new_color = compute_color(time)
     if new_color != last_color:
@@ -122,18 +122,18 @@ def setup(
 ```
 
 **Key points:**
-- `from_numpy()` returns a `Batchable` — an opaque batch object consumed by `spawn_batch`
+- `from_numpy()` returns a `Batchable` - an opaque batch object consumed by `spawn_batch`
 - Uniform components (plain instances like `PointLight(...)`) are cloned to every entity
 - Works with regular system `Commands` (deferred) or `World.commands()` (immediate)
 - Via `World.commands()`, returns `list[Entity]`; via system `Commands`, returns `None` (entities created at flush)
 - Arrays are auto-cast to float32 and validated for shape at `from_numpy()` time
-- `Transform.from_numpy()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) — all optional
+- `Transform.from_numpy()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
 - Any Rust component with `view_fields` supports `from_numpy()` (e.g., `PointLight.from_numpy(intensity=arr)`)
 - Custom `@component` classes with wrapper storage also support `from_numpy()`
 - Use View API afterwards for bulk per-entity updates (see below)
 
 **Limitations:**
-- `from_numpy()` requires wrapper storage — custom `@component` classes with `storage="python"` do not support it
+- `from_numpy()` requires wrapper storage - custom `@component` classes with `storage="python"` do not support it
 - All non-Batchable components are cloned uniformly to every entity. To vary materials across batched entities, call `spawn_batch` once per material with the appropriate subset of positions.
 
 **Legacy iterable path** still works for small batches:
@@ -177,16 +177,20 @@ Key View rules:
 - Expressions operate on ALL matching entities at once (SIMD-like)
 - Cross-component expressions supported
 - `from pybevy import expr` for math functions: `sin`, `cos`, `sqrt`, `clamp`, etc.
+- Numeric expressions follow Python array conventions: `%` uses the divisor's
+  sign, `round()` uses ties-to-even, and `min()`/`max()` propagate NaN.
+- `clamp(min, max)` propagates NaN and returns `max` when the bounds are
+  reversed. `fract()` is the signed fractional part (`x - trunc(x)`).
 
-### View API — Conditional Logic
+### View API - Conditional Logic
 
 The View API supports **per-entity conditionals** via `.where()`, making it suitable for collision response and any logic that branches per entity. **Always prefer View over Query for 1000+ entities**, even when conditionals are needed.
 
 Available conditional operators on `FieldExpr`:
-- `.where(true_val, false_val)` — vectorized ternary (like `np.where`)
-- `.min(val)` / `.max(val)` / `.clamp(min, max)` — per-element clamping
-- `|` and `&` — combine boolean conditions
-- `<`, `>`, `<=`, `>=`, `==`, `!=` — comparisons that produce boolean columns
+- `.where(true_val, false_val)` - vectorized ternary (like `np.where`)
+- `.min(val)` / `.max(val)` / `.clamp(min, max)` - per-element clamping
+- `|` and `&` - combine boolean conditions
+- `<`, `>`, `<=`, `>=`, `==`, `!=` - comparisons that produce boolean columns
 
 **Example: 5,000 bouncing balls (6.7x faster than Query)**
 
@@ -213,12 +217,12 @@ def bounce(
     pos.translation.y += vel.vel.y * dt
     pos.translation.z += vel.vel.z * dt
 
-    # Floor bounce — .where() for conditional velocity reflection
+    # Floor bounce - .where() for conditional velocity reflection
     hit_floor = pos.translation.y < BALL_R
     vel.vel.y = hit_floor.where(-vel.vel.y * RESTITUTION, vel.vel.y)
     pos.translation.y = pos.translation.y.max(BALL_R)
 
-    # Wall bounce — combine conditions with |
+    # Wall bounce - combine conditions with |
     hit_xn = pos.translation.x < -WALL_LIMIT
     hit_xp = pos.translation.x > WALL_LIMIT
     vel.vel.x = (hit_xn | hit_xp).where(-vel.vel.x * RESTITUTION, vel.vel.x)
@@ -233,6 +237,20 @@ Use `Visibility.Hidden` to cull entities without despawning:
 ```
 set_component {"entity_id": 42, "component": "Visibility", "fields": {"value": "Hidden"}}
 ```
+
+## Shadow Casters
+
+Every shadow-casting light re-renders all casters into its shadow map (6 cubemap
+faces for point lights). Two rules:
+
+- Tag particles and small glow meshes with `NotShadowCaster` - thousands of tiny
+  casters in shadow passes is the most common silent FPS killer:
+  ```python
+  from pybevy.light import NotShadowCaster
+  commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), NotShadowCaster(), ...)
+  ```
+- Budget shadows: one shadowed key light per scene, `shadow_maps_enabled=False` on
+  the rest. For emissive dust/particles also set `unlit=True` (skips PBR shading).
 
 ## Monitoring
 

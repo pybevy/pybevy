@@ -66,9 +66,9 @@ if __name__ == "__main__":
 ```
 
 **Key rules:**
-- `@entrypoint` signature is `def main(app: App) -> App:` — not `def main():`
-- **MUST** end with `if __name__ == "__main__": main().run()` — without this the scene won't launch
-- Register systems with `app.add_systems(Stage, fn)` — there is no `@app.system()` decorator
+- `@entrypoint` signature is `def main(app: App) -> App:` - not `def main():`
+- **MUST** end with `if __name__ == "__main__": main().run()` - without this the scene won't launch
+- Register systems with `app.add_systems(Stage, fn)` - there is no `@app.system()` decorator
 - Multiple systems in one stage: `app.add_systems(Update, sys1, sys2, sys3)`
 - Extra plugins go in the entrypoint before `add_systems`
 - Custom plugins require the `@plugin` decorator AND `Plugin` inheritance:
@@ -78,7 +78,7 @@ if __name__ == "__main__":
       def build(self, app: App) -> None:
           app.add_systems(Update, my_system)
   ```
-- Custom `Plugin.build()` works with hot reload — systems and resources registered inside build() are re-captured on reload
+- Custom `Plugin.build()` works with hot reload - systems and resources registered inside build() are re-captured on reload
 
 ## ECS Essentials
 
@@ -154,8 +154,8 @@ def damage_players(query: Query[Mut[Player]]) -> None:
 ```
 
 **Storage modes:**
-- **Default (wrapper)**: `int`, `float`, `bool`, `Vec3`, `Vec2` — fast, supports View batch execution and Numba JIT
-- **Python storage**: `str`, `list`, `dict`, custom classes — use `@component(storage="python")`. Slower (no View/Numba), but supports any Python type.
+- **Default (wrapper)**: `int`, `float`, `bool`, `Vec3`, `Vec2` - fast, supports View batch execution and Numba JIT
+- **Python storage**: `str`, `list`, `dict`, custom classes - use `@component(storage="python")`. Slower (no View/Numba), but supports any Python type.
 
 ```python
 @component(storage="python")
@@ -221,7 +221,7 @@ for cfg in arm_configs:
     )
 ```
 
-Capture **every** variable from the loop scope that the lambda references — including material handles, mesh handles, and config values.
+Capture **every** variable from the loop scope that the lambda references - including material handles, mesh handles, and config values.
 
 #### Modifying Hierarchy at Runtime
 
@@ -412,24 +412,24 @@ Query[Optional[Mut[Transform]]]                # mutable when present
 
 #### Borrow Rules (IMPORTANT)
 
-A system cannot have `Mut[T]` access to a component in one query and **any** access (mutable or read-only) to the same component in another query, unless disjointness is **proven by `Without` filters**. Different `With` filters alone (e.g., `With[A]` vs `With[B]`) are **not enough** — Bevy cannot prove those sets don't overlap.
+A system cannot have `Mut[T]` access to a component in one query and **any** access (mutable or read-only) to the same component in another query, unless disjointness is **proven by `Without` filters**. Different `With` filters alone (e.g., `With[A]` vs `With[B]`) are **not enough** - Bevy cannot prove those sets don't overlap.
 
 ```python
-# WRONG — panics even though A and B are logically disjoint:
+# WRONG - panics even though A and B are logically disjoint:
 def bad(q1: Query[Mut[Transform], With[A]], q2: Query[Mut[Transform], With[B]]) -> None: ...
 
-# ALSO WRONG — Mut + read-only is still a conflict:
+# ALSO WRONG - Mut + read-only is still a conflict:
 def bad2(q1: Query[Mut[Transform], With[A]], q2: Query[Transform, With[B]]) -> None: ...
 
-# OK — Without proves disjointness:
+# OK - Without proves disjointness:
 def ok(q1: Query[Mut[Transform], tuple[With[A], Without[B]]], q2: Query[Mut[Transform], tuple[With[B], Without[A]]]) -> None: ...
 
-# BEST — split into separate systems (simplest, always works):
+# BEST - split into separate systems (simplest, always works):
 def move_a(q: Query[Mut[Transform], With[A]]) -> None: ...
 def read_b(q: Query[Transform, With[B]]) -> None: ...
 ```
 
-Querying a component (e.g., `Query[tuple[Transform, TagA]]`) automatically implies `With[TagA]` — so `Without[TagA]` on another query proves disjointness. When in doubt, split into separate systems or use the Resource Flag Pattern (see below).
+Querying a component (e.g., `Query[tuple[Transform, TagA]]`) automatically implies `With[TagA]` - so `Without[TagA]` on another query proves disjointness. When in doubt, split into separate systems or use the Resource Flag Pattern (see below).
 
 **Change detection note:** Custom Python components using PyObject storage do NOT trigger Bevy's `Changed[T]` filter when fields are mutated. `Added[T]` still works for newly spawned components.
 #### Query Methods
@@ -497,7 +497,7 @@ def setup(commands: Commands) -> None:
 
 ### Messages
 
-Messages provide inter-system communication using double-buffering: messages written in frame N are readable in frame N+1.
+Messages provide buffered inter-system communication. An ordered reader can see values written earlier in the same schedule pass; retained values expire after two admitted message-update cycles.
 
 #### Defining and Registering
 
@@ -513,7 +513,7 @@ class DamageEvent(Message):
 app.add_message(DamageEvent)
 ```
 
-> **Note:** Messages must be registered via `app.add_message(...)` inside the scene's `@entrypoint`. Unlike components and resources, there is no runtime `world.register_message()` and no MCP `run_code` workaround — `add_message` installs both the `Messages<T>` resource *and* the per-frame `update_messages` system, which can only be added through `App`. Adding a new message type requires editing the scene file and reloading.
+> **Note:** Messages must be registered via `app.add_message(...)` inside the scene's `@entrypoint`. Unlike components and resources, there is no runtime `world.register_message()` or MCP `run_code` workaround: registration creates the App-local channel identity and scheduler access metadata used by reader and writer parameters. Adding a new message type requires editing the scene file and reloading.
 
 #### Sending and Receiving
 
@@ -529,7 +529,18 @@ def receive_damage(reader: MessageReader[DamageEvent], query: Query[Mut[Player]]
 ```
 
 `MessageWriter` methods: `write(msg)`, `write_batch([msg1, msg2])`, `write_default()`.
-`MessageReader` methods: iteration via `for msg in reader`, `is_empty()`, `len()`.
+`MessageReader` methods: iteration via `for msg in reader`, `read()`, reader-local `clear()`, `is_empty()`, `len()`. Each reader parameter has an independent cursor, and iteration consumes only values actually yielded.
+
+For a custom Python message system that must read, mutate, and write the same channel, use
+`MessageMutator[T]`. It combines the reader and writer methods above. Messages yielded from it are
+the retained Python objects, so changing their fields is visible to later readers. A write before
+`read()` is included in that read; a write afterward is read by the mutator on its next run.
+`MessageMutator` currently rejects native Bevy message wrappers because those reader values are
+snapshots and cannot safely provide in-place mutation.
+
+Do not put a `MessageWriter[T]` or `MessageMutator[T]` together with another reader, writer, or
+mutator for `T` in one system. Bevy treats both as mutable channel access. Multiple
+`MessageReader[T]` parameters are allowed, and unrelated message channels remain compatible.
 
 ### Observers
 
@@ -552,6 +563,46 @@ app.add_observer(on_transform_added)
 
 The `On` parameter supports filtering: `On[EventType, ComponentType]` only triggers for entities with that component. Use `On[EventType, tuple[A, B]]` to require multiple components.
 
+Lifecycle emissions follow Bevy 0.19 ordering. A first insertion emits `Add`
+then `Insert`; replacement emits `Discard` then `Insert`; explicit removal
+emits `Discard` then `Remove`; despawn emits `Despawn`, `Discard`, then
+`Remove` for each component. The old component/entity remains readable during
+the pre-removal callbacks, and `trigger.event()` returns the corresponding
+marker instance.
+
+Commands queued by an observer are applied after that callback's borrowed
+parameters are invalidated and before the next observer. An immediate
+`World.trigger()` callback error therefore flushes its commands, propagates to
+the caller, and aborts later observers. Lifecycle and deferred
+`Commands.trigger()` callbacks report errors and continue with later
+still-applicable observers.
+
+## Data-carrying enum variants
+
+Mirror both the Bevy Rust item kind and spelling. Enum variants use PascalCase, for example
+`Face::Front` -> `Face.Front`; genuine associated constants keep their declared spelling, for
+example `Vec3::ZERO` -> `Vec3.ZERO`. Do not use uppercase aliases such as `Face.FRONT` for enum
+variants.
+
+Data-carrying Bevy enums are exposed as nested Python classes. Match the exact variant and bind
+only that variant's fields:
+
+```python
+match event:
+    case GamepadEvent.Axis(axis, value):
+        print(axis, value)
+    case GamepadEvent.Connection(connected=True, name=name):
+        print(f"connected: {name}")
+```
+
+`Enum.Variant(...)` values are instances of both `Enum` and `Enum.Variant`. Payload fields do not
+exist on other variants, so use `isinstance` or `match` instead of probing flattened optional
+attributes.
+
+The same rule applies to enum-backed components. For example, construct an
+offscreen target as `RenderTarget.Image(ImageRenderTarget(handle))`; queried
+values remain `RenderTarget.Image` instances and can be matched the same way.
+
 ## Patterns
 
 ### Mesh Primitives
@@ -562,7 +613,7 @@ See `guide://mesh` for the full primitives table, builder patterns, and custom m
 
 ### `import math` and `math.tau`
 
-The scene template's imports should include `import math` — nearly every animated scene needs `math.sin`, `math.cos`, or `Quat.from_euler` (which takes radians).
+The scene template's imports should include `import math` - nearly every animated scene needs `math.sin`, `math.cos`, or `Quat.from_euler` (which takes radians).
 
 For periodic motion (spinning, orbiting, pulsing), `math.tau` (= 2pi) is cleaner than `2 * math.pi`:
 
@@ -591,11 +642,11 @@ def sway_lanterns(
         transform.translation.y += math.sin(t + phase) * 0.01
 ```
 
-**Note:** `Entity` is an opaque handle — it has no `.index()` or `.id()` method. Use `enumerate()` instead when you need a numeric index.
+**Note:** `Entity` is an opaque handle - it has no `.index()` or `.id()` method. Use `enumerate()` instead when you need a numeric index.
 
 ### Runtime Entity Lifecycle (Spawn/Despawn in Update)
 
-Many scenes need temporary entities spawned and despawned at runtime — projectiles, VFX, timed effects, pooled objects.
+Many scenes need temporary entities spawned and despawned at runtime - projectiles, VFX, timed effects, pooled objects.
 
 #### Basic Pattern: Spawn + Marker + Despawn
 
@@ -680,16 +731,16 @@ Use separate marker components per phase (`WarningMarker`, `ActiveEffect`, `Flas
 
 #### Key Rules
 
-1. **Cache asset handles** — Never call `meshes.add()` / `materials.add()` in Update systems. See `guide://performance`.
-2. **Use marker components** — Tag spawned entities so you can query and despawn them by type.
-3. **Despawn in the right phase** — Don't leave orphaned entities. Use state transitions to trigger cleanup.
-4. **PointLights don't need mesh handles** — Lights are components, no caching needed. Still tag with markers for cleanup.
+1. **Cache asset handles** - Never call `meshes.add()` / `materials.add()` in Update systems. See `guide://performance`.
+2. **Use marker components** - Tag spawned entities so you can query and despawn them by type.
+3. **Despawn in the right phase** - Don't leave orphaned entities. Use state transitions to trigger cleanup.
+4. **PointLights don't need mesh handles** - Lights are components, no caching needed. Still tag with markers for cleanup.
 
 ### Component vs Resource Field Types
 
 **Components** and **resources** have different storage architectures and different field type rules.
 
-#### `@component` fields — primitives and Vec3/Vec2 (by default)
+#### `@component` fields - primitives and Vec3/Vec2 (by default)
 
 Components are stored in Bevy's ECS archetype tables using fixed-size wrapper types. By default, `int`, `float`, `bool`, `Vec3`, and `Vec2` fields are allowed. Non-primitive fields require explicit opt-in:
 
@@ -713,15 +764,15 @@ class Inventory(Component):      # OK: opted into PyObject storage
     items: list[str] = field(default_factory=list)
 ```
 
-Vec3/Vec2 fields support borrowed writeback — `comp.position.x = 5.0` writes directly to ECS memory. They work with Query, View API batch expressions, Numba JIT, and `from_numpy()` batch spawning (with `(N, 3)` or `(N, 2)` shaped arrays).
+Vec3/Vec2 fields support borrowed writeback - `comp.position.x = 5.0` writes directly to ECS memory. They work with Query, View API batch expressions, Numba JIT, and `from_numpy()` batch spawning (with `(N, 3)` or `(N, 2)` shaped arrays).
 
 **Note:** Vec3/Vec2 are mutable, so use `field(default_factory=lambda: Vec3.ZERO)` for defaults.
 
 Using `storage="python"` disables View batch execution and Numba JIT for that component. Only opt in when needed.
 
-#### `@resource` fields — any Python type
+#### `@resource` fields - any Python type
 
-Resources are stored as plain Python objects in a side HashMap — they never cross a serialization boundary. **Any Python type works**, including `list`, `dict`, `Queue`, `Lock`, custom classes, etc.:
+Resources are stored as plain Python objects in a side HashMap - they never cross a serialization boundary. **Any Python type works**, including `list`, `dict`, `Queue`, `Lock`, custom classes, etc.:
 
 ```python
 import queue
@@ -743,7 +794,7 @@ class ThreadBridge(Resource):
         self.shared_state = {"status": "idle"}
 ```
 
-This is the idiomatic way to bridge background threads with ECS — store the shared `Queue`/`Lock` in a resource so systems access them via `Res[T]`/`ResMut[T]` instead of module globals.
+This is the idiomatic way to bridge background threads with ECS - store the shared `Queue`/`Lock` in a resource so systems access them via `Res[T]`/`ResMut[T]` instead of module globals.
 
 **Asset handles are `int`:** `meshes.add()` and `materials.add()` return `int` handle IDs, so storing them in `@resource` fields works naturally. See `guide://performance` for the cached asset pattern.
 
@@ -789,13 +840,13 @@ def reset_player(
 - Projectile hit -> enemy damage
 - Trigger zone -> spawn/despawn effects
 
-**Alternative:** If both systems only need read access to the conflicting component, use `Query[Transform]` (no `Mut`) in the detection system and `Query[Mut[Transform]]` in the reaction system — no flag needed.
+**Alternative:** If both systems only need read access to the conflicting component, use `Query[Transform]` (no `Mut`) in the detection system and `Query[Mut[Transform]]` in the reaction system - no flag needed.
 
 For disjoint query patterns (`Without` filters to resolve borrow conflicts within a single system), see the Borrow Rules section above.
 
 ### Runtime Material Swapping
 
-`MeshMaterial3d` and `Mesh3d` are **immutable newtype wrappers** around `Handle`. You cannot set fields on them — `.material`, `.handle`, `.0` all fail:
+`MeshMaterial3d` and `Mesh3d` are **immutable newtype wrappers** around `Handle`. You cannot set fields on them - `.material`, `.handle`, `.0` all fail:
 
 ```python
 # WRONG: All of these fail at runtime
@@ -819,7 +870,7 @@ def swap_materials(
         commands.entity(entity).insert(MeshMaterial3d(handle))
 ```
 
-**Important:** This requires `Entity` in the query tuple (not `Mut[MeshMaterial3d]`). Cache material handles in a `@resource` — never call `materials.add()` in Update.
+**Important:** This requires `Entity` in the query tuple (not `Mut[MeshMaterial3d]`). Cache material handles in a `@resource` - never call `materials.add()` in Update.
 
 For custom shader materials, see `guide://shaders` for the `@material` decorator.
 
@@ -894,7 +945,7 @@ commands.spawn(
     )
 )
 
-# Update: rotate the parent — all children follow
+# Update: rotate the parent - all children follow
 def rotate_star_map(
     query: Query[Mut[Transform], With[StarMap]],
     time: Res[Time],
@@ -907,13 +958,13 @@ def rotate_star_map(
 
 **Use cases:** rotating star maps, spinning chandeliers, orbiting ring assemblies, turrets with multiple parts, any multi-mesh object that moves as a unit.
 
-**Tip:** Children can have their own local transforms (offsets, tilts) — these are relative to the parent. Only the parent needs the animation system.
+**Tip:** Children can have their own local transforms (offsets, tilts) - these are relative to the parent. Only the parent needs the animation system.
 
 ### Pivot Point Animation (Edge Rotation)
 
 Bevy meshes rotate around their origin (geometric center). Objects that should pivot from an edge (grass base, door hinge, pendulum top) need special handling.
 
-**Approach A — Parent-child (small counts):**
+**Approach A - Parent-child (small counts):**
 Spawn a parent entity at the pivot point, child mesh offset to center:
 ```python
 # Door hinge: pivot at left edge
@@ -929,7 +980,7 @@ commands.spawn(
 ```
 Simple but doubles entity count. Best for < 1k entities.
 
-**Approach B — Translation compensation (large counts, 1k+):**
+**Approach B - Translation compensation (large counts, 1k+):**
 Keep single entities and compute position each frame to simulate edge-pivot rotation:
 ```python
 # Grass blade pivoting from base, angle = sway amount
@@ -969,7 +1020,7 @@ snow_disc = meshes.add(Cylinder(radius=0.9, height=0.05))
 foliage_green = materials.add(StandardMaterial(base_color=Color.srgb(0.3, 0.42, 0.25)))
 foliage_frosty = materials.add(StandardMaterial(base_color=Color.srgb(0.55, 0.62, 0.55)))
 foliage_snowy = materials.add(StandardMaterial(base_color=Color.srgb(0.82, 0.84, 0.88)))
-# Apply graduated materials to existing cone tiers — no extra geometry needed
+# Apply graduated materials to existing cone tiers - no extra geometry needed
 ```
 
 **When extra geometry works:** Flattened spheres for snow piles on flat surfaces (ground, rock tops) look fine because they sit on a flat plane rather than conforming to a curved surface.

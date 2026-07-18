@@ -2,7 +2,7 @@
 
 GPU-accelerated batch computation using `iter_batches()` + `@jax.jit` kernels.
 
-For workloads where GPU parallelism outweighs copy overhead — N-body interactions,
+For workloads where GPU parallelism outweighs copy overhead - N-body interactions,
 ML inference, large matrix operations. JAX compiles Python functions to optimized
 XLA code that runs on CPU or GPU.
 
@@ -75,7 +75,7 @@ ECS memory → (pytree flatten: copy out) → JAX kernel → new arrays → (fro
 
 The read direction is automatic (ViewColumn registered as JAX pytree, converted on
 `@jax.jit` call boundary). The write-back is always explicit via `from_jax()` because
-JAX is immutable — it returns new arrays, never mutates inputs.
+JAX is immutable - it returns new arrays, never mutates inputs.
 
 ## API Details
 
@@ -110,7 +110,7 @@ When passed to `@jax.jit`, they auto-convert:
 def kernel(x_col, y_col):     # x_col, y_col are jax.Arrays at this point
     return x_col + y_col
 
-# ViewColumns passed directly — conversion happens automatically
+# ViewColumns passed directly - conversion happens automatically
 result = kernel(pos.translation.x, pos.translation.y)
 ```
 
@@ -148,7 +148,7 @@ computation time dominates the copy cost.
 
 ## Complete Example: N-Body Gravity
 
-All-pairs gravitational interaction — O(n²) on CPU, trivially parallel on GPU:
+All-pairs gravitational interaction - O(n²) on CPU, trivially parallel on GPU:
 
 ```python
 import jax
@@ -209,5 +209,5 @@ def gravity_system(
 | Best for | Per-entity branching, tight budgets | O(n²) interactions, ML, GPU |
 | Parallelism | `numba.prange` (CPU cores) | XLA (CPU/GPU, automatic) |
 
-Use both in the same project — Numba for simple per-entity updates,
+Use both in the same project - Numba for simple per-entity updates,
 JAX for heavy batch computation.
