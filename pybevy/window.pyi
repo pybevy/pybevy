@@ -25,6 +25,24 @@ class ExitCondition(Enum):
     OnAllClosed = ...
     DontExit = ...
 
+class WindowRef:
+    """A window render-target reference."""
+
+    class Primary(WindowRef):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Entity(WindowRef):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: Entity
+        def __init__(self, value: Entity) -> None: ...
+
+    def normalize(self, primary_window: Entity | None = None) -> NormalizedWindowRef | None: ...
+
+class NormalizedWindowRef:
+    @property
+    def entity(self) -> Entity: ...
+
 class WindowPlugin(Plugin):
     """Plugin for window management.
 
@@ -73,8 +91,8 @@ class WindowResolution:
 
     def __init__(
         self,
-        width: float,
-        height: float,
+        width: float = 1280.0,
+        height: float = 720.0,
         scale_factor_override: float | None = None,
     ) -> None:
         """Create a new window resolution."""
@@ -155,7 +173,7 @@ class VideoModeSelection:
         """Use a specific video mode from the monitor's supported modes."""
         __match_args__: ClassVar[tuple[Literal["video_mode"]]]
         video_mode: VideoMode
-        def __init__(self, video_mode: VideoMode, /) -> None: ...
+        def __init__(self, video_mode: VideoMode) -> None: ...
 
 
 class WindowMode:
@@ -186,7 +204,7 @@ class WindowMode:
     class BorderlessFullscreen(WindowMode):
         __match_args__: ClassVar[tuple[Literal["monitor"]]]
         monitor: MonitorSelection
-        def __init__(self, monitor: MonitorSelection, /) -> None: ...
+        def __init__(self, monitor: MonitorSelection) -> None: ...
 
     class Fullscreen(WindowMode):
         __match_args__: ClassVar[tuple[Literal["monitor"], Literal["video_mode"]]]
@@ -1039,12 +1057,12 @@ class MonitorSelection:
     class Index(MonitorSelection):
         __match_args__: ClassVar[tuple[Literal["index"]]]
         index: int
-        def __init__(self, index: int, /) -> None: ...
+        def __init__(self, index: int) -> None: ...
 
     class Entity(MonitorSelection):
         __match_args__: ClassVar[tuple[Literal["entity"]]]
         entity: Entity
-        def __init__(self, entity: Entity, /) -> None: ...
+        def __init__(self, entity: Entity) -> None: ...
 
 
 class EnabledButtons:

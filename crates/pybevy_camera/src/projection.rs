@@ -1,11 +1,11 @@
 use std::f32::consts::FRAC_PI_4;
 
 use bevy::camera::{CameraProjection, OrthographicProjection, PerspectiveProjection, Projection};
-use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::pycomponent;
+use pybevy_core::{ComponentStorage, PyComponent, registry::global_registry};
+use pybevy_macros::{pycomponent, pyenum};
 use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A};
 use pybevy_transform::global_transform::PyGlobalTransform;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{PyTypeInfo, prelude::*};
 
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};
 
@@ -293,122 +293,163 @@ impl PyOrthographicProjection {
     }
 }
 
-#[pycomponent(Projection, bridge)]
-#[pyclass(name = "Projection", extends = PyComponent)]
+#[pyenum(Projection, manual)]
+#[pycomponent(Projection, bridge, materialize = materialize_projection)]
+#[pyclass(
+    name = "Projection",
+    module = "pybevy.camera",
+    extends = PyComponent,
+    subclass
+)]
 pub struct PyProjection {
     pub storage: ComponentStorage<Projection>,
 }
 
 #[pymethods]
 impl PyProjection {
-    #[new]
-    pub fn new() -> PyResult<PyClassInitializer<Self>> {
-        Ok(Self::from_owned(Projection::default()).into())
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "Perspective")]
-    pub fn perspective(projection: PyPerspectiveProjection) -> PyResult<Py<Self>> {
-        Python::attach(|py| {
-            Py::new(
-                py,
-                Self::from_owned(Projection::Perspective(projection.inner)),
-            )
-        })
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "Orthographic")]
-    pub fn orthographic(projection: PyOrthographicProjection) -> PyResult<Py<Self>> {
-        Python::attach(|py| {
-            Py::new(
-                py,
-                Self::from_owned(Projection::Orthographic(projection.inner)),
-            )
-        })
-    }
-
     pub fn is_perspective(&self) -> PyResult<bool> {
         Ok(self.as_ref()?.is_perspective())
     }
 
-    pub fn is_orthographic(&self) -> PyResult<bool> {
-        Ok(matches!(self.as_ref()?, Projection::Orthographic(_)))
-    }
-
-    pub fn as_orthographic(&self) -> PyResult<PyOrthographicProjection> {
+    pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref()? {
-            Projection::Orthographic(ortho) => Ok(PyOrthographicProjection {
-                inner: ortho.clone(),
-            }),
-            Projection::Perspective(_) => Err(PyTypeError::new_err(
-                "Projection is Perspective, not Orthographic",
-            )),
-            Projection::Custom(_) => Err(PyTypeError::new_err(
-                "Projection is Custom, not Orthographic",
-            )),
+            Projection::Perspective(value) => Ok(format!("Projection.Perspective({value:?})")),
+            Projection::Orthographic(value) => Ok(format!("Projection.Orthographic({value:?})")),
+            Projection::Custom(value) => Ok(format!("Projection.Custom({value:?})")),
         }
     }
+}
 
-    pub fn as_perspective(&self) -> PyResult<PyPerspectiveProjection> {
-        match self.as_ref()? {
-            Projection::Perspective(persp) => Ok(PyPerspectiveProjection {
-                inner: persp.clone(),
-            }),
-            Projection::Orthographic(_) => Err(PyTypeError::new_err(
-                "Projection is Orthographic, not Perspective",
-            )),
-            Projection::Custom(_) => Err(PyTypeError::new_err(
-                "Projection is Custom, not Perspective",
-            )),
-        }
+#[pyclass(
+    name = "Perspective",
+    module = "pybevy.camera",
+    extends = PyProjection
+)]
+pub struct PyProjectionPerspective;
+
+#[pymethods]
+#[allow(non_upper_case_globals)]
+impl PyProjectionPerspective {
+    #[classattr]
+    const __qualname__: &'static str = "Projection.Perspective";
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("value",)
+    }
+
+    #[new]
+    pub fn new(value: PyPerspectiveProjection) -> PyClassInitializer<Self> {
+        projection_initializer(Projection::Perspective(value.into())).add_subclass(Self)
     }
 
     #[getter]
-    pub fn orthographic_scale(&self) -> PyResult<Option<f32>> {
-        match self.as_ref()? {
-            Projection::Orthographic(ortho) => Ok(Some(ortho.scale)),
-            Projection::Perspective(_) | Projection::Custom(_) => Ok(None),
+    pub fn value(slf: PyRef<'_, Self>) -> PyResult<PyPerspectiveProjection> {
+        let base = slf.into_super();
+        match base.storage.as_ref()? {
+            Projection::Perspective(value) => Ok(value.clone().into()),
+            _ => unreachable!("Projection.Perspective instance changed discriminant"),
         }
     }
 
     #[setter]
-    pub fn set_orthographic_scale(&mut self, scale: f32) -> PyResult<()> {
-        match self.as_mut()? {
-            Projection::Orthographic(ortho) => {
-                ortho.scale = scale;
-                Ok(())
-            }
-            Projection::Perspective(_) => Err(PyTypeError::new_err(
-                "Cannot set orthographic_scale on Perspective projection",
-            )),
-            Projection::Custom(_) => Err(PyTypeError::new_err(
-                "Cannot set orthographic_scale on Custom projection",
-            )),
-        }
+    pub fn set_value(slf: PyRefMut<'_, Self>, value: PyPerspectiveProjection) -> PyResult<()> {
+        let mut base = slf.into_super();
+        *base.storage.as_mut()? = Projection::Perspective(value.into());
+        Ok(())
+    }
+}
+
+#[pyclass(
+    name = "Orthographic",
+    module = "pybevy.camera",
+    extends = PyProjection
+)]
+pub struct PyProjectionOrthographic;
+
+#[pymethods]
+#[allow(non_upper_case_globals)]
+impl PyProjectionOrthographic {
+    #[classattr]
+    const __qualname__: &'static str = "Projection.Orthographic";
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("value",)
+    }
+
+    #[new]
+    pub fn new(value: PyOrthographicProjection) -> PyClassInitializer<Self> {
+        projection_initializer(Projection::Orthographic(value.into())).add_subclass(Self)
     }
 
     #[getter]
-    pub fn perspective_fov(&self) -> PyResult<Option<f32>> {
-        match self.as_ref()? {
-            Projection::Perspective(persp) => Ok(Some(persp.fov)),
-            Projection::Orthographic(_) | Projection::Custom(_) => Ok(None),
+    pub fn value(slf: PyRef<'_, Self>) -> PyResult<PyOrthographicProjection> {
+        let base = slf.into_super();
+        match base.storage.as_ref()? {
+            Projection::Orthographic(value) => Ok(value.clone().into()),
+            _ => unreachable!("Projection.Orthographic instance changed discriminant"),
         }
     }
 
     #[setter]
-    pub fn set_perspective_fov(&mut self, fov: f32) -> PyResult<()> {
-        match self.as_mut()? {
-            Projection::Perspective(persp) => {
-                persp.fov = fov;
-                Ok(())
-            }
-            Projection::Orthographic(_) => Err(PyTypeError::new_err(
-                "Cannot set perspective_fov on Orthographic projection",
-            )),
-            Projection::Custom(_) => Err(PyTypeError::new_err(
-                "Cannot set perspective_fov on Custom projection",
-            )),
+    pub fn set_value(slf: PyRefMut<'_, Self>, value: PyOrthographicProjection) -> PyResult<()> {
+        let mut base = slf.into_super();
+        *base.storage.as_mut()? = Projection::Orthographic(value.into());
+        Ok(())
+    }
+}
+
+pub fn materialize_projection(
+    py: Python<'_>,
+    storage: ComponentStorage<Projection>,
+) -> PyResult<Py<PyAny>> {
+    enum Variant {
+        Perspective,
+        Orthographic,
+        Custom,
+    }
+
+    let variant = match storage.as_ref()? {
+        Projection::Perspective(_) => Variant::Perspective,
+        Projection::Orthographic(_) => Variant::Orthographic,
+        Projection::Custom(_) => Variant::Custom,
+    };
+    let base = PyClassInitializer::from(PyComponent).add_subclass(PyProjection { storage });
+
+    match variant {
+        Variant::Perspective => {
+            Ok(Py::new(py, base.add_subclass(PyProjectionPerspective))?.into_any())
+        }
+        Variant::Orthographic => {
+            Ok(Py::new(py, base.add_subclass(PyProjectionOrthographic))?.into_any())
+        }
+        Variant::Custom => Ok(Py::new(py, base)?.into_any()),
+    }
+}
+
+fn projection_initializer(value: Projection) -> PyClassInitializer<PyProjection> {
+    PyClassInitializer::from(PyComponent).add_subclass(PyProjection {
+        storage: ComponentStorage::owned(value),
+    })
+}
+
+pub fn register_projection_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = module.py();
+    let base = module.getattr("Projection")?;
+    base.setattr("Perspective", py.get_type::<PyProjectionPerspective>())?;
+    base.setattr("Orthographic", py.get_type::<PyProjectionOrthographic>())?;
+
+    let canonical = PyProjection::type_object_raw(py);
+    for alias in [
+        PyProjectionPerspective::type_object_raw(py),
+        PyProjectionOrthographic::type_object_raw(py),
+    ] {
+        if !global_registry::register_component_bridge_alias(alias, canonical) {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Projection bridge was not registered before its variants",
+            ));
         }
     }
+    Ok(())
 }

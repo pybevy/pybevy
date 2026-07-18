@@ -1,10 +1,10 @@
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Self
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Handle
 from pybevy.color import Color
 from pybevy.ecs import Batchable, Component, Entity, Resource
-from pybevy.image import Image
+from pybevy.image import Image as ImageAsset
 from pybevy.math import (
     Affine3A,
     HalfSpace,
@@ -22,6 +22,7 @@ from pybevy.math import (
     ViewFrustum,
 )
 from pybevy.transform import GlobalTransform
+from pybevy.window import NormalizedWindowRef, WindowRef
 
 try:
     import numpy as np
@@ -36,29 +37,43 @@ class CameraPlugin(Plugin):
 class ScalingMode:
     """Camera scaling mode for orthographic projections."""
 
-    @staticmethod
-    def WindowSize() -> ScalingMode:
-        """Match the viewport size. With scale=1, world units map 1:1 to pixels."""
+    class WindowSize(ScalingMode):
+        """Match viewport size so world units map directly to pixels."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Fixed(width: float, height: float) -> ScalingMode:
-        """Manually specify projection size, ignoring window resizing."""
+    class Fixed(ScalingMode):
+        """Use a fixed projection size and ignore window resizing."""
+        __match_args__: ClassVar[tuple[Literal["width"], Literal["height"]]]
+        width: float
+        height: float
+        def __init__(self, width: float, height: float) -> None: ...
 
-    @staticmethod
-    def AutoMin(min_width: float, min_height: float) -> ScalingMode:
-        """Keep aspect ratio while axes can't be smaller than given minimum."""
+    class AutoMin(ScalingMode):
+        """Preserve aspect ratio with minimum axis sizes."""
+        __match_args__: ClassVar[tuple[Literal["min_width"], Literal["min_height"]]]
+        min_width: float
+        min_height: float
+        def __init__(self, min_width: float, min_height: float) -> None: ...
 
-    @staticmethod
-    def AutoMax(max_width: float, max_height: float) -> ScalingMode:
-        """Keep aspect ratio while axes can't be bigger than given maximum."""
+    class AutoMax(ScalingMode):
+        """Preserve aspect ratio with maximum axis sizes."""
+        __match_args__: ClassVar[tuple[Literal["max_width"], Literal["max_height"]]]
+        max_width: float
+        max_height: float
+        def __init__(self, max_width: float, max_height: float) -> None: ...
 
-    @staticmethod
-    def FixedVertical(viewport_height: float) -> ScalingMode:
-        """Keep projection height constant; width adjusts to match aspect ratio."""
+    class FixedVertical(ScalingMode):
+        """Keep projection height constant and adjust width."""
+        __match_args__: ClassVar[tuple[Literal["viewport_height"]]]
+        viewport_height: float
+        def __init__(self, viewport_height: float) -> None: ...
 
-    @staticmethod
-    def FixedHorizontal(viewport_width: float) -> ScalingMode:
-        """Keep projection width constant; height adjusts to match aspect ratio."""
+    class FixedHorizontal(ScalingMode):
+        """Keep projection width constant and adjust height."""
+        __match_args__: ClassVar[tuple[Literal["viewport_width"]]]
+        viewport_width: float
+        def __init__(self, viewport_width: float) -> None: ...
 
 class OrthographicProjection:
     """Orthographic camera projection for isometric and 2D games."""
@@ -150,7 +165,7 @@ class Camera3dDepthLoadOp:
     class Clear(Camera3dDepthLoadOp):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
-        def __init__(self, value: float, /) -> None: ...
+        def __init__(self, value: float) -> None: ...
 
     class Load(Camera3dDepthLoadOp):
         __match_args__: ClassVar[tuple[()]]
@@ -177,95 +192,33 @@ class Camera3d(Component):
     def __deepcopy__(self, memo: dict[int, object]) -> Camera3d: ...
 
 class RenderTarget(Component):
-    """Specifies where a camera renders to.
+    """Specifies where a camera renders, matching Bevy's value-enum variants."""
 
-    This is a required component of Camera — it is automatically added when Camera
-    is spawned, defaulting to the primary window. You can override it by including
-    RenderTarget in the spawn tuple.
+    class Window(RenderTarget):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: WindowRef
+        def __init__(self, value: WindowRef) -> None: ...
 
-    Can be:
-    - Window: Render to the primary window surface
-    - Image: Render to a texture/image asset (for headless rendering, screenshots, etc.)
-    - TextureView: Render to a manually managed texture view
-    - None: No rendering output, just run the pipeline (useful for depth prepass)
+    class Image(RenderTarget):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: ImageRenderTarget
+        def __init__(self, value: ImageRenderTarget) -> None: ...
 
-    Examples:
-        >>> # Render to window (default)
-        >>> target = RenderTarget.window()
-        >>>
-        >>> # Render to texture for headless rendering
-        >>> image = Image.new_render_target(width=800, height=600)
-        >>> handle = images.add(image)
-        >>> commands.spawn((Camera3d(), Camera(), RenderTarget.image(handle)))
-        >>>
-        >>> # No rendering (depth prepass only)
-        >>> target = RenderTarget.none(UVec2(800, 600))
-    """
+    class TextureView(RenderTarget):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: ManualTextureViewHandle
+        def __init__(self, value: ManualTextureViewHandle) -> None: ...
 
-    @staticmethod
-    def window() -> RenderTarget:
-        """Create a RenderTarget that renders to the primary window.
+    class None_(RenderTarget):
+        __match_args__: ClassVar[tuple[Literal["size"]]]
+        size: UVec2
+        def __init__(self, size: UVec2) -> None: ...
 
-        Returns:
-            RenderTarget configured for window rendering
-        """
-
-    @staticmethod
-    def image(handle: Handle[Image]) -> RenderTarget:
-        """Create a RenderTarget that renders to an image texture.
-
-        The image must be created with appropriate texture usage flags:
-        - RENDER_ATTACHMENT: Can be used as a render target
-        - COPY_SRC: Can be copied from (for readback)
-        - TEXTURE_BINDING: Can be sampled in shaders
-
-        Use `Image.new_render_target()` to create a properly configured image.
-
-        Args:
-            handle: Handle to an Image asset with render target usage flags
-
-        Returns:
-            RenderTarget configured for image rendering
-
-        Examples:
-            >>> image = Image.new_render_target(width=800, height=600)
-            >>> handle = assets.add(image)
-            >>> target = RenderTarget.image(handle)
-        """
-
-    @staticmethod
-    def texture_view(texture_view_id: int) -> RenderTarget:
-        """Create a RenderTarget that renders to a manually managed texture view.
-
-        Used for advanced rendering scenarios where you manage the texture view
-        lifecycle manually via the render app.
-
-        Args:
-            texture_view_id: The ManualTextureViewHandle ID (u32)
-
-        Returns:
-            RenderTarget configured for manual texture view rendering
-        """
-
-    @staticmethod
-    def none(size: UVec2) -> RenderTarget:
-        """Create a RenderTarget with no output, just running the render pipeline.
-
-        Useful for depth prepass cameras that need to run the pipeline and
-        build depth buffers without producing any color output.
-
-        Args:
-            size: The logical size for the "virtual" render target
-
-        Returns:
-            RenderTarget configured for no-output rendering
-        """
-
-    def as_image(self) -> Handle[Image] | None:
+    def as_image(self) -> Handle[ImageAsset] | None:
         """Get the image handle if this is an image render target.
 
         Returns:
-            The image handle if this is RenderTarget.image(...), None otherwise
+            The image handle if this is RenderTarget.Image(...), None otherwise
         """
 
     def normalize(
@@ -282,6 +235,9 @@ class RenderTarget(Component):
         Returns:
             Normalized render target, or None if normalization fails
         """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Self: ...
 
 class Viewport:
     """Viewport configuration for rendering to a specific region.
@@ -318,8 +274,8 @@ class Viewport:
 
     def __init__(
         self,
-        physical_position: UVec2,
-        physical_size: UVec2,
+        physical_position: UVec2 = ...,
+        physical_size: UVec2 = ...,
         depth: tuple[float, float] = (0.0, 1.0),
     ) -> None:
         """Create a new Viewport.
@@ -1395,65 +1351,21 @@ class PerspectiveProjection:
 class Projection(Component):
     """Camera projection (perspective or orthographic)."""
 
-    def __init__(self) -> None: ...
+    class Perspective(Projection):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: PerspectiveProjection
+        def __init__(self, value: PerspectiveProjection) -> None: ...
 
-    @staticmethod
-    def Perspective(projection: PerspectiveProjection) -> Projection:
-        """Create a perspective projection."""
-
-    @staticmethod
-    def Orthographic(projection: OrthographicProjection) -> Projection:
-        """Create an orthographic projection."""
+    class Orthographic(Projection):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: OrthographicProjection
+        def __init__(self, value: OrthographicProjection) -> None: ...
 
     def is_perspective(self) -> bool:
         """Check if this is a perspective projection."""
 
-    def is_orthographic(self) -> bool:
-        """Check if this is an orthographic projection."""
-
-    def as_orthographic(self) -> OrthographicProjection:
-        """Get the orthographic projection if this is orthographic.
-
-        Raises:
-            RuntimeError: If this is a perspective or custom projection.
-        """
-
-    def as_perspective(self) -> PerspectiveProjection:
-        """Get the perspective projection if this is perspective.
-
-        Raises:
-            RuntimeError: If this is an orthographic or custom projection.
-        """
-
-    @property
-    def orthographic_scale(self) -> float | None:
-        """Get the orthographic scale if this is an orthographic projection.
-
-        Returns None if this is not an orthographic projection.
-        """
-
-    @orthographic_scale.setter
-    def orthographic_scale(self, scale: float) -> None:
-        """Set the orthographic scale.
-
-        Raises:
-            RuntimeError: If this is not an orthographic projection.
-        """
-
-    @property
-    def perspective_fov(self) -> float | None:
-        """Get the perspective FOV if this is a perspective projection.
-
-        Returns None if this is not a perspective projection.
-        """
-
-    @perspective_fov.setter
-    def perspective_fov(self, fov: float) -> None:
-        """Set the perspective FOV.
-
-        Raises:
-            RuntimeError: If this is not a perspective projection.
-        """
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Self: ...
 
 class ClearColor(Resource):
     color: Color
@@ -1483,21 +1395,21 @@ class ClearColorConfig:
         ```
     """
 
-    @staticmethod
-    def Default() -> ClearColorConfig:
+    class Default(ClearColorConfig):
         """Use the default clear color from the ClearColor resource."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Custom(color: Color) -> ClearColorConfig:
-        """Use a custom clear color.
+    class Custom(ClearColorConfig):
+        """Use a custom clear color."""
+        __match_args__: ClassVar[tuple[Literal["color"]]]
+        color: Color
+        def __init__(self, color: Color) -> None: ...
 
-        Args:
-            color: The color to clear the screen with
-        """
-
-    @staticmethod
-    def None_() -> ClearColorConfig:
+    class None_(ClearColorConfig):
         """Don't clear the screen (useful for layered rendering)."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
 
 class InheritedVisibility(Component):
@@ -1772,52 +1684,41 @@ class VisibilityClass(Component):
         """Clear all visibility classes."""
 
 
+class ImageRenderTarget:
+    def __init__(self, handle: Handle[ImageAsset], scale_factor: float = 1.0) -> None: ...
+    @property
+    def handle(self) -> Handle[ImageAsset]: ...
+    @property
+    def scale_factor(self) -> float: ...
+
+class ManualTextureViewHandle:
+    def __init__(self, value: int) -> None: ...
+    @property
+    def value(self) -> int: ...
+
 class NormalizedRenderTarget:
-    """A normalized render target used for equality comparisons.
+    """A normalized render target, matching Bevy's value-enum variants."""
 
-    This is a normalized version of RenderTarget, mostly used for
-    comparing whether two cameras render to the same target.
+    class Window(NormalizedRenderTarget):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: NormalizedWindowRef
+        def __init__(self, value: NormalizedWindowRef) -> None: ...
 
-    Note: Window render targets are obtained from Camera methods, not
-    constructed directly. You can construct Image, TextureView, and None
-    render targets using the static methods.
-    """
+    class Image(NormalizedRenderTarget):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: ImageRenderTarget
+        def __init__(self, value: ImageRenderTarget) -> None: ...
 
-    @staticmethod
-    def image(handle: Handle[Image], scale_factor: float = 1.0) -> NormalizedRenderTarget:
-        """Create an image render target from an image handle."""
+    class TextureView(NormalizedRenderTarget):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: ManualTextureViewHandle
+        def __init__(self, value: ManualTextureViewHandle) -> None: ...
 
-    @staticmethod
-    def texture_view(texture_view_id: int) -> NormalizedRenderTarget:
-        """Create a texture view render target from a manual texture view handle ID."""
-
-    @staticmethod
-    def none(width: int, height: int) -> NormalizedRenderTarget:
-        """Create a 'none' render target that only renders prepasses."""
-
-    def is_window(self) -> bool:
-        """Check if this is a window render target."""
-
-    def is_image(self) -> bool:
-        """Check if this is an image render target."""
-
-    def is_texture_view(self) -> bool:
-        """Check if this is a texture view render target."""
-
-    def is_none(self) -> bool:
-        """Check if this is a 'none' render target."""
-
-    def window_entity(self) -> Entity | None:
-        """Get the window entity if this is a window render target."""
-
-    def none_dimensions(self) -> tuple[int, int] | None:
-        """Get the dimensions if this is a 'none' render target."""
-
-    def texture_view_id(self) -> int | None:
-        """Get the texture view handle ID if this is a texture view render target."""
-
-    def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
+    class None_(NormalizedRenderTarget):
+        __match_args__: ClassVar[tuple[Literal["width"], Literal["height"]]]
+        width: int
+        height: int
+        def __init__(self, width: int, height: int) -> None: ...
 
 
 class DepthPrepass(Component):

@@ -29,6 +29,16 @@ impl From<PyColor> for Color {
     }
 }
 
+impl<'py> IntoPyObject<'py> for PyColor {
+    type Target = PyColor;
+    type Output = Bound<'py, PyColor>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        Ok(Self::from_color(self.0, py)?.into_bound(py))
+    }
+}
+
 impl PyColor {
     pub fn from_color(color: Color, py: Python) -> PyResult<Py<Self>> {
         Py::new(py, (PyColor(color), PyMaterializable))

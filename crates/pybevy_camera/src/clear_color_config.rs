@@ -1,72 +1,57 @@
 use bevy::camera::ClearColorConfig;
 use pybevy_color::color::PyColor;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ClearColorConfig", frozen, from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyClearColorConfig {
-    inner: ClearColorConfig,
+#[pyenum(ClearColorConfig, manual)]
+#[pyclass(name = "ClearColorConfig", frozen, eq, from_py_object)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum PyClearColorConfig {
+    Default(),
+    Custom {
+        color: PyColor,
+    },
+    #[pyo3(name = "None_")]
+    None(),
 }
 
 impl From<PyClearColorConfig> for ClearColorConfig {
     fn from(value: PyClearColorConfig) -> Self {
-        value.inner
+        match value {
+            PyClearColorConfig::Default() => ClearColorConfig::Default,
+            PyClearColorConfig::Custom { color } => ClearColorConfig::Custom(color.into()),
+            PyClearColorConfig::None() => ClearColorConfig::None,
+        }
     }
 }
 
 impl From<ClearColorConfig> for PyClearColorConfig {
     fn from(value: ClearColorConfig) -> Self {
-        PyClearColorConfig { inner: value }
+        match value {
+            ClearColorConfig::Default => PyClearColorConfig::Default(),
+            ClearColorConfig::Custom(color) => PyClearColorConfig::Custom {
+                color: color.into(),
+            },
+            ClearColorConfig::None => PyClearColorConfig::None(),
+        }
     }
 }
 
 #[pymethods]
 impl PyClearColorConfig {
-    #[new]
-    fn new() -> Self {
-        PyClearColorConfig {
-            inner: ClearColorConfig::default(),
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "Default")]
-    fn default_variant() -> Self {
-        PyClearColorConfig {
-            inner: ClearColorConfig::Default,
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "Custom")]
-    fn custom(color: PyColor) -> Self {
-        PyClearColorConfig {
-            inner: ClearColorConfig::Custom(color.into()),
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "None_")]
-    fn none_variant() -> Self {
-        PyClearColorConfig {
-            inner: ClearColorConfig::None,
-        }
-    }
-
     fn __repr__(&self) -> String {
-        match &self.inner {
-            ClearColorConfig::Default => "ClearColorConfig.Default()".to_string(),
-            ClearColorConfig::Custom(color) => format!("ClearColorConfig.Custom({color:?})"),
-            ClearColorConfig::None => "ClearColorConfig.None_()".to_string(),
+        match self {
+            PyClearColorConfig::Default() => "ClearColorConfig.Default()".to_string(),
+            PyClearColorConfig::Custom { color } => {
+                format!("ClearColorConfig.Custom({})", color.__repr__())
+            }
+            PyClearColorConfig::None() => "ClearColorConfig.None_()".to_string(),
         }
     }
+}
 
-    fn __eq__(&self, other: &Self) -> bool {
-        match (&self.inner, &other.inner) {
-            (ClearColorConfig::Default, ClearColorConfig::Default) => true,
-            (ClearColorConfig::None, ClearColorConfig::None) => true,
-            (ClearColorConfig::Custom(a), ClearColorConfig::Custom(b)) => a == b,
-            _ => false,
-        }
+impl Default for PyClearColorConfig {
+    fn default() -> Self {
+        ClearColorConfig::default().into()
     }
 }
