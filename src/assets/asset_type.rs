@@ -1,4 +1,4 @@
-use pybevy_core::registry::global_registry;
+use pybevy_core::{public_error::invalid_asset_type, registry::global_registry};
 use pyo3::{exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 /// Parameter type for Assets[T] subscript notation.
@@ -29,10 +29,7 @@ impl PyAssetTypeParam {
                 wrapper_class: None,
             })
         } else {
-            Err(PyTypeError::new_err(format!(
-                "Invalid asset type. Expected a subclass of `Asset`, but got `{}`",
-                asset_type
-            )))
+            Err(PyTypeError::new_err(invalid_asset_type(asset_type)))
         }
     }
 
@@ -49,10 +46,7 @@ impl PyAssetTypeParam {
                 wrapper_class: Some(wrapper.as_type_ptr()),
             })
         } else {
-            Err(PyTypeError::new_err(format!(
-                "Invalid asset type. Expected a subclass of `Asset`, but got `{}`",
-                actual_type
-            )))
+            Err(PyTypeError::new_err(invalid_asset_type(actual_type)))
         }
     }
 

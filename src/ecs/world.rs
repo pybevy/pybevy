@@ -807,10 +807,9 @@ impl PyWorld {
 
         // Check if entity exists
         if !world.entities().contains(entity.0) {
-            return Err(PyRuntimeError::new_err(format!(
-                "Entity {:?} does not exist",
-                entity.0
-            )));
+            return Err(PyRuntimeError::new_err(
+                pybevy_core::public_error::entity_does_not_exist(entity.0),
+            ));
         }
 
         // Get component type
@@ -853,10 +852,9 @@ impl PyWorld {
         let world = self.world_mut()?;
 
         if !world.entities().contains(entity.0) {
-            return Err(PyRuntimeError::new_err(format!(
-                "Entity {:?} does not exist",
-                entity.0
-            )));
+            return Err(PyRuntimeError::new_err(
+                pybevy_core::public_error::entity_does_not_exist(entity.0),
+            ));
         }
 
         let comp_type =
