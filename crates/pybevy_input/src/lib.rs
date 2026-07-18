@@ -1,5 +1,4 @@
 pub mod accumulated_mouse;
-pub mod axis;
 pub mod button_input;
 pub mod button_state;
 pub mod gamepad;
@@ -29,7 +28,7 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        axis::PyAxis, button_input::PyButtonInput, gamepad::PyGamepad, gamepad_axis::PyGamepadAxis,
+        button_input::PyButtonInput, gamepad::PyGamepad, gamepad_axis::PyGamepadAxis,
         gamepad_button::PyGamepadButton, gamepad_settings::PyGamepadSettings, key_code::PyKeyCode,
         mouse_button::PyMouseButton, plugin::PyInputPlugin, touch_input::PyTouchInput,
         touches::PyTouches,
@@ -39,7 +38,6 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "input")?;
     m.add_class::<plugin::PyInputPlugin>()?;
-    m.add_class::<axis::PyAxis>()?;
     m.add_class::<button_input::PyButtonInput>()?;
     m.add_class::<button_state::PyButtonState>()?;
     m.add_class::<gamepad::PyGamepad>()?;
