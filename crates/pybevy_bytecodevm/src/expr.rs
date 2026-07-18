@@ -1103,6 +1103,53 @@ mod tests {
     fn canonical_equality_is_structural_and_float_bit_exact() {
         assert!(RustExpr::Add(c(1.0), c(2.0)).canonical_eq(&RustExpr::Add(c(1.0), c(2.0))));
         assert!(!RustExpr::Add(c(1.0), c(2.0)).canonical_eq(&RustExpr::Sub(c(1.0), c(2.0))));
+        assert!(!RustExpr::Add(c(9.0), c(2.0)).canonical_eq(&RustExpr::Add(c(1.0), c(2.0))));
+        assert!(!RustExpr::Add(c(1.0), c(9.0)).canonical_eq(&RustExpr::Add(c(1.0), c(2.0))));
+        assert!(RustExpr::Neg(c(1.0)).canonical_eq(&RustExpr::Neg(c(1.0))));
+
+        let ternary = RustExpr::Clamp(c(1.0), c(2.0), c(3.0));
+        assert!(ternary.canonical_eq(&RustExpr::Clamp(c(1.0), c(2.0), c(3.0))));
+        assert!(!ternary.canonical_eq(&RustExpr::Clamp(c(9.0), c(2.0), c(3.0))));
+        assert!(!ternary.canonical_eq(&RustExpr::Clamp(c(1.0), c(9.0), c(3.0))));
+        assert!(!ternary.canonical_eq(&RustExpr::Clamp(c(1.0), c(2.0), c(9.0))));
+
+        assert!(RustExpr::Random.canonical_eq(&RustExpr::Random));
+
+        let field = RustExpr::Field {
+            component_id: ComponentId::new(1),
+            offset: 4,
+            field_type: FieldType::F32,
+        };
+        assert!(field.canonical_eq(&field));
+        assert!(!field.canonical_eq(&RustExpr::Field {
+            component_id: ComponentId::new(2),
+            offset: 4,
+            field_type: FieldType::F32,
+        }));
+        assert!(!field.canonical_eq(&RustExpr::Field {
+            component_id: ComponentId::new(1),
+            offset: 8,
+            field_type: FieldType::F32,
+        }));
+        assert!(!field.canonical_eq(&RustExpr::Field {
+            component_id: ComponentId::new(1),
+            offset: 4,
+            field_type: FieldType::F64,
+        }));
+
+        let input = RustExpr::Input {
+            index: 1,
+            field_type: FieldType::F32,
+        };
+        assert!(input.canonical_eq(&input));
+        assert!(!input.canonical_eq(&RustExpr::Input {
+            index: 2,
+            field_type: FieldType::F32,
+        }));
+        assert!(!input.canonical_eq(&RustExpr::Input {
+            index: 1,
+            field_type: FieldType::F64,
+        }));
         assert!(!RustExpr::Const(0.0).canonical_eq(&RustExpr::Const(-0.0)));
 
         let first_nan = f64::from_bits(0x7ff8_0000_0000_0001);
