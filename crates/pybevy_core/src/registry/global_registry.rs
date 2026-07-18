@@ -75,6 +75,28 @@ pub fn register_component_bridge_arc(bridge: Arc<dyn ComponentBridge>) {
     guard.by_py_type.insert(ptr, bridge);
 }
 
+/// Register an additional Python class for an existing component bridge.
+///
+/// Native subclasses such as value-enum variants have distinct Python type
+/// pointers but share one Bevy component type and one bridge with their base.
+/// Returns `false` when the canonical type has not been registered yet.
+pub fn register_component_bridge_alias(
+    alias_ptr: *const PyTypeObject,
+    canonical_ptr: *const PyTypeObject,
+) -> bool {
+    if alias_ptr.is_null() || canonical_ptr.is_null() {
+        return false;
+    }
+
+    let registry = get_global_registry();
+    let mut guard = registry.write().expect("Global registry lock poisoned");
+    let Some(bridge) = guard.by_py_type.get(&canonical_ptr).cloned() else {
+        return false;
+    };
+    guard.by_py_type.insert(alias_ptr, bridge);
+    true
+}
+
 /// Check if a Python type pointer is registered in the global registry.
 ///
 /// Returns the bridge if found, None otherwise.

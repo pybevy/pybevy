@@ -27,8 +27,10 @@ pub mod asset;
 pub mod asset_cleanup;
 pub mod asset_path;
 pub mod component;
+pub mod component_batch;
 pub mod component_layout;
 pub mod component_wrapper;
+pub mod content_hash;
 pub mod custom_component;
 pub mod custom_resource;
 pub mod debug_snapshot;
@@ -37,6 +39,7 @@ pub mod entity;
 pub mod handle;
 pub mod hierarchy;
 pub extern crate inventory;
+pub mod borrowed_array_anchor;
 pub mod bridge_inventory;
 pub mod materializable;
 pub mod message;
@@ -50,8 +53,8 @@ pub mod source_location;
 
 // Storage layer — re-exported from pybevy_storage
 pub use pybevy_storage::{
-    field_storage, list_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
-    validity_guard, value_storage, view_bridge,
+    batch_columns, field_storage, list_storage, pyasset, pycomponent, pyresource, storage_error,
+    storage_traits, validity_guard, value_storage, view_bridge,
 };
 
 pybevy_storage::impl_py_list!(PyF32List, "F32List", f32);

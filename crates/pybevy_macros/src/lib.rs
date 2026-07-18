@@ -6,6 +6,7 @@ mod app;
 mod asset;
 mod component;
 mod derive;
+mod enum_spec;
 mod enums;
 mod field;
 mod message;

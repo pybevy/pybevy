@@ -4737,10 +4737,12 @@ version = "0.2.1"
 dependencies = [
  "bevy",
  "inventory",
+ "pybevy_array",
  "pybevy_macros",
  "pybevy_storage",
  "pyo3",
  "serde_json",
+ "sha2",
  "uuid",
 ]
 

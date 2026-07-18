@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemStruct, Token, Type,
+    Ident, ItemStruct, Path, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -243,6 +243,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         view_fields: Option<Vec<BridgeField>>,
         batch_only_fields: Option<Vec<BridgeField>>,
         view_only_fields: Option<Vec<ViewOnlyField>>,
+        materialize: Option<Path>,
     }
 
     impl Parse for ComponentStorageArgs {
@@ -257,6 +258,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut view_fields = None;
             let mut batch_only_fields = None;
             let mut view_only_fields = None;
+            let mut materialize = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -270,6 +272,11 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                     "unit" => unit = true,
                     "bridge" => bridge = true,
                     "no_reflect" => no_reflect = true,
+                    "materialize" => {
+                        bridge = true;
+                        input.parse::<Token![=]>()?;
+                        materialize = Some(input.parse()?);
+                    }
                     "view_fields" => {
                         bridge = true;
                         input.parse::<Token![=]>()?;
@@ -298,7 +305,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, view_fields, batch_only_fields, view_only_fields",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, view_fields, batch_only_fields, view_only_fields",
                                 other
                             ),
                         ));
@@ -317,6 +324,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 view_fields,
                 batch_only_fields,
                 view_only_fields,
+                materialize,
             })
         }
     }
@@ -357,10 +365,43 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.view_fields.as_ref(),
             args.batch_only_fields.as_ref(),
             args.view_only_fields.as_ref(),
+            args.materialize.as_ref(),
             true, // emit inventory registration
         )
     } else {
         quote! {}
+    };
+
+    let copy_methods = if let Some(materialize) = args.materialize.as_ref() {
+        quote! {
+            #[pyo3::pymethods]
+            impl #py_type {
+                pub fn __copy__(&self, py: Python) -> PyResult<Py<PyAny>> {
+                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
+                    #materialize(py, owned)
+                }
+
+                pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
+                    #materialize(py, owned)
+                }
+            }
+        }
+    } else {
+        quote! {
+            #[pyo3::pymethods]
+            impl #py_type {
+                pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
+                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
+                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
+                }
+
+                pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
+                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
+                }
+            }
+        }
     };
 
     if args.no_clone {
@@ -441,18 +482,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
-            #[pyo3::pymethods]
-            impl #py_type {
-                pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
-                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
-                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
-                }
-
-                pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-                    let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
-                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
-                }
-            }
+            #copy_methods
 
             #bridge_tokens
         };
@@ -470,6 +500,7 @@ fn generate_bridge_tokens(
     view_fields: Option<&Vec<BridgeField>>,
     batch_only_fields: Option<&Vec<BridgeField>>,
     view_only_fields: Option<&Vec<ViewOnlyField>>,
+    materialize: Option<&Path>,
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
@@ -479,6 +510,12 @@ fn generate_bridge_tokens(
     });
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let component_name = &bridge_name_str;
+
+    let materialize_storage = if let Some(materialize) = materialize {
+        quote! { #materialize(py, storage)? }
+    } else {
+        quote! { pyo3::Py::new(py, #py_type::from_borrowed(storage))?.into_any() }
+    };
 
     // Generate view_bridge method if view_fields (or view_only_fields) is specified
     let has_view_fields = view_fields.is_some() || view_only_fields.is_some();
@@ -721,8 +758,8 @@ fn generate_bridge_tokens(
                     pybevy_core::ComponentStorage::borrowed(ptr, validity)
                 };
 
-                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                Ok(obj.into_any())
+                let obj = #materialize_storage;
+                Ok(obj)
             }
 
             #insert_impl
@@ -756,8 +793,8 @@ fn generate_bridge_tokens(
                         pybevy_core::ComponentStorage::borrowed(ptr, validity)
                     };
 
-                    let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                    Ok(obj.into_any())
+                    let obj = #materialize_storage;
+                    Ok(obj)
                 }
                 extract_impl
             }
@@ -782,8 +819,8 @@ fn generate_bridge_tokens(
                     )
                 } {
                     Some(storage) => {
-                        let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                        Ok(Some(obj.into_any()))
+                        let obj = #materialize_storage;
+                        Ok(Some(obj))
                     }
                     None => Ok(None),
                 }
@@ -804,8 +841,8 @@ fn generate_bridge_tokens(
                     )
                 } {
                     Some(storage) => {
-                        let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                        Ok(Some(obj.into_any()))
+                        let obj = #materialize_storage;
+                        Ok(Some(obj))
                     }
                     None => Ok(None),
                 }
@@ -896,66 +933,21 @@ fn generate_bridge_tokens(
             quote! {
                 if let Some(arr) = kwargs.get_item(#name_str)? {
                     let np = py.import("numpy")?;
+                    // Accept real NumPy, the bounded `pybevy.array` array (via its
+                    // `__array__`), and (nested) lists/tuples of numbers.
+                    let arr = np.call_method1("asarray", (arr,))?;
                     let arr_bound = &arr;
                     let ndim: usize = arr_bound.getattr("ndim")?.extract()?;
-
-                    // Normalize: scalar fields accept 1D, vector fields accept 2D
-                    let normalized = if #cols_var == 1 {
-                        // Scalar field: must be 1D
-                        if ndim != 1 {
-                            return Err(pyo3::exceptions::PyValueError::new_err(
-                                format!("Field '{}' expects a 1D array, got {}D", #name_str, ndim)
-                            ));
-                        }
-                        let count_val: usize = arr_bound.len()?;
-                        // Reshape to (N, 1) for uniform handling
-                        let reshaped = arr_bound.call_method1("reshape", ((count_val, 1usize),))?;
-                        let contiguous = np.call_method1("ascontiguousarray", (&reshaped,))?;
-                        contiguous.call_method1("astype", (np.getattr("float32")?,))?
-                    } else {
-                        // Vector field: accept 1D (single entity) or 2D with correct columns
-                        if ndim == 1 {
-                            // Single-entity shorthand or flat array
-                            let len: usize = arr_bound.len()?;
-                            if len % #cols_var != 0 {
-                                return Err(pyo3::exceptions::PyValueError::new_err(
-                                    format!("Field '{}' requires {} columns, but 1D array length {} is not divisible", #name_str, #cols_var, len)
-                                ));
-                            }
-                            let count_val = len / #cols_var;
-                            let reshaped = arr_bound.call_method1("reshape", ((count_val, #cols_var),))?;
-                            let contiguous = np.call_method1("ascontiguousarray", (&reshaped,))?;
-                            contiguous.call_method1("astype", (np.getattr("float32")?,))?
-                        } else if ndim == 2 {
-                            let shape = arr_bound.getattr("shape")?;
-                            let cols: usize = shape.get_item(1)?.extract()?;
-                            if cols != #cols_var {
-                                return Err(pyo3::exceptions::PyValueError::new_err(
-                                    format!("Field '{}' expects {} columns, got {}", #name_str, #cols_var, cols)
-                                ));
-                            }
-                            let contiguous = np.call_method1("ascontiguousarray", (arr_bound,))?;
-                            contiguous.call_method1("astype", (np.getattr("float32")?,))?
-                        } else {
-                            return Err(pyo3::exceptions::PyValueError::new_err(
-                                format!("Field '{}' must be a 1D or 2D array, got {}D", #name_str, ndim)
-                            ));
-                        }
-                    };
-
-                    // Track count
-                    let shape = normalized.getattr("shape")?;
-                    let rows: usize = shape.get_item(0)?.extract()?;
-                    if let Some((prev_count, ref prev_name)) = batch_count {
-                        if rows != prev_count {
-                            return Err(pyo3::exceptions::PyValueError::new_err(
-                                format!("Array length mismatch: '{}' has {} rows but '{}' has {}", prev_name, prev_count, #name_str, rows)
-                            ));
-                        }
-                    } else {
-                        batch_count = Some((rows, #name_str.to_string()));
-                    }
-
+                    let shape: Vec<usize> = arr_bound.getattr("shape")?.extract()?;
+                    // Neutral shape validation -> row count (shared error strings).
+                    let rows = pybevy_core::batch_columns::plan_column(#name_str, #cols_var, ndim, &shape)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                    // Data work: normalize to a contiguous float32 `(rows, cols)` array.
+                    let reshaped = arr_bound.call_method1("reshape", ((rows, #cols_var),))?;
+                    let contiguous = np.call_method1("ascontiguousarray", (&reshaped,))?;
+                    let normalized = contiguous.call_method1("astype", (np.getattr("float32")?,))?;
+                    count_agreement.observe(#name_str, rows)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
                     field_arrays.insert(#name_str.to_string(), normalized.unbind());
                 }
             }
@@ -1016,25 +1008,22 @@ fn generate_bridge_tokens(
                 use pyo3::types::PyAnyMethods;
                 let valid_fields: &[&str] = &[#(#field_strs),*];
 
-                // Validate field names
+                // Validate field names (shared error string)
                 for key in kwargs.keys() {
                     let key_str: String = key.extract()?;
-                    if !valid_fields.contains(&key_str.as_str()) {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            format!("Unknown field '{}'. Valid fields: {:?}", key_str, valid_fields)
-                        ));
-                    }
+                    pybevy_core::batch_columns::check_known_field(&key_str, valid_fields)
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
                 }
 
                 let default_val = <#bevy_type>::default();
                 #(#field_validations)*
 
                 let mut field_arrays = std::collections::HashMap::new();
-                let mut batch_count: Option<(usize, String)> = None;
+                let mut count_agreement = pybevy_core::batch_columns::CountAgreement::default();
 
                 #(#field_normalize_stmts)*
 
-                let count = batch_count.map(|(c, _)| c).unwrap_or(0);
+                let count = count_agreement.count().unwrap_or(0);
                 if count == 0 {
                     return Err(pyo3::exceptions::PyValueError::new_err(
                         "from_numpy() requires at least one field array"
@@ -1062,25 +1051,42 @@ fn generate_bridge_tokens(
     let from_numpy_pymethods = if all_batch_fields.is_some() && !no_insert {
         let snake_name = to_snake_case(&bridge_name_str);
         let from_numpy_fn_name = quote::format_ident!("{}_from_numpy", snake_name);
+        let fields = all_batch_fields
+            .as_ref()
+            .expect("batch fields checked above");
+        let parameters = fields.iter().map(|field| {
+            let name = &field.python_name;
+            quote! { #name: Option<&pyo3::Bound<pyo3::PyAny>> }
+        });
+        let signature_defaults = fields.iter().map(|field| {
+            let name = &field.python_name;
+            quote! { #name = None }
+        });
+        let dictionary_entries = fields.iter().map(|field| {
+            let name = &field.python_name;
+            let name_string = field.python_name.to_string();
+            quote! {
+                if let Some(value) = #name {
+                    kwargs.set_item(#name_string, value)?;
+                }
+            }
+        });
 
         quote! {
             #[pyo3::pymethods]
             impl #py_type {
                 /// Create a batch of components from numpy arrays for efficient bulk spawning.
                 #[staticmethod]
-                #[pyo3(signature = (**kwargs))]
+                #[pyo3(signature = (*, #(#signature_defaults),*))]
                 pub fn from_numpy(
                     py: pyo3::Python,
-                    kwargs: Option<&pyo3::Bound<pyo3::types::PyDict>>,
+                    #(#parameters),*
                 ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
-                    #from_numpy_fn_name(
-                        py,
-                        kwargs.ok_or_else(|| {
-                            pyo3::exceptions::PyValueError::new_err(
-                                "from_numpy() requires keyword arguments",
-                            )
-                        })?,
-                    )
+                    use pyo3::types::PyDictMethods;
+
+                    let kwargs = pyo3::types::PyDict::new(py);
+                    #(#dictionary_entries)*
+                    #from_numpy_fn_name(py, &kwargs)
                 }
             }
         }

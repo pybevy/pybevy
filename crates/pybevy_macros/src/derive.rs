@@ -89,12 +89,14 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
 
     let accessors = generate_field_accessors(&py_type, &field_defs);
 
-    // Generate constructor defaults: each field uses BevyType::default().field
+    // Generate constructor defaults from an owned snapshot. Cloning is required for
+    // non-Copy fields because PyO3 evaluates these expressions without allowing a
+    // field to be moved out of the temporary `Default` value.
     let constructor_defaults: Vec<proc_macro2::TokenStream> = field_names
         .iter()
         .zip(field_types.iter())
         .map(|(name, _ty)| {
-            quote! { #name = #bevy_type::default().#name }
+            quote! { #name = #bevy_type::default().#name.clone() }
         })
         .collect();
 

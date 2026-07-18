@@ -165,6 +165,16 @@ pub(crate) fn is_primitive_type(ty: &Type) -> bool {
     false
 }
 
+/// Check if a type is an owned Rust string.
+pub(crate) fn is_string_type(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        return segment.ident == "String";
+    }
+    false
+}
+
 /// Check if a type is `Option<T>` and return the inner type if so
 pub(crate) fn extract_option_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(type_path) = ty
@@ -233,6 +243,13 @@ pub(crate) fn generate_field_accessors(
                             Ok(self.as_ref()?.#field_name)
                         }
                     });
+                } else if is_string_type(field_ty) {
+                    methods.extend(quote! {
+                        #[getter]
+                        pub fn #field_name(&self) -> pyo3::PyResult<String> {
+                            Ok(self.as_ref()?.#field_name.clone())
+                        }
+                    });
                 } else {
                     methods.extend(quote! {
                         #[getter]
@@ -254,6 +271,19 @@ pub(crate) fn generate_field_accessors(
 
                             #[setter]
                             pub fn #setter_name(&mut self, value: Option<#inner_ty>) -> pyo3::PyResult<()> {
+                                self.as_mut()?.#field_name = value;
+                                Ok(())
+                            }
+                        });
+                    } else if is_string_type(inner_ty) {
+                        methods.extend(quote! {
+                            #[getter]
+                            pub fn #field_name(&self) -> pyo3::PyResult<Option<String>> {
+                                Ok(self.as_ref()?.#field_name.clone())
+                            }
+
+                            #[setter]
+                            pub fn #setter_name(&mut self, value: Option<String>) -> pyo3::PyResult<()> {
                                 self.as_mut()?.#field_name = value;
                                 Ok(())
                             }
@@ -282,6 +312,19 @@ pub(crate) fn generate_field_accessors(
 
                         #[setter]
                         pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
+                            self.as_mut()?.#field_name = value;
+                            Ok(())
+                        }
+                    });
+                } else if is_string_type(field_ty) {
+                    methods.extend(quote! {
+                        #[getter]
+                        pub fn #field_name(&self) -> pyo3::PyResult<String> {
+                            Ok(self.as_ref()?.#field_name.clone())
+                        }
+
+                        #[setter]
+                        pub fn #setter_name(&mut self, value: String) -> pyo3::PyResult<()> {
                             self.as_mut()?.#field_name = value;
                             Ok(())
                         }
