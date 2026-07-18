@@ -16,12 +16,13 @@ impl PyFocusPolicy {
     }
 
     #[staticmethod]
+    #[pyo3(name = "Block")]
     pub fn block(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(FocusPolicy::Block))
     }
 
     #[staticmethod]
-    #[pyo3(name = "pass_")]
+    #[pyo3(name = "Pass")]
     pub fn pass(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(FocusPolicy::Pass))
     }
@@ -46,8 +47,8 @@ impl PyFocusPolicy {
 
     pub fn __repr__(&self) -> String {
         match self.0 {
-            FocusPolicy::Block => "FocusPolicy.block()".to_string(),
-            FocusPolicy::Pass => "FocusPolicy.pass()".to_string(),
+            FocusPolicy::Block => "FocusPolicy.Block".to_string(),
+            FocusPolicy::Pass => "FocusPolicy.Pass".to_string(),
         }
     }
 }

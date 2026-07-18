@@ -1,9 +1,9 @@
-"""Replace UPPERCASE staticmethod factories with descriptors for Pythonic constant access.
+"""Replace constant-like factories with descriptors for Pythonic attribute access.
 
 Converts ``Color.WHITE()`` (staticmethod call) into ``Color.WHITE`` (attribute access)
 by wrapping each factory in a descriptor that calls it on every ``__get__``, returning
-a fresh instance each time.  This prevents the singleton mutation bug that ``#[classattr]``
-had, while providing the idiomatic ``UPPER_CASE`` constant syntax Python users expect.
+a fresh instance each time. This prevents the singleton mutation bug that ``#[classattr]``
+had while supporting both ``UPPER_CASE`` associated constants and PascalCase enum variants.
 """
 
 # ruff: noqa: PLC0415
@@ -26,7 +26,7 @@ class _ConstantFactory:
 
 
 def _apply() -> None:
-    """Wrap all UPPERCASE staticmethod factories with ``_ConstantFactory`` descriptors."""
+    """Wrap registered static factories with ``_ConstantFactory`` descriptors."""
     from .audio import PlaybackSettings, Volume
     from .camera import Exposure, Visibility
     from .color import Color, Laba, LinearRgba, Oklaba, Srgba, Xyza
@@ -37,7 +37,7 @@ def _apply() -> None:
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
     from .transform import GlobalTransform, Transform
-    from .ui import Overflow, UiRect, Val
+    from .ui import FocusPolicy, Interaction, Overflow, UiRect, Val
 
     _registry: list[tuple[type, list[str]]] = [
         # color
@@ -48,7 +48,7 @@ def _apply() -> None:
         (Oklaba, ["BLACK", "WHITE"]),
         (Xyza, ["BLACK", "WHITE"]),
         # camera
-        (Visibility, ["INHERITED", "VISIBLE", "HIDDEN"]),
+        (Visibility, ["Inherited", "Visible", "Hidden"]),
         (Bloom, ["NATURAL", "ANAMORPHIC", "OLD_SCHOOL", "SCREEN_BLUR"]),
         (Exposure, ["SUNLIGHT", "OVERCAST", "INDOOR", "BLENDER"]),
         # image
@@ -98,6 +98,8 @@ def _apply() -> None:
         (Transform, ["IDENTITY"]),
         (GlobalTransform, ["IDENTITY"]),
         # ui
+        (FocusPolicy, ["Block", "Pass"]),
+        (Interaction, ["None_", "Hovered", "Pressed"]),
         (Overflow, ["DEFAULT"]),
         (UiRect, ["ZERO", "AUTO", "DEFAULT"]),
         (Val, ["ZERO"]),

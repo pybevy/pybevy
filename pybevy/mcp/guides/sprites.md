@@ -71,7 +71,7 @@ def setup(
         Sprite.from_atlas_image(texture, atlas),
         Transform.from_scale(Vec3.splat(6.0)),
         AnimationIndices(first=1, last=6),
-        AnimationTimer(timer=Timer(0.1, TimerMode.REPEATING)),
+        AnimationTimer(timer=Timer(0.1, TimerMode.Repeating)),
     )
 ```
 
@@ -151,7 +151,7 @@ Repeat a texture across a resizable area:
 from pybevy.sprite import SpriteImageMode
 
 sprite = Sprite(image=image_handle)
-sprite.image_mode = SpriteImageMode.tiled(
+sprite.image_mode = SpriteImageMode.Tiled(
     tile_x=True,
     tile_y=True,
     stretch_value=0.5,  # tile every 128px at default image size

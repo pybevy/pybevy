@@ -1302,21 +1302,29 @@ class ImageSampler:
 class ImageArrayLayout:
     """Layout specification for image array textures."""
 
-    @staticmethod
-    def row_count(rows: int) -> ImageArrayLayout:
-        """Create a layout with a specific number of rows."""
+    class RowCount(ImageArrayLayout):
+        __match_args__: ClassVar[tuple[Literal["rows"]]]
+        rows: int
+        def __init__(self, rows: int) -> None: ...
 
-    @staticmethod
-    def row_height(pixels: int) -> ImageArrayLayout:
-        """Create a layout with a specific row height in pixels."""
+    class RowHeight(ImageArrayLayout):
+        __match_args__: ClassVar[tuple[Literal["pixels"]]]
+        pixels: int
+        def __init__(self, pixels: int) -> None: ...
 
-    @staticmethod
-    def grid_count(columns: int, rows: int) -> ImageArrayLayout:
-        """Create a layout with a specific number of columns and rows."""
+    class GridCount(ImageArrayLayout):
+        __match_args__: ClassVar[tuple[Literal["columns"], Literal["rows"]]]
+        columns: int
+        rows: int
+        def __init__(self, columns: int, rows: int) -> None: ...
 
-    @staticmethod
-    def grid_size(tile_width_pixels: int, tile_height_pixels: int) -> ImageArrayLayout:
-        """Create a layout with a specific tile width and height in pixels."""
+    class GridSize(ImageArrayLayout):
+        __match_args__: ClassVar[
+            tuple[Literal["tile_width_pixels"], Literal["tile_height_pixels"]]
+        ]
+        tile_width_pixels: int
+        tile_height_pixels: int
+        def __init__(self, tile_width_pixels: int, tile_height_pixels: int) -> None: ...
 
 class ImageLoaderSettings:
     """Settings for loading an Image using an ImageLoader.

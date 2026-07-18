@@ -12,27 +12,52 @@ See Also:
     - `pybevy.app.ScheduleRunnerPlugin`: Alternative for headless applications
 """
 
+from typing import ClassVar, Literal
+
 from pybevy.app import App, Plugin
 
 class UpdateMode:
     """Controls how frequently the application updates.
 
-    Use static constructors to create instances:
+    Construct exact variants directly, or use Bevy's convenience constructors:
 
     Examples:
         ```python
-        UpdateMode.continuous()           # Full speed rendering
+        UpdateMode.Continuous()           # Full speed rendering
         UpdateMode.reactive(wait=0.1)     # Reactive, all events, 100ms wait
         UpdateMode.reactive_low_power(wait=0.2)  # Low power mode
         ```
     """
 
-    @staticmethod
-    def continuous() -> UpdateMode:
-        """Update as fast as possible until an AppExit event occurs."""
+    class Continuous(UpdateMode):
+        __match_args__: ClassVar[tuple[()]]
+
+        def __init__(self) -> None: ...
+
+    class Reactive(UpdateMode):
+        __match_args__: ClassVar[
+            tuple[
+                Literal["wait"],
+                Literal["react_to_device_events"],
+                Literal["react_to_user_events"],
+                Literal["react_to_window_events"],
+            ]
+        ]
+        wait: float
+        react_to_device_events: bool
+        react_to_user_events: bool
+        react_to_window_events: bool
+
+        def __init__(
+            self,
+            wait: float,
+            react_to_device_events: bool,
+            react_to_user_events: bool,
+            react_to_window_events: bool,
+        ) -> None: ...
 
     @staticmethod
-    def reactive(wait: float = 1.0) -> UpdateMode:
+    def reactive(wait: float = 1.0) -> UpdateMode.Reactive:
         """Reactive mode - updates in response to events or after `wait` seconds.
 
         Reacts to all event types (window, device, and user events).
@@ -42,7 +67,7 @@ class UpdateMode:
         """
 
     @staticmethod
-    def reactive_low_power(wait: float = 1.0) -> UpdateMode:
+    def reactive_low_power(wait: float = 1.0) -> UpdateMode.Reactive:
         """Low power reactive mode - only reacts to window and user events.
 
         Unlike `reactive()`, this ignores device events like general mouse

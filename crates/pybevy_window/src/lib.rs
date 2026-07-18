@@ -71,6 +71,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<window_level::PyWindowLevel>()?;
     m.add_class::<window_mode::PyWindowMode>()?;
     m.add_class::<window_position::PyWindowPosition>()?;
+    window_position::register_window_position_variants(&m)?;
     m.add_class::<resize_constraints::PyWindowResizeConstraints>()?;
     m.add_class::<window_resolution::PyWindowResolution>()?;
     m.add_class::<window_ref::PyWindowRef>()?;

@@ -1111,34 +1111,33 @@ class WindowPosition:
         ```python
         from pybevy.window import WindowPosition, MonitorSelection
 
-        # Let window manager decide (default)
-        pos = WindowPosition()
+        # Let the window manager decide
+        pos = WindowPosition.Automatic()
 
         # Position at specific coordinates (physical pixels)
-        pos = WindowPosition(100, 200)
+        pos = WindowPosition.At(IVec2(100, 200))
 
         # Center on primary monitor
-        pos = WindowPosition.center(MonitorSelection.Primary())
+        pos = WindowPosition.Centered(MonitorSelection.Primary())
         ```
     """
 
-    def __init__(self, x: int | None = None, y: int | None = None) -> None:
-        """Create a WindowPosition.
+    class Automatic(WindowPosition):
+        """Let the window manager select the position."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-        - ``WindowPosition()`` — automatic (default)
-        - ``WindowPosition(x, y)`` — at specific coordinates
+    class Centered(WindowPosition):
+        """Center the window on the selected monitor."""
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: MonitorSelection
+        def __init__(self, value: MonitorSelection) -> None: ...
 
-        Args:
-            x: X coordinate in physical pixels (0 is left edge)
-            y: Y coordinate in physical pixels (0 is top edge)
-        """
-
-    @staticmethod
-    def center(monitor: MonitorSelection) -> WindowPosition:
-        """Center the window on the specified monitor.
-
-        Note: Does not account for window decorations.
-        """
+    class At(WindowPosition):
+        """Place the window at physical pixel coordinates."""
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: IVec2
+        def __init__(self, value: IVec2) -> None: ...
 
 
 class VideoMode:

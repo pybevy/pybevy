@@ -1,82 +1,50 @@
 use bevy::sprite::SliceScaleMode;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PySliceScaleModeInner {
-    Stretch,
-    Tile { stretch_value: f32 },
-}
-
-impl From<PySliceScaleModeInner> for SliceScaleMode {
-    fn from(mode: PySliceScaleModeInner) -> Self {
-        match mode {
-            PySliceScaleModeInner::Stretch => SliceScaleMode::Stretch,
-            PySliceScaleModeInner::Tile { stretch_value } => SliceScaleMode::Tile { stretch_value },
-        }
-    }
-}
-
-impl From<SliceScaleMode> for PySliceScaleModeInner {
-    fn from(mode: SliceScaleMode) -> Self {
-        match mode {
-            SliceScaleMode::Stretch => PySliceScaleModeInner::Stretch,
-            SliceScaleMode::Tile { stretch_value } => PySliceScaleModeInner::Tile { stretch_value },
-        }
-    }
-}
-
+#[pyenum(SliceScaleMode, manual)]
 #[pyclass(name = "SliceScaleMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PySliceScaleMode {
-    pub(crate) inner: PySliceScaleModeInner,
-}
-
-#[pymethods]
-impl PySliceScaleMode {
-    #[classattr]
-    const STRETCH: Self = PySliceScaleMode {
-        inner: PySliceScaleModeInner::Stretch,
-    };
-
-    #[new]
-    pub fn new() -> Self {
-        PySliceScaleMode {
-            inner: PySliceScaleModeInner::Stretch,
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (stretch_value = 1.0))]
-    pub fn tile(stretch_value: f32) -> Self {
-        PySliceScaleMode {
-            inner: PySliceScaleModeInner::Tile { stretch_value },
-        }
-    }
-
-    pub fn __repr__(&self) -> String {
-        match &self.inner {
-            PySliceScaleModeInner::Stretch => "SliceScaleMode.STRETCH".to_string(),
-            PySliceScaleModeInner::Tile { stretch_value } => {
-                format!("SliceScaleMode.tile({})", stretch_value)
-            }
-        }
-    }
+pub enum PySliceScaleMode {
+    Stretch(),
+    #[pyo3(constructor = (stretch_value = 1.0))]
+    Tile {
+        stretch_value: f32,
+    },
 }
 
 impl From<PySliceScaleMode> for SliceScaleMode {
-    fn from(wrapper: PySliceScaleMode) -> Self {
-        wrapper.inner.into()
+    fn from(mode: PySliceScaleMode) -> Self {
+        match mode {
+            PySliceScaleMode::Stretch() => SliceScaleMode::Stretch,
+            PySliceScaleMode::Tile { stretch_value } => SliceScaleMode::Tile { stretch_value },
+        }
     }
 }
 
 impl From<SliceScaleMode> for PySliceScaleMode {
     fn from(mode: SliceScaleMode) -> Self {
-        PySliceScaleMode { inner: mode.into() }
+        match mode {
+            SliceScaleMode::Stretch => PySliceScaleMode::Stretch(),
+            SliceScaleMode::Tile { stretch_value } => PySliceScaleMode::Tile { stretch_value },
+        }
+    }
+}
+
+#[pymethods]
+impl PySliceScaleMode {
+    pub fn __repr__(&self) -> String {
+        match self {
+            Self::Stretch() => "SliceScaleMode.Stretch()".to_string(),
+            Self::Tile { stretch_value } => {
+                format!("SliceScaleMode.Tile(stretch_value={stretch_value})")
+            }
+        }
     }
 }
 
 impl Default for PySliceScaleMode {
     fn default() -> Self {
-        Self::new()
+        SliceScaleMode::default().into()
     }
 }

@@ -19,7 +19,7 @@ impl PyColorMaterial {
     #[pyo3(signature = (
         color = Color::WHITE.into(),
         texture = None,
-        alpha_mode = PyAlphaMode2d::blend()
+        alpha_mode = PyAlphaMode2d::Blend()
     ))]
     pub fn new(
         color: PyColor,

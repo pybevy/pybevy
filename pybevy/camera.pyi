@@ -692,9 +692,9 @@ class Camera(Component):
         """
 
 class Visibility(Component):
-    INHERITED: ClassVar[Visibility]
-    VISIBLE: ClassVar[Visibility]
-    HIDDEN: ClassVar[Visibility]
+    Inherited: ClassVar[Visibility]
+    Visible: ClassVar[Visibility]
+    Hidden: ClassVar[Visibility]
     def __init__(self) -> None: ...
     @staticmethod
     def from_numpy(visibility: np.typing.ArrayLike) -> Batchable: ...  # type: ignore[override]

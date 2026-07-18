@@ -403,13 +403,13 @@ impl PyWindow {
     }
 
     #[getter]
-    pub fn position(&self) -> PyResult<PyWindowPosition> {
-        Ok(self.as_ref()?.position.into())
+    pub fn position(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        crate::window_position::materialize_window_position(py, self.as_ref()?.position.clone())
     }
 
     #[setter]
-    pub fn set_position(&mut self, value: PyWindowPosition) -> PyResult<()> {
-        self.as_mut()?.position = value.into();
+    pub fn set_position(&mut self, value: PyRef<'_, PyWindowPosition>) -> PyResult<()> {
+        self.as_mut()?.position = value.0.clone();
         Ok(())
     }
 

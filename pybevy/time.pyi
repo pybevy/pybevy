@@ -1,4 +1,5 @@
 from datetime import timedelta
+from typing import ClassVar, Literal
 
 from pybevy.app import App, Plugin
 from pybevy.ecs import Resource
@@ -50,20 +51,22 @@ class TimePlugin(Plugin):
 class TimeUpdateStrategy(Resource):
     """Controls how Bevy advances its real and virtual clocks each frame."""
 
-    def __init__(self) -> None:
-        """Create Bevy's default automatic update strategy."""
-
-    @staticmethod
-    def Automatic() -> TimeUpdateStrategy:
+    class Automatic(TimeUpdateStrategy):
         """Advance from the render-world or system clock."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def ManualDuration(duration: timedelta) -> TimeUpdateStrategy:
+    class ManualDuration(TimeUpdateStrategy):
         """Advance by ``duration`` after Bevy's zero-delta first update."""
+        __match_args__: ClassVar[tuple[Literal["duration"]]]
+        duration: timedelta
+        def __init__(self, duration: timedelta) -> None: ...
 
-    @staticmethod
-    def FixedTimesteps(steps: int) -> TimeUpdateStrategy:
+    class FixedTimesteps(TimeUpdateStrategy):
         """Advance by ``steps`` fixed timesteps on every app update."""
+        __match_args__: ClassVar[tuple[Literal["steps"]]]
+        steps: int
+        def __init__(self, steps: int) -> None: ...
 
 class Time(Resource):
     """A generic clock resource that tracks elapsed time and delta time.
