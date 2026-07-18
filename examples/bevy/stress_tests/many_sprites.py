@@ -40,7 +40,7 @@ class PrintingTimer(Resource):
     """Timer for periodic sprite count logging."""
 
     def __init__(self):
-        self.timer = Timer(1.0, TimerMode.REPEATING)
+        self.timer = Timer(1.0, TimerMode.Repeating)
 
 
 def setup(

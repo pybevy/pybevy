@@ -37,7 +37,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<image_compare_function::PyImageCompareFunction>()?;
     m.add_class::<image_format::PyImageFormat>()?;
     m.add_class::<image_format_setting::PyImageFormatSetting>()?;
-    m.add_class::<image_format_setting::PyImageFormatSettingWithFormat>()?;
     m.add_class::<image_sampler_border_color::PyImageSamplerBorderColor>()?;
     m.add_class::<sampler_descriptor::PyImageSamplerDescriptor>()?;
     m.add_class::<loader_settings::PyImageSampler>()?;

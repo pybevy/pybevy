@@ -16,9 +16,9 @@ class Countdown(Resource):
     """Resource holding countdown timers."""
 
     def __init__(self):
-        self.percent_trigger = Timer(4.0, TimerMode.REPEATING)
-        self.main_timer = Timer(20.0, TimerMode.ONCE)
-        self.entity_timer = Timer(5.0, TimerMode.ONCE)
+        self.percent_trigger = Timer(4.0, TimerMode.Repeating)
+        self.main_timer = Timer(20.0, TimerMode.Once)
+        self.entity_timer = Timer(5.0, TimerMode.Once)
 
 
 def print_when_completed(time: Res[Time], countdown_res: ResMut[Countdown]) -> None:

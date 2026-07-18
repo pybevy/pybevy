@@ -15,12 +15,6 @@ pub enum PyTimerMode {
 
 #[pymethods]
 impl PyTimerMode {
-    #[classattr]
-    pub const ONCE: Self = PyTimerMode::Once;
-
-    #[classattr]
-    pub const REPEATING: Self = PyTimerMode::Repeating;
-
     pub fn __str__(&self) -> &'static str {
         match self {
             PyTimerMode::Once => "once",

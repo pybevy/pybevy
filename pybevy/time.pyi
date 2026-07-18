@@ -473,28 +473,28 @@ class TimerMode:
     """Specifies Timer behavior when the duration is reached.
 
     **Modes:**
-    - **ONCE**: Timer runs once and stays finished until manually reset
-    - **REPEATING**: Timer automatically resets and continues when finished
+    - **Once**: Timer runs once and stays finished until manually reset
+    - **Repeating**: Timer automatically resets and continues when finished
 
     Example:
         ```python
         from pybevy.time import Timer, TimerMode
 
         # One-shot timer for cooldowns
-        cooldown = Timer(timedelta(seconds=5), TimerMode.ONCE)
+        cooldown = Timer(timedelta(seconds=5), TimerMode.Once)
 
         # Repeating timer for periodic events
-        spawn_timer = Timer(timedelta(seconds=2), TimerMode.REPEATING)
+        spawn_timer = Timer(timedelta(seconds=2), TimerMode.Repeating)
         ```
 
     See Also:
         - Timer: The timer class that uses this mode enum
     """
 
-    ONCE: TimerMode
+    Once: TimerMode
     """Run once and stop. Timer stays finished until reset() is called."""
 
-    REPEATING: TimerMode
+    Repeating: TimerMode
     """Reset automatically when finished and continue counting."""
 
     def __eq__(self, other: object) -> bool: ...
@@ -512,8 +512,8 @@ class Timer:
     game logic. They must be manually ticked each frame to advance.
 
     **Timer Modes:**
-    - **ONCE**: Runs once and stays finished until reset()
-    - **REPEATING**: Automatically resets and continues when finished
+    - **Once**: Runs once and stays finished until reset()
+    - **Repeating**: Automatically resets and continues when finished
 
     **Key Features:**
     - Pause/unpause support
@@ -523,7 +523,7 @@ class Timer:
 
     Args:
         duration: Timer duration - can be a timedelta, float (seconds), or int (seconds)
-        mode: Timer mode - TimerMode.ONCE or TimerMode.REPEATING
+        mode: Timer mode - TimerMode.Once or TimerMode.Repeating
 
     Example:
         ```python
@@ -532,7 +532,7 @@ class Timer:
         from pybevy.ecs import Res
 
         # Create a 5-second cooldown timer
-        cooldown = Timer(timedelta(seconds=5), TimerMode.ONCE)
+        cooldown = Timer(timedelta(seconds=5), TimerMode.Once)
 
         def update_timer(time: Res[Time]) -> None:
             cooldown.tick(time.delta())
@@ -562,12 +562,12 @@ class Timer:
         """Create a new timer.
 
         If called with no arguments, creates a timer with duration 0.0 and
-        TimerMode.ONCE (equivalent to Bevy's Timer::default()).
+        TimerMode.Once (equivalent to Bevy's Timer::default()).
 
         Args:
             duration: Timer duration - can be timedelta, float (seconds), or int (seconds).
                      Defaults to 0.0 if not provided.
-            mode: Timer mode - TimerMode.ONCE or TimerMode.REPEATING. Defaults to ONCE.
+            mode: Timer mode - TimerMode.Once or TimerMode.Repeating. Defaults to ONCE.
         """
 
     @staticmethod
@@ -578,18 +578,18 @@ class Timer:
 
         Args:
             duration: Timer duration in seconds
-            mode: Timer mode - TimerMode.ONCE or TimerMode.REPEATING
+            mode: Timer mode - TimerMode.Once or TimerMode.Repeating
 
         Returns:
             A new Timer instance
 
         Example:
             ```python
-            # More concise than Timer(timedelta(seconds=5), TimerMode.ONCE)
-            cooldown = Timer.from_seconds(5.0, TimerMode.ONCE)
+            # More concise than Timer(timedelta(seconds=5), TimerMode.Once)
+            cooldown = Timer.from_seconds(5.0, TimerMode.Once)
 
             # Matches Bevy's Rust API
-            spawn_timer = Timer.from_seconds(2.0, TimerMode.REPEATING)
+            spawn_timer = Timer.from_seconds(2.0, TimerMode.Repeating)
             ```
         """
 
@@ -833,7 +833,7 @@ class Timer:
         """Set the timer mode.
 
         Args:
-            mode: The new timer mode (TimerMode.ONCE or TimerMode.REPEATING)
+            mode: The new timer mode (TimerMode.Once or TimerMode.Repeating)
 
         Notes:
             - If switching from ONCE to REPEATING while finished, the timer resets
