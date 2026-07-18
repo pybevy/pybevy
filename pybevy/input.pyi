@@ -1455,49 +1455,6 @@ class GamepadSettings(Component):
     def button_axis_settings(self) -> dict[GamepadButton, ButtonAxisSettings]:
         """Get all custom button axis settings."""
 
-class Axis(Resource):
-    """Axis input tracking for gamepad axes.
-
-    Stores analog input values for gamepad axes with clamping support.
-    Values are stored in the range [-1.0, 1.0].
-
-    Example:
-        ```python
-        def check_axis(axis: Res[Axis]) -> None:
-            value = axis.get(GamepadAxis.LeftStickX())
-            if value is not None:
-                print(f"Left stick X: {value}")
-
-            # Get all active axes
-            for ax, val in axis.all_axes_and_values():
-                print(f"{ax}: {val}")
-        ```
-    """
-
-    MIN: float
-    """The smallest possible axis value (-1.0)."""
-    MAX: float
-    """The largest possible axis value (1.0)."""
-
-    def __init__(self) -> None: ...
-    def get(self, axis: GamepadAxis) -> float | None:
-        """Get the clamped value of an axis.
-
-        Returns the value clamped to [-1.0, 1.0], or None if the axis hasn't been set.
-        """
-
-    def get_unclamped(self, axis: GamepadAxis) -> float | None:
-        """Get the unclamped value of an axis.
-
-        Returns the raw value which may be outside [-1.0, 1.0].
-        """
-
-    def all_axes(self) -> list[GamepadAxis]:
-        """Get all axes that have values."""
-
-    def all_axes_and_values(self) -> list[tuple[GamepadAxis, float]]:
-        """Get all axes and their clamped values."""
-
 # Type aliases for Bevy's Event suffix naming convention
 GamepadAxisChangedEvent = GamepadAxisChanged
 """Alias for GamepadAxisChanged (Bevy naming convention)."""
