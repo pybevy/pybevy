@@ -82,7 +82,7 @@ class AnimationNodeType:
     class Clip(AnimationNodeType):
         __match_args__: ClassVar[tuple[Literal["handle"]]]
         handle: Handle[AnimationClip]
-        def __init__(self, handle: Handle[AnimationClip], /) -> None: ...
+        def __init__(self, handle: Handle[AnimationClip]) -> None: ...
 
     class Blend(AnimationNodeType):
         __match_args__: ClassVar[tuple[()]]
@@ -106,7 +106,7 @@ class RepeatAnimation:
     class Count(RepeatAnimation):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: int
-        def __init__(self, value: int, /) -> None: ...
+        def __init__(self, value: int) -> None: ...
 
     class Forever(RepeatAnimation):
         __match_args__: ClassVar[tuple[()]]

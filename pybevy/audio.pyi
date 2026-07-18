@@ -24,13 +24,13 @@ class Volume:
         """Volume represented as a linear amplitude."""
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
-        def __init__(self, value: float, /) -> None: ...
+        def __init__(self, value: float) -> None: ...
 
     class Decibels(Volume):
         """Volume represented in decibels."""
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
-        def __init__(self, value: float, /) -> None: ...
+        def __init__(self, value: float) -> None: ...
 
     SILENT: ClassVar[Volume]
     """Create a silent (zero) volume."""
