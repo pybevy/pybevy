@@ -266,7 +266,6 @@ class FontWidth:
         """The width ratio (0.5-2.0)."""
 
     def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
 
 class FontStyle:
     """The slant style of a font face: normal, italic, or oblique.
