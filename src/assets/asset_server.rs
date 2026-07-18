@@ -3,7 +3,7 @@ use bevy::{
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
     image::Image,
 };
-use pybevy_core::{handle::PyHandle, registry::global_registry};
+use pybevy_core::{handle::PyHandle, public_error::invalid_asset_type, registry::global_registry};
 use pybevy_image::loader_settings::PyImageLoaderSettings;
 use pyo3::{
     IntoPyObjectExt,
@@ -77,12 +77,8 @@ impl PyAssetServer {
         asset_type: Bound<'py, PyType>,
     ) -> PyResult<Py<PyAny>> {
         let type_ptr = asset_type.as_type_ptr();
-        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr).ok_or_else(|| {
-            PyTypeError::new_err(format!(
-                "Invalid asset type. Expected a subclass of `Asset`, but got `{}`",
-                asset_type
-            ))
-        })?;
+        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
+            .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
 
         if !bridge.is_loadable() {
             return Err(PyTypeError::new_err(format!(
@@ -119,12 +115,8 @@ impl PyAssetServer {
         settings: Bound<'py, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let type_ptr = asset_type.as_type_ptr();
-        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr).ok_or_else(|| {
-            PyTypeError::new_err(format!(
-                "Invalid asset type. Expected a subclass of `Asset`, but got `{}`",
-                asset_type
-            ))
-        })?;
+        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
+            .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
 
         let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
@@ -186,7 +178,12 @@ impl PyAssetServer {
     }
 
     pub fn load_folder<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        self.load_by_name(py, path, "LoadedFolder")
+        let bridge = global_registry::get_asset_bridge_by_name("LoadedFolder")
+            .ok_or_else(|| PyRuntimeError::new_err("Asset bridge for 'LoadedFolder' not found"))?;
+        let asset_server = self.asset_server()?;
+        let asset_path = extract_asset_path(&path)?;
+        let handle = asset_server.load_folder(asset_path).untyped();
+        PyHandle::from_untyped(handle, bridge.py_type_ptr()).into_py_any(py)
     }
 
     pub fn load_state(&self, id: &PyHandle) -> PyResult<PyLoadState> {
@@ -214,12 +211,8 @@ impl PyAssetServer {
         asset_type: Bound<'py, PyType>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let type_ptr = asset_type.as_type_ptr();
-        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr).ok_or_else(|| {
-            PyTypeError::new_err(format!(
-                "Invalid asset type. Expected a subclass of `Asset`, but got `{}`",
-                asset_type
-            ))
-        })?;
+        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
+            .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
 
         let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;

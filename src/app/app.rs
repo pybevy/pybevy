@@ -659,7 +659,7 @@ impl PyApp {
             ScheduleType::OnTransition(label)
         } else {
             return Err(PyTypeError::new_err(
-                "add_systems() schedule parameter must be Stage, OnEnter(), OnExit(), or OnTransition()",
+                pybevy_core::public_error::ADD_SYSTEMS_SCHEDULE_TYPE,
             ));
         };
 

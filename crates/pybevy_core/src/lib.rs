@@ -45,6 +45,7 @@ pub mod materializable;
 pub mod message;
 pub mod numpy_view_guard;
 pub mod plugin;
+pub mod public_error;
 pub mod reflect_registration;
 pub mod registry;
 pub mod reload_request;
