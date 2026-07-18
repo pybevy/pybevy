@@ -1,6 +1,5 @@
 """Type stubs for lazy expression system."""
 
-import numpy as np
 
 class Expr:
     """Base class for lazy expression tree nodes."""
@@ -137,38 +136,6 @@ class FieldExpr(Expr):
 
     def __setitem__(self, index: int, value: float | int) -> None:
         """Set the value at the given index (for Numba kernels)."""
-
-    # NumPy conversion (requires batch context)
-    def to_numpy(self) -> np.ndarray:
-        """Convert this field to a NumPy array (zero-copy view in batch context).
-
-        Only valid within batch iteration context.
-        Returns a NumPy array of shape (N,) for scalar fields.
-
-        Raises:
-            RuntimeError: If called outside batch iteration context
-        """
-
-    @property
-    def len(self) -> int:
-        """Get the length of the underlying data array."""
-
-    def at_offset(self, length: int, dtype: str) -> FieldExpr:
-        """Create a at_offset view with specified length and dtype.
-
-        Args:
-            length: Number of elements in the at_offset
-            dtype: NumPy dtype string (e.g., "f4" for float32)
-
-        Returns:
-            A new FieldExpr representing the at_offset
-        """
-
-    def peek(self, index: int) -> float:
-        """Peek at a value at the given index without bounds checking.
-
-        Warning: This may read out of bounds if index >= len.
-        """
 
 class Vec3Expression:
     """Represents a Vec3 expression built from component-wise operations."""

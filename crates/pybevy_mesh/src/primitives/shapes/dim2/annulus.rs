@@ -55,9 +55,19 @@ impl PyAnnulus {
         Py::new(py, (self.0.inner_circle.into(), PyMeshable))
     }
 
+    #[setter]
+    pub fn set_inner_circle(&mut self, value: &PyCircle) {
+        self.0.inner_circle = Circle::new(value.radius());
+    }
+
     #[getter]
     pub fn outer_circle(&self, py: Python<'_>) -> PyResult<Py<PyCircle>> {
         Py::new(py, (self.0.outer_circle.into(), PyMeshable))
+    }
+
+    #[setter]
+    pub fn set_outer_circle(&mut self, value: &PyCircle) {
+        self.0.outer_circle = Circle::new(value.radius());
     }
 
     pub fn diameter(&self) -> f32 {

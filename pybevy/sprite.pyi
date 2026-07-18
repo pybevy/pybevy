@@ -171,6 +171,8 @@ class SpriteImageMode:
         ```
     """
 
+    def __init__(self) -> None: ...
+
     AUTO: ClassVar[SpriteImageMode]
     """Automatic mode - default sprite rendering. The texture is rendered
     directly without special scaling or tiling behavior."""
@@ -585,6 +587,8 @@ class SliceScaleMode:
         - SpriteImageMode.sliced(): Applies nine-patch rendering
     """
 
+    def __init__(self) -> None: ...
+
     STRETCH: ClassVar[SliceScaleMode]
     """Stretch mode - scale the slice uniformly to fill its designated area.
     Good for borders and corners that should scale smoothly."""
@@ -967,9 +971,9 @@ class Sprite(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        flip_x: np.ndarray | None = None,
-        flip_y: np.ndarray | None = None,
-        color: np.ndarray | None = None,
+        flip_x: np.typing.ArrayLike | None = None,
+        flip_y: np.typing.ArrayLike | None = None,
+        color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
     def as_asset_id(self) -> Handle[Image]:

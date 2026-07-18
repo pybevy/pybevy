@@ -1,9 +1,10 @@
 from enum import Enum
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
 from pybevy.app import App, Plugin
+from pybevy.array import Array
 from pybevy.assets import Asset, Handle
 from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
@@ -75,17 +76,19 @@ class ImageSamplerBorderColor(Enum):
     OpaqueWhite = "OpaqueWhite"
     Zero = "Zero"
 
-class ImageFormatSetting(Enum):
-    FromExtension = "FromExtension"
-    Guess = "Guess"
-    @staticmethod
-    def from_extension() -> ImageFormatSetting: ...
-    @staticmethod
-    def guess() -> ImageFormatSetting: ...
-    @staticmethod
-    def format(format: ImageFormat) -> ImageFormatSettingWithFormat: ...
+class ImageFormatSetting:
+    class FromExtension(ImageFormatSetting):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-class ImageFormatSettingWithFormat: ...
+    class Guess(ImageFormatSetting):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Format(ImageFormatSetting):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: ImageFormat
+        def __init__(self, value: ImageFormat) -> None: ...
 
 class RenderAssetUsages:
     """Asset usage flags indicating which worlds can access this asset.
@@ -143,47 +146,45 @@ class ImagePlugin(Plugin):
 class ImageDataContext:
     """Context manager for read-only zero-copy access to image pixel data.
 
-    Provides a NumPy array view of the image's pixel buffer without copying.
-    Use within a `with` statement. The array remains valid as long as the
-    Image asset is not dropped.
+    Yields a bounded uint8 array that borrows the image's pixel buffer without
+    copying. On context exit the array closes and all later data access raises.
 
     Example:
         ```python
-        with image.data_context() as pixels:
-            mean = np.mean(pixels)
+        with image.data() as pixels:
+            mean = pixels.mean()
         ```
     """
-    def __enter__(self) -> np.ndarray:
-        """Enter the context and return the numpy array view."""
+    def __enter__(self) -> Array:
+        """Enter the context and return the read-only bounded array."""
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """Exit the context (no cleanup needed)."""
+        """Close the array and release the read borrow."""
 
 class ImageDataContextMut:
     """Context manager for mutable zero-copy access to image pixel data.
 
-    Provides a mutable NumPy array view of the image's pixel buffer.
-    Modifications are immediately reflected in the image data.
-    Use within a `with` statement.
+    Yields a mutable bounded uint8 array over the image's pixel buffer.
+    Modifications are immediately reflected in the image data. On exit the
+    array closes and the exclusive write borrow is released.
 
     Example:
         ```python
-        with image.data_context_mut() as pixels:
+        with image.data_mut() as pixels:
             pixels[:] = 255  # Modify in-place
         ```
     """
-    def __enter__(self) -> np.ndarray:
-        """Enter the context and return the mutable numpy array view."""
+    def __enter__(self) -> Array:
+        """Enter the context and return the mutable bounded array."""
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """Exit the context (no cleanup needed)."""
+        """Close the array and release the write borrow."""
 
 class ImagePixelContextMut:
     """Context manager for mutable zero-copy access to a single pixel's bytes.
 
-    Provides a mutable NumPy array view of the bytes for a specific pixel.
-    Array length equals the pixel size (e.g., 4 for RGBA8).
-    Use within a `with` statement.
+    Yields a mutable bounded uint8 array over one pixel's bytes. Its length
+    equals the pixel size (e.g., 4 for RGBA8), and it closes on context exit.
 
     Example:
         ```python
@@ -193,11 +194,11 @@ class ImagePixelContextMut:
             pixel[0] = 255  # Modify R channel
         ```
     """
-    def __enter__(self) -> np.ndarray:
-        """Enter the context and return the mutable numpy array view of pixel bytes."""
+    def __enter__(self) -> Array:
+        """Enter the context and return the mutable bounded pixel array."""
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """Exit the context (no cleanup needed)."""
+        """Close the array and release the write borrow."""
 
 class Image(Asset):
     """GPU texture asset storing pixel data and texture configuration.
@@ -349,7 +350,7 @@ class Image(Asset):
             >>> # Create render target for headless rendering
             >>> image = Image.new_render_target(width=800, height=600)
             >>> handle = images.add(image)
-            >>> commands.spawn((Camera3d(), Camera(), RenderTarget.image(handle)))
+            >>> commands.spawn((Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle))))
         """
 
     @staticmethod
@@ -465,66 +466,54 @@ class Image(Asset):
     def data(self) -> ImageDataContext:
         """Get zero-copy read-only access to image pixel data via context manager.
 
-        Returns a context manager that provides a NumPy array view of the pixel data.
-        This is more Pythonic than the callback-based `data()` method and allows
-        using the array in larger code blocks.
+        Returns a context manager yielding a bounded uint8 array. The array is
+        zero-copy but valid only until the context exits.
 
         Returns:
-            Context manager yielding read-only numpy array
+            Context manager yielding a read-only bounded array
 
         Example:
             ```python
             from pybevy.image import Image
             from pybevy.wgpu import Extent3d
-            import numpy as np
-
             img = Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])
 
-            # Use with context manager
-            with img.data_context() as pixels:
-                # Zero-copy read access
-                mean_value = np.mean(pixels)
+            with img.data() as pixels:
+                mean_value = pixels.mean()
                 print(f"Mean pixel value: {mean_value}")
-                # Can use any NumPy operations for analysis
             ```
 
         Notes:
             - Zero-copy: no data is duplicated
             - Array is only valid within the `with` block
-            - For mutable access, use `data_context_mut()`
+            - For mutable access, use `data_mut()`
             - For guaranteed safety across threads, use `data_copy()`
         """
 
     def data_mut(self) -> ImageDataContextMut:
         """Get zero-copy mutable access to image pixel data via context manager.
 
-        Returns a context manager that provides a mutable NumPy array view
-        of the pixel data. Modifications are immediately reflected in the image.
+        Returns a context manager yielding a mutable bounded uint8 array.
+        Modifications are immediately reflected in the image.
 
         Returns:
-            Context manager yielding mutable numpy array
+            Context manager yielding a mutable bounded array
 
         Example:
             ```python
             from pybevy.image import Image
             from pybevy.wgpu import Extent3d
-            import numpy as np
-
             img = Image(Extent3d(64, 64, 1))
 
-            # Use with context manager
-            with img.data_context_mut() as pixels:
-                # Zero-copy write access
+            with img.data_mut() as pixels:
                 pixels[:] = 255  # Fill entire image with white
-                # Or use NumPy operations
-                pixels[0:1024] = np.linspace(0, 255, 1024, dtype=np.uint8)
             ```
 
         Notes:
             - Zero-copy: modifies data in-place
             - Changes persist after the `with` block
             - Array is only valid within the `with` block
-            - For read-only access, use `data_context()`
+            - For read-only access, use `data()`
         """
 
     def pixel_data_offset(self, coords: UVec3) -> int | None:
@@ -588,15 +577,15 @@ class Image(Asset):
     def pixel_bytes_mut(self, coords: UVec3) -> ImagePixelContextMut:
         """Get zero-copy mutable access to a specific pixel's bytes via context manager.
 
-        Returns a context manager that provides a mutable NumPy array view of the bytes
-        for a specific pixel. The array length equals the pixel size for the image format
+        Returns a context manager yielding a mutable bounded uint8 array. The
+        array length equals the pixel size for the image format
         (e.g., 4 bytes for RGBA8).
 
         Args:
             coords: Pixel coordinates as UVec3(x, y, z) where z is the array layer
 
         Returns:
-            Context manager yielding mutable numpy array of pixel bytes
+            Context manager yielding a mutable bounded array of pixel bytes
 
         Raises:
             RuntimeError: If coordinates are invalid or image has no data
@@ -624,15 +613,15 @@ class Image(Asset):
             - For bulk modifications, use `data_mut()` instead
         """
 
-    def data_copy(self) -> np.ndarray:
-        """Get an owned copy of the image pixel data as a NumPy array.
+    def data_copy(self) -> Array:
+        """Get an owned copy of the image pixel data as a bounded array.
 
-        Returns a new NumPy array containing a copy of the pixel data.
+        Returns a new writable bounded uint8 array containing a copy of the data.
         This is the safest method as the returned array is fully owned
         by Python and can be used anywhere without lifetime concerns.
 
         Returns:
-            Owned NumPy array with shape (n,) where n is the total bytes
+            Owned bounded array with shape (n,) where n is the total bytes
 
         Example:
             ```python
@@ -653,18 +642,18 @@ class Image(Asset):
         Notes:
             - Always safe to use, no lifetime restrictions
             - Creates a full copy of the data (memory cost)
-            - Use `data_context()` for zero-copy read access
+            - Use `data()` for zero-copy read access
             - Use `set_data()` to copy data back to the image
         """
 
-    def set_data(self, data: np.ndarray) -> None:
-        """Copy pixel data from a NumPy array into the image.
+    def set_data(self, data: bytes | list[int] | np.ndarray | Array) -> None:
+        """Copy uint8 pixel data into the image.
 
         Copies the provided data into the image's pixel buffer.
         The array size must match the image's data size.
 
         Args:
-            data: NumPy array containing pixel data to copy
+            data: Bytes, list, NumPy array, or bounded array to copy
 
         Raises:
             ValueError: If data size doesn't match image data size
@@ -688,7 +677,7 @@ class Image(Asset):
 
         Notes:
             - Creates a copy of the data
-            - Use `data_context_mut()` for zero-copy write access
+            - Use `data_mut()` for zero-copy write access
             - Data size must match exactly
         """
 
@@ -1024,7 +1013,11 @@ class TextureAtlas:
     layout: Handle[TextureAtlasLayout]
     index: int
     
-    def __init__(self, layout: Handle[TextureAtlasLayout], index: int) -> None:
+    def __init__(
+        self,
+        layout: Handle[TextureAtlasLayout] | None = None,
+        index: int = 0,
+    ) -> None:
         """Create a TextureAtlas reference.
 
         Args:
@@ -1271,17 +1264,16 @@ class ImageSampler:
     - Descriptor: Use a custom ImageSamplerDescriptor
     """
 
-    class Default:
+    class Default(ImageSampler):
         """Default image sampler variant."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    class Descriptor:
+    class Descriptor(ImageSampler):
         """Custom sampler descriptor variant."""
+        __match_args__: ClassVar[tuple[Literal["desc"]]]
         desc: ImageSamplerDescriptor
         def __init__(self, desc: ImageSamplerDescriptor) -> None: ...
-
-    @staticmethod
-    def default() -> ImageSampler:
-        """Create a default sampler."""
 
     @staticmethod
     def linear() -> ImageSampler:
@@ -1290,10 +1282,6 @@ class ImageSampler:
     @staticmethod
     def nearest() -> ImageSampler:
         """Create a sampler with nearest-neighbor filtering."""
-
-    @staticmethod
-    def descriptor(desc: ImageSamplerDescriptor) -> ImageSampler:
-        """Create a sampler with a custom descriptor."""
 
     @property
     def is_default(self) -> bool: ...
@@ -1386,4 +1374,3 @@ class ImageLoaderSettings:
 
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...
-

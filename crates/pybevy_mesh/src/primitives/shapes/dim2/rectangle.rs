@@ -62,6 +62,14 @@ impl PyRectangle {
         self.0.size().into()
     }
 
+    pub fn width(&self) -> f32 {
+        self.0.half_size.x * 2.0
+    }
+
+    pub fn height(&self) -> f32 {
+        self.0.half_size.y * 2.0
+    }
+
     pub fn closest_point(&self, point: &PyVec2) -> PyVec2 {
         let cp = self.0.closest_point(point.into());
         cp.into()

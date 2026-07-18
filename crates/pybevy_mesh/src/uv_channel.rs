@@ -16,10 +16,6 @@ impl PyUvChannel {
     pub fn new() -> Self {
         PyUvChannel::Uv0
     }
-    #[classattr]
-    pub const UV0: Self = PyUvChannel::Uv0;
-    #[classattr]
-    pub const UV1: Self = PyUvChannel::Uv1;
 }
 
 impl Default for PyUvChannel {

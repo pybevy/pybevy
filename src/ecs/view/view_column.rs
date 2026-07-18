@@ -171,7 +171,7 @@ impl PyViewColumn {
             ptr,
             len: column.len(),
             stride: column.stride(),
-            element_extent: column.stride(),
+            element_extent: column.element_extent(),
             writable: column.is_writable(),
             field_type: None,
             validity_token: Arc::new(AtomicBool::new(true)),
@@ -194,7 +194,7 @@ impl PyViewColumn {
             ptr,
             len: column.len(),
             stride: column.stride(),
-            element_extent: column.stride(),
+            element_extent: column.element_extent(),
             writable: column.is_writable(),
             field_type: None,
             validity_token: Arc::new(AtomicBool::new(true)),
@@ -364,6 +364,31 @@ impl PyViewColumn {
                  Assign it back to an ECS-backed column first.",
             ));
         }
+        if let Some(owner) = &self.owner {
+            let child = Arc::new(
+                owner
+                    .subcolumn(offset, field_type)
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?,
+            );
+            // SAFETY: the shared runtime validated this child span and the
+            // adapter retains its capability for the complete pointer lifetime.
+            let ptr = unsafe { child.raw_ptr_unchecked() };
+            return Ok(Self {
+                ptr,
+                len: child.len(),
+                stride: child.stride(),
+                element_extent: child.element_extent(),
+                writable: child.is_writable(),
+                field_type,
+                validity_token: self.validity_token.clone(),
+                owner: Some(child),
+                component_type: None,
+                builtin_component_type: None,
+                owned_data: None,
+            });
+        }
+
+        // Non-ECS columns retain adapter-local bounds.
         let parent_extent = self.element_extent;
         if offset >= parent_extent {
             return Err(PyRuntimeError::new_err(format!(

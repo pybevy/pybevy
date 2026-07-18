@@ -17,7 +17,11 @@
 //! **Important**: Use `Mut[T]` in the View type parameter to declare mutable access,
 //! just like Query. This ensures type safety and correct ECS access tracking.
 
-use std::{cell::RefCell, collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    mem::size_of,
+    sync::{Arc, Mutex},
+};
 
 use bevy::{
     ecs::{
@@ -32,7 +36,7 @@ use pybevy_bytecodevm::{
         BatchSlice, ViewReduction, ViewReductionOutput, ViewRuntimeCore, ViewRuntimeError,
     },
 };
-use pybevy_core::{PyEntity, registry::global_registry};
+use pybevy_core::{FieldType as StorageFieldType, PyEntity, registry::global_registry};
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -62,7 +66,7 @@ pub struct PyView {
 
     /// Track which components have already been borrowed mutably
     /// This prevents getting multiple mutable column proxies for the same component
-    borrowed_mut: RefCell<HashSet<PyComponentType>>,
+    borrowed_mut: Arc<Mutex<HashSet<PyComponentType>>>,
 
     /// Master validity flag - invalidated when system exits
     validity: ValidityFlag,
@@ -102,7 +106,7 @@ impl PyView {
         Ok(Self {
             cached,
             runtime,
-            borrowed_mut: RefCell::new(HashSet::new()),
+            borrowed_mut: Arc::new(Mutex::new(HashSet::new())),
             validity,
         })
     }
@@ -234,19 +238,19 @@ impl PyView {
             )));
         }
 
-        // Check if this component has already been borrowed mutably
-        {
-            let borrowed = self.borrowed_mut.borrow();
-            if borrowed.contains(&comp_type) {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Component type {} already has a mutable column borrowed. Cannot get multiple mutable columns for the same component.",
-                    component_type.name()?
-                )));
-            }
+        // Check and record under one lock so free-threaded callers cannot both
+        // acquire a mutable proxy for the same component.
+        let inserted = self
+            .borrowed_mut
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("View mutable-borrow lock was poisoned"))?
+            .insert(comp_type.clone());
+        if !inserted {
+            return Err(PyRuntimeError::new_err(format!(
+                "Component type {} already has a mutable column borrowed. Cannot get multiple mutable columns for the same component.",
+                component_type.name()?
+            )));
         }
-
-        // Record that we've borrowed this component mutably
-        self.borrowed_mut.borrow_mut().insert(comp_type.clone());
 
         let component_id = self.get_component_id(&comp_type)?;
 
@@ -506,19 +510,26 @@ pub(crate) fn get_component_field_info(
                     ))
                 })?;
 
-                // Add sub-field offset (x/y/z/w within Vec3/Quat)
-                let sub_offset = match sub {
-                    "x" => 0,  // First f32
-                    "y" => 4,  // Second f32
-                    "z" => 8,  // Third f32
-                    "w" => 12, // Fourth f32 (for Quat)
-                    _ => {
-                        return Err(PyTypeError::new_err(format!(
-                            "Vec3/Quat has no sub-field '{}'",
-                            sub
-                        )));
-                    }
+                let lane = match sub {
+                    "x" => 0,
+                    "y" => 1,
+                    "z" => 2,
+                    "w" => 3,
+                    _ => usize::MAX,
                 };
+                let lane_count = match base_offset.field_type {
+                    StorageFieldType::Vec2 => 2,
+                    StorageFieldType::Vec3 => 3,
+                    StorageFieldType::Vec4 => 4,
+                    _ => 0,
+                };
+                if lane >= lane_count {
+                    return Err(PyTypeError::new_err(format!(
+                        "field '{base}' of type {:?} has no sub-field '{sub}'",
+                        base_offset.field_type
+                    )));
+                }
+                let sub_offset = lane * size_of::<f32>();
 
                 return Ok((base_offset.offset + sub_offset, VmFieldType::F32));
             }

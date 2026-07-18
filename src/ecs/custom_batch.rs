@@ -2,7 +2,12 @@ use std::sync::Arc;
 
 use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
-use pybevy_core::{BatchComponent, PreparedBatchComponent, registry::global_registry};
+use pybevy_core::{
+    BatchComponent, PreparedBatchComponent,
+    batch_columns::{ColumnShape, CustomColumnError, CustomCountAgreement},
+    component_batch::{FieldColumn, build_wrapper_rows, column_dtype_for},
+    registry::global_registry,
+};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
@@ -10,9 +15,7 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{
-        ComponentLayout, ComponentLayoutExt, FieldInfo, PrimitiveType, PrimitiveTypeExt,
-    },
+    component_layout::{ComponentLayout, ComponentLayoutExt, PrimitiveType, PrimitiveTypeExt},
     component_type::register_custom_component,
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,
@@ -54,10 +57,9 @@ impl PyCustomComponentBatch {
             .and_then(|marker| marker.is_truthy().ok())
             .unwrap_or(false);
         if !has_decorator {
-            return Err(PyTypeError::new_err(format!(
-                "Class '{}' must be decorated with @component",
-                cls.name()?
-            )));
+            return Err(custom_batch_err(CustomColumnError::NotDecorated {
+                class_name: cls.name()?.to_string(),
+            }));
         }
 
         // Validate: must not be PyObject storage
@@ -68,30 +70,23 @@ impl PyCustomComponentBatch {
             .map(|s| s == "pyobject")
             .unwrap_or(false);
         if has_pyobject_storage {
-            return Err(PyTypeError::new_err(format!(
-                "from_numpy() is not supported for components with storage=\"python\". \
-                 '{}' uses PyObject storage which cannot be batch-spawned from numpy arrays.",
-                cls.name()?
-            )));
+            return Err(custom_batch_err(CustomColumnError::PyObjectStorage {
+                class_name: cls.name()?.to_string(),
+            }));
         }
 
         // Compute layout
         let layout = ComponentLayout::from_annotations(cls)?;
 
-        let kwargs = kwargs.ok_or_else(|| {
-            PyValueError::new_err("from_numpy() requires at least one keyword argument")
-        })?;
+        let kwargs = match kwargs {
+            Some(kwargs) if !kwargs.is_empty() => kwargs,
+            _ => return Err(custom_batch_err(CustomColumnError::NoKwargs)),
+        };
 
-        if kwargs.is_empty() {
-            return Err(PyValueError::new_err(
-                "from_numpy() requires at least one keyword argument",
-            ));
-        }
-
-        // Validate and normalize each kwarg
+        // Validate and normalize each kwarg through the shared shape rules.
         let np = py.import("numpy")?;
         let mut field_arrays = Vec::new();
-        let mut expected_count: Option<(usize, String)> = None;
+        let mut agree = CustomCountAgreement::default();
 
         for (key, value) in kwargs.iter() {
             let field_name: String = key.extract()?;
@@ -103,53 +98,37 @@ impl PyCustomComponentBatch {
                 .enumerate()
                 .find(|(_, f)| f.name == field_name)
                 .ok_or_else(|| {
-                    PyValueError::new_err(format!(
-                        "Unknown field '{}' for component '{}'. Valid fields: {:?}",
-                        field_name,
-                        layout.name,
-                        layout.field_names()
-                    ))
+                    custom_batch_err(CustomColumnError::UnknownField {
+                        field: field_name.clone(),
+                        component: layout.name.clone(),
+                        valid: format!("{:?}", layout.field_names()),
+                    })
                 })?;
 
-            // Validate array shape based on field type
+            // Accept real NumPy, the bounded `pybevy.array` array (via its
+            // `__array__`), and (nested) lists/tuples of numbers.
+            let value = np.call_method1("asarray", (value,))?;
+
+            // Validate array shape against the shared custom-batch rules.
             let ndim: usize = value.getattr("ndim")?.extract()?;
-            let length: usize = if field_info.field_type.is_composite() {
-                // Vec3/Vec2: require 2D array with shape (N, 3) or (N, 2)
-                let expected_cols = field_info.field_type.element_count();
-                if ndim != 2 {
-                    return Err(PyValueError::new_err(format!(
-                        "Field '{}' ({:?}): expected 2D array with shape (N, {}), got {}D array",
-                        field_name, field_info.field_type, expected_cols, ndim
-                    )));
+            let shape: Vec<usize> = value.getattr("shape")?.extract()?;
+            let (_, cols) = column_dtype_for(field_info.field_type);
+            let type_name = format!("{:?}", field_info.field_type);
+            let shape_rule = if field_info.field_type.is_composite() {
+                ColumnShape::CustomComposite {
+                    field: &field_name,
+                    type_name: &type_name,
+                    cols,
                 }
-                let shape: Vec<usize> = value.getattr("shape")?.extract()?;
-                if shape[1] != expected_cols {
-                    return Err(PyValueError::new_err(format!(
-                        "Field '{}' ({:?}): expected shape (N, {}), got (N, {})",
-                        field_name, field_info.field_type, expected_cols, shape[1]
-                    )));
-                }
-                shape[0]
             } else {
-                // Scalar: require 1D array
-                if ndim != 1 {
-                    return Err(PyValueError::new_err(format!(
-                        "Field '{}' must be a 1D array, got {}D",
-                        field_name, ndim
-                    )));
-                }
-                value.len()?
+                ColumnShape::CustomScalar { field: &field_name }
             };
-            if let Some((prev_count, ref prev_name)) = expected_count {
-                if length != prev_count {
-                    return Err(PyValueError::new_err(format!(
-                        "Array length mismatch: '{}' has {} elements but '{}' has {}",
-                        prev_name, prev_count, field_name, length
-                    )));
-                }
-            } else {
-                expected_count = Some((length, field_name.clone()));
-            }
+            let length = shape_rule
+                .plan(ndim, &shape)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            agree
+                .observe(&field_name, length)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
 
             // Cast to correct numpy dtype
             let target_dtype = field_info.field_type.to_numpy_dtype();
@@ -160,9 +139,8 @@ impl PyCustomComponentBatch {
             field_arrays.push((field_idx, arr.unbind()));
         }
 
-        let count = expected_count
-            .map(|(c, _)| c)
-            .ok_or_else(|| PyValueError::new_err("No arrays provided"))?;
+        // kwargs is non-empty, so at least one column was observed.
+        let count = agree.count().unwrap_or(0);
 
         // Qualified name for registration
         let module = cls
@@ -203,61 +181,14 @@ enum ReadonlyArrayHolder<'py> {
     Vec2(PyReadonlyArray2<'py, f32>),
 }
 
-/// A borrowed slice from a ReadonlyArrayHolder, typed by primitive type.
-enum FieldSlice<'a> {
-    F32(&'a [f32]),
-    F64(&'a [f64]),
-    I32(&'a [i32]),
-    I64(&'a [i64]),
-    U32(&'a [u32]),
-    U64(&'a [u64]),
-    Bool(&'a [u8]),
-    /// Flat slice of f32 from (N, 3) array — stride 3 per entity
-    Vec3(&'a [f32]),
-    /// Flat slice of f32 from (N, 2) array — stride 2 per entity
-    Vec2(&'a [f32]),
-}
-
-impl<'a> FieldSlice<'a> {
-    /// Write the value at `index` into `buffer` at the given byte offset.
-    #[inline(always)]
-    fn write_to_buffer(&self, index: usize, buffer: &mut [u8], offset: usize) {
-        match self {
-            FieldSlice::F32(s) => {
-                buffer[offset..offset + 4].copy_from_slice(&s[index].to_le_bytes());
-            }
-            FieldSlice::F64(s) => {
-                buffer[offset..offset + 8].copy_from_slice(&s[index].to_le_bytes());
-            }
-            FieldSlice::I32(s) => {
-                buffer[offset..offset + 4].copy_from_slice(&s[index].to_le_bytes());
-            }
-            FieldSlice::I64(s) => {
-                buffer[offset..offset + 8].copy_from_slice(&s[index].to_le_bytes());
-            }
-            FieldSlice::U32(s) => {
-                buffer[offset..offset + 4].copy_from_slice(&s[index].to_le_bytes());
-            }
-            FieldSlice::U64(s) => {
-                buffer[offset..offset + 8].copy_from_slice(&s[index].to_le_bytes());
-            }
-            FieldSlice::Bool(s) => {
-                buffer[offset] = s[index];
-            }
-            FieldSlice::Vec3(s) => {
-                // 3 contiguous f32 per entity
-                let base = index * 3;
-                buffer[offset..offset + 4].copy_from_slice(&s[base].to_le_bytes());
-                buffer[offset + 4..offset + 8].copy_from_slice(&s[base + 1].to_le_bytes());
-                buffer[offset + 8..offset + 12].copy_from_slice(&s[base + 2].to_le_bytes());
-            }
-            FieldSlice::Vec2(s) => {
-                // 2 contiguous f32 per entity
-                let base = index * 2;
-                buffer[offset..offset + 4].copy_from_slice(&s[base].to_le_bytes());
-                buffer[offset + 4..offset + 8].copy_from_slice(&s[base + 1].to_le_bytes());
-            }
-        }
+/// Map a neutral custom-batch validation error to the exception type pyo3
+/// raises: `TypeError` for the not-decorated and PyObject-storage variants,
+/// `ValueError` for the rest.
+fn custom_batch_err(error: CustomColumnError) -> PyErr {
+    if error.is_type_error() {
+        PyTypeError::new_err(error.to_string())
+    } else {
+        PyValueError::new_err(error.to_string())
     }
 }
 
@@ -351,67 +282,59 @@ fn prepare_custom_batch(
         holders.push(holder);
     }
 
-    let mut field_slices: Vec<(&FieldInfo, FieldSlice<'_>)> = Vec::with_capacity(holders.len());
+    let mut columns: Vec<(usize, FieldColumn<'_>)> = Vec::with_capacity(holders.len());
     for ((field_idx, _), holder) in batch.field_arrays.iter().zip(&holders) {
-        let field_info = &layout.fields[*field_idx];
-        let slice = match holder {
+        let column = match holder {
             ReadonlyArrayHolder::F32(array) => {
-                FieldSlice::F32(array.as_slice().map_err(|error| {
+                FieldColumn::F32(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::F64(array) => {
-                FieldSlice::F64(array.as_slice().map_err(|error| {
+                FieldColumn::F64(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::I32(array) => {
-                FieldSlice::I32(array.as_slice().map_err(|error| {
+                FieldColumn::I32(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::I64(array) => {
-                FieldSlice::I64(array.as_slice().map_err(|error| {
+                FieldColumn::I64(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::U32(array) => {
-                FieldSlice::U32(array.as_slice().map_err(|error| {
+                FieldColumn::U32(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::U64(array) => {
-                FieldSlice::U64(array.as_slice().map_err(|error| {
+                FieldColumn::U64(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::Bool(array) => {
-                FieldSlice::Bool(array.as_slice().map_err(|error| {
+                FieldColumn::Bool(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::Vec3(array) => {
-                FieldSlice::Vec3(array.as_slice().map_err(|error| {
+                FieldColumn::Vec3(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
             ReadonlyArrayHolder::Vec2(array) => {
-                FieldSlice::Vec2(array.as_slice().map_err(|error| {
+                FieldColumn::Vec2(array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
         };
-        field_slices.push((field_info, slice));
+        columns.push((*field_idx, column));
     }
 
-    let mut rows = Vec::with_capacity(batch.count);
-    for index in 0..batch.count {
-        let mut buffer = vec![0u8; layout.wrapper_size.size_bytes()];
-        for (field_info, slice) in &field_slices {
-            slice.write_to_buffer(index, &mut buffer, field_info.offset);
-        }
-        rows.push(buffer);
-    }
+    let rows = build_wrapper_rows(layout, &columns, batch.count);
 
     Ok(PreparedCustomBatch {
         wrapper_size: layout.wrapper_size,

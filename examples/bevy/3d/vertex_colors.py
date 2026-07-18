@@ -28,15 +28,14 @@ def setup(
     # Assign vertex colors based on vertex positions
     colorful_cube = Cuboid().mesh().build()
 
-    # Get vertex positions
-    with colorful_cube.attribute(Mesh.ATTRIBUTE_POSITION) as positions:
-        # positions is a numpy array of shape (n_vertices, 3)
-        # Convert positions to colors: map [-0.5, 0.5] to [0, 1]
-        colors = np.zeros((len(positions), 4), dtype=np.float32)
-        colors[:, 0] = (1.0 - positions[:, 0]) / 2.0  # R from x
-        colors[:, 1] = (1.0 - positions[:, 1]) / 2.0  # G from y
-        colors[:, 2] = (1.0 - positions[:, 2]) / 2.0  # B from z
-        colors[:, 3] = 1.0  # Alpha
+    # Get vertex positions (zero-copy bounded array, converted to numpy for the math)
+    positions = colorful_cube.attribute(Mesh.ATTRIBUTE_POSITION).to_numpy()
+    # Convert positions to colors: map [-0.5, 0.5] to [0, 1]
+    colors = np.zeros((len(positions), 4), dtype=np.float32)
+    colors[:, 0] = (1.0 - positions[:, 0]) / 2.0  # R from x
+    colors[:, 1] = (1.0 - positions[:, 1]) / 2.0  # G from y
+    colors[:, 2] = (1.0 - positions[:, 2]) / 2.0  # B from z
+    colors[:, 3] = 1.0  # Alpha
 
     # Insert vertex colors
     colorful_cube.insert_attribute(Mesh.ATTRIBUTE_COLOR, colors)

@@ -25,8 +25,8 @@ impl From<&MeshMaterial3d<StandardMaterial>> for PyMeshMaterial3d {
 #[pymethods]
 impl PyMeshMaterial3d {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(handle)?;
+    pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let handle = extract_handle_from_any(material)?;
 
         // Validate asset type
         if let Some(name) = handle.asset_type_name()

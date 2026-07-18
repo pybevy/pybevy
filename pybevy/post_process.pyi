@@ -86,11 +86,11 @@ class Bloom(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        low_frequency_boost: np.ndarray | None = None,
-        low_frequency_boost_curvature: np.ndarray | None = None,
-        high_pass_frequency: np.ndarray | None = None,
-        max_mip_dimension: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        low_frequency_boost: np.typing.ArrayLike | None = None,
+        low_frequency_boost_curvature: np.typing.ArrayLike | None = None,
+        high_pass_frequency: np.typing.ArrayLike | None = None,
+        max_mip_dimension: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class Vignette(Component):
@@ -145,11 +145,11 @@ class Vignette(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        radius: np.ndarray | None = None,
-        smoothness: np.ndarray | None = None,
-        roundness: np.ndarray | None = None,
-        edge_compensation: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        radius: np.typing.ArrayLike | None = None,
+        smoothness: np.typing.ArrayLike | None = None,
+        roundness: np.typing.ArrayLike | None = None,
+        edge_compensation: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
 class LensDistortion(Component):
@@ -192,7 +192,7 @@ class LensDistortion(Component):
     @staticmethod
     def from_numpy(  # type: ignore[override]
         *,
-        intensity: np.ndarray | None = None,
-        scale: np.ndarray | None = None,
-        edge_curvature: np.ndarray | None = None,
+        intensity: np.typing.ArrayLike | None = None,
+        scale: np.typing.ArrayLike | None = None,
+        edge_curvature: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...

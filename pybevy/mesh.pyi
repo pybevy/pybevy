@@ -5,13 +5,16 @@ from typing import ClassVar
 
 import numpy as np
 
+from pybevy import array as xp
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
-from pybevy.ecs import Component, Entity
+from pybevy.ecs import Batchable, Component, Entity
 from pybevy.image import RenderAssetUsages
-from pybevy.math import Dir3, Vec2
+from pybevy.math import Dir3, Quat, Vec2, Vec3
 from pybevy.pbr import StandardMaterial
 from pybevy.sprite import ColorMaterial
+from pybevy.transform import Transform
+from pybevy.wgpu import VertexFormat
 
 class MeshPlugin(Plugin):
     def __init__(self) -> None: ...
@@ -23,20 +26,11 @@ class MeshBuilder:
 class Meshable:
     def mesh(self) -> MeshBuilder: ...
 
-class MeshAttributeContext:
-    """Context manager for read-only zero-copy access to mesh vertex attributes.
-
-    Provides a NumPy array view of vertex attribute data (positions, normals, etc.)
-    without copying. Use within a `with` statement.
-
-    Example:
-        ```python
-        with mesh.positions_context() as positions:
-            mean_pos = positions.mean(axis=0)
-        ```
-    """
-    def __enter__(self) -> np.ndarray:
-        """Enter the context and return the numpy array view."""
+class MeshBoundedContextMut:
+    """Context manager yielding an in-place mutable bounded array over a mesh
+    attribute. Writes land directly in the mesh; the array is closed on exit."""
+    def __enter__(self) -> xp.Array:
+        """Enter the context and return the mutable bounded array."""
 
     def __exit__(
         self,
@@ -44,31 +38,7 @@ class MeshAttributeContext:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool:
-        """Exit the context (no cleanup needed)."""
-
-class MeshAttributeContextMut:
-    """Context manager for mutable zero-copy access to mesh vertex attributes.
-
-    Provides a mutable NumPy array view of vertex attribute data.
-    Modifications are immediately reflected in the mesh.
-    Use within a `with` statement.
-
-    Example:
-        ```python
-        with mesh.positions_context_mut() as positions:
-            positions[:, 2] += 1.0  # Translate in Z
-        ```
-    """
-    def __enter__(self) -> np.ndarray:
-        """Enter the context and return the mutable numpy array view."""
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool:
-        """Exit the context (no cleanup needed)."""
+        """Exit the context: close the array and release the write-lock."""
 
 class Mesh(Asset):
     ATTRIBUTE_POSITION: ClassVar[MeshVertexAttribute]
@@ -88,75 +58,105 @@ class Mesh(Asset):
     def enable_raytracing(self) -> bool: ...
     def get_vertex_buffer_size(self) -> int: ...
     def count_vertices(self) -> int: ...
+    def contains_attribute(self, attribute: MeshVertexAttribute) -> bool: ...
+    def remove_attribute(
+        self, attribute: MeshVertexAttribute
+    ) -> VertexAttributeValues | None: ...
+    def with_removed_attribute(self, attribute: MeshVertexAttribute) -> Mesh: ...
     def with_inserted_attribute(
-        self, attribute: MeshVertexAttribute, values: VertexAttributeValues | np.ndarray
+        self,
+        attribute: MeshVertexAttribute,
+        values: VertexAttributeValues | np.ndarray | xp.Array,
     ) -> Mesh: ...
     def insert_attribute(
-        self, attribute: MeshVertexAttribute, values: VertexAttributeValues | np.ndarray
+        self,
+        attribute: MeshVertexAttribute,
+        values: VertexAttributeValues | np.ndarray | xp.Array,
     ) -> None: ...
     def with_inserted_indices(
-        self, indices: Indices | np.ndarray | list[int]
+        self, indices: Indices | np.ndarray | xp.Array | list[int]
     ) -> Mesh: ...
-    def insert_indices(self, indices: Indices | np.ndarray | list[int]) -> None: ...
+    def insert_indices(
+        self, indices: Indices | np.ndarray | xp.Array | list[int]
+    ) -> None: ...
 
-    def positions(self) -> MeshAttributeContext:
-        """Get zero-copy read-only access to vertex positions via context manager.
+    def positions(self) -> xp.Array:
+        """Read-only zero-copy bounded array of vertex positions, shape (N, 3).
 
-        Returns:
-            Context manager yielding readonly numpy array with shape (N, 3)
-
-        Example:
-            ```python
-            with mesh.positions_context() as positions:
-                mean_pos = positions.mean(axis=0)
-            ```
-        """
-
-    def positions_mut(self) -> MeshAttributeContextMut:
-        """Get zero-copy mutable access to vertex positions via context manager.
-
-        Returns:
-            Context manager yielding mutable numpy array with shape (N, 3)
+        Returns the portable ``pybevy.array.Array`` type on both
+        backends. The array borrows the mesh data: mutating the mesh is blocked
+        while it is alive, and access after the owning system ends raises. Call
+        ``.to_numpy()`` (or ``.copy()``) for an independent snapshot.
 
         Example:
             ```python
-            with mesh.positions_context_mut() as positions:
-                positions[:, 2] += 1.0  # Move all vertices up by 1
+            pos = mesh.positions()
+            mean_pos = pos.mean(axis=0)
+            snapshot = pos.to_numpy()  # detached NumPy copy
             ```
         """
 
-    def normals(self) -> MeshAttributeContext:
-        """Get zero-copy read-only access to vertex normals via context manager."""
+    def positions_mut(self) -> MeshBoundedContextMut:
+        """In-place mutable bounded array of positions via a context manager.
 
-    def normals_mut(self) -> MeshAttributeContextMut:
-        """Get zero-copy mutable access to vertex normals via context manager."""
+        Writes land directly in the mesh (zero-copy); the array is closed on
+        exit.
 
-    def uvs(self) -> MeshAttributeContext:
-        """Get zero-copy read-only access to UV coordinates via context manager."""
+        Example:
+            ```python
+            with mesh.positions_mut() as pos:
+                pos[:, 2] += 1.0  # Move all vertices up by 1
+            ```
+        """
 
-    def uvs_mut(self) -> MeshAttributeContextMut:
-        """Get zero-copy mutable access to UV coordinates via context manager."""
+    def normals(self) -> xp.Array:
+        """Read-only zero-copy bounded array of vertex normals, shape (N, 3)."""
 
-    def attribute(self, id: MeshVertexAttribute) -> MeshAttributeContext:
-        """Get zero-copy read-only access to any vertex attribute via context manager."""
+    def normals_mut(self) -> MeshBoundedContextMut:
+        """In-place mutable bounded array of normals via a context manager."""
 
-    def attribute_mut(self, id: MeshVertexAttribute) -> MeshAttributeContextMut:
-        """Get zero-copy mutable access to any vertex attribute via context manager."""
+    def uvs(self) -> xp.Array:
+        """Read-only zero-copy bounded array of UV coordinates, shape (N, 2)."""
 
-    def positions_copy(self) -> np.ndarray:
-        """Get an owned copy of vertex positions as numpy array with shape (N, 3)."""
+    def uvs_mut(self) -> MeshBoundedContextMut:
+        """In-place mutable bounded array of UVs via a context manager."""
 
-    def set_positions(self, positions: np.ndarray) -> None:
-        """Copy vertex positions from numpy array with shape (N, 3)."""
+    def attribute(self, id: MeshVertexAttribute) -> xp.Array:
+        """Read-only zero-copy bounded array of any float32 vertex attribute."""
 
-    def normals_copy(self) -> np.ndarray:
-        """Get an owned copy of vertex normals as numpy array with shape (N, 3)."""
+    def attribute_mut(self, id: MeshVertexAttribute) -> MeshBoundedContextMut:
+        """In-place mutable bounded array of any float32 attribute."""
 
-    def set_normals(self, normals: np.ndarray) -> None:
-        """Copy vertex normals from numpy array with shape (N, 3)."""
+    def set_positions(self, positions: np.typing.ArrayLike | xp.Array) -> None:
+        """Copy vertex positions from an (N, 3) array-like (numpy array, bounded
+        pybevy.array array, or nested list)."""
+
+    def set_normals(self, normals: np.typing.ArrayLike | xp.Array) -> None:
+        """Copy vertex normals from an (N, 3) array-like (numpy array, bounded
+        pybevy.array array, or nested list)."""
 
     def with_generated_tangents(self) -> Mesh: ...
     def generate_tangents(self) -> None: ...
+    def compute_normals(self) -> None: ...
+    def compute_flat_normals(self) -> None: ...
+    def compute_smooth_normals(self) -> None: ...
+    def with_computed_normals(self) -> Mesh: ...
+    def with_computed_flat_normals(self) -> Mesh: ...
+    def with_computed_smooth_normals(self) -> Mesh: ...
+    def duplicate_vertices(self) -> None: ...
+    def with_duplicated_vertices(self) -> Mesh: ...
+    def invert_winding(self) -> None: ...
+    def with_inverted_winding(self) -> Mesh: ...
+    def merge(self, other: Mesh) -> None: ...
+    def transform_by(self, transform: Transform) -> None: ...
+    def transformed_by(self, transform: Transform) -> Mesh: ...
+    def translate_by(self, translation: Vec3) -> None: ...
+    def translated_by(self, translation: Vec3) -> Mesh: ...
+    def rotate_by(self, rotation: Quat) -> None: ...
+    def rotated_by(self, rotation: Quat) -> Mesh: ...
+    def scale_by(self, scale: Vec3) -> None: ...
+    def scaled_by(self, scale: Vec3) -> Mesh: ...
+    def has_morph_targets(self) -> bool: ...
 
 class PrimitiveTopology(Enum):
     PointList = ...
@@ -170,8 +170,6 @@ class UvChannel:
 
     Uv0: ClassVar[UvChannel]
     Uv1: ClassVar[UvChannel]
-    UV0: ClassVar[UvChannel]
-    UV1: ClassVar[UvChannel]
 
     def __init__(self) -> None: ...
 
@@ -181,11 +179,11 @@ class MeshVertexAttribute:
     @property
     def id(self) -> int: ...
     @property
-    def format(self) -> str: ...
+    def format(self) -> VertexFormat: ...
     def __eq__(self, other: object) -> bool: ...
 
 class Indices:
-    def __init__(self, obj: np.ndarray | list[int]) -> None: ...
+    def __init__(self, obj: np.ndarray | xp.Array | list[int]) -> None: ...
     @property
     def len(self) -> int: ...
     def is_empty(self) -> bool: ...
@@ -196,7 +194,7 @@ class IndicesIterator:
     def __next__(self) -> int: ...
 
 class VertexAttributeValues:
-    def __init__(self, obj: np.ndarray) -> None: ...
+    def __init__(self, obj: np.ndarray | xp.Array) -> None: ...
     def __eq__(self, other: object) -> bool: ...
 
 class CylinderMeshBuilder(MeshBuilder):
@@ -342,6 +340,8 @@ class MeshTag(Component):
     def value(self) -> int: ...
     @value.setter
     def value(self, value: int) -> None: ...
+    @staticmethod
+    def from_numpy(*, value: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
     def __eq__(self, other: MeshTag) -> bool: ...  # type: ignore[override]
 
 class MorphWeights(Component):

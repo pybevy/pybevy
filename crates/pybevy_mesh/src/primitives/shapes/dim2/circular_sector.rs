@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircularSectorMeshBuilder,
 };
 
-#[pyclass(name = "CircularSector", extends = PyMeshable, eq, frozen, skip_from_py_object)]
+#[pyclass(name = "CircularSector", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCircularSector(pub(crate) CircularSector);
 
@@ -72,6 +72,11 @@ impl PyCircularSector {
     #[getter]
     pub fn arc(&self) -> PyArc2d {
         self.0.arc.into()
+    }
+
+    #[setter]
+    pub fn set_arc(&mut self, value: PyArc2d) {
+        self.0.arc = value.into();
     }
 
     pub fn radius(&self) -> f32 {

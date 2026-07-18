@@ -82,8 +82,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sphere_kind::PySphereKind>()?;
     m.add_class::<uv_channel::PyUvChannel>()?;
     m.add_class::<vertex_attribute::PyVertexAttributeValues>()?;
-    m.add_class::<mesh::MeshAttributeContext>()?;
-    m.add_class::<mesh::MeshAttributeContextMut>()?;
+    m.add_class::<mesh::MeshBoundedContextMut>()?;
     m.add_class::<meshable::PyMeshable>()?;
 
     m.add_class::<mesh_builder::PyMeshBuilder>()?;
