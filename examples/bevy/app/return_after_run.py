@@ -20,14 +20,14 @@ yet available, so we use the default window configuration.
 from pybevy.prelude import *
 
 
-def system() -> None:
+def tick() -> None:
     """System that runs each frame."""
 
 
 @entrypoint
 def main(app: App) -> App:
     print("Running Bevy App")
-    return app.add_plugins(DefaultPlugins).add_systems(Update, system)
+    return app.add_plugins(DefaultPlugins).add_systems(Update, tick)
 
 
 if __name__ == "__main__":

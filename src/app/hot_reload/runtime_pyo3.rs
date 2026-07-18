@@ -13,7 +13,7 @@ use bevy::ecs::{
 use pybevy_ecs::shared::schedule::{StateScheduleLabel, TransitionScheduleLabel};
 use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadGenerationSet, ReloadMode,
-    ReloadRuntime, SystemStage, generation_matches, is_verbose, lock_or_recover, startup_or_reload,
+    ReloadRuntime, SystemStage, is_verbose, lock_or_recover,
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
@@ -25,7 +25,7 @@ use crate::{
         chained_systems::PyChainedSystems,
     },
     ecs::{
-        conditional_system::{PyConditionalSystem, build_conditional_system_config},
+        conditional_system::PyConditionalSystem,
         dynamic_system::{DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
         observer_registry::ObserverRegistry,
         python_message::{
@@ -36,7 +36,8 @@ use crate::{
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             register_reloaded_state_machine,
         },
-        system_interpreter::{new_main_system, retire_main_handle},
+        system_config::{PySystemConfig, build_scheduled_system},
+        system_interpreter::retire_main_handle,
         world::PyWorld,
     },
 };
@@ -76,61 +77,26 @@ fn add_systems_to_schedule(
         let result = Python::attach(|py| -> PyResult<()> {
             let system_bound = system_func.bind(py);
 
-            if let Ok(conditional) = system_bound.extract::<PyConditionalSystem>() {
-                let system_inner = conditional.system.clone_ref(py);
-                let condition = conditional.condition;
-
-                let dynamic_system = new_main_system(
-                    system_inner,
-                    generation,
-                    error_state.clone(),
-                    error_buffer.clone(),
-                    system_stage,
-                )?;
-                system_handles.push(dynamic_system.handle().clone());
-
-                let config = build_conditional_system_config(
-                    dynamic_system,
-                    condition,
-                    generation,
-                    error_state.clone(),
-                    system_stage,
-                    is_startup,
-                )?
-                .in_set(ReloadGenerationSet(generation));
-                schedule.add_systems(config);
-            } else if let Ok(chained) = system_bound.extract::<PyChainedSystems>() {
+            if let Ok(chained) = system_bound.extract::<PyChainedSystems>() {
                 let systems_tuple = chained.systems.bind(py);
-                let mut dynamic_systems = Vec::new();
+                let mut configs = Vec::new();
 
                 for sys in systems_tuple.iter() {
-                    let dynamic_system = new_main_system(
-                        sys.unbind(),
+                    let (config, handle) = build_scheduled_system(
+                        &sys,
                         generation,
                         error_state.clone(),
                         error_buffer.clone(),
                         system_stage,
+                        is_startup,
                     )?;
-                    system_handles.push(dynamic_system.handle().clone());
-                    dynamic_systems.push(dynamic_system);
+                    system_handles.push(handle);
+                    configs.push(config.in_set(ReloadGenerationSet(generation)));
                 }
 
-                if dynamic_systems.is_empty() {
+                if configs.is_empty() {
                     return Err(PyRuntimeError::new_err("Empty chained systems"));
                 }
-
-                let configs: Vec<ScheduleConfigs<_>> = dynamic_systems
-                    .into_iter()
-                    .map(|sys| {
-                        if is_startup {
-                            sys.run_if(startup_or_reload(generation))
-                                .in_set(ReloadGenerationSet(generation))
-                        } else {
-                            sys.run_if(generation_matches(generation))
-                                .in_set(ReloadGenerationSet(generation))
-                        }
-                    })
-                    .collect();
 
                 let chained = ScheduleConfigs::Configs {
                     configs,
@@ -140,27 +106,16 @@ fn add_systems_to_schedule(
 
                 schedule.add_systems(chained);
             } else {
-                let dynamic_system = new_main_system(
-                    system_func,
+                let (config, handle) = build_scheduled_system(
+                    system_bound,
                     generation,
                     error_state.clone(),
                     error_buffer.clone(),
                     system_stage,
+                    is_startup,
                 )?;
-                system_handles.push(dynamic_system.handle().clone());
-                if is_startup {
-                    schedule.add_systems(
-                        dynamic_system
-                            .run_if(startup_or_reload(generation))
-                            .in_set(ReloadGenerationSet(generation)),
-                    );
-                } else {
-                    schedule.add_systems(
-                        dynamic_system
-                            .run_if(generation_matches(generation))
-                            .in_set(ReloadGenerationSet(generation)),
-                    );
-                }
+                system_handles.push(handle);
+                schedule.add_systems(config.in_set(ReloadGenerationSet(generation)));
             }
             Ok(())
         });
@@ -219,7 +174,12 @@ fn hash_system_code(
     sys_bound: &Bound<'_, PyAny>,
     hasher: &mut impl std::hash::Hasher,
 ) {
-    if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
+    if let Ok(config) = sys_bound.extract::<PySystemConfig>() {
+        hash_callable_code(py, config.system.bind(py), hasher);
+        for condition in &config.conditions {
+            hash_callable_code(py, condition.bind(py), hasher);
+        }
+    } else if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
         hash_callable_code(py, conditional.system.bind(py), hasher);
         hash_callable_code(py, conditional.condition.bind(py), hasher);
     } else if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
@@ -340,7 +300,13 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             for (_stage, systems) in &defs.systems {
                 for sys in systems {
                     let sys_bound = sys.bind(py);
-                    if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
+                    if let Ok(config) = sys_bound.extract::<PySystemConfig>() {
+                        if let Ok(name) = config.system.bind(py).getattr("__name__")
+                            && let Ok(s) = name.extract::<String>()
+                        {
+                            names.insert(s);
+                        }
+                    } else if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
                         if let Ok(name) = conditional.system.bind(py).getattr("__name__")
                             && let Ok(s) = name.extract::<String>()
                         {
@@ -511,19 +477,21 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                     world.schedule_scope(label, |_world, schedule| {
                         schedule.set_executor(SingleThreadedExecutor::new());
                         for system in pending.systems {
-                            match new_main_system(
-                                system,
-                                generation,
-                                self.error_state.clone(),
-                                error_buffer.clone(),
-                                SystemStage::UpdateOrLast,
-                            ) {
-                                Ok(dynamic_system) => {
-                                    system_handles.push(dynamic_system.handle().clone());
+                            let result = Python::attach(|py| {
+                                build_scheduled_system(
+                                    system.bind(py),
+                                    generation,
+                                    self.error_state.clone(),
+                                    error_buffer.clone(),
+                                    SystemStage::UpdateOrLast,
+                                    false,
+                                )
+                            });
+                            match result {
+                                Ok((config, handle)) => {
+                                    system_handles.push(handle);
                                     schedule.add_systems(
-                                        dynamic_system
-                                            .run_if(generation_matches(generation))
-                                            .in_set(ReloadGenerationSet(generation)),
+                                        config.in_set(ReloadGenerationSet(generation)),
                                     );
                                 }
                                 Err(error) => {
@@ -700,6 +668,17 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         for handle in handles {
             retire_main_handle(handle);
         }
+    }
+
+    fn take_pending_system_error(&mut self, world: &mut World) -> Option<String> {
+        let buffer = world.get_resource::<LastErrorBuffer>()?.buffer.clone();
+        let error = lock_or_recover(&buffer).take()?;
+        Some(match error.traceback {
+            Some(traceback) if !traceback.is_empty() => {
+                format!("{}\n{}", error.error, traceback)
+            }
+            _ => error.error,
+        })
     }
 
     fn prune_messages(&mut self, world: &mut World, keep_after_generation: u32) {

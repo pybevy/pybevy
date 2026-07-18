@@ -78,6 +78,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     app.add_class::<PyStage>()?;
     app.add_class::<app_exit::PyAppExit>()?;
     app.add_class::<chained_systems::PyChainedSystems>()?;
+    app.add_class::<chained_systems::PyChainedSystemSets>()?;
     app.add_class::<hot_reload::bindings::PyAppReloadState>()?;
     app.add_class::<hot_reload::bindings::PyHotReloadControl>()?;
     app.add_class::<hot_reload::bindings::PyHotReloadPlugin>()?;

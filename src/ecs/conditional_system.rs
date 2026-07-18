@@ -1,13 +1,4 @@
-use std::sync::{Arc, Mutex};
-
-use bevy::ecs::{
-    schedule::{IntoScheduleConfigs, ScheduleConfigs},
-    system::ScheduleSystem,
-};
-use pybevy_reload::SystemStage;
 use pyo3::{prelude::*, types::PyDict};
-
-use crate::ecs::system_interpreter::{MainDynamicSystem as DynamicSystem, new_main_condition};
 
 /// Wrapper for a system with a run condition
 /// Similar to Bevy's IntoSystemConfigs::run_if()
@@ -145,17 +136,4 @@ result = make_not(c, functools)";
 #[pyfunction]
 pub fn run_if(system: Py<PyAny>, condition: Py<PyAny>) -> PyResult<PyConditionalSystem> {
     Ok(PyConditionalSystem::new(system, condition))
-}
-
-/// Apply the appropriate run_if (DynamicCondition or generation-gated closure) to a DynamicSystem.
-pub(crate) fn build_conditional_system_config(
-    dynamic_system: DynamicSystem,
-    condition: Py<PyAny>,
-    generation: u32,
-    error_state: Arc<Mutex<Vec<PyErr>>>,
-    system_stage: SystemStage,
-    _is_startup: bool,
-) -> PyResult<ScheduleConfigs<ScheduleSystem>> {
-    let dynamic_condition = new_main_condition(condition, generation, error_state, system_stage)?;
-    Ok(dynamic_system.run_if(dynamic_condition))
 }

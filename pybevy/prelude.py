@@ -99,6 +99,8 @@ from .ecs import (
     Resource,
     Single,
     State,
+    SystemSet,
+    SystemSetEnum,
     View,
     With,
     Without,
@@ -106,6 +108,8 @@ from .ecs import (
     in_state,
     run_if,
     state,
+    system,
+    system_set,
 )
 from .expr import FieldExpr
 from .gltf import Gltf, GltfAssetLabel, GltfExtras
@@ -535,6 +539,10 @@ __all__ = [
     "Without",
     "World",
     "run_if",
+    "system",
+    "system_set",
+    "SystemSet",
+    "SystemSetEnum",
     # Expr (PyBevy-specific)
     "FieldExpr",
     # GLTF

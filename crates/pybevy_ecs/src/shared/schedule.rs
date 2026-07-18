@@ -7,10 +7,89 @@ use bevy::{
     },
     ecs::{
         resource::Resource,
-        schedule::{InternedScheduleLabel, ScheduleLabel},
+        schedule::{InternedScheduleLabel, ScheduleLabel, SystemSet},
         world::World,
     },
 };
+
+/// Namespace for a dynamic Python scheduler identity.
+///
+/// User-declared sets and callable identities deliberately occupy different
+/// namespaces so a set named after a function cannot accidentally alias that
+/// function's ordering target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DynamicSetKind {
+    Named,
+    Callable,
+}
+
+/// Interpreter-neutral Bevy system-set label for Python scheduling.
+///
+/// Adapters derive `qualified_name` from stable Python metadata such as
+/// `__module__` and `__qualname__`. The label owns no interpreter object or raw
+/// type pointer, so recreating a class or function during hot reload produces
+/// the same scheduler identity.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DynamicSetLabel {
+    kind: DynamicSetKind,
+    qualified_name: String,
+}
+
+impl DynamicSetLabel {
+    #[must_use]
+    pub fn named(qualified_name: impl Into<String>) -> Self {
+        Self {
+            kind: DynamicSetKind::Named,
+            qualified_name: qualified_name.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn callable(qualified_name: impl Into<String>) -> Self {
+        Self {
+            kind: DynamicSetKind::Callable,
+            qualified_name: qualified_name.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> DynamicSetKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn qualified_name(&self) -> &str {
+        &self.qualified_name
+    }
+}
+
+/// Interpreter-neutral ordering metadata attached to a Python system or set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScheduleOrdering {
+    pub in_sets: Vec<DynamicSetLabel>,
+    pub before: Vec<DynamicSetLabel>,
+    pub after: Vec<DynamicSetLabel>,
+}
+
+impl ScheduleOrdering {
+    pub fn push_in_set(&mut self, set: DynamicSetLabel) {
+        push_unique(&mut self.in_sets, set);
+    }
+
+    pub fn push_before(&mut self, set: DynamicSetLabel) {
+        push_unique(&mut self.before, set);
+    }
+
+    pub fn push_after(&mut self, set: DynamicSetLabel) {
+        push_unique(&mut self.after, set);
+    }
+}
+
+fn push_unique(labels: &mut Vec<DynamicSetLabel>, label: DynamicSetLabel) {
+    if !labels.contains(&label) {
+        labels.push(label);
+    }
+}
 
 /// Exact identity of one interpreter-defined state type.
 ///
@@ -316,6 +395,31 @@ mod tests {
             StateScheduleLabel::on_enter(first, 42),
             StateScheduleLabel::on_exit(first, 42)
         );
+    }
+
+    #[test]
+    fn dynamic_set_namespaces_do_not_alias() {
+        let named = DynamicSetLabel::named("game.Movement");
+        let callable = DynamicSetLabel::callable("game.Movement");
+
+        assert_ne!(named, callable);
+        assert_eq!(named.kind(), DynamicSetKind::Named);
+        assert_eq!(named.qualified_name(), "game.Movement");
+    }
+
+    #[test]
+    fn schedule_ordering_deduplicates_labels() {
+        let movement = DynamicSetLabel::named("game.Movement");
+        let input = DynamicSetLabel::named("game.Input");
+        let mut ordering = ScheduleOrdering::default();
+
+        ordering.push_in_set(movement.clone());
+        ordering.push_in_set(movement.clone());
+        ordering.push_after(input.clone());
+        ordering.push_after(input);
+
+        assert_eq!(ordering.in_sets, vec![movement]);
+        assert_eq!(ordering.after.len(), 1);
     }
 
     #[test]
