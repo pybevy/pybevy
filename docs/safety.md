@@ -93,6 +93,106 @@ stored_query[0]  # RuntimeError: Component access is no longer valid
 - **Impact**: ~4-8% of Query iteration cost (negligible compared to Python overhead)
 - **Benefit**: Complete prevention of use-after-free bugs
 
+### Zero-Copy Borrowed Bounded Arrays
+
+`Mesh.positions()` and Image byte accessors return bounded `pybevy.array`
+arrays that borrow the asset's `f32` or `u8` data zero-copy
+(`ArrayStorage::BorrowedF32` / `BorrowedU8`). Safety rests on a `BorrowProbe` (the
+`AssetBorrowAnchor` in `pybevy_core`) checked once at the start of every read
+operation (`ensure_readable`):
+
+- The anchor holds the borrowed asset's `ValidityFlag` (or `None` for a
+  Python-owned mesh, always live). After the owning system ends the flag is
+  invalid, so every data operation raises a clean `RuntimeError`; metadata
+  (`shape`, `dtype`) reads no storage and stays valid.
+- The anchor also holds a `PyNumpyViewGuard`, which increments the asset's
+  read-view counter (blocking `as_mut`/`take`, so the mesh cannot be reallocated
+  through the wrapper while the array is alive) and keeps a strong reference to
+  the owning Python object (keeping owned mesh data alive). Dropping the last
+  Python array releases the count.
+- Arrays returned by read accessors are read-only; writes raise.
+  `.copy()`/`astype()`/arithmetic materialize owned, independent arrays that
+  outlive the system.
+
+The PyO3 numeric adapter retains each input array's `PyRef` guard for the
+complete synchronous kernel call and passes a borrowed `DenseArrayCore` into
+the neutral kernels. This avoids cloning owned input storage while preventing
+Python-side mutation until the kernel returns. Borrowed engine storage still
+performs its ordinary `BorrowProbe` check before a kernel reads it.
+
+**Unsafe inventory:**
+
+- `unsafe impl Send/Sync` for the borrowed `f32` and `u8` slice wrappers:
+  every access is probe-gated and mutable storage holds the exclusive write
+  count that prevents aliases.
+- `ArrayStorage::borrowed_f32` / `borrowed_mut_f32` and `borrowed_u8` /
+  `borrowed_mut_u8`: callers guarantee the pointer covers `len` initialized
+  contiguous elements for the complete live probe window; mutable constructors
+  additionally require unique access.
+- `ArrayStorage::get`/`set`: bounds are checked and the operation-level read or
+  write probe has succeeded on the owning thread before dereferencing.
+- `ArrayStorage::as_mut_contiguous_ptr` and the buffer-lens executor: the
+  adapter retains the mutable storage borrow through a synchronous call, and
+  validates source identity, type, alignment, and stride bounds before the
+  executor dereferences the pointer.
+- The mesh/image construction sites: pointers come from live contiguous
+  attribute or pixel buffers after validity and view-count checks.
+
+**Shared per-asset view counters.** `ViewCounters` are shared per `AssetId`
+within an access scope (via a registry on `AssetBorrowCounter`), so *every*
+borrowed wrapper of one asset sees the same view count. A live zero-copy array
+over one `meshes.get_mut()` wrapper therefore blocks reallocation via a second
+wrapper of the same asset, which is what prevents a use-after-free. This holds
+for both the bounded arrays and the NumPy views.
+
+**Thread affinity for owned assets.** Asset borrows carry a thread-affine
+`ValidityFlag`, but Python-*owned* assets have `validity = None` and so no
+affinity of their own. `AssetBorrowAnchor`/`AssetBorrowAnchorMut` therefore pin
+to their creating thread and reject cross-thread access, and the mutable
+anchor's `close()` is a no-op off that thread (release deferred to `Drop`, which
+runs only at refcount zero). Under free-threaded Python this keeps a mutable
+array's per-operation writes from racing a `close()` or reallocation on another
+thread: only the owning thread can operate or close, so an in-flight write
+always holds the write count and blocks reallocation.
+
+**In-place mutable borrows.** `Mesh.positions_mut()` (and normals/uvs/
+attribute) and `Image.data_mut()` / `pixel_bytes_mut()` yield writable bounded
+arrays in a `with` block. Writes land directly in the asset buffer (no copy, no
+commit); `set`/slice-assignment gate
+each write through `ensure_writable()` → the probe's `check_write` (an
+`AssetBorrowAnchorMut` that also carries a `closed` flag). On `__exit__` the
+anchor is closed (both reads and writes then raise) and the exclusive write
+count releases. Cloning a mutable borrow **downgrades** it to a read-only borrow
+(`ArrayStorage::clone`), so there is never a second writable alias.
+
+The shared buffer-lens executor accepts a raw writable base only after its
+adapter has acquired that same exclusive lease. It validates that every
+synthetic expression field belongs to the lens, has an allowed type, is aligned,
+and fits entirely within the element stride before performing pointer
+arithmetic. Execution is synchronous and the pointer is never retained. The
+neutral executor has no World pointer or scheduler access; adapters remain
+responsible for checking the borrow probe and holding exclusive storage access
+for the complete call.
+
+The store-free fused array kernel uses explicit dense-input slots; no `FieldId`,
+`ComponentId`, ECS offset, or World pointer enters that path. Callers must hold
+input storage borrows for the complete synchronous operation and perform each
+leaf's `BorrowProbe` check before gathering or reading it. No input pointer may
+be retained after evaluation, and the result owns fresh storage. This remains
+an internal capability rather than a public lazy-array API.
+
+**Free-threading-safe acquisition.** Every zero-copy view path claims its view
+atomically. This covers the mesh `positions()`/`positions_mut()` arrays, their
+normals/uvs/attribute equivalents, and the image
+`data()`/`data_mut()`/`pixel_bytes_mut()` arrays. Each acquires via
+`ViewCounters::try_acquire_read`/`try_acquire_write` (increment, then verify the
+invariant, roll back on conflict). The write paths then take `&mut` through
+`AssetStorage::as_mut_write_leased`, which skips the no-views check that ordinary
+`as_mut` would self-conflict on (the CAS write claim already established
+exclusivity) while still validity-checking and change-marking. This closes the
+check-then-acquire race that is unreachable under a GIL but real under
+free-threaded Python (CPython 3.14t).
+
 ### Query Parameters and the World Cell
 
 Query and View data are not rebuilt on every run from a fresh `&mut World`.
@@ -104,8 +204,11 @@ Instead:
   `src/ecs/query/query_runtime.rs` and the `query_caches` field in
   `src/ecs/dynamic_system.rs`.
 - At run time the Query arm hands `PyQueryIter` the run's `UnsafeWorldCell` plus a
-  raw pointer to the cached state. Iteration fetches through
-  the unchecked `QueryState::query_unchecked_with_ticks` API. The uniqueness
+  raw pointer to the cached state. `PyQueryIter` delegates traversal, lookup,
+  cardinality, and tick filtering to the interpreter-neutral `QueryRuntimeCore`
+  (`crates/pybevy_ecs/src/shared/query_runtime.rs`); its `RowMaterializer` impl is
+  the PyO3 leaf that turns each matched entity into Python objects. Iteration
+  fetches through the unchecked `QueryState::query_unchecked_with_ticks` API. The uniqueness
   obligation of that unchecked call is discharged by the access this parameter
   declared in `initialize` (see Section 4, "How the Scheduler Learns Each System's
   Access"): the executor never schedules a system with conflicting declared access
@@ -113,6 +216,30 @@ Instead:
 - Both the cached-state pointer and the world cell are fenced by the same
   `ValidityFlag`, so a leaked `PyQueryIter` (or an iterator derived from it) fails
   the validity check rather than dereferencing a stale cell.
+- On both backends, custom wrapper-storage and Python-object proxies produced by
+  a scheduled Query retain the same validity-fenced World access and the Query's
+  captured `RunTicks`. Explicit field writes mark only the declared
+  component through `get_entity_with_ticks(last_run, this_run)`; they do not
+  manufacture a new whole-World mutable borrow or read the later live global
+  tick. Long-lived `World.get_mut` proxies intentionally use Bevy's live tick.
+- `DynamicSystem::initialize` likewise builds one View parameter cache
+  (`CachedPyView`). It pairs
+  the interpreter's pre-resolved type-to-`ComponentId` map
+  with an interpreter-neutral `CachedViewCore`, whose mutex-protected program
+  cache persists across runs and resolves hash collisions by comparing the full
+  expression, destination, and field type. Each run creates a `ViewRuntimeCore`
+  from that cache, the scaffold's exact tick window, its `UnsafeWorldCell`, and
+  the shared `ValidityFlag`. Every expression assignment and numeric/conditional
+  reduction is compiled through an intent-bearing validator, gathers an exact
+  `BatchLease`, and executes only over rows matching every declared data
+  component and View filter. Raw program execution cannot be reached from the
+  PyO3 adapter without the validated capability. Destination change ticks are
+  bounds-checked first and stamped with the scaffold's `this_run` by an unwind
+  guard. `BatchColumn` records the addressable byte extent of each element;
+  typed and struct subcolumns can only narrow that extent while retaining the
+  same lease, validity fence, row range, and writability. Numba's row-index
+  guards remain required after a column is unboxed. These paths neither rebuild
+  a query nor construct a whole-World mutable reference.
 
 All parameter arms build from the world cell; no shared `&mut World` is
 materialized across the parameter loop. The arms differ in shape:
@@ -129,17 +256,41 @@ materialized across the parameter loop. The arms differ in shape:
   asymmetric conflict graph next to Bevy's empty-access exclusive systems that
   wedges the executor's ready-queue accounting (its `ready_systems.is_clear()`
   assertion fires with three or more exclusives of mixed shape in one schedule).
-- **View, message, and asset** wrappers hold the cell and derive a momentary
-  world pointer per operation, because their internals (`QueryBuilder`, the
-  message macros, the `AssetBridge`) take `&mut World`. `initialize` declares the
-  access these operations are expected to touch, but the `&mut World` they derive
-  is not itself narrowed to that declaration: at the aliasing level these paths
-  still reach the whole world, and soundness rests on the executor not scheduling
-  a conflicting system plus the `ValidityFlag` fence, not on the pointer being
-  bounded. This is the same
+- **Message and asset** wrappers hold the cell and derive a momentary world
+  pointer per operation, because the message macros and `AssetBridge` still
+  take `&mut World`. `initialize`
+  declares the access these operations are expected to touch, but the `&mut
+  World` they derive is not itself narrowed to that declaration: at the aliasing
+  level these residual paths still reach the whole world, and soundness rests on
+  the executor not scheduling a conflicting system plus the `ValidityFlag`
+  fence, not on the pointer being bounded. This is the same
   residual-pointer class as the custom-component write-back path inside
   `PyQueryIter` (`world_ptr`), which still stamps change ticks through a
   `*mut World`; narrowing these internals is planned follow-up work.
+
+#### Query Iteration Tokens
+
+Each call to `Query.__iter__` creates a separate backend iterator that owns an
+interpreter-neutral `IterationToken`. The token uniquely owns its erased Bevy
+iterator and increments the runtime's shared `Arc<AtomicUsize>` live-iterator
+counter. Exhaustion or `Drop` releases the allocation and decrements the
+counter, so leaving a loop with `break` immediately makes the Query reusable on
+the refcounted backends. Fresh traversals such as `len`, `get`, `single`, and
+`is_empty` fail while the counter is nonzero, preventing a second traversal
+from aliasing the cached `QueryState`.
+
+CPython's `list(query)` requests a length hint after creating its iterator. An
+unadvanced live iterator therefore makes `Query.__len__` raise `TypeError`,
+which the length-hint protocol treats as "no hint" and ignores. Direct
+`len(query)` is still rejected in that state, and once advancement begins the
+normal `IterationInProgress` runtime error applies.
+
+Traversal admission uses atomic compare-exchange, and a separate atomic
+operation fence rejects reentrant materialization. Counter failures are
+fail-closed: an over-count can temporarily reject another operation, while an
+under-count could admit aliasing and is forbidden. Dropping a token only frees
+its owned iterator and updates the counter; it never dereferences the World, so
+it remains safe after the run's `ValidityFlag` has been invalidated.
 
 ---
 
@@ -484,7 +635,7 @@ for p1 in points:
 
 ### Test Coverage
 
-Three tests in `tests/safety/test_intra_query_aliasing.py` document this behavior:
+Three intra-query aliasing tests in the maintainer safety suite document this behavior:
 
 1. **`test_aliasing_via_list()`** - Multiple refs to same entity work (normal Python)
 2. **`test_aliasing_during_iteration()`** - Stored refs see modifications (expected)
@@ -552,7 +703,28 @@ def system(query: Query[Mut[Transform]]) -> None:
 
 ### Overview
 
-Python 3.13+ introduced optional free-threaded mode where the Global Interpreter Lock (GIL) is disabled, allowing true parallel execution of Python code. PyBevy declares `gil_used = false` on the extension module so the free-threaded interpreter does not re-enable the GIL at import. Initial validation on CPython 3.14t passes 3,533/3,534 tests and confirms genuine parallel execution of non-conflicting CPU-bound Python systems. PyBevy's core safety mechanisms remain effective in this mode, with some additional considerations.
+Python 3.13+ introduced optional free-threaded mode where the Global Interpreter Lock (GIL) is disabled, allowing true parallel execution of Python code. PyBevy declares `gil_used = false` on the extension module so the free-threaded interpreter does not re-enable the GIL at import. Validation on CPython 3.14t passes the full Python test suite apart from a small number of known exclusions, and confirms genuine parallel execution of non-conflicting CPU-bound Python systems. PyBevy's core safety mechanisms remain effective in this mode, with some additional considerations.
+
+### CPython Conformance Matrix
+
+The Main workflow treats interpreter compatibility as a runtime contract, not
+as a wheel-build smoke test:
+
+- CPython 3.13 runs the complete native suite;
+- CPython 3.12 and 3.14 each build and import the extension, then run the
+  surface, stub, module-replacement, validity, component-storage, and borrowed
+  mesh-array contracts;
+- CPython 3.14t runs those contracts plus the scheduler overlap and
+  serialization scenarios. The job sets `PYTHON_GIL=0` and asserts after
+  importing `pybevy` that `sys._is_gil_enabled()` remains false.
+
+The module-replacement regression derives its cases from every Python source
+that assigns `sys.modules[__name__]`, including private native shims, and checks
+that the installed extension module reports that exact canonical name. The
+version matrix currently has no allow-failure entries or version-specific
+exceptions. Do not add a broad pytest selector or conditional CI bypass for a
+version gap: any future exception needs an exact test node, a reason, and an
+enforcing stale check before the gate may consume it.
 
 **Risk Level**: 15/100 (Low-Medium)
 
@@ -820,8 +992,9 @@ them to take effect) would either violate that contract or silently do nothing.
 
 PyBevy therefore rejects any parameter kind that could mutate the world when a
 condition is registered, before the condition ever reaches Bevy
-(`condition_param_rejection` / `validate_condition_params` in
-`src/ecs/dynamic_condition.rs`):
+(`condition_param_rejection` / `condition_rejection_message` in
+`crates/pybevy_ecs/src/shared/param_spec.rs`, applied during registration in
+`src/ecs/system_interpreter.rs`):
 
 - `World` (exclusive world access)
 - `Commands` (its queued mutations are never applied to conditions)
@@ -831,10 +1004,11 @@ condition is registered, before the condition ever reaches Bevy
 - `MessageWriter` (writing messages mutates the world)
 - `MessageReader` (advancing the read cursor mutates the world; read messages in a
   regular system instead)
+- `MessageMutator` (reading, mutating, and writing messages mutates the world)
 
 Read-only parameters (`Res`, read-only `Query`/`View`, `Local`, read-only `Assets`)
 are allowed. The error names the offending parameter index and explains the
-read-only requirement. Coverage lives in `tests/safety/test_condition_readonly.py`.
+read-only requirement. Coverage lives in the maintainer safety suite.
 
 ### Unsafe Patterns (Free-Threaded Mode)
 
@@ -958,83 +1132,73 @@ for transform in Query[Mut[Transform]]:
 
 The issue: `transform.translation` returns a copy of the Vec3. Modifying `copy.x` doesn't affect the ECS.
 
-### The Solution: Borrowed Field Pattern
+### The Solution: Typed Borrowed Storage
 
-PyBevy implements an enum-based storage pattern where property getters return **borrowed** references pointing directly to component fields:
+PyBevy implements an enum-based storage pattern where property getters return **borrowed** references pointing directly to component fields. Read vs write access is encoded at the type level by two shared primitives (`crates/pybevy_storage/src/borrowed.rs`):
 
 ```rust
-// Vec3 can be either owned or borrowed - crates/pybevy_math/src/vec3.rs
-enum Vec3Storage {
-    Owned(Vec3),  // Created via Vec3(1.0, 2.0, 3.0)
-    Borrowed {
-        ptr: *mut Vec3,                // Points to component field
-        validity: ValidityFlagWithMode, // Tracks read/write permissions
-    },
+/// Read-only borrow: holds *const T. as_mut is impossible because
+/// this type has no mutable accessor.
+pub struct BorrowedRef<T> {
+    ptr: *const T,
+    validity: ValidityFlag,
 }
 
+/// Mutable borrow: holds *mut T obtained from a &mut T chain.
+pub struct BorrowedMut<T> {
+    ptr: *mut T,
+    validity: ValidityFlag,
+}
+```
+
+Every storage type wraps these in its borrowed variants. For `Copy` field types (Vec3, Quat, f32, ...):
+
+```rust
+// crates/pybevy_storage/src/value_storage.rs
+pub enum ValueStorageInner<T: Copy> {
+    Owned(T),                    // Created via Vec3(1.0, 2.0, 3.0)
+    OwnedReadOnly(T),            // Snapshot of a field from owned/temporary storage
+    BorrowedRef(BorrowedRef<T>), // Read-only borrow into a component field
+    BorrowedMut(BorrowedMut<T>), // Mutable borrow into a component field
+}
+
+// crates/pybevy_math/src/vec3.rs
 #[pyclass(name = "Vec3")]
 pub struct PyVec3 {
-    storage: Vec3Storage,
+    pub(crate) storage: ValueStorage<Vec3>,
 }
+```
 
-impl PyVec3 {
-    // Create borrowed Vec3 pointing to a component's field
-    pub(crate) fn from_borrowed(ptr: *mut Vec3, validity: ValidityFlagWithMode) -> Self {
-        PyVec3 {
-            storage: Vec3Storage::Borrowed { ptr, validity },
-        }
-    }
+`as_mut()` succeeds only for `Owned` and `BorrowedMut`; a `BorrowedRef` has no mutable accessor, so read-only-ness is a property of the variant, not a runtime flag check. The plain `ValidityFlag` inside each borrow answers a single question: is the owning system still executing?
 
-    // Get mutable reference with safety checks
-    fn as_mut(&mut self) -> PyResult<&mut Vec3> {
-        match &mut self.storage {
-            Vec3Storage::Owned(vec) => Ok(vec),
-            Vec3Storage::Borrowed { ptr, validity } => {
-                validity.check_write()?;  // Ensures mutable access allowed
-                Ok(unsafe { &mut **ptr })
-            }
-        }
-    }
-}
+`ValidityFlagWithMode` survives as the bridge transport type: extraction paths still hand it to the storage constructors, which resolve the mode into a typed variant at construction and never store it:
 
-#[pymethods]
-impl PyVec3 {
-    #[setter]
-    pub fn set_x(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.x = value;  // Writes directly to ECS memory!
-        Ok(())
+```rust
+// crates/pybevy_storage/src/pycomponent.rs
+pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+    match validity.access_mode() {
+        AccessMode::Write => unsafe { Self::borrowed_mut(ptr, validity.flag) },
+        _ => unsafe { Self::borrowed_ref(ptr as *const T, validity.flag) },
     }
 }
 ```
 
-**Transform property returns borrowed Vec3**:
+**Transform property returns a borrowed Vec3** via the shared field-borrow helpers, which inherit mutability from the parent by type (a `BorrowedRef` parent produces `BorrowedRef` fields, a `BorrowedMut` parent produces `BorrowedMut` fields):
+
 ```rust
-// In Transform::translation() - crates/pybevy_transform/src/transform.rs
+// crates/pybevy_transform/src/transform.rs
 #[getter]
 pub fn translation(&self) -> PyResult<PyVec3> {
-    self.check_valid()?;
-    match &self.storage {
-        TransformStorage::Owned(boxed) => {
-            Ok(PyVec3::from(boxed.translation))  // Copy for owned
-        }
-        TransformStorage::Borrowed { ptr, validity } => {
-            // Return borrowed Vec3 pointing directly to the field
-            let translation_ptr = unsafe {
-                let transform_ptr = *ptr as *const Transform;
-                &(*transform_ptr).translation as *const Vec3 as *mut Vec3
-            };
-            Ok(PyVec3::from_borrowed(translation_ptr, validity.clone()))
-        }
-    }
+    Ok(self.storage.borrow_field_as(|t| &t.translation)?)
 }
 ```
 
 ### How It Works
 
-1. `Query[Mut[Transform]]` iteration creates borrowed Transform pointing to ECS memory
-2. `transform.translation` getter returns borrowed Vec3 pointing to transform's field
+1. `Query[Mut[Transform]]` iteration creates a `BorrowedMut`-backed Transform pointing to ECS memory
+2. `transform.translation` returns a `BorrowedMut`-backed Vec3 pointing to the transform's field
 3. `translation.x = 100.0` calls `set_x()`, which writes directly to ECS memory
-4. `ValidityFlagWithMode` ensures write access is allowed (would fail for read-only query)
+4. A read-only `Query[Transform]` extracts `BorrowedRef`-backed wrappers instead; their setters fail with `StorageError::ReadOnly`
 
 **Result**: Field mutations persist to ECS!
 
@@ -1058,22 +1222,65 @@ Types with borrowed field access:
 ### Safety Guarantees
 
 1. **ValidityFlag**: Prevents access after system completion
-2. **ValidityFlagWithMode**: Enforces read-only vs mutable access:
-   - `Query[Transform]` → Borrowed fields are read-only
-   - `Query[Mut[Transform]]` → Borrowed fields allow writes
+2. **Typed variants**: Enforce read-only vs mutable access at construction:
+   - `Query[Transform]` → fields extract as `BorrowedRef` (no mutable accessor exists)
+   - `Query[Mut[Transform]]` → fields extract as `BorrowedMut`
 3. **Pointer safety**: Only dereferenced after validity check passes
-4. **Lifetime coupling**: Borrowed field lifetime tied to parent component
+4. **Lifetime coupling**: Field borrows share the parent component's validity flag
+5. **Bevy-immutable components**: `ChildOf` is extracted with `borrowed_ref` regardless
+   of the transport mode, so it can never be written through Python
+
+### Zero-Copy Bounded Arrays (Mesh and Image Assets)
+
+Mesh attribute contexts (`mesh.positions()`, `mesh.attribute_mut(...)`) and
+image data contexts (`image.data()`, `image.data_mut()`,
+`image.pixel_bytes_mut(...)`) yield bounded `pybevy.array.Array` objects that
+alias asset memory directly. Mutating the asset can reallocate that memory, so
+live arrays and mutation must exclude each other. This is enforced by probes and
+view counters:
+
+- `AssetStorage` carries `ViewCounters` (read and write atomics,
+  `crates/pybevy_storage/src/pyasset.rs`). `as_ref()` fails while a writable
+  view is live; `as_mut()` and `take()` fail while any view is live, with a
+  `RuntimeError` telling the user which array to drop. Because every mutating
+  asset method goes through `as_mut()`, the gate covers all pyasset types
+  centrally.
+- Mutable borrowed assets also carry an `AssetChangeTracker`. Bridge extraction
+  uses Bevy's `Assets::get_mut_untracked()`, so merely calling Python
+  `assets.get_mut(handle)` does not emit `AssetEvent::Modified`. On the first
+  successful `AssetStorage::as_mut()` call, the tracker re-resolves the typed
+  asset through its validity-guarded world pointer and mutably dereferences a
+  real Bevy `AssetMut`; this queues one `Modified` event. Later writes through
+  the same Python wrapper are coalesced, matching the lifetime of one Bevy
+  `AssetMut`. Mutable zero-copy contexts pass through `as_mut()` before exposing
+  their array, so they participate in the same change detection.
+- Each array retains an `AssetBorrowAnchor` or `AssetBorrowAnchorMut`, which owns
+  the view count, a strong reference to the owning Python wrapper, thread
+  affinity, and the system's `ValidityFlag` where applicable. Every operation
+  checks that anchor before dereferencing borrowed storage.
+- The `with` block is the safety scope. Mutable contexts and Image read contexts
+  close their anchor on `__exit__`; a lingering array then raises on every data
+  operation. Mesh read arrays retain their read lease until their last reference
+  drops, so they continue blocking asset mutation while readable.
+- `to_numpy()` and NumPy's `__array__` protocol always produce an owned copy;
+  NumPy never receives a raw borrowed asset pointer.
 
 ---
 
 ## 6. Thread Safety
 
-PyBevy types that wrap raw pointers implement `Send + Sync` to allow them to cross thread boundaries:
+The `Send`/`Sync` assertions for the storage layer live on the two typed borrow primitives, so every storage type inherits them instead of asserting its own:
 
 ```rust
-// SAFETY: ValidityFlag ensures borrowed pointers only accessed during system execution
-unsafe impl Send for PyVec3 {}
-unsafe impl Sync for PyVec3 {}
+// crates/pybevy_storage/src/borrowed.rs
+// SAFETY: the raw pointer is just an address and access is gated by the
+// ValidityFlag (Arc<AtomicU8>), which is itself Send + Sync. The flag is
+// invalidated (RAII) when the owning system exits, so the pointer is never
+// dereferenced outside the borrow's valid window.
+unsafe impl<T: Send> Send for BorrowedRef<T> {}
+unsafe impl<T: Sync> Sync for BorrowedRef<T> {}
+unsafe impl<T: Send> Send for BorrowedMut<T> {}
+unsafe impl<T: Sync> Sync for BorrowedMut<T> {}
 ```
 
 **Why this is safe**:
@@ -1192,15 +1399,41 @@ Message access is designed so that a system in the parallel path never has to
 insert a `Messages<T>` resource (again, a structural world mutation would be
 unsound there):
 
+- **Python-defined messages use a preinserted shared store.** `app.add_message(T)`
+  registers an App-local logical channel and a synthetic scheduler-access
+  `ComponentId`; it does not allocate a compiled Rust slot. Readers declare the
+  channel read, writers and mutators declare the channel write, and all three read
+  the real store resource. The `First` maintenance system writes the store
+  resource, so rotation cannot overlap a reader, writer, or mutator.
+- **Same-channel access follows Bevy borrowing rules.** Multiple reader parameters
+  are compatible. A writer or mutator conflicts with every same-channel reader,
+  writer, or mutator, both within one Python system and across scheduled systems.
+  Different channels remain scheduler-compatible.
+- **Custom wrappers retain no World pointer.** Readers, writers, and iterators own
+  only cloned store/channel/class handles plus the invocation's `ValidityFlag`;
+  mutators compose the same handles and cursor. Every operation checks validity;
+  escaped wrappers fail after the system call. Returned message payload objects
+  are owned Python values and may escape normally. Same-channel scheduler exclusion
+  ensures a mutator can change such an object without a concurrent reader observing
+  it, including under free-threaded CPython.
+- **Store locks never run Python.** Appends and cursor operations manipulate only
+  context-free `Arc<Py<PyAny>>` handles. Maintenance, clearing, and alias pruning
+  move retired handles out, release locks and World resource borrows, then destroy
+  Python handles inside an attached interpreter context.
+
 - **Readers of a missing `Messages` resource see an empty read.** A
-  `MessageReader` whose buffer does not exist yields no messages rather than
+  native `MessageReader` whose buffer does not exist yields no messages rather than
   creating the resource (`iter_messages` returns an empty vector; the
   clear/len/`is_empty` helpers fall back to an `EmptyMessages` stand-in). See
   `src/ecs/messages.rs`.
-- **Writers raise instead of creating the resource.** A `MessageWriter` to a
+- **Native writers raise instead of creating the resource.** A `MessageWriter` to a
   missing buffer returns an error telling you to register the message type with
   `app.add_message(T)` first (`src/ecs/message.rs`), rather than silently inserting
   the buffer from a possibly-parallel system.
+- **Native mutators are rejected.** Native reader bridges return owned Python
+  snapshots, not borrowed retained values. `MessageMutator[T]` therefore accepts
+  only custom Python messages until native wrappers gain a safe borrowed or
+  explicit write-back design.
 - **Built-in message resources are pre-inserted at `PreStartup`.** Buffers whose
   owning plugin may be absent (keyboard input, window events, world-instance-ready,
   and image/mesh asset events) are filled in by `ensure_builtin_message_resources`
@@ -1210,6 +1443,54 @@ unsound there):
 This is also why message resource, asset, and `Res`/`ResMut` `ComponentId`s are
 **registered** (not just looked up) in `initialize`: see Section 4, "How the
 Scheduler Learns Each System's Access."
+
+---
+
+## App Identity and Ownership Transitions
+
+`pybevy_storage::AppStoreCore` defines the backend-neutral ownership contract
+for stored Bevy `App` values. The core does not itself provide global storage:
+each interpreter adapter owns its own thread-local container, while App IDs are
+allocated from one process-wide, non-wrapping atomic sequence.
+
+The safety-bearing rules are:
+
+- an `AppId` is an opaque identity, not a pointer and not permission to bypass
+  an adapter's thread-affinity checks;
+- a fresh `AllocatedAppId` token is single-use and non-cloneable, so safe code
+  cannot install the same identity twice;
+- each slot has exactly one lifecycle state: `Active`,
+  `Borrowed(AppOperation)`, `Consumed`, or `Removed`;
+- interpreter-entering operations must move the `App` out with
+  `begin_operation` and leave the `Borrowed` marker visible while callbacks
+  run. Recursive access then fails before another owner can be created;
+- adapter-owned RAII restores the extracted App during normal return and
+  unwinding. If restoration finds an invalid slot state, `AppRestoreError`
+  retains the App itself so reporting the invariant violation cannot silently
+  drop or duplicate ownership;
+- run, removal, and shutdown draining move Apps out of the store. Running or
+  destroying those Apps occurs only after the adapter releases its thread-local
+  store borrow; and
+- tombstones are retained. A stale wrapper receives an exact lifecycle error
+  and can never fall back to a different App.
+
+Main uses one thread-local `AppStoreCore` as its lifecycle authority. `PyApp`
+stores the neutral `AppId` while retaining PyO3-only thread affinity, plugin,
+error-sink, and reload state. Every interpreter-entering operation moves the
+sole App owner through `begin_operation`; the neutral `Borrowed` tombstone stays
+visible until the adapter RAII guard restores on return or unwind. Normal
+`run` commits `Consumed` before destroying the App outside the store borrow.
+Shutdown uses `drain_active`, destroys returned Apps after releasing the borrow,
+and reports any operation still borrowed. Main allocates a fresh ID before it
+borrows the TLS store, so allocation exhaustion cannot destroy a newly built
+App under that borrow. Removed and consumed tombstones prevent stale wrappers
+from redirecting to a later App.
+
+`with_app_leaf` is only for Rust operations proven not to enter Python,
+invoke a Python plugin, or recursively access the store. Production
+adapters must classify a path before using this narrower access mode; the
+presence of the neutral core does not make an adapter path extraction-safe by
+itself.
 
 ---
 
@@ -1231,28 +1512,50 @@ Scheduler Learns Each System's Access."
 
 - **Core Storage Layer** (`crates/pybevy_storage/src/`, re-exported by
   `pybevy_core` and, for the main crate, by `src/ecs/helpers/validity_guard.rs`):
-  - `validity_guard.rs` - ValidityFlag, ValidityFlagWithMode, ValidityGuard (RAII), AccessMode
-  - `pycomponent.rs` - Owned/Borrowed component storage
+  - `borrowed.rs` - BorrowedRef/BorrowedMut typed primitives (Send/Sync, field borrows)
+  - `filtered_entity_access.rs` - variant-aware read-only/read-write entity access
+    shared by query runtimes and component extraction bridges
+  - `asset_runtime.rs` - backend-neutral `Assets[T]` validity/write admission,
+    handle identity, and live-borrow exclusion; interpreter adapters retain
+    their world cells and bridge/Python conversions
+  - `app_store.rs` - backend-neutral App IDs, lifecycle tombstones, extraction
+    admission, ownership-preserving restoration errors, and shutdown draining
+  - `pyasset.rs` - asset borrowed storage, lazy Bevy `AssetMut` change tracking,
+    and `ViewCounters`; `pybevy_core/src/numpy_view_guard.rs` owns live NumPy
+    view leases for zero-copy mesh/image arrays
+  - `validity_guard.rs` - ValidityFlag, ValidityGuard (RAII), AccessMode,
+    ValidityFlagWithMode (bridge transport, resolved at storage construction)
+  - `pycomponent.rs` - Owned/BorrowedRef/BorrowedMut component storage
   - `value_storage.rs` - Copy-type field storage (Vec3, Quat, f32, etc.)
   - `field_storage.rs` - Non-Copy field storage (TextureAtlas, WindowResolution, etc.)
   - `list_storage.rs` - Vec<T> field storage with Python list interface
-  - `pyasset.rs` - Asset storage (read-only vs mutable variants)
+  - `pyasset.rs` - Asset storage (read-only vs mutable variants plus handle)
   - `pyresource.rs` - Resource storage
 - **Access Declaration**: `crates/pybevy_ecs/src/shared/access_sets.rs`
   (`QueryParamAccess`, `build_resource_access`)
+- **Query Runtime**: `crates/pybevy_ecs/src/shared/query_runtime.rs`
+  (`QueryRuntimeCore`, erased iterator ownership, validity/tick filtering,
+  `RowMaterializer` backend seam)
 - **Parameter Validation and Access Declaration**: `src/ecs/dynamic_system.rs`
   (`initialize` builds the `FilteredAccessSet` and precomputes conflict validation)
-- **Run-Condition Validation**: `src/ecs/dynamic_condition.rs`
+- **Run-Condition Validation**: `crates/pybevy_ecs/src/shared/param_spec.rs`
+  (`condition_param_rejection`), enforced in `src/ecs/system_interpreter.rs`
 - **Borrowed Fields**: `crates/pybevy_math/src/vec2.rs`, `crates/pybevy_math/src/vec3.rs`, `crates/pybevy_math/src/quat.rs`
 - **Component Pattern**: `crates/pybevy_transform/src/transform.rs`, `crates/pybevy_light/src/point_light.rs`
-- **Python Safety Tests**: `tests/safety/` (Python safety test suite)
 - **Rust Unit Tests**: storage-layer tests live in `pybevy_storage`
   (`cargo test -p pybevy_storage`); registry and handle tests live in `pybevy_core`
   (`cargo test -p pybevy_core`)
 
+### Lint Enforcement
+
+`clippy::undocumented_unsafe_blocks` is enabled as a warning. New `unsafe`
+blocks and impls should carry a `// SAFETY:` comment directly above.
+
 ### Related Documentation
 
-- **[Enum Component Pattern](tech/enum-component-pattern.md)** - Detailed guide to borrowed field pattern
+- **Enum Component Pattern** - see Section 6 above and the `borrow_field_as`
+  implementations in `crates/pybevy_transform/src/transform.rs` and
+  `crates/pybevy_post_process/src/bloom.rs` for the borrowed field pattern
 
 ---
 
@@ -1277,19 +1580,20 @@ cargo test -p pybevy_core      # registry + handle unit tests
 | Module | Crate | What's Tested |
 |--------|-------|---------------|
 | `validity_guard` | pybevy_storage | Flag lifecycle, read/write/invalid modes, RAII guard drop, clone propagation, ValidityFlagWithMode |
-| `pycomponent` | pybevy_storage | Owned/borrowed modes, mutation persistence, validity enforcement, write permissions, into_owned |
+| `pycomponent` | pybevy_storage | Owned/BorrowedRef/BorrowedMut modes, typed constructors, share_borrow mode preservation, mutation persistence, validity enforcement, into_owned |
 | `value_storage` | pybevy_storage | Same as pycomponent for Copy types (Vec3, f32, etc.) |
 | `field_storage` | pybevy_storage | Owned/borrowed, borrow_field chains (owned→field, borrowed→field), mutation persistence through nested borrows, Drop invalidation, clone independence |
 | `list_storage` | pybevy_storage | Vec storage, mutation persistence, validity/write enforcement, normalize_index edge cases |
 | `pyasset` | pybevy_storage | Read-only vs mutable variants, take/consume, validity enforcement |
 | `pyresource` | pybevy_storage | Resource storage variants (owned/borrowed, validity enforcement) |
+| `app_store` | pybevy_storage | ID exhaustion/non-reuse, exact selection, extraction/reentry, unwind restoration, removal, draining, and collision defense |
 | `handle` | pybevy_core | UUID handling |
 | `global_registry` | pybevy_core | Registry basics |
 
 ### Key Safety Properties Tested
 
 - **Use-after-free prevention**: Validity flag becomes Invalid after guard drops; access raises error
-- **Write permission enforcement**: Read-only borrows reject mutation attempts
+- **Write permission enforcement**: Read-only borrows reject mutation attempts (`BorrowedRef` has no mutable accessor)
 - **Mutation persistence**: Borrowed storage mutations propagate through raw pointers to original data
 - **Drop invalidation**: Owned storage invalidates its validity flag before freeing memory
 - **Nested borrow chains**: Field borrows from borrowed parents share the same validity flag
@@ -1301,27 +1605,29 @@ cargo test -p pybevy_core      # registry + handle unit tests
 
 **Purpose**: Detect memory errors (use-after-free, buffer overflow, etc.) at runtime using compiler instrumentation
 
-### Running
-
-```bash
-./scripts/check_asan.sh                          # Phase 1 only (Rust unit tests under ASan)
-./scripts/check_asan.sh --full                   # Phase 1 + Phase 2 (build .so + run pytest)
-./scripts/check_asan.sh --full tests/safety/     # Phase 2 with specific test directory
-./scripts/check_asan.sh --full -k test_transform # Phase 2 with pytest args
-```
-
 ### Requirements
 
-```bash
-rustup toolchain install nightly
-sudo apt install libasan8    # only needed for --full (Phase 2)
-```
+A Rust nightly toolchain (`rustup toolchain install nightly`) is required for
+`-Z sanitizer=address`. Instrumenting the Python extension additionally needs the
+platform's AddressSanitizer runtime library available for preloading.
 
-### What It Does
+### The Two Phases
 
-1. **Phase 1** (default): Runs `cargo +nightly test -p pybevy_core` with `-Z sanitizer=address`, exercising the core Rust unit tests under ASan. Always works because `pybevy_core` has minimal dependencies. The storage primitives themselves now live in `pybevy_storage`; run `cargo +nightly test -p pybevy_storage` under ASan to cover them directly.
-2. **Phase 2** (`--full`): Builds the full PyO3 `.so` with ASan instrumentation via `maturin develop`, then runs `pytest` with `LD_PRELOAD=libasan.so`, catching memory errors during actual Python-to-Rust interaction.
-3. **Cleanup** (Phase 2 only): Rebuilds without ASan to restore the normal dev environment.
+ASan coverage is organized in two phases, run in maintainer CI on a pinned
+nightly toolchain:
+
+1. **Phase 1**: Runs the `pybevy_storage` and `pybevy_core` Rust tests with
+   `-Z sanitizer=address`, exercising validity, borrowed storage, mutation,
+   app-store, handle, and registry behavior under ASan. This phase needs no
+   Python interpreter and is the one to reproduce locally.
+2. **Phase 2**: Builds the full PyO3 `.so` with ASan instrumentation via
+   `maturin develop --target <host-triple>`, then runs `pytest` with the ASan
+   runtime preloaded, catching memory errors during actual Python-to-Rust
+   interaction. Passing an explicit target keeps host-built proc macros and
+   build scripts unsanitized even when the target triple equals the host; only
+   code linked into the extension receives the target sanitizer flags.
+3. **Cleanup** (Phase 2 only): Rebuild without ASan to restore the normal dev
+   environment.
 
 ### What ASan Detects
 
@@ -1333,7 +1639,7 @@ sudo apt install libasan8    # only needed for --full (Phase 2)
 ### Limitations
 
 - Requires Rust nightly toolchain
-- Phase 2 may fail on some nightly versions due to transitive dependency breakage (e.g., `zerocopy`, `futures-util` not compiling on bleeding-edge nightly). Phase 1 results are still valid in this case.
+- Phase 2 may fail on some nightly versions due to genuine transitive dependency breakage (e.g., `zerocopy`, `futures-util` not compiling on bleeding-edge nightly). Host proc-macro loading errors usually mean the explicit target split was lost and should not be treated as a product failure. Phase 1 results are still valid in either case.
 - Miri (`cargo miri`) cannot be used because `pybevy_core` depends on `pyo3`/`bevy` which have FFI that Miri can't interpret
 - ASan adds ~2x runtime overhead (not for production use)
 
@@ -1355,14 +1661,14 @@ PyBevy achieves production-ready safety through:
 5. **Async system detection** - Blocks async functions at registration (would break ValidityFlag)
 6. **Borrowed field access** - Direct mutations persist safely (zero overhead)
 7. **Rust unit tests** - Pure-Rust unit tests covering all storage types in `pybevy_storage`
-8. **AddressSanitizer support** - `scripts/check_asan.sh` for runtime memory error detection
+8. **AddressSanitizer support** - runtime memory error detection under `-Z sanitizer=address`
 
 ### Test Coverage
 
 | Layer | What's Tested | Scope |
 |-------|---------------|-------|
 | Rust storage (pybevy_storage) | Validity flags, owned/borrowed storage, field borrows, Drop safety | pure-Rust unit tests |
-| Python safety (tests/safety/) | Parameter conflicts, aliasing, async detection, run-condition read-only, field mutations | Python safety suite |
-| ASan (scripts/check_asan.sh) | Runtime memory errors across Rust + Python boundary | On-demand |
+| Python safety | Parameter conflicts, aliasing, async detection, run-condition read-only, field mutations | maintainer Python safety suite |
+| ASan | Runtime memory errors across Rust + Python boundary | On-demand |
 
 These mechanisms ensure that PyBevy maintains Rust's safety guarantees at runtime, making it safe for production use while keeping performance impact minimal.
