@@ -28,54 +28,13 @@ Write Python, save the file, and see your 3D scene update. Use NumPy, JAX, and P
 
 ### Installation
 
-Pre-compiled wheels are available for the following platforms:
-
-| Platform | Architecture                |
-| -------- | --------------------------- |
-| Linux    | x86_64                      |
-| macOS    | ARM (Apple Silicon), x86_64 |
-| Windows  | x86_64                      |
-
 ```bash
 pip install pybevy --upgrade
 ```
 
-#### Linux System Dependencies
+Pre-compiled wheels are available for Linux (x86_64), macOS (Apple Silicon and x86_64), and Windows (x86_64). Python 3.12+.
 
-PyBevy's pre-built wheels link against system display and audio libraries.
-On most desktop distributions these are already present.
-
-If you see an `ImportError` mentioning `libwayland-client.so` or `libasound.so`:
-
-```bash
-# Debian/Ubuntu
-sudo apt install libwayland-client0 libasound2t64
-
-# Fedora/RHEL
-sudo dnf install alsa-lib wayland
-```
-
-**Docker / headless environments** also need a software GPU driver:
-
-```bash
-apt install -y libwayland-client0 libasound2t64 mesa-vulkan-drivers
-```
-
-ALSA warnings about missing audio devices are harmless and can be ignored.
-
-**Building from source** additionally requires development headers:
-
-```bash
-# Debian/Ubuntu
-sudo apt install libwayland-dev libasound2-dev
-
-# Fedora/RHEL
-sudo dnf install wayland-devel alsa-lib-devel
-```
-
-### Free-Threaded Python (3.13t+)
-
-PyBevy supports Python's free-threaded mode (PEP 703). Non-conflicting Python systems run truly in parallel on separate cores via Bevy's multi-threaded scheduler — no GIL serialization. Validated on CPython 3.14t. Performance depends on workload and scene complexity; see [Benchmarks](docs/benchmarks.md) for methodology and numbers.
+Linux users may need system display and audio libraries. See [Installation](docs/installation.md) for platform details, Docker/headless setup, free-threaded Python, and building from source.
 
 ## Quick Example
 
@@ -217,6 +176,7 @@ PyBevy versions target specific Bevy versions:
 
 | pybevy | Bevy |
 | ------ | ---- |
+| 0.3.x  | 0.19 |
 | 0.2.x  | 0.18 |
 | 0.1.x  | 0.18 |
 
