@@ -7,10 +7,11 @@ Based on Bevy's examples/2d/rotation.rs, this example shows:
 - Combining Single with Query for disjoint entity sets
 - 2D rotation and movement using quaternions
 
-NOTE: The snap_to_player_system currently fails due to a PyBevy limitation.
-PyBevy doesn't yet recognize disjoint filters (With/Without) as making
-queries safe for simultaneous mutable and immutable access. This works
-in Rust Bevy but not in PyBevy yet.
+Note on query access: mixing Single[Transform, With[Player]] with
+Query[Mut[Transform], ..., Without[Player]] is accepted because the
+With/Without filters prove the two entity sets are disjoint — the same
+rule as Rust Bevy. (An earlier PyBevy version rejected this; verified
+working on 0.2.1.)
 """
 
 import math
