@@ -981,6 +981,13 @@ class Text(Component):
     @content.setter
     def content(self, value: str) -> None: ...
 
+    @property
+    def text(self) -> str:
+        """Alias for `content`, matching `Text2d.text`."""
+
+    @text.setter
+    def text(self, value: str) -> None: ...
+
 
 class Node(Component):
     """UI layout node component.

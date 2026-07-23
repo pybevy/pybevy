@@ -781,6 +781,13 @@ class Text2d(Component):
     @text.setter
     def text(self, value: str) -> None: ...
 
+    @property
+    def content(self) -> str:
+        """Alias for `text`, matching UI `Text.content`."""
+
+    @content.setter
+    def content(self, value: str) -> None: ...
+
 class Text2dShadow(Component):
     """Adds a shadow behind Text2d text.
 
