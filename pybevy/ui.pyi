@@ -801,7 +801,7 @@ class Val2:
         offset = Val2.percent(50.0, 50.0)
 
         # Mixed values
-        pos = Val2(Val.Px(10.0), Val.Percent(50.0))
+        pos = Val2(Val.px(10.0), Val.Percent(50.0))
         ```
     """
 
@@ -958,8 +958,8 @@ class Text(Component):
         # Spawn UI text with styling
         node = Node()
         node.position_type = PositionType.Absolute
-        node.top = Val.Px(10.0)
-        node.left = Val.Px(10.0)
+        node.top = Val.px(10.0)
+        node.left = Val.px(10.0)
         commands.spawn((
             Text("Hello, UI!"),
             node,
@@ -998,23 +998,23 @@ class Node(Component):
         # Absolutely positioned node
         node = Node()
         node.position_type = PositionType.Absolute
-        node.top = Val.Px(10.0)
-        node.left = Val.Px(10.0)
+        node.top = Val.px(10.0)
+        node.left = Val.px(10.0)
         commands.spawn((node, Text("Top Left")))
 
         # Flexbox layout
         node = Node()
         node.flex_direction = FlexDirection.Column  # Stack vertically
         node.display = Display.Flex
-        node.width = Val.Px(300.0)
-        node.height = Val.Px(200.0)
+        node.width = Val.px(300.0)
+        node.height = Val.px(200.0)
         commands.spawn(node)
 
         # Custom positioning
         node = Node()
         node.position_type = PositionType.Absolute
-        node.top = Val.Px(50.0)
-        node.left = Val.Px(100.0)
+        node.top = Val.px(50.0)
+        node.left = Val.px(100.0)
         commands.spawn((node, Text("Custom Position")))
         ```
 
