@@ -8,6 +8,7 @@ PyBevy exposes several Cargo features to control optional functionality. Feature
 |---------|---------|-------------|
 | `mcp` | Yes | Model Context Protocol server for AI agents |
 | `linux-display` | No | X11 and Wayland windowing on Linux |
+| `hanabi` | Yes | GPU particle effects via bevy_hanabi (`pybevy.contrib.hanabi`) |
 | `native-plugin` | No | Embed Python systems in native Rust Bevy apps |
 | `native-hot-reload` | No | File-watcher auto-reload for native plugin mode |
 
@@ -73,6 +74,22 @@ Adds automatic file-watching to the native plugin's hot reload system. When a `.
 ```toml
 [dependencies]
 pybevy = { version = "0.18", features = ["native-hot-reload"] }
+```
+
+### `hanabi`
+
+**Default: enabled**
+
+Enables GPU particle effects through [bevy_hanabi](https://github.com/djeedai/bevy_hanabi), exposed as the `pybevy.contrib.hanabi` Python module.
+
+- Pulls in the `pybevy_hanabi` crate and its `bevy_hanabi` dependency
+- Registers `HanabiPlugin`, `EffectAsset` (with `fountain`/`burst` presets), and the `ParticleEffect` component
+- Particles are simulated and rendered entirely on the GPU; no runtime cost unless `HanabiPlugin` is added to the app
+- When disabled, `import pybevy.contrib.hanabi` raises a clear `ImportError`
+
+```toml
+# Disable to reduce compile time and binary size
+pybevy = { version = "0.19", default-features = false, features = ["mcp"] }
 ```
 
 ## Feature Propagation

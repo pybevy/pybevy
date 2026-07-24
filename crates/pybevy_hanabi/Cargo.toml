@@ -1,0 +1,13 @@
+[package]
+name = "pybevy_hanabi"
+version = "0.2.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Hanabi GPU particle bindings for pybevy (contrib)"
+
+[dependencies]
+bevy = { workspace = true }
+bevy_hanabi = { version = "0.19", default-features = false, features = ["2d", "3d"] }
+pyo3 = { workspace = true }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
