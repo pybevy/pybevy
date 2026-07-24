@@ -84,6 +84,14 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         pybevy_control::register_world_wrapper_hook(ecs::world::create_world_wrapper);
     }
 
+    // Optional third-party ecosystem bindings live under pybevy.contrib
+    #[cfg(feature = "hanabi")]
+    {
+        let contrib = PyModule::new(m.py(), "contrib")?;
+        pybevy_hanabi::add_module(&contrib)?;
+        m.add_submodule(&contrib)?;
+    }
+
     // Main crate modules (local code)
     app::add_module(m)?;
     assets::add_module(m)?;

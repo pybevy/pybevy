@@ -28,10 +28,11 @@ name = "pybevy"
 crate-type = ["rlib"]
 
 [features]
-default = ["mcp", "linux-display"]
+default = ["mcp", "linux-display", "hanabi"]
 linux-display = ["bevy/x11", "bevy/wayland"]
 debug = ["bevy/debug"]
 mcp = ["dep:pybevy_control", "pybevy_control?/bevy_winit", "pybevy_reload/mcp"]
+hanabi = ["dep:pybevy_hanabi"]
 native-plugin = []
 native-hot-reload = ["native-plugin", "dep:notify"]
 
@@ -64,6 +65,7 @@ pybevy_camera = { path = "./crates/pybevy_camera", version = "=0.2.1" }
 pybevy_post_process = { path = "./crates/pybevy_post_process", version = "=0.2.1" }
 pybevy_gltf = { path = "./crates/pybevy_gltf", version = "=0.2.1" }
 pybevy_gizmos = { path = "./crates/pybevy_gizmos", version = "=0.2.1" }
+pybevy_hanabi = { path = "./crates/pybevy_hanabi", version = "=0.2.1" }
 pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.2.1" }
 pybevy_material = { path = "./crates/pybevy_material", version = "=0.2.1" }
 pybevy_mesh = { path = "./crates/pybevy_mesh", version = "=0.2.1" }
@@ -116,6 +118,7 @@ pybevy_pbr = { workspace = true }
 pybevy_world_serialization = { workspace = true }
 pybevy_reload = { workspace = true }
 pybevy_control = { workspace = true, optional = true }
+pybevy_hanabi = { workspace = true, optional = true }
 rayon = "1.10"
 numpy = { workspace = true }
 
