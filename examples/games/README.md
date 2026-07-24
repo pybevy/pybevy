@@ -25,7 +25,5 @@ Every game supports two env vars for demos and CI:
 BENCH=1 PYBEVY_MAX_FRAMES=600 python examples/games/survivors.py
 ```
 
-Assets: `assets/games/` contains a hero sprite and wizard sprite (Kenney
-"Pixel Platformer" / "Tiny Dungeon") and a click sound (Kenney "Interface
-Sounds") — all CC0 from https://kenney.nl (attribution not required, given
-with thanks).
+Assets: the three files in `assets/games/` are CC0 by [Kenney](https://kenney.nl)
+— full attribution and source links in [`assets/games/CREDITS.md`](../../assets/games/CREDITS.md).
