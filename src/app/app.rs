@@ -1096,8 +1096,18 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
 
-        // Skip during hot reload — resources are preserved or re-inserted via insert_resource
+        // If this is a temp reload app, capture a default instance for
+        // re-insertion after the reload (mirrors insert_resource above).
+        // Custom Python resources are wiped on a Full reload and only
+        // pending_resources are re-registered, so skipping here leaves any
+        // init_resource'd type permanently missing — every system that
+        // parameterizes on it dies with a buffered param error (#33).
         if pyself.is_reload_temp.get() {
+            let instance = resource.call0()?;
+            pyself
+                .pending_resources
+                .borrow_mut()
+                .push(instance.unbind());
             return Ok(pyself.into());
         }
 
