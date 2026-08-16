@@ -301,14 +301,14 @@ class MouseInput(Resource):
 
     Example:
         ```python
-        def handle_mouse_system(mouse: MouseInput) -> None:
-            if mouse.just_pressed(MouseButton.Left):
+        def handle_mouse_system(mouse: Res[MouseInput]) -> None:
+            if mouse.just_pressed(MouseButton.Left()):
                 print("Left mouse button was just pressed!")
 
-            if mouse.pressed(MouseButton.Right):
+            if mouse.pressed(MouseButton.Right()):
                 print("Right mouse button is being held")
 
-            if mouse.just_released(MouseButton.Middle):
+            if mouse.just_released(MouseButton.Middle()):
                 print("Middle mouse button was just released")
         ```
     """
