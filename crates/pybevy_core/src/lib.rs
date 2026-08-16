@@ -415,12 +415,12 @@ pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};
 pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
-    AccessMode, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, AssetBorrowCounter,
-    AssetRuntimeCore, AssetRuntimeError, AssetStorage, BorrowableStorage, ComponentStorage,
-    ComponentStorageInner, FieldOffset, FieldStorage, FieldStorageInner, FieldType,
-    FilteredEntityAccess, FromBorrowedStorage, ResourceStorage, ResourceStorageInner, StorageError,
-    ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge,
-    ViewFieldAccess, allocate_id, consume_unstored_id,
+    AccessMode, ActiveAssetAccess, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError,
+    AssetAccessRegistry, AssetBorrowCounter, AssetRuntimeCore, AssetRuntimeError, AssetStorage,
+    BorrowableStorage, ComponentStorage, ComponentStorageInner, FieldOffset, FieldStorage,
+    FieldStorageInner, FieldType, FilteredEntityAccess, FromBorrowedStorage, ResourceStorage,
+    ResourceStorageInner, StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard,
+    ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, allocate_id, consume_unstored_id,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{
