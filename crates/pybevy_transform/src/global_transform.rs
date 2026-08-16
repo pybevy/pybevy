@@ -1,12 +1,12 @@
 use bevy::transform::components::{GlobalTransform, Transform};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine3a::PyAffine3A, bounding::PyIsometry3d, mat4::PyMat4, quat::PyQuat, vec3::PyVec3,
 };
 use pyo3::prelude::*;
 
-use crate::transform::PyTransform;
+use crate::transform::{PyTransform, format_transform_repr};
 
 #[pycomponent(GlobalTransform, bridge, no_insert)]
 #[pyclass(name = "GlobalTransform", extends = pybevy_core::PyComponent, eq)]
@@ -39,17 +39,17 @@ impl PyGlobalTransform {
 
     #[getter]
     pub fn translation(&self) -> PyResult<PyVec3> {
-        Ok(self.as_ref()?.translation().into())
+        Ok(computed_owned(self.as_ref()?.translation().into()))
     }
 
     #[getter]
     pub fn rotation(&self) -> PyResult<PyQuat> {
-        Ok(self.as_ref()?.rotation().into())
+        Ok(computed_owned(self.as_ref()?.rotation().into()))
     }
 
     #[getter]
     pub fn scale(&self) -> PyResult<PyVec3> {
-        Ok(self.as_ref()?.scale().into())
+        Ok(computed_owned(self.as_ref()?.scale().into()))
     }
 
     pub fn to_scale_rotation_translation(&self) -> PyResult<(PyVec3, PyQuat, PyVec3)> {
@@ -75,7 +75,10 @@ impl PyGlobalTransform {
     }
 
     pub fn transform_point(&self, point: PyVec3) -> PyResult<PyVec3> {
-        Ok(self.as_ref()?.transform_point(point.into()).into())
+        Ok(self
+            .as_ref()?
+            .transform_point(point.try_into()?)
+            .try_into()?)
     }
 
     pub fn reparented_to(
@@ -83,7 +86,7 @@ impl PyGlobalTransform {
         py: Python<'_>,
         parent: &PyGlobalTransform,
     ) -> PyResult<Py<PyTransform>> {
-        let transform = self.as_ref()?.reparented_to(parent.as_ref()?);
+        let transform = self.as_ref()?.reparented_to(parent.as_ref()?.reborrow());
         Py::new(py, PyTransform::from_owned(transform))
     }
 
@@ -124,12 +127,12 @@ impl PyGlobalTransform {
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
             Ok(gt) => {
-                let t = gt.translation();
-                let r = gt.rotation();
-                let s = gt.scale();
-                Ok(format!(
-                    "GlobalTransform(translation={:?}, rotation={:?}, scale={:?})",
-                    t, r, s
+                let (scale, rotation, translation) = gt.to_scale_rotation_translation();
+                Ok(format_transform_repr(
+                    "GlobalTransform",
+                    translation,
+                    rotation,
+                    scale,
                 ))
             }
             Err(_) => Ok("GlobalTransform(<invalid>)".to_string()),

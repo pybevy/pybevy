@@ -179,7 +179,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_scale(&mut self, scale: PyVec2) -> PyResult<()> {
-        self.as_mut()?.scale = scale.into();
+        self.as_mut()?.scale = scale.try_into()?;
         Ok(())
     }
 }

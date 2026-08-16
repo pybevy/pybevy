@@ -44,6 +44,5 @@ PyBevy is split into modular feature crates.
 | [`pybevy_time`](pybevy_time/) | Time, Timer, Stopwatch |
 | [`pybevy_transform`](pybevy_transform/) | Transform, GlobalTransform |
 | [`pybevy_ui`](pybevy_ui/) | UI nodes, styles, interaction |
-| [`pybevy_wgpu`](pybevy_wgpu/) | wgpu type wrappers (Extent3d, TextureDimension, TextureFormat) |
 | [`pybevy_window`](pybevy_window/) | Window management, cursor, events |
 | [`pybevy_world_serialization`](pybevy_world_serialization/) | World serialization (WorldAsset, DynamicWorld, spawning) |

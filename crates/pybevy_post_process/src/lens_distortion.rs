@@ -30,16 +30,22 @@ impl PyLensDistortion {
         multiplier: Option<PyVec2>,
         center: Option<PyVec2>,
         edge_curvature: f32,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let lens_distortion = LensDistortion {
             intensity,
             scale,
-            multiplier: multiplier.map(Into::into).unwrap_or(Vec2::ONE),
-            center: center.map(Into::into).unwrap_or(Vec2::splat(0.5)),
+            multiplier: multiplier
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(Vec2::ONE),
+            center: center
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(Vec2::splat(0.5)),
             edge_curvature,
         };
 
-        Self::from_owned(lens_distortion).into()
+        Ok(Self::from_owned(lens_distortion).into())
     }
 
     #[getter]
@@ -71,7 +77,7 @@ impl PyLensDistortion {
 
     #[setter]
     pub fn set_multiplier(&mut self, multiplier: PyVec2) -> PyResult<()> {
-        self.as_mut()?.multiplier = multiplier.into();
+        self.as_mut()?.multiplier = multiplier.try_into()?;
         Ok(())
     }
 
@@ -82,7 +88,7 @@ impl PyLensDistortion {
 
     #[setter]
     pub fn set_center(&mut self, center: PyVec2) -> PyResult<()> {
-        self.as_mut()?.center = center.into();
+        self.as_mut()?.center = center.try_into()?;
         Ok(())
     }
 
