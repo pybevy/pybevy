@@ -1,9 +1,9 @@
 """Iterates and prints gamepad input and connection events.
 
 Demonstrates:
-- GamepadConnection events (connect/disconnect)
-- GamepadAxisChanged events (continuous analog values)
-- GamepadButtonChanged events (continuous button pressure)
+- GamepadConnectionEvent events (connect/disconnect)
+- GamepadAxisChangedEvent events (continuous analog values)
+- GamepadButtonChangedEvent events (continuous button pressure)
 - Using MessageReader for event-based gamepad input
 
 Note: PyBevy's gamepad events don't include entity information (which gamepad
@@ -12,24 +12,26 @@ example which uses the Gamepad resource.
 """
 
 from pybevy.input import (
-    GamepadAxisChanged,
-    GamepadButtonChanged,
+    GamepadAxisChangedEvent,
+    GamepadButtonChangedEvent,
     GamepadConnection,
+    GamepadConnectionEvent,
 )
 from pybevy.prelude import *
 
 
 def gamepad_events(
-    connection_events: MessageReader[GamepadConnection],
-    axis_changed_events: MessageReader[GamepadAxisChanged],
-    button_changed_events: MessageReader[GamepadButtonChanged],
+    connection_events: MessageReader[GamepadConnectionEvent],
+    axis_changed_events: MessageReader[GamepadAxisChangedEvent],
+    button_changed_events: MessageReader[GamepadButtonChangedEvent],
 ) -> None:
     """Print all gamepad events."""
     for connection_event in connection_events:
-        if connection_event.connected:
-            print("Gamepad connected")
-        else:
-            print("Gamepad disconnected")
+        match connection_event.connection:
+            case GamepadConnection.Connected(name, _, _):
+                print(f"Gamepad connected: {name}")
+            case GamepadConnection.Disconnected():
+                print("Gamepad disconnected")
 
     for axis_changed_event in axis_changed_events:
         print(f"{axis_changed_event.axis} is changed to {axis_changed_event.value}")
