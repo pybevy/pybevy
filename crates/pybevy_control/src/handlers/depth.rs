@@ -7,6 +7,43 @@ use bevy::{
 use super::spatial::compute_world_aabb;
 use crate::bridge::ControlError;
 
+const EXPLICIT_SAMPLE_EXTENT: i64 = 800;
+
+fn camera_basis(position: Vec3, target: Vec3) -> Result<(Vec3, Vec3, Vec3), ControlError> {
+    let forward = (target - position).normalize_or_zero();
+    if forward == Vec3::ZERO {
+        return Err(ControlError::invalid_params(
+            "position and look_at must be distinct finite points",
+        ));
+    }
+    let reference_up = if forward.dot(Vec3::Y).abs() > 0.999 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+    let right = forward.cross(reference_up).normalize();
+    let up = right.cross(forward).normalize();
+    Ok((forward, right, up))
+}
+
+fn validate_sample_points(sample_points: &[[i64; 2]]) -> Result<Vec<[u32; 2]>, ControlError> {
+    sample_points
+        .iter()
+        .enumerate()
+        .map(|(index, &[x, y])| {
+            if !(0..EXPLICIT_SAMPLE_EXTENT).contains(&x)
+                || !(0..EXPLICIT_SAMPLE_EXTENT).contains(&y)
+            {
+                return Err(ControlError::invalid_params(format!(
+                    "sample_points[{index}] must be within [0, 800) on both axes (got [{x}, {y}])"
+                )));
+            }
+
+            Ok([x as u32, y as u32])
+        })
+        .collect()
+}
+
 /// Compute depth samples by casting rays from a camera position through sample points
 /// against all entity world AABBs.
 ///
@@ -16,16 +53,25 @@ pub fn compute_depth_samples(
     world: &mut World,
     position: &Option<[f32; 3]>,
     look_at: &Option<[f32; 3]>,
-    sample_points: &Option<Vec<[u32; 2]>>,
+    sample_points: &Option<Vec<[i64; 2]>>,
     grid_density: &Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
+    if matches!(grid_density, Some(0)) {
+        return Err(ControlError::invalid_params(
+            "grid_density must be at least 1",
+        ));
+    }
+
+    let explicit_points = sample_points
+        .as_deref()
+        .map(validate_sample_points)
+        .transpose()?;
+
     // Determine camera position and orientation
     let (cam_pos, cam_forward, cam_right, cam_up) = if let Some(pos) = position {
         let p = Vec3::from_array(*pos);
         let target = Vec3::from_array(look_at.unwrap_or([0.0, 0.0, 0.0]));
-        let forward = (target - p).normalize_or_zero();
-        let right = forward.cross(Vec3::Y).normalize_or_zero();
-        let up = right.cross(forward).normalize_or_zero();
+        let (forward, right, up) = camera_basis(p, target)?;
         (p, forward, right, up)
     } else {
         // Try to find active scene camera
@@ -50,8 +96,9 @@ pub fn compute_depth_samples(
 
     // Generate sample points
     let density = grid_density.unwrap_or(8);
-    let points: Vec<[u32; 2]> = if let Some(pts) = sample_points {
-        pts.clone()
+    let explicit_sampling = explicit_points.is_some();
+    let points: Vec<[u32; 2]> = if let Some(pts) = explicit_points {
+        pts
     } else {
         // Generate NxN grid
         let mut pts = Vec::new();
@@ -80,17 +127,18 @@ pub fn compute_depth_samples(
     }
 
     // Cast rays and find intersections
+    let occurrences = super::spatial::NameOccurrences::collect(world);
     let mut samples = Vec::new();
-    let grid_size = if sample_points.is_some() {
-        800.0
+    let divisor = if explicit_sampling {
+        EXPLICIT_SAMPLE_EXTENT as f32
     } else {
         density as f32
     };
-
+    let cell_offset = if explicit_sampling { 0.0 } else { 0.5 };
     for point in &points {
         // Convert to normalized coordinates (-1 to 1)
-        let nx = (point[0] as f32 / grid_size) * 2.0 - 1.0;
-        let ny = -((point[1] as f32 / grid_size) * 2.0 - 1.0); // flip Y
+        let nx = ((point[0] as f32 + cell_offset) / divisor) * 2.0 - 1.0;
+        let ny = -(((point[1] as f32 + cell_offset) / divisor) * 2.0 - 1.0); // flip Y
 
         // Compute ray direction
         let dir = (cam_forward + cam_right * nx * fov_half_tan + cam_up * ny * fov_half_tan)
@@ -110,12 +158,11 @@ pub fn compute_depth_samples(
             }
         }
 
-        let sample = if let Some((entity, distance)) = nearest_hit {
+        let mut sample = if let Some((entity, distance)) = nearest_hit {
             let hit_pos = cam_pos + dir * distance;
             let name = world.get::<Name>(entity).map(|n| n.as_str().to_string());
-            let label = super::spatial::entity_label(world, entity);
+            let label = super::spatial::entity_label_with(world, entity, &occurrences);
             serde_json::json!({
-                "screen": [point[0], point[1]],
                 "hit": true,
                 "distance": distance,
                 "world_position": [hit_pos.x, hit_pos.y, hit_pos.z],
@@ -125,11 +172,12 @@ pub fn compute_depth_samples(
             })
         } else {
             serde_json::json!({
-                "screen": [point[0], point[1]],
                 "hit": false,
                 "distance": null,
             })
         };
+        let coordinate_key = if explicit_sampling { "pixel" } else { "grid" };
+        sample[coordinate_key] = serde_json::json!([point[0], point[1]]);
 
         samples.push(sample);
     }
@@ -140,6 +188,7 @@ pub fn compute_depth_samples(
         "sample_count": samples.len(),
         "hit_count": hit_count,
         "camera_position": [cam_pos.x, cam_pos.y, cam_pos.z],
+        "coordinate_space": if explicit_sampling { "pixels_800x800" } else { "grid_indices" },
         "samples": samples,
     }))
 }
@@ -260,6 +309,10 @@ mod tests {
 
         assert_eq!(result["sample_count"], 9); // 3x3 grid
         assert!(result["hit_count"].as_u64().unwrap() > 0); // rays should hit the large cube
+        assert_eq!(result["coordinate_space"], "grid_indices");
+        assert_eq!(result["samples"][0]["grid"], serde_json::json!([0, 0]));
+        assert!(result["samples"][0].get("pixel").is_none());
+        assert!(result["samples"][0].get("screen").is_none());
         let cam_pos = result["camera_position"].as_array().unwrap();
         assert!((cam_pos[0].as_f64().unwrap() - 0.0).abs() < 1e-5);
         assert!((cam_pos[1].as_f64().unwrap() - 0.0).abs() < 1e-5);
@@ -289,6 +342,28 @@ mod tests {
     }
 
     #[test]
+    fn odd_density_grid_samples_the_center_cell() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::splat(-0.25), Vec3::splat(0.25)),
+            GlobalTransform::default(),
+        ));
+
+        let result = compute_depth_samples(
+            &mut world,
+            &Some([0.0, 0.0, 10.0]),
+            &Some([0.0, 0.0, 0.0]),
+            &None,
+            &Some(3),
+        )
+        .unwrap();
+
+        let center = &result["samples"][4];
+        assert_eq!(center["grid"], serde_json::json!([1, 1]));
+        assert_eq!(center["hit"], true);
+    }
+
+    #[test]
     fn compute_depth_samples_custom_sample_points() {
         let mut world = World::new();
         world.spawn((
@@ -299,7 +374,7 @@ mod tests {
 
         let position = Some([0.0_f32, 0.0, 10.0]);
         let look_at = Some([0.0_f32, 0.0, 0.0]);
-        let sample_points = Some(vec![[400_u32, 400]]);
+        let sample_points = Some(vec![[400_i64, 400]]);
         let grid_density = None;
 
         let result = compute_depth_samples(
@@ -312,9 +387,39 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["sample_count"], 1);
+        assert_eq!(result["coordinate_space"], "pixels_800x800");
+        assert_eq!(result["samples"][0]["pixel"], serde_json::json!([400, 400]));
+        assert!(result["samples"][0].get("grid").is_none());
+        assert!(result["samples"][0].get("screen").is_none());
         // The center point (400,400) maps to (0,0) in normalized coords on an 800-pixel grid,
         // which shoots straight forward and should hit the cube at origin.
         assert!(result["hit_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn compute_depth_samples_rejects_out_of_range_points_before_camera_lookup() {
+        let mut world = World::new();
+        let sample_points = Some(vec![[99999_i64, -50]]);
+
+        let error = compute_depth_samples(&mut world, &None, &None, &sample_points, &None)
+            .expect_err("out-of-range coordinates must be rejected");
+
+        assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "sample_points[0] must be within [0, 800) on both axes (got [99999, -50])"
+        );
+    }
+
+    #[test]
+    fn compute_depth_samples_rejects_zero_grid_density_before_camera_lookup() {
+        let mut world = World::new();
+
+        let error = compute_depth_samples(&mut world, &None, &None, &None, &Some(0))
+            .expect_err("zero grid density must be rejected");
+
+        assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
+        assert_eq!(error.message, "grid_density must be at least 1");
     }
 
     #[test]
@@ -363,11 +468,10 @@ mod tests {
         let samples = result["samples"].as_array().unwrap();
         // With grid_density=1 we get a single sample at the center
         let sample = &samples[0];
-        if sample["hit"].as_bool().unwrap() {
-            assert_eq!(sample["entity_name"].as_str().unwrap(), "TestCube");
-            assert!(sample["distance"].as_f64().unwrap() > 0.0);
-            assert!(sample["world_position"].as_array().is_some());
-        }
+        assert!(sample["hit"].as_bool().unwrap());
+        assert_eq!(sample["entity_name"].as_str().unwrap(), "TestCube");
+        assert!(sample["distance"].as_f64().unwrap() > 0.0);
+        assert!(sample["world_position"].as_array().is_some());
     }
 
     #[test]
@@ -421,5 +525,53 @@ mod tests {
         assert!(t.is_some());
         // Should hit at x=-3.0, so t ≈ 3.0
         assert!((t.unwrap() - 3.0).abs() < 1e-4, "t={}", t.unwrap());
+    }
+
+    #[test]
+    fn vertical_camera_basis_remains_orthonormal() {
+        let (forward, right, up) = camera_basis(Vec3::new(0.0, 11.0, 0.0), Vec3::ZERO).unwrap();
+
+        assert_eq!(forward, Vec3::NEG_Y);
+        assert!((right.length() - 1.0).abs() < 1e-6);
+        assert!((up.length() - 1.0).abs() < 1e-6);
+        assert!(forward.dot(right).abs() < 1e-6);
+        assert!(forward.dot(up).abs() < 1e-6);
+        assert!(right.dot(up).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vertical_camera_produces_distinct_grid_samples() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(
+                Vec3::new(-100.0, -0.1, -100.0),
+                Vec3::new(100.0, 0.1, 100.0),
+            ),
+            GlobalTransform::default(),
+        ));
+
+        let result = compute_depth_samples(
+            &mut world,
+            &Some([0.0, 11.0, 0.0]),
+            &Some([0.0, 0.0, 0.0]),
+            &None,
+            &Some(3),
+        )
+        .unwrap();
+        let samples = result["samples"].as_array().unwrap();
+
+        assert_eq!(result["hit_count"], 9);
+        assert_ne!(samples[0]["world_position"], samples[8]["world_position"]);
+    }
+
+    #[test]
+    fn coincident_camera_points_are_rejected() {
+        let error = camera_basis(Vec3::ONE, Vec3::ONE).unwrap_err();
+
+        assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "position and look_at must be distinct finite points"
+        );
     }
 }

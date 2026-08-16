@@ -2,6 +2,7 @@ pub mod depth;
 pub mod diagnostics;
 pub mod entity;
 pub mod entity_count;
+pub mod frame_analysis;
 pub mod pyo3;
 pub mod reflect_mutate;
 pub mod reload;
