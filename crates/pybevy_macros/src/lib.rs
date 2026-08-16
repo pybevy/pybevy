@@ -6,6 +6,8 @@ mod app;
 mod asset;
 mod component;
 mod derive;
+mod enum_component;
+mod enum_message;
 mod enum_spec;
 mod enums;
 mod field;
@@ -15,6 +17,7 @@ mod plugin;
 mod resource;
 mod unit;
 mod util;
+mod value;
 
 #[proc_macro_attribute]
 pub fn pybevy_app(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -59,6 +62,11 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn pyfield(attr: TokenStream, item: TokenStream) -> TokenStream {
     field::pyfield(attr, item)
+}
+
+#[proc_macro_attribute]
+pub fn pyvalue(attr: TokenStream, item: TokenStream) -> TokenStream {
+    value::pyvalue(attr, item)
 }
 
 #[proc_macro_attribute]

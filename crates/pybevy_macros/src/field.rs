@@ -104,12 +104,12 @@ pub fn pyfield(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #[inline(always)]
-            pub(crate) fn as_ref(&self) -> PyResult<&#bevy_type> {
+            pub(crate) fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                 Ok(self.storage.as_ref()?)
             }
 
             #[inline(always)]
-            pub(crate) fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+            pub(crate) fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                 Ok(self.storage.as_mut()?)
             }
         }

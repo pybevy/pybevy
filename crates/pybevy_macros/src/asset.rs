@@ -79,12 +79,12 @@ pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #[inline(always)]
-            pub fn as_ref(&self) -> PyResult<&#bevy_type> {
+            pub fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                 Ok(self.storage.as_ref()?)
             }
 
             #[inline(always)]
-            pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+            pub fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                 Ok(self.storage.as_mut()?)
             }
         }
@@ -138,6 +138,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         bridge: bool,
         bridge_name: Option<String>,
         not_loadable: bool,
+        material: bool,
         input_converter: bool,
     }
 
@@ -149,6 +150,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut bridge_name = None;
             let mut not_loadable = false;
             let mut input_converter = false;
+            let mut material = false;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -163,12 +165,13 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "no_clone" => no_clone = true,
                         "bridge" => bridge = true,
                         "not_loadable" => not_loadable = true,
+                        "material" => material = true,
                         "input_converter" => input_converter = true,
                         other => {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter",
+                                    "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter, material",
                                     other
                                 ),
                             ));
@@ -191,6 +194,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                 bridge_name,
                 not_loadable,
                 input_converter,
+                material,
             })
         }
     }
@@ -199,6 +203,34 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
     let bevy_type = &args.bevy_type;
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
+
+    // `material` inserts PyMaterial between PyAsset and the wrapper, mirroring
+    // `impl Material for T` in Bevy. The assertion makes a mislabelled wrapper a
+    // compile error; the reverse direction is covered by the issubclass pins.
+    let (initializer, constructor_return, material_assert) = if args.material {
+        (
+            quote! {
+                |value| pyo3::PyClassInitializer::from(pybevy_core::PyAsset)
+                    .add_subclass(pybevy_core::PyMaterial)
+                    .add_subclass(value)
+            },
+            quote! { pyo3::PyClassInitializer<Self> },
+            quote! {
+                const _: fn() = {
+                    fn assert_material<T: bevy::pbr::Material>() {}
+                    assert_material::<#bevy_type>
+                };
+            },
+        )
+    } else {
+        // Unchanged for every other asset: the tuple is the documented return
+        // type and downstream callers destructure it.
+        (
+            quote! { |value| (value, pybevy_core::PyAsset) },
+            quote! { (Self, pybevy_core::PyAsset) },
+            quote! {},
+        )
+    };
 
     let clone_impl = if args.no_clone {
         quote! {}
@@ -221,6 +253,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.bridge_name.as_deref(),
             args.not_loadable,
             args.input_converter,
+            args.material,
         )
     } else {
         quote! {}
@@ -228,6 +261,8 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #input
+
+        #material_assert
 
         impl pybevy_core::NativeAsset for #py_type {
             type Asset = #bevy_type;
@@ -256,23 +291,23 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         impl #py_type {
-            /// Create from an owned asset value. Returns tuple for PyO3 class inheritance.
-            pub fn from_owned(asset: #bevy_type) -> (Self, pybevy_core::PyAsset) {
-                (Self { storage: pybevy_core::AssetStorage::owned(asset) }, pybevy_core::PyAsset)
+            /// Create from an owned asset value, initialized for PyO3 class inheritance.
+            pub fn from_owned(asset: #bevy_type) -> #constructor_return {
+                (#initializer)(Self { storage: pybevy_core::AssetStorage::owned(asset) })
             }
 
             /// Create from a borrowed asset storage (for asset iteration).
-            pub fn from_borrowed(storage: pybevy_core::AssetStorage<#bevy_type>) -> (Self, pybevy_core::PyAsset) {
-                (Self { storage }, pybevy_core::PyAsset)
+            pub fn from_borrowed(storage: pybevy_core::AssetStorage<#bevy_type>) -> #constructor_return {
+                (#initializer)(Self { storage })
             }
 
             #[inline(always)]
-            pub fn as_ref(&self) -> PyResult<&#bevy_type> {
+            pub fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                 Ok(self.storage.as_ref()?)
             }
 
             #[inline(always)]
-            pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+            pub fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                 Ok(self.storage.as_mut()?)
             }
         }
@@ -290,7 +325,18 @@ pub(crate) fn generate_asset_bridge_tokens(
     bridge_name_override: Option<&str>,
     not_loadable: bool,
     input_converter: bool,
+    material: bool,
 ) -> proc_macro2::TokenStream {
+    let bridge_initializer = if material {
+        quote! {
+            |value| pyo3::PyClassInitializer::from(pybevy_core::PyAsset)
+                .add_subclass(pybevy_core::PyMaterial)
+                .add_subclass(value)
+        }
+    } else {
+        quote! { |value| (value, pybevy_core::PyAsset) }
+    };
+
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
         let name = py_type.to_string();
@@ -354,6 +400,102 @@ pub(crate) fn generate_asset_bridge_tokens(
                 world.register_component::<bevy::asset::Assets<#bevy_type>>()
             }
 
+            fn register_event_resource_id(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
+                world.register_component::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>()
+            }
+
+            fn read_events(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+            ) -> Vec<pybevy_core::AssetEventRecord> {
+                let Some(messages) = world.get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>() else {
+                    return Vec::new();
+                };
+                let mut cursor = cursor_state
+                    .as_ref()
+                    .and_then(|state| state.downcast_ref::<bevy::ecs::message::MessageCursor<bevy::asset::AssetEvent<#bevy_type>>>())
+                    .cloned()
+                    .unwrap_or_else(|| messages.get_cursor());
+                let events = cursor
+                    .read(messages)
+                    .map(|event| match event {
+                        bevy::asset::AssetEvent::Added { id } => pybevy_core::AssetEventRecord::Added { id: id.untyped() },
+                        bevy::asset::AssetEvent::Modified { id } => pybevy_core::AssetEventRecord::Modified { id: id.untyped() },
+                        bevy::asset::AssetEvent::Removed { id } => pybevy_core::AssetEventRecord::Removed { id: id.untyped() },
+                        bevy::asset::AssetEvent::Unused { id } => pybevy_core::AssetEventRecord::Unused { id: id.untyped() },
+                        bevy::asset::AssetEvent::LoadedWithDependencies { id } => pybevy_core::AssetEventRecord::LoadedWithDependencies { id: id.untyped() },
+                    })
+                    .collect();
+                *cursor_state = Some(Box::new(cursor));
+                events
+            }
+
+            fn clear_events(&self, world: &mut bevy::ecs::world::World) {
+                if let Some(mut messages) = world.get_resource_mut::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>() {
+                    messages.clear();
+                }
+            }
+
+            fn events_is_empty(&self, world: &bevy::ecs::world::World) -> bool {
+                world
+                    .get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>()
+                    .is_none_or(|messages| messages.is_empty())
+            }
+
+            fn event_count(&self, world: &bevy::ecs::world::World) -> usize {
+                world
+                    .get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>()
+                    .map_or(0, |messages| messages.len())
+            }
+
+            fn register_load_failed_resource_id(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
+                world.register_component::<bevy::ecs::message::Messages<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>()
+            }
+
+            fn read_load_failed_events(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+            ) -> Vec<pybevy_core::AssetLoadFailedRecord> {
+                let Some(messages) = world.get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>() else {
+                    return Vec::new();
+                };
+                let mut cursor = cursor_state
+                    .as_ref()
+                    .and_then(|state| state.downcast_ref::<bevy::ecs::message::MessageCursor<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>())
+                    .cloned()
+                    .unwrap_or_else(|| messages.get_cursor());
+                let events = cursor
+                    .read(messages)
+                    .map(|event| pybevy_core::AssetLoadFailedRecord {
+                        id: event.id.untyped(),
+                        path: event.path.clone(),
+                        error: event.error.to_string(),
+                    })
+                    .collect();
+                *cursor_state = Some(Box::new(cursor));
+                events
+            }
+
+            fn clear_load_failed_events(&self, world: &mut bevy::ecs::world::World) {
+                if let Some(mut messages) = world.get_resource_mut::<bevy::ecs::message::Messages<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>() {
+                    messages.clear();
+                }
+            }
+
+            fn load_failed_events_is_empty(&self, world: &bevy::ecs::world::World) -> bool {
+                world
+                    .get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>()
+                    .is_none_or(|messages| messages.is_empty())
+            }
+
+            fn load_failed_event_count(&self, world: &bevy::ecs::world::World) -> usize {
+                world
+                    .get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>()
+                    .map_or(0, |messages| messages.len())
+            }
+
             #is_loadable_impl
 
             #try_convert_input_impl
@@ -361,34 +503,36 @@ pub(crate) fn generate_asset_bridge_tokens(
             fn get(
                 &self,
                 world: &bevy::ecs::world::World,
-                handle: &bevy::asset::UntypedHandle,
+                id: bevy::asset::UntypedAssetId,
                 validity: pybevy_core::ValidityFlagWithMode,
                 borrow_counter: pybevy_core::AssetBorrowCounter,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
                 use bevy::asset::Assets;
 
+                let resource_state = borrow_counter.scope().resource_state().clone();
+                let _resource_guard = resource_state.try_read()?;
+                let world_cell = world.as_unsafe_world_cell_readonly();
                 let assets = world.get_resource::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         concat!("Assets<", #asset_name, "> resource not found")
                     )
                 })?;
 
-                let typed_handle = handle.clone().typed::<#bevy_type>();
-                let asset_id = typed_handle.id().into();
-                match assets.get(&typed_handle) {
+                let typed_id = id.typed::<#bevy_type>();
+                match assets.get(typed_id) {
                     Some(asset) => {
                         let ptr = asset as *const #bevy_type;
                         // SAFETY: `ptr` is derived from a valid Bevy `Assets` borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                         let storage = unsafe {
                             pybevy_core::AssetStorage::borrowed_readonly_tracked(
                                 ptr,
-                                asset_id,
+                                world_cell,
+                                id,
                                 validity,
-                                handle.clone(),
                                 borrow_counter,
                             )
-                        };
+                        }?;
                         let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
                         Ok(Some(obj.into_any()))
                     }
@@ -398,37 +542,41 @@ pub(crate) fn generate_asset_bridge_tokens(
 
             fn get_mut(
                 &self,
-                world: &mut bevy::ecs::world::World,
-                handle: &bevy::asset::UntypedHandle,
+                world_cell: bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell<'_>,
+                id: bevy::asset::UntypedAssetId,
                 validity: pybevy_core::ValidityFlagWithMode,
                 borrow_counter: pybevy_core::AssetBorrowCounter,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-                use bevy::{asset::Assets, ecs::world::World};
+                use bevy::asset::Assets;
 
-                let world_ptr = world as *mut World;
-                let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
-                    )
-                })?;
+                let resource_state = borrow_counter.scope().resource_state().clone();
+                let _resource_guard = resource_state.try_read()?;
+                // SAFETY: the caller declared mutable scheduler access to the
+                // exact resource. Wrapper creation intentionally derives only
+                // a shared pointer; its first write re-derives mutable access.
+                let assets = unsafe { world_cell.get_resource::<Assets<#bevy_type>>() }
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            concat!("Assets<", #asset_name, "> resource not found")
+                        )
+                    })?;
 
-                let typed_handle = handle.clone().typed::<#bevy_type>();
-                let asset_id = typed_handle.id();
-                match assets.get_mut_untracked(&typed_handle) {
+                let typed_id = id.typed::<#bevy_type>();
+                match assets.get(typed_id) {
                     Some(asset) => {
-                        let ptr = asset as *mut #bevy_type;
-                        // SAFETY: `ptr` is derived from a valid Bevy `Assets` mutable borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
+                        let ptr = asset as *const #bevy_type;
+                        // SAFETY: `ptr` is used for reads only. Mutable access
+                        // is lazily re-derived through the retained world cell.
                         let storage = unsafe {
                             pybevy_core::AssetStorage::borrowed_mut_tracked(
                                 ptr,
-                                world_ptr,
-                                asset_id,
+                                world_cell,
+                                typed_id,
                                 validity,
-                                handle.clone(),
                                 borrow_counter,
                             )
-                        };
+                        }?;
                         let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
                         Ok(Some(obj.into_any()))
                     }
@@ -445,14 +593,29 @@ pub(crate) fn generate_asset_bridge_tokens(
                 use bevy::asset::Assets;
                 use pybevy_core::NativeAsset;
 
+                pybevy_core::ensure_asset_access_registry(world);
+                let resource_state = world
+                    .resource::<pybevy_core::AssetAccessRegistry>()
+                    .state_for(std::any::TypeId::of::<#bevy_type>(), #asset_name);
+                let _resource_guard = resource_state.try_write()?;
+                if resource_state.active() > 0 {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        pybevy_core::AssetRuntimeError::BorrowedAssetsLive {
+                            asset_name: #asset_name.to_owned(),
+                        }
+                        .to_string(),
+                    ));
+                }
                 let mut py_asset = asset.extract::<pyo3::PyRefMut<#py_type>>()?;
-                let native_asset = py_asset.take()?;
-
+                // Resolve the collection before take() so a failed add leaves the
+                // Python wrapper still owning its asset.
                 let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         concat!("Assets<", #asset_name, "> resource not found")
                     )
                 })?;
+                resource_state.advance_epoch();
+                let native_asset = py_asset.take()?;
 
                 let handle = assets.add(native_asset);
                 Ok(handle.untyped())
@@ -461,18 +624,31 @@ pub(crate) fn generate_asset_bridge_tokens(
             fn remove(
                 &self,
                 world: &mut bevy::ecs::world::World,
-                handle: &bevy::asset::UntypedHandle,
+                id: bevy::asset::UntypedAssetId,
             ) -> pyo3::PyResult<bool> {
                 use bevy::asset::Assets;
 
+                pybevy_core::ensure_asset_access_registry(world);
+                let resource_state = world
+                    .resource::<pybevy_core::AssetAccessRegistry>()
+                    .state_for(std::any::TypeId::of::<#bevy_type>(), #asset_name);
+                let _resource_guard = resource_state.try_write()?;
+                if resource_state.active() > 0 {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        pybevy_core::AssetRuntimeError::BorrowedAssetsLive {
+                            asset_name: #asset_name.to_owned(),
+                        }
+                        .to_string(),
+                    ));
+                }
                 let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         concat!("Assets<", #asset_name, "> resource not found")
                     )
                 })?;
+                resource_state.advance_epoch();
 
-                let typed_handle = handle.clone().typed::<#bevy_type>();
-                Ok(assets.remove(&typed_handle).is_some())
+                Ok(assets.remove(id.typed::<#bevy_type>()).is_some())
             }
 
             fn len(&self, world: &bevy::ecs::world::World) -> pyo3::PyResult<usize> {
@@ -490,7 +666,7 @@ pub(crate) fn generate_asset_bridge_tokens(
             fn contains(
                 &self,
                 world: &bevy::ecs::world::World,
-                handle: &bevy::asset::UntypedHandle,
+                id: bevy::asset::UntypedAssetId,
             ) -> pyo3::PyResult<bool> {
                 use bevy::asset::Assets;
 
@@ -500,8 +676,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                     )
                 })?;
 
-                let typed_handle = handle.clone().typed::<#bevy_type>();
-                Ok(assets.contains(&typed_handle))
+                Ok(assets.contains(id.typed::<#bevy_type>()))
             }
 
             fn iter_pairs(
@@ -510,44 +685,34 @@ pub(crate) fn generate_asset_bridge_tokens(
                 validity: pybevy_core::ValidityFlagWithMode,
                 borrow_counter: pybevy_core::AssetBorrowCounter,
                 py: pyo3::Python,
-            ) -> pyo3::PyResult<Vec<(bevy::asset::UntypedHandle, pyo3::Py<pyo3::PyAny>)>> {
-                use bevy::asset::{Assets, AssetId};
+            ) -> pyo3::PyResult<Vec<(bevy::asset::UntypedAssetId, pyo3::Py<pyo3::PyAny>)>> {
+                use bevy::asset::Assets;
 
+                let resource_state = borrow_counter.scope().resource_state().clone();
+                let _resource_guard = resource_state.try_read()?;
+                let world_cell = world.as_unsafe_world_cell_readonly();
                 let assets = world.get_resource::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         concat!("Assets<", #asset_name, "> resource not found")
                     )
                 })?;
 
-                let type_id = std::any::TypeId::of::<#bevy_type>();
                 let mut result = Vec::new();
                 for (id, asset) in assets.iter() {
-                    let untyped_handle = match id {
-                        AssetId::Uuid { uuid } => bevy::asset::UntypedHandle::Uuid { uuid, type_id },
-                        AssetId::Index { index, .. } => {
-                            let index_bits = index.to_bits();
-                            let synthetic_uuid = pybevy_core::uuid::Uuid::from_u128(
-                                0xDEAD_BEEF_0000_0000_u128 << 64 | index_bits as u128
-                            );
-                            bevy::asset::UntypedHandle::Uuid {
-                                uuid: synthetic_uuid,
-                                type_id,
-                            }
-                        }
-                    };
+                    let untyped_id = id.untyped();
                     let ptr = asset as *const #bevy_type;
                     // SAFETY: `ptr` is derived from a valid Bevy `Assets` borrow. The `validity` flag ensures the storage is invalidated before the borrow expires.
                     let storage = unsafe {
                         pybevy_core::AssetStorage::borrowed_readonly_tracked(
                             ptr,
-                            id.into(),
+                            world_cell,
+                            untyped_id,
                             validity.clone(),
-                            untyped_handle.clone(),
                             borrow_counter.clone(),
                         )
-                    };
+                    }?;
                     let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                    result.push((untyped_handle, obj.into_any()));
+                    result.push((untyped_id, obj.into_any()));
                 }
                 Ok(result)
             }
@@ -555,22 +720,35 @@ pub(crate) fn generate_asset_bridge_tokens(
             fn remove_and_return(
                 &self,
                 world: &mut bevy::ecs::world::World,
-                handle: &bevy::asset::UntypedHandle,
+                id: bevy::asset::UntypedAssetId,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
                 use bevy::asset::Assets;
 
+                pybevy_core::ensure_asset_access_registry(world);
+                let resource_state = world
+                    .resource::<pybevy_core::AssetAccessRegistry>()
+                    .state_for(std::any::TypeId::of::<#bevy_type>(), #asset_name);
+                let _resource_guard = resource_state.try_write()?;
+                if resource_state.active() > 0 {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        pybevy_core::AssetRuntimeError::BorrowedAssetsLive {
+                            asset_name: #asset_name.to_owned(),
+                        }
+                        .to_string(),
+                    ));
+                }
                 let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
                         concat!("Assets<", #asset_name, "> resource not found")
                     )
                 })?;
+                resource_state.advance_epoch();
 
-                let typed_handle = handle.clone().typed::<#bevy_type>();
-                match assets.remove(&typed_handle) {
+                match assets.remove(id.typed::<#bevy_type>()) {
                     Some(asset) => {
                         let py_asset = #py_type::from(asset);
-                        let obj = pyo3::Py::new(py, (py_asset, pybevy_core::PyAsset))?;
+                        let obj = pyo3::Py::new(py, (#bridge_initializer)(py_asset))?;
                         Ok(Some(obj.into_any()))
                     }
                     None => Ok(None),
@@ -596,10 +774,21 @@ pub(crate) fn generate_asset_bridge_tokens(
             fn clear_programmatic(&self, world: &mut bevy::ecs::world::World, verbose: bool) {
                 use bevy::asset::{Assets, AssetServer};
 
+                pybevy_core::ensure_asset_access_registry(world);
+                let resource_state = world
+                    .resource::<pybevy_core::AssetAccessRegistry>()
+                    .state_for(std::any::TypeId::of::<#bevy_type>(), #asset_name);
+                let Ok(_resource_guard) = resource_state.try_write() else {
+                    return;
+                };
+                if resource_state.active() > 0 {
+                    return;
+                }
                 let ids_to_remove: Vec<_> = {
                     let Some(asset_server) = world.get_resource::<AssetServer>() else {
                         // No AssetServer - clear all assets (no file-loaded assets to preserve)
                         if let Some(mut assets) = world.get_resource_mut::<Assets<#bevy_type>>() {
+                            resource_state.advance_epoch();
                             let count = assets.len();
                             if count > 0 {
                                 let handles: Vec<_> = assets.ids().map(|id| id.untyped()).collect();
@@ -627,6 +816,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 }
 
                 if let Some(mut assets) = world.get_resource_mut::<Assets<#bevy_type>>() {
+                    resource_state.advance_epoch();
                     for id in &ids_to_remove {
                         assets.remove(*id);
                     }
@@ -701,6 +891,10 @@ pub(crate) fn generate_handle_bridge_tokens(
 
             fn name(&self) -> &'static str {
                 #component_name
+            }
+
+            fn can_insert(&self) -> bool {
+                true
             }
 
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {

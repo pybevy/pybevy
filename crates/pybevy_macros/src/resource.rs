@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemStruct, Token, Type,
+    Ident, ItemStruct, Path, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -29,7 +29,7 @@ use crate::util::{find_storage_field_type, reflect_registration_tokens};
 ///
 /// ```rust,ignore
 /// #[native_resource(Time<Fixed>)]
-/// #[pyclass(name = "TimeFixed", extends = PyResource)]
+/// #[pyclass(name = "_TimeFixed", extends = PyResource)]
 /// pub struct PyTimeFixed {
 ///     pub(crate) storage: ResourceStorage<Time<Fixed>>,
 /// }
@@ -79,8 +79,8 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         impl #py_type {
             /// Create from a borrowed resource storage (for Res/ResMut access).
-            pub(crate) fn from_borrowed(storage: ResourceStorage<#bevy_type>) -> (Self, PyResource) {
-                (Self { storage }, PyResource)
+            pub(crate) fn from_borrowed(storage: ResourceStorage<#bevy_type>) -> PyClassInitializer<Self> {
+                resource_initializer(Self { storage })
             }
 
             #[inline(always)]
@@ -127,7 +127,8 @@ pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// #[pyresource(FontAtlasSet, bridge, no_mut, no_insert)]
 /// ```
 ///
-/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`, `no_default`.
+/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`,
+/// `no_default`, `preserve_on_reload`.
 pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ResourceStorageArgs {
         bevy_type: Type,
@@ -139,7 +140,10 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_remove: bool,
         default_insert: bool,
         no_default: bool,
+        preserve_on_reload: bool,
         no_reflect: bool,
+        materialize: Option<Path>,
+        clone_with: Option<Path>,
     }
 
     impl Parse for ResourceStorageArgs {
@@ -153,7 +157,10 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_remove = false;
             let mut default_insert = false;
             let mut no_default = false;
+            let mut preserve_on_reload = false;
             let mut no_reflect = false;
+            let mut materialize = None;
+            let mut clone_with = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -164,6 +171,16 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                     bridge_name = Some(input.parse::<syn::LitStr>()?.value());
                 } else {
                     let ident: Ident = input.parse()?;
+                    if matches!(ident.to_string().as_str(), "materialize" | "clone_with") {
+                        input.parse::<Token![=]>()?;
+                        let path: Path = input.parse()?;
+                        if ident == "materialize" {
+                            materialize = Some(path);
+                        } else {
+                            clone_with = Some(path);
+                        }
+                        continue;
+                    }
                     match ident.to_string().as_str() {
                         "no_clone" => no_clone = true,
                         "bridge" => bridge = true,
@@ -172,12 +189,13 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "no_remove" => no_remove = true,
                         "default_insert" => default_insert = true,
                         "no_default" => no_default = true,
+                        "preserve_on_reload" => preserve_on_reload = true,
                         "no_reflect" => no_reflect = true,
                         other => {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert, no_default, no_reflect",
+                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert, no_default, preserve_on_reload, no_reflect, materialize, clone_with",
                                     other
                                 ),
                             ));
@@ -196,7 +214,10 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                 no_remove,
                 default_insert,
                 no_default,
+                preserve_on_reload,
                 no_reflect,
+                materialize,
+                clone_with,
             })
         }
     }
@@ -212,12 +233,15 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             bevy_type,
             py_type,
             args.bridge_name.as_deref(),
-            args.no_insert || (args.no_clone && !args.default_insert),
+            args.no_insert || (args.no_clone && !args.default_insert && args.clone_with.is_none()),
             args.no_mut,
             args.no_remove,
             args.default_insert,
             args.no_default,
+            args.preserve_on_reload,
             args.no_reflect,
+            args.materialize.as_ref(),
+            args.clone_with.as_ref(),
         )
     } else {
         quote! {}
@@ -226,8 +250,8 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
     let storage_impls = if args.no_clone {
         quote! {
             impl #py_type {
-                pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> (Self, pybevy_core::PyResource) {
-                    (Self { storage }, pybevy_core::PyResource)
+                pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> pyo3::PyClassInitializer<Self> {
+                    pybevy_core::resource_initializer(Self { storage })
                 }
 
                 #[inline(always)]
@@ -268,12 +292,12 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             impl #py_type {
-                pub fn from_owned(resource: #bevy_type) -> (Self, pybevy_core::PyResource) {
-                    (Self { storage: pybevy_core::ResourceStorage::owned(resource) }, pybevy_core::PyResource)
+                pub fn from_owned(resource: #bevy_type) -> pyo3::PyClassInitializer<Self> {
+                    pybevy_core::resource_initializer(Self { storage: pybevy_core::ResourceStorage::owned(resource) })
                 }
 
-                pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> (Self, pybevy_core::PyResource) {
-                    (Self { storage }, pybevy_core::PyResource)
+                pub fn from_borrowed(storage: pybevy_core::ResourceStorage<#bevy_type>) -> pyo3::PyClassInitializer<Self> {
+                    pybevy_core::resource_initializer(Self { storage })
                 }
 
                 #[inline(always)]
@@ -308,7 +332,10 @@ pub(crate) fn generate_resource_bridge_tokens(
     no_remove: bool,
     default_insert: bool,
     no_default: bool,
+    preserve_on_reload: bool,
     no_reflect: bool,
+    materialize: Option<&Path>,
+    clone_with: Option<&Path>,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -342,6 +369,18 @@ pub(crate) fn generate_resource_bridge_tokens(
                 Ok(())
             }
         }
+    } else if let Some(clone_with) = clone_with {
+        quote! {
+            fn insert(
+                &self,
+                world: &mut bevy::ecs::world::World,
+                resource: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<()> {
+                let py_resource = resource.extract::<pyo3::PyRef<#py_type>>()?;
+                world.insert_resource(#clone_with(<#py_type>::as_ref(&py_resource)?)?);
+                Ok(())
+            }
+        }
     } else {
         quote! {
             fn insert(
@@ -356,8 +395,22 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    let wrap_storage = |storage: proc_macro2::TokenStream| {
+        if let Some(materialize) = materialize {
+            quote! { #materialize(py, #storage) }
+        } else {
+            quote! {
+                {
+                    let obj = pyo3::Py::new(py, #py_type::from_borrowed(#storage))?;
+                    Ok(obj.into_any())
+                }
+            }
+        }
+    };
+
     // Generate get_mut method based on no_mut flag
     let get_mut_impl = if no_mut {
+        let wrapped = wrap_storage(quote! { storage });
         // Read-only: get_mut returns read-only access (same as get)
         quote! {
             fn get_mut(
@@ -370,20 +423,18 @@ pub(crate) fn generate_resource_bridge_tokens(
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
 
-                // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
-                let ptr = resource as *const #bevy_type as *mut #bevy_type;
-                // Override to read mode even though caller requested write
-                let read_validity = validity.flag.with_access_mode(pybevy_core::AccessMode::Read);
-                // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
+                let ptr = resource as *const #bevy_type;
+                // SAFETY: ptr is from a valid shared Bevy resource borrow; the validity
+                // flag invalidates storage when that borrow expires.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed(ptr, read_validity)
+                    pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
                 };
 
-                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                Ok(obj.into_any())
+                #wrapped
             }
         }
     } else {
+        let wrapped = wrap_storage(quote! { storage });
         quote! {
             fn get_mut(
                 &self,
@@ -398,17 +449,17 @@ pub(crate) fn generate_resource_bridge_tokens(
                 let ptr = resource.into_inner() as *mut #bevy_type;
                 // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed(ptr, validity)
+                    pybevy_core::ResourceStorage::borrowed_mut(ptr, validity.flag)
                 };
 
-                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                Ok(obj.into_any())
+                #wrapped
             }
         }
     };
 
     // Cell-based read accessor: narrow access to just this resource through an
     // UnsafeWorldCell, so run_unsafe never conjures `&World`.
+    let get_from_cell_wrapped = wrap_storage(quote! { storage });
     let get_from_cell_impl = quote! {
         unsafe fn get_from_cell(
             &self,
@@ -423,20 +474,20 @@ pub(crate) fn generate_resource_bridge_tokens(
                 pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
             })?;
 
-            // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
-            let ptr = resource as *const #bevy_type as *mut #bevy_type;
-            // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
+            let ptr = resource as *const #bevy_type;
+            // SAFETY: ptr is from a valid shared Bevy resource borrow; the validity
+            // flag invalidates storage when that borrow expires.
             let storage = unsafe {
-                pybevy_core::ResourceStorage::borrowed(ptr, validity)
+                pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
             };
 
-            let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-            Ok(obj.into_any())
+            #get_from_cell_wrapped
         }
     };
 
     // Cell-based mutable accessor (or read-only override for no_mut resources).
     let get_mut_from_cell_impl = if no_mut {
+        let wrapped = wrap_storage(quote! { storage });
         quote! {
             unsafe fn get_mut_from_cell(
                 &self,
@@ -450,20 +501,18 @@ pub(crate) fn generate_resource_bridge_tokens(
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
 
-                // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
-                let ptr = resource as *const #bevy_type as *mut #bevy_type;
-                // Override to read mode even though caller requested write
-                let read_validity = validity.flag.with_access_mode(pybevy_core::AccessMode::Read);
-                // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
+                let ptr = resource as *const #bevy_type;
+                // SAFETY: ptr is from a valid shared Bevy resource borrow; the validity
+                // flag invalidates storage when that borrow expires.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed(ptr, read_validity)
+                    pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
                 };
 
-                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                Ok(obj.into_any())
+                #wrapped
             }
         }
     } else {
+        let wrapped = wrap_storage(quote! { storage });
         quote! {
             unsafe fn get_mut_from_cell(
                 &self,
@@ -481,11 +530,10 @@ pub(crate) fn generate_resource_bridge_tokens(
                 let ptr = resource.into_inner() as *mut #bevy_type;
                 // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag invalidates storage when borrow expires.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed(ptr, validity)
+                    pybevy_core::ResourceStorage::borrowed_mut(ptr, validity.flag)
                 };
 
-                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                Ok(obj.into_any())
+                #wrapped
             }
         }
     };
@@ -521,6 +569,50 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    let get_wrapped = wrap_storage(quote! { storage });
+    let extract_wrapped = wrap_storage(quote! { storage });
+    let query_storage = if no_mut {
+        quote! {
+            let untyped = entity.get_by_id(component_id).ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+            })?;
+            let ptr = unsafe {
+                untyped.deref::<#bevy_type>() as *const #bevy_type
+            };
+            let storage = unsafe {
+                pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
+            };
+        }
+    } else {
+        quote! {
+            let storage = if validity.access_mode() == pybevy_core::AccessMode::Write {
+                let ptr = entity.get_mut_ptr_by_id_unchanged(component_id).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?.cast::<#bevy_type>();
+                unsafe {
+                    pybevy_core::ResourceStorage::borrowed(ptr, validity)
+                }
+            } else {
+                let untyped = entity.get_by_id(component_id).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+                let ptr = unsafe {
+                    untyped.deref::<#bevy_type>() as *const #bevy_type
+                };
+                unsafe {
+                    pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
+                }
+            };
+        }
+    };
+    let mutable = !no_mut;
+    let revalidating_mut_validity = if no_mut {
+        quote! { validity.flag.with_access_mode(pybevy_core::AccessMode::Read) }
+    } else {
+        quote! { validity }
+    };
+    let entity_ref_wrapped = wrap_storage(quote! { storage });
+    let entity_mut_wrapped = wrap_storage(quote! { storage });
     let expanded = quote! {
         /// Bridge for #resource_name resource
         pub struct #bridge_name;
@@ -544,6 +636,69 @@ pub(crate) fn generate_resource_bridge_tokens(
                 #resource_name
             }
 
+            fn is_mutable(&self) -> bool {
+                #mutable
+            }
+
+            fn preserve_on_reload(&self) -> bool {
+                #preserve_on_reload
+            }
+
+            fn extract(
+                &self,
+                entity: &mut pybevy_core::FilteredEntityAccess,
+                component_id: bevy::ecs::component::ComponentId,
+                validity: pybevy_core::ValidityFlagWithMode,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                #query_storage
+                #extract_wrapped
+            }
+
+            fn entity_contains(&self, entity: &bevy::ecs::world::EntityRef) -> bool {
+                entity.contains::<#bevy_type>()
+            }
+
+            unsafe fn extract_from_entity_ref(
+                &self,
+                entity_id: bevy::ecs::entity::Entity,
+                world_ptr: *mut bevy::ecs::world::World,
+                validity: pybevy_core::ValidityFlagWithMode,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+                match unsafe {
+                    pybevy_core::resolve_revalidating_resource::<#bevy_type>(
+                        entity_id, world_ptr, validity,
+                    )
+                } {
+                    Some(storage) => {
+                        let object: pyo3::PyResult<pyo3::Py<pyo3::PyAny>> = #entity_ref_wrapped;
+                        Ok(Some(object?))
+                    }
+                    None => Ok(None),
+                }
+            }
+
+            unsafe fn extract_from_entity_mut(
+                &self,
+                entity_id: bevy::ecs::entity::Entity,
+                world_ptr: *mut bevy::ecs::world::World,
+                validity: pybevy_core::ValidityFlagWithMode,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+                match unsafe {
+                    pybevy_core::resolve_revalidating_resource::<#bevy_type>(
+                        entity_id, world_ptr, #revalidating_mut_validity,
+                    )
+                } {
+                    Some(storage) => {
+                        let object: pyo3::PyResult<pyo3::Py<pyo3::PyAny>> = #entity_mut_wrapped;
+                        Ok(Some(object?))
+                    }
+                    None => Ok(None),
+                }
+            }
+
             fn get(
                 &self,
                 world: &bevy::ecs::world::World,
@@ -554,15 +709,14 @@ pub(crate) fn generate_resource_bridge_tokens(
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
 
-                // TODO(pybevy/pybevy#90): use a read-only ResourceStorage variant to avoid *const -> *mut cast
-                let ptr = resource as *const #bevy_type as *mut #bevy_type;
-                // SAFETY: ptr is from a valid Bevy resource borrow; validity flag invalidates storage when borrow expires.
+                let ptr = resource as *const #bevy_type;
+                // SAFETY: ptr is from a valid shared Bevy resource borrow; the validity
+                // flag invalidates storage when that borrow expires.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed(ptr, validity)
+                    pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
                 };
 
-                let obj = pyo3::Py::new(py, #py_type::from_borrowed(storage))?;
-                Ok(obj.into_any())
+                #get_wrapped
             }
 
             #get_mut_impl

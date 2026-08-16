@@ -188,6 +188,10 @@ pub(crate) fn generate_newtype_bridge_tokens(
                 #component_name
             }
 
+            fn can_insert(&self) -> bool {
+                true
+            }
+
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 world.register_component::<#bevy_type>()
             }
@@ -257,7 +261,7 @@ pub(crate) fn generate_newtype_bridge_tokens(
                     py: pyo3::Python,
                 ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
                     let untyped = entity.get_by_id(component_id).ok_or_else(|| {
-                        pyo3::exceptions::PyRuntimeError::new_err("Component not found")
+                        pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                     })?;
 
                     // SAFETY: component_id was registered for #bevy_type, so the untyped pointer points to a valid instance.

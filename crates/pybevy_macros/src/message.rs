@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemStruct, Token, Type,
+    Ident, ItemStruct, Path, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -17,30 +17,48 @@ use syn::{
 /// #[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq)]
 /// pub struct PyCursorEntered { ... }
 /// ```
+///
+/// Manual complex-enum adapters can provide an exact nested-variant
+/// materializer for messages read from Bevy:
+///
+/// ```ignore
+/// #[pymessage(Ime, materialize = materialize_ime)]
+/// #[pyclass(name = "Ime", extends = PyMessage, subclass)]
+/// pub struct PyIme { ... }
+/// ```
 pub fn pymessage(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct MessageStorageArgs {
         bevy_type: Type,
         writable: bool,
+        materialize: Option<Path>,
     }
 
     impl Parse for MessageStorageArgs {
         fn parse(input: ParseStream) -> syn::Result<Self> {
             let bevy_type: Type = input.parse()?;
             let mut writable = false;
+            let mut materialize = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
                 let ident: Ident = input.parse()?;
                 if ident == "writable" {
                     writable = true;
+                } else if ident == "materialize" {
+                    input.parse::<Token![=]>()?;
+                    materialize = Some(input.parse()?);
                 } else {
-                    return Err(syn::Error::new_spanned(ident, "expected 'writable'"));
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "expected 'writable' or 'materialize = path'",
+                    ));
                 }
             }
 
             Ok(MessageStorageArgs {
                 bevy_type,
                 writable,
+                materialize,
             })
         }
     }
@@ -54,6 +72,7 @@ pub fn pymessage(attr: TokenStream, item: TokenStream) -> TokenStream {
         py_type,
         None,
         args.writable,
+        args.materialize.as_ref(),
         true, // emit inventory
     );
 
@@ -66,11 +85,12 @@ pub fn pymessage(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Shared message bridge code generation.
-fn generate_message_bridge_tokens(
+pub(crate) fn generate_message_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
     bridge_name_override: Option<&str>,
     writable: bool,
+    materialize: Option<&Path>,
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
@@ -119,6 +139,20 @@ fn generate_message_bridge_tokens(
     } else {
         quote! {
             // Uses default implementation which returns read-only error
+        }
+    };
+
+    let materialize_message = if let Some(materialize) = materialize {
+        quote! {
+            let py_obj = #materialize(py, event)?;
+            result.push(py_obj);
+        }
+    } else {
+        quote! {
+            let py_event = #py_type::from(event);
+            // Use tuple form for types extending PyMessage
+            let py_obj = pyo3::Py::new(py, (py_event, pybevy_core::PyMessage))?;
+            result.push(py_obj.into_any());
         }
     };
 
@@ -177,10 +211,7 @@ fn generate_message_bridge_tokens(
                     .unwrap_or_else(|| messages.get_cursor());
                 let mut result = Vec::new();
                 for event in cursor.read(&*messages) {
-                    let py_event = #py_type::from(event);
-                    // Use tuple form for types extending PyMessage
-                    let py_obj = pyo3::Py::new(py, (py_event, pybevy_core::PyMessage))?;
-                    result.push(py_obj.into_any());
+                    #materialize_message
                 }
                 *cursor_storage = Some(Box::new(cursor));
                 Ok(result)

@@ -1,6 +1,40 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemStruct, Type, parse_macro_input};
+use syn::{Ident, ItemStruct, Token, Type, parse::Parse, parse_macro_input};
+
+struct PluginArgs {
+    bevy_type: Type,
+    default_plugin: Option<Ident>,
+}
+
+impl Parse for PluginArgs {
+    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+        let bevy_type = input.parse()?;
+        let default_plugin = if input.is_empty() {
+            None
+        } else {
+            input.parse::<Token![,]>()?;
+            let option: Ident = input.parse()?;
+            if option != "default_plugin" {
+                return Err(syn::Error::new(
+                    option.span(),
+                    "expected `default_plugin = Variant`",
+                ));
+            }
+            input.parse::<Token![=]>()?;
+            let kind = input.parse()?;
+            if !input.is_empty() {
+                return Err(input.error("unexpected pyplugin option"));
+            }
+            Some(kind)
+        };
+
+        Ok(Self {
+            bevy_type,
+            default_plugin,
+        })
+    }
+}
 
 /// Attribute proc macro for plugin wrappers.
 ///
@@ -10,7 +44,7 @@ use syn::{ItemStruct, Type, parse_macro_input};
 /// # Usage
 ///
 /// ```rust,ignore
-/// #[pyplugin(bevy::window::WindowPlugin)]
+/// #[pyplugin(bevy::window::WindowPlugin, default_plugin = Window)]
 /// #[pyclass(name = "WindowPlugin", extends = PyPlugin)]
 /// pub struct PyWindowPlugin { ... }
 ///
@@ -23,7 +57,10 @@ use syn::{ItemStruct, Type, parse_macro_input};
 /// }
 /// ```
 pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let bevy_type: Type = parse_macro_input!(attr as Type);
+    let PluginArgs {
+        bevy_type,
+        default_plugin,
+    } = parse_macro_input!(attr as PluginArgs);
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
 
@@ -40,6 +77,14 @@ pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let bridge_name = quote::format_ident!("{}Bridge", bevy_type_name);
     let plugin_name = &bevy_type_name;
+    let default_plugin_kind = match default_plugin {
+        Some(kind) => quote! {
+            fn default_plugin_kind(&self) -> Option<pybevy_core::DefaultPluginKind> {
+                Some(pybevy_core::DefaultPluginKind::#kind)
+            }
+        },
+        None => quote! {},
+    };
 
     let expanded = quote! {
         #input
@@ -65,8 +110,14 @@ pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #plugin_name
             }
 
+            #default_plugin_kind
+
             fn build(&self, py_plugin: &pyo3::Bound<'_, pyo3::PyAny>, app: &mut bevy::app::App) -> pyo3::PyResult<()> {
                 <#py_type as pybevy_core::PluginBuild>::build(py_plugin, app)
+            }
+
+            fn is_added(&self, app: &bevy::app::App) -> bool {
+                app.is_plugin_added::<#bevy_type>()
             }
         }
 
