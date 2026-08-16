@@ -11,6 +11,7 @@ pub mod plugin;
 pub mod sampler_descriptor;
 pub mod texture_atlas;
 pub mod texture_atlas_layout;
+pub mod texture_atlas_rects;
 pub mod texture_atlas_sources;
 
 use pyo3::prelude::*;
@@ -46,6 +47,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<image_array_layout::PyImageArrayLayout>()?;
     m.add_class::<texture_atlas::PyTextureAtlas>()?;
     m.add_class::<texture_atlas_layout::PyTextureAtlasLayout>()?;
+    m.add_class::<texture_atlas_rects::PyTextureAtlasRects>()?;
     m.add_class::<texture_atlas_sources::PyTextureAtlasSources>()?;
+    loader_settings::register_image_sampler_variants(&m)?;
     parent.add_submodule(&m)
 }

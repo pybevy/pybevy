@@ -49,21 +49,21 @@ impl PyTextureAtlas {
         Ok(())
     }
 
-    #[pyo3(name = "with_index")]
-    pub fn with_index(slf: Py<Self>, py: Python<'_>, index: usize) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.index = index;
-        Ok(slf)
+    pub fn with_index(&self, index: usize) -> PyResult<Self> {
+        let mut atlas = self.as_ref()?.clone();
+        atlas.index = index;
+        Ok(Self {
+            storage: FieldStorage::owned(atlas),
+        })
     }
 
-    #[pyo3(name = "with_layout")]
-    pub fn with_layout(
-        slf: Py<Self>,
-        py: Python<'_>,
-        layout: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<Self>> {
+    pub fn with_layout(&self, layout: &Bound<'_, PyAny>) -> PyResult<Self> {
         let py_handle = extract_handle_from_any(layout)?;
-        slf.borrow_mut(py).as_mut()?.layout = py_handle.try_into()?;
-        Ok(slf)
+        let mut atlas = self.as_ref()?.clone();
+        atlas.layout = py_handle.try_into()?;
+        Ok(Self {
+            storage: FieldStorage::owned(atlas),
+        })
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

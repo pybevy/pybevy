@@ -1,4 +1,6 @@
-use bevy::image::ImageSamplerDescriptor;
+use bevy::image::{ImageSampler, ImageSamplerDescriptor};
+use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 use crate::{
@@ -6,10 +8,11 @@ use crate::{
     image_filter_mode::PyImageFilterMode, image_sampler_border_color::PyImageSamplerBorderColor,
 };
 
+#[pyfield]
 #[pyclass(name = "ImageSamplerDescriptor", eq, from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct PyImageSamplerDescriptor {
-    inner: ImageSamplerDescriptor,
+    storage: FieldStorage<ImageSamplerDescriptor>,
 }
 
 #[pymethods]
@@ -44,186 +47,185 @@ impl PyImageSamplerDescriptor {
         border_color: Option<PyImageSamplerBorderColor>,
         label: Option<String>,
     ) -> Self {
-        Self {
-            inner: ImageSamplerDescriptor {
-                address_mode_u: address_mode_u.into(),
-                address_mode_v: address_mode_v.into(),
-                address_mode_w: address_mode_w.into(),
-                mag_filter: mag_filter.into(),
-                min_filter: min_filter.into(),
-                mipmap_filter: mipmap_filter.into(),
-                lod_min_clamp,
-                lod_max_clamp,
-                compare: compare.map(Into::into),
-                anisotropy_clamp,
-                border_color: border_color.map(Into::into),
-                label,
-            },
+        ImageSamplerDescriptor {
+            address_mode_u: address_mode_u.into(),
+            address_mode_v: address_mode_v.into(),
+            address_mode_w: address_mode_w.into(),
+            mag_filter: mag_filter.into(),
+            min_filter: min_filter.into(),
+            mipmap_filter: mipmap_filter.into(),
+            lod_min_clamp,
+            lod_max_clamp,
+            compare: compare.map(Into::into),
+            anisotropy_clamp,
+            border_color: border_color.map(Into::into),
+            label,
         }
+        .into()
     }
 
     #[staticmethod]
     pub fn linear() -> Self {
-        Self {
-            inner: ImageSamplerDescriptor::linear(),
-        }
+        ImageSamplerDescriptor::linear().into()
     }
 
     #[staticmethod]
     pub fn nearest() -> Self {
-        Self {
-            inner: ImageSamplerDescriptor::nearest(),
-        }
+        ImageSamplerDescriptor::nearest().into()
     }
 
     #[getter]
-    pub fn address_mode_u(&self) -> PyImageAddressMode {
-        self.inner.address_mode_u.into()
+    pub fn address_mode_u(&self) -> PyResult<PyImageAddressMode> {
+        Ok(self.as_ref()?.address_mode_u.into())
     }
 
     #[setter]
-    pub fn set_address_mode_u(&mut self, value: PyImageAddressMode) {
-        self.inner.address_mode_u = value.into();
+    pub fn set_address_mode_u(&mut self, value: PyImageAddressMode) -> PyResult<()> {
+        self.as_mut()?.address_mode_u = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn address_mode_v(&self) -> PyImageAddressMode {
-        self.inner.address_mode_v.into()
+    pub fn address_mode_v(&self) -> PyResult<PyImageAddressMode> {
+        Ok(self.as_ref()?.address_mode_v.into())
     }
 
     #[setter]
-    pub fn set_address_mode_v(&mut self, value: PyImageAddressMode) {
-        self.inner.address_mode_v = value.into();
+    pub fn set_address_mode_v(&mut self, value: PyImageAddressMode) -> PyResult<()> {
+        self.as_mut()?.address_mode_v = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn address_mode_w(&self) -> PyImageAddressMode {
-        self.inner.address_mode_w.into()
+    pub fn address_mode_w(&self) -> PyResult<PyImageAddressMode> {
+        Ok(self.as_ref()?.address_mode_w.into())
     }
 
     #[setter]
-    pub fn set_address_mode_w(&mut self, value: PyImageAddressMode) {
-        self.inner.address_mode_w = value.into();
+    pub fn set_address_mode_w(&mut self, value: PyImageAddressMode) -> PyResult<()> {
+        self.as_mut()?.address_mode_w = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn mag_filter(&self) -> PyImageFilterMode {
-        self.inner.mag_filter.into()
+    pub fn mag_filter(&self) -> PyResult<PyImageFilterMode> {
+        Ok(self.as_ref()?.mag_filter.into())
     }
 
     #[setter]
-    pub fn set_mag_filter(&mut self, value: PyImageFilterMode) {
-        self.inner.mag_filter = value.into();
+    pub fn set_mag_filter(&mut self, value: PyImageFilterMode) -> PyResult<()> {
+        self.as_mut()?.mag_filter = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn min_filter(&self) -> PyImageFilterMode {
-        self.inner.min_filter.into()
+    pub fn min_filter(&self) -> PyResult<PyImageFilterMode> {
+        Ok(self.as_ref()?.min_filter.into())
     }
 
     #[setter]
-    pub fn set_min_filter(&mut self, value: PyImageFilterMode) {
-        self.inner.min_filter = value.into();
+    pub fn set_min_filter(&mut self, value: PyImageFilterMode) -> PyResult<()> {
+        self.as_mut()?.min_filter = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn mipmap_filter(&self) -> PyImageFilterMode {
-        self.inner.mipmap_filter.into()
+    pub fn mipmap_filter(&self) -> PyResult<PyImageFilterMode> {
+        Ok(self.as_ref()?.mipmap_filter.into())
     }
 
     #[setter]
-    pub fn set_mipmap_filter(&mut self, value: PyImageFilterMode) {
-        self.inner.mipmap_filter = value.into();
+    pub fn set_mipmap_filter(&mut self, value: PyImageFilterMode) -> PyResult<()> {
+        self.as_mut()?.mipmap_filter = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn lod_min_clamp(&self) -> f32 {
-        self.inner.lod_min_clamp
+    pub fn lod_min_clamp(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.lod_min_clamp)
     }
 
     #[setter]
-    pub fn set_lod_min_clamp(&mut self, value: f32) {
-        self.inner.lod_min_clamp = value;
+    pub fn set_lod_min_clamp(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.lod_min_clamp = value;
+        Ok(())
     }
 
     #[getter]
-    pub fn lod_max_clamp(&self) -> f32 {
-        self.inner.lod_max_clamp
+    pub fn lod_max_clamp(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.lod_max_clamp)
     }
 
     #[setter]
-    pub fn set_lod_max_clamp(&mut self, value: f32) {
-        self.inner.lod_max_clamp = value;
+    pub fn set_lod_max_clamp(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.lod_max_clamp = value;
+        Ok(())
     }
 
     #[getter]
-    pub fn compare(&self) -> Option<PyImageCompareFunction> {
-        self.inner.compare.map(Into::into)
+    pub fn compare(&self) -> PyResult<Option<PyImageCompareFunction>> {
+        Ok(self.as_ref()?.compare.map(Into::into))
     }
 
     #[setter]
-    pub fn set_compare(&mut self, value: Option<PyImageCompareFunction>) {
-        self.inner.compare = value.map(Into::into);
+    pub fn set_compare(&mut self, value: Option<PyImageCompareFunction>) -> PyResult<()> {
+        self.as_mut()?.compare = value.map(Into::into);
+        Ok(())
     }
 
     #[getter]
-    pub fn anisotropy_clamp(&self) -> u16 {
-        self.inner.anisotropy_clamp
+    pub fn anisotropy_clamp(&self) -> PyResult<u16> {
+        Ok(self.as_ref()?.anisotropy_clamp)
     }
 
     #[setter]
-    pub fn set_anisotropy_clamp(&mut self, value: u16) {
-        self.inner.anisotropy_clamp = value;
+    pub fn set_anisotropy_clamp(&mut self, value: u16) -> PyResult<()> {
+        self.as_mut()?.anisotropy_clamp = value;
+        Ok(())
     }
 
     #[getter]
-    pub fn border_color(&self) -> Option<PyImageSamplerBorderColor> {
-        self.inner.border_color.map(Into::into)
+    pub fn border_color(&self) -> PyResult<Option<PyImageSamplerBorderColor>> {
+        Ok(self.as_ref()?.border_color.map(Into::into))
     }
 
     #[setter]
-    pub fn set_border_color(&mut self, value: Option<PyImageSamplerBorderColor>) {
-        self.inner.border_color = value.map(Into::into);
+    pub fn set_border_color(&mut self, value: Option<PyImageSamplerBorderColor>) -> PyResult<()> {
+        self.as_mut()?.border_color = value.map(Into::into);
+        Ok(())
     }
 
     #[getter]
-    pub fn label(&self) -> Option<String> {
-        self.inner.label.clone()
+    pub fn label(&self) -> PyResult<Option<String>> {
+        Ok(self.as_ref()?.label.clone())
     }
 
     #[setter]
-    pub fn set_label(&mut self, value: Option<String>) {
-        self.inner.label = value;
+    pub fn set_label(&mut self, value: Option<String>) -> PyResult<()> {
+        self.as_mut()?.label = value;
+        Ok(())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
+    pub fn __repr__(&self) -> PyResult<String> {
+        let descriptor = self.as_ref()?;
+        Ok(format!(
             "ImageSamplerDescriptor(mag_filter={:?}, min_filter={:?}, mipmap_filter={:?})",
-            self.inner.mag_filter, self.inner.min_filter, self.inner.mipmap_filter
-        )
-    }
-}
-
-impl From<ImageSamplerDescriptor> for PyImageSamplerDescriptor {
-    fn from(inner: ImageSamplerDescriptor) -> Self {
-        Self { inner }
-    }
-}
-
-impl From<PyImageSamplerDescriptor> for ImageSamplerDescriptor {
-    fn from(py: PyImageSamplerDescriptor) -> Self {
-        py.inner
-    }
-}
-
-impl From<&PyImageSamplerDescriptor> for ImageSamplerDescriptor {
-    fn from(py: &PyImageSamplerDescriptor) -> Self {
-        py.inner.clone()
+            descriptor.mag_filter, descriptor.min_filter, descriptor.mipmap_filter
+        ))
     }
 }
 
 impl PyImageSamplerDescriptor {
-    pub fn to_image_sampler(&self) -> bevy::image::ImageSampler {
-        bevy::image::ImageSampler::Descriptor(self.inner.clone())
+    pub fn to_image_sampler(&self) -> PyResult<ImageSampler> {
+        Ok(ImageSampler::Descriptor(self.as_ref()?.clone()))
+    }
+}
+
+impl PartialEq for PyImageSamplerDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.as_ref(), other.as_ref()) {
+            (Ok(left), Ok(right)) => *left == *right,
+            _ => false,
+        }
     }
 }

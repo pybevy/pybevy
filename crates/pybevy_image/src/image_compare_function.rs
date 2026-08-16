@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ImageCompareFunction)]
-#[pyclass(name = "ImageCompareFunction", eq, frozen, from_py_object)]
+#[pyclass(name = "ImageCompareFunction", eq, frozen, from_py_object, hash)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyImageCompareFunction {
     Never,

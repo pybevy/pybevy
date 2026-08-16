@@ -1,3 +1,4 @@
+from collections.abc import Buffer
 from enum import Enum
 from typing import ClassVar, Literal
 
@@ -6,9 +7,15 @@ import numpy as np
 from pybevy.app import App, Plugin
 from pybevy.array import Array
 from pybevy.assets import Asset, Handle
+from pybevy.collections import LiveList
 from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
-from pybevy.render import Extent3d, TextureDimension, TextureFormat
+from pybevy.render import (
+    Extent3d,
+    TextureDimension,
+    TextureFormat,
+    TextureViewDimension,
+)
 
 class ImageFormat(Enum):
     """Image encoding format for saving/exporting images.
@@ -60,6 +67,9 @@ class ImageFormat(Enum):
     Farbfeld = "Farbfeld"
     """Farbfeld format - simple lossless format with 16-bit RGBA"""
 
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
 class ImageCompareFunction(Enum):
     Never = "Never"
     Less = "Less"
@@ -70,11 +80,15 @@ class ImageCompareFunction(Enum):
     GreaterEqual = "GreaterEqual"
     Always = "Always"
 
+    def __hash__(self) -> int: ...
+
 class ImageSamplerBorderColor(Enum):
     TransparentBlack = "TransparentBlack"
     OpaqueBlack = "OpaqueBlack"
     OpaqueWhite = "OpaqueWhite"
     Zero = "Zero"
+
+    def __hash__(self) -> int: ...
 
 class ImageFormatSetting:
     class FromExtension(ImageFormatSetting):
@@ -242,7 +256,7 @@ class Image(Asset):
         self,
         size: Extent3d = Extent3d(1, 1, 1),
         dimension: TextureDimension | None = None,
-        data: bytes | list[int] | np.ndarray | None = None,
+        data: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array | None = None,
         format: TextureFormat | None = None,
         asset_usage: RenderAssetUsages | None = None,
     ) -> None:
@@ -254,8 +268,10 @@ class Image(Asset):
             dimension: Texture dimension. Defaults to TextureDimension.D2.
             data: Optional pixel data. If None, fills with max-value bytes
                   (white for 8-bit unorm formats). Must match size and format;
-                  raises ValueError on length mismatch. Can be bytes, list of
-                  ints, or numpy array.
+                  raises ValueError on length or shape mismatch. Accepts a
+                  byte-format Buffer, a list/tuple of ints, a uint8 NumPy
+                  array, or a uint8 bounded Array. Arrays may be flat or use
+                  the natural (height, width, bytes_per_pixel) shape.
             format: Texture format. Defaults to TextureFormat.Rgba8UnormSrgb.
             asset_usage: Which worlds keep the asset. Defaults to both
                   (bevy's `RenderAssetUsages::default()`).
@@ -277,7 +293,7 @@ class Image(Asset):
     @staticmethod
     def new_fill(
         size: Extent3d,
-        pixel: bytes | list[int],
+        pixel: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array,
         format: TextureFormat | None = None,
         dimension: TextureDimension | None = None,
     ) -> Image:
@@ -321,6 +337,10 @@ class Image(Asset):
         Returns:
             New Image configured as a render target, filled with zeroes
 
+        Raises:
+            ValueError: If width or height is zero, or the format cannot be
+                used for a render target.
+
         Example:
             >>> # Create a render target for post-processing
             >>> render_target = Image.new_target_texture(1920, 1080, TextureFormat.Rgba8UnormSrgb)
@@ -346,6 +366,9 @@ class Image(Asset):
         Returns:
             New Image configured as a render target, filled with zeroes
 
+        Raises:
+            ValueError: If width or height is zero.
+
         Example:
             >>> # Create render target for headless rendering
             >>> image = Image.new_render_target(width=800, height=600)
@@ -354,7 +377,10 @@ class Image(Asset):
         """
 
     @staticmethod
-    def from_buffer(buffer: bytes, is_srgb: bool = True) -> Image:
+    def from_buffer(
+        buffer: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array,
+        is_srgb: bool = True,
+    ) -> Image:
         """Load an image from encoded bytes (PNG, JPEG, etc.).
 
         Args:
@@ -418,6 +444,13 @@ class Image(Asset):
         """Get the texture dimension (D1, D2, D3) of this image."""
 
     @property
+    def texture_view_dimension(self) -> TextureViewDimension | None:
+        """Explicit dimension used to interpret this image's texture view."""
+
+    @texture_view_dimension.setter
+    def texture_view_dimension(self, value: TextureViewDimension | None) -> None: ...
+
+    @property
     def mip_level_count(self) -> int:
         """Get the number of mip levels in this image."""
 
@@ -450,6 +483,8 @@ class Image(Asset):
 
         Indicates which worlds (main/render) can access this asset.
         """
+    @asset_usage.setter
+    def asset_usage(self, value: RenderAssetUsages) -> None: ...
 
     @property
     def copy_on_resize(self) -> bool:
@@ -513,6 +548,8 @@ class Image(Asset):
             - Zero-copy: modifies data in-place
             - Changes persist after the `with` block
             - Array is only valid within the `with` block
+            - Basic slices, `reshape()`, and `ravel()` share this buffer while
+              the context is live, so writes through those views reach the image
             - For read-only access, use `data()`
         """
 
@@ -646,7 +683,10 @@ class Image(Asset):
             - Use `set_data()` to copy data back to the image
         """
 
-    def set_data(self, data: bytes | list[int] | np.ndarray | Array) -> None:
+    def set_data(
+        self,
+        data: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array,
+    ) -> None:
         """Copy uint8 pixel data into the image.
 
         Copies the provided data into the image's pixel buffer.
@@ -811,7 +851,10 @@ class Image(Asset):
             RuntimeError: If layer count is incompatible with texture height
         """
 
-    def clear(self, pixel: bytes | list[int]) -> None:
+    def clear(
+        self,
+        pixel: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array,
+    ) -> None:
         """Fill the entire image with a single pixel value.
 
         Args:
@@ -864,7 +907,8 @@ class Image(Asset):
         """Save the image to a file in the specified format.
 
         Args:
-            path: File path to save to
+            path: File path to save to. Relative paths are resolved from the
+                native process launch directory.
             format: Output image format (default: PNG)
             quality: JPEG quality (0-100), only used for JPEG format (default: 95)
 
@@ -958,13 +1002,15 @@ class TextureAtlasLayout(Asset):
         Returns:
             Total dimensions of the atlas in pixels.
         """
+    @size.setter
+    def size(self, value: UVec2) -> None: ...
 
     @property
-    def textures(self) -> list[URect]:
-        """Get the list of texture regions in the atlas.
+    def textures(self) -> LiveList[URect]:
+        """Get list-like access to the texture regions in the atlas.
 
         Returns:
-            List of rectangular regions, each representing one texture/sprite.
+            Indexed rectangular regions, each representing one texture/sprite.
         """
 
     def add_texture(self, rect: URect) -> int:
@@ -1003,7 +1049,6 @@ class TextureAtlasLayout(Asset):
 
     def __eq__(self, other: object) -> bool: ...
 
-
 class TextureAtlas:
     """Reference to a texture region within a texture atlas.
     
@@ -1026,15 +1071,13 @@ class TextureAtlas:
         """
 
     def with_index(self, index: int) -> TextureAtlas:
-        """Set the index and return self for chaining.
-
-        Mutates this TextureAtlas in place and returns self.
+        """Return a copy of this TextureAtlas with the given index.
 
         Args:
             index: New index for the texture region.
 
         Returns:
-            Self (same object) for method chaining.
+            A new TextureAtlas; this one is left unchanged.
 
         Example:
             ```python
@@ -1043,15 +1086,13 @@ class TextureAtlas:
         """
 
     def with_layout(self, layout: Handle[TextureAtlasLayout]) -> TextureAtlas:
-        """Set the layout and return self for chaining.
-
-        Mutates this TextureAtlas in place and returns self.
+        """Return a copy of this TextureAtlas with the given layout.
 
         Args:
             layout: New layout handle.
 
         Returns:
-            Self (same object) for method chaining.
+            A new TextureAtlas; this one is left unchanged.
 
         Example:
             ```python
@@ -1112,6 +1153,9 @@ class ImageSamplerDescriptor:
     """Descriptor for configuring image sampling behavior.
 
     Controls filtering, addressing, and other sampling parameters.
+    Mipmap filtering and LOD clamps only affect images with more than one mip
+    level. Ordinary image formats and programmatic images do not generate mip
+    levels automatically; authored DDS and KTX2 files can contain them.
     """
 
     def __init__(
@@ -1276,28 +1320,12 @@ class ImageSampler:
         def __init__(self, desc: ImageSamplerDescriptor) -> None: ...
 
     @staticmethod
-    def linear() -> ImageSampler:
+    def linear() -> ImageSampler.Descriptor:
         """Create a sampler with linear filtering."""
 
     @staticmethod
-    def nearest() -> ImageSampler:
+    def nearest() -> ImageSampler.Descriptor:
         """Create a sampler with nearest-neighbor filtering."""
-
-    @property
-    def is_default(self) -> bool: ...
-    @property
-    def mag_filter(self) -> ImageFilterMode | None: ...
-    @property
-    def min_filter(self) -> ImageFilterMode | None: ...
-    @property
-    def mipmap_filter(self) -> ImageFilterMode | None: ...
-    @property
-    def address_mode_u(self) -> ImageAddressMode | None: ...
-    @property
-    def address_mode_v(self) -> ImageAddressMode | None: ...
-    @property
-    def address_mode_w(self) -> ImageAddressMode | None: ...
-
 
 class ImageArrayLayout:
     """Layout specification for image array textures."""
