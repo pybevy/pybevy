@@ -8,14 +8,23 @@ use image::{ImageFormat, Rgb, RgbImage};
 use tokio::sync::oneshot;
 
 use super::{
-    screenshot::{DebugCameraCleanup, setup_debug_camera},
+    screenshot::{
+        CAPTURE_DEADLINE_ERROR, DebugCameraCleanup, EntityCaptureIsolationActive,
+        MAX_CAPTURE_WAIT_FRAMES, STALE_HEADLESS_FRAME_ERROR, cleanup_debug_camera_world,
+        headless_frame_sequence, restore_ui_nodes, setup_debug_camera_with_up,
+    },
     spatial::compute_world_aabb,
 };
 use crate::bridge::{ControlError, DebugCameraRequest, InternalOverlayUi};
 
+pub const MAX_TURNAROUND_VIEWS: u32 = 20;
+// Transform propagation, render extraction, and GPU readback cross separate frames.
+const HEADLESS_VIEW_SETTLE_READBACKS: u64 = 3;
+
 /// A single viewpoint in a turnaround capture.
 pub struct TurnaroundView {
     pub position: [f32; 3],
+    pub up: [f32; 3],
     pub label: String,
 }
 
@@ -33,6 +42,8 @@ pub struct ActiveTurnaround {
     pub columns: u32,
     pub max_width: Option<u32>,
     pub frames_remaining: u32,
+    /// Whether the current viewpoint is configured and waiting for capture.
+    pub view_staged: bool,
     pub hide_ui: bool,
     pub ui_restore: Option<Vec<(Entity, Visibility)>>,
     /// Whether this turnaround holds an `OverlaySuppression` refcount
@@ -42,6 +53,19 @@ pub struct ActiveTurnaround {
     pub look_at: [f32; 3],
     /// Entity of pending Screenshot component, if any
     pub pending_screenshot_entity: Option<Entity>,
+    /// Headless readback sequence present when the current viewpoint was applied.
+    pub headless_sequence: Option<u64>,
+    /// Frames spent waiting on a capture (or headless frame) without progress.
+    pub stall_frames: u32,
+}
+
+fn headless_view_is_ready(baseline: Option<u64>, current: Option<u64>) -> bool {
+    current.is_some_and(|current| {
+        current
+            >= baseline
+                .unwrap_or(0)
+                .saturating_add(HEADLESS_VIEW_SETTLE_READBACKS)
+    })
 }
 
 /// Resource mapping turnaround screenshot entities to their turnaround index.
@@ -75,13 +99,15 @@ pub fn compute_viewpoints(
 
         views.push(TurnaroundView {
             position: [x, y, z],
+            up: Vec3::Y.to_array(),
             label: format!("{angle_degrees}°"),
         });
     }
 
     if include_top {
         views.push(TurnaroundView {
-            position: [center.x, center.y + distance, center.z + 0.001],
+            position: [center.x, center.y + distance, center.z],
+            up: Vec3::Z.to_array(),
             label: "top".to_string(),
         });
     }
@@ -133,13 +159,37 @@ fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
     ui_entities
 }
 
+/// Fail an active turnaround, restoring the capture state it held.
+fn fail_turnaround(world: &mut World, mut turnaround: ActiveTurnaround, message: String) {
+    if let Some(entity) = turnaround.pending_screenshot_entity.take() {
+        if let Some(mut captures) = world.get_resource_mut::<TurnaroundCaptures>() {
+            captures.map.remove(&entity);
+        }
+        if let Ok(entity_mut) = world.get_entity_mut(entity) {
+            entity_mut.despawn();
+        }
+    }
+    if let Some(cleanup) = turnaround.debug_cleanup.take() {
+        cleanup_debug_camera_world(cleanup, world);
+    }
+    if let Some(restore) = turnaround.ui_restore.take() {
+        restore_ui_nodes(world, restore);
+    }
+    if turnaround.overlay_suppressed {
+        super::screenshot::release_internal_overlay(world);
+    }
+    if let Some(tx) = turnaround.response_tx.take() {
+        let _ = tx.send(Err(ControlError::internal(message)));
+    }
+}
+
 /// Process pending turnaround captures (called each frame in Last schedule).
 pub fn process_pending_turnarounds(world: &mut World) {
     let Some(mut pending) = world.remove_resource::<PendingTurnarounds>() else {
         return;
     };
 
-    if pending.active.is_empty() {
+    if pending.active.is_empty() || world.contains_resource::<EntityCaptureIsolationActive>() {
         world.insert_resource(pending);
         return;
     }
@@ -159,10 +209,22 @@ pub fn process_pending_turnarounds(world: &mut World) {
             // If the capture is still pending, keep waiting
             if tc.map.contains_key(&screenshot_entity) {
                 turnaround.pending_screenshot_entity = Some(screenshot_entity);
-                still_active.push(turnaround);
+                turnaround.stall_frames += 1;
+                if turnaround.stall_frames > MAX_CAPTURE_WAIT_FRAMES {
+                    fail_turnaround(world, turnaround, CAPTURE_DEADLINE_ERROR.to_string());
+                } else {
+                    still_active.push(turnaround);
+                }
                 continue;
             }
             // Capture was collected (handled by observer) — continue to next viewpoint
+            turnaround.stall_frames = 0;
+            turnaround.view_staged = false;
+        }
+
+        if turnaround.view_staged {
+            still_active.push(turnaround);
+            continue;
         }
 
         // Clean up previous debug camera if any.
@@ -236,8 +298,29 @@ pub fn process_pending_turnarounds(world: &mut World) {
             position: view.position,
             look_at: turnaround.look_at,
         };
-        let cleanup = setup_debug_camera(world, &debug_req);
+        let cleanup = match setup_debug_camera_with_up(world, &debug_req, Vec3::from_array(view.up))
+        {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                if let Some(restore) = turnaround.ui_restore.take() {
+                    for (ui_entity, original_vis) in restore {
+                        if let Some(mut vis) = world.get_mut::<Visibility>(ui_entity) {
+                            *vis = original_vis;
+                        }
+                    }
+                }
+                if turnaround.overlay_suppressed {
+                    super::screenshot::release_internal_overlay(world);
+                }
+                if let Some(tx) = turnaround.response_tx.take() {
+                    let _ = tx.send(Err(error));
+                }
+                continue;
+            }
+        };
         turnaround.debug_cleanup = Some(cleanup);
+        turnaround.headless_sequence = headless_frame_sequence(world);
+        turnaround.view_staged = true;
 
         // Wait 2 frames for camera to render, then capture
         turnaround.frames_remaining = 2;
@@ -258,6 +341,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
             && turnaround.pending_screenshot_entity.is_none()
             && turnaround.current_index < turnaround.viewpoints.len()
             && turnaround.debug_cleanup.is_some()
+            && turnaround.view_staged
         {
             screenshots_to_spawn.push(idx);
         }
@@ -282,16 +366,51 @@ pub fn process_pending_turnarounds(world: &mut World) {
             pending.active[idx].frames_remaining = 2;
         }
     } else {
-        // Headless fallback: capture from HeadlessFrameBuffer
-        if let Ok(rgb) = super::screenshot::read_headless_frame(world) {
-            for idx in screenshots_to_spawn {
-                let capture_index = pending.active[idx].current_index;
-                pending.active[idx]
-                    .captures
-                    .push((capture_index, rgb.clone()));
-                pending.active[idx].current_index += 1;
-                pending.active[idx].frames_remaining = 2;
+        let current_sequence = headless_frame_sequence(world);
+        let mut ready = Vec::new();
+        let mut failed = Vec::new();
+        for idx in screenshots_to_spawn {
+            let turnaround = &mut pending.active[idx];
+            if !headless_view_is_ready(turnaround.headless_sequence, current_sequence) {
+                turnaround.stall_frames += 1;
+                if turnaround.stall_frames > MAX_CAPTURE_WAIT_FRAMES {
+                    failed.push((idx, STALE_HEADLESS_FRAME_ERROR.to_string()));
+                }
+            } else {
+                ready.push(idx);
             }
+        }
+
+        if !ready.is_empty() {
+            match super::screenshot::read_headless_frame(world) {
+                Ok(rgb) => {
+                    for idx in ready {
+                        let capture_index = pending.active[idx].current_index;
+                        pending.active[idx]
+                            .captures
+                            .push((capture_index, rgb.clone()));
+                        pending.active[idx].current_index += 1;
+                        pending.active[idx].frames_remaining = 0;
+                        pending.active[idx].view_staged = false;
+                        pending.active[idx].headless_sequence = current_sequence;
+                        pending.active[idx].stall_frames = 0;
+                    }
+                }
+                Err(error) => {
+                    for idx in ready {
+                        pending.active[idx].stall_frames += 1;
+                        if pending.active[idx].stall_frames > MAX_CAPTURE_WAIT_FRAMES {
+                            failed.push((idx, error.message.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        failed.sort_unstable_by_key(|(idx, _)| *idx);
+        for (idx, message) in failed.into_iter().rev() {
+            let turnaround = pending.active.remove(idx);
+            fail_turnaround(world, turnaround, message);
         }
     }
 
@@ -309,6 +428,14 @@ pub fn handle_turnaround_capture(
         return false;
     };
 
+    let Some(turnaround) = turnarounds
+        .active
+        .iter_mut()
+        .find(|turnaround| turnaround.pending_screenshot_entity == Some(entity))
+    else {
+        return true;
+    };
+
     let dyn_img = match image.clone().try_into_dynamic() {
         Ok(d) => d,
         Err(e) => {
@@ -316,23 +443,7 @@ pub fn handle_turnaround_capture(
             return true;
         }
     };
-    let rgb = dyn_img.to_rgb8();
-
-    // Find the active turnaround and store the capture
-    for turnaround in &mut turnarounds.active {
-        if turnaround
-            .pending_screenshot_entity
-            .is_some_and(|e| !turnaround_captures.map.contains_key(&e))
-        {
-            turnaround.captures.push((capture_index, rgb));
-            return true;
-        }
-    }
-
-    // Fallback: store in first active turnaround
-    if let Some(turnaround) = turnarounds.active.first_mut() {
-        turnaround.captures.push((capture_index, rgb));
-    }
+    turnaround.captures.push((capture_index, dyn_img.to_rgb8()));
 
     true
 }
@@ -349,10 +460,9 @@ fn composite_turnaround(
     }
 
     // Treat user-supplied columns as a max; shrink to a divisor of count when possible
-    // to avoid trailing empty cells. Floor at ceil(preferred/2) so prime counts don't
-    // collapse to a single column.
+    // to avoid trailing empty cells. Multi-column requests never collapse to one column.
     let preferred = (turnaround.columns.max(1) as usize).min(count);
-    let min_cols = preferred.div_ceil(2);
+    let min_cols = preferred.min(2);
     let cols = (min_cols..=preferred)
         .rev()
         .find(|&c| count % c == 0)
@@ -579,8 +689,8 @@ mod tests {
         assert_eq!(top.label, "top");
         assert!((top.position[0] - look_at[0]).abs() < 0.01);
         assert!((top.position[1] - (look_at[1] + distance)).abs() < 0.01);
-        // Z has small offset to avoid degenerate look_at
-        assert!((top.position[2] - (look_at[2] + 0.001)).abs() < 0.01);
+        assert!((top.position[2] - look_at[2]).abs() < 0.01);
+        assert_eq!(top.up, Vec3::Z.to_array());
     }
 
     #[test]
@@ -697,13 +807,264 @@ mod tests {
             columns,
             max_width,
             frames_remaining: 0,
+            view_staged: false,
             hide_ui: false,
             ui_restore: None,
             overlay_suppressed: false,
             debug_cleanup: None,
             look_at: [0.0, 0.0, 0.0],
             pending_screenshot_entity: None,
+            headless_sequence: None,
+            stall_frames: 0,
         }
+    }
+
+    #[test]
+    fn headless_view_waits_for_three_readbacks_after_setup() {
+        assert!(!headless_view_is_ready(None, None));
+        assert!(!headless_view_is_ready(None, Some(1)));
+        assert!(!headless_view_is_ready(None, Some(2)));
+        assert!(headless_view_is_ready(None, Some(3)));
+        assert!(!headless_view_is_ready(Some(5), Some(7)));
+        assert!(headless_view_is_ready(Some(5), Some(8)));
+    }
+
+    #[test]
+    fn headless_turnaround_does_not_reuse_the_previous_view() {
+        let mut world = World::new();
+        world.insert_resource(crate::handlers::screenshot::HeadlessFrameBuffer {
+            latest: Some((vec![255, 0, 0, 255], 1, 1)),
+            sequence: 5,
+        });
+        let mut turnaround = make_turnaround(make_viewpoints(1), Vec::new(), 1, None);
+        turnaround.frames_remaining = 1;
+        turnaround.view_staged = true;
+        turnaround.headless_sequence = Some(5);
+        turnaround.debug_cleanup = Some(DebugCameraCleanup {
+            debug_entity: Entity::PLACEHOLDER,
+            reused_state: None,
+            original_cameras: Vec::new(),
+        });
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+
+        process_pending_turnarounds(&mut world);
+
+        let turnaround = &world.resource::<PendingTurnarounds>().active[0];
+        assert_eq!(turnaround.current_index, 0);
+        assert!(turnaround.captures.is_empty());
+        assert_eq!(turnaround.stall_frames, 1);
+
+        process_pending_turnarounds(&mut world);
+
+        let turnaround = &world.resource::<PendingTurnarounds>().active[0];
+        assert_eq!(turnaround.headless_sequence, Some(5));
+        assert_eq!(turnaround.stall_frames, 2);
+    }
+
+    #[test]
+    fn headless_turnaround_advances_to_view_setup_after_capture() {
+        let mut world = World::new();
+        world.insert_resource(crate::handlers::screenshot::HeadlessFrameBuffer {
+            latest: Some((vec![0, 255, 0, 255], 1, 1)),
+            sequence: 8,
+        });
+        let mut turnaround = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
+        turnaround.frames_remaining = 1;
+        turnaround.view_staged = true;
+        turnaround.headless_sequence = Some(5);
+        turnaround.debug_cleanup = Some(DebugCameraCleanup {
+            debug_entity: Entity::PLACEHOLDER,
+            reused_state: None,
+            original_cameras: Vec::new(),
+        });
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+
+        process_pending_turnarounds(&mut world);
+
+        let turnaround = &world.resource::<PendingTurnarounds>().active[0];
+        assert_eq!(turnaround.current_index, 1);
+        assert_eq!(turnaround.captures.len(), 1);
+        assert_eq!(turnaround.frames_remaining, 0);
+    }
+
+    #[test]
+    fn process_turnaround_rejects_camera2d_scene() {
+        let mut world = World::new();
+        let camera = world.spawn(Camera2d::default()).id();
+        let (tx, mut rx) = oneshot::channel();
+        let mut turnaround = make_turnaround(make_viewpoints(1), Vec::new(), 1, None);
+        turnaround.response_tx = Some(tx);
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+
+        process_pending_turnarounds(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("require a Camera3d"));
+        assert!(world.resource::<PendingTurnarounds>().active.is_empty());
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
+        assert_eq!(world.resource::<crate::bridge::OverlaySuppression>().0, 0);
+    }
+
+    fn make_capture_image() -> bevy::image::Image {
+        bevy::image::Image::new(
+            bevy::render::render_resource::Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            vec![255u8; 16],
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        )
+    }
+
+    #[test]
+    fn capture_lands_in_the_turnaround_that_owns_the_entity() {
+        let mut world = World::new();
+        let entity_a = world.spawn_empty().id();
+        let entity_b = world.spawn_empty().id();
+
+        let mut first = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
+        first.pending_screenshot_entity = Some(entity_a);
+        let mut second = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
+        second.pending_screenshot_entity = Some(entity_b);
+        let mut turnarounds = PendingTurnarounds {
+            active: vec![first, second],
+        };
+        let mut captures = TurnaroundCaptures::default();
+        captures.map.insert(entity_a, 0);
+        captures.map.insert(entity_b, 1);
+
+        // Both captures arrive in the same frame, second turnaround's first.
+        let image = make_capture_image();
+        assert!(handle_turnaround_capture(
+            entity_b,
+            &image,
+            &mut turnarounds,
+            &mut captures
+        ));
+        assert!(handle_turnaround_capture(
+            entity_a,
+            &image,
+            &mut turnarounds,
+            &mut captures
+        ));
+
+        assert_eq!(
+            turnarounds.active[0]
+                .captures
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
+        assert_eq!(
+            turnarounds.active[1]
+                .captures
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert!(captures.map.is_empty());
+    }
+
+    #[test]
+    fn capture_for_a_removed_turnaround_is_consumed_and_dropped() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let mut turnarounds = PendingTurnarounds::default();
+        let mut captures = TurnaroundCaptures::default();
+        captures.map.insert(entity, 0);
+
+        let image = make_capture_image();
+        assert!(handle_turnaround_capture(
+            entity,
+            &image,
+            &mut turnarounds,
+            &mut captures
+        ));
+        assert!(captures.map.is_empty());
+    }
+
+    #[test]
+    fn non_turnaround_capture_is_not_consumed() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let mut turnarounds = PendingTurnarounds::default();
+        let mut captures = TurnaroundCaptures::default();
+
+        let image = make_capture_image();
+        assert!(!handle_turnaround_capture(
+            entity,
+            &image,
+            &mut turnarounds,
+            &mut captures
+        ));
+    }
+
+    #[test]
+    fn stalled_turnaround_fails_with_error_and_restored_state() {
+        let mut world = World::new();
+        world.insert_resource(crate::bridge::OverlaySuppression(1));
+        let ui = world
+            .spawn((Visibility::Hidden, bevy::ui::Node::default()))
+            .id();
+        let screenshot_entity = world.spawn_empty().id();
+
+        let (tx, mut rx) = oneshot::channel();
+        let mut turnaround = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
+        turnaround.response_tx = Some(tx);
+        turnaround.pending_screenshot_entity = Some(screenshot_entity);
+        turnaround.overlay_suppressed = true;
+        turnaround.ui_restore = Some(vec![(ui, Visibility::Visible)]);
+        turnaround.stall_frames = MAX_CAPTURE_WAIT_FRAMES;
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+        let mut captures = TurnaroundCaptures::default();
+        captures.map.insert(screenshot_entity, 0);
+        world.insert_resource(captures);
+
+        process_pending_turnarounds(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("deadline"));
+        assert!(world.resource::<PendingTurnarounds>().active.is_empty());
+        assert!(world.resource::<TurnaroundCaptures>().map.is_empty());
+        assert_eq!(world.resource::<crate::bridge::OverlaySuppression>().0, 0);
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert!(world.get_entity(screenshot_entity).is_err());
+    }
+
+    #[test]
+    fn waiting_turnaround_below_deadline_is_kept() {
+        let mut world = World::new();
+        let screenshot_entity = world.spawn_empty().id();
+        let (tx, mut rx) = oneshot::channel();
+        let mut turnaround = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
+        turnaround.response_tx = Some(tx);
+        turnaround.pending_screenshot_entity = Some(screenshot_entity);
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+        let mut captures = TurnaroundCaptures::default();
+        captures.map.insert(screenshot_entity, 0);
+        world.insert_resource(captures);
+
+        process_pending_turnarounds(&mut world);
+
+        assert!(rx.try_recv().is_err(), "response must remain deferred");
+        let pending = world.resource::<PendingTurnarounds>();
+        assert_eq!(pending.active.len(), 1);
+        assert_eq!(pending.active[0].stall_frames, 1);
     }
 
     #[test]
@@ -711,6 +1072,7 @@ mod tests {
         let mut t = make_turnaround(
             vec![TurnaroundView {
                 position: [0.0, 0.0, 10.0],
+                up: [0.0, 1.0, 0.0],
                 label: "0°".into(),
             }],
             vec![(0, RgbImage::from_pixel(4, 4, Rgb([100, 100, 100])))],
@@ -731,6 +1093,7 @@ mod tests {
         let mut t = make_turnaround(
             vec![TurnaroundView {
                 position: [0.0, 0.0, 10.0],
+                up: [0.0, 1.0, 0.0],
                 label: "0°".into(),
             }],
             vec![],
@@ -746,6 +1109,7 @@ mod tests {
         let mut t = make_turnaround(
             vec![TurnaroundView {
                 position: [0.0, 0.0, 10.0],
+                up: [0.0, 1.0, 0.0],
                 label: "0°".into(),
             }],
             vec![(0, RgbImage::from_pixel(100, 100, Rgb([50, 50, 50])))],
@@ -766,6 +1130,7 @@ mod tests {
         let viewpoints: Vec<TurnaroundView> = (0..4)
             .map(|i| TurnaroundView {
                 position: [0.0, 0.0, 10.0],
+                up: [0.0, 1.0, 0.0],
                 label: format!("{i}"),
             })
             .collect();
@@ -787,6 +1152,7 @@ mod tests {
         (0..n)
             .map(|i| TurnaroundView {
                 position: [0.0, 0.0, 10.0],
+                up: [0.0, 1.0, 0.0],
                 label: format!("{i}"),
             })
             .collect()
@@ -809,6 +1175,14 @@ mod tests {
         let mut t = make_turnaround(make_viewpoints(4), make_captures(4, 10, 10), 3, None);
         let val = composite_turnaround(&mut t).unwrap();
         // 2 cols * 10 = 20 wide; 2 rows * (10 + 20) = 60 tall.
+        assert_eq!(val["width"], 20);
+        assert_eq!(val["height"], 60);
+    }
+
+    #[test]
+    fn composite_turnaround_count_3_columns_2_keeps_two_columns() {
+        let mut t = make_turnaround(make_viewpoints(3), make_captures(3, 10, 10), 2, None);
+        let val = composite_turnaround(&mut t).unwrap();
         assert_eq!(val["width"], 20);
         assert_eq!(val["height"], 60);
     }
