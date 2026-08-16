@@ -1,126 +1,242 @@
 use bevy::{
     asset::RenderAssetUsages,
-    image::{ImageFormatSetting, ImageLoaderSettings, ImageSampler},
+    image::{ImageFormatSetting, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
 };
-use pyo3::prelude::*;
+use pybevy_core::{FieldStorage, StorageRef, public_error::enum_variant_changed};
+use pybevy_macros::pyenum;
+use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyTuple};
 
 use crate::{
-    image::PyRenderAssetUsages, image_address_mode::PyImageAddressMode,
-    image_filter_mode::PyImageFilterMode, image_format::PyImageFormat,
+    image::PyRenderAssetUsages, image_format::PyImageFormat,
     image_format_setting::PyImageFormatSetting, sampler_descriptor::PyImageSamplerDescriptor,
 };
 
-#[pyclass(name = "ImageSampler", eq, from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
-pub enum PyImageSampler {
-    Default(),
-    Descriptor { desc: PyImageSamplerDescriptor },
+#[pyenum(ImageSampler, manual)]
+#[pyclass(
+    name = "ImageSampler",
+    module = "pybevy.image",
+    subclass,
+    from_py_object
+)]
+#[derive(Debug, Clone)]
+pub struct PyImageSampler {
+    storage: FieldStorage<ImageSampler>,
+    expected: ImageSamplerVariant,
 }
 
-#[pymethods]
-impl PyImageSampler {
-    #[staticmethod]
-    pub fn linear() -> Self {
-        PyImageSampler::Descriptor {
-            desc: PyImageSamplerDescriptor::linear(),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageSamplerVariant {
+    Default,
+    Descriptor,
+}
+
+impl ImageSamplerVariant {
+    fn of(sampler: &ImageSampler) -> Self {
+        match sampler {
+            ImageSampler::Default => Self::Default,
+            ImageSampler::Descriptor(_) => Self::Descriptor,
         }
     }
 
-    #[staticmethod]
-    pub fn nearest() -> Self {
-        PyImageSampler::Descriptor {
-            desc: PyImageSamplerDescriptor::nearest(),
-        }
-    }
-
-    #[getter]
-    pub fn is_default(&self) -> bool {
-        matches!(self, PyImageSampler::Default())
-    }
-
-    #[getter]
-    pub fn mag_filter(&self) -> Option<PyImageFilterMode> {
+    fn qualname(self) -> &'static str {
         match self {
-            PyImageSampler::Descriptor { desc } => Some(desc.mag_filter()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    pub fn min_filter(&self) -> Option<PyImageFilterMode> {
-        match self {
-            PyImageSampler::Descriptor { desc } => Some(desc.min_filter()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    pub fn mipmap_filter(&self) -> Option<PyImageFilterMode> {
-        match self {
-            PyImageSampler::Descriptor { desc } => Some(desc.mipmap_filter()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    pub fn address_mode_u(&self) -> Option<PyImageAddressMode> {
-        match self {
-            PyImageSampler::Descriptor { desc } => Some(desc.address_mode_u()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    pub fn address_mode_v(&self) -> Option<PyImageAddressMode> {
-        match self {
-            PyImageSampler::Descriptor { desc } => Some(desc.address_mode_v()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    pub fn address_mode_w(&self) -> Option<PyImageAddressMode> {
-        match self {
-            PyImageSampler::Descriptor { desc } => Some(desc.address_mode_w()),
-            _ => None,
-        }
-    }
-
-    pub fn __repr__(&self) -> String {
-        match self {
-            PyImageSampler::Default() => "ImageSampler.Default".to_string(),
-            PyImageSampler::Descriptor { desc } => {
-                format!("ImageSampler.Descriptor({})", desc.__repr__())
-            }
+            Self::Default => "ImageSampler.Default",
+            Self::Descriptor => "ImageSampler.Descriptor",
         }
     }
 }
 
 impl From<ImageSampler> for PyImageSampler {
     fn from(sampler: ImageSampler) -> Self {
-        match sampler {
-            ImageSampler::Default => PyImageSampler::Default(),
-            ImageSampler::Descriptor(desc) => PyImageSampler::Descriptor { desc: desc.into() },
+        Self {
+            expected: ImageSamplerVariant::of(&sampler),
+            storage: FieldStorage::owned(sampler),
         }
     }
 }
 
-impl From<PyImageSampler> for ImageSampler {
-    fn from(sampler: PyImageSampler) -> Self {
-        match sampler {
-            PyImageSampler::Default() => ImageSampler::Default,
-            PyImageSampler::Descriptor { desc } => ImageSampler::Descriptor(desc.into()),
-        }
+impl TryFrom<PyImageSampler> for ImageSampler {
+    type Error = PyErr;
+
+    fn try_from(sampler: PyImageSampler) -> PyResult<Self> {
+        sampler.resolved_clone()
     }
 }
 
-impl From<&PyImageSampler> for ImageSampler {
-    fn from(sampler: &PyImageSampler) -> Self {
-        match sampler {
-            PyImageSampler::Default() => ImageSampler::Default,
-            PyImageSampler::Descriptor { desc } => ImageSampler::Descriptor(desc.into()),
+impl TryFrom<&PyImageSampler> for ImageSampler {
+    type Error = PyErr;
+
+    fn try_from(sampler: &PyImageSampler) -> PyResult<Self> {
+        sampler.resolved_clone()
+    }
+}
+
+#[pymethods]
+impl PyImageSampler {
+    #[staticmethod]
+    pub fn linear(py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_sampler(
+            ImageSampler::Descriptor(ImageSamplerDescriptor::linear()),
+            py,
+        )
+    }
+
+    #[staticmethod]
+    pub fn nearest(py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_sampler(
+            ImageSampler::Descriptor(ImageSamplerDescriptor::nearest()),
+            py,
+        )
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        match self.as_ref()?.reborrow() {
+            ImageSampler::Default => Ok("ImageSampler.Default".to_string()),
+            ImageSampler::Descriptor(desc) => Ok(format!(
+                "ImageSampler.Descriptor({})",
+                PyImageSamplerDescriptor::from(desc.clone()).__repr__()?
+            )),
         }
     }
+
+    pub fn __copy__(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_sampler(self.resolved_clone()?, py)
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.__copy__(py)
+    }
+
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.resolved_clone()? == other.resolved_clone()?)
+    }
+
+    pub fn __ne__(&self, other: &Self) -> PyResult<bool> {
+        Ok(!self.__eq__(other)?)
+    }
+
+    #[classattr]
+    const __hash__: Option<Py<PyAny>> = None;
+}
+
+impl PyImageSampler {
+    pub fn from_sampler(sampler: ImageSampler, py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_storage(FieldStorage::owned(sampler), py)
+    }
+
+    pub fn from_storage(storage: FieldStorage<ImageSampler>, py: Python<'_>) -> PyResult<Py<Self>> {
+        let sampler = storage.get()?;
+        let expected = ImageSamplerVariant::of(&sampler);
+        match sampler {
+            ImageSampler::Default => {
+                let value = Py::new(
+                    py,
+                    PyClassInitializer::from(Self { storage, expected })
+                        .add_subclass(PyImageSamplerDefault),
+                )?;
+                Ok(value.into_bound(py).into_super().unbind())
+            }
+            ImageSampler::Descriptor(_) => {
+                let value = Py::new(
+                    py,
+                    PyClassInitializer::from(Self { storage, expected })
+                        .add_subclass(PyImageSamplerDescriptorVariant),
+                )?;
+                Ok(value.into_bound(py).into_super().unbind())
+            }
+        }
+    }
+
+    fn validate_variant(&self, sampler: &ImageSampler) -> PyResult<()> {
+        if ImageSamplerVariant::of(sampler) == self.expected {
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err(enum_variant_changed(
+                self.expected.qualname(),
+            )))
+        }
+    }
+
+    fn as_ref(&self) -> PyResult<StorageRef<'_, ImageSampler>> {
+        let sampler = self.storage.as_ref()?;
+        self.validate_variant(&sampler)?;
+        Ok(sampler)
+    }
+
+    pub fn resolved_clone(&self) -> PyResult<ImageSampler> {
+        Ok(self.as_ref()?.clone())
+    }
+}
+
+#[pyclass(name = "Default", module = "pybevy.image", extends = PyImageSampler)]
+pub struct PyImageSamplerDefault;
+
+#[pymethods]
+#[allow(non_upper_case_globals)]
+impl PyImageSamplerDefault {
+    #[classattr]
+    const __qualname__: &'static str = "ImageSampler.Default";
+
+    #[classattr]
+    fn __match_args__(py: Python<'_>) -> Py<PyTuple> {
+        PyTuple::empty(py).unbind()
+    }
+
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyImageSampler::from(ImageSampler::Default)).add_subclass(Self)
+    }
+}
+
+#[pyclass(name = "Descriptor", module = "pybevy.image", extends = PyImageSampler)]
+pub struct PyImageSamplerDescriptorVariant;
+
+#[pymethods]
+#[allow(non_upper_case_globals)]
+impl PyImageSamplerDescriptorVariant {
+    #[classattr]
+    const __qualname__: &'static str = "ImageSampler.Descriptor";
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("desc",)
+    }
+
+    #[new]
+    pub fn new(desc: &PyImageSamplerDescriptor) -> PyResult<PyClassInitializer<Self>> {
+        let desc = ImageSamplerDescriptor::try_from(desc)?;
+        Ok(
+            PyClassInitializer::from(PyImageSampler::from(ImageSampler::Descriptor(desc)))
+                .add_subclass(Self),
+        )
+    }
+
+    #[getter]
+    pub fn desc(slf: PyRef<'_, Self>) -> PyResult<PyImageSamplerDescriptor> {
+        let base = slf.into_super();
+        Ok(base.storage.borrow_resolved_variant_as(
+            "ImageSampler.Descriptor",
+            |sampler| match sampler {
+                ImageSampler::Descriptor(desc) => Some(desc),
+                ImageSampler::Default => None,
+            },
+            |sampler| match sampler {
+                ImageSampler::Descriptor(desc) => Some(desc),
+                ImageSampler::Default => None,
+            },
+        )?)
+    }
+}
+
+pub fn register_image_sampler_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = module.py();
+    let base = module.getattr("ImageSampler")?;
+    base.setattr("Default", py.get_type::<PyImageSamplerDefault>())?;
+    base.setattr(
+        "Descriptor",
+        py.get_type::<PyImageSamplerDescriptorVariant>(),
+    )?;
+    Ok(())
 }
 
 #[pyclass(name = "ImageLoaderSettings", from_py_object)]
@@ -136,17 +252,20 @@ impl PyImageLoaderSettings {
         is_srgb = true,
         sampler = None,
     ))]
-    pub fn new(is_srgb: bool, sampler: Option<PyImageSampler>) -> Self {
-        Self {
+    pub fn new(is_srgb: bool, sampler: Option<PyImageSampler>) -> PyResult<Self> {
+        Ok(Self {
             inner: ImageLoaderSettings {
                 format: ImageFormatSetting::FromExtension,
                 texture_format: None,
                 is_srgb,
-                sampler: sampler.map(Into::into).unwrap_or(ImageSampler::Default),
+                sampler: sampler
+                    .map(ImageSampler::try_from)
+                    .transpose()?
+                    .unwrap_or(ImageSampler::Default),
                 asset_usage: RenderAssetUsages::default(),
                 array_layout: None,
             },
-        }
+        })
     }
 
     #[staticmethod]
@@ -155,17 +274,20 @@ impl PyImageLoaderSettings {
         format: PyImageFormat,
         is_srgb: bool,
         sampler: Option<PyImageSampler>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        Ok(Self {
             inner: ImageLoaderSettings {
                 format: ImageFormatSetting::Format(format.into()),
                 texture_format: None,
                 is_srgb,
-                sampler: sampler.map(Into::into).unwrap_or(ImageSampler::Default),
+                sampler: sampler
+                    .map(ImageSampler::try_from)
+                    .transpose()?
+                    .unwrap_or(ImageSampler::Default),
                 asset_usage: RenderAssetUsages::default(),
                 array_layout: None,
             },
-        }
+        })
     }
 
     #[getter]
@@ -179,13 +301,14 @@ impl PyImageLoaderSettings {
     }
 
     #[getter]
-    pub fn sampler(&self) -> PyImageSampler {
-        self.inner.sampler.clone().into()
+    pub fn sampler(&self, py: Python<'_>) -> PyResult<Py<PyImageSampler>> {
+        PyImageSampler::from_sampler(self.inner.sampler.clone(), py)
     }
 
     #[setter]
-    pub fn set_sampler(&mut self, value: PyImageSampler) {
-        self.inner.sampler = value.into();
+    pub fn set_sampler(&mut self, value: PyImageSampler) -> PyResult<()> {
+        self.inner.sampler = value.try_into()?;
+        Ok(())
     }
 
     #[getter]

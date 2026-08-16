@@ -4,6 +4,8 @@ use pybevy_macros::pyasset;
 use pybevy_math::{urect::PyURect, uvec2::PyUVec2};
 use pyo3::prelude::*;
 
+use crate::texture_atlas_rects::PyTextureAtlasRects;
+
 #[pyasset(TextureAtlasLayout, bridge, not_loadable)]
 #[pyclass(name = "TextureAtlasLayout", extends = PyAsset, eq, skip_from_py_object)]
 #[derive(Debug, PartialEq)]
@@ -21,10 +23,14 @@ impl PyTextureAtlasLayout {
     ) -> PyResult<Py<PyTextureAtlasLayout>> {
         Python::attach(|py| {
             let layout = TextureAtlasLayout {
-                size: size.into(),
-                textures: textures
-                    .map(|v| v.into_iter().map(|r| r.into()).collect())
-                    .unwrap_or_default(),
+                size: size.try_into()?,
+                textures: match textures {
+                    Some(v) => v
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<PyResult<Vec<_>>>()?,
+                    None => Vec::new(),
+                },
             };
             Py::new(py, Self::from_owned(layout))
         })
@@ -33,7 +39,7 @@ impl PyTextureAtlasLayout {
     #[staticmethod]
     pub fn new_empty(size: PyUVec2) -> PyResult<Py<PyTextureAtlasLayout>> {
         Python::attach(|py| {
-            let layout = TextureAtlasLayout::new_empty(size.into());
+            let layout = TextureAtlasLayout::new_empty(size.try_into()?);
             Py::new(py, Self::from_owned(layout))
         })
     }
@@ -49,11 +55,11 @@ impl PyTextureAtlasLayout {
     ) -> PyResult<Py<PyTextureAtlasLayout>> {
         Python::attach(|py| {
             let layout = TextureAtlasLayout::from_grid(
-                tile_size.into(),
+                tile_size.try_into()?,
                 columns,
                 rows,
-                padding.map(|p| p.into()),
-                offset.map(|o| o.into()),
+                padding.map(TryInto::try_into).transpose()?,
+                offset.map(TryInto::try_into).transpose()?,
             );
             Py::new(py, Self::from_owned(layout))
         })
@@ -61,21 +67,28 @@ impl PyTextureAtlasLayout {
 
     #[getter]
     pub fn size(&self) -> PyResult<PyUVec2> {
-        Ok(self.as_ref()?.size.into())
+        Ok(self
+            .storage
+            .borrow_field_as(|layout| &layout.size, |layout| &mut layout.size)?)
+    }
+
+    #[setter]
+    pub fn set_size(&mut self, size: PyUVec2) -> PyResult<()> {
+        let size = size.try_into()?;
+        self.as_mut()?.size = size;
+        Ok(())
     }
 
     #[getter]
-    pub fn textures(&self) -> PyResult<Vec<PyURect>> {
+    pub fn textures(&self) -> PyResult<PyTextureAtlasRects> {
         Ok(self
-            .as_ref()?
-            .textures
-            .iter()
-            .map(|r| (*r).into())
-            .collect())
+            .storage
+            .borrow_field_as(|layout| &layout.textures, |layout| &mut layout.textures)?)
     }
 
     pub fn add_texture(&mut self, rect: PyURect) -> PyResult<usize> {
-        Ok(self.as_mut()?.add_texture(rect.into()))
+        let rect = rect.try_into()?;
+        Ok(self.as_mut()?.add_texture(rect))
     }
 
     pub fn len(&self) -> PyResult<usize> {
