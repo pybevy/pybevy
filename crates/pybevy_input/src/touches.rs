@@ -1,10 +1,10 @@
 use bevy::input::touch::{ForceTouch, Touch, Touches};
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
 use pybevy_macros::pyresource;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pyresource(Touches, no_clone, bridge, no_mut, default_insert, no_reflect)]
+#[pyresource(Touches, no_clone, bridge, default_insert, no_reflect)]
 #[pyclass(name = "Touches", extends = PyResource)]
 pub struct PyTouches {
     pub(crate) storage: ResourceStorage<Touches>,
@@ -14,13 +14,9 @@ pub struct PyTouches {
 impl PyTouches {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
-        (
-            Self {
-                storage: ResourceStorage::owned(Touches::default()),
-            },
-            PyResource,
-        )
-            .into()
+        resource_initializer(Self {
+            storage: ResourceStorage::owned(Touches::default()),
+        })
     }
 
     pub fn any_just_pressed(&self) -> PyResult<bool> {
@@ -120,7 +116,10 @@ impl PyTouches {
     }
 
     fn __repr__(&self) -> String {
-        "Touches(...)".to_string()
+        match self.as_ref() {
+            Ok(touches) => format!("Touches(active={})", touches.iter().count()),
+            Err(_) => "Touches(<invalid>)".to_string(),
+        }
     }
 }
 

@@ -1,63 +1,111 @@
 use bevy::input::keyboard::KeyCode;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyclass(name = "KeyCode", eq, frozen, from_py_object)]
+use crate::native_key_code::PyNativeKeyCode;
+
+#[pyenum(KeyCode, manual)]
+#[pyclass(
+    name = "KeyCode",
+    module = "pybevy.input",
+    eq,
+    frozen,
+    subclass,
+    from_py_object,
+    hash
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PyKeyCode {
-    F1,
-    F2,
-    F3,
-    F4,
-    F5,
-    F6,
-    F7,
-    F8,
-    F9,
-    F10,
-    F11,
-    F12,
+pub struct PyKeyCode(pub(crate) KeyCode);
 
-    ShiftLeft,
-    ShiftRight,
-    ControlLeft,
-    ControlRight,
-    AltLeft,
-    AltRight,
-    SuperLeft,
-    SuperRight,
+impl PyKeyCode {
+    pub fn from_bevy(key_code: KeyCode) -> Self {
+        Self(key_code)
+    }
 
-    Space,
-    Enter,
-    Escape,
-    Backspace,
-    Tab,
-    Delete,
-    Insert,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    CapsLock,
-    ScrollLock,
-    NumLock,
+    pub fn to_bevy(&self) -> KeyCode {
+        self.0
+    }
+}
 
+#[pymethods]
+impl PyKeyCode {
+    fn __repr__(&self) -> String {
+        match self.0 {
+            KeyCode::Unidentified(value) => {
+                format!(
+                    "KeyCode.Unidentified({})",
+                    PyNativeKeyCode::from(value).repr()
+                )
+            }
+            _ => format!(
+                "KeyCode.{}",
+                self.portable_name().expect("portable key code")
+            ),
+        }
+    }
+
+    fn __str__(&self) -> String {
+        match self.0 {
+            KeyCode::Unidentified(value) => {
+                format!("Unidentified({})", PyNativeKeyCode::from(value).repr())
+            }
+            _ => self.portable_name().expect("portable key code").to_string(),
+        }
+    }
+
+    fn __copy__(&self) -> Self {
+        *self
+    }
+
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> Self {
+        *self
+    }
+}
+
+macro_rules! define_key_code_variants {
+    ($($variant:ident),* $(,)?) => {
+        impl PyKeyCode {
+            fn portable_name(&self) -> Option<&'static str> {
+                match self.0 {
+                    KeyCode::Unidentified(_) => None,
+                    $(KeyCode::$variant => Some(stringify!($variant)),)*
+                }
+            }
+        }
+
+        #[pymethods]
+        #[allow(non_snake_case)]
+        impl PyKeyCode {
+            $(
+                #[classattr]
+                fn $variant() -> Self {
+                    Self(KeyCode::$variant)
+                }
+            )*
+        }
+    };
+}
+
+define_key_code_variants!(
     Backquote,
     Backslash,
     BracketLeft,
     BracketRight,
     Comma,
+    Digit0,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
     Equal,
-    Minus,
-    Period,
-    Quote,
-    Semicolon,
-    Slash,
-
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-
+    IntlBackslash,
+    IntlRo,
+    IntlYen,
     KeyA,
     KeyB,
     KeyC,
@@ -84,222 +132,205 @@ pub enum PyKeyCode {
     KeyX,
     KeyY,
     KeyZ,
+    Minus,
+    Period,
+    Quote,
+    Semicolon,
+    Slash,
+    AltLeft,
+    AltRight,
+    Backspace,
+    CapsLock,
+    ContextMenu,
+    ControlLeft,
+    ControlRight,
+    Enter,
+    SuperLeft,
+    SuperRight,
+    ShiftLeft,
+    ShiftRight,
+    Space,
+    Tab,
+    Convert,
+    KanaMode,
+    Lang1,
+    Lang2,
+    Lang3,
+    Lang4,
+    Lang5,
+    NonConvert,
+    Delete,
+    End,
+    Help,
+    Home,
+    Insert,
+    PageDown,
+    PageUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    NumLock,
+    Numpad0,
+    Numpad1,
+    Numpad2,
+    Numpad3,
+    Numpad4,
+    Numpad5,
+    Numpad6,
+    Numpad7,
+    Numpad8,
+    Numpad9,
+    NumpadAdd,
+    NumpadBackspace,
+    NumpadClear,
+    NumpadClearEntry,
+    NumpadComma,
+    NumpadDecimal,
+    NumpadDivide,
+    NumpadEnter,
+    NumpadEqual,
+    NumpadHash,
+    NumpadMemoryAdd,
+    NumpadMemoryClear,
+    NumpadMemoryRecall,
+    NumpadMemoryStore,
+    NumpadMemorySubtract,
+    NumpadMultiply,
+    NumpadParenLeft,
+    NumpadParenRight,
+    NumpadStar,
+    NumpadSubtract,
+    Escape,
+    Fn,
+    FnLock,
+    PrintScreen,
+    ScrollLock,
+    Pause,
+    BrowserBack,
+    BrowserFavorites,
+    BrowserForward,
+    BrowserHome,
+    BrowserRefresh,
+    BrowserSearch,
+    BrowserStop,
+    Eject,
+    LaunchApp1,
+    LaunchApp2,
+    LaunchMail,
+    MediaPlayPause,
+    MediaSelect,
+    MediaStop,
+    MediaTrackNext,
+    MediaTrackPrevious,
+    Power,
+    Sleep,
+    AudioVolumeDown,
+    AudioVolumeMute,
+    AudioVolumeUp,
+    WakeUp,
+    Meta,
+    Hyper,
+    Turbo,
+    Abort,
+    Resume,
+    Suspend,
+    Again,
+    Copy,
+    Cut,
+    Find,
+    Open,
+    Paste,
+    Props,
+    Select,
+    Undo,
+    Hiragana,
+    Katakana,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    F13,
+    F14,
+    F15,
+    F16,
+    F17,
+    F18,
+    F19,
+    F20,
+    F21,
+    F22,
+    F23,
+    F24,
+    F25,
+    F26,
+    F27,
+    F28,
+    F29,
+    F30,
+    F31,
+    F32,
+    F33,
+    F34,
+    F35,
+);
 
-    Digit0,
-    Digit1,
-    Digit2,
-    Digit3,
-    Digit4,
-    Digit5,
-    Digit6,
-    Digit7,
-    Digit8,
-    Digit9,
-}
-
-impl PyKeyCode {
-    pub fn from_bevy(key: KeyCode) -> Option<Self> {
-        match key {
-            KeyCode::F1 => Some(PyKeyCode::F1),
-            KeyCode::F2 => Some(PyKeyCode::F2),
-            KeyCode::F3 => Some(PyKeyCode::F3),
-            KeyCode::F4 => Some(PyKeyCode::F4),
-            KeyCode::F5 => Some(PyKeyCode::F5),
-            KeyCode::F6 => Some(PyKeyCode::F6),
-            KeyCode::F7 => Some(PyKeyCode::F7),
-            KeyCode::F8 => Some(PyKeyCode::F8),
-            KeyCode::F9 => Some(PyKeyCode::F9),
-            KeyCode::F10 => Some(PyKeyCode::F10),
-            KeyCode::F11 => Some(PyKeyCode::F11),
-            KeyCode::F12 => Some(PyKeyCode::F12),
-
-            KeyCode::ShiftLeft => Some(PyKeyCode::ShiftLeft),
-            KeyCode::ShiftRight => Some(PyKeyCode::ShiftRight),
-            KeyCode::ControlLeft => Some(PyKeyCode::ControlLeft),
-            KeyCode::ControlRight => Some(PyKeyCode::ControlRight),
-            KeyCode::AltLeft => Some(PyKeyCode::AltLeft),
-            KeyCode::AltRight => Some(PyKeyCode::AltRight),
-            KeyCode::SuperLeft => Some(PyKeyCode::SuperLeft),
-            KeyCode::SuperRight => Some(PyKeyCode::SuperRight),
-
-            KeyCode::Space => Some(PyKeyCode::Space),
-            KeyCode::Enter => Some(PyKeyCode::Enter),
-            KeyCode::Escape => Some(PyKeyCode::Escape),
-            KeyCode::Backspace => Some(PyKeyCode::Backspace),
-            KeyCode::Tab => Some(PyKeyCode::Tab),
-            KeyCode::Delete => Some(PyKeyCode::Delete),
-            KeyCode::Insert => Some(PyKeyCode::Insert),
-            KeyCode::Home => Some(PyKeyCode::Home),
-            KeyCode::End => Some(PyKeyCode::End),
-            KeyCode::PageUp => Some(PyKeyCode::PageUp),
-            KeyCode::PageDown => Some(PyKeyCode::PageDown),
-            KeyCode::CapsLock => Some(PyKeyCode::CapsLock),
-            KeyCode::ScrollLock => Some(PyKeyCode::ScrollLock),
-            KeyCode::NumLock => Some(PyKeyCode::NumLock),
-
-            KeyCode::Backquote => Some(PyKeyCode::Backquote),
-            KeyCode::Backslash => Some(PyKeyCode::Backslash),
-            KeyCode::BracketLeft => Some(PyKeyCode::BracketLeft),
-            KeyCode::BracketRight => Some(PyKeyCode::BracketRight),
-            KeyCode::Comma => Some(PyKeyCode::Comma),
-            KeyCode::Equal => Some(PyKeyCode::Equal),
-            KeyCode::Minus => Some(PyKeyCode::Minus),
-            KeyCode::Period => Some(PyKeyCode::Period),
-            KeyCode::Quote => Some(PyKeyCode::Quote),
-            KeyCode::Semicolon => Some(PyKeyCode::Semicolon),
-            KeyCode::Slash => Some(PyKeyCode::Slash),
-
-            KeyCode::ArrowUp => Some(PyKeyCode::ArrowUp),
-            KeyCode::ArrowDown => Some(PyKeyCode::ArrowDown),
-            KeyCode::ArrowLeft => Some(PyKeyCode::ArrowLeft),
-            KeyCode::ArrowRight => Some(PyKeyCode::ArrowRight),
-
-            KeyCode::KeyA => Some(PyKeyCode::KeyA),
-            KeyCode::KeyB => Some(PyKeyCode::KeyB),
-            KeyCode::KeyC => Some(PyKeyCode::KeyC),
-            KeyCode::KeyD => Some(PyKeyCode::KeyD),
-            KeyCode::KeyE => Some(PyKeyCode::KeyE),
-            KeyCode::KeyF => Some(PyKeyCode::KeyF),
-            KeyCode::KeyG => Some(PyKeyCode::KeyG),
-            KeyCode::KeyH => Some(PyKeyCode::KeyH),
-            KeyCode::KeyI => Some(PyKeyCode::KeyI),
-            KeyCode::KeyJ => Some(PyKeyCode::KeyJ),
-            KeyCode::KeyK => Some(PyKeyCode::KeyK),
-            KeyCode::KeyL => Some(PyKeyCode::KeyL),
-            KeyCode::KeyM => Some(PyKeyCode::KeyM),
-            KeyCode::KeyN => Some(PyKeyCode::KeyN),
-            KeyCode::KeyO => Some(PyKeyCode::KeyO),
-            KeyCode::KeyP => Some(PyKeyCode::KeyP),
-            KeyCode::KeyQ => Some(PyKeyCode::KeyQ),
-            KeyCode::KeyR => Some(PyKeyCode::KeyR),
-            KeyCode::KeyS => Some(PyKeyCode::KeyS),
-            KeyCode::KeyT => Some(PyKeyCode::KeyT),
-            KeyCode::KeyU => Some(PyKeyCode::KeyU),
-            KeyCode::KeyV => Some(PyKeyCode::KeyV),
-            KeyCode::KeyW => Some(PyKeyCode::KeyW),
-            KeyCode::KeyX => Some(PyKeyCode::KeyX),
-            KeyCode::KeyY => Some(PyKeyCode::KeyY),
-            KeyCode::KeyZ => Some(PyKeyCode::KeyZ),
-
-            KeyCode::Digit0 => Some(PyKeyCode::Digit0),
-            KeyCode::Digit1 => Some(PyKeyCode::Digit1),
-            KeyCode::Digit2 => Some(PyKeyCode::Digit2),
-            KeyCode::Digit3 => Some(PyKeyCode::Digit3),
-            KeyCode::Digit4 => Some(PyKeyCode::Digit4),
-            KeyCode::Digit5 => Some(PyKeyCode::Digit5),
-            KeyCode::Digit6 => Some(PyKeyCode::Digit6),
-            KeyCode::Digit7 => Some(PyKeyCode::Digit7),
-            KeyCode::Digit8 => Some(PyKeyCode::Digit8),
-            KeyCode::Digit9 => Some(PyKeyCode::Digit9),
-
-            _ => None, // Unsupported key codes
-        }
-    }
-
-    pub fn to_bevy(&self) -> KeyCode {
-        match self {
-            PyKeyCode::F1 => KeyCode::F1,
-            PyKeyCode::F2 => KeyCode::F2,
-            PyKeyCode::F3 => KeyCode::F3,
-            PyKeyCode::F4 => KeyCode::F4,
-            PyKeyCode::F5 => KeyCode::F5,
-            PyKeyCode::F6 => KeyCode::F6,
-            PyKeyCode::F7 => KeyCode::F7,
-            PyKeyCode::F8 => KeyCode::F8,
-            PyKeyCode::F9 => KeyCode::F9,
-            PyKeyCode::F10 => KeyCode::F10,
-            PyKeyCode::F11 => KeyCode::F11,
-            PyKeyCode::F12 => KeyCode::F12,
-
-            PyKeyCode::ShiftLeft => KeyCode::ShiftLeft,
-            PyKeyCode::ShiftRight => KeyCode::ShiftRight,
-            PyKeyCode::ControlLeft => KeyCode::ControlLeft,
-            PyKeyCode::ControlRight => KeyCode::ControlRight,
-            PyKeyCode::AltLeft => KeyCode::AltLeft,
-            PyKeyCode::AltRight => KeyCode::AltRight,
-            PyKeyCode::SuperLeft => KeyCode::SuperLeft,
-            PyKeyCode::SuperRight => KeyCode::SuperRight,
-
-            PyKeyCode::Space => KeyCode::Space,
-            PyKeyCode::Enter => KeyCode::Enter,
-            PyKeyCode::Escape => KeyCode::Escape,
-            PyKeyCode::Backspace => KeyCode::Backspace,
-            PyKeyCode::Tab => KeyCode::Tab,
-            PyKeyCode::Delete => KeyCode::Delete,
-            PyKeyCode::Insert => KeyCode::Insert,
-            PyKeyCode::Home => KeyCode::Home,
-            PyKeyCode::End => KeyCode::End,
-            PyKeyCode::PageUp => KeyCode::PageUp,
-            PyKeyCode::PageDown => KeyCode::PageDown,
-            PyKeyCode::CapsLock => KeyCode::CapsLock,
-            PyKeyCode::ScrollLock => KeyCode::ScrollLock,
-            PyKeyCode::NumLock => KeyCode::NumLock,
-
-            PyKeyCode::Backquote => KeyCode::Backquote,
-            PyKeyCode::Backslash => KeyCode::Backslash,
-            PyKeyCode::BracketLeft => KeyCode::BracketLeft,
-            PyKeyCode::BracketRight => KeyCode::BracketRight,
-            PyKeyCode::Comma => KeyCode::Comma,
-            PyKeyCode::Equal => KeyCode::Equal,
-            PyKeyCode::Minus => KeyCode::Minus,
-            PyKeyCode::Period => KeyCode::Period,
-            PyKeyCode::Quote => KeyCode::Quote,
-            PyKeyCode::Semicolon => KeyCode::Semicolon,
-            PyKeyCode::Slash => KeyCode::Slash,
-
-            PyKeyCode::ArrowUp => KeyCode::ArrowUp,
-            PyKeyCode::ArrowDown => KeyCode::ArrowDown,
-            PyKeyCode::ArrowLeft => KeyCode::ArrowLeft,
-            PyKeyCode::ArrowRight => KeyCode::ArrowRight,
-
-            PyKeyCode::KeyA => KeyCode::KeyA,
-            PyKeyCode::KeyB => KeyCode::KeyB,
-            PyKeyCode::KeyC => KeyCode::KeyC,
-            PyKeyCode::KeyD => KeyCode::KeyD,
-            PyKeyCode::KeyE => KeyCode::KeyE,
-            PyKeyCode::KeyF => KeyCode::KeyF,
-            PyKeyCode::KeyG => KeyCode::KeyG,
-            PyKeyCode::KeyH => KeyCode::KeyH,
-            PyKeyCode::KeyI => KeyCode::KeyI,
-            PyKeyCode::KeyJ => KeyCode::KeyJ,
-            PyKeyCode::KeyK => KeyCode::KeyK,
-            PyKeyCode::KeyL => KeyCode::KeyL,
-            PyKeyCode::KeyM => KeyCode::KeyM,
-            PyKeyCode::KeyN => KeyCode::KeyN,
-            PyKeyCode::KeyO => KeyCode::KeyO,
-            PyKeyCode::KeyP => KeyCode::KeyP,
-            PyKeyCode::KeyQ => KeyCode::KeyQ,
-            PyKeyCode::KeyR => KeyCode::KeyR,
-            PyKeyCode::KeyS => KeyCode::KeyS,
-            PyKeyCode::KeyT => KeyCode::KeyT,
-            PyKeyCode::KeyU => KeyCode::KeyU,
-            PyKeyCode::KeyV => KeyCode::KeyV,
-            PyKeyCode::KeyW => KeyCode::KeyW,
-            PyKeyCode::KeyX => KeyCode::KeyX,
-            PyKeyCode::KeyY => KeyCode::KeyY,
-            PyKeyCode::KeyZ => KeyCode::KeyZ,
-
-            PyKeyCode::Digit0 => KeyCode::Digit0,
-            PyKeyCode::Digit1 => KeyCode::Digit1,
-            PyKeyCode::Digit2 => KeyCode::Digit2,
-            PyKeyCode::Digit3 => KeyCode::Digit3,
-            PyKeyCode::Digit4 => KeyCode::Digit4,
-            PyKeyCode::Digit5 => KeyCode::Digit5,
-            PyKeyCode::Digit6 => KeyCode::Digit6,
-            PyKeyCode::Digit7 => KeyCode::Digit7,
-            PyKeyCode::Digit8 => KeyCode::Digit8,
-            PyKeyCode::Digit9 => KeyCode::Digit9,
-        }
-    }
-}
+#[pyclass(
+    name = "Unidentified",
+    module = "pybevy.input",
+    extends = PyKeyCode,
+    frozen
+)]
+pub struct PyKeyCodeUnidentified;
 
 #[pymethods]
-impl PyKeyCode {
-    fn __repr__(&self) -> String {
-        format!("KeyCode.{:?}", self)
+#[allow(non_upper_case_globals)]
+impl PyKeyCodeUnidentified {
+    #[classattr]
+    const __qualname__: &'static str = "KeyCode.Unidentified";
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("value",)
     }
 
-    fn __str__(&self) -> String {
-        format!("{:?}", self)
+    #[new]
+    pub fn new(value: PyNativeKeyCode) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyKeyCode(KeyCode::Unidentified(value.into()))).add_subclass(Self)
     }
+
+    #[getter]
+    pub fn value(slf: PyRef<'_, Self>) -> PyNativeKeyCode {
+        let base = slf.into_super();
+        match base.0 {
+            KeyCode::Unidentified(value) => value.into(),
+            _ => unreachable!("KeyCode.Unidentified changed discriminant"),
+        }
+    }
+}
+
+pub fn materialize_key_code(py: Python<'_>, key_code: KeyCode) -> PyResult<Py<PyAny>> {
+    match key_code {
+        KeyCode::Unidentified(_) => Ok(Py::new(
+            py,
+            PyClassInitializer::from(PyKeyCode(key_code)).add_subclass(PyKeyCodeUnidentified),
+        )?
+        .into_any()),
+        _ => Ok(Py::new(py, PyKeyCode(key_code))?.into_any()),
+    }
+}
+
+pub fn register_key_code_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = module.py();
+    module
+        .getattr("KeyCode")?
+        .setattr("Unidentified", py.get_type::<PyKeyCodeUnidentified>())
 }

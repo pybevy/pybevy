@@ -193,7 +193,7 @@ impl PyButtonAxisSettings {
 }
 
 #[pycomponent(GamepadSettings, no_clone, bridge)]
-#[pyclass(name = "GamepadSettings", extends = PyComponent, frozen)]
+#[pyclass(name = "GamepadSettings", extends = PyComponent)]
 pub struct PyGamepadSettings {
     pub(crate) storage: ComponentStorage<GamepadSettings>,
 }
@@ -201,32 +201,112 @@ pub struct PyGamepadSettings {
 #[pymethods]
 impl PyGamepadSettings {
     #[new]
-    pub fn new() -> PyClassInitializer<Self> {
+    #[pyo3(signature = (
+        default_button_settings = None,
+        default_axis_settings = None,
+        default_button_axis_settings = None,
+        button_settings = None,
+        axis_settings = None,
+        button_axis_settings = None,
+    ))]
+    pub fn new(
+        default_button_settings: Option<&PyButtonSettings>,
+        default_axis_settings: Option<&PyAxisSettings>,
+        default_button_axis_settings: Option<&PyButtonAxisSettings>,
+        button_settings: Option<HashMap<PyGamepadButton, Py<PyButtonSettings>>>,
+        axis_settings: Option<HashMap<PyGamepadAxis, Py<PyAxisSettings>>>,
+        button_axis_settings: Option<HashMap<PyGamepadButton, Py<PyButtonAxisSettings>>>,
+    ) -> PyClassInitializer<Self> {
+        let settings = GamepadSettings {
+            default_button_settings: default_button_settings
+                .map(|settings| settings.inner.clone())
+                .unwrap_or_default(),
+            default_axis_settings: default_axis_settings
+                .map(|settings| settings.inner.clone())
+                .unwrap_or_default(),
+            default_button_axis_settings: default_button_axis_settings
+                .map(|settings| settings.inner.clone())
+                .unwrap_or_default(),
+            button_settings: button_settings
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(button, settings)| (button.into(), settings.get().inner.clone()))
+                .collect(),
+            axis_settings: axis_settings
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(axis, settings)| (axis.into(), settings.get().inner.clone()))
+                .collect(),
+            button_axis_settings: button_axis_settings
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(button, settings)| (button.into(), settings.get().inner.clone()))
+                .collect(),
+        };
         (
             Self {
-                storage: ComponentStorage::owned(GamepadSettings::default()),
+                storage: ComponentStorage::owned(settings),
             },
             PyComponent,
         )
             .into()
     }
 
-    pub fn button_settings_for(&self, button: PyGamepadButton) -> PyResult<PyButtonSettings> {
-        let settings = self.as_ref()?;
-        Ok(settings.get_button_settings(button.into()).into())
+    #[setter]
+    pub fn set_default_button_settings(&mut self, settings: &PyButtonSettings) -> PyResult<()> {
+        self.as_mut()?.default_button_settings = settings.inner.clone();
+        Ok(())
     }
 
-    pub fn axis_settings_for(&self, axis: PyGamepadAxis) -> PyResult<PyAxisSettings> {
-        let settings = self.as_ref()?;
-        Ok(settings.get_axis_settings(axis.into()).into())
+    #[setter]
+    pub fn set_default_axis_settings(&mut self, settings: &PyAxisSettings) -> PyResult<()> {
+        self.as_mut()?.default_axis_settings = settings.inner.clone();
+        Ok(())
     }
 
-    pub fn button_axis_settings_for(
-        &self,
-        button: PyGamepadButton,
-    ) -> PyResult<PyButtonAxisSettings> {
-        let settings = self.as_ref()?;
-        Ok(settings.get_button_axis_settings(button.into()).into())
+    #[setter]
+    pub fn set_default_button_axis_settings(
+        &mut self,
+        settings: &PyButtonAxisSettings,
+    ) -> PyResult<()> {
+        self.as_mut()?.default_button_axis_settings = settings.inner.clone();
+        Ok(())
+    }
+
+    #[setter]
+    pub fn set_button_settings(
+        &mut self,
+        settings: HashMap<PyGamepadButton, Py<PyButtonSettings>>,
+    ) -> PyResult<()> {
+        self.as_mut()?.button_settings = settings
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.get().inner.clone()))
+            .collect();
+        Ok(())
+    }
+
+    #[setter]
+    pub fn set_axis_settings(
+        &mut self,
+        settings: HashMap<PyGamepadAxis, Py<PyAxisSettings>>,
+    ) -> PyResult<()> {
+        self.as_mut()?.axis_settings = settings
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.get().inner.clone()))
+            .collect();
+        Ok(())
+    }
+
+    #[setter]
+    pub fn set_button_axis_settings(
+        &mut self,
+        settings: HashMap<PyGamepadButton, Py<PyButtonAxisSettings>>,
+    ) -> PyResult<()> {
+        self.as_mut()?.button_axis_settings = settings
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.get().inner.clone()))
+            .collect();
+        Ok(())
     }
 
     #[getter]
