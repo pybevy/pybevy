@@ -1,4 +1,4 @@
-use bevy::light::VolumetricFog;
+use bevy::{color::Color, light::VolumetricFog};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
@@ -43,24 +43,26 @@ impl PyVolumetricFog {
         ambient_intensity: f32,
         step_count: u32,
         jitter: f32,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(VolumetricFog {
-            ambient_color: ambient_color.into(),
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let ambient_color = Color::try_from(ambient_color)?;
+        Ok(Self::from_owned(VolumetricFog {
+            ambient_color,
             ambient_intensity,
             step_count,
             jitter,
         })
-        .into()
+        .into())
     }
 
     #[getter]
     pub fn ambient_color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.ambient_color, py)
+        PyColor::from_component_field(&self.storage, |fog| &fog.ambient_color, py)
     }
 
     #[setter]
     pub fn set_ambient_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.ambient_color = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.ambient_color = color;
         Ok(())
     }
 

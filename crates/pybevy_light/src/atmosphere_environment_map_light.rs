@@ -36,13 +36,13 @@ impl PyAtmosphereEnvironmentMapLight {
         intensity: f32,
         affects_lightmapped_mesh_diffuse: bool,
         size: PyUVec2,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(AtmosphereEnvironmentMapLight {
+    ) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(AtmosphereEnvironmentMapLight {
             intensity,
             affects_lightmapped_mesh_diffuse,
-            size: size.into(),
+            size: size.try_into()?,
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -74,7 +74,7 @@ impl PyAtmosphereEnvironmentMapLight {
 
     #[setter]
     pub fn set_size(&mut self, size: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.size = size.into();
+        self.as_mut()?.size = size.try_into()?;
         Ok(())
     }
 }

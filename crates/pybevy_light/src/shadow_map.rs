@@ -1,5 +1,5 @@
 use bevy::light::{DirectionalLightShadowMap, PointLightShadowMap};
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -15,11 +15,7 @@ impl PyPointLightShadowMap {
     #[new]
     #[pyo3(signature = (size = 1024))]
     pub fn new(size: usize) -> PyClassInitializer<Self> {
-        (
-            PyPointLightShadowMap::from(PointLightShadowMap { size }),
-            PyResource,
-        )
-            .into()
+        resource_initializer(PyPointLightShadowMap::from(PointLightShadowMap { size }))
     }
 
     #[getter]
@@ -50,11 +46,9 @@ impl PyDirectionalLightShadowMap {
     #[new]
     #[pyo3(signature = (size = 2048))]
     pub fn new(size: usize) -> PyClassInitializer<Self> {
-        (
-            PyDirectionalLightShadowMap::from(DirectionalLightShadowMap { size }),
-            PyResource,
-        )
-            .into()
+        resource_initializer(PyDirectionalLightShadowMap::from(
+            DirectionalLightShadowMap { size },
+        ))
     }
 
     #[getter]

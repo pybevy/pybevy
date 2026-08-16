@@ -1,5 +1,5 @@
 use bevy::light::Cascades;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
 use pybevy_macros::pycomponent;
 use pyo3::{
     prelude::*,
@@ -28,7 +28,7 @@ impl PyCascades {
             dict.set_item(entity.index_u32(), py_list)?;
         }
 
-        Ok(dict.into())
+        Ok(computed_owned(dict.into()))
     }
 
     fn __repr__(&self) -> PyResult<String> {

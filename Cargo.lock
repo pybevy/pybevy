@@ -4831,9 +4831,11 @@ dependencies = [
  "pybevy_camera",
  "pybevy_color",
  "pybevy_core",
+ "pybevy_gizmos",
  "pybevy_macros",
  "pybevy_math",
  "pyo3",
+ "smallvec",
 ]
 
 [[package]]

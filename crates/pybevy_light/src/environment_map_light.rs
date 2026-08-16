@@ -53,7 +53,7 @@ impl PyEnvironmentMapLight {
             diffuse_map: diffuse,
             specular_map: specular,
             intensity,
-            rotation: rotation.into(),
+            rotation: rotation.try_into()?,
             affects_lightmapped_mesh_diffuse,
         })
         .into())
@@ -99,7 +99,7 @@ impl PyEnvironmentMapLight {
 
     #[setter]
     pub fn set_rotation(&mut self, rotation: PyQuat) -> PyResult<()> {
-        self.as_mut()?.rotation = rotation.into();
+        self.as_mut()?.rotation = rotation.try_into()?;
         Ok(())
     }
 

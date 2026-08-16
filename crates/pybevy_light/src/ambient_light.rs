@@ -1,43 +1,21 @@
-use std::ptr;
-
 use bevy::{
+    color::Color,
     ecs::resource::Resource,
     light::{AmbientLight, GlobalAmbientLight},
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{
-    ComponentStorage, PyComponent, PyResource, ResourceStorage, ResourceStorageInner,
+    ComponentStorage, PyComponent, PyResource, ResourceStorage, resource_initializer,
 };
 use pybevy_macros::{pycomponent, pyresource};
 use pyo3::prelude::*;
 
 #[pyresource(GlobalAmbientLight, bridge)]
-#[pyclass(name = "GlobalAmbientLight", extends = PyResource, eq, from_py_object)]
+#[pyclass(name = "GlobalAmbientLight", extends = PyResource, from_py_object)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {
+    // TODO: make to crate-pub only. sweep for similar pub's
     pub storage: ResourceStorage<GlobalAmbientLight>,
-}
-
-impl PartialEq for PyGlobalAmbientLight {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.storage.inner, &other.storage.inner) {
-            (
-                ResourceStorageInner::Owned { data: a, .. },
-                ResourceStorageInner::Owned { data: b, .. },
-            ) => {
-                a.color == b.color
-                    && a.brightness == b.brightness
-                    && a.affects_lightmapped_meshes == b.affects_lightmapped_meshes
-            }
-            (ResourceStorageInner::BorrowedRef(a), ResourceStorageInner::BorrowedRef(b)) => {
-                ptr::eq(a.as_ptr(), b.as_ptr())
-            }
-            (ResourceStorageInner::BorrowedMut(a), ResourceStorageInner::BorrowedMut(b)) => {
-                ptr::eq(a.as_ptr(), b.as_ptr())
-            }
-            _ => false,
-        }
-    }
 }
 
 #[pymethods]
@@ -52,27 +30,27 @@ impl PyGlobalAmbientLight {
         color: PyColor,
         brightness: f32,
         affects_lightmapped_meshes: bool,
-    ) -> PyClassInitializer<Self> {
-        (
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let color = Color::try_from(color)?;
+        Ok(resource_initializer(
             GlobalAmbientLight {
-                color: color.into(),
+                color,
                 brightness,
                 affects_lightmapped_meshes,
             }
             .into(),
-            PyResource,
-        )
-            .into()
+        ))
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_resource_field(&self.storage, |light| &light.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 
@@ -100,23 +78,10 @@ impl PyGlobalAmbientLight {
 }
 
 #[pycomponent(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color])]
-#[pyclass(name = "AmbientLight", extends = PyComponent, eq)]
+#[pyclass(name = "AmbientLight", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyAmbientLight {
     pub(crate) storage: ComponentStorage<AmbientLight>,
-}
-
-impl PartialEq for PyAmbientLight {
-    fn eq(&self, other: &Self) -> bool {
-        match (self.as_ref(), other.as_ref()) {
-            (Ok(a), Ok(b)) => {
-                a.color == b.color
-                    && a.brightness == b.brightness
-                    && a.affects_lightmapped_meshes == b.affects_lightmapped_meshes
-            }
-            _ => false,
-        }
-    }
 }
 
 #[pymethods]
@@ -131,23 +96,25 @@ impl PyAmbientLight {
         color: PyColor,
         brightness: f32,
         affects_lightmapped_meshes: bool,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(AmbientLight {
-            color: color.into(),
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let color = Color::try_from(color)?;
+        Ok(Self::from_owned(AmbientLight {
+            color,
             brightness,
             affects_lightmapped_meshes,
         })
-        .into()
+        .into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |light| &light.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 
