@@ -41,6 +41,7 @@ pub mod hierarchy;
 pub extern crate inventory;
 pub mod borrowed_array_anchor;
 pub mod bridge_inventory;
+pub mod logical_type;
 pub mod materializable;
 pub mod message;
 pub mod numpy_view_guard;
