@@ -25,7 +25,7 @@ use pybevy_storage::{FilteredEntityAccess, StorageError, ValidityFlag};
 
 use super::{
     cached_query::{CachedQueryCore, ErasedQueryState},
-    run_scaffold::RunTicks,
+    run_ticks::RunTicks,
 };
 
 const NESTED_ITERATION_MESSAGE: &str = "Cannot nest iteration on the same Query (Bevy disallows this via borrow rules). \
