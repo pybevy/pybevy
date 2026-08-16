@@ -1,7 +1,7 @@
 use bevy::audio::Volume;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Volume", eq, from_py_object)]
+#[pyclass(name = "Volume", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyVolume {
     Linear { value: f32 },

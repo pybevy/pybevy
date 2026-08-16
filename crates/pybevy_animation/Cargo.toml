@@ -8,7 +8,7 @@ repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
 
 [dependencies]
-pyo3 = { workspace = true, features = ["macros"] }
+pyo3 = { workspace = true, features = ["macros", "uuid"] }
 uuid = { workspace = true }
 pybevy_core = { path = "../pybevy_core", version = "=0.2.1" }
 pybevy_macros = { path = "../pybevy_macros", version = "=0.2.1" }

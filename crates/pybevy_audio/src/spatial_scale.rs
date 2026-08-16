@@ -9,7 +9,7 @@ fn parse_scale_arg(ob: &Bound<'_, PyAny>) -> PyResult<SpatialScale> {
         // Handle int as float
         Ok(SpatialScale::new(i as f32))
     } else if let Ok(v) = ob.extract::<PyVec3>() {
-        Ok(SpatialScale(v.into()))
+        Ok(SpatialScale(v.try_into()?))
     } else {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "Expected float or Vec3",
@@ -60,9 +60,5 @@ impl PySpatialScale {
 
     fn __repr__(&self) -> String {
         format!("SpatialScale({:?})", self.inner.0)
-    }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner.0 == other.inner.0
     }
 }

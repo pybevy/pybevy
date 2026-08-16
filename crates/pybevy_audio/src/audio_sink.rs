@@ -92,6 +92,15 @@ impl PyAudioSink {
     }
 
     fn __repr__(&self) -> String {
-        "AudioSink(...)".to_string()
+        match self.as_ref() {
+            Ok(sink) => format!(
+                "AudioSink(volume={}, speed={}, paused={}, muted={})",
+                sink.volume().to_linear(),
+                sink.speed(),
+                if sink.is_paused() { "True" } else { "False" },
+                if sink.is_muted() { "True" } else { "False" },
+            ),
+            Err(_) => "AudioSink(<invalid>)".to_string(),
+        }
     }
 }

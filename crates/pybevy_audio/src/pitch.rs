@@ -1,7 +1,5 @@
-use std::time::Duration;
-
 use bevy::audio::Pitch;
-use pybevy_core::AssetStorage;
+use pybevy_core::{AssetStorage, duration_from_secs_f64};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
@@ -16,9 +14,9 @@ pub struct PyPitch {
 impl PyPitch {
     #[new]
     #[pyo3(signature = (frequency, duration))]
-    pub fn new(frequency: f32, duration: f64) -> PyClassInitializer<Self> {
-        let pitch = Pitch::new(frequency, Duration::from_secs_f64(duration));
-        Self::from_owned(pitch).into()
+    pub fn new(frequency: f32, duration: f64) -> PyResult<PyClassInitializer<Self>> {
+        let pitch = Pitch::new(frequency, duration_from_secs_f64(duration)?);
+        Ok(Self::from_owned(pitch).into())
     }
 
     #[getter]
@@ -39,7 +37,7 @@ impl PyPitch {
 
     #[setter]
     pub fn set_duration(&mut self, duration: f64) -> PyResult<()> {
-        self.as_mut()?.duration = Duration::from_secs_f64(duration);
+        self.as_mut()?.duration = duration_from_secs_f64(duration)?;
         Ok(())
     }
 

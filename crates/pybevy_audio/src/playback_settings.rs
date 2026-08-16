@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::audio::{PlaybackMode, PlaybackSettings};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume::PyVolume};
 
@@ -39,11 +39,11 @@ impl PyPlaybackSettings {
         start_position: Option<Duration>,
         duration: Option<Duration>,
         spatial_scale: Option<PySpatialScale>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let settings = PlaybackSettings {
             mode: mode.map(Into::into).unwrap_or(PlaybackMode::Once),
             volume: volume.map(Into::into).unwrap_or_default(),
-            speed,
+            speed: validate_speed(speed)?,
             paused,
             muted,
             spatial,
@@ -51,7 +51,7 @@ impl PyPlaybackSettings {
             duration,
             spatial_scale: spatial_scale.map(|s| s.inner),
         };
-        Self::from_owned(settings).into()
+        Ok(Self::from_owned(settings).into())
     }
 
     #[staticmethod]
@@ -107,7 +107,7 @@ impl PyPlaybackSettings {
 
     #[setter]
     pub fn set_speed(&mut self, speed: f32) -> PyResult<()> {
-        self.as_mut()?.speed = speed;
+        self.as_mut()?.speed = validate_speed(speed)?;
         Ok(())
     }
 
@@ -177,48 +177,44 @@ impl PyPlaybackSettings {
         Ok(())
     }
 
-    #[pyo3(name = "with_volume")]
-    pub fn with_volume(slf: Py<Self>, py: Python, volume: PyVolume) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.volume = volume.into();
-        Ok(slf)
+    pub fn with_volume(&self, py: Python, volume: PyVolume) -> PyResult<Py<Self>> {
+        let mut settings = *self.as_ref()?;
+        settings.volume = volume.into();
+        Py::new(py, Self::from_owned(settings))
     }
 
-    #[pyo3(name = "with_speed")]
-    pub fn with_speed(slf: Py<Self>, py: Python, speed: f32) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.speed = speed;
-        Ok(slf)
+    pub fn with_speed(&self, py: Python, speed: f32) -> PyResult<Py<Self>> {
+        let mut settings = *self.as_ref()?;
+        settings.speed = validate_speed(speed)?;
+        Py::new(py, Self::from_owned(settings))
     }
 
-    #[pyo3(name = "with_spatial")]
-    pub fn with_spatial(slf: Py<Self>, py: Python, spatial: bool) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.spatial = spatial;
-        Ok(slf)
+    pub fn with_spatial(&self, py: Python, spatial: bool) -> PyResult<Py<Self>> {
+        let mut settings = *self.as_ref()?;
+        settings.spatial = spatial;
+        Py::new(py, Self::from_owned(settings))
     }
 
-    #[pyo3(name = "with_start_position")]
-    pub fn with_start_position(
-        slf: Py<Self>,
-        py: Python,
-        start_position: Duration,
-    ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.start_position = Some(start_position);
-        Ok(slf)
+    pub fn with_start_position(&self, py: Python, start_position: Duration) -> PyResult<Py<Self>> {
+        let mut settings = *self.as_ref()?;
+        settings.start_position = Some(start_position);
+        Py::new(py, Self::from_owned(settings))
     }
 
-    #[pyo3(name = "with_duration")]
-    pub fn with_duration(slf: Py<Self>, py: Python, duration: Duration) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.duration = Some(duration);
-        Ok(slf)
+    pub fn with_duration(&self, py: Python, duration: Duration) -> PyResult<Py<Self>> {
+        let mut settings = *self.as_ref()?;
+        settings.duration = Some(duration);
+        Py::new(py, Self::from_owned(settings))
     }
 
-    #[pyo3(name = "with_spatial_scale")]
     pub fn with_spatial_scale(
-        slf: Py<Self>,
+        &self,
         py: Python,
         spatial_scale: PySpatialScale,
     ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.spatial_scale = Some(spatial_scale.inner);
-        Ok(slf)
+        let mut settings = *self.as_ref()?;
+        settings.spatial_scale = Some(spatial_scale.inner);
+        Py::new(py, Self::from_owned(settings))
     }
 
     fn __repr__(&self) -> String {
@@ -234,5 +230,15 @@ impl PyPlaybackSettings {
             ),
             Err(_) => "PlaybackSettings(<invalid>)".to_string(),
         }
+    }
+}
+
+fn validate_speed(speed: f32) -> PyResult<f32> {
+    if speed.is_finite() {
+        Ok(speed)
+    } else {
+        Err(PyValueError::new_err(format!(
+            "speed must be finite (got {speed})"
+        )))
     }
 }

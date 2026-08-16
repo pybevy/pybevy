@@ -1,47 +1,9 @@
 use bevy::animation::{AnimationPlayer, RepeatAnimation, graph::AnimationNodeIndex};
-use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::{PyRefMut, Python, exceptions::PyValueError, prelude::*};
 
-use super::{
-    animation_node_index::PyAnimationNodeIndex, animation_target_id::PyAnimationTargetId,
-    repeat_animation::PyRepeatAnimation,
-};
-
-#[pyclass(name = "AnimationTarget", extends = PyComponent, eq, skip_from_py_object)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PyAnimationTarget {
-    pub id: PyAnimationTargetId,
-
-    #[pyo3(get, set)]
-    pub player: PyEntity,
-}
-
-#[pymethods]
-impl PyAnimationTarget {
-    #[new]
-    pub fn new(id: &PyAnimationTargetId, player: PyEntity) -> PyClassInitializer<Self> {
-        (Self { id: *id, player }, PyComponent).into()
-    }
-
-    #[getter]
-    pub fn id(&self, py: Python<'_>) -> PyResult<Py<PyAnimationTargetId>> {
-        Py::new(py, PyAnimationTargetId::from_owned(self.id.0))
-    }
-
-    #[setter]
-    pub fn set_id(&mut self, id: &PyAnimationTargetId) {
-        self.id = *id;
-    }
-
-    pub fn __repr__(&self) -> String {
-        format!(
-            "AnimationTarget(id={}, player={})",
-            self.id.__repr__(),
-            self.player.__repr__()
-        )
-    }
-}
+use super::{animation_node_index::PyAnimationNodeIndex, repeat_animation::PyRepeatAnimation};
 
 #[pyclass(name = "ActiveAnimation")]
 pub struct PyActiveAnimation {
@@ -65,7 +27,7 @@ impl PyActiveAnimation {
     where
         F: FnOnce(&mut bevy::animation::ActiveAnimation) -> PyResult<T>,
     {
-        let player = self.storage.as_mut()?;
+        let mut player = self.storage.as_mut()?;
         let anim = player
             .animation_mut(self.node_index)
             .ok_or_else(|| PyValueError::new_err("Animation not found for node index"))?;
@@ -211,6 +173,26 @@ pub struct PyAnimationPlayer {
     pub(crate) storage: ComponentStorage<AnimationPlayer>,
 }
 
+impl PyAnimationPlayer {
+    fn animation_with_storage(
+        &self,
+        py: Python<'_>,
+        animation: AnimationNodeIndex,
+        storage: ComponentStorage<AnimationPlayer>,
+    ) -> PyResult<Option<Py<PyActiveAnimation>>> {
+        if !self.as_ref()?.is_playing_animation(animation) {
+            return Ok(None);
+        }
+        Ok(Some(Py::new(
+            py,
+            PyActiveAnimation {
+                storage,
+                node_index: animation,
+            },
+        )?))
+    }
+}
+
 #[pymethods]
 impl PyAnimationPlayer {
     #[new]
@@ -271,11 +253,6 @@ impl PyAnimationPlayer {
         Ok(pyself)
     }
 
-    pub fn set_speed(mut pyself: PyRefMut<'_, Self>, speed: f32) -> PyResult<PyRefMut<'_, Self>> {
-        pyself.as_mut()?.adjust_speeds(speed);
-        Ok(pyself)
-    }
-
     pub fn seek_all_by(
         mut pyself: PyRefMut<'_, Self>,
         amount: f32,
@@ -303,17 +280,7 @@ impl PyAnimationPlayer {
         py: Python<'_>,
         animation: &PyAnimationNodeIndex,
     ) -> PyResult<Option<Py<PyActiveAnimation>>> {
-        if !self.as_ref()?.is_playing_animation(animation.0) {
-            return Ok(None);
-        }
-        let py_anim = Py::new(
-            py,
-            PyActiveAnimation {
-                storage: self.storage.share_borrow(),
-                node_index: animation.0,
-            },
-        )?;
-        Ok(Some(py_anim))
+        self.animation_with_storage(py, animation.0, self.storage.share_borrow_ref())
     }
 
     pub fn animation_mut(
@@ -321,7 +288,7 @@ impl PyAnimationPlayer {
         py: Python<'_>,
         animation: &PyAnimationNodeIndex,
     ) -> PyResult<Option<Py<PyActiveAnimation>>> {
-        self.animation(py, animation)
+        self.animation_with_storage(py, animation.0, self.storage.share_borrow())
     }
 
     pub fn rewind_all(mut pyself: PyRefMut<'_, Self>) -> PyResult<PyRefMut<'_, Self>> {

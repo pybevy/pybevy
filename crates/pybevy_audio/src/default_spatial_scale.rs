@@ -20,7 +20,7 @@ impl PyDefaultSpatialScale {
             Some(s) => DefaultSpatialScale(s.inner),
             None => DefaultSpatialScale::default(),
         };
-        Self::from_owned(default_scale).into()
+        Self::from_owned(default_scale)
     }
 
     #[getter]

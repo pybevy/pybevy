@@ -110,7 +110,7 @@ class PlaybackSettings(Component):
         Args:
             mode: Playback behavior (default: Once)
             volume: Volume level
-            speed: Playback speed multiplier
+            speed: Finite playback speed multiplier. Negative values play in reverse.
             paused: Start paused
             muted: Start muted
             spatial: Enable spatial audio
@@ -135,7 +135,7 @@ class PlaybackSettings(Component):
 
     @property
     def speed(self) -> float:
-        """Speed to play at (1.0 is normal speed)."""
+        """Finite speed to play at (1.0 is normal; negative reverses playback)."""
 
     @speed.setter
     def speed(self, value: float) -> None: ...
@@ -201,7 +201,7 @@ class PlaybackSettings(Component):
         """Helper to set the volume from start of playback."""
 
     def with_speed(self, speed: float) -> PlaybackSettings:
-        """Helper to set the speed from start of playback."""
+        """Set a finite speed from the start of playback."""
 
     def with_spatial(self, spatial: bool) -> PlaybackSettings:
         """Helper to enable or disable spatial audio."""
@@ -292,7 +292,10 @@ class AudioSource(Asset):
 class Pitch(Asset):
     """Procedural audio asset that generates a sine wave at a specific frequency.
 
-    This asset can be used to generate simple tones programmatically.
+    Not playable from Python: it constructs and can be added to `Assets[Pitch]`,
+    but `AudioPlayer` accepts only `Handle[AudioSource]` and `AudioSource` has no
+    Python constructor. Generate tones offline and load them with
+    `asset_server.load_audio(...)` instead.
     """
 
     def __init__(self, frequency: float, duration: float) -> None:
@@ -384,10 +387,9 @@ class AudioSink(Component):
     def try_seek(self, pos: timedelta) -> None:
         """Seek to position in the audio stream.
 
-        Note: Seeking is not supported on file-based audio loaded via
-        ``asset_server.load_audio()`` due to a rodio limitation (the decoder
-        does not support ``Seekable``). This method will raise an error in that
-        case. Seeking works with procedural sources such as ``Pitch``.
+        Needs a non-looping source whose decoder can seek. Raises
+        ``RuntimeError`` for ``PlaybackMode.Loop`` and for formats whose decoder
+        cannot seek, such as ogg/vorbis. wav seeks with ``PlaybackSettings.ONCE``.
         """
 
     def toggle_playback(self) -> None:
@@ -451,10 +453,9 @@ class SpatialAudioSink(Component):
     def try_seek(self, pos: timedelta) -> None:
         """Seek to position in the audio stream.
 
-        Note: Seeking is not supported on file-based audio loaded via
-        ``asset_server.load_audio()`` due to a rodio limitation (the decoder
-        does not support ``Seekable``). This method will raise an error in that
-        case. Seeking works with procedural sources such as ``Pitch``.
+        Needs a non-looping source whose decoder can seek. Raises
+        ``RuntimeError`` for ``PlaybackMode.Loop`` and for formats whose decoder
+        cannot seek, such as ogg/vorbis. wav seeks with ``PlaybackSettings.ONCE``.
         """
 
     def toggle_playback(self) -> None:

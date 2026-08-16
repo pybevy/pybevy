@@ -5,26 +5,15 @@ use pyo3::prelude::*;
 use uuid::Uuid;
 
 #[pywrap(AnimationTargetId, bridge, copy)]
-#[pyclass(from_py_object, name = "AnimationTargetId", extends = PyComponent, frozen, eq)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[pyclass(from_py_object, name = "AnimationTargetId", extends = PyComponent, frozen, eq, hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PyAnimationTargetId(pub(crate) AnimationTargetId);
 
 #[pymethods]
 impl PyAnimationTargetId {
     #[new]
-    pub fn new(py: Python<'_>, uuid: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
-        if let Ok(value) = uuid.extract::<u128>() {
-            return Py::new(
-                py,
-                Self::from_owned(AnimationTargetId(Uuid::from_u128(value))),
-            );
-        }
-
-        let int_value: u128 = uuid.getattr("int")?.extract()?;
-        Py::new(
-            py,
-            Self::from_owned(AnimationTargetId(Uuid::from_u128(int_value))),
-        )
+    pub fn new(py: Python<'_>, uuid: Uuid) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(AnimationTargetId(uuid)))
     }
 
     #[staticmethod]
@@ -45,8 +34,9 @@ impl PyAnimationTargetId {
         )
     }
 
-    pub fn as_uuid(&self) -> u128 {
-        self.0.0.as_u128()
+    #[getter]
+    pub fn value(&self) -> Uuid {
+        self.0.0
     }
 
     pub fn __repr__(&self) -> String {

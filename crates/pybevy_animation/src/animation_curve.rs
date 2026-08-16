@@ -4,14 +4,6 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, Default)]
 pub struct PyAnimationCurve;
 
-#[pymethods]
-impl PyAnimationCurve {
-    #[new]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 #[pyclass(name = "AnimatableCurve")]
 pub struct PyAnimatableCurve {}
 

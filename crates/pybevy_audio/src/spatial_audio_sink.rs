@@ -98,7 +98,7 @@ impl PySpatialAudioSink {
 
     pub fn set_ears_position(&self, left_position: PyVec3, right_position: PyVec3) -> PyResult<()> {
         self.as_ref()?
-            .set_ears_position(left_position.into(), right_position.into());
+            .set_ears_position(left_position.try_into()?, right_position.try_into()?);
         Ok(())
     }
 
@@ -109,11 +109,20 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_emitter_position(&self, position: PyVec3) -> PyResult<()> {
-        self.as_ref()?.set_emitter_position(position.into());
+        self.as_ref()?.set_emitter_position(position.try_into()?);
         Ok(())
     }
 
     fn __repr__(&self) -> String {
-        "SpatialAudioSink(...)".to_string()
+        match self.as_ref() {
+            Ok(sink) => format!(
+                "SpatialAudioSink(volume={}, speed={}, paused={}, muted={})",
+                sink.volume().to_linear(),
+                sink.speed(),
+                if sink.is_paused() { "True" } else { "False" },
+                if sink.is_muted() { "True" } else { "False" },
+            ),
+            Err(_) => "SpatialAudioSink(<invalid>)".to_string(),
+        }
     }
 }
