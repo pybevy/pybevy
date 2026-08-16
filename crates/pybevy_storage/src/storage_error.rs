@@ -8,6 +8,12 @@
 
 use std::fmt;
 
+#[cfg(feature = "pyo3")]
+use pyo3::{
+    PyErr,
+    exceptions::{PyIndexError, PyKeyError, PyRuntimeError},
+};
+
 /// Error message for accessing components outside system execution
 const ERR_OUTSIDE_SYSTEM: &str = "PyBevy component accessed outside of system execution. \
      Query parameters are only valid during the system's execution. \
@@ -57,14 +63,31 @@ pub enum StorageError {
     /// Operation would alias or invalidate a live NumPy view (`RuntimeError`)
     AssetViewsLive,
 
+    /// Another Python asset resolution currently holds an incompatible
+    /// resource-wide access guard (`RuntimeError`).
+    AssetAccessConflict,
+
     /// List index out of range (`IndexError`)
     IndexOutOfRange,
+
+    /// Keyed path no longer contains its key (`KeyError`).
+    KeyNotFound(String),
 
     /// Mutation on a field extracted from an owned/temporary component (`RuntimeError`)
     OwnedFieldReadOnly,
 
     /// Pop from empty list (`IndexError`)
     EmptyList,
+
+    /// A resolver-backed enum wrapper no longer matches the current variant
+    /// (`RuntimeError`).
+    VariantChanged(&'static str),
+}
+
+pub fn enum_variant_changed(variant: impl fmt::Display) -> String {
+    format!(
+        "{variant} wrapper no longer matches the value's current variant; fetch it again to observe the new variant"
+    )
 }
 
 impl fmt::Display for StorageError {
@@ -99,13 +122,21 @@ impl fmt::Display for StorageError {
                  Drop the array (del it or leave the with-block that created it) \
                  before mutating or consuming the asset.",
             ),
+            StorageError::AssetAccessConflict => f.write_str(
+                "Conflicting access to this Assets<T> resource is already active. Finish the current asset read or write before resolving another asset wrapper.",
+            ),
             StorageError::OwnedFieldReadOnly => f.write_str(
-                "Cannot mutate a field extracted from an owned or temporary component. \
+                "Cannot mutate a field extracted from an owned or temporary value. \
                  Assign the field back through the component, \
-                 e.g. `transform.translation = Vec3(...)` instead of `transform.translation.x = 5.0`.",
+                 e.g. `transform.translation = Vec3(...)` instead of `transform.translation.x = 5.0`, \
+                 or use a borrowed mutable parent for live nested mutation.",
             ),
             StorageError::IndexOutOfRange => f.write_str("list index out of range"),
+            StorageError::KeyNotFound(key) => write!(f, "key not found: {key}"),
             StorageError::EmptyList => f.write_str("pop from empty list"),
+            StorageError::VariantChanged(variant) => {
+                f.write_str(&enum_variant_changed(variant))
+            }
         }
     }
 }
@@ -172,9 +203,8 @@ mod tests {
 }
 
 #[cfg(feature = "pyo3")]
-impl From<StorageError> for pyo3::PyErr {
+impl From<StorageError> for PyErr {
     fn from(err: StorageError) -> Self {
-        use pyo3::exceptions::{PyIndexError, PyRuntimeError};
         match err {
             StorageError::InvalidAccess
             | StorageError::EntityUnavailable
@@ -185,10 +215,13 @@ impl From<StorageError> for pyo3::PyErr {
             | StorageError::AssetBorrowed
             | StorageError::AssetReadOnly
             | StorageError::AssetUnavailable
-            | StorageError::AssetViewsLive => PyRuntimeError::new_err(err.to_string()),
+            | StorageError::AssetViewsLive
+            | StorageError::AssetAccessConflict
+            | StorageError::VariantChanged(_) => PyRuntimeError::new_err(err.to_string()),
             StorageError::IndexOutOfRange | StorageError::EmptyList => {
                 PyIndexError::new_err(err.to_string())
             }
+            StorageError::KeyNotFound(_) => PyKeyError::new_err(err.to_string()),
         }
     }
 }
