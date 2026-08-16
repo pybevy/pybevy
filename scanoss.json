@@ -16,7 +16,7 @@
           "assets/**",
           "**/LICENSE-*",
           "LICENSE-*",
-          "crates/pybevy_wgpu/src/extent3d.rs",
+          "crates/pybevy_render/src/extent3d.rs",
           "src/assets/recursive_dependency_load_state.rs"
         ]
       }
