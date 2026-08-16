@@ -116,6 +116,9 @@ pub enum BatchColumnError {
         field: String,
         ndim: usize,
     },
+    NonFinite {
+        field: String,
+    },
     LengthMismatch {
         first_field: String,
         first_rows: usize,
@@ -144,6 +147,9 @@ impl fmt::Display for BatchColumnError {
             BatchColumnError::Not1DOr2D { field, ndim } => {
                 write!(f, "Field '{field}' must be a 1D or 2D array, got {ndim}D")
             }
+            BatchColumnError::NonFinite { field } => {
+                write!(f, "Field '{field}' must contain only finite values")
+            }
             BatchColumnError::LengthMismatch {
                 first_field,
                 first_rows,
@@ -161,6 +167,12 @@ impl fmt::Display for BatchColumnError {
 }
 
 impl std::error::Error for BatchColumnError {}
+
+/// Value-domain constraints attached to a native component batch field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BatchValueConstraint {
+    Finite,
+}
 
 /// Custom `@component` `from_numpy` validation errors. `Display` reproduces the
 /// pyo3 `src/ecs/custom_batch.rs` strings verbatim. Kept SEPARATE from
@@ -285,6 +297,25 @@ pub fn check_known_field(field: &str, valid: &[&str]) -> Result<(), BatchColumnE
             valid: format!("{valid:?}"),
         })
     }
+}
+
+/// Apply a native batch field's declared constraints to normalized float data.
+pub fn validate_f32_values(
+    field: &str,
+    values: &[f32],
+    constraints: &[BatchValueConstraint],
+) -> Result<(), BatchColumnError> {
+    for constraint in constraints {
+        match constraint {
+            BatchValueConstraint::Finite if values.iter().any(|value| !value.is_finite()) => {
+                return Err(BatchColumnError::NonFinite {
+                    field: field.to_string(),
+                });
+            }
+            BatchValueConstraint::Finite => {}
+        }
+    }
+    Ok(())
 }
 
 /// Validate a column's shape against `cols` and return its row (entity) count.
@@ -548,6 +579,21 @@ mod tests {
             "Unknown field 'bogus'. Valid fields: [\"intensity\", \"range\"]"
         );
         assert!(check_known_field("range", &["intensity", "range"]).is_ok());
+    }
+
+    #[test]
+    fn finite_column_validation() {
+        let constraints = [BatchValueConstraint::Finite];
+        assert!(validate_f32_values("translation", &[0.0, -1.0, 1.0e20], &constraints).is_ok());
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(
+                validate_f32_values("translation", &[0.0, value], &constraints)
+                    .unwrap_err()
+                    .to_string(),
+                "Field 'translation' must contain only finite values"
+            );
+        }
+        assert!(validate_f32_values("unconstrained", &[f32::NAN], &[]).is_ok());
     }
 
     #[test]

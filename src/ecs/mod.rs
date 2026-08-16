@@ -23,6 +23,7 @@ pub use pybevy_core::{PyChildOf, PyChildren, PyChildrenIterator, PyEntity};
 #[allow(unused_imports)]
 pub use pybevy_core::{PyF32List, field_storage::FieldStorage, value_storage::ValueStorage};
 pub mod local;
+pub(crate) mod logical_type;
 pub mod message;
 pub mod messages;
 pub mod mutable;
