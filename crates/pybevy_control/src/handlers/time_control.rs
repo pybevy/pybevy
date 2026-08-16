@@ -5,6 +5,7 @@ use bevy::{
     prelude::{ChildOf, Children, Entity, GlobalTransform, Transform, Without},
     time::{Time, Virtual},
 };
+use pybevy_core::try_duration_from_secs_f64;
 
 use crate::bridge::{ControlError, SeekTimeParams};
 
@@ -123,6 +124,9 @@ pub fn seek_time(
     if seconds < 0.0 {
         return Err(ControlError::invalid_params("seconds must be >= 0"));
     }
+    // `< 0.0` is false for NaN, and Duration tops out near 1.8e19 seconds.
+    let target = try_duration_from_secs_f64(seconds)
+        .map_err(|error| ControlError::invalid_params(error.message()))?;
     let current = world.resource::<Time<Virtual>>().elapsed_secs_f64();
     if seconds < current {
         // Reset virtual time by replacing the resource, preserving speed
@@ -131,11 +135,20 @@ pub fn seek_time(
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(old_speed);
         if seconds > 0.0 {
-            time.advance_to(Duration::from_secs_f64(seconds));
+            time.advance_to(target);
         }
     } else {
         let mut time = world.resource_mut::<Time<Virtual>>();
-        time.advance_to(Duration::from_secs_f64(seconds));
+        time.advance_to(target);
+    }
+    {
+        // advance_to leaves the whole jump as this frame's delta, and the
+        // fixed main loop consumes Time<Virtual>::delta directly: a large
+        // seek would replay that many FixedMain catch-up iterations in one
+        // frame. Nothing else reads this delta (the generic clock was synced
+        // earlier in the frame), so zero it.
+        let mut time = world.resource_mut::<Time<Virtual>>();
+        time.advance_by(Duration::ZERO);
     }
     if pause {
         let mut time = world.resource_mut::<Time<Virtual>>();
@@ -152,7 +165,7 @@ pub fn seek_time(
         "elapsed_secs": elapsed,
         "paused": paused,
         "relative_speed": time.relative_speed(),
-        "note": "Time set. Animations/timers will update on next frame. GlobalTransform synced for spatial queries.",
+        "note": "Time set. Absolute-time systems observe the new elapsed time on the next frame; delta-accumulated state is not replayed. GlobalTransform synced for spatial queries.",
     }))
 }
 
@@ -165,6 +178,39 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
         world
+    }
+
+    /// `seconds < 0.0` is false for NaN, and Duration saturates near 1.8e19
+    /// seconds, so both reached `Duration::from_secs_f64` and panicked the
+    /// control plane on an otherwise valid JSON request.
+    #[test]
+    fn seek_time_rejects_non_finite_and_overflowing_seconds() {
+        for seconds in [f64::NAN, f64::INFINITY, 1e30] {
+            let mut world = world_with_virtual_time();
+            let error = seek_time(
+                &mut world,
+                SeekTimeParams {
+                    seconds,
+                    pause: true,
+                },
+            )
+            .expect_err("must be rejected, not panic");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+        }
+    }
+
+    #[test]
+    fn seek_time_still_accepts_a_normal_target() {
+        let mut world = world_with_virtual_time();
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 2.5,
+                pause: true,
+            },
+        )
+        .expect("a finite target must seek");
+        assert_eq!(result["elapsed_secs"], 2.5);
     }
 
     #[test]
@@ -322,6 +368,34 @@ mod tests {
         .unwrap();
         let elapsed = result["elapsed_secs"].as_f64().unwrap();
         assert!((elapsed - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_seek_time_leaves_no_frame_delta() {
+        // The fixed main loop consumes Time<Virtual>::delta; a seek that left
+        // the jump there would replay it as FixedMain catch-up iterations.
+        let mut world = world_with_virtual_time();
+        seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 120.0,
+                pause: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(world.resource::<Time<Virtual>>().delta(), Duration::ZERO);
+        // The backward branch rebuilds the clock and advances again.
+        seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 30.0,
+                pause: false,
+            },
+        )
+        .unwrap();
+        let time = world.resource::<Time<Virtual>>();
+        assert_eq!(time.delta(), Duration::ZERO);
+        assert!((time.elapsed_secs_f64() - 30.0).abs() < 0.01);
     }
 
     #[test]
