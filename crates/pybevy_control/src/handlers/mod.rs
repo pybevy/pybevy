@@ -14,11 +14,18 @@ pub mod time_control;
 pub mod turnaround;
 
 use bevy::ecs::world::World;
+use pybevy_core::ensure_no_live_asset_access;
 
+use self::pyo3::mutate::despawn_entity;
 use crate::{
-    bridge::{ControlError, ControlOperation},
+    bridge::{ControlError, ControlOperation, SharedExclusiveExecution},
     runtime::ControlRuntime,
 };
+
+fn guard_structural_request(world: &World, operation: &str) -> Result<(), ControlError> {
+    ensure_no_live_asset_access(world, operation)
+        .map_err(|error| ControlError::invalid_params(error.to_string()))
+}
 
 /// Dispatch an MCP operation to the appropriate handler.
 ///
@@ -34,32 +41,59 @@ pub fn dispatch(
         ControlOperation::ListEntities => runtime.list_entities(world),
         ControlOperation::GetEntity { entity } => runtime.get_entity(world, entity),
         ControlOperation::ListResources => runtime.list_resources(world),
-        ControlOperation::ListSystems => runtime.list_systems(world),
+        ControlOperation::ListSystems { include_internal } => {
+            runtime.list_systems(world, include_internal)
+        }
         ControlOperation::QueryEntities(p) => runtime.query_entities(world, p),
         ControlOperation::GetComponentSchema { name } => runtime.get_component_schema(world, name),
         ControlOperation::GetComponent(p) => runtime.get_component(world, p),
+        ControlOperation::GetResource(p) => runtime.get_resource(world, p),
         ControlOperation::GetSceneSummary => runtime.scene_summary(world),
         ControlOperation::GetBoundingBox { entity } => runtime.get_bounding_box(world, entity),
         ControlOperation::GetRegistry => runtime.debug_registry(world),
-        ControlOperation::SpawnEntity { components } => runtime.spawn_entity(world, components),
-        ControlOperation::DespawnEntity { entity } => pyo3::mutate::despawn_entity(world, entity),
-        ControlOperation::SetComponent(p) => runtime.set_component(world, p),
-        ControlOperation::RemoveComponent(p) => runtime.remove_component(world, p),
-        ControlOperation::SetResource(p) => runtime.insert_resource(world, p),
+        ControlOperation::SpawnEntity { components } => {
+            guard_structural_request(world, "spawn_entity")?;
+            runtime.spawn_entity(world, components)
+        }
+        ControlOperation::DespawnEntity { entity } => {
+            guard_structural_request(world, "despawn_entity")?;
+            despawn_entity(world, entity)
+        }
+        ControlOperation::SetComponent(p) => {
+            guard_structural_request(world, "set_component")?;
+            runtime.set_component(world, p)
+        }
+        ControlOperation::RemoveComponent(p) => {
+            guard_structural_request(world, "remove_component")?;
+            runtime.remove_component(world, p)
+        }
+        ControlOperation::SetResource(p) => {
+            guard_structural_request(world, "set_resource")?;
+            runtime.insert_resource(world, p)
+        }
         ControlOperation::RemoveResource { resource_type } => {
+            guard_structural_request(world, "remove_resource")?;
             runtime.remove_resource(world, resource_type)
         }
-        ControlOperation::Batch { operations } => runtime.batch_mutate(world, operations),
+        ControlOperation::Batch { operations } => {
+            guard_structural_request(world, "batch")?;
+            runtime.batch_mutate(world, operations)
+        }
         ControlOperation::PauseTime => time_control::pause_time(world),
         ControlOperation::ResumeTime => time_control::resume_time(world),
         ControlOperation::SetTimeScale { scale } => time_control::set_time_scale(world, scale),
         ControlOperation::GetTimeStatus => time_control::get_time_status(world),
         ControlOperation::SeekTime(p) => time_control::seek_time(world, p),
         ControlOperation::CaptureScreenshot(..)
+        | ControlOperation::CaptureStats(..)
         | ControlOperation::CaptureWithGizmos(..)
         | ControlOperation::CaptureTimeline(..) => Err(ControlError::internal(
             "Screenshot requests should be deferred",
         )),
+        ControlOperation::CompareFrames(params) => world
+            .get_resource::<frame_analysis::CapturedFrames>()
+            .ok_or_else(|| ControlError::internal("Captured frame cache is unavailable"))?
+            .compare(&params.a, &params.b, params.epsilon),
         ControlOperation::CaptureTurnaround(..) => Err(ControlError::internal(
             "CaptureTurnaround requests should be deferred",
         )),
@@ -80,7 +114,18 @@ pub fn dispatch(
         }
         ControlOperation::CheckOverlaps(p) => spatial::check_overlaps(world, p),
         ControlOperation::CheckAllOverlaps(p) => spatial::check_all_overlaps(world, p),
-        ControlOperation::RunCode { code } => runtime.execute_python(world, code),
+        ControlOperation::RunCode { code } => {
+            let execution = world
+                .get_resource::<SharedExclusiveExecution>()
+                .cloned()
+                .ok_or_else(|| ControlError::internal("Exclusive execution state missing"))?;
+            let _guard = execution.try_enter().ok_or_else(|| {
+                ControlError::internal(
+                    "reentrant-control-call: exclusive run_code execution is already active",
+                )
+            })?;
+            runtime.execute_python(world, code)
+        }
         ControlOperation::GetPerformance => diagnostics::get_performance(world),
         ControlOperation::SetAsset(p) => runtime.mutate_asset(world, p),
         ControlOperation::GetConfig { key } => {
@@ -107,23 +152,35 @@ pub fn dispatch(
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
+
     use bevy::{
         MinimalPlugins,
         app::App,
+        asset::{Asset, Handle},
         camera::primitives::Aabb,
         ecs::{name::Name, world::World},
         math::Vec3,
         prelude::GlobalTransform,
+        reflect::TypePath,
+    };
+    use pybevy_core::{
+        AccessMode, AssetAccessRegistry, AssetBorrowCounter, AssetStorage, ValidityFlag,
+        ensure_asset_access_registry,
     };
 
     use super::*;
     use crate::{
         bridge::{
             CaptureDepthParams, CaptureScreenshotParams, CaptureTurnaroundParams,
-            CheckAllOverlapsParams, EntityRef, ErrorCode,
+            CheckAllOverlapsParams, EntityRef, ErrorCode, RemoveComponentParams,
+            SetComponentParams, SetResourceParams,
         },
         runtime_pyo3::Pyo3ControlRuntime,
     };
+
+    #[derive(Asset, TypePath)]
+    struct BarrierAsset;
 
     fn runtime() -> Pyo3ControlRuntime {
         Pyo3ControlRuntime
@@ -139,7 +196,14 @@ mod tests {
     #[test]
     fn dispatch_list_systems() {
         let mut world = World::new();
-        let result = dispatch(&mut world, ControlOperation::ListSystems, &mut runtime()).unwrap();
+        let result = dispatch(
+            &mut world,
+            ControlOperation::ListSystems {
+                include_internal: false,
+            },
+            &mut runtime(),
+        )
+        .unwrap();
         assert!(result["stages"].is_object());
     }
 
@@ -190,11 +254,99 @@ mod tests {
     }
 
     #[test]
+    fn structural_dispatch_sites_reject_live_asset_access() {
+        let mut world = World::new();
+        ensure_asset_access_registry(&mut world);
+        let scope = world.resource::<AssetAccessRegistry>().new_scope(
+            TypeId::of::<BarrierAsset>(),
+            "BarrierAsset",
+            ValidityFlag::new_write(),
+            "control test",
+        );
+        let counter = AssetBorrowCounter::from_scope(scope);
+        let asset_id = Handle::<BarrierAsset>::default().id().untyped();
+        let ptr = Box::into_raw(Box::new(BarrierAsset));
+        let world_cell = world.as_unsafe_world_cell_readonly();
+        // SAFETY: the boxed asset remains allocated until storage is dropped,
+        // and the test validity flag remains live for the complete borrow.
+        let storage = unsafe {
+            AssetStorage::borrowed_readonly_tracked(
+                ptr,
+                world_cell,
+                asset_id,
+                ValidityFlag::new_read().with_access_mode(AccessMode::Read),
+                counter,
+            )
+        }
+        .expect("live tracked asset scope");
+
+        let operations = [
+            (
+                ControlOperation::SpawnEntity {
+                    components: serde_json::json!({}),
+                },
+                "spawn_entity",
+            ),
+            (
+                ControlOperation::DespawnEntity {
+                    entity: EntityRef::Id(1),
+                },
+                "despawn_entity",
+            ),
+            (
+                ControlOperation::SetComponent(SetComponentParams {
+                    entity: EntityRef::Id(1),
+                    component: "Marker".into(),
+                    fields: serde_json::json!({}),
+                }),
+                "set_component",
+            ),
+            (
+                ControlOperation::RemoveComponent(RemoveComponentParams {
+                    entity: EntityRef::Id(1),
+                    component: "Marker".into(),
+                }),
+                "remove_component",
+            ),
+            (
+                ControlOperation::SetResource(SetResourceParams {
+                    resource_type: "Config".into(),
+                    value: serde_json::json!({}),
+                }),
+                "set_resource",
+            ),
+            (
+                ControlOperation::RemoveResource {
+                    resource_type: "Config".into(),
+                },
+                "remove_resource",
+            ),
+            (ControlOperation::Batch { operations: vec![] }, "batch"),
+        ];
+
+        for (operation, name) in operations {
+            let error = dispatch(&mut world, operation, &mut runtime()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(
+                error.message,
+                format!(
+                    "Cannot call {name} while a borrowed BarrierAsset asset from control test is live (asset UUID 97128bb1-2588-480b-bdc6-87b4adbec477). Drop the asset wrapper or close its view first."
+                )
+            );
+        }
+
+        drop(storage);
+        // SAFETY: storage has released the only borrowed reference to `ptr`.
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
     fn dispatch_screenshot_returns_deferred_error() {
         let mut world = World::new();
         let result = dispatch(
             &mut world,
             ControlOperation::CaptureScreenshot(CaptureScreenshotParams {
+                entity: None,
                 max_width: None,
                 delay_frames: 0,
                 position: None,

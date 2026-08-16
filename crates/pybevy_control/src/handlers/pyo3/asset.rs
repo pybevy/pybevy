@@ -1,5 +1,10 @@
-use bevy::ecs::world::World;
-use pybevy_core::AssetBorrowCounter;
+use std::any::TypeId;
+
+use bevy::{asset::UntypedHandle, ecs::world::World};
+use pybevy_core::{
+    AccessMode, AssetAccessRegistry, AssetBorrowCounter, ValidityFlag, ValidityGuard,
+    ensure_asset_access_registry,
+};
 use pyo3::prelude::*;
 
 use super::mutate::convert_field_value;
@@ -7,6 +12,22 @@ use crate::{
     bridge::{ControlError, EntityRef},
     handlers::entity::resolve_entity,
 };
+
+fn validate_asset_handle_type(
+    handle: &UntypedHandle,
+    expected_type_id: TypeId,
+    component: &str,
+    requested_asset_type: &str,
+    handle_asset_type: &str,
+) -> Result<(), String> {
+    if handle.type_id() == expected_type_id {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Asset type '{requested_asset_type}' does not match component '{component}' handle type '{handle_asset_type}'"
+    ))
+}
 
 /// Modify asset properties (material color, roughness, etc.) live without code reload.
 pub fn mutate_asset(
@@ -16,6 +37,7 @@ pub fn mutate_asset(
     asset_type: String,
     fields: serde_json::Value,
 ) -> Result<serde_json::Value, ControlError> {
+    ensure_asset_access_registry(world);
     let entity = resolve_entity(world, &entity_ref)?;
     let entity_id = entity.to_bits();
 
@@ -53,40 +75,31 @@ pub fn mutate_asset(
             validity_flag.set_invalid();
             return;
         };
+        let untyped = (|| {
+            let handle_obj = handle_obj.ok_or_else(|| {
+                format!("Component '{component}' not found on entity {entity_id}")
+            })?;
+
+            let bound = handle_obj.bind(py);
+            let py_handle = bound.getattr("handle").map_err(|error| {
+                format!("Component '{component}' has no 'handle' attribute: {error}")
+            })?;
+            let handle: PyRef<pybevy_core::PyHandle> = py_handle
+                .extract()
+                .map_err(|error| format!("Failed to extract handle: {error}"))?;
+
+            let asset_type_name = handle.asset_type_name().unwrap_or("Unknown").to_owned();
+            let untyped = handle
+                .to_untyped_handle()
+                .map_err(|error| format!("Failed to convert handle: {error}"))?;
+            Ok((untyped, asset_type_name))
+        })();
         validity_flag.set_invalid();
 
-        let Some(handle_obj) = handle_obj else {
-            errors.push(format!(
-                "Component '{component}' not found on entity {entity_id}"
-            ));
-            return;
-        };
-
-        // Get the handle from the component
-        let bound = handle_obj.bind(py);
-        let py_handle = match bound.getattr("handle") {
-            Ok(h) => h,
-            Err(e) => {
-                errors.push(format!(
-                    "Component '{component}' has no 'handle' attribute: {e}"
-                ));
-                return;
-            }
-        };
-
-        // Extract the PyHandle and convert to UntypedHandle
-        let handle: PyRef<pybevy_core::PyHandle> = match py_handle.extract() {
-            Ok(h) => h,
-            Err(e) => {
-                errors.push(format!("Failed to extract handle: {e}"));
-                return;
-            }
-        };
-
-        let untyped = match handle.to_untyped_handle() {
-            Ok(h) => h,
-            Err(e) => {
-                errors.push(format!("Failed to convert handle: {e}"));
+        let (untyped, handle_asset_type) = match untyped {
+            Ok(handle) => handle,
+            Err(error) => {
+                errors.push(error);
                 return;
             }
         };
@@ -100,17 +113,35 @@ pub fn mutate_asset(
             return;
         };
 
-        // Get mutable access to the asset
-        let write_flag = pybevy_core::ValidityFlag::new_write();
-        let write_validity = write_flag.with_access_mode(pybevy_core::AccessMode::Write);
-
-        match asset_bridge.get_mut(
-            world,
+        if let Err(error) = validate_asset_handle_type(
             &untyped,
-            write_validity,
-            AssetBorrowCounter::default(),
-            py,
+            asset_bridge.bevy_type_id(),
+            &component,
+            &asset_type,
+            &handle_asset_type,
         ) {
+            errors.push(error);
+            return;
+        }
+
+        // Get mutable access to the asset
+        let write_flag = ValidityFlag::new();
+        let _write_guard = ValidityGuard::new(write_flag.clone());
+        let write_validity = write_flag.with_access_mode(AccessMode::Write);
+        let borrow_counter = {
+            let registry = world
+                .get_resource::<AssetAccessRegistry>()
+                .expect("control asset mutation initializes AssetAccessRegistry");
+            AssetBorrowCounter::from_scope(registry.new_scope(
+                asset_bridge.bevy_type_id(),
+                asset_bridge.name(),
+                write_flag.clone(),
+                "control:mutate_asset",
+            ))
+        };
+
+        let world_cell = world.as_unsafe_world_cell();
+        match asset_bridge.get_mut(world_cell, untyped.id(), write_validity, borrow_counter, py) {
             Ok(Some(py_asset)) => {
                 let asset_bound = py_asset.bind(py);
                 for (field_name, field_value) in field_obj {
@@ -135,9 +166,11 @@ pub fn mutate_asset(
                 errors.push(format!("Failed to get mutable asset: {e}"));
             }
         }
-
-        write_flag.set_invalid();
     });
+
+    if updated_fields.is_empty() && !errors.is_empty() {
+        return Err(ControlError::invalid_params(errors.join("; ")));
+    }
 
     let mut result = serde_json::json!({
         "entity_id": entity_id,
@@ -158,9 +191,14 @@ pub fn mutate_asset(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{any::TypeId, sync::Once};
 
-    use bevy::ecs::{name::Name, world::World};
+    use bevy::{
+        asset::Handle,
+        ecs::{name::Name, world::World},
+        mesh::Mesh,
+        pbr::StandardMaterial,
+    };
     use pyo3::{ffi::c_str, prelude::*};
 
     use super::*;
@@ -233,6 +271,29 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_asset_handle_type_is_rejected_before_typed_conversion() {
+        let handle = Handle::<Mesh>::default().untyped();
+
+        let error = validate_asset_handle_type(
+            &handle,
+            TypeId::of::<StandardMaterial>(),
+            "Mesh3d",
+            "StandardMaterial",
+            "Mesh",
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "Asset type 'StandardMaterial' does not match component 'Mesh3d' handle type 'Mesh'"
+        );
+        assert!(
+            validate_asset_handle_type(&handle, TypeId::of::<Mesh>(), "Mesh3d", "Mesh", "Mesh",)
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn mutate_asset_unknown_component_reports_error() {
         setup_python();
         let mut world = World::new();
@@ -244,12 +305,8 @@ mod tests {
             "StandardMaterial".into(),
             serde_json::json!({"base_color": [1.0, 0.0, 0.0, 1.0]}),
         );
-        // Returns Ok with errors array (not a hard error)
-        let result = result.unwrap();
-        assert!(result["errors"].is_array());
-        let errors = result["errors"].as_array().unwrap();
-        assert!(!errors.is_empty());
-        assert!(errors[0].as_str().unwrap().contains("not in registry"));
+        let error = result.unwrap_err();
+        assert!(error.message.contains("not in registry"));
     }
 
     /// Regression: the handler must access `.handle` as a property (getter),
@@ -305,20 +362,14 @@ class FakeMeshComponent:
         setup_python();
         let mut world = World::new();
         let entity = world.spawn(Name::new("TestEntity")).id();
-        // Use an unknown component to trigger the soft error path
-        let result = mutate_asset(
+        let error = mutate_asset(
             &mut world,
             EntityRef::Id(entity.to_bits()),
             "FakeComponent".into(),
             "FakeMaterial".into(),
             serde_json::json!({"roughness": 0.5}),
         )
-        .unwrap();
-        // Verify response structure
-        assert!(result["entity_id"].is_number());
-        assert_eq!(result["component"], "FakeComponent");
-        assert_eq!(result["asset_type"], "FakeMaterial");
-        assert!(result["updated_fields"].is_array());
-        assert_eq!(result["updated_fields"].as_array().unwrap().len(), 0);
+        .unwrap_err();
+        assert!(error.message.contains("not in registry"));
     }
 }
