@@ -40,7 +40,7 @@ def detect_changed(
         flush=True,
     )
     if tick_counter.tick >= 5:
-        app_exit.write(AppExit.SUCCESS)
+        app_exit.write(AppExit.Success())
 
 
 @entrypoint

@@ -25,14 +25,39 @@ pub(crate) mod assets;
 pub(crate) mod ecs;
 pub(crate) mod render;
 
+#[cfg(feature = "mcp")]
+fn remove_component_for_control(
+    world: &mut bevy::ecs::world::World,
+    entity: bevy::ecs::entity::Entity,
+    type_ptr: *const pyo3::ffi::PyTypeObject,
+) {
+    let component =
+        if pybevy_core::registry::global_registry::get_bridge_by_py_type(type_ptr).is_some() {
+            ecs::component_type::PyComponentType::Dynamic(type_ptr)
+        } else {
+            ecs::component_type::PyComponentType::Custom(type_ptr)
+        };
+    ecs::lifecycle_mutation::remove(world, entity, component);
+}
+
+#[cfg(feature = "mcp")]
+fn despawn_entity_for_control(
+    world: &mut bevy::ecs::world::World,
+    entity: bevy::ecs::entity::Entity,
+) {
+    ecs::lifecycle_mutation::despawn_recursive(world, entity);
+}
+
 #[pyfunction]
 fn _color_materialize(color: &pybevy_color::color::PyColor, py: Python<'_>) -> PyResult<Py<PyAny>> {
     let material = bevy::pbr::StandardMaterial {
-        base_color: color.0,
+        base_color: color.resolved_copy()?,
         ..Default::default()
     };
-    let py_material: Py<pybevy_pbr::standard_material::PyStandardMaterial> =
-        Py::new(py, (material.into(), pybevy_core::PyAsset))?;
+    let py_material: Py<pybevy_pbr::standard_material::PyStandardMaterial> = Py::new(
+        py,
+        pybevy_pbr::standard_material::PyStandardMaterial::from_owned(material),
+    )?;
     Ok(py_material.into_any())
 }
 
@@ -44,8 +69,8 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register base classes from pybevy_core FIRST before any modules that use them
     // This ensures classes like GlobalVolume (extends PyResource) use the same base class
-    m.add_class::<pybevy_core::PyResource>()?;
     m.add_class::<pybevy_core::PyComponent>()?;
+    m.add_class::<pybevy_core::PyResource>()?;
     m.add_class::<pybevy_core::PyPlugin>()?;
 
     // Feature crate modules (fully owned by crates)
@@ -81,6 +106,10 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         pybevy_control::add_module(m)?;
         pybevy_control::register_world_wrapper_hook(ecs::world::create_world_wrapper);
+        pybevy_control::register_lifecycle_mutation_hooks(
+            remove_component_for_control,
+            despawn_entity_for_control,
+        );
     }
 
     // Main crate modules (local code)
@@ -88,6 +117,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     assets::add_module(m)?;
     ecs::add_module(m)?;
     render::add_module(m)?;
+    ecs::system_config::register_native_system_sets(m)?;
 
     // Enrich "math" module with meshable primitives from pybevy_mesh.
     //
@@ -130,7 +160,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// The pymodule entry point — used by append_to_inittab! in native plugin mode.
+/// The pymodule entry point, used by append_to_inittab! in native plugin mode.
 ///
 /// Gated behind `native-plugin` feature to avoid generating a duplicate `PyInit__pybevy`
 /// symbol when the rlib is linked into pybevy-python (cdylib), which defines its own.

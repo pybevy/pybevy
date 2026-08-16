@@ -233,10 +233,10 @@ def game_over_system(
     """
     if game_state.winning_player is not None:
         print(f"{game_state.winning_player} won the game!")
-        app_exit_writer.write(AppExit.SUCCESS)
+        app_exit_writer.write(AppExit.Success())
     elif game_state.current_round == game_rules.max_rounds:
         print("Ran out of rounds. Nobody wins!")
-        app_exit_writer.write(AppExit.SUCCESS)
+        app_exit_writer.write(AppExit.Success())
 
 
 def startup_system(
@@ -294,12 +294,12 @@ def new_player_system(
 def print_at_end_round(counter: Local[Counter]) -> None:
     """System demonstrating Local<T> for per-system state.
 
-    Local<T> refers to a value of type T that is owned by the system.
+    Local<T> holds a value of type T that is owned by the system.
     This value is automatically initialized using T's default implementation
     upon the system's initialization.
 
     In this system's Local (counter), T is Counter.
-    Therefore, on the first turn, counter has a value of 0.
+    Therefore, on the first turn, counter.value is 0.
     """
     counter.value += 1
     print(f"In schedule 'Last' for the {counter.value}th time")
