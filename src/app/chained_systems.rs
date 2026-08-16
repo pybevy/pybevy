@@ -1,4 +1,5 @@
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::PyTuple,
@@ -21,6 +22,16 @@ impl Clone for PyChainedSystems {
 
 #[pymethods]
 impl PyChainedSystems {
+    /// Report held Python objects to the cyclic GC.
+    ///
+    /// A Rust-held `Py` reference is invisible to the collector, and user
+    /// scene objects reach back here through their defining module's dict, so
+    /// without this the cycle is uncollectable and every hot reload leaks a
+    /// whole generation. Traverse stays read-only and takes no locks.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.systems)
+    }
+
     #[new]
     #[pyo3(signature = (*systems))]
     pub fn new(systems: Bound<'_, PyTuple>) -> Self {
@@ -46,6 +57,16 @@ impl Clone for PyChainedSystemSets {
 
 #[pymethods]
 impl PyChainedSystemSets {
+    /// Report held Python objects to the cyclic GC.
+    ///
+    /// A Rust-held `Py` reference is invisible to the collector, and user
+    /// scene objects reach back here through their defining module's dict, so
+    /// without this the cycle is uncollectable and every hot reload leaks a
+    /// whole generation. Traverse stays read-only and takes no locks.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.sets)
+    }
+
     #[new]
     #[pyo3(signature = (*sets))]
     pub fn new(sets: Bound<'_, PyTuple>) -> Self {
