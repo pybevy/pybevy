@@ -24,7 +24,7 @@ impl PyAtmosphere {
         Ok(Self::from_owned(Atmosphere {
             inner_radius,
             outer_radius,
-            ground_albedo: ground_albedo.into(),
+            ground_albedo: ground_albedo.try_into()?,
             medium: handle.try_into()?,
         })
         .into())
@@ -72,7 +72,7 @@ impl PyAtmosphere {
 
     #[setter]
     pub fn set_ground_albedo(&mut self, value: PyVec3) -> PyResult<()> {
-        self.as_mut()?.ground_albedo = value.into();
+        self.as_mut()?.ground_albedo = value.try_into()?;
         Ok(())
     }
 

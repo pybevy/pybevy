@@ -12,15 +12,19 @@ pyo3 = { workspace = true, features = ["macros"] }
 pybevy_core = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_camera = { workspace = true }
+pybevy_gizmos = { workspace = true }
 pybevy_macros = { workspace = true }
 pybevy_math = { workspace = true }
 numpy = { workspace = true }
+smallvec = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
 features = [
     "bevy_pbr",
     "bevy_light",
+    "bevy_gizmos",
+    "pbr_light_textures",
     # Embeds the LTC lookup textures RectLight needs to render; the LUTs are
     # zstd-compressed KTX2, so a zstd backend must be chosen (pure-Rust one)
     "area_light_luts",

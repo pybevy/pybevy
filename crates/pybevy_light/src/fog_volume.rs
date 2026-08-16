@@ -1,4 +1,4 @@
-use bevy::light::FogVolume;
+use bevy::{color::Color, light::FogVolume};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
@@ -77,19 +77,21 @@ impl PyFogVolume {
         light_tint: PyColor,
         light_intensity: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let fog_color = Color::try_from(fog_color)?;
+        let light_tint = Color::try_from(light_tint)?;
         let texture = match density_texture {
             Some(h) => Some(extract_handle_from_any(h)?.try_into()?),
             None => None,
         };
         Ok(Self::from_owned(FogVolume {
-            fog_color: fog_color.into(),
+            fog_color,
             density_factor,
             density_texture: texture,
-            density_texture_offset: density_texture_offset.into(),
+            density_texture_offset: density_texture_offset.try_into()?,
             absorption,
             scattering,
             scattering_asymmetry,
-            light_tint: light_tint.into(),
+            light_tint,
             light_intensity,
         })
         .into())
@@ -97,12 +99,13 @@ impl PyFogVolume {
 
     #[getter]
     pub fn fog_color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.fog_color, py)
+        PyColor::from_component_field(&self.storage, |volume| &volume.fog_color, py)
     }
 
     #[setter]
     pub fn set_fog_color(&mut self, value: PyColor) -> PyResult<()> {
-        self.as_mut()?.fog_color = value.into();
+        let value = Color::try_from(value)?;
+        self.as_mut()?.fog_color = value;
         Ok(())
     }
 
@@ -140,7 +143,7 @@ impl PyFogVolume {
 
     #[setter]
     pub fn set_density_texture_offset(&mut self, value: PyVec3) -> PyResult<()> {
-        self.as_mut()?.density_texture_offset = value.into();
+        self.as_mut()?.density_texture_offset = value.try_into()?;
         Ok(())
     }
 
@@ -179,12 +182,13 @@ impl PyFogVolume {
 
     #[getter]
     pub fn light_tint(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.light_tint, py)
+        PyColor::from_component_field(&self.storage, |volume| &volume.light_tint, py)
     }
 
     #[setter]
     pub fn set_light_tint(&mut self, value: PyColor) -> PyResult<()> {
-        self.as_mut()?.light_tint = value.into();
+        let value = Color::try_from(value)?;
+        self.as_mut()?.light_tint = value;
         Ok(())
     }
 

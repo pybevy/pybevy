@@ -30,7 +30,7 @@ impl PySkybox {
         Ok(Self::from_owned(Skybox {
             image,
             brightness,
-            rotation: rotation.into(),
+            rotation: rotation.try_into()?,
         })
         .into())
     }
@@ -67,7 +67,7 @@ impl PySkybox {
 
     #[setter]
     pub fn set_rotation(&mut self, rotation: PyQuat) -> PyResult<()> {
-        self.as_mut()?.rotation = rotation.into();
+        self.as_mut()?.rotation = rotation.try_into()?;
         Ok(())
     }
 }

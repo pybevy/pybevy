@@ -1,4 +1,4 @@
-use bevy::light::SpotLight;
+use bevy::{color::Color, light::SpotLight};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
@@ -104,9 +104,10 @@ impl PySpotLight {
         shadow_map_near_z: f32,
         outer_angle: f32,
         inner_angle: f32,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(SpotLight {
-            color: color.into(),
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let color = Color::try_from(color)?;
+        Ok(Self::from_owned(SpotLight {
+            color,
             intensity,
             range,
             radius,
@@ -119,17 +120,18 @@ impl PySpotLight {
             outer_angle,
             inner_angle,
         })
-        .into()
+        .into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |light| &light.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 

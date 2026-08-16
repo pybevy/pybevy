@@ -171,29 +171,26 @@ impl PyLightProbe {
 impl PyLightProbe {
     #[new]
     #[pyo3(signature = (falloff = PyLightProbe::default_falloff()))]
-    pub fn new(falloff: PyVec3) -> PyClassInitializer<Self> {
-        Self::from_owned(LightProbe {
-            falloff: falloff.into(),
+    pub fn new(falloff: PyVec3) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(LightProbe {
+            falloff: falloff.try_into()?,
         })
-        .into()
+        .into())
     }
 
     #[getter]
     pub fn falloff(&self) -> PyResult<PyVec3> {
-        Ok(self.as_ref()?.falloff.into())
+        Ok(self.storage.borrow_field_as(|p| &p.falloff)?)
     }
 
     #[setter]
     pub fn set_falloff(&mut self, falloff: PyVec3) -> PyResult<()> {
-        self.as_mut()?.falloff = falloff.into();
+        let value = falloff.try_get()?;
+        self.as_mut()?.falloff = value;
         Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!("LightProbe(falloff={:?})", self.as_ref()?.falloff))
-    }
-
-    fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        Ok(self.as_ref()?.falloff == other.as_ref()?.falloff)
     }
 }

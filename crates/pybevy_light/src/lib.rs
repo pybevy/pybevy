@@ -10,6 +10,7 @@ pub mod environment_map_light;
 pub mod falloff;
 pub mod fog_volume;
 pub mod generated_environment_map_light;
+pub mod gizmos;
 pub mod irradiance_volume;
 pub mod light_texture;
 pub mod parallax_correction;
@@ -19,6 +20,7 @@ pub mod point_light;
 pub mod rect_light;
 pub mod scattering_medium;
 pub mod scattering_term;
+pub mod scattering_terms;
 pub mod shadow_filtering_method;
 pub mod shadow_map;
 pub mod shadow_markers;
@@ -35,6 +37,7 @@ pub mod prelude {
         directional_light::PyDirectionalLight,
         environment_map_light::PyEnvironmentMapLight,
         generated_environment_map_light::PyGeneratedEnvironmentMapLight,
+        gizmos::{PyLightGizmoColor, PyLightGizmoConfigGroup, PyShowLightGizmo},
         parallax_correction::PyParallaxCorrection,
         plugin::PyLightPlugin,
         point_light::PyPointLight,
@@ -47,11 +50,15 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "light")?;
     m.add_class::<plugin::PyLightPlugin>()?;
+    m.add_class::<gizmos::PyLightGizmoColor>()?;
+    m.add_class::<gizmos::PyLightGizmoConfigGroup>()?;
+    m.add_class::<gizmos::PyShowLightGizmo>()?;
     m.add_class::<point_light::PyPointLight>()?;
     m.add_class::<directional_light::PyDirectionalLight>()?;
     m.add_class::<spot_light::PySpotLight>()?;
     m.add_class::<rect_light::PyRectLight>()?;
     m.add_class::<parallax_correction::PyParallaxCorrection>()?;
+    parallax_correction::register_parallax_correction_variants(&m)?;
     m.add_class::<shadow_markers::PyNotShadowCaster>()?;
     m.add_class::<shadow_markers::PyNotShadowReceiver>()?;
     m.add_class::<shadow_markers::PyTransmittedShadowReceiver>()?;
@@ -80,8 +87,11 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<atmosphere::PyAtmosphere>()?;
     m.add_class::<scattering_medium::PyScatteringMedium>()?;
     m.add_class::<scattering_term::PyScatteringTerm>()?;
+    m.add_class::<scattering_terms::PyScatteringTerms>()?;
     m.add_class::<phase_function::PyPhaseFunction>()?;
+    phase_function::register_phase_function_variants(&m)?;
     m.add_class::<falloff::PyFalloff>()?;
+    falloff::register_falloff_variants(&m)?;
     m.add_class::<skybox::PySkybox>()?;
     parent.add_submodule(&m)
 }

@@ -1,13 +1,15 @@
 import math
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.camera import CubemapLayout
+from pybevy.collections import LiveList
 from pybevy.color import Color
-from pybevy.ecs import Batchable, Component, F32List, Resource
+from pybevy.ecs import Batchable, Component, Resource
+from pybevy.gizmos import GizmoConfigGroup
 from pybevy.image import Image
 from pybevy.math import Mat4, Quat, UVec2, Vec3
 
@@ -19,6 +21,51 @@ class LightPlugin(Plugin):
     """
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...
+
+class LightGizmoColor:
+    """Selects how a light gizmo is colored."""
+
+    class Manual(LightGizmoColor):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: Color
+        def __init__(self, value: Color) -> None: ...
+
+    class Varied(LightGizmoColor):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MatchLightColor(LightGizmoColor):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ByLightType(LightGizmoColor):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+class LightGizmoConfigGroup(GizmoConfigGroup):
+    """Configuration and selector for Bevy's light gizmo group."""
+
+    def __init__(
+        self,
+        draw_all: bool = False,
+        color: LightGizmoColor = LightGizmoColor.MatchLightColor(),
+        point_light_color: Color = ...,
+        spot_light_color: Color = ...,
+        directional_light_color: Color = ...,
+        rect_light_color: Color = ...,
+    ) -> None: ...
+    draw_all: bool
+    color: LightGizmoColor
+    point_light_color: Color
+    spot_light_color: Color
+    directional_light_color: Color
+    rect_light_color: Color
+
+class ShowLightGizmo(Component):
+    """Draw a gizmo for light components on this entity."""
+
+    def __init__(self, color: LightGizmoColor | None = None) -> None: ...
+    color: LightGizmoColor | None
 
 class NotShadowCaster(Component):
     """Prevents a mesh from casting shadows."""
@@ -325,15 +372,18 @@ class RectLight(Component):
 class ParallaxCorrection(Component):
     """Parallax correction mode for reflection (light) probes."""
 
-    NONE: ClassVar[ParallaxCorrection]
-    AUTO: ClassVar[ParallaxCorrection]
+    class None_(ParallaxCorrection):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    def __init__(self) -> None: ...
-    @staticmethod
-    def custom(half_extents: Vec3) -> ParallaxCorrection: ...
-    @property
-    def custom_half_extents(self) -> Vec3 | None: ...
-    def __eq__(self, other: object) -> bool: ...
+    class Auto(ParallaxCorrection):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Custom(ParallaxCorrection):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: Vec3
+        def __init__(self, value: Vec3) -> None: ...
 
 class EnvironmentMapLight(Component):
     def __init__(
@@ -391,13 +441,13 @@ class CascadeShadowConfig(Component):
     """
     def __init__(
         self,
-        bounds: list[float] = [10.0, 28.0, 78.0, 150.0],
+        bounds: list[float] = ...,
         overlap_proportion: float = 0.2,
         minimum_distance: float = 0.1,
     ) -> None: ...
 
     @property
-    def bounds(self) -> F32List: ...
+    def bounds(self) -> LiveList[float]: ...
     @bounds.setter
     def bounds(self, value: list[float]) -> None: ...
     overlap_proportion: float
@@ -441,7 +491,6 @@ class LightProbe(Component):
         """Falloff applied at the edges of the light probe's region."""
     @falloff.setter
     def falloff(self, value: Vec3) -> None: ...
-    def __eq__(self, other: LightProbe) -> bool: ...  # type: ignore[override]
 
 class IrradianceVolume(Component):
     """A light probe using irradiance volumes for diffuse global illumination.
@@ -564,8 +613,13 @@ class GeneratedEnvironmentMapLight(Component):
     Use this when you have an HDR cubemap that needs GPU filtering
     to generate specular and diffuse maps.
 
+    The source cubemap must be square, power-of-two, and at most 8192 wide.
+    Bevy checks this in a system on the frame the image finishes loading, so a
+    violation panics and terminates the app rather than raising at the spawn
+    call. Catching the panic does not help: the check re-runs every frame.
+
     Args:
-        environment_map: Source cubemap to filter (size must be power of two).
+        environment_map: Source cubemap to filter (square, power-of-two, <= 8192).
         intensity: Light intensity in cd/m².
         rotation: World-space rotation applied to the cubemap.
         affects_lightmapped_mesh_diffuse: Whether to affect lightmapped meshes.
@@ -718,8 +772,8 @@ class ScatteringMedium(Asset):
     def phase_resolution(self, value: int) -> None: ...
 
     @property
-    def terms(self) -> list[ScatteringTerm]:
-        """Snapshot list of the medium's scattering terms."""
+    def terms(self) -> LiveList[ScatteringTerm]:
+        """Live indexed terms for a stored medium; owned/read-only terms reject writes."""
 
     @terms.setter
     def terms(self, value: list[ScatteringTerm]) -> None: ...
@@ -801,19 +855,28 @@ class Atmosphere(Component):
     def ground_albedo(self, value: Vec3) -> None: ...
 
 class Falloff:
-    """Falloff mode controlling intensity decay over distance."""
+    """Falloff mode controlling intensity decay over distance.
 
-    @staticmethod
-    def linear() -> Falloff:
+    Bevy's Curve variant holds a Rust callback and cannot be constructed from Python.
+    """
+
+    class Linear(Falloff):
         """Linear falloff."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def exponential(scale: float) -> Falloff:
+    class Exponential(Falloff):
         """Exponential falloff with given scale."""
+        __match_args__: ClassVar[tuple[Literal["scale"]]]
+        scale: float
+        def __init__(self, scale: float) -> None: ...
 
-    @staticmethod
-    def tent(center: float, width: float) -> Falloff:
+    class Tent(Falloff):
         """Tent-shaped falloff with given center and width."""
+        __match_args__: ClassVar[tuple[Literal["center"], Literal["width"]]]
+        center: float
+        width: float
+        def __init__(self, center: float, width: float) -> None: ...
 
 class PhaseFunction:
     """Phase function describing how a ScatteringTerm scatters light in different directions.
@@ -822,23 +885,27 @@ class PhaseFunction:
     constructed from Python.
     """
 
-    @staticmethod
-    def Isotropic() -> PhaseFunction:
+    class Isotropic(PhaseFunction):
         """Scatters light evenly in all directions."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Rayleigh() -> PhaseFunction:
+    class Rayleigh(PhaseFunction):
         """Rayleigh scattering (particles much smaller than visible wavelengths)."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def Mie(asymmetry: float) -> PhaseFunction:
+    class Mie(PhaseFunction):
         """Henyey-Greenstein approximation of Mie scattering."""
+        __match_args__: ClassVar[tuple[Literal["asymmetry"]]]
+        asymmetry: float
+        def __init__(self, asymmetry: float) -> None: ...
 
-    @staticmethod
-    def ChromaticTexture(image: Handle[Image]) -> PhaseFunction:
+    class ChromaticTexture(PhaseFunction):
         """Chromatic phase function sampled from an Nx1 Rgba32Float texture."""
-
-    def __eq__(self, other: PhaseFunction) -> bool: ...  # type: ignore[override]
+        __match_args__: ClassVar[tuple[Literal["image"]]]
+        image: Handle[Image]
+        def __init__(self, image: Handle[Image]) -> None: ...
 
 class ScatteringTerm:
     """An individual element of a ScatteringMedium."""

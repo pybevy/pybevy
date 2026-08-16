@@ -9,7 +9,7 @@ use pybevy_core::{AssetStorage, PyAsset, extract_handle_from_any};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
-use crate::scattering_term::PyScatteringTerm;
+use crate::{scattering_term::PyScatteringTerm, scattering_terms::PyScatteringTerms};
 
 #[pyasset(ScatteringMedium, bridge, not_loadable)]
 #[pyclass(name = "ScatteringMedium", extends = PyAsset, skip_from_py_object)]
@@ -25,17 +25,19 @@ impl PyScatteringMedium {
         falloff_resolution: u32,
         phase_resolution: u32,
         terms: Option<Vec<PyScatteringTerm>>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         // terms omitted keeps bevy's Default: ScatteringMedium::earth(256, 256)
         let medium = match terms {
-            Some(terms) => ScatteringMedium::new(
-                falloff_resolution,
-                phase_resolution,
-                terms.into_iter().map(ScatteringTerm::from),
-            ),
+            Some(terms) => {
+                let terms = terms
+                    .into_iter()
+                    .map(ScatteringTerm::try_from)
+                    .collect::<PyResult<Vec<_>>>()?;
+                ScatteringMedium::new(falloff_resolution, phase_resolution, terms)
+            }
             None => ScatteringMedium::earth(falloff_resolution, phase_resolution),
         };
-        Self::from_owned(medium).into()
+        Ok(Self::from_owned(medium).into())
     }
 
     #[getter]
@@ -72,19 +74,19 @@ impl PyScatteringMedium {
     }
 
     #[getter]
-    pub fn terms(&self) -> PyResult<Vec<PyScatteringTerm>> {
+    pub fn terms(&self) -> PyResult<PyScatteringTerms> {
         Ok(self
-            .as_ref()?
-            .terms
-            .iter()
-            .cloned()
-            .map(Into::into)
-            .collect())
+            .storage
+            .borrow_field_as(|medium| &medium.terms, |medium| &mut medium.terms)?)
     }
 
     #[setter]
     pub fn set_terms(&mut self, terms: Vec<PyScatteringTerm>) -> PyResult<()> {
-        self.as_mut()?.terms = terms.into_iter().map(Into::into).collect();
+        let terms = terms
+            .into_iter()
+            .map(ScatteringTerm::try_from)
+            .collect::<PyResult<Vec<_>>>()?;
+        self.as_mut()?.terms = terms.into_iter().collect();
         Ok(())
     }
 

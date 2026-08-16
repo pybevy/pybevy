@@ -1,4 +1,4 @@
-use bevy::light::DirectionalLight;
+use bevy::{color::Color, light::DirectionalLight};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
@@ -68,9 +68,10 @@ impl PyDirectionalLight {
         affects_lightmapped_mesh_diffuse: bool,
         shadow_depth_bias: f32,
         shadow_normal_bias: f32,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(DirectionalLight {
-            color: color.into(),
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let color = Color::try_from(color)?;
+        Ok(Self::from_owned(DirectionalLight {
+            color,
             illuminance,
             shadow_maps_enabled,
             contact_shadows_enabled,
@@ -78,17 +79,18 @@ impl PyDirectionalLight {
             shadow_depth_bias,
             shadow_normal_bias,
         })
-        .into()
+        .into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |light| &light.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 
