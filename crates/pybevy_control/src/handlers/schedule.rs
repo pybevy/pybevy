@@ -18,8 +18,9 @@ use tokio::sync::oneshot;
 
 use crate::{
     bridge::{
-        ControlError, ControlOperation, PendingScreenshots, push_pending_depth,
-        push_pending_screenshot, push_pending_timeline, push_pending_turnaround,
+        ControlError, ControlOperation, PendingScreenshots, json_object_schema, push_pending_depth,
+        push_pending_screenshot, push_pending_stats, push_pending_timeline,
+        push_pending_turnaround,
     },
     handlers,
 };
@@ -52,6 +53,7 @@ pub struct ScheduleAction {
     pub tool: String,
     /// Tool arguments (default {})
     #[serde(default)]
+    #[schemars(schema_with = "json_object_schema")]
     pub args: serde_json::Value,
     /// Time offset in **virtual** seconds from schedule start (default 0). Must be monotonically
     /// non-decreasing. Note: virtual seconds do not advance while time is paused, so a schedule
@@ -59,7 +61,7 @@ pub struct ScheduleAction {
     /// call `resume_time` from outside the schedule.
     pub at: Option<f64>,
     /// Frame offset from schedule start (alternative to 'at'). Cannot mix with 'at'.
-    pub at_frame: Option<u64>,
+    pub at_frame: Option<i64>,
     /// Label for this action (used by skip_if_error)
     pub label: Option<String>,
     /// Skip this action if the action with the given label errored
@@ -96,7 +98,7 @@ impl ActionResult {
             label: action.label.clone(),
             tool: action.tool.clone(),
             at: action.at.unwrap_or(0.0),
-            at_frame: action.at_frame,
+            at_frame: resolve_at_frame(action),
             fired_at_game_time,
             status: status.into(),
             result: None,
@@ -128,7 +130,8 @@ pub struct ActiveSchedule {
     results: Vec<ActionResult>,
     current_index: usize,
     state: ScheduleState,
-    t0_game_time: f64,
+    start_game_time: f64,
+    timing_origin_game_time: f64,
     frame_counter: u64,
     stop_on_error: bool,
     errored_labels: HashSet<String>,
@@ -148,9 +151,17 @@ pub struct SharedScheduleState {
     pub schedule_id: String,
     pub status: String,
     pub total_actions: usize,
+    /// Number of actions with a terminal result, including actions that did not run.
     pub completed_actions: usize,
+    /// Number of actions that were dispatched, including partial and error results.
+    pub executed_actions: usize,
+    pub skipped_actions: usize,
+    pub aborted_actions: usize,
+    pub cancelled_actions: usize,
     pub results: Vec<ActionResult>,
     pub cancelled: bool,
+    #[serde(skip)]
+    pub completed_at: Option<std::time::Instant>,
 }
 
 impl SharedScheduleState {
@@ -160,11 +171,21 @@ impl SharedScheduleState {
             status: "running".to_string(),
             total_actions: total,
             completed_actions: 0,
+            executed_actions: 0,
+            skipped_actions: 0,
+            aborted_actions: 0,
+            cancelled_actions: 0,
             results: Vec::new(),
             cancelled: false,
+            completed_at: None,
         }
     }
 }
+
+/// How long a completed schedule stays pollable before eviction.
+pub const COMPLETED_SCHEDULE_RETENTION: std::time::Duration = std::time::Duration::from_secs(300);
+/// Completed schedules kept regardless of age; oldest beyond this are evicted.
+pub const MAX_COMPLETED_SCHEDULES: usize = 32;
 
 #[derive(Clone, Default)]
 pub struct SharedScheduleRegistry {
@@ -180,7 +201,37 @@ impl SharedScheduleRegistry {
 
     pub fn insert(&self, id: String, state: Arc<Mutex<SharedScheduleState>>) {
         if let Ok(mut guard) = self.inner.lock() {
+            Self::evict_completed(&mut guard);
             guard.insert(id, state);
+        }
+    }
+
+    fn evict_completed(
+        entries: &mut std::collections::HashMap<String, Arc<Mutex<SharedScheduleState>>>,
+    ) {
+        let now = std::time::Instant::now();
+        let mut completed: Vec<(String, std::time::Instant)> = entries
+            .iter()
+            .filter_map(|(id, state)| {
+                let completed_at = state.lock().ok()?.completed_at?;
+                Some((id.clone(), completed_at))
+            })
+            .collect();
+
+        completed.retain(|(id, completed_at)| {
+            if now.duration_since(*completed_at) > COMPLETED_SCHEDULE_RETENTION {
+                entries.remove(id);
+                false
+            } else {
+                true
+            }
+        });
+
+        if completed.len() > MAX_COMPLETED_SCHEDULES {
+            completed.sort_by_key(|(_, completed_at)| *completed_at);
+            for (id, _) in &completed[..completed.len() - MAX_COMPLETED_SCHEDULES] {
+                entries.remove(id);
+            }
         }
     }
 
@@ -222,7 +273,11 @@ fn is_non_schedulable(tool: &str) -> bool {
 fn is_deferred_tool(name: &str) -> bool {
     matches!(
         name,
-        "capture_screenshot" | "capture_timeline" | "capture_turnaround" | "capture_depth"
+        "capture_screenshot"
+            | "capture_stats"
+            | "capture_timeline"
+            | "capture_turnaround"
+            | "capture_depth"
     )
 }
 
@@ -237,6 +292,20 @@ fn is_time_control_tool(name: &str) -> bool {
 /// GlobalTransform propagation within the same frame).
 fn is_transform_mutation_tool(name: &str) -> bool {
     matches!(name, "set_component" | "spawn_entity" | "batch")
+}
+
+fn is_render_mutation_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "set_component"
+            | "remove_component"
+            | "spawn_entity"
+            | "despawn_entity"
+            | "set_resource"
+            | "remove_resource"
+            | "set_asset"
+            | "batch"
+    )
 }
 
 /// Propagate transforms through the full hierarchy after mutations.
@@ -288,9 +357,10 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
         return Err("actions must have at most 256 entries".to_string());
     }
     let mut last_at: Option<f64> = None;
-    let mut last_frame: Option<u64> = None;
+    let mut last_frame: Option<i64> = None;
     let mut uses_at = false;
     let mut uses_at_frame = false;
+    let mut labels = HashSet::new();
 
     for (i, action) in request.actions.iter().enumerate() {
         if is_non_schedulable(&action.tool) {
@@ -298,6 +368,23 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
                 "action[{}]: tool '{}' is not schedulable",
                 i, action.tool
             ));
+        }
+
+        if let Some(skip_label) = action.skip_if_error.as_deref()
+            && !labels.contains(skip_label)
+        {
+            return Err(format!(
+                "action[{i}]: 'skip_if_error' must reference an earlier action label (got '{skip_label}')"
+            ));
+        }
+
+        if let Some(label) = action.label.as_deref() {
+            if label.is_empty() {
+                return Err(format!("action[{i}]: 'label' must not be empty"));
+            }
+            if !labels.insert(label) {
+                return Err(format!("action[{i}]: duplicate action label '{label}'"));
+            }
         }
 
         match (action.at, action.at_frame) {
@@ -327,6 +414,11 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
             }
             (None, Some(frame)) => {
                 uses_at_frame = true;
+                if frame < 0 {
+                    return Err(format!(
+                        "action[{i}]: 'at_frame' must be a non-negative integer"
+                    ));
+                }
                 if let Some(prev) = last_frame
                     && frame < prev
                 {
@@ -387,7 +479,7 @@ fn resolve_at(action: &ScheduleAction) -> f64 {
 }
 
 fn resolve_at_frame(action: &ScheduleAction) -> Option<u64> {
-    action.at_frame
+    action.at_frame.and_then(|frame| u64::try_from(frame).ok())
 }
 
 /// Returns true when virtual time cannot advance — either it is paused, or its
@@ -403,7 +495,7 @@ impl ActiveSchedule {
     pub fn new_sync(
         schedule_id: String,
         request: ScheduleRequest,
-        t0_game_time: f64,
+        start_game_time: f64,
         response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     ) -> Self {
         Self {
@@ -413,7 +505,8 @@ impl ActiveSchedule {
             results: Vec::new(),
             current_index: 0,
             state: ScheduleState::WaitingForTime,
-            t0_game_time,
+            start_game_time,
+            timing_origin_game_time: start_game_time,
             frame_counter: 0,
             errored_labels: HashSet::new(),
             sync_response_tx: Some(response_tx),
@@ -425,7 +518,7 @@ impl ActiveSchedule {
     pub fn new_async(
         schedule_id: String,
         request: ScheduleRequest,
-        t0_game_time: f64,
+        start_game_time: f64,
         shared: Arc<Mutex<SharedScheduleState>>,
     ) -> Self {
         Self {
@@ -435,7 +528,8 @@ impl ActiveSchedule {
             results: Vec::new(),
             current_index: 0,
             state: ScheduleState::WaitingForTime,
-            t0_game_time,
+            start_game_time,
+            timing_origin_game_time: start_game_time,
             frame_counter: 0,
             errored_labels: HashSet::new(),
             sync_response_tx: None,
@@ -653,7 +747,7 @@ fn process_single_schedule(
                 let ready = if let Some(frame_offset) = resolve_at_frame(action) {
                     schedule.frame_counter >= frame_offset
                 } else {
-                    let target_time = schedule.t0_game_time + resolve_at(action);
+                    let target_time = schedule.timing_origin_game_time + resolve_at(action);
                     game_time >= target_time
                 };
 
@@ -684,7 +778,7 @@ fn process_single_schedule(
                             label: action_label,
                             tool: action_tool,
                             at: action_at,
-                            at_frame: action.at_frame,
+                            at_frame: resolve_at_frame(action),
                             fired_at_game_time: game_time,
                             status: "error".to_string(),
                             result: None,
@@ -716,7 +810,8 @@ fn process_single_schedule(
                 let tool_name = action.tool.clone();
                 let tool_args = action.args.clone();
                 let is_time_tool = is_time_control_tool(&tool_name);
-                let is_mutation_tool = is_transform_mutation_tool(&tool_name);
+                let is_transform_mutation = is_transform_mutation_tool(&tool_name);
+                let is_render_mutation = is_render_mutation_tool(&tool_name);
 
                 if is_deferred_tool(&tool_name) {
                     // Set up deferred execution via forwarder pattern
@@ -824,8 +919,15 @@ fn process_single_schedule(
                                     // the tool could have modified them so that
                                     // subsequent spatial queries in the same frame
                                     // see up-to-date GlobalTransform values.
-                                    if is_mutation_tool {
+                                    if is_transform_mutation {
                                         propagate_transforms(world);
+                                    }
+                                    if is_render_mutation {
+                                        if let Some(readiness) = world.get_resource::<
+                                            crate::handlers::screenshot::RenderFrameReadiness,
+                                        >() {
+                                            readiness.request_frame();
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -870,11 +972,11 @@ fn process_single_schedule(
                         }
                     }
                     schedule.current_index += 1;
-                    // Re-base t0 after time-manipulation tools (seek_time can
-                    // move game_time backward below the original t0, which would
+                    // Re-base action timing after time-manipulation tools (seek_time can
+                    // move game_time backward below the previous timing origin, which would
                     // stall all subsequent at:0 actions).
                     if is_time_tool {
-                        schedule.t0_game_time = world
+                        schedule.timing_origin_game_time = world
                             .get_resource::<Time<Virtual>>()
                             .map(|t| t.elapsed_secs_f64())
                             .unwrap_or(0.0);
@@ -897,11 +999,13 @@ fn setup_deferred_action(
 
     match op {
         ControlOperation::CaptureScreenshot(p) => {
-            push_pending_screenshot(p, false, tx, &mut screenshots)
+            let with_gizmos = p.gizmos;
+            push_pending_screenshot(p, with_gizmos, tx, &mut screenshots)
         }
         ControlOperation::CaptureWithGizmos(p) => {
             push_pending_screenshot(p, true, tx, &mut screenshots)
         }
+        ControlOperation::CaptureStats(p) => push_pending_stats(p, tx, &mut screenshots),
         ControlOperation::CaptureTimeline(p) => push_pending_timeline(p, tx, world),
         ControlOperation::CaptureTurnaround(p) => push_pending_turnaround(p, tx, world),
         ControlOperation::CaptureDepth(p) => push_pending_depth(p, tx, &mut screenshots, world),
@@ -909,6 +1013,17 @@ fn setup_deferred_action(
     }
 
     if !screenshots.is_empty() {
+        if let Some(required_epoch) = world
+            .get_resource::<crate::handlers::screenshot::RenderFrameReadiness>()
+            .map(|readiness| readiness.requested_epoch())
+        {
+            for screenshot in &mut screenshots {
+                screenshot.required_render_epoch = Some(required_epoch);
+            }
+        }
+        for screenshot in &mut screenshots {
+            crate::handlers::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
+        }
         let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
         pending.pending.extend(screenshots);
     }
@@ -924,11 +1039,41 @@ fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ActionCounts {
+    executed: usize,
+    skipped: usize,
+    aborted: usize,
+    cancelled: usize,
+}
+
+fn action_counts(results: &[ActionResult]) -> ActionCounts {
+    let mut counts = ActionCounts::default();
+    for result in results {
+        match result.status.as_str() {
+            "skipped" => counts.skipped += 1,
+            "aborted" => counts.aborted += 1,
+            "cancelled" => counts.cancelled += 1,
+            _ => counts.executed += 1,
+        }
+    }
+    counts
+}
+
+fn update_shared_action_counts(state: &mut SharedScheduleState, counts: ActionCounts) {
+    state.executed_actions = counts.executed;
+    state.skipped_actions = counts.skipped;
+    state.aborted_actions = counts.aborted;
+    state.cancelled_actions = counts.cancelled;
+}
+
 fn update_async_progress(schedule: &ActiveSchedule) {
+    let counts = action_counts(&schedule.results);
     if let Some(ref shared) = schedule.async_shared
         && let Ok(mut guard) = shared.lock()
     {
         guard.completed_actions = schedule.results.len();
+        update_shared_action_counts(&mut guard, counts);
         guard.results = schedule.results.clone();
     }
 }
@@ -940,13 +1085,18 @@ fn finalize_schedule(schedule: ActiveSchedule) {
         .map(|r| r.fired_at_game_time)
         .collect();
     let end_time = game_times.iter().copied().fold(0.0_f64, f64::max);
+    let counts = action_counts(&schedule.results);
 
     let response = serde_json::json!({
         "schedule_id": schedule.schedule_id,
         "status": "completed",
         "total_actions": schedule.actions.len(),
         "completed_actions": schedule.results.len(),
-        "start_game_time": schedule.t0_game_time,
+        "executed_actions": counts.executed,
+        "skipped_actions": counts.skipped,
+        "aborted_actions": counts.aborted,
+        "cancelled_actions": counts.cancelled,
+        "start_game_time": schedule.start_game_time,
         "end_game_time": end_time,
         "results": schedule.results,
     });
@@ -960,7 +1110,9 @@ fn finalize_schedule(schedule: ActiveSchedule) {
     {
         guard.status = "completed".to_string();
         guard.completed_actions = schedule.results.len();
+        update_shared_action_counts(&mut guard, counts);
         guard.results = schedule.results;
+        guard.completed_at = Some(std::time::Instant::now());
     }
 }
 #[cfg(test)]
@@ -970,8 +1122,9 @@ mod tests {
     use super::*;
     use crate::{
         bridge::{
-            CaptureScreenshotParams, EntityRef, GetComponentParams, ReloadMode, ReloadParams,
-            SeekTimeParams, SetComponentParams,
+            CaptureScreenshotParams, CaptureStatsParams, CompareFramesParams, EntityRef,
+            GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
+            SetComponentParams,
         },
         handlers::pyo3::mutate::has_embedded_errors,
     };
@@ -1159,13 +1312,41 @@ mod tests {
                     at: Some(5.0),
                     at_frame: None,
                     label: None,
-                    skip_if_error: None,
+                    skip_if_error: Some("p".to_string()),
                 },
             ],
             mode: ScheduleMode::Sync,
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_ok());
+    }
+
+    #[test]
+    fn test_validate_skip_if_error_rejects_unknown_or_forward_labels() {
+        for json in [
+            r#"{"actions":[{"tool":"resume_time","skip_if_error":"missing"}]}"#,
+            r#"{"actions":[{"tool":"resume_time","skip_if_error":"later"},{"tool":"pause_time","label":"later"}]}"#,
+        ] {
+            let request: ScheduleRequest = serde_json::from_str(json).unwrap();
+            assert!(
+                validate_schedule(&request)
+                    .unwrap_err()
+                    .contains("must reference an earlier action label")
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_rejects_duplicate_labels() {
+        let request: ScheduleRequest = serde_json::from_str(
+            r#"{"actions":[{"tool":"pause_time","label":"step"},{"tool":"resume_time","label":"step"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            validate_schedule(&request).unwrap_err(),
+            "action[1]: duplicate action label 'step'"
+        );
     }
 
     #[test]
@@ -1223,6 +1404,27 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_negative_at_frame() {
+        let req = ScheduleRequest {
+            actions: vec![ScheduleAction {
+                tool: "pause_time".to_string(),
+                args: serde_json::Value::Null,
+                at: None,
+                at_frame: Some(-5),
+                label: None,
+                skip_if_error: None,
+            }],
+            mode: ScheduleMode::Sync,
+            stop_on_error: false,
+        };
+
+        assert_eq!(
+            validate_schedule(&req).unwrap_err(),
+            "action[0]: 'at_frame' must be a non-negative integer"
+        );
+    }
+
+    #[test]
     fn test_tool_to_operation_pause() {
         let op = tool_to_operation("pause_time", &serde_json::Value::Null).unwrap();
         assert!(matches!(op, ControlOperation::PauseTime));
@@ -1276,6 +1478,26 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_to_operation_stats_and_compare() {
+        let stats = tool_to_operation("capture_stats", &serde_json::json!({"grid": 4})).unwrap();
+        assert!(matches!(
+            stats,
+            ControlOperation::CaptureStats(CaptureStatsParams { grid: 4, .. })
+        ));
+
+        let compare = tool_to_operation(
+            "compare_frames",
+            &serde_json::json!({"a": "f_1", "b": "f_2"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            compare,
+            ControlOperation::CompareFrames(CompareFramesParams { a, b, .. })
+                if a == "f_1" && b == "f_2"
+        ));
+    }
+
+    #[test]
     fn test_tool_to_operation_unknown() {
         let result = tool_to_operation("nonexistent_tool", &serde_json::Value::Null);
         assert!(result.is_err());
@@ -1284,6 +1506,7 @@ mod tests {
     #[test]
     fn test_is_deferred_tool() {
         assert!(is_deferred_tool("capture_screenshot"));
+        assert!(is_deferred_tool("capture_stats"));
         assert!(is_deferred_tool("capture_timeline"));
         assert!(is_deferred_tool("capture_turnaround"));
         assert!(is_deferred_tool("capture_depth"));
@@ -1408,6 +1631,101 @@ mod tests {
         assert!(registry.get("nonexistent").is_none());
     }
 
+    fn completed_state(
+        id: &str,
+        completed_at: std::time::Instant,
+    ) -> Arc<Mutex<SharedScheduleState>> {
+        let mut state = SharedScheduleState::new(id, 1);
+        state.status = "completed".to_string();
+        state.completed_at = Some(completed_at);
+        Arc::new(Mutex::new(state))
+    }
+
+    #[test]
+    fn registry_evicts_expired_completed_schedules_on_insert() {
+        let registry = SharedScheduleRegistry::default();
+        let expired = std::time::Instant::now() - COMPLETED_SCHEDULE_RETENTION * 2;
+        registry.insert("old".to_string(), completed_state("old", expired));
+        registry.insert(
+            "fresh".to_string(),
+            completed_state("fresh", std::time::Instant::now()),
+        );
+        registry.insert(
+            "running".to_string(),
+            Arc::new(Mutex::new(SharedScheduleState::new("running", 1))),
+        );
+
+        assert!(
+            registry.get("old").is_none(),
+            "expired entry must be evicted"
+        );
+        assert!(registry.get("fresh").is_some());
+        assert!(registry.get("running").is_some());
+    }
+
+    #[test]
+    fn registry_caps_completed_schedules_evicting_oldest() {
+        let registry = SharedScheduleRegistry::default();
+        let base = std::time::Instant::now();
+        for index in 0..=MAX_COMPLETED_SCHEDULES {
+            let id = format!("s-{index}");
+            registry.insert(
+                id.clone(),
+                completed_state(&id, base + std::time::Duration::from_millis(index as u64)),
+            );
+        }
+        registry.insert(
+            "trigger".to_string(),
+            Arc::new(Mutex::new(SharedScheduleState::new("trigger", 1))),
+        );
+
+        assert!(
+            registry.get("s-0").is_none(),
+            "oldest completed entry beyond the cap must be evicted"
+        );
+        assert!(
+            registry
+                .get(&format!("s-{MAX_COMPLETED_SCHEDULES}"))
+                .is_some()
+        );
+        assert!(registry.get("trigger").is_some());
+    }
+
+    #[test]
+    fn registry_never_evicts_running_schedules() {
+        let registry = SharedScheduleRegistry::default();
+        for index in 0..MAX_COMPLETED_SCHEDULES * 2 {
+            let id = format!("run-{index}");
+            registry.insert(
+                id,
+                Arc::new(Mutex::new(SharedScheduleState::new("running", 1))),
+            );
+        }
+        assert!(registry.get("run-0").is_some());
+    }
+
+    #[test]
+    fn finalize_schedule_stamps_completed_at() {
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-done", 0)));
+        let schedule = ActiveSchedule {
+            schedule_id: "s-done".to_string(),
+            actions: vec![],
+            results: vec![],
+            current_index: 0,
+            state: ScheduleState::Done,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
+            frame_counter: 0,
+            stop_on_error: false,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: Some(shared.clone()),
+            deferred_rx: None,
+        };
+        finalize_schedule(schedule);
+        assert!(shared.lock().unwrap().completed_at.is_some());
+    }
+
     #[test]
     fn test_tool_to_operation_query_spatial_pairwise() {
         let op = tool_to_operation(
@@ -1465,7 +1783,8 @@ mod tests {
             results: vec![],
             current_index: 0,
             state: ScheduleState::WaitingForTime,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 0,
             stop_on_error: true,
             errored_labels: HashSet::new(),
@@ -1477,6 +1796,13 @@ mod tests {
         assert_eq!(schedule.results.len(), 2);
         assert_eq!(schedule.results[0].status, "aborted");
         assert_eq!(schedule.results[1].status, "aborted");
+        assert_eq!(
+            action_counts(&schedule.results),
+            ActionCounts {
+                aborted: 2,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
@@ -1616,7 +1942,8 @@ mod tests {
             results: vec![],
             current_index: 1, // Simulate that first action already processed
             state: ScheduleState::WaitingForTime,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 0,
             stop_on_error: true,
             errored_labels: HashSet::new(),
@@ -1675,6 +2002,21 @@ mod tests {
     fn test_tool_to_operation_get_scene_summary() {
         let op = tool_to_operation("get_scene_summary", &serde_json::Value::Null).unwrap();
         assert!(matches!(op, ControlOperation::GetSceneSummary));
+    }
+
+    #[test]
+    fn test_tool_to_operation_get_system_list() {
+        let op = tool_to_operation(
+            "get_system_list",
+            &serde_json::json!({"include_internal": true}),
+        )
+        .unwrap();
+        assert!(matches!(
+            op,
+            ControlOperation::ListSystems {
+                include_internal: true
+            }
+        ));
     }
 
     #[test]
@@ -1785,6 +2127,28 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_capture_inherits_the_latest_render_epoch() {
+        let mut world = World::new();
+        let readiness = crate::handlers::screenshot::RenderFrameReadiness::default();
+        let required_epoch = readiness.request_frame();
+        world.insert_resource(readiness);
+
+        let _rx = setup_deferred_action(
+            &mut world,
+            "capture_stats",
+            &serde_json::json!({"delay_frames": 2}),
+        )
+        .unwrap();
+
+        let pending = world.resource::<PendingScreenshots>();
+        assert_eq!(pending.pending.len(), 1);
+        assert_eq!(
+            pending.pending[0].required_render_epoch,
+            Some(required_epoch)
+        );
+    }
+
+    #[test]
     fn test_tool_to_operation_capture_turnaround() {
         let op = tool_to_operation(
             "capture_turnaround",
@@ -1792,6 +2156,18 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(op, ControlOperation::CaptureTurnaround(..)));
+    }
+
+    #[test]
+    fn test_tool_to_operation_rejects_unknown_parameters() {
+        let error = tool_to_operation(
+            "capture_turnaround",
+            &serde_json::json!({"views": 3, "view_count": 2}),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("unknown field `views`"), "{error}");
+        assert!(error.contains("view_count"), "{error}");
     }
 
     #[test]
@@ -1884,10 +2260,17 @@ mod tests {
     fn test_tool_to_operation_query_entities_with_filters() {
         let op = tool_to_operation(
             "query_entities",
-            &serde_json::json!({"with": ["Transform", "Velocity"], "without": ["Marker"]}),
+            &serde_json::json!({
+                "with": ["Transform", "Velocity"],
+                "without": ["Marker"],
+                "limit": 25,
+            }),
         )
         .unwrap();
-        assert!(matches!(op, ControlOperation::QueryEntities(..)));
+        assert!(matches!(
+            op,
+            ControlOperation::QueryEntities(QueryEntitiesParams { limit: 25, .. })
+        ));
     }
 
     #[test]
@@ -1968,7 +2351,8 @@ mod tests {
             }],
             current_index: 1,
             state: ScheduleState::Done,
-            t0_game_time: 0.0,
+            start_game_time: 0.25,
+            timing_origin_game_time: 50.0,
             frame_counter: 1,
             stop_on_error: false,
             errored_labels: HashSet::new(),
@@ -1982,6 +2366,11 @@ mod tests {
         assert_eq!(response["status"], "completed");
         assert_eq!(response["total_actions"], 1);
         assert_eq!(response["completed_actions"], 1);
+        assert_eq!(response["executed_actions"], 1);
+        assert_eq!(response["skipped_actions"], 0);
+        assert_eq!(response["aborted_actions"], 0);
+        assert_eq!(response["cancelled_actions"], 0);
+        assert_eq!(response["start_game_time"], 0.25);
     }
 
     #[test]
@@ -2010,7 +2399,8 @@ mod tests {
             }],
             current_index: 1,
             state: ScheduleState::Done,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 1,
             stop_on_error: false,
             errored_labels: HashSet::new(),
@@ -2022,6 +2412,10 @@ mod tests {
         let guard = shared.lock().unwrap();
         assert_eq!(guard.status, "completed");
         assert_eq!(guard.completed_actions, 1);
+        assert_eq!(guard.executed_actions, 1);
+        assert_eq!(guard.skipped_actions, 0);
+        assert_eq!(guard.aborted_actions, 0);
+        assert_eq!(guard.cancelled_actions, 0);
     }
 
     #[test]
@@ -2056,7 +2450,8 @@ mod tests {
             ],
             current_index: 2,
             state: ScheduleState::Done,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 0,
             stop_on_error: false,
             errored_labels: HashSet::new(),
@@ -2067,6 +2462,7 @@ mod tests {
         update_async_progress(&schedule);
         let guard = shared.lock().unwrap();
         assert_eq!(guard.completed_actions, 2);
+        assert_eq!(guard.executed_actions, 2);
         assert_eq!(guard.results.len(), 2);
     }
 
@@ -2079,7 +2475,8 @@ mod tests {
             results: vec![],
             current_index: 0,
             state: ScheduleState::Done,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 0,
             stop_on_error: false,
             errored_labels: HashSet::new(),
@@ -2128,6 +2525,10 @@ mod tests {
         assert_eq!(state.status, "running");
         assert_eq!(state.total_actions, 5);
         assert_eq!(state.completed_actions, 0);
+        assert_eq!(state.executed_actions, 0);
+        assert_eq!(state.skipped_actions, 0);
+        assert_eq!(state.aborted_actions, 0);
+        assert_eq!(state.cancelled_actions, 0);
         assert!(state.results.is_empty());
         assert!(!state.cancelled);
     }
@@ -2149,7 +2550,8 @@ mod tests {
         };
         let schedule = ActiveSchedule::new_sync("s-test".to_string(), req, 10.0, tx);
         assert_eq!(schedule.schedule_id, "s-test");
-        assert_eq!(schedule.t0_game_time, 10.0);
+        assert_eq!(schedule.start_game_time, 10.0);
+        assert_eq!(schedule.timing_origin_game_time, 10.0);
         assert!(schedule.stop_on_error);
         assert!(schedule.sync_response_tx.is_some());
         assert!(schedule.async_shared.is_none());
@@ -2314,7 +2716,8 @@ mod tests {
             results: vec![],
             current_index: 0,
             state: ScheduleState::WaitingForTime,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 0,
             stop_on_error: false,
             errored_labels: HashSet::new(),
@@ -2331,7 +2734,7 @@ mod tests {
             .map(|t| t.elapsed_secs_f64())
             .unwrap_or(0.0);
         let uses_frame_offset = resolve_at_frame(&action).is_some();
-        let target_time = schedule.t0_game_time + resolve_at(&action);
+        let target_time = schedule.timing_origin_game_time + resolve_at(&action);
         let ready = uses_frame_offset || game_time >= target_time;
         assert!(!ready, "test setup: action should not be ready");
         assert!(virtual_time_is_stalled(&world));
@@ -2347,7 +2750,7 @@ mod tests {
             label: action_label,
             tool: action_tool,
             at: action_at,
-            at_frame: action.at_frame,
+            at_frame: resolve_at_frame(&action),
             fired_at_game_time: game_time,
             status: "error".to_string(),
             result: None,
@@ -2416,7 +2819,8 @@ mod tests {
             }],
             current_index: 1, // simulate the deadlock guard already consumed action 0
             state: ScheduleState::WaitingForTime,
-            t0_game_time: 0.0,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
             frame_counter: 0,
             stop_on_error: false,
             errored_labels: HashSet::new(),
