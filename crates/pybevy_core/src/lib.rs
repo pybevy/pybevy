@@ -22,10 +22,14 @@
 //! to register their types without the core crate needing to import them at
 //! compile time, enabling independent compilation and faster incremental builds.
 
+extern crate self as pybevy_core;
+
 pub mod added_plugins;
 pub mod asset;
 pub mod asset_access;
 pub mod asset_cleanup;
+pub mod asset_id;
+pub mod asset_index;
 pub mod asset_path;
 pub mod component;
 pub mod component_batch;
@@ -57,8 +61,8 @@ pub mod source_location;
 
 // Storage layer — re-exported from pybevy_storage
 pub use pybevy_storage::{
-    batch_columns, field_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
-    validity_guard, value_storage, view_bridge,
+    LogicalTypeId, LogicalTypeMap, batch_columns, field_storage, pyasset, pycomponent, pyresource,
+    storage_error, storage_traits, validity_guard, value_storage, view_bridge,
 };
 
 #[pyclass(name = "_FloatLiveList", skip_from_py_object)]
@@ -400,6 +404,10 @@ impl ComponentBridge for ChildrenBridge {
 pub use asset::{NativeAsset, PyAsset};
 pub use asset_access::{ActiveAssetAccessError, ensure_no_live_asset_access};
 pub use asset_cleanup::AssetCleanupRegistration;
+pub use asset_id::{
+    MaterializedPyAssetId, PyAssetId, extract_asset_id_from_any, materialize_asset_id,
+};
+pub use asset_index::PyAssetIndex;
 pub use asset_path::PyAssetPath;
 pub use bridge_inventory::{
     AssetBridgeRegistration, BatchRegistration, ComponentBridgeRegistration,
@@ -419,8 +427,9 @@ pub use pybevy_storage::{
     AssetAccessRegistry, AssetBorrowCounter, AssetRuntimeCore, AssetRuntimeError, AssetStorage,
     BorrowableStorage, ComponentStorage, ComponentStorageInner, FieldOffset, FieldStorage,
     FieldStorageInner, FieldType, FilteredEntityAccess, FromBorrowedStorage, ResourceStorage,
-    ResourceStorageInner, StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard,
-    ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, allocate_id, consume_unstored_id,
+    ResourceStorageInner, StorageError, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode,
+    ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, allocate_id,
+    consume_unstored_id,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{

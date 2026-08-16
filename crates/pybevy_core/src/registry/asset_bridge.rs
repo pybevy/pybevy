@@ -7,15 +7,38 @@
 //! 2. Feature crate registers bridges via `global_registry` at init time
 //! 3. Core uses bridges via runtime dispatch (no compile-time coupling)
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 
 use bevy::{
-    asset::{AssetPath, AssetServer, UntypedHandle},
-    ecs::{component::ComponentId, world::World},
+    asset::{AssetPath, AssetServer, UntypedAssetId, UntypedHandle},
+    ecs::{
+        component::ComponentId,
+        world::{World, unsafe_world_cell::UnsafeWorldCell},
+    },
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::{AssetBorrowCounter, ValidityFlagWithMode};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetEventRecord {
+    Added { id: UntypedAssetId },
+    Modified { id: UntypedAssetId },
+    Removed { id: UntypedAssetId },
+    Unused { id: UntypedAssetId },
+    LoadedWithDependencies { id: UntypedAssetId },
+}
+
+/// A failed asset load, flattened for the type-erased bridge boundary.
+///
+/// `error` is `AssetLoadError`'s `Display` text: its variants carry loader
+/// internals with no Python value model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetLoadFailedRecord {
+    pub id: UntypedAssetId,
+    pub path: AssetPath<'static>,
+    pub error: String,
+}
 
 /// Trait that bridges a Bevy asset to its Python wrapper.
 ///
@@ -59,12 +82,44 @@ pub trait AssetBridge: Send + Sync + 'static {
     /// TypeId-keyed and equals the one a later insertion resolves to.
     fn register_resource_id(&self, world: &mut World) -> ComponentId;
 
+    /// Register the message-buffer component ID for `AssetEvent<T>`.
+    fn register_event_resource_id(&self, world: &mut World) -> ComponentId;
+
+    /// Read new events through the reader's type-erased persistent cursor.
+    fn read_events(
+        &self,
+        world: &World,
+        cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+    ) -> Vec<AssetEventRecord>;
+
+    fn clear_events(&self, world: &mut World);
+
+    fn events_is_empty(&self, world: &World) -> bool;
+
+    fn event_count(&self, world: &World) -> usize;
+
+    /// Register the message-buffer component ID for `AssetLoadFailedEvent<T>`.
+    fn register_load_failed_resource_id(&self, world: &mut World) -> ComponentId;
+
+    /// Read new load failures through the reader's type-erased persistent cursor.
+    fn read_load_failed_events(
+        &self,
+        world: &World,
+        cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+    ) -> Vec<AssetLoadFailedRecord>;
+
+    fn clear_load_failed_events(&self, world: &mut World);
+
+    fn load_failed_events_is_empty(&self, world: &World) -> bool;
+
+    fn load_failed_event_count(&self, world: &World) -> usize;
+
     /// Get asset from Assets resource and convert to Python object (read-only)
     ///
     /// # Arguments
     ///
     /// * `world` - World reference for accessing Assets<T> resource
-    /// * `handle` - Untyped handle to the asset
+    /// * `id` - Untyped ID of the asset
     /// * `validity` - Validity flag for borrowed reference tracking
     /// * `py` - Python GIL token
     ///
@@ -74,7 +129,7 @@ pub trait AssetBridge: Send + Sync + 'static {
     fn get(
         &self,
         world: &World,
-        handle: &UntypedHandle,
+        id: UntypedAssetId,
         validity: ValidityFlagWithMode,
         borrow_counter: AssetBorrowCounter,
         py: Python,
@@ -85,7 +140,7 @@ pub trait AssetBridge: Send + Sync + 'static {
     /// # Arguments
     ///
     /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `handle` - Untyped handle to the asset
+    /// * `id` - Untyped ID of the asset
     /// * `validity` - Validity flag for borrowed reference tracking
     /// * `py` - Python GIL token
     ///
@@ -94,8 +149,8 @@ pub trait AssetBridge: Send + Sync + 'static {
     /// `Ok(Some(asset))` if asset exists, `Ok(None)` if not found.
     fn get_mut(
         &self,
-        world: &mut World,
-        handle: &UntypedHandle,
+        world: UnsafeWorldCell<'_>,
+        id: UntypedAssetId,
         validity: ValidityFlagWithMode,
         borrow_counter: AssetBorrowCounter,
         py: Python,
@@ -119,19 +174,19 @@ pub trait AssetBridge: Send + Sync + 'static {
     /// # Arguments
     ///
     /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `handle` - Untyped handle to the asset to remove
+    /// * `id` - Untyped ID of the asset to remove
     ///
     /// # Returns
     ///
     /// `true` if asset was found and removed, `false` if not found.
-    fn remove(&self, world: &mut World, handle: &UntypedHandle) -> PyResult<bool>;
+    fn remove(&self, world: &mut World, id: UntypedAssetId) -> PyResult<bool>;
 
     /// Remove asset from Assets resource and return it as a Python object.
     ///
     /// # Arguments
     ///
     /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `handle` - Untyped handle to the asset to remove
+    /// * `id` - Untyped ID of the asset to remove
     /// * `py` - Python GIL token
     ///
     /// # Returns
@@ -140,7 +195,7 @@ pub trait AssetBridge: Send + Sync + 'static {
     fn remove_and_return(
         &self,
         world: &mut World,
-        handle: &UntypedHandle,
+        id: UntypedAssetId,
         py: Python,
     ) -> PyResult<Option<Py<PyAny>>>;
 
@@ -173,10 +228,10 @@ pub trait AssetBridge: Send + Sync + 'static {
         Ok(self.len(world)? == 0)
     }
 
-    /// Check if Assets<T> resource contains the given handle
-    fn contains(&self, world: &World, handle: &UntypedHandle) -> PyResult<bool>;
+    /// Check if Assets<T> contains the given asset ID.
+    fn contains(&self, world: &World, id: UntypedAssetId) -> PyResult<bool>;
 
-    /// Iterate over all assets and return (handle, python_object) pairs
+    /// Iterate over all assets and return (ID, Python object) pairs.
     ///
     /// Used for implementing `__iter__` on PyAssets.
     fn iter_pairs(
@@ -185,7 +240,7 @@ pub trait AssetBridge: Send + Sync + 'static {
         validity: ValidityFlagWithMode,
         borrow_counter: AssetBorrowCounter,
         py: Python,
-    ) -> PyResult<Vec<(UntypedHandle, Py<PyAny>)>>;
+    ) -> PyResult<Vec<(UntypedAssetId, Py<PyAny>)>>;
 
     /// Whether this asset type can be loaded from files via AssetServer.
     ///
