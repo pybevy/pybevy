@@ -16,7 +16,7 @@ pybevy_transform = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = ["bevy_gltf"]
+features = ["bevy_gltf", "gltf_animation"]
 
 [lints]
 workspace = true

@@ -4954,6 +4954,7 @@ name = "pybevy_shader_types"
 version = "0.2.1"
 dependencies = [
  "bevy",
+ "tracing",
 ]
 
 [[package]]

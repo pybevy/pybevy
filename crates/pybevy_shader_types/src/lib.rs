@@ -4,6 +4,8 @@
 //! (`ExtendedMaterial<StandardMaterial, ShaderMaterialExtension>`) and
 //! supporting types. No Python dependencies.
 
+mod shader_def_registry;
+
 use std::{
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
@@ -11,8 +13,11 @@ use std::{
 };
 
 use bevy::{
-    asset::{Asset, Assets, Handle},
-    ecs::system::{Res, ResMut},
+    asset::{Asset, AssetId, AssetLoadFailedEvent, AssetServer, Assets, Handle},
+    ecs::{
+        message::MessageReader,
+        system::{Res, ResMut},
+    },
     image::Image,
     math::Vec4,
     mesh::MeshVertexBufferLayoutRef,
@@ -24,20 +29,43 @@ use bevy::{
     render::render_resource::{
         AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     },
-    shader::{Shader, ShaderRef},
+    shader::{Shader, ShaderDefVal, ShaderImport, ShaderRef},
 };
+use shader_def_registry::{
+    clear_shader_def_names, get_shader_def_names, register_shader_def_names,
+};
+use tracing::error;
 
 static SHADER_REGISTRY: OnceLock<RwLock<HashMap<u64, Handle<Shader>>>> = OnceLock::new();
-static SHADER_DEF_REGISTRY: OnceLock<RwLock<HashMap<u64, Vec<String>>>> = OnceLock::new();
-/// Tracks which bindings WGSL sources have been injected (by hash of content).
-static BINDINGS_INJECTED: OnceLock<RwLock<std::collections::HashSet<u64>>> = OnceLock::new();
+/// Retains generated shader modules so their assets remain available for imports.
+static BINDINGS_REGISTRY: OnceLock<RwLock<BindingsRegistry>> = OnceLock::new();
+
+#[derive(Clone)]
+struct GeneratedBindingsShader {
+    logical_type_id: u64,
+    source: String,
+    handle: Handle<Shader>,
+}
+
+type BindingsRegistry = HashMap<ShaderImport, GeneratedBindingsShader>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ShaderStage {
+    Fragment,
+    Vertex,
+}
+
+impl ShaderStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fragment => "fragment",
+            Self::Vertex => "vertex",
+        }
+    }
+}
 
 fn registry() -> &'static RwLock<HashMap<u64, Handle<Shader>>> {
     SHADER_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-fn def_registry() -> &'static RwLock<HashMap<u64, Vec<String>>> {
-    SHADER_DEF_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 pub fn hash_shader_path(path: &str) -> u64 {
@@ -56,18 +84,47 @@ fn register_shader_handle(id: u64, handle: Handle<Shader>) {
     }
 }
 
-fn get_shader_def_names(shader_id: u64) -> Option<Vec<String>> {
-    def_registry().read().ok()?.get(&shader_id).cloned()
+fn bindings_registry() -> &'static RwLock<BindingsRegistry> {
+    BINDINGS_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn register_shader_def_names(shader_id: u64, names: Vec<String>) {
-    if let Ok(mut map) = def_registry().write() {
-        map.insert(shader_id, names);
+fn sync_generated_bindings_shader(
+    registry: &mut BindingsRegistry,
+    shaders: &mut Assets<Shader>,
+    logical_type_id: u64,
+    wgsl: &str,
+) {
+    let source_hash = hash_shader_path(wgsl);
+    let shader = Shader::from_wgsl(wgsl.to_owned(), format!("pybevy://gen/{source_hash}"));
+    let import_path = shader.import_path.clone();
+
+    if let Some(entry) = registry.get_mut(&import_path) {
+        if entry.source == wgsl {
+            entry.logical_type_id = entry.logical_type_id.max(logical_type_id);
+            return;
+        }
+        // Assets created by an older material class can survive a reload. They
+        // must not restore their layout after the newer class replaces it.
+        if logical_type_id <= entry.logical_type_id {
+            return;
+        }
+
+        if shaders.insert(entry.handle.id(), shader.clone()).is_ok() {
+            entry.logical_type_id = logical_type_id;
+            entry.source = wgsl.to_owned();
+            return;
+        }
     }
-}
 
-fn bindings_set() -> &'static RwLock<std::collections::HashSet<u64>> {
-    BINDINGS_INJECTED.get_or_init(|| RwLock::new(std::collections::HashSet::new()))
+    let handle = shaders.add(shader);
+    registry.insert(
+        import_path,
+        GeneratedBindingsShader {
+            logical_type_id,
+            source: wgsl.to_owned(),
+            handle,
+        },
+    );
 }
 
 /// Clear all cached shader handles and def names.
@@ -78,16 +135,37 @@ pub fn clear_shader_registries() {
     {
         map.clear();
     }
-    if let Some(reg) = SHADER_DEF_REGISTRY.get()
+    clear_shader_def_names();
+    if let Some(reg) = BINDINGS_REGISTRY.get()
         && let Ok(mut map) = reg.write()
     {
         map.clear();
     }
-    if let Some(reg) = BINDINGS_INJECTED.get()
-        && let Ok(mut set) = reg.write()
-    {
-        set.clear();
+}
+
+fn sync_shader_path(path: &str, asset_server: &AssetServer) -> u64 {
+    let id = hash_shader_path(path);
+    if get_shader_handle(id).is_none() {
+        let handle = asset_server.load(path.to_owned());
+        register_shader_handle(id, handle);
     }
+    id
+}
+
+fn stage_uses_shader(
+    materials: &Assets<ShaderMaterial>,
+    stage: ShaderStage,
+    shader_id: AssetId<Shader>,
+) -> bool {
+    materials.iter().any(|(_, material)| {
+        let path = match stage {
+            ShaderStage::Fragment => &material.extension.fragment_shader_path,
+            ShaderStage::Vertex => &material.extension.vertex_shader_path,
+        };
+        path.as_deref()
+            .and_then(|path| get_shader_handle(hash_shader_path(path)))
+            .is_some_and(|handle| handle.id() == shader_id)
+    })
 }
 
 // Shader params uniform buffer
@@ -111,11 +189,12 @@ impl Default for ShaderParams {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub struct ShaderMaterialKey {
     pub frag_shader_id: u64,
     pub vert_shader_id: u64,
     pub shader_defs: u32,
+    pub def_names_id: u64,
 }
 
 impl From<&ShaderMaterialExtension> for ShaderMaterialKey {
@@ -132,12 +211,16 @@ impl From<&ShaderMaterialExtension> for ShaderMaterialKey {
                 .map(|p| hash_shader_path(p))
                 .unwrap_or(0),
             shader_defs: ext.shader_defs,
+            def_names_id: ext.logical_type_id.unwrap_or(0),
         }
     }
 }
 
 /// Maximum number of texture slots available to @material classes.
 pub const MAX_TEXTURE_SLOTS: usize = 4;
+
+/// Bevy pushes this for every prepass and shadow pipeline it specializes.
+const PREPASS_PIPELINE_DEF: &str = "PREPASS_PIPELINE";
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[bind_group_data(ShaderMaterialKey)]
@@ -176,6 +259,11 @@ pub struct ShaderMaterialExtension {
     #[reflect(ignore)]
     pub shader_def_names: Vec<String>,
 
+    /// Process-local identity of the Python `@material` class that created this asset.
+    /// This is metadata only and is deliberately excluded from GPU bindings/reflection.
+    #[reflect(ignore)]
+    pub logical_type_id: Option<u64>,
+
     /// In-memory WGSL source for generated binding declarations.
     /// Contains `#define_import_path` so user shaders can `#import` it.
     /// Injected into `Assets<Shader>` by `sync_shader_handles`.
@@ -199,6 +287,17 @@ impl MaterialExtension for ShaderMaterialExtension {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        // Bevy calls specialize for prepass and shadow pipelines too. A forward
+        // shader swapped in there mismatches the prepass vertex stage, so leave
+        // those pipelines on bevy's defaults as an unextended material would.
+        if descriptor
+            .vertex
+            .shader_defs
+            .iter()
+            .any(|def| matches!(def, ShaderDefVal::Bool(name, _) if name == PREPASS_PIPELINE_DEF))
+        {
+            return Ok(());
+        }
         if key.bind_group_data.frag_shader_id != 0
             && let Some(handle) = get_shader_handle(key.bind_group_data.frag_shader_id)
             && let Some(fragment) = &mut descriptor.fragment
@@ -213,19 +312,19 @@ impl MaterialExtension for ShaderMaterialExtension {
 
         // Push shader defs from bool fields
         if key.bind_group_data.shader_defs != 0
-            && let Some(names) = get_shader_def_names(key.bind_group_data.frag_shader_id)
+            && let Some(names) = get_shader_def_names(key.bind_group_data.def_names_id)
         {
-            for (i, name) in names.iter().enumerate() {
+            for (i, name) in names.iter().take(u32::BITS as usize).enumerate() {
                 if key.bind_group_data.shader_defs & (1 << i) != 0 {
                     if let Some(fragment) = &mut descriptor.fragment {
                         fragment
                             .shader_defs
-                            .push(bevy::shader::ShaderDefVal::Bool(name.clone(), true));
+                            .push(ShaderDefVal::Bool(name.clone(), true));
                     }
                     descriptor
                         .vertex
                         .shader_defs
-                        .push(bevy::shader::ShaderDefVal::Bool(name.clone(), true));
+                        .push(ShaderDefVal::Bool(name.clone(), true));
                 }
             }
         }
@@ -245,45 +344,47 @@ pub type ShaderMaterial = ExtendedMaterial<StandardMaterial, ShaderMaterialExten
 
 pub fn sync_shader_handles(
     materials: Res<Assets<ShaderMaterial>>,
-    asset_server: Res<bevy::asset::AssetServer>,
+    asset_server: Res<AssetServer>,
     mut shaders: ResMut<Assets<Shader>>,
+    mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
 ) {
-    for (_, material) in materials.iter() {
-        if let Some(path) = &material.extension.fragment_shader_path {
-            let id = hash_shader_path(path);
-            if get_shader_handle(id).is_none() {
-                let handle: Handle<Shader> = asset_server.load(path.clone());
-                register_shader_handle(id, handle);
-            }
-            // Register shader def names for this shader (idempotent)
-            if !material.extension.shader_def_names.is_empty() && get_shader_def_names(id).is_none()
-            {
-                register_shader_def_names(id, material.extension.shader_def_names.clone());
+    for failure in load_failures.read() {
+        for stage in [ShaderStage::Fragment, ShaderStage::Vertex] {
+            if stage_uses_shader(&materials, stage, failure.id) {
+                error!(
+                    "Custom {} shader '{}' failed to load: {}",
+                    stage.label(),
+                    failure.path,
+                    failure.error
+                );
             }
         }
+    }
+
+    for (_, material) in materials.iter() {
+        if let Some(path) = &material.extension.fragment_shader_path {
+            sync_shader_path(path, &asset_server);
+        }
         if let Some(path) = &material.extension.vertex_shader_path {
-            let id = hash_shader_path(path);
-            if get_shader_handle(id).is_none() {
-                let handle: Handle<Shader> = asset_server.load(path.clone());
-                register_shader_handle(id, handle);
-            }
+            sync_shader_path(path, &asset_server);
+        }
+        if let Some(type_id) = material.extension.logical_type_id
+            && !material.extension.shader_def_names.is_empty()
+        {
+            register_shader_def_names(type_id, material.extension.shader_def_names.clone());
         }
 
         // Inject in-memory binding declarations into Assets<Shader>.
         // The WGSL contains #define_import_path so user shaders can #import it.
-        if let Some(wgsl) = &material.extension.bindings_wgsl {
-            let id = hash_shader_path(wgsl);
-            let already = bindings_set()
-                .read()
-                .map(|s| s.contains(&id))
-                .unwrap_or(false);
-            if !already {
-                let shader = Shader::from_wgsl(wgsl.clone(), format!("pybevy://gen/{}", id));
-                shaders.add(shader);
-                if let Ok(mut set) = bindings_set().write() {
-                    set.insert(id);
-                }
-            }
+        if let Some(wgsl) = &material.extension.bindings_wgsl
+            && let Ok(mut registry) = bindings_registry().write()
+        {
+            sync_generated_bindings_shader(
+                &mut registry,
+                &mut shaders,
+                material.extension.logical_type_id.unwrap_or(0),
+                wgsl,
+            );
         }
     }
 }

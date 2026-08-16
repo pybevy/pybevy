@@ -1,10 +1,19 @@
-use bevy::gltf::{Gltf, GltfMesh, GltfNode, GltfPrimitive, GltfSkin};
-use pybevy_core::{AssetStorage, PyAsset, PyComponent, PyHandle};
+use std::collections::HashMap;
+
+use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode, GltfPrimitive, GltfSkin};
+use pybevy_core::{AssetStorage, PyAsset, PyHandle};
 use pybevy_macros::pyasset;
 use pybevy_transform::transform::PyTransform;
 use pyo3::prelude::*;
 
-use crate::label::PyGltfAssetLabel;
+use crate::{gltf_primitives::PyGltfPrimitives, label::PyGltfAssetLabel};
+
+#[pyasset(GltfMaterial, no_clone, bridge)]
+#[pyclass(name = "GltfMaterial", extends = PyAsset)]
+#[derive(Debug)]
+pub struct PyGltfMaterial {
+    pub storage: AssetStorage<GltfMaterial>,
+}
 
 #[pyasset(Gltf, no_clone, bridge)]
 #[pyclass(name = "Gltf", extends = PyAsset)]
@@ -100,6 +109,22 @@ impl PyGltf {
             .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
             .collect())
     }
+
+    #[getter]
+    pub fn animations(&self) -> PyResult<Vec<PyHandle>> {
+        let gltf = self.storage.as_ref()?;
+        Ok(gltf.animations.iter().map(PyHandle::from).collect())
+    }
+
+    #[getter]
+    pub fn named_animations(&self) -> PyResult<HashMap<String, PyHandle>> {
+        let gltf = self.storage.as_ref()?;
+        Ok(gltf
+            .named_animations
+            .iter()
+            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
+            .collect())
+    }
 }
 
 #[pyasset(GltfMesh, no_clone, bridge)]
@@ -122,12 +147,10 @@ impl PyGltfMesh {
     }
 
     #[getter]
-    pub fn primitives(&self, py: Python<'_>) -> PyResult<Vec<Py<PyGltfPrimitive>>> {
-        let mesh = self.storage.as_ref()?;
-        mesh.primitives
-            .iter()
-            .map(|primitive| Py::new(py, PyGltfPrimitive::from_owned(primitive.clone())))
-            .collect()
+    pub fn primitives(&self) -> PyResult<PyGltfPrimitives> {
+        Ok(self
+            .storage
+            .borrow_field_as(|mesh| &mesh.primitives, |mesh| &mut mesh.primitives)?)
     }
 
     #[getter]
@@ -182,8 +205,10 @@ impl PyGltfNode {
 
     #[getter]
     pub fn transform(&self, py: Python<'_>) -> PyResult<Py<PyTransform>> {
-        let node = self.storage.as_ref()?;
-        Py::new(py, (PyTransform::from(node.transform), PyComponent))
+        let storage = self
+            .storage
+            .borrow_field(|node| &node.transform, |node| &mut node.transform)?;
+        Py::new(py, PyTransform::from_borrowed(storage))
     }
 
     #[getter]

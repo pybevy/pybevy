@@ -42,9 +42,7 @@ impl TryFrom<PyShaderRef> for ShaderRef {
         match py_ref {
             PyShaderRef::Default() => Ok(ShaderRef::Default),
             PyShaderRef::Handle { value } => Ok(ShaderRef::Handle(value.try_into()?)),
-            PyShaderRef::Path { value } => Ok(ShaderRef::Path(AssetPath::from(
-                value.leak() as &'static str
-            ))),
+            PyShaderRef::Path { value } => Ok(ShaderRef::Path(AssetPath::from(value))),
         }
     }
 }

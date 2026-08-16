@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
 
+[dependencies]
+tracing = "0.1"
+
 [dependencies.bevy]
 workspace = true
 default-features = false
