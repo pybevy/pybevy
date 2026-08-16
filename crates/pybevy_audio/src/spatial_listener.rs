@@ -18,15 +18,15 @@ impl PySpatialListener {
         gap: f32,
         left_ear_offset: Option<PyVec3>,
         right_ear_offset: Option<PyVec3>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let mut listener = SpatialListener::new(gap);
         if let Some(offset) = left_ear_offset {
-            listener.left_ear_offset = offset.into();
+            listener.left_ear_offset = offset.try_into()?;
         }
         if let Some(offset) = right_ear_offset {
-            listener.right_ear_offset = offset.into();
+            listener.right_ear_offset = offset.try_into()?;
         }
-        Self::from_owned(listener).into()
+        Ok(Self::from_owned(listener).into())
     }
 
     #[getter]
@@ -36,7 +36,7 @@ impl PySpatialListener {
 
     #[setter]
     pub fn set_left_ear_offset(&mut self, offset: PyVec3) -> PyResult<()> {
-        self.as_mut()?.left_ear_offset = offset.into();
+        self.as_mut()?.left_ear_offset = offset.try_into()?;
         Ok(())
     }
 
@@ -47,7 +47,7 @@ impl PySpatialListener {
 
     #[setter]
     pub fn set_right_ear_offset(&mut self, offset: PyVec3) -> PyResult<()> {
-        self.as_mut()?.right_ear_offset = offset.into();
+        self.as_mut()?.right_ear_offset = offset.try_into()?;
         Ok(())
     }
 

@@ -33,6 +33,9 @@ impl PyAudioPlayer {
     }
 
     fn __repr__(&self) -> String {
-        "AudioPlayer(...)".to_string()
+        match self.as_ref() {
+            Ok(player) => format!("AudioPlayer(source={:?})", player.0.id()),
+            Err(_) => "AudioPlayer(<invalid>)".to_string(),
+        }
     }
 }

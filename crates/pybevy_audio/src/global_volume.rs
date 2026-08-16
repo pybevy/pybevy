@@ -21,7 +21,7 @@ impl PyGlobalVolume {
             Some(v) => GlobalVolume::new(v.into()),
             None => GlobalVolume::default(),
         };
-        Self::from_owned(global_volume).into()
+        Self::from_owned(global_volume)
     }
 
     #[getter]

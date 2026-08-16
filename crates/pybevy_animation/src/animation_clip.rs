@@ -1,11 +1,16 @@
 use bevy::animation::{AnimationClip, VariableCurve};
-use pybevy_core::{AssetStorage, PyAsset};
+use pybevy_core::{AssetStorage, PyAsset, computed_owned};
 use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
 use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId};
 
-#[pyclass(name = "VariableCurve", extends = PyAnimationCurve, from_py_object)]
+#[pyclass(
+    name = "VariableCurve",
+    extends = PyAnimationCurve,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyVariableCurve(pub(crate) VariableCurve);
 
@@ -33,19 +38,20 @@ impl PyAnimationClip {
     }
 
     pub fn curves(&self, py: Python) -> PyResult<Py<PyDict>> {
-        let curves = self.as_ref()?.curves();
+        let clip = self.as_ref()?;
+        let curves = clip.curves();
         let dict = PyDict::new(py);
 
         for (target_id, curve_vec) in curves.iter() {
             let py_target_id = Py::new(py, PyAnimationTargetId::from_owned(*target_id))?;
             let py_curves: Vec<Py<PyVariableCurve>> = curve_vec
                 .iter()
-                .map(|c| Py::new(py, (PyVariableCurve(c.clone()), PyAnimationCurve)))
-                .collect::<Result<_, _>>()?;
+                .map(|curve| Py::new(py, (PyVariableCurve(curve.clone()), PyAnimationCurve)))
+                .collect::<PyResult<_>>()?;
             dict.set_item(py_target_id, py_curves)?;
         }
 
-        Ok(dict.into())
+        Ok(computed_owned(dict.into()))
     }
 
     pub fn curves_for_target(
@@ -53,7 +59,8 @@ impl PyAnimationClip {
         py: Python,
         target_id: &PyAnimationTargetId,
     ) -> PyResult<Option<Vec<Py<PyVariableCurve>>>> {
-        let curves = self.as_ref()?.curves_for_target(target_id.0);
+        let clip = self.as_ref()?;
+        let curves = clip.curves_for_target(target_id.0);
 
         match curves {
             Some(curve_vec) => {

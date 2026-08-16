@@ -1,8 +1,15 @@
-use bevy::animation::graph::{AnimationGraph, AnimationGraphNode, AnimationNodeType};
-use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
+use bevy::animation::{
+    graph::{AnimationGraph, AnimationGraphNode, AnimationNodeType},
+    prelude::AnimationNodeIndex,
+};
+use pybevy_core::{
+    AssetStorage, PyAsset, PyHandle, extract_handle_from_any,
+    public_error::{ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY},
+};
 use pybevy_macros::pyasset;
 use pyo3::{
-    PyRefMut,
+    PyTraverseError, PyVisit,
+    exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
     types::{PyList, PyTuple},
 };
@@ -82,6 +89,7 @@ impl PyAnimationGraph {
         weight: f32,
         parent: &PyAnimationNodeIndex,
     ) -> PyResult<PyAnimationNodeIndex> {
+        let weight = validate_weight(weight)?;
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_blend(weight, parent.0),
         ))
@@ -99,11 +107,11 @@ impl PyAnimationGraph {
             ));
         }
         let handle = extract_handle_from_any(clip)?;
-        Ok(PyAnimationNodeIndex(self.as_mut()?.add_clip(
-            (&handle).try_into()?,
-            weight,
-            parent.0,
-        )))
+        let handle = (&handle).try_into()?;
+        let weight = validate_weight(weight)?;
+        Ok(PyAnimationNodeIndex(
+            self.as_mut()?.add_clip(handle, weight, parent.0),
+        ))
     }
 
     #[pyo3(signature = (from_, to))]
@@ -125,15 +133,38 @@ impl PyAnimationGraph {
         Ok(self.as_mut()?.remove_edge(from_.0, to.0))
     }
 
-    pub fn get(&self, animation: &PyAnimationNodeIndex) -> PyResult<Option<PyAnimationGraphNode>> {
-        Ok(self
-            .as_ref()?
+    pub fn get(
+        slf: &Bound<'_, Self>,
+        animation: &PyAnimationNodeIndex,
+    ) -> PyResult<Option<PyAnimationGraphNode>> {
+        let present = PyAnimationGraph::as_ref(&slf.borrow())?
             .get(animation.0)
-            .map(|index| PyAnimationGraphNode(index.clone())))
+            .is_some();
+        Ok(present.then(|| PyAnimationGraphNode::view(slf.clone().unbind(), animation.0, false)))
+    }
+
+    pub fn get_mut(
+        slf: &Bound<'_, Self>,
+        animation: &PyAnimationNodeIndex,
+    ) -> PyResult<Option<PyAnimationGraphNode>> {
+        let present = PyAnimationGraph::as_ref(&slf.borrow())?
+            .get(animation.0)
+            .is_some();
+        Ok(present.then(|| PyAnimationGraphNode::view(slf.clone().unbind(), animation.0, true)))
     }
 
     pub fn nodes(&self) -> PyResult<Vec<PyAnimationNodeIndex>> {
         Ok(self.as_ref()?.nodes().map(PyAnimationNodeIndex).collect())
+    }
+}
+
+fn validate_weight(weight: f32) -> PyResult<f32> {
+    if weight.is_finite() {
+        Ok(weight)
+    } else {
+        Err(PyValueError::new_err(format!(
+            "weight must be finite (got {weight})"
+        )))
     }
 }
 
@@ -171,53 +202,119 @@ impl PyAnimationNodeType {
 }
 
 #[pyclass(name = "AnimationGraphNode", skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyAnimationGraphNode(pub AnimationGraphNode);
+pub struct PyAnimationGraphNode {
+    graph: Py<PyAnimationGraph>,
+    index: AnimationNodeIndex,
+    mutable: bool,
+}
+
+impl PyAnimationGraphNode {
+    fn view(graph: Py<PyAnimationGraph>, index: AnimationNodeIndex, mutable: bool) -> Self {
+        Self {
+            graph,
+            index,
+            mutable,
+        }
+    }
+
+    fn with_node<R>(
+        &self,
+        py: Python<'_>,
+        read: impl FnOnce(&AnimationGraphNode) -> R,
+    ) -> PyResult<R> {
+        let graph = self.graph.borrow(py);
+        let graph = PyAnimationGraph::as_ref(&graph)?;
+        let node = graph
+            .get(self.index)
+            .ok_or_else(|| PyValueError::new_err(ANIMATION_GRAPH_NODE_MISSING))?;
+        Ok(read(node))
+    }
+
+    fn with_node_mut<R>(
+        &self,
+        py: Python<'_>,
+        write: impl FnOnce(&mut AnimationGraphNode) -> R,
+    ) -> PyResult<R> {
+        if !self.mutable {
+            return Err(PyRuntimeError::new_err(ANIMATION_GRAPH_NODE_READ_ONLY));
+        }
+        let mut graph = self.graph.borrow_mut(py);
+        PyAnimationGraph::as_ref(&graph)?
+            .get(self.index)
+            .ok_or_else(|| PyValueError::new_err(ANIMATION_GRAPH_NODE_MISSING))?;
+        let mut graph = PyAnimationGraph::as_mut(&mut graph)?;
+        let node = graph
+            .get_mut(self.index)
+            .expect("node existence was preflighted without Python reentry");
+        Ok(write(node))
+    }
+}
 
 #[pymethods]
 impl PyAnimationGraphNode {
-    #[getter]
-    pub fn node_type(&self) -> PyAnimationNodeType {
-        PyAnimationNodeType::from(&self.0.node_type)
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.graph)
     }
 
     #[getter]
-    pub fn mask(&self) -> u64 {
-        self.0.mask
+    pub fn node_type(&self, py: Python<'_>) -> PyResult<PyAnimationNodeType> {
+        self.with_node(py, |node| PyAnimationNodeType::from(&node.node_type))
+    }
+
+    #[getter]
+    pub fn mask(&self, py: Python<'_>) -> PyResult<u64> {
+        self.with_node(py, |node| node.mask)
     }
 
     #[setter]
-    pub fn set_mask(&mut self, mask: u64) {
-        self.0.mask = mask;
+    pub fn set_mask(&mut self, py: Python<'_>, mask: u64) -> PyResult<()> {
+        self.with_node_mut(py, |node| node.mask = mask)
     }
 
     #[getter]
-    pub fn weight(&self) -> f32 {
-        self.0.weight
+    pub fn weight(&self, py: Python<'_>) -> PyResult<f32> {
+        self.with_node(py, |node| node.weight)
     }
 
     #[setter]
-    pub fn set_weight(&mut self, weight: f32) {
-        self.0.weight = weight;
+    pub fn set_weight(&mut self, py: Python<'_>, weight: f32) -> PyResult<()> {
+        self.with_node_mut(py, |node| node.weight = weight)
     }
 
-    pub fn add_mask(mut slf: PyRefMut<'_, Self>, mask: u64) -> PyRefMut<'_, Self> {
-        slf.0.add_mask(mask);
-        slf
+    pub fn add_mask<'py>(slf: PyRef<'py, Self>, mask: u64) -> PyResult<PyRef<'py, Self>> {
+        slf.with_node_mut(slf.py(), |node| {
+            node.add_mask(mask);
+        })?;
+        Ok(slf)
     }
 
-    pub fn remove_mask(mut slf: PyRefMut<'_, Self>, mask: u64) -> PyRefMut<'_, Self> {
-        slf.0.remove_mask(mask);
-        slf
+    pub fn remove_mask<'py>(slf: PyRef<'py, Self>, mask: u64) -> PyResult<PyRef<'py, Self>> {
+        slf.with_node_mut(slf.py(), |node| {
+            node.remove_mask(mask);
+        })?;
+        Ok(slf)
     }
 
-    pub fn add_mask_group(mut slf: PyRefMut<'_, Self>, group: u32) -> PyRefMut<'_, Self> {
-        slf.0.add_mask_group(group);
-        slf
+    pub fn add_mask_group<'py>(slf: PyRef<'py, Self>, group: u32) -> PyResult<PyRef<'py, Self>> {
+        slf.with_node_mut(slf.py(), |node| {
+            node.add_mask_group(group);
+        })?;
+        Ok(slf)
     }
 
-    pub fn remove_mask_group(mut slf: PyRefMut<'_, Self>, group: u32) -> PyRefMut<'_, Self> {
-        slf.0.remove_mask_group(group);
-        slf
+    pub fn remove_mask_group<'py>(slf: PyRef<'py, Self>, group: u32) -> PyResult<PyRef<'py, Self>> {
+        slf.with_node_mut(slf.py(), |node| {
+            node.remove_mask_group(group);
+        })?;
+        Ok(slf)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        self.with_node(py, |node| {
+            format!(
+                "AnimationGraphNode(node_type={:?}, mask={}, weight={})",
+                node.node_type, node.mask, node.weight
+            )
+        })
     }
 }

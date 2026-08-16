@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import ClassVar, Literal
 from uuid import UUID
 
@@ -64,19 +65,15 @@ class AnimationPlugin(Plugin):
 
 class AnimatableCurve:
     """A curve that can be used to animate a property."""
-    def __init__(self) -> None: ...
 
 class AnimatableKeyframeCurve:
     """A keyframe-based animation curve."""
-    def __init__(self) -> None: ...
 
 class WeightsCurve:
     """A curve for animating blend shape weights."""
-    def __init__(self) -> None: ...
 
 class AnimatedField:
     """A field that can be animated."""
-    def __init__(self) -> None: ...
 
 class AnimationNodeType:
     class Clip(AnimationNodeType):
@@ -157,10 +154,9 @@ class AnimationPlayer(Component):
     def all_paused(self) -> bool: ...
     def pause_all(self) -> AnimationPlayer: ...
     def resume_all(self) -> AnimationPlayer: ...
-    def set_speed(self, speed: float) -> AnimationPlayer: ...
     def seek_all_by(self, amount: float) -> AnimationPlayer: ...
     def animation(self, animation: AnimationNodeIndex) -> ActiveAnimation | None:
-        """Get reference to a specific playing animation without starting it.
+        """Get a read-only reference to a playing animation without starting it.
 
         Returns None if the animation is not currently playing.
 
@@ -250,8 +246,8 @@ class AnimationGraph(Asset):
     ) -> tuple[AnimationGraph, AnimationNodeIndex]: ...
     @staticmethod
     def from_clips(
-        clips: list[Handle[AnimationClip]],
-    ) -> tuple[AnimationGraph, AnimationNodeIndex]: ...
+        clips: Iterable[Handle[AnimationClip]],
+    ) -> tuple[AnimationGraph, list[AnimationNodeIndex]]: ...
     @property
     def root(self) -> AnimationNodeIndex: ...
     def add_blend(
@@ -264,7 +260,12 @@ class AnimationGraph(Asset):
     def remove_edge(
         self, from_: AnimationNodeIndex, to: AnimationNodeIndex
     ) -> bool: ...
-    def get(self, animation: AnimationNodeIndex) -> AnimationGraphNode | None: ...
+    def get(self, animation: AnimationNodeIndex) -> AnimationGraphNode | None:
+        """Read-only view of a node; its setters raise."""
+
+    def get_mut(self, animation: AnimationNodeIndex) -> AnimationGraphNode | None:
+        """Writable view of a node."""
+
     def nodes(self) -> list[AnimationNodeIndex]: ...
 
 class AnimationGraphNode:
@@ -312,8 +313,9 @@ class AnimationGraphHandle(Component):
     Used to attach an animation graph to an entity with AnimationPlayer.
     """
 
-    def __init__(self, graph_handle: Handle[AnimationGraph]) -> None: ...
-    def handle(self) -> Handle[AnimationGraph]:
+    def __init__(self, value: Handle[AnimationGraph]) -> None: ...
+    @property
+    def value(self) -> Handle[AnimationGraph]:
         """Get the underlying asset handle."""
 
 class AnimationTargetId(Component):
@@ -335,24 +337,27 @@ class AnimationTargetId(Component):
         Args:
             names: List of names forming the path (e.g., ["Root", "Spine", "Arm"])
         """
-    def as_uuid(self) -> UUID: ...
+    @property
+    def value(self) -> UUID:
+        """The wrapped uuid.UUID (Bevy's newtype payload)."""
+
+    def __hash__(self) -> int: ...
 
 class AnimationCurve:
     """Base class for animation curves.
 
-    **LIMITATION**: Bevy's AnimationCurve trait is private and does not expose
-    curve evaluation methods (domain, sample, etc.) publicly.
+    **LIMITATION**: PyBevy does not wrap bevy's curve constructors or
+    evaluation methods (domain, sample, etc.) yet.
 
     This class exists for type compatibility but cannot be constructed or used
     directly. Use AnimationPlayer for animation playback.
     """
-    def __init__(self) -> None: ...
 
 class VariableCurve(AnimationCurve):
     """Wrapper for Bevy's VariableCurve.
 
-    **LIMITATION**: Due to Bevy's private AnimationCurve trait, this class
-    cannot expose curve evaluation methods. It serves as a type marker for
+    **LIMITATION**: PyBevy does not wrap bevy's curve constructors or
+    evaluation methods, so this class serves as a type marker for
     curves returned by AnimationClip.curves() but has no accessible methods.
 
     For animation playback, use AnimationPlayer - the full animation system
@@ -363,6 +368,13 @@ class VariableCurve(AnimationCurve):
     """
 
 class AnimationClip(Asset):
+    """A set of curves keyed by animation target.
+
+    Clips are playable and inspectable, but not authorable: the curve-adding
+    methods below take a VariableCurve, and PyBevy does not wrap bevy's curve
+    constructors yet. Build clips by loading them (glTF), and drive playback
+    with AnimationPlayer.
+    """
     def __init__(self) -> None: ...
     def duration(self) -> float: ...
     def set_duration(self, duration_sec: float) -> None: ...
@@ -381,10 +393,6 @@ class AnimationClip(Asset):
     #     self, target_id: AnimationTargetId, time: float, event: str
     # ) -> None: ...
 
-class AnimationTarget:
-    id: AnimationTargetId
-    player: Entity
-    def __init__(self, id: AnimationTargetId, player: Entity) -> None: ...
 class AnimatedBy(Component):
     """Component indicating which AnimationPlayer entity drives this entity's animations.
 

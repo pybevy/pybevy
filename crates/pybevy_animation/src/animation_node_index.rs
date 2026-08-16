@@ -1,7 +1,7 @@
 use bevy::animation::graph::AnimationNodeIndex;
 use pyo3::prelude::*;
 
-#[pyclass(name = "AnimationNodeIndex", eq, skip_from_py_object)]
+#[pyclass(name = "AnimationNodeIndex", eq, frozen, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyAnimationNodeIndex(pub AnimationNodeIndex);
 
