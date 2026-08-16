@@ -41,6 +41,7 @@ pub mod hierarchy;
 pub extern crate inventory;
 pub mod borrowed_array_anchor;
 pub mod bridge_inventory;
+pub mod live_sequence;
 pub mod logical_type;
 pub mod materializable;
 pub mod message;
@@ -55,11 +56,17 @@ pub mod source_location;
 
 // Storage layer — re-exported from pybevy_storage
 pub use pybevy_storage::{
-    batch_columns, field_storage, list_storage, pyasset, pycomponent, pyresource, storage_error,
-    storage_traits, validity_guard, value_storage, view_bridge,
+    batch_columns, field_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
+    validity_guard, value_storage, view_bridge,
 };
 
-pybevy_storage::impl_py_list!(PyF32List, "F32List", f32);
+#[pyclass(name = "_FloatLiveList", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyFloatLiveList {
+    storage: FieldStorage<Vec<f32>>,
+}
+
+impl_live_scalar_list!(PyFloatLiveList, "_FloatLiveList", Vec<f32>, f32);
 
 use std::any::TypeId;
 
@@ -69,7 +76,13 @@ use bevy::ecs::{
     hierarchy::{ChildOf, Children},
     world::{EntityRef, EntityWorldMut, World},
 };
-use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::PyRuntimeError,
+    ffi::PyTypeObject,
+    prelude::*,
+    types::{PyList, PyType},
+};
 
 /// Build a re-resolving [`ComponentStorage<B>`] for a native/bridge component reached
 /// from `world.get`/`world.get_mut`, or `None` if the entity or component is absent.
@@ -403,10 +416,9 @@ pub use pybevy_storage::{
     AccessMode, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, AssetBorrowCounter,
     AssetRuntimeCore, AssetRuntimeError, AssetStorage, BorrowableStorage, ComponentStorage,
     ComponentStorageInner, FieldOffset, FieldStorage, FieldStorageInner, FieldType,
-    FilteredEntityAccess, FromBorrowedStorage, ListStorage, ListStorageInner, ResourceStorage,
-    ResourceStorageInner, StorageError, ValidityFlag, ValidityFlagWithMode, ValidityGuard,
-    ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, allocate_id, consume_unstored_id,
-    normalize_index,
+    FilteredEntityAccess, FromBorrowedStorage, ResourceStorage, ResourceStorageInner, StorageError,
+    ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge,
+    ViewFieldAccess, allocate_id, consume_unstored_id,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{
