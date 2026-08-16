@@ -124,6 +124,7 @@ pub fn list_tools() -> Vec<Value> {
         let mut input_schema = json!({
             "type": "object",
             "properties": properties,
+            "additionalProperties": false,
         });
 
         if !required.is_empty() {
@@ -190,12 +191,33 @@ fn resolve_refs(value: &mut Value, definitions: &Map<String, Value>) {
     }
 }
 
-/// Strip schemars noise that wastes MCP context: `format`, `minimum` on integers,
-/// and simplify `["type", "null"]` arrays to just `"type"` (MCP always allows omission).
+/// Strip schemars noise that wastes MCP context: `format`, null defaults,
+/// `minimum` on integers, and simplify `["type", "null"]` arrays to just
+/// `"type"` (MCP always allows omission).
 fn clean_schema_noise(value: &mut Value) {
     match value {
         Value::Object(obj) => {
+            if let Some(any_of) = obj.get("anyOf").and_then(Value::as_array) {
+                let non_null = any_of
+                    .iter()
+                    .filter(|entry| entry.get("type") != Some(&json!("null")))
+                    .collect::<Vec<_>>();
+                if non_null.len() == 1 && non_null.len() < any_of.len() {
+                    let description = obj.get("description").cloned();
+                    *value = non_null[0].clone();
+                    if let (Some(description), Some(replacement)) =
+                        (description, value.as_object_mut())
+                    {
+                        replacement.insert("description".to_string(), description);
+                    }
+                    clean_schema_noise(value);
+                    return;
+                }
+            }
             obj.remove("format");
+            if obj.get("default").is_some_and(Value::is_null) {
+                obj.remove("default");
+            }
             // Remove minimum: 0 on unsigned integers (not useful for LLMs)
             if obj.get("minimum") == Some(&json!(0)) {
                 obj.remove("minimum");
@@ -242,8 +264,15 @@ mod tests {
             names.contains(&"capture_screenshot"),
             "missing capture_screenshot"
         );
+        assert!(names.contains(&"capture_stats"), "missing capture_stats");
+        assert!(names.contains(&"compare_frames"), "missing compare_frames");
         assert!(names.contains(&"spawn_entity"), "missing spawn_entity");
         assert!(names.contains(&"set_resource"), "missing set_resource");
+        assert!(names.contains(&"get_resource"), "missing get_resource");
+        assert!(
+            names.contains(&"get_system_list"),
+            "missing get_system_list"
+        );
         assert!(names.contains(&"set_asset"), "missing set_asset");
         assert!(
             names.contains(&"schedule_actions"),
@@ -289,6 +318,18 @@ mod tests {
     }
 
     #[test]
+    fn get_system_list_advertises_internal_filter() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "get_system_list")
+            .expect("get_system_list tool");
+        let include_internal = &tool["inputSchema"]["properties"]["include_internal"];
+        assert_eq!(include_internal["type"], "boolean");
+        assert_eq!(include_internal["default"], false);
+    }
+
+    #[test]
     fn list_tools_have_input_schema() {
         let tools = list_tools();
         for tool in &tools {
@@ -301,6 +342,55 @@ mod tests {
                 "tool {name} inputSchema.type != object"
             );
         }
+    }
+
+    #[test]
+    fn list_tools_reject_unknown_top_level_parameters() {
+        for tool in list_tools() {
+            assert_eq!(
+                tool["inputSchema"]["additionalProperties"], false,
+                "tool {} must advertise a closed argument object",
+                tool["name"]
+            );
+        }
+    }
+
+    #[test]
+    fn spatial_neighborhood_radius_advertises_non_negative_minimum() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "query_spatial_neighborhood")
+            .unwrap();
+
+        assert_eq!(tool["inputSchema"]["properties"]["radius"]["minimum"], 0.0);
+    }
+
+    #[test]
+    fn turnaround_distance_advertises_positive_minimum() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "capture_turnaround")
+            .unwrap();
+
+        assert_eq!(
+            tool["inputSchema"]["properties"]["distance"]["exclusiveMinimum"],
+            0.0
+        );
+    }
+
+    #[test]
+    fn turnaround_view_count_advertises_supported_range() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "capture_turnaround")
+            .unwrap();
+        let view_count = &tool["inputSchema"]["properties"]["view_count"];
+
+        assert_eq!(view_count["minimum"], 1);
+        assert_eq!(view_count["maximum"], 20);
     }
 
     #[test]
@@ -327,11 +417,58 @@ mod tests {
     }
 
     #[test]
+    fn set_resource_describes_custom_field_declarations() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "set_resource")
+            .unwrap();
+        assert!(tool["description"].as_str().unwrap().contains("@dataclass"));
+        assert!(
+            tool["inputSchema"]["properties"]["value"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("@dataclass")
+        );
+    }
+
+    #[test]
+    fn batch_operations_advertise_object_items_schema() {
+        // `Vec<serde_json::Value>` normally becomes `{"items": true}`. That is
+        // valid JSON Schema, but Moonshot and DeepSeek require `items` to be a
+        // schema object when validating function parameters.
+        let tools = list_tools();
+        let batch = tools.iter().find(|tool| tool["name"] == "batch").unwrap();
+        let operations = &batch["inputSchema"]["properties"]["operations"];
+
+        assert_eq!(operations["type"], "array");
+        assert_eq!(operations["items"]["type"], "object");
+    }
+
+    #[test]
+    fn schedule_action_args_advertise_object_schema_without_null_default() {
+        // Unconstrained `serde_json::Value` otherwise emits only
+        // `{"default": null, "description": ...}`, which DeepSeek cannot
+        // interpret as a function-parameter schema.
+        let tools = list_tools();
+        let schedule = tools
+            .iter()
+            .find(|tool| tool["name"] == "schedule_actions")
+            .unwrap();
+        let args = &schedule["inputSchema"]["properties"]["actions"]["items"]["properties"]["args"];
+
+        assert_eq!(args["type"], "object");
+        assert!(args.get("default").is_none());
+    }
+
+    #[test]
     fn list_tools_feature_gates_correct() {
         let tools = list_tools();
         let find = |name: &str| -> &Value { tools.iter().find(|t| t["name"] == name).unwrap() };
 
         assert_eq!(find("capture_screenshot")["feature_gate"], "screenshot");
+        assert_eq!(find("capture_stats")["feature_gate"], "screenshot");
+        assert_eq!(find("compare_frames")["feature_gate"], "screenshot");
         assert_eq!(find("spawn_entity")["feature_gate"], "manipulation");
         assert_eq!(find("run_code")["feature_gate"], "execute_python");
         assert!(find("query_entities")["feature_gate"].is_null());
@@ -374,5 +511,51 @@ mod tests {
 
         assert_eq!(props["delay_frames"]["default"], 2);
         assert_eq!(props["hide_ui"]["default"], true);
+        assert_eq!(props["entity"]["anyOf"][0]["type"], "integer");
+        assert_eq!(props["entity"]["anyOf"][1]["type"], "string");
+    }
+
+    #[test]
+    fn capture_timeline_has_visibility_defaults() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "capture_timeline")
+            .unwrap();
+        let props = &tool["inputSchema"]["properties"];
+
+        assert_eq!(props["hide_ui"]["default"], true);
+        assert_eq!(props["gizmos"]["default"], false);
+    }
+
+    #[test]
+    fn capture_depth_grid_density_has_positive_minimum() {
+        let tools = list_tools();
+        let tool = tools.iter().find(|t| t["name"] == "capture_depth").unwrap();
+
+        assert_eq!(
+            tool["inputSchema"]["properties"]["grid_density"]["minimum"],
+            1
+        );
+    }
+
+    #[test]
+    fn frame_analysis_tools_advertise_bounded_inputs() {
+        let tools = list_tools();
+        let stats = tools.iter().find(|t| t["name"] == "capture_stats").unwrap();
+        let stats_properties = &stats["inputSchema"]["properties"];
+        assert_eq!(stats_properties["grid"]["default"], 1);
+        assert_eq!(stats_properties["grid"]["minimum"], 1);
+        assert_eq!(stats_properties["grid"]["maximum"], 16);
+        assert_eq!(stats_properties["sample_points"]["maxItems"], 256);
+        assert_eq!(stats_properties["max_width"]["minimum"], 1);
+
+        let compare = tools
+            .iter()
+            .find(|t| t["name"] == "compare_frames")
+            .unwrap();
+        let epsilon = &compare["inputSchema"]["properties"]["epsilon"];
+        assert_eq!(epsilon["minimum"], 0.0);
+        assert_eq!(epsilon["maximum"], 1.0);
     }
 }

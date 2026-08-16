@@ -28,6 +28,8 @@ pub struct ApiIndex {
     entries: Vec<ApiIndexEntry>,
     /// Module name -> full file content (.pyi preferred, .py fallback)
     contents: HashMap<String, String>,
+    /// Public package-qualified name -> defining module-qualified name
+    type_aliases: HashMap<String, String>,
     /// Guide entries (name, title, description)
     guides: Vec<GuideEntry>,
     /// Guide name -> full markdown content
@@ -45,6 +47,7 @@ impl ApiIndex {
         // Collect .pyi files (preferred) and .py fallbacks
         let mut pyi_files: Vec<(String, PathBuf)> = Vec::new();
         let mut py_fallbacks: Vec<(String, PathBuf)> = Vec::new();
+        let mut package_init_files: Vec<(String, PathBuf)> = Vec::new();
 
         if let Ok(read_dir) = std::fs::read_dir(pybevy_dir) {
             let mut dir_entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
@@ -79,11 +82,19 @@ impl ApiIndex {
                                 let ext = sub_path.extension().and_then(|e| e.to_str());
                                 let stem = sub_path.file_stem().and_then(|s| s.to_str());
                                 match (ext, stem) {
+                                    (Some("pyi"), Some("__init__")) => {
+                                        package_init_files
+                                            .push((subdir_str.to_string(), sub_path.clone()));
+                                        pyi_files.push((subdir_str.to_string(), sub_path));
+                                    }
                                     (Some("pyi"), Some(name)) => {
                                         let module_name = format!("{subdir_str}.{name}");
                                         pyi_files.push((module_name, sub_path));
                                     }
-                                    (Some("py"), Some(name)) if name != "__init__" => {
+                                    (Some("py"), Some("__init__")) => {
+                                        package_init_files.push((subdir_str.to_string(), sub_path));
+                                    }
+                                    (Some("py"), Some(name)) => {
                                         let module_name = format!("{subdir_str}.{name}");
                                         py_fallbacks.push((module_name, sub_path));
                                     }
@@ -117,16 +128,26 @@ impl ApiIndex {
             }
         }
 
+        let mut type_aliases = HashMap::new();
+        for (package, path) in package_init_files {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                type_aliases.extend(parse_package_reexports(&package, &content));
+            }
+        }
+
         // Load guides from pybevy/mcp/guides/
         let (guides, guide_contents) = load_guides(&pybevy_dir.join("mcp/guides"));
 
         // Load default instructions from pybevy/mcp/instructions.md
         let instructions_path = pybevy_dir.join("mcp/instructions.md");
-        let instructions = std::fs::read_to_string(&instructions_path).ok();
+        let instructions = std::fs::read_to_string(&instructions_path)
+            .ok()
+            .map(|content| strip_html_comments(&content));
 
         Self {
             entries,
             contents,
+            type_aliases,
             guides,
             guide_contents,
             instructions,
@@ -186,20 +207,103 @@ impl ApiIndex {
         (results, total)
     }
 
-    /// Get a single type definition from stubs
+    /// Get a single class or function definition from stubs
     pub fn get_type_definition(&self, type_name: &str) -> Option<String> {
-        for content in self.contents.values() {
-            if let Some(def) = extract_class_definition(content, type_name) {
-                return Some(def);
+        let candidates = self.find_type_candidates(type_name);
+        match candidates.as_slice() {
+            [] => None,
+            [candidate] => Some(format!(
+                "# {}\n{}",
+                candidate.qualified_name(),
+                candidate.definition
+            )),
+            _ => {
+                let names = candidates
+                    .iter()
+                    .map(DefinitionCandidate::qualified_name)
+                    .collect::<Vec<_>>()
+                    .join("\n- ");
+                Some(format!(
+                    "Ambiguous type name `{type_name}`. Use a qualified name:\n- {names}"
+                ))
             }
         }
-        None
     }
 
-    /// Get a structured type definition with sections separated for clarity
+    /// Get a structured class or function definition
     pub fn get_type_definition_structured(&self, type_name: &str) -> Option<serde_json::Value> {
-        let raw = self.get_type_definition(type_name)?;
-        Some(format_class_structured(&raw))
+        let candidates = self.find_type_candidates(type_name);
+        match candidates.as_slice() {
+            [] => None,
+            [candidate] => {
+                let mut structured = match candidate.kind {
+                    DefinitionKind::Class => format_class_structured(&candidate.definition),
+                    DefinitionKind::Function => format_function_structured(&candidate.definition),
+                };
+                if let Some(object) = structured.as_object_mut() {
+                    object.insert(
+                        "type_name".into(),
+                        serde_json::Value::String(candidate.qualified_name()),
+                    );
+                    object.insert(
+                        "module".into(),
+                        serde_json::Value::String(candidate.module.clone()),
+                    );
+                    object.insert(
+                        "qualname".into(),
+                        serde_json::Value::String(candidate.qualname.clone()),
+                    );
+                }
+                Some(structured)
+            }
+            _ => Some(serde_json::json!({
+                "error": "ambiguous_type_name",
+                "query": type_name,
+                "candidates": candidates
+                    .iter()
+                    .map(DefinitionCandidate::qualified_name)
+                    .collect::<Vec<_>>(),
+            })),
+        }
+    }
+
+    fn find_type_candidates(&self, type_name: &str) -> Vec<DefinitionCandidate> {
+        let normalized = type_name
+            .trim()
+            .strip_prefix("pybevy.")
+            .unwrap_or(type_name.trim());
+        let normalized = self
+            .type_aliases
+            .get(normalized)
+            .map(String::as_str)
+            .unwrap_or(normalized);
+        let qualified = normalized.contains('.');
+        let mut candidates = self
+            .contents
+            .iter()
+            .flat_map(|(module, content)| collect_definitions(module, content))
+            .filter(|candidate| {
+                if qualified {
+                    candidate.short_qualified_name() == normalized
+                } else {
+                    candidate
+                        .qualname
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|name| name == normalized)
+                }
+            })
+            .collect::<Vec<_>>();
+        if !qualified
+            && candidates
+                .iter()
+                .any(|candidate| candidate.qualname == normalized)
+        {
+            candidates.retain(|candidate| candidate.qualname == normalized);
+        }
+        candidates.sort_by_key(DefinitionCandidate::qualified_name);
+        candidates.dedup_by(|left, right| left.qualified_name() == right.qualified_name());
+        candidates
     }
 
     /// Find the pybevy/ directory relative to the current working directory
@@ -223,11 +327,246 @@ impl ApiIndex {
     }
 }
 
+fn parse_package_reexports(package: &str, content: &str) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+    let mut lines = content.lines();
+
+    while let Some(line) = lines.next() {
+        if line.starts_with([' ', '\t']) {
+            continue;
+        }
+        let Some(import) = line.trim().strip_prefix("from .") else {
+            continue;
+        };
+        let Some((module, imported_names)) = import.split_once(" import ") else {
+            continue;
+        };
+        if module.is_empty() || module.starts_with('.') {
+            continue;
+        }
+
+        let mut imported_names = imported_names
+            .split('#')
+            .next()
+            .unwrap_or(imported_names)
+            .to_string();
+        if let Some(open) = imported_names.trim_start().strip_prefix('(') {
+            let mut joined = open.to_string();
+            while !joined.contains(')') {
+                let Some(continuation) = lines.next() else {
+                    break;
+                };
+                let continuation = continuation.split('#').next().unwrap_or(continuation);
+                joined.push(' ');
+                joined.push_str(continuation.trim());
+            }
+            imported_names = joined.split(')').next().unwrap_or(&joined).to_string();
+        }
+        for imported_name in imported_names.split(',') {
+            let imported_name = imported_name.trim();
+            if imported_name.is_empty() || imported_name == "*" {
+                continue;
+            }
+            let (source_name, public_name) = imported_name
+                .split_once(" as ")
+                .map(|(source, alias)| (source.trim(), alias.trim()))
+                .unwrap_or((imported_name, imported_name));
+            if source_name.is_empty() || public_name.is_empty() {
+                continue;
+            }
+
+            aliases.insert(
+                format!("{package}.{public_name}"),
+                format!("{package}.{module}.{source_name}"),
+            );
+        }
+    }
+
+    aliases
+}
+
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
     pub module: String,
     pub line: usize,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DefinitionKind {
+    Class,
+    Function,
+}
+
+#[derive(Debug, Clone)]
+struct DefinitionCandidate {
+    module: String,
+    qualname: String,
+    definition: String,
+    kind: DefinitionKind,
+}
+
+impl DefinitionCandidate {
+    fn short_qualified_name(&self) -> String {
+        format!("{}.{}", self.module, self.qualname)
+    }
+
+    fn qualified_name(&self) -> String {
+        format!("pybevy.{}", self.short_qualified_name())
+    }
+}
+
+fn indentation(line: &str) -> usize {
+    line.chars()
+        .take_while(|character| character.is_whitespace())
+        .map(|character| if character == '\t' { 4 } else { 1 })
+        .sum()
+}
+
+fn class_name(line: &str) -> Option<&str> {
+    line.trim()
+        .strip_prefix("class ")?
+        .split(['(', ':'])
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn function_name(line: &str) -> Option<&str> {
+    line.trim()
+        .strip_prefix("def ")?
+        .split('(')
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn deindent_definition(lines: &[&str], amount: usize) -> String {
+    lines
+        .iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                ""
+            } else {
+                line.get(amount..).unwrap_or(line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn collect_class_definitions(module: &str, content: &str) -> Vec<DefinitionCandidate> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    let mut parents = Vec::<(usize, String)>::new();
+    let mut in_docstring = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let triple_quotes = trimmed.matches("\"\"\"").count() + trimmed.matches("'''").count();
+        if in_docstring {
+            if triple_quotes % 2 == 1 {
+                in_docstring = false;
+            }
+            continue;
+        }
+        if triple_quotes % 2 == 1 {
+            in_docstring = true;
+            continue;
+        }
+
+        let Some(name) = class_name(line) else {
+            continue;
+        };
+        let indent = indentation(line);
+        while parents
+            .last()
+            .is_some_and(|(parent_indent, _)| *parent_indent >= indent)
+        {
+            parents.pop();
+        }
+        let qualname = parents
+            .iter()
+            .map(|(_, parent)| parent.as_str())
+            .chain(std::iter::once(name))
+            .collect::<Vec<_>>()
+            .join(".");
+        let end = lines
+            .iter()
+            .enumerate()
+            .skip(index + 1)
+            .find(|(_, next)| !next.trim().is_empty() && indentation(next) <= indent)
+            .map(|(next_index, _)| next_index)
+            .unwrap_or(lines.len());
+        candidates.push(DefinitionCandidate {
+            module: module.to_string(),
+            qualname,
+            definition: deindent_definition(&lines[index..end], indent),
+            kind: DefinitionKind::Class,
+        });
+        parents.push((indent, name.to_string()));
+    }
+
+    candidates
+}
+
+fn collect_function_definitions(module: &str, content: &str) -> Vec<DefinitionCandidate> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    let mut in_docstring = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        let triple_quotes = line.matches("\"\"\"").count() + line.matches("'''").count();
+        if in_docstring {
+            if triple_quotes % 2 == 1 {
+                in_docstring = false;
+            }
+            continue;
+        }
+        if triple_quotes % 2 == 1 {
+            in_docstring = true;
+            continue;
+        }
+        if indentation(line) != 0 {
+            continue;
+        }
+        let Some(name) = function_name(line) else {
+            continue;
+        };
+        let mut open_parens = line.matches('(').count();
+        let mut close_parens = line.matches(')').count();
+        let mut signature_complete = open_parens > 0
+            && open_parens == close_parens
+            && (line.trim_end().ends_with(':') || line.trim_end().ends_with("..."));
+        let mut end = lines.len();
+        for (next_index, next) in lines.iter().enumerate().skip(index + 1) {
+            if signature_complete && !next.trim().is_empty() && indentation(next) == 0 {
+                end = next_index;
+                break;
+            }
+            if !signature_complete {
+                open_parens += next.matches('(').count();
+                close_parens += next.matches(')').count();
+                signature_complete = open_parens > 0
+                    && open_parens == close_parens
+                    && (next.trim_end().ends_with(':') || next.trim_end().ends_with("..."));
+            }
+        }
+        candidates.push(DefinitionCandidate {
+            module: module.to_string(),
+            qualname: name.to_string(),
+            definition: deindent_definition(&lines[index..end], 0),
+            kind: DefinitionKind::Function,
+        });
+    }
+
+    candidates
+}
+
+fn collect_definitions(module: &str, content: &str) -> Vec<DefinitionCandidate> {
+    let mut definitions = collect_class_definitions(module, content);
+    definitions.extend(collect_function_definitions(module, content));
+    definitions
 }
 
 /// Parse a .pyi file to extract class and function names.
@@ -318,6 +657,7 @@ fn load_guides(guides_dir: &Path) -> (Vec<GuideEntry>, HashMap<String, String>) 
 
     for (name, path) in md_files {
         if let Ok(content) = std::fs::read_to_string(&path) {
+            let content = strip_html_comments(&content);
             let (title, description) = parse_guide_header(&content);
             entries.push(GuideEntry {
                 name: name.clone(),
@@ -331,15 +671,34 @@ fn load_guides(guides_dir: &Path) -> (Vec<GuideEntry>, HashMap<String, String>) 
     (entries, contents)
 }
 
+/// Remove source-only HTML comments before Markdown is exposed to MCP clients.
+fn strip_html_comments(content: &str) -> String {
+    let mut output = String::with_capacity(content.len());
+    let mut remaining = content;
+
+    while let Some(start) = remaining.find("<!--") {
+        output.push_str(&remaining[..start]);
+        remaining = &remaining[start + "<!--".len()..];
+        let Some(end) = remaining.find("-->") else {
+            return output;
+        };
+        remaining = &remaining[end + "-->".len()..];
+    }
+
+    output.push_str(remaining);
+    output
+}
+
 /// Parse a guide's first heading and first paragraph for index display.
 pub(crate) fn parse_guide_header(content: &str) -> (String, String) {
     let mut title = String::new();
-    let mut description = String::new();
+    let mut description_lines = Vec::new();
+    let mut description_started = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            if !title.is_empty() && !description.is_empty() {
+            if description_started {
                 break;
             }
             continue;
@@ -348,41 +707,16 @@ pub(crate) fn parse_guide_header(content: &str) -> (String, String) {
             if let Some(heading) = trimmed.strip_prefix("# ") {
                 title = heading.to_string();
             }
-        } else if description.is_empty() && !trimmed.starts_with('#') {
-            description = trimmed.to_string();
+        } else if !trimmed.starts_with('#') {
+            description_started = true;
+            description_lines.push(trimmed);
         }
     }
 
     if title.is_empty() {
         title = "Untitled".to_string();
     }
-    (title, description)
-}
-
-/// Extract a class definition (class line through next class/end of file)
-fn extract_class_definition(content: &str, class_name: &str) -> Option<String> {
-    let lines: Vec<&str> = content.lines().collect();
-    let class_prefix = format!("class {class_name}");
-
-    let start = lines.iter().position(|line| {
-        let trimmed = line.trim();
-        trimmed.starts_with(&class_prefix) && trimmed[class_prefix.len()..].starts_with(['(', ':'])
-    })?;
-
-    let mut end = lines.len();
-    for (i, line) in lines.iter().enumerate().skip(start + 1) {
-        let trimmed = line.trim();
-        // Next top-level class or function definition
-        if (trimmed.starts_with("class ") || trimmed.starts_with("def "))
-            && !line.starts_with(' ')
-            && !line.starts_with('\t')
-        {
-            end = i;
-            break;
-        }
-    }
-
-    Some(lines[start..end].join("\n"))
+    (title, description_lines.join(" "))
 }
 
 /// Parse a raw class definition into structured JSON with separate sections.
@@ -392,11 +726,15 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
     let lines: Vec<&str> = raw.lines().collect();
 
     let class_header = lines.first().map(|s| s.trim()).unwrap_or("").to_string();
+    let class_indent = lines.first().map(|line| indentation(line)).unwrap_or(0);
+    let member_indent = class_indent + 4;
 
     let mut constructor: Option<String> = None;
     let mut static_methods: Vec<String> = Vec::new();
     let mut properties: Vec<serde_json::Value> = Vec::new();
+    let mut class_attributes: Vec<serde_json::Value> = Vec::new();
     let mut methods: Vec<String> = Vec::new();
+    let mut variants: Vec<serde_json::Value> = Vec::new();
 
     // State machine to parse .pyi stub members
     let mut i = 1; // skip class line
@@ -409,6 +747,7 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
 
     while i < lines.len() {
         let trimmed = lines[i].trim();
+        let line_indent = indentation(lines[i]);
 
         // Track triple-quoted docstring blocks
         let triple_count = trimmed.matches("\"\"\"").count();
@@ -426,6 +765,28 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
             continue;
         }
         // triple_count == 0 or 2 (single-line docstring like """text""") — not in docstring
+
+        if !trimmed.is_empty() && line_indent == member_indent && class_name(lines[i]).is_some() {
+            let end = lines
+                .iter()
+                .enumerate()
+                .skip(i + 1)
+                .find(|(_, next)| !next.trim().is_empty() && indentation(next) <= member_indent)
+                .map(|(next_index, _)| next_index)
+                .unwrap_or(lines.len());
+            let nested = deindent_definition(&lines[i..end], member_indent);
+            variants.push(format_class_structured(&nested));
+            i = end;
+            next_is_static = false;
+            next_is_property = false;
+            next_is_setter = false;
+            continue;
+        }
+
+        if !trimmed.is_empty() && line_indent != member_indent {
+            i += 1;
+            continue;
+        }
 
         if trimmed == "@staticmethod" {
             next_is_static = true;
@@ -517,20 +878,28 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
             if let Some(colon_pos) = trimmed.find(':') {
                 let attr_name = trimmed[..colon_pos].trim();
                 let attr_type = trimmed[colon_pos + 1..].trim().to_string();
+                let classvar_type = attr_type
+                    .strip_prefix("ClassVar[")
+                    .and_then(|value| value.strip_suffix(']'));
                 if !attr_name.is_empty()
                     && !attr_name.starts_with('_')
                     && attr_name.chars().all(|c| c.is_alphanumeric() || c == '_')
                     && !attr_name.starts_with(|c: char| c.is_ascii_digit())
-                    && !attr_type.starts_with("ClassVar")
-                    && !property_names.contains_key(attr_name)
                 {
-                    let idx = properties.len();
-                    property_names.insert(attr_name.to_string(), idx);
-                    properties.push(serde_json::json!({
-                        "name": attr_name,
-                        "type": attr_type,
-                        "readonly": false,
-                    }));
+                    if let Some(value_type) = classvar_type {
+                        class_attributes.push(serde_json::json!({
+                            "name": attr_name,
+                            "type": value_type,
+                        }));
+                    } else if attr_type != "ClassVar" && !property_names.contains_key(attr_name) {
+                        let idx = properties.len();
+                        property_names.insert(attr_name.to_string(), idx);
+                        properties.push(serde_json::json!({
+                            "name": attr_name,
+                            "type": attr_type,
+                            "readonly": false,
+                        }));
+                    }
                 }
             }
         }
@@ -541,9 +910,111 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
     serde_json::json!({
         "class": class_header,
         "constructor": constructor,
+        "documentation": extract_class_docstring(raw),
         "static_methods": static_methods,
+        "class_attributes": class_attributes,
         "properties": properties,
         "methods": methods,
+        "variants": variants,
+    })
+}
+
+fn extract_class_docstring(raw: &str) -> Option<String> {
+    let lines = raw.lines().collect::<Vec<_>>();
+    let member_indent = lines.first().map(|line| indentation(line) + 4)?;
+
+    for (index, line) in lines.iter().enumerate().skip(1) {
+        if line.trim().is_empty() || indentation(line) != member_indent {
+            continue;
+        }
+        let trimmed = line.trim();
+        if !trimmed.starts_with("\"\"\"") && !trimmed.starts_with("'''") {
+            return None;
+        }
+        let definition = format!("\n{}", lines[index..].join("\n"));
+        return extract_docstring(&definition);
+    }
+
+    None
+}
+
+fn extract_docstring(raw: &str) -> Option<String> {
+    let lines = raw.lines().collect::<Vec<_>>();
+
+    for (index, line) in lines.iter().enumerate().skip(1) {
+        let trimmed = line.trim();
+        let delimiter = if trimmed.starts_with("\"\"\"") {
+            "\"\"\""
+        } else if trimmed.starts_with("'''") {
+            "'''"
+        } else {
+            continue;
+        };
+        let first = trimmed.trim_start_matches(delimiter);
+        if let Some(end) = first.find(delimiter) {
+            return Some(first[..end].trim().to_string());
+        }
+
+        let mut parts = Vec::new();
+        if !first.trim().is_empty() {
+            parts.push(first.trim());
+        }
+        for continuation in lines.iter().skip(index + 1) {
+            let continuation = continuation.trim();
+            if let Some(end) = continuation.find(delimiter) {
+                if !continuation[..end].trim().is_empty() {
+                    parts.push(continuation[..end].trim());
+                }
+                return Some(parts.join(" "));
+            }
+            if !continuation.is_empty() {
+                parts.push(continuation);
+            }
+        }
+    }
+
+    None
+}
+
+fn format_function_structured(raw: &str) -> serde_json::Value {
+    let lines = raw.lines().collect::<Vec<_>>();
+    let mut header = lines
+        .first()
+        .map(|line| line.trim().to_string())
+        .unwrap_or_default();
+
+    for continuation in lines.iter().skip(1) {
+        let open_parens = header.matches('(').count();
+        let close_parens = header.matches(')').count();
+        if open_parens > 0
+            && open_parens == close_parens
+            && (header.ends_with(':') || header.ends_with("..."))
+        {
+            break;
+        }
+        header.push(' ');
+        header.push_str(continuation.trim());
+    }
+
+    let header = header
+        .trim_end_matches(": ...")
+        .trim_end_matches(" ...")
+        .trim_end_matches(':')
+        .trim();
+    let signature = header.strip_prefix("def ").unwrap_or(header);
+    let parameters = signature
+        .find('(')
+        .zip(signature.rfind(')'))
+        .map(|(start, end)| signature[start..=end].to_string())
+        .unwrap_or_default();
+
+    serde_json::json!({
+        "kind": "function",
+        "function": header,
+        "signature": signature,
+        "parameters": parameters,
+        "return_type": extract_return_type(signature),
+        "documentation": extract_docstring(raw),
     })
 }
 
@@ -757,43 +1228,6 @@ class GameState(Resource): ...
     }
 
     #[test]
-    fn extract_class_definition_found() {
-        let content = "\
-class Foo(Bar):
-    x: int
-    def method(self): ...
-
-class Baz:
-    pass
-";
-        let result = extract_class_definition(content, "Foo").unwrap();
-        assert!(result.starts_with("class Foo(Bar):"));
-        assert!(result.contains("def method"));
-        assert!(!result.contains("class Baz"));
-    }
-
-    #[test]
-    fn extract_class_definition_not_found() {
-        let content = "class Foo:\n    pass\n";
-        assert!(extract_class_definition(content, "NotHere").is_none());
-    }
-
-    #[test]
-    fn extract_class_definition_last_class() {
-        let content = "\
-class First:
-    pass
-
-class Last:
-    x: int
-    y: float
-";
-        let result = extract_class_definition(content, "Last").unwrap();
-        assert!(result.starts_with("class Last:"));
-        assert!(result.contains("y: float"));
-    }
-
-    #[test]
     fn extract_constructor_display_with_params() {
         let sig = "__init__(self, x: float, y: float) -> None";
         assert_eq!(extract_constructor_display(sig), "(x: float, y: float)");
@@ -827,6 +1261,15 @@ class Last:
         let (title, desc) = parse_guide_header(content);
         assert_eq!(title, "My Guide");
         assert_eq!(desc, "This is the description.");
+    }
+
+    #[test]
+    fn parse_guide_header_joins_the_first_complete_paragraph() {
+        let content =
+            "# My Guide\n\nThis description wraps\nacross physical lines.\n\nMore content.\n";
+        let (title, desc) = parse_guide_header(content);
+        assert_eq!(title, "My Guide");
+        assert_eq!(desc, "This description wraps across physical lines.");
     }
 
     #[test]
@@ -878,7 +1321,7 @@ class Sprite(Component):
     flip_y: bool
     custom_size: tuple[float, float] | None
     def __init__(self, image: Handle[Image]) -> None: ...
-    def as_asset_id(self) -> Handle[Image]: ...
+    def as_asset_id(self) -> AssetId[Image]: ...
 ";
         let result = format_class_structured(raw);
         let props = result["properties"].as_array().unwrap();
@@ -950,6 +1393,21 @@ class Transform(Component):
         assert!(names.contains(&"rotation"));
         assert!(names.contains(&"scale"));
         assert!(!names.contains(&"IDENTITY"));
+        assert_eq!(result["class_attributes"][0]["name"], "IDENTITY");
+        assert_eq!(result["class_attributes"][0]["type"], "Transform");
+    }
+
+    #[test]
+    fn format_class_structured_includes_class_docstring() {
+        let raw = r#"class Plugin:
+    """Custom plugins require the @plugin decorator."""
+    def build(self, app: App) -> None: ...
+"#;
+        let result = format_class_structured(raw);
+        assert_eq!(
+            result["documentation"],
+            "Custom plugins require the @plugin decorator."
+        );
     }
 
     #[test]
@@ -1000,6 +1458,31 @@ class Color:
         let statics = result["static_methods"].as_array().unwrap();
         assert_eq!(statics.len(), 1);
         assert!(statics[0].as_str().unwrap().contains("linear_rgb"));
+    }
+
+    #[test]
+    fn format_class_structured_keeps_nested_variants_out_of_base_constructor() {
+        let raw = r#"class Projection(Component):
+    class Perspective(Projection):
+        value: PerspectiveProjection
+        def __init__(self, value: PerspectiveProjection) -> None: ...
+
+    class Orthographic(Projection):
+        value: OrthographicProjection
+        def __init__(self, value: OrthographicProjection) -> None: ...
+
+    def is_perspective(self) -> bool: ...
+"#;
+
+        let result = format_class_structured(raw);
+
+        assert!(result["constructor"].is_null());
+        let variants = result["variants"].as_array().unwrap();
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0]["class"], "class Perspective(Projection):");
+        assert_eq!(variants[0]["constructor"], "(value: PerspectiveProjection)");
+        assert_eq!(variants[1]["class"], "class Orthographic(Projection):");
+        assert_eq!(result["methods"][0], "def is_perspective(self) -> bool");
     }
 
     #[test]
@@ -1118,6 +1601,33 @@ class Bloom(Component):
     }
 
     #[test]
+    fn package_init_stub_uses_the_package_module_name() {
+        let dir = std::env::temp_dir().join("pybevy_test_api_package_index");
+        let _ = fs::remove_dir_all(&dir);
+        let ecs_dir = dir.join("ecs");
+        fs::create_dir_all(&ecs_dir).unwrap();
+        fs::write(
+            ecs_dir.join("__init__.pyi"),
+            "class World:\n    def spawn_empty(self) -> None: ...\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+
+        assert!(index.contents.contains_key("ecs"));
+        assert!(!index.contents.contains_key("ecs.__init__"));
+        assert!(index.get_module_content("ecs").is_some());
+        assert!(index.get_type_definition("ecs.World").is_some());
+        assert!(index.get_type_definition("pybevy.ecs.World").is_some());
+
+        let definition = index.get_type_definition_structured("ecs.World").unwrap();
+        assert_eq!(definition["module"], "ecs");
+        assert_eq!(definition["type_name"], "pybevy.ecs.World");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn api_index_search_case_insensitive() {
         let dir = std::env::temp_dir().join("pybevy_test_search");
         let _ = fs::remove_dir_all(&dir);
@@ -1190,6 +1700,136 @@ class Bloom(Component):
     }
 
     #[test]
+    fn api_index_gets_structured_function_definitions() {
+        let dir = std::env::temp_dir().join("pybevy_test_function_definition");
+        let _ = fs::remove_dir_all(&dir);
+        let material_dir = dir.join("material");
+        fs::create_dir_all(&material_dir).unwrap();
+        fs::write(
+            material_dir.join("__init__.pyi"),
+            r#"
+"""Module documentation mentioning an example:
+def fake_material(): ...
+"""
+
+def material(
+    fragment_shader: str | None = None,
+    *,
+    unlit: bool | None = None,
+) -> Callable[[type], type]:
+    """Decorator to define a custom shader material."""
+"#,
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        assert!(index.get_type_definition("fake_material").is_none());
+        let raw = index.get_type_definition("material.material").unwrap();
+        assert!(raw.contains("fragment_shader: str | None = None"));
+
+        let definition = index
+            .get_type_definition_structured("pybevy.material.material")
+            .unwrap();
+        assert_eq!(definition["kind"], "function");
+        assert_eq!(definition["type_name"], "pybevy.material.material");
+        assert_eq!(definition["module"], "material");
+        assert_eq!(definition["return_type"], "Callable[[type], type]");
+        assert_eq!(
+            definition["documentation"],
+            "Decorator to define a custom shader material."
+        );
+        assert!(
+            definition["signature"]
+                .as_str()
+                .unwrap()
+                .contains("unlit: bool | None = None")
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_type_lookup_is_qualified_and_reports_ambiguity() {
+        let dir = std::env::temp_dir().join("pybevy_test_qualified_typedef");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("camera.pyi"),
+            r#"class RenderTarget(Component):
+    class Image(RenderTarget):
+        handle: Handle[Image]
+        def __init__(self, handle: Handle[Image]) -> None: ...
+
+    class Window(RenderTarget):
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
+
+    def normalize(self) -> RenderTarget: ...
+
+class NormalizedRenderTarget:
+    class Image(NormalizedRenderTarget):
+        handle: Handle[Image]
+        def __init__(self, handle: Handle[Image]) -> None: ...
+
+class Shared:
+    source: str
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("image.pyi"),
+            "class Image(Asset):\n    width: int\n    def __init__(self, width: int) -> None: ...\n\nclass Shared:\n    source: str\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+
+        let image = index.get_type_definition_structured("Image").unwrap();
+        assert_eq!(image["type_name"], "pybevy.image.Image");
+        assert_eq!(image["constructor"], "(width: int)");
+
+        let ambiguous = index.get_type_definition_structured("Shared").unwrap();
+        assert_eq!(ambiguous["error"], "ambiguous_type_name");
+        assert_eq!(
+            ambiguous["candidates"],
+            serde_json::json!(["pybevy.camera.Shared", "pybevy.image.Shared"])
+        );
+
+        let asset = index
+            .get_type_definition_structured("pybevy.image.Image")
+            .unwrap();
+        assert_eq!(asset["type_name"], "pybevy.image.Image");
+        assert_eq!(asset["constructor"], "(width: int)");
+
+        let variant = index
+            .get_type_definition_structured("camera.RenderTarget.Image")
+            .unwrap();
+        assert_eq!(variant["type_name"], "pybevy.camera.RenderTarget.Image");
+        assert_eq!(variant["constructor"], "(handle: Handle[Image])");
+
+        let normalized_variant = index
+            .get_type_definition_structured("camera.NormalizedRenderTarget.Image")
+            .unwrap();
+        assert_eq!(
+            normalized_variant["type_name"],
+            "pybevy.camera.NormalizedRenderTarget.Image"
+        );
+
+        let base = index
+            .get_type_definition_structured("RenderTarget")
+            .unwrap();
+        assert_eq!(base["type_name"], "pybevy.camera.RenderTarget");
+        assert!(base["constructor"].is_null());
+        assert_eq!(base["variants"].as_array().unwrap().len(), 2);
+
+        let raw_ambiguity = index.get_type_definition("Shared").unwrap();
+        assert!(raw_ambiguity.contains("Ambiguous type name"));
+        assert!(raw_ambiguity.contains("pybevy.image.Shared"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn api_index_guides() {
         let dir = std::env::temp_dir().join("pybevy_test_guides");
         let _ = fs::remove_dir_all(&dir);
@@ -1198,7 +1838,7 @@ class Bloom(Component):
 
         fs::write(
             guides_dir.join("camera.md"),
-            "# Camera Guide\n\nHow to set up cameras.\n",
+            "# Camera Guide\n\n<!-- source-only directive -->\nHow to set up cameras.\n",
         )
         .unwrap();
 
@@ -1210,10 +1850,19 @@ class Bloom(Component):
 
         let content = index.get_guide("camera").unwrap();
         assert!(content.contains("# Camera Guide"));
+        assert!(!content.contains("source-only directive"));
 
         assert!(index.get_guide("nonexistent").is_none());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn html_comments_are_removed_from_published_markdown() {
+        let content = "before<!-- one line -->middle<!-- pybevy-snippet: smoke\nfrom pybevy.prelude import *\n-->after";
+        assert_eq!(strip_html_comments(content), "beforemiddleafter");
+
+        assert_eq!(strip_html_comments("visible<!-- unfinished"), "visible");
     }
 
     #[test]
@@ -1233,10 +1882,10 @@ class Bloom(Component):
         .unwrap();
         // .py file that has a .pyi counterpart (should be skipped)
         fs::write(dir.join("math.py"), "class Vec3Impl:\n    pass\n").unwrap();
-        // __init__.py should be skipped
+        // __init__.py should provide public aliases without becoming a module entry
         fs::write(
             contrib_dir.join("__init__.py"),
-            "from .orbit_camera import *\n",
+            "from .orbit_camera import OrbitCamera, OrbitCameraPlugin as CameraPlugin\n",
         )
         .unwrap();
 
@@ -1267,10 +1916,55 @@ class Bloom(Component):
         );
         assert_eq!(total, results.len());
 
+        let orbit_camera = index
+            .get_type_definition_structured("contrib.OrbitCamera")
+            .unwrap();
+        assert_eq!(
+            orbit_camera["type_name"],
+            "pybevy.contrib.orbit_camera.OrbitCamera"
+        );
+        let camera_plugin = index
+            .get_type_definition_structured("pybevy.contrib.CameraPlugin")
+            .unwrap();
+        assert_eq!(
+            camera_plugin["type_name"],
+            "pybevy.contrib.orbit_camera.OrbitCameraPlugin"
+        );
+
         // __init__.py should not be indexed
         assert!(!index.contents.contains_key("contrib.__init__"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn package_reexports_parse_parenthesized_multiline_imports() {
+        let content = "\
+from .orbit_camera import (
+    OrbitCamera,
+    OrbitCameraPlugin as CameraPlugin,  # alias
+)
+from .grid import (GridPlugin,)
+from .single import Simple
+";
+        let aliases = parse_package_reexports("contrib", content);
+
+        assert_eq!(
+            aliases.get("contrib.OrbitCamera"),
+            Some(&"contrib.orbit_camera.OrbitCamera".to_string())
+        );
+        assert_eq!(
+            aliases.get("contrib.CameraPlugin"),
+            Some(&"contrib.orbit_camera.OrbitCameraPlugin".to_string())
+        );
+        assert_eq!(
+            aliases.get("contrib.GridPlugin"),
+            Some(&"contrib.grid.GridPlugin".to_string())
+        );
+        assert_eq!(
+            aliases.get("contrib.Simple"),
+            Some(&"contrib.single.Simple".to_string())
+        );
     }
 
     #[test]
