@@ -6,6 +6,7 @@ pub mod cubic_splines;
 pub mod dir2;
 pub mod dir3;
 pub mod easing;
+pub mod float_ord;
 pub mod ivec2;
 pub mod mat3;
 pub mod mat3a;
@@ -36,6 +37,7 @@ pub mod prelude {
         dir2::PyDir2,
         dir3::PyDir3,
         easing::{PyEaseFunction, PyJumpAt},
+        float_ord::PyFloatOrd,
         ivec2::PyIVec2,
         mat3::PyMat3,
         mat3a::PyMat3A,
@@ -99,6 +101,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<compass::PyCompassQuadrant>()?;
     m.add_class::<easing::PyJumpAt>()?;
     m.add_class::<easing::PyEaseFunction>()?;
+    m.add_class::<float_ord::PyFloatOrd>()?;
     m.add_class::<torus_kind::PyTorusKind>()?;
     m.add_class::<winding_order::PyWindingOrder>()?;
     // Primitives

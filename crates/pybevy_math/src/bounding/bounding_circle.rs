@@ -2,7 +2,7 @@ use bevy::math::{
     Vec2,
     bounding::{BoundingCircle, BoundingVolume, IntersectsVolume},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
 use super::aabb2d::PyAabb2d;
@@ -56,12 +56,12 @@ impl PyBoundingCircle {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&BoundingCircle> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, BoundingCircle>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut BoundingCircle> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, BoundingCircle>> {
         Ok(self.storage.as_mut()?)
     }
 
@@ -76,19 +76,21 @@ impl PyBoundingCircle {
 #[pymethods]
 impl PyBoundingCircle {
     #[new]
-    pub fn new(center: PyVec2, radius: f32) -> Self {
-        let center_vec: Vec2 = center.into();
-        PyBoundingCircle::from_bounding_circle(BoundingCircle::new(center_vec, radius))
+    pub fn new(center: PyVec2, radius: f32) -> PyResult<Self> {
+        let center_vec: Vec2 = center.try_into()?;
+        Ok(PyBoundingCircle::from_bounding_circle(BoundingCircle::new(
+            center_vec, radius,
+        )))
     }
 
     #[getter]
     pub fn center(&self) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(self.as_ref()?.center))
+        Ok(self.storage.borrow_field_as(|c| &c.center)?)
     }
 
     #[setter]
     pub fn set_center(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.center = value.into();
+        self.as_mut()?.center = value.try_into()?;
         Ok(())
     }
 
@@ -97,7 +99,7 @@ impl PyBoundingCircle {
     }
 
     pub fn closest_point(&self, point: PyVec2) -> PyResult<PyVec2> {
-        let point_vec: Vec2 = point.into();
+        let point_vec: Vec2 = point.try_into()?;
         Ok(PyVec2::from_vec2(self.as_ref()?.closest_point(point_vec)))
     }
 
@@ -157,7 +159,10 @@ impl PyBoundingCircle {
         use bevy::math::Isometry2d;
 
         let iso: Isometry2d = isometry.into();
-        let point_refs: Vec<Vec2> = points.into_iter().map(|p| p.into()).collect();
+        let point_refs: Vec<Vec2> = points
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
 
         Ok(PyBoundingCircle::from_bounding_circle(
             BoundingCircle::from_point_cloud(iso, &point_refs),

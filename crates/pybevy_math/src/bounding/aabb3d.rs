@@ -3,142 +3,163 @@ use bevy::math::{
     bounding::{Aabb3d, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 use super::bounding_sphere::PyBoundingSphere;
-use crate::vec3::PyVec3;
+use crate::{
+    vec3::PyVec3,
+    vec3a::{PyVec3A, extract_vec3a_from_any},
+};
 
+#[pyvalue(bevy::math::Isometry3d)]
 #[pyclass(name = "Isometry3d", eq, from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PyIsometry3d {
-    rotation: bevy::math::Quat,
-    translation: Vec3A,
+    pub(crate) storage: ValueStorage<bevy::math::Isometry3d>,
 }
 
-impl From<PyIsometry3d> for bevy::math::Isometry3d {
-    fn from(iso: PyIsometry3d) -> Self {
-        bevy::math::Isometry3d::new(iso.translation, iso.rotation)
+impl PartialEq for PyIsometry3d {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.to_bevy(), other.to_bevy()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl TryFrom<PyIsometry3d> for bevy::math::Isometry3d {
+    type Error = PyErr;
+
+    fn try_from(iso: PyIsometry3d) -> PyResult<Self> {
+        Ok(iso.storage.get()?)
+    }
+}
+
+impl TryFrom<&PyIsometry3d> for bevy::math::Isometry3d {
+    type Error = PyErr;
+
+    fn try_from(iso: &PyIsometry3d) -> PyResult<Self> {
+        Ok(iso.storage.get()?)
     }
 }
 
 impl From<bevy::math::Isometry3d> for PyIsometry3d {
     fn from(iso: bevy::math::Isometry3d) -> Self {
-        PyIsometry3d {
-            rotation: iso.rotation,
-            translation: iso.translation,
-        }
+        PyIsometry3d::from_owned(iso)
     }
 }
 
 #[pymethods]
 impl PyIsometry3d {
     #[new]
-    #[pyo3(signature = (translation = PyVec3::ZERO, rotation = crate::quat::PyQuat::IDENTITY))]
-    pub fn new(translation: PyVec3, rotation: crate::quat::PyQuat) -> Self {
-        let t: Vec3 = translation.into();
-        PyIsometry3d {
-            rotation: rotation.into(),
-            translation: Vec3A::from(t),
-        }
+    #[pyo3(signature = (translation = None, rotation = crate::quat::PyQuat::IDENTITY))]
+    pub fn new(
+        translation: Option<&Bound<'_, PyAny>>,
+        rotation: crate::quat::PyQuat,
+    ) -> PyResult<Self> {
+        let t = match translation {
+            Some(obj) => extract_vec3a_from_any(obj)?,
+            None => Vec3A::ZERO,
+        };
+        Ok(PyIsometry3d::from_owned(bevy::math::Isometry3d::new(
+            t,
+            rotation.try_into()?,
+        )))
     }
 
     #[classattr]
     #[pyo3(name = "IDENTITY")]
     fn identity() -> Self {
-        PyIsometry3d {
-            rotation: bevy::math::Quat::IDENTITY,
-            translation: Vec3A::ZERO,
-        }
+        PyIsometry3d::from_owned(bevy::math::Isometry3d::IDENTITY)
     }
 
     #[staticmethod]
-    pub fn from_rotation(rotation: crate::quat::PyQuat) -> Self {
-        PyIsometry3d {
-            rotation: rotation.into(),
-            translation: Vec3A::ZERO,
-        }
+    pub fn from_rotation(rotation: crate::quat::PyQuat) -> PyResult<Self> {
+        Ok(PyIsometry3d::from_owned(
+            bevy::math::Isometry3d::from_rotation(rotation.try_into()?),
+        ))
     }
 
     #[staticmethod]
-    pub fn from_translation(translation: PyVec3) -> Self {
-        let t: Vec3 = translation.into();
-        PyIsometry3d {
-            rotation: bevy::math::Quat::IDENTITY,
-            translation: Vec3A::from(t),
-        }
+    pub fn from_translation(translation: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let t = extract_vec3a_from_any(translation)?;
+        Ok(PyIsometry3d::from_owned(
+            bevy::math::Isometry3d::from_translation(t),
+        ))
     }
 
     #[staticmethod]
     pub fn from_xyz(x: f32, y: f32, z: f32) -> Self {
-        PyIsometry3d {
-            rotation: bevy::math::Quat::IDENTITY,
-            translation: Vec3A::new(x, y, z),
-        }
+        PyIsometry3d::from_owned(bevy::math::Isometry3d::from_xyz(x, y, z))
     }
 
     #[getter]
-    pub fn translation(&self) -> PyVec3 {
-        let v: Vec3 = self.translation.into();
-        v.into()
+    pub fn translation(&self) -> PyResult<PyVec3A> {
+        Ok(self.storage.borrow_field_as(|i| &i.translation)?)
     }
 
     #[setter]
-    pub fn set_translation(&mut self, value: PyVec3) {
-        self.translation = Vec3A::from(Vec3::from(value));
+    pub fn set_translation(&mut self, value: PyVec3A) -> PyResult<()> {
+        self.storage.as_mut()?.translation = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
-    pub fn rotation(&self) -> crate::quat::PyQuat {
-        self.rotation.into()
+    pub fn rotation(&self) -> PyResult<crate::quat::PyQuat> {
+        Ok(self.storage.borrow_field_as(|i| &i.rotation)?)
     }
 
     #[setter]
-    pub fn set_rotation(&mut self, value: crate::quat::PyQuat) {
-        self.rotation = value.into();
+    pub fn set_rotation(&mut self, value: crate::quat::PyQuat) -> PyResult<()> {
+        self.storage.as_mut()?.rotation = value.try_into()?;
+        Ok(())
     }
 
-    pub fn inverse(&self) -> Self {
-        let inv_rot = self.rotation.inverse();
-        PyIsometry3d {
-            rotation: inv_rot,
-            translation: inv_rot * -self.translation,
-        }
+    pub fn inverse(&self) -> PyResult<Self> {
+        Ok(PyIsometry3d::from_owned(self.to_bevy()?.inverse()))
     }
 
-    pub fn inverse_mul(&self, rhs: &PyIsometry3d) -> Self {
-        let inv_rot = self.rotation.inverse();
-        let delta_translation = rhs.translation - self.translation;
-        PyIsometry3d {
-            rotation: inv_rot * rhs.rotation,
-            translation: inv_rot * delta_translation,
-        }
+    pub fn inverse_mul(&self, rhs: &PyIsometry3d) -> PyResult<Self> {
+        Ok(PyIsometry3d::from_owned(
+            self.to_bevy()?.inverse_mul(rhs.to_bevy()?),
+        ))
     }
 
-    pub fn transform_point(&self, point: PyVec3) -> PyVec3 {
-        let p: Vec3 = point.into();
-        let result: Vec3 = (self.rotation * Vec3A::from(p) + self.translation).into();
-        result.into()
+    pub fn transform_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+        let p = extract_vec3a_from_any(point)?;
+        let result: Vec3 = self.to_bevy()?.transform_point(p).into();
+        Ok(result.into())
     }
 
-    pub fn inverse_transform_point(&self, point: PyVec3) -> PyVec3 {
-        let p: Vec3 = point.into();
-        let result: Vec3 = (self.rotation.inverse() * (Vec3A::from(p) - self.translation)).into();
-        result.into()
+    pub fn inverse_transform_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+        let p = extract_vec3a_from_any(point)?;
+        let result: Vec3 = self.to_bevy()?.inverse_transform_point(p).into();
+        Ok(result.into())
     }
 
-    fn __repr__(&self) -> String {
-        let t: Vec3 = self.translation.into();
-        format!(
-            "Isometry3d(translation=Vec3({}, {}, {}), rotation=Quat({}, {}, {}, {}))",
-            t.x, t.y, t.z, self.rotation.x, self.rotation.y, self.rotation.z, self.rotation.w
-        )
+    fn __repr__(&self) -> PyResult<String> {
+        let iso = self.to_bevy()?;
+        let t = iso.translation;
+        let r = iso.rotation;
+        Ok(format!(
+            "Isometry3d(translation=Vec3A({}, {}, {}), rotation=Quat({}, {}, {}, {}))",
+            t.x, t.y, t.z, r.x, r.y, r.z, r.w
+        ))
     }
 }
 
+#[pyvalue]
 #[pyclass(name = "Aabb3d", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAabb3d {
     storage: ValueStorage<Aabb3d>,
+}
+
+impl PyAabb3d {
+    pub fn try_to_bevy(&self) -> PyResult<Aabb3d> {
+        Ok(self.storage.get()?)
+    }
 }
 
 impl From<PyAabb3d> for Aabb3d {
@@ -164,32 +185,7 @@ impl From<&PyAabb3d> for Aabb3d {
 impl From<Aabb3d> for PyAabb3d {
     #[inline(always)]
     fn from(aabb: Aabb3d) -> Self {
-        PyAabb3d::from_aabb3d(aabb)
-    }
-}
-
-impl FromBorrowedStorage<ValueStorage<Aabb3d>> for PyAabb3d {
-    fn from_borrowed(storage: ValueStorage<Aabb3d>) -> Self {
-        PyAabb3d { storage }
-    }
-}
-
-impl PyAabb3d {
-    #[inline(always)]
-    pub fn from_aabb3d(aabb: Aabb3d) -> Self {
-        PyAabb3d {
-            storage: ValueStorage::owned(aabb),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Aabb3d> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Aabb3d> {
-        Ok(self.storage.as_mut()?)
+        PyAabb3d::from_owned(aabb)
     }
 }
 
@@ -197,44 +193,40 @@ impl PyAabb3d {
 impl PyAabb3d {
     #[new]
     #[pyo3(signature = (center, half_size))]
-    pub fn new(center: PyVec3, half_size: PyVec3) -> Self {
-        let center_vec: Vec3 = center.into();
-        let half_size_vec: Vec3 = half_size.into();
-        PyAabb3d::from_aabb3d(Aabb3d::new(
-            Vec3A::from(center_vec),
-            Vec3A::from(half_size_vec),
-        ))
+    pub fn new(center: &Bound<'_, PyAny>, half_size: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(PyAabb3d::from_owned(Aabb3d::new(
+            extract_vec3a_from_any(center)?,
+            extract_vec3a_from_any(half_size)?,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_min_max(min: PyVec3, max: PyVec3) -> Self {
-        let min_vec: Vec3 = min.into();
-        let max_vec: Vec3 = max.into();
-        PyAabb3d::from_aabb3d(Aabb3d::from_min_max(
-            Vec3A::from(min_vec),
-            Vec3A::from(max_vec),
-        ))
+    pub fn from_min_max(min: &Bound<'_, PyAny>, max: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(PyAabb3d::from_owned(Aabb3d::from_min_max(
+            extract_vec3a_from_any(min)?,
+            extract_vec3a_from_any(max)?,
+        )))
     }
 
     #[getter]
-    pub fn min(&self) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.min.into()))
+    pub fn min(&self) -> PyResult<PyVec3A> {
+        Ok(self.storage.borrow_field_as(|a| &a.min)?)
     }
 
     #[setter]
-    pub fn set_min(&mut self, value: PyVec3) -> PyResult<()> {
-        self.as_mut()?.min = Vec3::from(value).into();
+    pub fn set_min(&mut self, value: PyVec3A) -> PyResult<()> {
+        self.as_mut()?.min = value.try_into()?;
         Ok(())
     }
 
     #[getter]
-    pub fn max(&self) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.max.into()))
+    pub fn max(&self) -> PyResult<PyVec3A> {
+        Ok(self.storage.borrow_field_as(|a| &a.max)?)
     }
 
     #[setter]
-    pub fn set_max(&mut self, value: PyVec3) -> PyResult<()> {
-        self.as_mut()?.max = Vec3::from(value).into();
+    pub fn set_max(&mut self, value: PyVec3A) -> PyResult<()> {
+        self.as_mut()?.max = value.try_into()?;
         Ok(())
     }
 
@@ -246,10 +238,10 @@ impl PyAabb3d {
         Ok(PyVec3::from_vec3(self.as_ref()?.half_size().into()))
     }
 
-    pub fn closest_point(&self, point: PyVec3) -> PyResult<PyVec3> {
-        let point_vec: Vec3 = point.into();
+    pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+        let point = extract_vec3a_from_any(point)?;
         Ok(PyVec3::from_vec3(
-            self.as_ref()?.closest_point(Vec3A::from(point_vec)).into(),
+            self.as_ref()?.closest_point(point).into(),
         ))
     }
 
@@ -260,27 +252,23 @@ impl PyAabb3d {
 
     pub fn merge(&self, other: &PyAabb3d) -> PyResult<PyAabb3d> {
         let other_aabb: Aabb3d = other.into();
-        Ok(PyAabb3d::from_aabb3d(self.as_ref()?.merge(&other_aabb)))
+        Ok(PyAabb3d::from_owned(self.as_ref()?.merge(&other_aabb)))
     }
 
-    pub fn grow(&self, amount: PyVec3) -> PyResult<PyAabb3d> {
-        let amount_vec: Vec3 = amount.into();
-        Ok(PyAabb3d::from_aabb3d(
-            self.as_ref()?.grow(Vec3A::from(amount_vec)),
-        ))
+    pub fn grow(&self, amount: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
+        let amount = extract_vec3a_from_any(amount)?;
+        Ok(PyAabb3d::from_owned(self.as_ref()?.grow(amount)))
     }
 
-    pub fn shrink(&self, amount: PyVec3) -> PyResult<PyAabb3d> {
-        let amount_vec: Vec3 = amount.into();
-        Ok(PyAabb3d::from_aabb3d(
-            self.as_ref()?.shrink(Vec3A::from(amount_vec)),
-        ))
+    pub fn shrink(&self, amount: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
+        let amount = extract_vec3a_from_any(amount)?;
+        Ok(PyAabb3d::from_owned(self.as_ref()?.shrink(amount)))
     }
 
-    pub fn scale_around_center(&self, scale: PyVec3) -> PyResult<PyAabb3d> {
-        let scale_vec: Vec3 = scale.into();
-        Ok(PyAabb3d::from_aabb3d(
-            self.as_ref()?.scale_around_center(Vec3A::from(scale_vec)),
+    pub fn scale_around_center(&self, scale: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
+        let scale = extract_vec3a_from_any(scale)?;
+        Ok(PyAabb3d::from_owned(
+            self.as_ref()?.scale_around_center(scale),
         ))
     }
 
@@ -289,7 +277,7 @@ impl PyAabb3d {
     }
 
     pub fn bounding_sphere(&self) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_bounding_sphere(
+        Ok(PyBoundingSphere::from_owned(
             self.as_ref()?.bounding_sphere(),
         ))
     }
@@ -308,16 +296,16 @@ impl PyAabb3d {
     pub fn from_point_cloud(isometry: PyIsometry3d, points: Vec<PyVec3>) -> PyResult<PyAabb3d> {
         use bevy::math::Isometry3d;
 
-        let iso: Isometry3d = isometry.into();
+        let iso: Isometry3d = isometry.try_into()?;
         let point_refs: Vec<Vec3A> = points
             .into_iter()
             .map(|p| {
-                let v: Vec3 = p.into();
-                v.into()
+                let v: Vec3 = p.try_into()?;
+                Ok(Vec3A::from(v))
             })
-            .collect();
+            .collect::<PyResult<Vec<_>>>()?;
 
-        Ok(PyAabb3d::from_aabb3d(Aabb3d::from_point_cloud(
+        Ok(PyAabb3d::from_owned(Aabb3d::from_point_cloud(
             iso,
             point_refs.into_iter(),
         )))

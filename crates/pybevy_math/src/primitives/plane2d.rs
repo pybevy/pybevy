@@ -14,7 +14,7 @@ impl PyPlane2d {
     #[new]
     #[pyo3(signature = (normal = PyVec2::Y))]
     pub fn new(normal: PyVec2) -> PyResult<Self> {
-        let dir = Dir2::new(normal.get())
+        let dir = Dir2::new(normal.try_get()?)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
         Ok(Self {
             inner: Plane2d { normal: dir },
@@ -22,12 +22,12 @@ impl PyPlane2d {
     }
 
     #[staticmethod]
-    pub fn from_dir(normal: PyDir2) -> Self {
-        Self {
+    pub fn from_dir(normal: PyDir2) -> PyResult<Self> {
+        Ok(Self {
             inner: Plane2d {
-                normal: normal.into_dir2(),
+                normal: normal.into_dir2()?,
             },
-        }
+        })
     }
 
     #[getter]
@@ -36,8 +36,9 @@ impl PyPlane2d {
     }
 
     #[setter]
-    pub fn set_normal(&mut self, normal: PyDir2) {
-        self.inner.normal = normal.into_dir2();
+    pub fn set_normal(&mut self, normal: PyDir2) -> PyResult<()> {
+        self.inner.normal = normal.into_dir2()?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

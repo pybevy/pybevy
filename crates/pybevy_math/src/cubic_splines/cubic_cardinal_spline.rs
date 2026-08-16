@@ -16,21 +16,27 @@ pub struct PyCubicCardinalSpline2d {
 #[pymethods]
 impl PyCubicCardinalSpline2d {
     #[new]
-    pub fn new(tension: f32, control_points: Vec<PyVec2>) -> Self {
-        let control_points: Vec<Vec2> = control_points.into_iter().map(|p| p.into()).collect();
+    pub fn new(tension: f32, control_points: Vec<PyVec2>) -> PyResult<Self> {
+        let control_points: Vec<Vec2> = control_points
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
 
-        PyCubicCardinalSpline2d {
+        Ok(PyCubicCardinalSpline2d {
             spline: CubicCardinalSpline::new(tension, control_points),
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn new_catmull_rom(control_points: Vec<PyVec2>) -> Self {
-        let control_points: Vec<Vec2> = control_points.into_iter().map(|p| p.into()).collect();
+    pub fn new_catmull_rom(control_points: Vec<PyVec2>) -> PyResult<Self> {
+        let control_points: Vec<Vec2> = control_points
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
 
-        PyCubicCardinalSpline2d {
+        Ok(PyCubicCardinalSpline2d {
             spline: CubicCardinalSpline::new_catmull_rom(control_points),
-        }
+        })
     }
 
     pub fn to_curve(&self, py: Python<'_>) -> PyResult<Py<PyCubicCurve2d>> {

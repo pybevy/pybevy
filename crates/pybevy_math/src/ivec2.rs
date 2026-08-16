@@ -1,5 +1,5 @@
 use bevy::math::IVec2;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 #[pyclass(name = "IVec2", from_py_object)]
@@ -8,17 +8,21 @@ pub struct PyIVec2 {
     storage: ValueStorage<IVec2>,
 }
 
-impl From<PyIVec2> for IVec2 {
+impl TryFrom<PyIVec2> for IVec2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: PyIVec2) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: PyIVec2) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
-impl From<&PyIVec2> for IVec2 {
+impl TryFrom<&PyIVec2> for IVec2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: &PyIVec2) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: &PyIVec2) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
@@ -60,12 +64,12 @@ impl PyIVec2 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&IVec2> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, IVec2>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut IVec2> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, IVec2>> {
         Ok(self.storage.as_mut()?)
     }
 

@@ -1,24 +1,46 @@
 use bevy::math::{Mat4, Vec3, primitives::ViewFrustum};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::half_space::PyHalfSpace;
 use crate::{mat4::PyMat4, vec3::PyVec3};
 
+#[pyvalue]
 #[pyclass(name = "ViewFrustum", eq, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PyViewFrustum {
-    pub(crate) inner: ViewFrustum,
+    pub(crate) storage: ValueStorage<ViewFrustum>,
+}
+
+impl PartialEq for PyViewFrustum {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.as_ref(), other.as_ref()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl From<ViewFrustum> for PyViewFrustum {
     fn from(frustum: ViewFrustum) -> Self {
-        PyViewFrustum { inner: frustum }
+        Self::from_owned(frustum)
     }
 }
 
-impl From<PyViewFrustum> for ViewFrustum {
-    fn from(frustum: PyViewFrustum) -> Self {
-        frustum.inner
+impl TryFrom<PyViewFrustum> for ViewFrustum {
+    type Error = PyErr;
+
+    fn try_from(frustum: PyViewFrustum) -> PyResult<Self> {
+        frustum.to_bevy()
+    }
+}
+
+impl TryFrom<&PyViewFrustum> for ViewFrustum {
+    type Error = PyErr;
+
+    fn try_from(frustum: &PyViewFrustum) -> PyResult<Self> {
+        frustum.to_bevy()
     }
 }
 
@@ -31,13 +53,13 @@ impl PyViewFrustum {
 
     #[new]
     pub fn new() -> Self {
-        ViewFrustum::default().into()
+        Self::from_owned(ViewFrustum::default())
     }
 
     #[staticmethod]
-    pub fn from_clip_from_world(clip_from_world: &PyMat4) -> Self {
-        let mat: Mat4 = clip_from_world.into();
-        ViewFrustum::from_clip_from_world(&mat).into()
+    pub fn from_clip_from_world(clip_from_world: &PyMat4) -> PyResult<Self> {
+        let mat: Mat4 = clip_from_world.try_into()?;
+        Ok(Self::from_owned(ViewFrustum::from_clip_from_world(&mat)))
     }
 
     #[staticmethod]
@@ -46,22 +68,30 @@ impl PyViewFrustum {
         view_translation: PyVec3,
         view_backward: PyVec3,
         far: f32,
-    ) -> Self {
-        let mat: Mat4 = clip_from_world.into();
-        let translation: Vec3 = view_translation.into();
-        let backward: Vec3 = view_backward.into();
-        ViewFrustum::from_clip_from_world_custom_far(&mat, &translation, &backward, far).into()
+    ) -> PyResult<Self> {
+        let mat: Mat4 = clip_from_world.try_into()?;
+        let translation: Vec3 = view_translation.try_into()?;
+        let backward: Vec3 = view_backward.try_into()?;
+        Ok(Self::from_owned(
+            ViewFrustum::from_clip_from_world_custom_far(&mat, &translation, &backward, far),
+        ))
     }
 
-    pub fn corners(&self) -> Option<Vec<PyVec3>> {
-        self.inner
+    pub fn corners(&self) -> PyResult<Option<Vec<PyVec3>>> {
+        Ok(self
+            .as_ref()?
             .corners()
-            .map(|corners| corners.into_iter().map(PyVec3::from).collect())
+            .map(|corners| corners.into_iter().map(PyVec3::from).collect()))
     }
 
     #[getter]
-    pub fn half_spaces(&self) -> Vec<PyHalfSpace> {
-        self.inner.half_spaces.iter().map(|&hs| hs.into()).collect()
+    pub fn half_spaces(&self) -> PyResult<Vec<PyHalfSpace>> {
+        Ok(self
+            .as_ref()?
+            .half_spaces
+            .iter()
+            .map(|&hs| hs.into())
+            .collect())
     }
 
     #[setter]
@@ -71,8 +101,9 @@ impl PyViewFrustum {
                 "ViewFrustum requires exactly 6 half-spaces",
             ));
         }
+        let mut frustum = self.as_mut()?;
         for (i, hs) in half_spaces.into_iter().enumerate() {
-            self.inner.half_spaces[i] = hs.into();
+            frustum.half_spaces[i] = hs.into();
         }
         Ok(())
     }

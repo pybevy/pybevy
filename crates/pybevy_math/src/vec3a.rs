@@ -1,5 +1,5 @@
 use bevy::math::{Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::vec3::PyVec3;
@@ -10,17 +10,21 @@ pub struct PyVec3A {
     storage: ValueStorage<Vec3A>,
 }
 
-impl From<PyVec3A> for Vec3A {
+impl TryFrom<PyVec3A> for Vec3A {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: PyVec3A) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: PyVec3A) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
-impl From<&PyVec3A> for Vec3A {
+impl TryFrom<&PyVec3A> for Vec3A {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: &PyVec3A) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: &PyVec3A) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
@@ -53,12 +57,12 @@ impl PyVec3A {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Vec3A> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Vec3A>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Vec3A> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Vec3A>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -118,8 +122,8 @@ impl PyVec3A {
     }
 
     #[staticmethod]
-    pub fn from_vec3(v: &PyVec3) -> Self {
-        PyVec3A::from_vec3a(Vec3A::from(v.get()))
+    pub fn from_vec3(v: &PyVec3) -> PyResult<Self> {
+        Ok(PyVec3A::from_vec3a(Vec3A::from(v.try_get()?)))
     }
 
     pub fn to_vec3(&self) -> PyResult<PyVec3> {
@@ -233,13 +237,21 @@ impl PyVec3A {
         Ok(PyVec3A::from_vec3a(-*self.as_ref()?))
     }
 
-    pub fn __richcmp__(&self, other: &Self, op: CompareOp) -> PyResult<bool> {
-        let s = self.as_ref()?;
-        let o = other.as_ref()?;
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        let other = if let Ok(other_vec) = other.extract::<PyVec3A>() {
+            *other_vec.as_ref()?
+        } else if let Ok((x, y, z)) = other.extract::<(f32, f32, f32)>() {
+            Vec3A::new(x, y, z)
+        } else {
+            return Err(PyTypeError::new_err(
+                "Can only compare Vec3A with another Vec3A or a tuple of three floats",
+            ));
+        };
+
         match op {
-            CompareOp::Eq => Ok(*s == *o),
-            CompareOp::Ne => Ok(*s != *o),
-            _ => Err(PyTypeError::new_err("Vec3A only supports == and !=")),
+            CompareOp::Eq => Ok(*self.as_ref()? == other),
+            CompareOp::Ne => Ok(*self.as_ref()? != other),
+            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
         }
     }
 
@@ -251,4 +263,22 @@ impl PyVec3A {
     pub fn __str__(&self) -> PyResult<String> {
         self.__repr__()
     }
+}
+
+/// Extract a `Vec3A` from the union Bevy accepts as `impl Into<Vec3A>`.
+///
+/// Bevy's bounding-volume and isometry constructors are generic over
+/// `Into<Vec3A>`, which `Vec3` satisfies. Mirroring that here keeps a value read
+/// back from one of these types usable as an argument to the next call.
+pub fn extract_vec3a_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Vec3A> {
+    if let Ok(value) = obj.extract::<PyVec3A>() {
+        return Ok(value.try_into()?);
+    }
+    if let Ok(value) = obj.extract::<PyVec3>() {
+        return Ok(Vec3A::from(Vec3::try_from(value)?));
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected Vec3A or Vec3, got {}",
+        obj.get_type().name()?
+    )))
 }

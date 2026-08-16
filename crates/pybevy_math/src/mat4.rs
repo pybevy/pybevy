@@ -1,5 +1,5 @@
 use bevy::math::{Mat4, Vec4};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
@@ -14,17 +14,21 @@ pub struct PyMat4 {
     storage: ValueStorage<Mat4>,
 }
 
-impl From<PyMat4> for Mat4 {
+impl TryFrom<PyMat4> for Mat4 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_mat: PyMat4) -> Self {
-        py_mat.storage.get().unwrap()
+    fn try_from(py_mat: PyMat4) -> PyResult<Self> {
+        Ok(py_mat.storage.get()?)
     }
 }
 
-impl From<&PyMat4> for Mat4 {
+impl TryFrom<&PyMat4> for Mat4 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_mat: &PyMat4) -> Self {
-        py_mat.storage.get().unwrap()
+    fn try_from(py_mat: &PyMat4) -> PyResult<Self> {
+        Ok(py_mat.storage.get()?)
     }
 }
 
@@ -50,8 +54,8 @@ impl PyMat4 {
     }
 
     #[inline(always)]
-    pub fn into_mat4(self) -> Mat4 {
-        self.into()
+    pub fn into_mat4(self) -> PyResult<Mat4> {
+        self.try_into()
     }
 
     #[inline(always)]
@@ -62,7 +66,7 @@ impl PyMat4 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Mat4> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Mat4>> {
         Ok(self.storage.as_ref()?)
     }
 }
@@ -111,10 +115,10 @@ impl PyMat4 {
         w_axis: &PyVec4,
     ) -> PyResult<Self> {
         Ok(PyMat4::mat4(Mat4::from_cols(
-            x_axis.into(),
-            y_axis.into(),
-            z_axis.into(),
-            w_axis.into(),
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+            w_axis.try_into()?,
         )))
     }
 
@@ -130,27 +134,29 @@ impl PyMat4 {
 
     #[staticmethod]
     pub fn from_diagonal(diagonal: &PyVec4) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_diagonal(diagonal.into())))
+        Ok(PyMat4::mat4(Mat4::from_diagonal(diagonal.try_into()?)))
     }
 
     #[staticmethod]
     pub fn from_translation(translation: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_translation(translation.into())))
+        Ok(PyMat4::mat4(Mat4::from_translation(
+            translation.try_into()?,
+        )))
     }
 
     #[staticmethod]
     pub fn from_scale(scale: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_scale(scale.into())))
+        Ok(PyMat4::mat4(Mat4::from_scale(scale.try_into()?)))
     }
 
     #[staticmethod]
     pub fn from_quat(quat: &PyQuat) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_quat(quat.into())))
+        Ok(PyMat4::mat4(Mat4::from_quat(quat.try_into()?)))
     }
 
     #[staticmethod]
     pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_axis_angle(axis.into(), angle)))
+        Ok(PyMat4::mat4(Mat4::from_axis_angle(axis.try_into()?, angle)))
     }
 
     #[staticmethod]
@@ -175,15 +181,15 @@ impl PyMat4 {
         translation: &PyVec3,
     ) -> PyResult<Self> {
         Ok(PyMat4::mat4(Mat4::from_scale_rotation_translation(
-            scale.into(),
-            rotation.into(),
-            translation.into(),
+            scale.try_into()?,
+            rotation.try_into()?,
+            translation.try_into()?,
         )))
     }
 
     #[staticmethod]
     pub fn from_mat3(mat3: &PyMat3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_mat3(mat3.into())))
+        Ok(PyMat4::mat4(Mat4::from_mat3(mat3.try_into()?)))
     }
 
     #[staticmethod]
@@ -233,36 +239,36 @@ impl PyMat4 {
     #[staticmethod]
     pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         Ok(PyMat4::mat4(Mat4::look_at_lh(
-            eye.into(),
-            center.into(),
-            up.into(),
+            eye.try_into()?,
+            center.try_into()?,
+            up.try_into()?,
         )))
     }
 
     #[staticmethod]
     pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         Ok(PyMat4::mat4(Mat4::look_at_rh(
-            eye.into(),
-            center.into(),
-            up.into(),
+            eye.try_into()?,
+            center.try_into()?,
+            up.try_into()?,
         )))
     }
 
     #[staticmethod]
     pub fn look_to_lh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         Ok(PyMat4::mat4(Mat4::look_to_lh(
-            eye.into(),
-            dir.into(),
-            up.into(),
+            eye.try_into()?,
+            dir.try_into()?,
+            up.try_into()?,
         )))
     }
 
     #[staticmethod]
     pub fn look_to_rh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         Ok(PyMat4::mat4(Mat4::look_to_rh(
-            eye.into(),
-            dir.into(),
-            up.into(),
+            eye.try_into()?,
+            dir.try_into()?,
+            up.try_into()?,
         )))
     }
 
@@ -303,19 +309,25 @@ impl PyMat4 {
     }
 
     pub fn mul_vec4(&self, rhs: &PyVec4) -> PyResult<PyVec4> {
-        Ok(PyVec4::from_vec4(self.as_ref()?.mul_vec4(rhs.into())))
+        Ok(PyVec4::from_vec4(self.as_ref()?.mul_vec4(rhs.try_into()?)))
     }
 
     pub fn mul_mat4(&self, rhs: &PyMat4) -> PyResult<Self> {
-        Ok(PyMat4::mat4(self.as_ref()?.mul_mat4(rhs.as_ref()?)))
+        Ok(PyMat4::mat4(
+            self.as_ref()?.mul_mat4(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn add_mat4(&self, rhs: &PyMat4) -> PyResult<Self> {
-        Ok(PyMat4::mat4(self.as_ref()?.add_mat4(rhs.as_ref()?)))
+        Ok(PyMat4::mat4(
+            self.as_ref()?.add_mat4(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn sub_mat4(&self, rhs: &PyMat4) -> PyResult<Self> {
-        Ok(PyMat4::mat4(self.as_ref()?.sub_mat4(rhs.as_ref()?)))
+        Ok(PyMat4::mat4(
+            self.as_ref()?.sub_mat4(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn mul_scalar(&self, rhs: f32) -> PyResult<Self> {
@@ -328,18 +340,20 @@ impl PyMat4 {
 
     pub fn transform_point3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
         Ok(PyVec3::from_vec3(
-            self.as_ref()?.transform_point3(rhs.into()),
+            self.as_ref()?.transform_point3(rhs.try_into()?),
         ))
     }
 
     pub fn transform_vector3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
         Ok(PyVec3::from_vec3(
-            self.as_ref()?.transform_vector3(rhs.into()),
+            self.as_ref()?.transform_vector3(rhs.try_into()?),
         ))
     }
 
     pub fn project_point3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.project_point3(rhs.into())))
+        Ok(PyVec3::from_vec3(
+            self.as_ref()?.project_point3(rhs.try_into()?),
+        ))
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {
@@ -370,7 +384,7 @@ impl PyMat4 {
         } else if let Ok(other_mat) = other.extract::<PyMat4>() {
             Ok(Py::new(py, PyMat4::mat4(self_mat * *other_mat.as_ref()?))?.into_any())
         } else if let Ok(vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(self_mat * Vec4::from(&vec)))?.into_any())
+            Ok(Py::new(py, PyVec4::from_vec4(self_mat * Vec4::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

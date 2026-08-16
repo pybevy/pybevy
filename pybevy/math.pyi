@@ -25,6 +25,26 @@ from pybevy.mesh import (
     Triangle3dMeshBuilder,
 )
 
+class FloatOrd:
+    """A float with Bevy's total ordering and hashing semantics.
+
+    NaN values compare equal to each other and sort before every non-NaN value.
+    Positive and negative zero compare equal and have the same hash.
+    """
+
+    def __init__(self, value: float) -> None: ...
+    @property
+    def value(self) -> float: ...
+    def __float__(self) -> float: ...
+    def __neg__(self) -> FloatOrd: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __lt__(self, other: FloatOrd) -> bool: ...
+    def __le__(self, other: FloatOrd) -> bool: ...
+    def __gt__(self, other: FloatOrd) -> bool: ...
+    def __ge__(self, other: FloatOrd) -> bool: ...
+    def __hash__(self) -> int: ...
+
+
 class Vec3:
     """A 3-dimensional vector class providing common vector operations.
 
@@ -171,6 +191,7 @@ class Vec3:
     def copysign(self, rhs: Vec3) -> Vec3: ...
     def is_finite(self) -> bool: ...
     def is_nan(self) -> bool: ...
+    def abs_diff_eq(self, rhs: Vec3, max_abs_diff: float) -> bool: ...
     def round(self) -> Vec3: ...
     def trunc(self) -> Vec3: ...
     def fract(self) -> Vec3: ...
@@ -738,16 +759,31 @@ class Circle(Meshable):
     def mesh(self) -> CircleMeshBuilder: ...
 
 class EulerRot:
-    """Euler rotation order for converting to/from Euler angles.
-
-    Variants represent different rotation orders (intrinsic three-axis rotations).
-    """
+    """Euler rotation order for converting to/from Euler angles."""
     ZYX: EulerRot  # Intrinsic three-axis rotation ZYX
     ZXY: EulerRot  # Intrinsic three-axis rotation ZXY
     YXZ: EulerRot  # Intrinsic three-axis rotation YXZ
     YZX: EulerRot  # Intrinsic three-axis rotation YZX
     XYZ: EulerRot  # Intrinsic three-axis rotation XYZ
     XZY: EulerRot  # Intrinsic three-axis rotation XZY
+    ZYZ: EulerRot  # Intrinsic two-axis rotation ZYZ
+    ZXZ: EulerRot  # Intrinsic two-axis rotation ZXZ
+    YXY: EulerRot  # Intrinsic two-axis rotation YXY
+    YZY: EulerRot  # Intrinsic two-axis rotation YZY
+    XYX: EulerRot  # Intrinsic two-axis rotation XYX
+    XZX: EulerRot  # Intrinsic two-axis rotation XZX
+    ZYXEx: EulerRot  # Extrinsic three-axis rotation ZYX
+    ZXYEx: EulerRot  # Extrinsic three-axis rotation ZXY
+    YXZEx: EulerRot  # Extrinsic three-axis rotation YXZ
+    YZXEx: EulerRot  # Extrinsic three-axis rotation YZX
+    XYZEx: EulerRot  # Extrinsic three-axis rotation XYZ
+    XZYEx: EulerRot  # Extrinsic three-axis rotation XZY
+    ZYZEx: EulerRot  # Extrinsic two-axis rotation ZYZ
+    ZXZEx: EulerRot  # Extrinsic two-axis rotation ZXZ
+    YXYEx: EulerRot  # Extrinsic two-axis rotation YXY
+    YZYEx: EulerRot  # Extrinsic two-axis rotation YZY
+    XYXEx: EulerRot  # Extrinsic two-axis rotation XYX
+    XZXEx: EulerRot  # Extrinsic two-axis rotation XZX
 
 class Quat:
     IDENTITY: ClassVar[Quat]
@@ -803,6 +839,8 @@ class Quat:
         Returns:
             tuple: (x, y, z) rotations in radians
         """
+    def to_axis_angle(self) -> tuple[Vec3, float]: ...
+    def to_scaled_axis(self) -> Vec3: ...
     @overload
     def __mul__(self, other: Quat) -> Quat: ...
     @overload
@@ -1034,6 +1072,8 @@ class Rectangle(Meshable):
     @half_size.setter
     def half_size(self, value: Vec2) -> None: ...
     def size(self) -> Vec2: ...
+    def width(self) -> float: ...
+    def height(self) -> float: ...
     def closest_point(self, point: Vec2) -> Vec2: ...
     def area(self) -> float: ...
     def perimeter(self) -> float: ...
@@ -1057,9 +1097,9 @@ class Plane3d(Meshable):
     The ``half_size`` Vec2 maps to the plane's local 2D axes, which depend on
     the normal:
 
-    - ``Plane3d(Vec3.Y, half_size=Vec2(w, h))`` — horizontal plane.
+    - ``Plane3d(Vec3.Y, half_size=Vec2(w, h))``: horizontal plane.
       ``w`` → world X, ``h`` → world Z.
-    - ``Plane3d(Vec3(0,0,1), half_size=Vec2(w, h))`` — vertical plane facing +Z.
+    - ``Plane3d(Vec3(0,0,1), half_size=Vec2(w, h))``: vertical plane facing +Z.
       ``w`` → world X (width), ``h`` → world Y (height).
       Use this for screens / billboards facing the camera.
 
@@ -1071,10 +1111,14 @@ class Plane3d(Meshable):
 
     def __init__(
         self, normal: Vec3 = Dir3.Y.as_vec3(), half_size: Vec2 = Vec2.splat(0.5)
-    ) -> None: ...
+    ) -> None:
+        """Raise ValueError when ``normal`` is zero or non-finite."""
     @staticmethod
     def from_points(a: Vec3, b: Vec3, c: Vec3) -> tuple[Plane3d, Vec3]:
-        """Create a plane from three points, returning the plane and translation."""
+        """Create a plane from three finite, non-collinear points.
+
+        Raises ValueError when a valid normal cannot be computed.
+        """
     @property
     def half_size(self) -> Vec2: ...
     @half_size.setter
@@ -1144,7 +1188,9 @@ class ViewFrustum:
     def __eq__(self, other: object) -> bool: ...
 
 class Cylinder(Meshable):
-    def __init__(self, radius: float = 0.5, height: float = 1.0) -> None: ...
+    def __init__(
+        self, radius: float = 0.5, height: float = 1.0, *, half_height: float | None = None
+    ) -> None: ...
     @property
     def radius(self) -> float: ...
     @radius.setter
@@ -1394,7 +1440,7 @@ class Mat3A:
     @staticmethod
     def from_cols_array(m: list[float]) -> Mat3A: ...
     @staticmethod
-    def from_diagonal(diagonal: Vec3A) -> Mat3A: ...
+    def from_diagonal(diagonal: Vec3) -> Mat3A: ...
     @staticmethod
     def from_rotation_x(angle: float) -> Mat3A: ...
     @staticmethod
@@ -1721,10 +1767,10 @@ class Isometry3d:
 
     IDENTITY: ClassVar[Isometry3d]
 
-    translation: Vec3
+    translation: Vec3A
     rotation: Quat
 
-    def __init__(self, translation: Vec3 = ..., rotation: Quat = ...) -> None:
+    def __init__(self, translation: Vec3A | Vec3 = ..., rotation: Quat = ...) -> None:
         """Create a new Isometry3d.
 
         Args:
@@ -1737,7 +1783,7 @@ class Isometry3d:
         """Create an isometry from translation coordinates with identity rotation."""
 
     @staticmethod
-    def from_translation(translation: Vec3) -> Isometry3d:
+    def from_translation(translation: Vec3A | Vec3) -> Isometry3d:
         """Create an isometry from a translation vector with identity rotation."""
 
     @staticmethod
@@ -1750,19 +1796,19 @@ class Isometry3d:
     def inverse_mul(self, rhs: Isometry3d) -> Isometry3d:
         """Compute the equivalent of applying the inverse of self followed by rhs."""
 
-    def transform_point(self, point: Vec3) -> Vec3:
+    def transform_point(self, point: Vec3A | Vec3) -> Vec3:
         """Transform a point by this isometry (rotate then translate)."""
 
-    def inverse_transform_point(self, point: Vec3) -> Vec3:
+    def inverse_transform_point(self, point: Vec3A | Vec3) -> Vec3:
         """Inverse-transform a point (undo translation then undo rotation)."""
 
 class Aabb3d:
     """Axis-aligned bounding box in 3D space."""
 
-    min: Vec3
-    max: Vec3
+    min: Vec3A
+    max: Vec3A
 
-    def __init__(self, center: Vec3, half_size: Vec3) -> None:
+    def __init__(self, center: Vec3A | Vec3, half_size: Vec3A | Vec3) -> None:
         """Create a new Aabb3d from a center point and half-extents.
 
         Args:
@@ -1775,7 +1821,7 @@ class Aabb3d:
         """
 
     @staticmethod
-    def from_min_max(min: Vec3, max: Vec3) -> Aabb3d:
+    def from_min_max(min: Vec3A | Vec3, max: Vec3A | Vec3) -> Aabb3d:
         """Create an Aabb3d directly from minimum and maximum corners.
 
         Args:
@@ -1793,7 +1839,7 @@ class Aabb3d:
     def half_size(self) -> Vec3:
         """Half-extents of the bounding box."""
 
-    def closest_point(self, point: Vec3) -> Vec3:
+    def closest_point(self, point: Vec3A | Vec3) -> Vec3:
         """Find the closest point on the AABB to the given point."""
 
     def contains(self, other: Aabb3d) -> bool:
@@ -1802,13 +1848,13 @@ class Aabb3d:
     def merge(self, other: Aabb3d) -> Aabb3d:
         """Merge this AABB with another, returning the smallest AABB containing both."""
 
-    def grow(self, amount: Vec3) -> Aabb3d:
+    def grow(self, amount: Vec3A | Vec3) -> Aabb3d:
         """Grow the AABB by the given amount in each direction."""
 
-    def shrink(self, amount: Vec3) -> Aabb3d:
+    def shrink(self, amount: Vec3A | Vec3) -> Aabb3d:
         """Shrink the AABB by the given amount in each direction."""
 
-    def scale_around_center(self, scale: Vec3) -> Aabb3d:
+    def scale_around_center(self, scale: Vec3A | Vec3) -> Aabb3d:
         """Scale the AABB around its center."""
 
     def visible_area(self) -> float:
@@ -1840,9 +1886,9 @@ class Aabb3d:
 class BoundingSphere:
     """Bounding sphere in 3D space."""
 
-    center: Vec3
+    center: Vec3A
 
-    def __init__(self, center: Vec3, radius: float) -> None:
+    def __init__(self, center: Vec3A | Vec3, radius: float) -> None:
         """Create a new BoundingSphere from a center point and radius.
 
         Args:
@@ -1857,7 +1903,7 @@ class BoundingSphere:
     def radius(self) -> float:
         """Radius of the bounding sphere."""
 
-    def closest_point(self, point: Vec3) -> Vec3:
+    def closest_point(self, point: Vec3A | Vec3) -> Vec3:
         """Find the closest point on the sphere to the given point."""
 
     def contains(self, other: BoundingSphere) -> bool:
@@ -2369,7 +2415,9 @@ class Capsule2d(Meshable):
     @half_length.setter
     def half_length(self, value: float) -> None: ...
 
-    def __init__(self, radius: float = 0.5, length: float = 1.0) -> None:
+    def __init__(
+        self, radius: float = 0.5, length: float = 1.0, *, half_length: float | None = None
+    ) -> None:
         """Create a new 2D capsule.
 
         Args:
@@ -2675,6 +2723,9 @@ class RegularPolygon(Meshable):
         Args:
             circumradius: The radius of the circumcircle (circle passing through all vertices)
             sides: The number of sides (must be at least 3)
+
+        Raises:
+            ValueError: If circumradius is non-finite or negative, or sides is less than 3.
         """
 
     def circumradius(self) -> float:
@@ -2859,7 +2910,7 @@ class Plane2d:
 
     normal: Dir2
 
-    def __init__(self, normal: Vec2) -> None:
+    def __init__(self, normal: Vec2 = ...) -> None:
         """Create a new plane from a normal vector.
 
         Args:
@@ -3074,7 +3125,7 @@ class Arc2d:
     radius: float
     half_angle: float
 
-    def __init__(self, radius: float, half_angle: float) -> None:
+    def __init__(self, radius: float = 1.0, half_angle: float = ...) -> None:
         """Create a new arc from a radius and half-angle.
 
         Args:
@@ -4034,7 +4085,7 @@ class Rot2:
 
         # Rotate a vector
         v = Vec2(1, 0)
-        rotated = rot.rotate(v)
+        rotated = rot * v
 
         # Combine rotations
         double_rot = rot * rot
@@ -4171,5 +4222,10 @@ class Rot2:
     def smooth_nudge(self, target: Rot2, decay_rate: float, delta: float) -> None:
         """Smoothly nudge towards target at given decay rate."""
 
+    @overload
     def __mul__(self, other: Rot2) -> Rot2:
         """Compose two rotations."""
+
+    @overload
+    def __mul__(self, other: Vec2) -> Vec2:
+        """Rotate a 2D vector."""

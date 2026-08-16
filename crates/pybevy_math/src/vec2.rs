@@ -1,5 +1,5 @@
 use bevy::math::{BVec2, Vec2, Vec2Swizzles};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
@@ -14,17 +14,21 @@ pub struct PyVec2 {
     pub(crate) storage: ValueStorage<Vec2>,
 }
 
-impl From<PyVec2> for Vec2 {
+impl TryFrom<PyVec2> for Vec2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: PyVec2) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: PyVec2) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
-impl From<&PyVec2> for Vec2 {
+impl TryFrom<&PyVec2> for Vec2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: &PyVec2) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: &PyVec2) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
@@ -57,18 +61,18 @@ impl PyVec2 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Vec2> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Vec2>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Vec2> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Vec2>> {
         Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Vec2 {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Vec2> {
+        Ok(self.storage.get()?)
     }
 
     pub const ZERO: PyVec2 = PyVec2::vec2(Vec2::ZERO);
@@ -186,7 +190,7 @@ impl PyVec2 {
     }
 
     pub fn dot(&self, other: &PyVec2) -> PyResult<f32> {
-        Ok(self.as_ref()?.dot(other.get()))
+        Ok(self.as_ref()?.dot(other.try_get()?))
     }
 
     pub fn length(&self) -> PyResult<f32> {
@@ -206,7 +210,7 @@ impl PyVec2 {
         if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec2::from_vec2(*self_v + Vec2::splat(scalar)))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(Py::new(py, PyVec2::from_vec2(*self_v + other_vec.get()))?.into_any())
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v + other_vec.try_get()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -217,7 +221,7 @@ impl PyVec2 {
         if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec2::from_vec2(*self_v - Vec2::splat(scalar)))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(Py::new(py, PyVec2::from_vec2(*self_v - other_vec.get()))?.into_any())
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v - other_vec.try_get()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -228,7 +232,7 @@ impl PyVec2 {
         if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec2::from_vec2(*self_v * scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(Py::new(py, PyVec2::from_vec2(*self_v * other_vec.get()))?.into_any())
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v * other_vec.try_get()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -239,7 +243,7 @@ impl PyVec2 {
         if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec2::from_vec2(*self_v / scalar))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(Py::new(py, PyVec2::from_vec2(*self_v / other_vec.get()))?.into_any())
+            Ok(Py::new(py, PyVec2::from_vec2(*self_v / other_vec.try_get()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -258,7 +262,7 @@ impl PyVec2 {
         if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec2::from_vec2(scalar * *self_v))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            Ok(Py::new(py, PyVec2::from_vec2(other_vec.get() * *self_v))?.into_any())
+            Ok(Py::new(py, PyVec2::from_vec2(other_vec.try_get()? * *self_v))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -272,8 +276,8 @@ impl PyVec2 {
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
         if let Ok(other_vec) = other.extract::<PyVec2>() {
             match op {
-                CompareOp::Eq => Ok(self.get() == other_vec.get()),
-                CompareOp::Ne => Ok(self.get() != other_vec.get()),
+                CompareOp::Eq => Ok(self.try_get()? == other_vec.try_get()?),
+                CompareOp::Ne => Ok(self.try_get()? != other_vec.try_get()?),
                 _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
             }
         } else if let Ok(tuple) = other.extract::<(f32, f32)>() {

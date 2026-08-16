@@ -12,11 +12,14 @@ pub struct PyPolygon {
 #[pymethods]
 impl PyPolygon {
     #[new]
-    pub fn new(vertices: Vec<PyVec2>) -> Self {
-        let bevy_vertices: Vec<Vec2> = vertices.into_iter().map(|v| v.into()).collect();
-        Self {
+    pub fn new(vertices: Vec<PyVec2>) -> PyResult<Self> {
+        let bevy_vertices: Vec<Vec2> = vertices
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
             inner: Polygon::new(bevy_vertices),
-        }
+        })
     }
 
     #[getter]
@@ -29,9 +32,13 @@ impl PyPolygon {
     }
 
     #[setter]
-    pub fn set_vertices(&mut self, vertices: Vec<PyVec2>) {
-        let bevy_vertices: Vec<Vec2> = vertices.into_iter().map(|v| v.into()).collect();
+    pub fn set_vertices(&mut self, vertices: Vec<PyVec2>) -> PyResult<()> {
+        let bevy_vertices: Vec<Vec2> = vertices
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
         self.inner = Polygon::new(bevy_vertices);
+        Ok(())
     }
 
     pub fn is_simple(&self) -> bool {

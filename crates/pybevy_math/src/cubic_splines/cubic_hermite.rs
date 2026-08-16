@@ -16,14 +16,20 @@ pub struct PyCubicHermite2d {
 #[pymethods]
 impl PyCubicHermite2d {
     #[new]
-    pub fn new(control_points: Vec<PyVec2>, tangents: Vec<PyVec2>) -> Self {
-        let control_points: Vec<Vec2> = control_points.into_iter().map(|p| p.into()).collect();
+    pub fn new(control_points: Vec<PyVec2>, tangents: Vec<PyVec2>) -> PyResult<Self> {
+        let control_points: Vec<Vec2> = control_points
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
 
-        let tangents: Vec<Vec2> = tangents.into_iter().map(|p| p.into()).collect();
+        let tangents: Vec<Vec2> = tangents
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
 
-        PyCubicHermite2d {
+        Ok(PyCubicHermite2d {
             hermite: CubicHermite::new(control_points, tangents),
-        }
+        })
     }
 
     pub fn to_curve(&self, py: Python<'_>) -> PyResult<Py<PyCubicCurve2d>> {

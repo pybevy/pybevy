@@ -43,19 +43,19 @@ impl From<RayCast2d> for PyRayCast2d {
 #[pymethods]
 impl PyRayCast2d {
     #[new]
-    pub fn new(origin: PyVec2, direction: PyDir2, max: f32) -> Self {
-        let origin_vec: Vec2 = origin.into();
-        let dir = direction.get();
-        PyRayCast2d {
+    pub fn new(origin: PyVec2, direction: PyDir2, max: f32) -> PyResult<Self> {
+        let origin_vec: Vec2 = origin.try_into()?;
+        let dir = direction.get()?;
+        Ok(PyRayCast2d {
             ray_cast: RayCast2d::new(origin_vec, dir, max),
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn from_ray(ray: &PyRay2d, max: f32) -> Self {
-        PyRayCast2d {
-            ray_cast: RayCast2d::from_ray(ray.to_ray2d(), max),
-        }
+    pub fn from_ray(ray: &PyRay2d, max: f32) -> PyResult<Self> {
+        Ok(PyRayCast2d {
+            ray_cast: RayCast2d::from_ray(ray.to_ray2d()?, max),
+        })
     }
 
     #[getter]
@@ -64,8 +64,9 @@ impl PyRayCast2d {
     }
 
     #[setter]
-    pub fn set_ray(&mut self, ray: &PyRay2d) {
-        self.ray_cast = RayCast2d::from_ray(ray.to_ray2d(), self.ray_cast.max);
+    pub fn set_ray(&mut self, ray: &PyRay2d) -> PyResult<()> {
+        self.ray_cast = RayCast2d::from_ray(ray.to_ray2d()?, self.ray_cast.max);
+        Ok(())
     }
 
     #[getter]
@@ -137,19 +138,19 @@ impl From<RayCast3d> for PyRayCast3d {
 #[pymethods]
 impl PyRayCast3d {
     #[new]
-    pub fn new(origin: PyVec3, direction: PyDir3, max: f32) -> Self {
-        let origin_vec: Vec3 = origin.into();
-        let dir = direction.get();
-        PyRayCast3d {
+    pub fn new(origin: PyVec3, direction: PyDir3, max: f32) -> PyResult<Self> {
+        let origin_vec: Vec3 = origin.try_into()?;
+        let dir = direction.get()?;
+        Ok(PyRayCast3d {
             ray_cast: RayCast3d::new(origin_vec, dir, max),
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn from_ray(ray: &PyRay3d, max: f32) -> Self {
-        PyRayCast3d {
-            ray_cast: RayCast3d::from_ray(ray.to_ray3d(), max),
-        }
+    pub fn from_ray(ray: &PyRay3d, max: f32) -> PyResult<Self> {
+        Ok(PyRayCast3d {
+            ray_cast: RayCast3d::from_ray(ray.to_ray3d()?, max),
+        })
     }
 
     #[getter]
@@ -160,8 +161,9 @@ impl PyRayCast3d {
     }
 
     #[setter]
-    pub fn set_ray(&mut self, ray: &PyRay3d) {
-        self.ray_cast = RayCast3d::from_ray(ray.to_ray3d(), self.ray_cast.max);
+    pub fn set_ray(&mut self, ray: &PyRay3d) -> PyResult<()> {
+        self.ray_cast = RayCast3d::from_ray(ray.to_ray3d()?, self.ray_cast.max);
+        Ok(())
     }
 
     #[getter]

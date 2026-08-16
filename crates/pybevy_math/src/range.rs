@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef};
 use pyo3::prelude::*;
 
 #[pyclass(name = "Range", skip_from_py_object)]
@@ -32,12 +32,12 @@ impl PyRange {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Range<f32>> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Range<f32>>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Range<f32>> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Range<f32>>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -98,17 +98,20 @@ impl From<Range<f32>> for PyRange {
     }
 }
 
-impl From<PyRange> for Range<f32> {
-    fn from(range: PyRange) -> Self {
-        let r = range.storage.get().unwrap();
-        r.start..r.end
+impl TryFrom<PyRange> for Range<f32> {
+    type Error = PyErr;
+
+    fn try_from(range: PyRange) -> Result<Self, Self::Error> {
+        Self::try_from(&range)
     }
 }
 
-impl From<&PyRange> for Range<f32> {
-    fn from(range: &PyRange) -> Self {
-        let r = range.storage.get().unwrap();
-        r.start..r.end
+impl TryFrom<&PyRange> for Range<f32> {
+    type Error = PyErr;
+
+    fn try_from(range: &PyRange) -> Result<Self, Self::Error> {
+        let r = range.storage.get()?;
+        Ok(r.start..r.end)
     }
 }
 
@@ -118,9 +121,11 @@ impl From<(f32, f32)> for PyRange {
     }
 }
 
-impl From<PyRange> for (f32, f32) {
-    fn from(range: PyRange) -> Self {
-        let r = range.storage.get().unwrap();
-        (r.start, r.end)
+impl TryFrom<PyRange> for (f32, f32) {
+    type Error = PyErr;
+
+    fn try_from(range: PyRange) -> Result<Self, Self::Error> {
+        let r = range.storage.get()?;
+        Ok((r.start, r.end))
     }
 }

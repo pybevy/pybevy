@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::vec4::PyVec4;
 
-#[pyclass(name = "HalfSpace", from_py_object)]
+#[pyclass(name = "HalfSpace", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyHalfSpace {
     pub(crate) inner: HalfSpace,
@@ -30,11 +30,11 @@ impl From<&PyHalfSpace> for HalfSpace {
 #[pymethods]
 impl PyHalfSpace {
     #[new]
-    pub fn new(normal_d: &PyVec4) -> Self {
-        let vec4: Vec4 = normal_d.into();
-        PyHalfSpace {
+    pub fn new(normal_d: &PyVec4) -> PyResult<Self> {
+        let vec4: Vec4 = normal_d.try_into()?;
+        Ok(PyHalfSpace {
             inner: HalfSpace::new(vec4),
-        }
+        })
     }
 
     #[getter]

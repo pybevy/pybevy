@@ -35,9 +35,9 @@ impl PyCompassOctant {
         octant.opposite().into()
     }
 
-    pub fn is_in_direction(&self, origin: PyVec2, candidate: PyVec2) -> bool {
+    pub fn is_in_direction(&self, origin: PyVec2, candidate: PyVec2) -> PyResult<bool> {
         let octant: CompassOctant = (*self).into();
-        octant.is_in_direction(origin.into(), candidate.into())
+        Ok(octant.is_in_direction(origin.try_into()?, candidate.try_into()?))
     }
 
     pub fn __neg__(&self) -> Self {

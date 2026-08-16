@@ -1,8 +1,8 @@
 use bevy::math::{Mat3A, Vec3A};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-use super::vec3a::PyVec3A;
+use super::{vec3::PyVec3, vec3a::PyVec3A};
 
 #[pyclass(name = "Mat3A", from_py_object)]
 #[derive(Debug, Clone)]
@@ -10,17 +10,21 @@ pub struct PyMat3A {
     storage: ValueStorage<Mat3A>,
 }
 
-impl From<PyMat3A> for Mat3A {
+impl TryFrom<PyMat3A> for Mat3A {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_mat: PyMat3A) -> Self {
-        py_mat.storage.get().unwrap()
+    fn try_from(py_mat: PyMat3A) -> PyResult<Self> {
+        Ok(py_mat.storage.get()?)
     }
 }
 
-impl From<&PyMat3A> for Mat3A {
+impl TryFrom<&PyMat3A> for Mat3A {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_mat: &PyMat3A) -> Self {
-        py_mat.storage.get().unwrap()
+    fn try_from(py_mat: &PyMat3A) -> PyResult<Self> {
+        Ok(py_mat.storage.get()?)
     }
 }
 
@@ -53,13 +57,13 @@ impl PyMat3A {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Mat3A> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Mat3A>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Mat3A {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Mat3A> {
+        Ok(self.storage.get()?)
     }
 }
 
@@ -93,12 +97,12 @@ impl PyMat3A {
     }
 
     #[staticmethod]
-    pub fn from_cols(x_axis: &PyVec3A, y_axis: &PyVec3A, z_axis: &PyVec3A) -> Self {
-        PyMat3A::mat3a(Mat3A::from_cols(
-            x_axis.into(),
-            y_axis.into(),
-            z_axis.into(),
-        ))
+    pub fn from_cols(x_axis: &PyVec3A, y_axis: &PyVec3A, z_axis: &PyVec3A) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(Mat3A::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]
@@ -107,9 +111,8 @@ impl PyMat3A {
     }
 
     #[staticmethod]
-    pub fn from_diagonal(diagonal: &PyVec3A) -> Self {
-        let v: Vec3A = diagonal.into();
-        PyMat3A::mat3a(Mat3A::from_diagonal(v.into()))
+    pub fn from_diagonal(diagonal: &PyVec3) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(Mat3A::from_diagonal(diagonal.try_get()?)))
     }
 
     #[staticmethod]
@@ -167,11 +170,13 @@ impl PyMat3A {
     }
 
     pub fn mul_vec3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.mul_vec3a(rhs.into()).into())
+        Ok(self.as_ref()?.mul_vec3a(rhs.try_into()?).try_into()?)
     }
 
     pub fn mul_mat3a(&self, rhs: &PyMat3A) -> PyResult<Self> {
-        Ok(PyMat3A::mat3a(self.as_ref()?.mul_mat3(rhs.as_ref()?)))
+        Ok(PyMat3A::mat3a(
+            self.as_ref()?.mul_mat3(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn mul_scalar(&self, rhs: f32) -> PyResult<Self> {
@@ -202,7 +207,7 @@ impl PyMat3A {
         } else if let Ok(other_mat) = other.extract::<PyMat3A>() {
             Ok(Py::new(py, PyMat3A::mat3a(self_mat * *other_mat.as_ref()?))?.into_any())
         } else if let Ok(vec) = other.extract::<PyVec3A>() {
-            Ok(Py::new(py, PyVec3A::from_vec3a(self_mat * Vec3A::from(&vec)))?.into_any())
+            Ok(Py::new(py, PyVec3A::from_vec3a(self_mat * Vec3A::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
