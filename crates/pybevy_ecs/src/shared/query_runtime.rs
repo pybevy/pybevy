@@ -96,6 +96,12 @@ pub trait RowMaterializer<Context> {
     /// Interpreter-specific exception type.
     type Error;
 
+    /// Apply an interpreter-adapter predicate not expressible in Bevy's static
+    /// query shape (for example a logical Python type sharing native storage).
+    fn matches(&self, _entity: &FilteredEntityAccess<'_, '_>) -> bool {
+        true
+    }
+
     /// Materialize one matched entity.
     fn materialize(
         &self,
@@ -263,6 +269,7 @@ pub struct QueryRuntimeCore {
     operation_active: AtomicBool,
     last_run: Tick,
     this_run: Tick,
+    live_ticks: bool,
 }
 
 /// RAII owner for one Python-level query traversal.
@@ -325,7 +332,34 @@ impl QueryRuntimeCore {
             operation_active: AtomicBool::new(false),
             last_run,
             this_run,
+            live_ticks: false,
         }
+    }
+
+    /// Construct an ad-hoc runtime that reads Bevy's current World tick window
+    /// for each operation, matching `QueryState::query` and `query_mut`.
+    ///
+    /// # Safety
+    ///
+    /// The cache, world, validity, and access requirements are the same as
+    /// [`Self::new`].
+    pub unsafe fn new_live(
+        cached: Option<&CachedQueryCore>,
+        world_cell: UnsafeWorldCell,
+        validity: ValidityFlag,
+    ) -> Self {
+        // SAFETY: the caller provides the same invariants as `new`.
+        let mut runtime = unsafe {
+            Self::new(
+                cached,
+                world_cell,
+                validity,
+                world_cell.last_change_tick(),
+                world_cell.change_tick(),
+            )
+        };
+        runtime.live_ticks = true;
+        runtime
     }
 
     /// Return the shared validity flag used by row materializers.
@@ -335,6 +369,12 @@ impl QueryRuntimeCore {
 
     /// Return the captured change-detection window for this run.
     pub fn run_ticks(&self) -> RunTicks {
+        if self.live_ticks {
+            return RunTicks {
+                last_run: self.world_cell.last_change_tick(),
+                this_run: self.world_cell.change_tick(),
+            };
+        }
         RunTicks {
             last_run: self.last_run,
             this_run: self.this_run,
@@ -391,10 +431,17 @@ impl QueryRuntimeCore {
             return Err(QueryRuntimeError::NestedIteration);
         }
         self.iteration_started.store(false, Ordering::Release);
+        let ticks = self.run_ticks();
         // SAFETY: the constructor binds this cache to this cell, validity was
         // checked above, and scheduler access covers the query.
-        let erased =
-            unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
+        let erased = unsafe {
+            create_iter(
+                &cached.state,
+                self.world_cell,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
         Ok(IterationToken {
             erased: Some(erased),
             live: Arc::clone(&self.live_iterators),
@@ -419,16 +466,90 @@ impl QueryRuntimeCore {
         self.iteration_started.store(true, Ordering::Release);
         // SAFETY: the token uniquely owns the live allocation and `_operation`
         // prevents overlapping access while the row is materialized.
-        match unsafe { self.next_passing(cached, iterator) } {
-            Some(mut entity) => materializer
-                .materialize(&mut entity, context)
-                .map(Some)
-                .map_err(QueryExecutionError::Materialize),
-            None => {
-                token.release();
-                Ok(None)
+        loop {
+            match unsafe { self.next_passing(cached, iterator) } {
+                Some(mut entity) if materializer.matches(&entity) => {
+                    return materializer
+                        .materialize(&mut entity, context)
+                        .map(Some)
+                        .map_err(QueryExecutionError::Materialize);
+                }
+                Some(_) => {}
+                None => {
+                    token.release();
+                    return Ok(None);
+                }
             }
         }
+    }
+
+    /// Count rows after the backend adapter's additional identity predicate.
+    pub fn count_with<Context, Materializer>(
+        &self,
+        materializer: &Materializer,
+    ) -> Result<usize, QueryRuntimeError>
+    where
+        Materializer: RowMaterializer<Context>,
+    {
+        self.check_valid()?;
+        let _operation = self.enter_operation()?;
+        self.begin_isolated_operation()?;
+        let Some(cached) = self.cached() else {
+            return Ok(0);
+        };
+        let ticks = self.run_ticks();
+        // SAFETY: the constructor binds this cache to this cell, validity was
+        // checked above, and scheduler access covers the query.
+        let iterator = unsafe {
+            create_iter(
+                &cached.state,
+                self.world_cell,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
+        let iterator = ErasedIterGuard(iterator);
+        let mut count = 0;
+        while let Some(entity) = unsafe { self.next_passing(cached, iterator.0) } {
+            if materializer.matches(&entity) {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    /// Return whether no row passes the backend adapter's identity predicate.
+    pub fn is_empty_with<Context, Materializer>(
+        &self,
+        materializer: &Materializer,
+    ) -> Result<bool, QueryRuntimeError>
+    where
+        Materializer: RowMaterializer<Context>,
+    {
+        self.check_valid()?;
+        let _operation = self.enter_operation()?;
+        self.begin_isolated_operation()?;
+        let Some(cached) = self.cached() else {
+            return Ok(true);
+        };
+        let ticks = self.run_ticks();
+        // SAFETY: the constructor binds this cache to this cell, validity was
+        // checked above, and scheduler access covers the query.
+        let iterator = unsafe {
+            create_iter(
+                &cached.state,
+                self.world_cell,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
+        let iterator = ErasedIterGuard(iterator);
+        while let Some(entity) = unsafe { self.next_passing(cached, iterator.0) } {
+            if materializer.matches(&entity) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Count matching entities, including Added/Changed filtering.
@@ -440,19 +561,27 @@ impl QueryRuntimeCore {
             return Ok(0);
         };
         if !cached.has_tick_filters() {
+            let ticks = self.run_ticks();
             // SAFETY: constructor contract + validity check establish the world/
             // access requirements; `begin_isolated_operation` guaranteed no stored
             // iterator still borrows this state.
             return Ok(unsafe {
                 cached
                     .state
-                    .count(self.world_cell, self.last_run, self.this_run)
+                    .count(self.world_cell, ticks.last_run, ticks.this_run)
             });
         }
 
+        let ticks = self.run_ticks();
         // SAFETY: as above; the temporary iterator is the only live borrow of the state.
-        let iterator =
-            unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
+        let iterator = unsafe {
+            create_iter(
+                &cached.state,
+                self.world_cell,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
         // The guard ensures the erased allocation is reclaimed on every return.
         let iterator = ErasedIterGuard(iterator);
         let mut count = 0;
@@ -472,17 +601,25 @@ impl QueryRuntimeCore {
             return Ok(true);
         };
         if !cached.has_tick_filters() {
+            let ticks = self.run_ticks();
             // SAFETY: as in `count`; no stored iterator still borrows this state.
             return Ok(unsafe {
                 cached
                     .state
-                    .is_empty_check(self.world_cell, self.last_run, self.this_run)
+                    .is_empty_check(self.world_cell, ticks.last_run, ticks.this_run)
             });
         }
 
+        let ticks = self.run_ticks();
         // SAFETY: as in `count`; the temporary iterator is the only live borrow.
-        let iterator =
-            unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
+        let iterator = unsafe {
+            create_iter(
+                &cached.state,
+                self.world_cell,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
         let iterator = ErasedIterGuard(iterator);
         // SAFETY: the guard owns the live iterator for this method scope.
         Ok(unsafe { self.next_passing(cached, iterator.0) }.is_none())
@@ -501,14 +638,15 @@ impl QueryRuntimeCore {
         let Some(cached) = self.cached() else {
             return Ok(None);
         };
+        let ticks = self.run_ticks();
         // SAFETY: the constructor contract and validity check establish the
         // world/cache/access requirements for this lookup.
         let result = unsafe {
             get_entity(
                 &cached.state,
                 self.world_cell,
-                self.last_run,
-                self.this_run,
+                ticks.last_run,
+                ticks.this_run,
                 entity,
             )
         };
@@ -533,41 +671,13 @@ impl QueryRuntimeCore {
         let Some(mut entity) = (unsafe { self.get_entity_access(entity)? }) else {
             return Ok(None);
         };
+        if !materializer.matches(&entity) {
+            return Ok(None);
+        }
         materializer
             .materialize(&mut entity, context)
             .map(Some)
             .map_err(QueryExecutionError::Materialize)
-    }
-
-    /// Return exactly one matching entity or a neutral cardinality error.
-    ///
-    /// # Safety
-    ///
-    /// The caller must hold this runtime's operation guard until the returned
-    /// access is dropped, preventing overlapping mutable entity access.
-    unsafe fn single_entity(&self) -> Result<FilteredEntityAccess<'_, '_>, QueryRuntimeError> {
-        let Some(cached) = self.cached() else {
-            return Err(QueryRuntimeError::NoEntities);
-        };
-
-        // SAFETY: the constructor contract and validity check establish the
-        // world/cache/access requirements for this temporary iterator; the
-        // caller's `begin_isolated_operation` ensured no stored iterator borrows
-        // the state.
-        let iterator =
-            unsafe { create_iter(&cached.state, self.world_cell, self.last_run, self.this_run) };
-        let iterator = ErasedIterGuard(iterator);
-        // SAFETY: the guard owns the live iterator for this method scope.
-        let first = match unsafe { self.next_passing(cached, iterator.0) } {
-            Some(access) => access,
-            None => return Err(QueryRuntimeError::NoEntities),
-        };
-        // SAFETY: the guard still owns the live iterator; advancing again probes
-        // for a second match (a distinct entity from `first`).
-        if unsafe { self.next_passing(cached, iterator.0) }.is_some() {
-            return Err(QueryRuntimeError::MultipleEntities);
-        }
-        Ok(first)
     }
 
     /// Enforce single-result cardinality and materialize the row.
@@ -582,9 +692,31 @@ impl QueryRuntimeCore {
         self.check_valid()?;
         let _operation = self.enter_operation()?;
         self.begin_isolated_operation()?;
-        // SAFETY: `_operation` prevents another operation from overlapping the
-        // entity access, which is consumed by the materializer before it drops.
-        let mut entity = unsafe { self.single_entity()? };
+        let Some(cached) = self.cached() else {
+            return Err(QueryRuntimeError::NoEntities.into());
+        };
+        let ticks = self.run_ticks();
+        // SAFETY: the constructor binds this cache to this cell, validity was
+        // checked above, and scheduler access covers the query.
+        let iterator = unsafe {
+            create_iter(
+                &cached.state,
+                self.world_cell,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
+        let iterator = ErasedIterGuard(iterator);
+        let mut first = None;
+        while let Some(entity) = unsafe { self.next_passing(cached, iterator.0) } {
+            if materializer.matches(&entity) {
+                if first.is_some() {
+                    return Err(QueryRuntimeError::MultipleEntities.into());
+                }
+                first = Some(entity);
+            }
+        }
+        let mut entity = first.ok_or(QueryRuntimeError::NoEntities)?;
         materializer
             .materialize(&mut entity, context)
             .map_err(QueryExecutionError::Materialize)
@@ -599,10 +731,12 @@ impl QueryRuntimeCore {
     }
 
     fn passes_tick_filters(&self, cached: &CachedQueryCore, access: &FilteredEntityAccess) -> bool {
+        let ticks = self.run_ticks();
         cached.entity_passes_tick_filters(
+            |component_id| access.contains_id(component_id),
             |component_id| access.get_change_ticks_by_id(component_id),
-            self.last_run,
-            self.this_run,
+            ticks.last_run,
+            ticks.this_run,
         )
     }
 
@@ -688,7 +822,10 @@ impl Drop for OperationGuard<'_> {
 
 #[cfg(test)]
 mod tests {
-    use bevy::ecs::component::Component;
+    use bevy::ecs::{
+        change_detection::DetectChangesMut,
+        component::{Component, ComponentId},
+    };
 
     use super::{super::query_builder_ext::QueryComponent, *};
     use crate::shared::query_builder_ext::QueryBuildSpec;
@@ -701,6 +838,30 @@ mod tests {
     impl RowMaterializer<()> for EntityMaterializer {
         type Output = Entity;
         type Error = std::convert::Infallible;
+
+        fn materialize(
+            &self,
+            entity: &mut FilteredEntityAccess<'_, '_>,
+            _context: (),
+        ) -> Result<Self::Output, Self::Error> {
+            Ok(entity.id())
+        }
+    }
+
+    struct OddMaterializer {
+        component_id: ComponentId,
+    }
+
+    impl RowMaterializer<()> for OddMaterializer {
+        type Output = Entity;
+        type Error = std::convert::Infallible;
+
+        fn matches(&self, entity: &FilteredEntityAccess<'_, '_>) -> bool {
+            let pointer = entity.get_by_id(self.component_id).unwrap();
+            // SAFETY: the test registered `component_id` for `A`, and its query
+            // declares read access to that exact component.
+            unsafe { (*(pointer.as_ptr() as *const A)).0 % 2 == 1 }
+        }
 
         fn materialize(
             &self,
@@ -799,7 +960,8 @@ mod tests {
                     Vec::new()
                 },
                 added_filters: Vec::new(),
-                anyof_filters: Vec::new(),
+                anyof_groups: Vec::new(),
+                or_filters: Vec::new(),
             },
         )
     }
@@ -856,6 +1018,35 @@ mod tests {
                 .get_with(Entity::from_raw_u32(999).unwrap(), &EntityMaterializer, (),)
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn backend_predicate_is_consistent_across_query_operations() {
+        let mut world = World::new();
+        let even = world.spawn(A(2)).id();
+        let odd = world.spawn(A(3)).id();
+        world.spawn(A(4));
+        let component_id = world.component_id::<A>().unwrap();
+        let cache = cache(&mut world, false, false);
+        // SAFETY: cache and world outlive `runtime` in this scope.
+        let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
+        let materializer = OddMaterializer { component_id };
+
+        assert_eq!(runtime.count_with::<(), _>(&materializer).unwrap(), 1);
+        assert!(!runtime.is_empty_with::<(), _>(&materializer).unwrap());
+        assert!(runtime.get_with(even, &materializer, ()).unwrap().is_none());
+        assert_eq!(runtime.get_with(odd, &materializer, ()).unwrap(), Some(odd));
+        assert_eq!(runtime.single_with(&materializer, ()).unwrap(), odd);
+
+        let mut token = runtime.begin_iteration().unwrap();
+        assert_eq!(
+            runtime.advance_with(&mut token, &materializer, ()).unwrap(),
+            Some(odd)
+        );
+        assert_eq!(
+            runtime.advance_with(&mut token, &materializer, ()).unwrap(),
+            None
         );
     }
 
@@ -1251,6 +1442,67 @@ mod tests {
         validity.set_invalid();
         drop(token);
         assert_eq!(runtime.live_iterators.load(Ordering::Acquire), 0);
+    }
+
+    struct MarkChangedMaterializer {
+        component_id: ComponentId,
+    }
+
+    impl RowMaterializer<()> for MarkChangedMaterializer {
+        type Output = Entity;
+        type Error = std::convert::Infallible;
+
+        fn materialize(
+            &self,
+            entity: &mut FilteredEntityAccess<'_, '_>,
+            _context: (),
+        ) -> Result<Self::Output, Self::Error> {
+            entity
+                .get_mut_by_id(self.component_id)
+                .expect("component present")
+                .set_changed();
+            Ok(entity.id())
+        }
+    }
+
+    /// A live-tick runtime must build its fresh traversals from the live tick
+    /// window, not the constructor-time capture, so a write through a
+    /// `single()` row stamps the current tick.
+    #[test]
+    fn live_tick_single_stamps_the_current_tick_on_write() {
+        let mut world = World::new();
+        let entity = world.spawn(A(0)).id();
+        let component_id = world.component_id::<A>().unwrap();
+        let cache = cache(&mut world, true, false);
+        let stale_tick = world.change_tick();
+        // SAFETY: cache and world outlive `runtime` in this scope.
+        let runtime = unsafe {
+            QueryRuntimeCore::new_live(
+                Some(&cache),
+                world.as_unsafe_world_cell(),
+                ValidityFlag::new_write(),
+            )
+        };
+        // SAFETY: validity is active and the cell stays within this scope.
+        let cell = unsafe { runtime.world_cell() }.unwrap();
+        for _ in 0..3 {
+            cell.increment_change_tick();
+        }
+        let live_tick = cell.change_tick();
+        assert_ne!(live_tick, stale_tick);
+
+        let marked = runtime
+            .single_with(&MarkChangedMaterializer { component_id }, ())
+            .unwrap();
+        assert_eq!(marked, entity);
+        drop(runtime);
+
+        let changed = world
+            .entity(entity)
+            .get_change_ticks_by_id(component_id)
+            .unwrap()
+            .changed;
+        assert_eq!(changed, live_tick);
     }
 
     #[test]

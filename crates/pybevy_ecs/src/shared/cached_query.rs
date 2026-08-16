@@ -18,7 +18,9 @@ use bevy::ecs::{
     world::{FilteredEntityMut, FilteredEntityRef, World, unsafe_world_cell::UnsafeWorldCell},
 };
 
-use super::query_builder_ext::{QueryBuildSpec, build_query_state, build_query_state_ref};
+use super::query_builder_ext::{
+    QueryBuildSpec, QueryFilterBranch, build_query_state, build_query_state_ref,
+};
 
 /// Type-erased Bevy QueryState. Owns a heap-allocated QueryState behind a raw
 /// pointer; Drop reconstructs the correct Box type to deallocate.
@@ -209,6 +211,7 @@ pub struct CachedQueryCore {
     /// ComponentIds for Added\[T\] filters - entities must pass the
     /// per-entity tick check.
     pub added_filter_ids: Vec<ComponentId>,
+    pub or_filter_groups: Vec<Vec<QueryFilterBranch>>,
 }
 
 impl CachedQueryCore {
@@ -240,29 +243,57 @@ impl CachedQueryCore {
             state,
             changed_filter_ids: spec.changed_filters.clone(),
             added_filter_ids: spec.added_filters.clone(),
+            or_filter_groups: spec.or_filters.clone(),
         }
     }
 
     /// True if the query carries Added/Changed filters, i.e. iteration must
     /// run the per-entity tick check.
     pub fn has_tick_filters(&self) -> bool {
-        !self.changed_filter_ids.is_empty() || !self.added_filter_ids.is_empty()
+        !self.changed_filter_ids.is_empty()
+            || !self.added_filter_ids.is_empty()
+            || self
+                .or_filter_groups
+                .iter()
+                .flatten()
+                .any(|branch| !branch.changed.is_empty() || !branch.added.is_empty())
     }
 
     /// Check whether an entity passes this query's Added/Changed tick filters.
     pub fn entity_passes_tick_filters(
         &self,
+        contains: impl Fn(ComponentId) -> bool,
         get_ticks: impl Fn(ComponentId) -> Option<ComponentTicks>,
         last_run: Tick,
         this_run: Tick,
     ) -> bool {
-        passes_tick_filters(
-            get_ticks,
+        if !passes_tick_filters(
+            &get_ticks,
             &self.changed_filter_ids,
             &self.added_filter_ids,
             last_run,
             this_run,
-        )
+        ) {
+            return false;
+        }
+        self.or_filter_groups.iter().all(|branches| {
+            branches.iter().any(|branch| {
+                branch.with.iter().all(|&id| contains(id))
+                    && branch.without.iter().all(|&id| !contains(id))
+                    && branch
+                        .changed
+                        .iter()
+                        .chain(&branch.added)
+                        .all(|&id| contains(id))
+                    && passes_tick_filters(
+                        &get_ticks,
+                        &branch.changed,
+                        &branch.added,
+                        last_run,
+                        this_run,
+                    )
+            })
+        })
     }
 
     /// Return the Bevy-computed component access for debug access auditing.
@@ -313,7 +344,10 @@ pub fn passes_tick_filters(
 mod tests {
     use bevy::ecs::{change_detection::ComponentTicks, component::Component};
 
-    use super::{super::query_builder_ext::QueryComponent, *};
+    use super::{
+        super::query_builder_ext::{QueryComponent, QueryFilterBranch},
+        *,
+    };
 
     #[derive(Component)]
     struct A;
@@ -341,7 +375,8 @@ mod tests {
             without_filters: Vec::new(),
             changed_filters: if changed { vec![b] } else { Vec::new() },
             added_filters: Vec::new(),
-            anyof_filters: Vec::new(),
+            anyof_groups: Vec::new(),
+            or_filters: Vec::new(),
         }
     }
 
@@ -388,10 +423,63 @@ mod tests {
                 without_filters: Vec::new(),
                 changed_filters: Vec::new(),
                 added_filters: Vec::new(),
-                anyof_filters: Vec::new(),
+                anyof_groups: Vec::new(),
+                or_filters: Vec::new(),
             },
         );
         assert!(!no_filters.has_tick_filters());
+    }
+
+    #[test]
+    fn or_tick_filter_branches_use_disjunction_and_preserve_filter_kinds() {
+        let mut world = World::new();
+        let a = world.register_component::<A>();
+        let b = world.register_component::<B>();
+        let mut query_spec = spec(&mut world, false, false);
+        query_spec.or_filters = vec![vec![
+            QueryFilterBranch {
+                changed: vec![a],
+                ..Default::default()
+            },
+            QueryFilterBranch {
+                added: vec![b],
+                ..Default::default()
+            },
+        ]];
+        let core = CachedQueryCore::build_auto(&mut world, &query_spec);
+        let last_run = Tick::new(3);
+        let this_run = Tick::new(6);
+
+        assert!(core.entity_passes_tick_filters(
+            |id| id == a || id == b,
+            |id| match id {
+                id if id == a => Some(ticks(1, 5)),
+                id if id == b => Some(ticks(1, 2)),
+                _ => None,
+            },
+            last_run,
+            this_run,
+        ));
+        assert!(core.entity_passes_tick_filters(
+            |id| id == a || id == b,
+            |id| match id {
+                id if id == a => Some(ticks(1, 2)),
+                id if id == b => Some(ticks(5, 5)),
+                _ => None,
+            },
+            last_run,
+            this_run,
+        ));
+        assert!(!core.entity_passes_tick_filters(
+            |id| id == a || id == b,
+            |id| match id {
+                id if id == a => Some(ticks(1, 2)),
+                id if id == b => Some(ticks(1, 5)),
+                _ => None,
+            },
+            last_run,
+            this_run,
+        ));
     }
 
     #[test]
