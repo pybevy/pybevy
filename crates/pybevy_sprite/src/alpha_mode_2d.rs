@@ -7,7 +7,10 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyAlphaMode2d {
     Opaque(),
-    Mask { threshold: f32 },
+    #[py_bevy(tuple)]
+    Mask {
+        threshold: f32,
+    },
     Blend(),
 }
 

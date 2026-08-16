@@ -1,19 +1,23 @@
-use bevy::sprite::SpriteImageMode;
+use bevy::sprite::{SpriteImageMode, SpriteScalingMode, TextureSlicer};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::{scaling_mode::PySpriteScalingMode, texture_slicer::PyTextureSlicer};
 
-#[pyenum(SpriteImageMode, manual)]
+#[pyenum(SpriteImageMode, empty_tuple, no_repr)]
 #[pyclass(name = "SpriteImageMode", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PySpriteImageMode {
     Auto(),
+    #[py_bevy(tuple)]
     Scale {
-        mode: PySpriteScalingMode,
+        #[py_type(PySpriteScalingMode)]
+        mode: SpriteScalingMode,
     },
+    #[py_bevy(tuple)]
     Sliced {
-        slicer: PyTextureSlicer,
+        #[py_type(PyTextureSlicer)]
+        slicer: TextureSlicer,
     },
     #[pyo3(constructor = (tile_x = true, tile_y = true, stretch_value = 1.0))]
     Tiled {
@@ -31,7 +35,7 @@ impl PySpriteImageMode {
 
     pub fn scale(&self) -> Option<PySpriteScalingMode> {
         match self {
-            Self::Scale { mode } => Some(*mode),
+            Self::Scale { mode } => Some((*mode).into()),
             _ => None,
         }
     }
@@ -39,8 +43,14 @@ impl PySpriteImageMode {
     pub fn __repr__(&self) -> String {
         match self {
             Self::Auto() => "SpriteImageMode.Auto()".to_string(),
-            Self::Scale { mode } => format!("SpriteImageMode.Scale(mode={mode:?})"),
-            Self::Sliced { slicer } => format!("SpriteImageMode.Sliced(slicer={slicer:?})"),
+            Self::Scale { mode } => {
+                let mode: PySpriteScalingMode = (*mode).into();
+                format!("SpriteImageMode.Scale(mode={mode:?})")
+            }
+            Self::Sliced { slicer } => {
+                let slicer: PyTextureSlicer = slicer.clone().into();
+                format!("SpriteImageMode.Sliced(slicer={slicer:?})")
+            }
             Self::Tiled {
                 tile_x,
                 tile_y,
@@ -48,46 +58,6 @@ impl PySpriteImageMode {
             } => format!(
                 "SpriteImageMode.Tiled(tile_x={tile_x}, tile_y={tile_y}, stretch_value={stretch_value})"
             ),
-        }
-    }
-}
-
-impl From<SpriteImageMode> for PySpriteImageMode {
-    fn from(mode: SpriteImageMode) -> Self {
-        match mode {
-            SpriteImageMode::Auto => Self::Auto(),
-            SpriteImageMode::Scale(mode) => Self::Scale { mode: mode.into() },
-            SpriteImageMode::Sliced(slicer) => Self::Sliced {
-                slicer: slicer.into(),
-            },
-            SpriteImageMode::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            } => Self::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            },
-        }
-    }
-}
-
-impl From<PySpriteImageMode> for SpriteImageMode {
-    fn from(mode: PySpriteImageMode) -> Self {
-        match mode {
-            PySpriteImageMode::Auto() => Self::Auto,
-            PySpriteImageMode::Scale { mode } => Self::Scale(mode.into()),
-            PySpriteImageMode::Sliced { slicer } => Self::Sliced(slicer.into()),
-            PySpriteImageMode::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            } => Self::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            },
         }
     }
 }

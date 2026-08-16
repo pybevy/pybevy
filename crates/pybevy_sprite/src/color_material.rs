@@ -1,7 +1,8 @@
 use bevy::{color::Color, math::Affine2, sprite_render::ColorMaterial};
 use pybevy_color::color::PyColor;
-use pybevy_core::{AssetStorage, PyAsset, PyHandle, extract_handle_from_any};
+use pybevy_core::{AssetStorage, PyAsset, PyHandle, ValueStorage, extract_handle_from_any};
 use pybevy_macros::pyasset;
+use pybevy_math::affine2::PyAffine2;
 use pyo3::prelude::*;
 
 use crate::alpha_mode_2d::PyAlphaMode2d;
@@ -18,13 +19,15 @@ impl PyColorMaterial {
     #[new]
     #[pyo3(signature = (
         color = Color::WHITE.into(),
-        texture = None,
-        alpha_mode = PyAlphaMode2d::Blend()
+        alpha_mode = PyAlphaMode2d::Blend(),
+        uv_transform = PyAffine2::IDENTITY,
+        texture = None
     ))]
     pub fn new(
         color: PyColor,
-        texture: Option<&Bound<'_, PyAny>>,
         alpha_mode: PyAlphaMode2d,
+        uv_transform: PyAffine2,
+        texture: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let texture_handle = match texture {
             Some(handle_obj) => {
@@ -34,23 +37,28 @@ impl PyColorMaterial {
             None => None,
         };
 
+        let color = color.try_into()?;
         Ok(Self::from_owned(ColorMaterial {
-            color: color.into(),
-            texture: texture_handle,
+            color,
             alpha_mode: alpha_mode.into(),
-            uv_transform: Affine2::IDENTITY,
+            uv_transform: uv_transform.try_into()?,
+            texture: texture_handle,
         })
         .into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        let storage: ValueStorage<Color> = self
+            .storage
+            .borrow_field(|material| &material.color, |material| &mut material.color)?;
+        PyColor::from_storage(storage, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = color.try_into()?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 
@@ -82,13 +90,29 @@ impl PyColorMaterial {
         Ok(())
     }
 
+    #[getter]
+    pub fn uv_transform(&self) -> PyResult<PyAffine2> {
+        Ok(self.storage.borrow_field_as(
+            |material| &material.uv_transform,
+            |material| &mut material.uv_transform,
+        )?)
+    }
+
+    #[setter]
+    pub fn set_uv_transform(&mut self, transform: PyAffine2) -> PyResult<()> {
+        let transform: Affine2 = transform.try_into()?;
+        self.as_mut()?.uv_transform = transform;
+        Ok(())
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         let mat = self.as_ref()?;
         Ok(format!(
-            "ColorMaterial(color={:?}, texture={:?}, alpha_mode={:?})",
+            "ColorMaterial(color={:?}, alpha_mode={:?}, uv_transform={:?}, texture={:?})",
             mat.color,
-            mat.texture.is_some(),
-            mat.alpha_mode
+            mat.alpha_mode,
+            mat.uv_transform,
+            mat.texture.is_some()
         ))
     }
 }

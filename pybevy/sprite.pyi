@@ -3,11 +3,11 @@ from typing import ClassVar, Literal
 import numpy as np
 
 from pybevy.app import App, Plugin
-from pybevy.assets import Asset, Handle
+from pybevy.assets import Asset, AssetId, Handle
 from pybevy.color import Color
 from pybevy.ecs import Batchable, Component
 from pybevy.image import Image, TextureAtlas
-from pybevy.math import Rect, Vec2
+from pybevy.math import Affine2, Rect, Vec2
 
 class ColorMaterialPlugin(Plugin):
     """Plugin for 2D ColorMaterial rendering."""
@@ -19,12 +19,14 @@ class ColorMaterial(Asset):
     def __init__(
         self,
         color: Color = Color.WHITE,
+        alpha_mode: AlphaMode2d = ...,
+        uv_transform: Affine2 = Affine2.IDENTITY,
         texture: Handle[Image] | None = None,
-        alpha_mode: AlphaMode2d | None = None,
     ) -> None: ...
     color: Color
-    texture: Handle[Image] | None
     alpha_mode: AlphaMode2d
+    uv_transform: Affine2
+    texture: Handle[Image] | None
 
 class SpritePlugin(Plugin):
     """Plugin that enables 2D sprite rendering.
@@ -173,14 +175,14 @@ class Anchor(Component):
         app.spawn((
             Sprite.from_image(image),
             Transform.from_xyz(100.0, 50.0, 0.0),
-            Anchor.CENTER()  # (0, 0) - sprite center at (100, 50)
+            Anchor.CENTER  # (0, 0) - sprite center at (100, 50)
         ))
 
         # Bottom-left corner at (100, 50)
         app.spawn((
             Sprite.from_image(image),
             Transform.from_xyz(100.0, 50.0, 0.0),
-            Anchor.BOTTOM_LEFT()  # (-0.5, -0.5)
+            Anchor.BOTTOM_LEFT  # (-0.5, -0.5)
         ))
 
         # Custom anchor point
@@ -387,6 +389,8 @@ class SpriteScalingMode:
     FitEnd: ClassVar[SpriteScalingMode]
     """Scale to fit within sprite area, aligned to bottom-right. May add letterboxing."""
 
+    def __hash__(self) -> int: ...
+
 class SliceScaleMode:
     """Scaling mode for nine-patch texture slices."""
 
@@ -541,6 +545,7 @@ class Sprite(Component):
         from pybevy.sprite import Sprite, Anchor
         from pybevy.transform import Transform
         from pybevy.color import Color
+        from pybevy.math import Vec2
 
         # Simple sprite from an image
         app.spawn((
@@ -553,7 +558,7 @@ class Sprite(Component):
             Sprite(
                 image=image_handle,
                 color=Color.srgb(1.0, 0.5, 0.5),  # Red tint
-                custom_size=(64.0, 64.0),
+                custom_size=Vec2(64.0, 64.0),
                 flip_x=True
             ),
             Transform.from_xyz(200.0, 100.0, 0.0),
@@ -561,7 +566,7 @@ class Sprite(Component):
 
         # Solid color rectangle
         app.spawn((
-            Sprite.from_color(Color.srgb(0.2, 0.4, 0.8), (100.0, 50.0)),
+            Sprite.from_color(Color.srgb(0.2, 0.4, 0.8), Vec2(100.0, 50.0)),
             Transform.from_xyz(0.0, 0.0, 0.0),
         ))
 
@@ -602,8 +607,11 @@ class Sprite(Component):
     flip_y: bool
     """Flip sprite vertically (mirror on Y axis)."""
 
-    custom_size: tuple[float, float] | None
-    """Override size in pixels (None = use image size)."""
+    @property
+    def custom_size(self) -> Vec2 | None:
+        """Override size in pixels (None = use image size)."""
+    @custom_size.setter
+    def custom_size(self, value: Vec2 | None) -> None: ...
 
     rect: Rect | None
     """Render only a sub-rectangle of the image (None = full image)."""
@@ -617,7 +625,7 @@ class Sprite(Component):
         color: Color = Color.WHITE,
         flip_x: bool = False,
         flip_y: bool = False,
-        custom_size: tuple[float, float] | None = None,
+        custom_size: Vec2 | None = None,
         rect: Rect | None = None,
         texture_atlas: TextureAtlas | None = None,
         image_mode: SpriteImageMode = ...,
@@ -749,10 +757,10 @@ class Sprite(Component):
         color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
-    def as_asset_id(self) -> Handle[Image]:
+    def as_asset_id(self) -> AssetId[Image]:
         """Get the AssetId of this sprite's image.
 
-        Returns a handle representing the AssetId of the sprite's image.
+        Returns the AssetId of the sprite's image.
         This is useful for comparing sprites or looking up assets.
 
         Returns:

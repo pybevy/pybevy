@@ -6,7 +6,7 @@ handling std140 packing automatically.
 
 Example:
     @material(fragment_shader="shaders/lava.wgsl")
-    class LavaMaterial:
+    class LavaMaterial(Material):
         color: LinearRgba = LinearRgba(1.0, 0.3, 0.0, 1.0)
         crack_scale: float = 5.0
         speed: float = 2.0
@@ -14,8 +14,10 @@ Example:
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
-from typing import Any, get_type_hints
+from threading import Lock
+from typing import Any, TypeVar, cast, get_type_hints
 
 from .. import _pybevy  # type: ignore
 from ..color import LinearRgba
@@ -28,8 +30,54 @@ from ._layout import (
     _generate_wgsl,
 )
 
+_Material = _pybevy.pbr.Material  # type: ignore
+MaterialT = TypeVar("MaterialT", bound=_Material)  # type: ignore[valid-type]
 AlphaMode = _pybevy.material.AlphaMode  # type: ignore
 OpaqueRendererMethod = _pybevy.material.OpaqueRendererMethod  # type: ignore
+
+
+_MaterialLayoutSignature = tuple[object, ...]
+
+_material_type_cache: dict[str, tuple[int, _MaterialLayoutSignature]] = {}
+_next_material_type_id = 1
+_material_type_lock = Lock()
+_material_type_cache_enabled = bool(
+    getattr(sys.modules.get("pybevy.decorators"), "_component_cache_enabled", False)
+)
+
+
+def _clear_material_type_cache() -> None:
+    """Drop full-reload aliases while never reusing an old process-local ID."""
+    with _material_type_lock:
+        _material_type_cache.clear()
+
+
+def _set_material_type_caching(enabled: bool) -> None:
+    """Mirror the component cache mode used by the hot-reload loader."""
+    global _material_type_cache_enabled
+    with _material_type_lock:
+        _material_type_cache_enabled = enabled
+
+
+def _logical_material_type_id(
+    qualified_name: str,
+    signature: _MaterialLayoutSignature,
+) -> int:
+    """Allocate or reuse a logical identity according to the reload mode."""
+    global _next_material_type_id
+    with _material_type_lock:
+        cached = _material_type_cache.get(qualified_name)
+        if (
+            _material_type_cache_enabled
+            and cached is not None
+            and cached[1] == signature
+        ):
+            return cached[0]
+
+        logical_type_id = _next_material_type_id
+        _next_material_type_id += 1
+        _material_type_cache[qualified_name] = (logical_type_id, signature)
+        return logical_type_id
 
 
 def _pack_value(
@@ -84,6 +132,12 @@ def _read_value(
 _SENTINEL = object()
 
 
+
+def _is_native_material(cls: type) -> bool:
+    """A material class defined in Rust rather than by @material."""
+    return cls.__module__ == _Material.__module__
+
+
 def material(
     fragment_shader: str | None = None,
     vertex_shader: str | None = None,
@@ -93,7 +147,7 @@ def material(
     cull_mode: object = _SENTINEL,
     unlit: bool | None = None,
     depth_bias: float | None = None,
-) -> Callable[[type], type]:
+) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material.
 
     Generates WGSL struct + binding declaration and handles data packing.
@@ -101,7 +155,7 @@ def material(
     Args:
         fragment_shader: Asset path to custom fragment shader (relative to assets/ directory).
         vertex_shader: Asset path to custom vertex shader (relative to assets/ directory).
-        alpha_mode: Default AlphaMode for the base StandardMaterial (e.g., AlphaMode.BLEND).
+        alpha_mode: Default AlphaMode for the base StandardMaterial (e.g., AlphaMode.Blend()).
         double_sided: Whether the material renders on both sides.
         cull_mode: Face culling mode. None = no culling, Face.Back = back-face culling (default).
         unlit: Whether the material ignores lighting.
@@ -110,10 +164,10 @@ def material(
     Example:
         @material(
             fragment_shader="shaders/hologram.wgsl",
-            alpha_mode=AlphaMode.BLEND,
+            alpha_mode=AlphaMode.Blend(),
             double_sided=True,
         )
-        class HologramMaterial:
+        class HologramMaterial(Material):
             opacity: float = 0.5
             scan_speed: float = 2.0
 
@@ -122,7 +176,7 @@ def material(
 
         # Or override base explicitly:
         mat = HologramMaterial(
-            base=StandardMaterial(alpha_mode=AlphaMode.ADD),
+            base=StandardMaterial(alpha_mode=AlphaMode.Add()),
             opacity=0.8,
         )
     """
@@ -139,9 +193,26 @@ def material(
     if depth_bias is not None:
         base_overrides["depth_bias"] = depth_bias
 
-    def decorator(cls: type) -> type:
+    def decorator(cls: type[MaterialT]) -> type[MaterialT]:
+        # Rejected before any mutation: the decorator rewrites the class in
+        # place, and rewriting a native wrapper leaves its constructor calling
+        # itself.
+        if cls is _Material or _is_native_material(cls):
+            raise TypeError(
+                f"@material cannot be applied to '{cls.__name__}': it is a native "
+                "material provided by PyBevy. Define your own class inheriting "
+                "Material instead."
+            )
+        if not issubclass(cls, _Material):
+            raise TypeError(
+                f"Material class '{cls.__name__}' must inherit from Material: "
+                f"write `class {cls.__name__}(Material)` so Assets[{cls.__name__}] "
+                f"and MeshMaterial3d[{cls.__name__}] accept it"
+            )
+
         # Use Any-typed alias to allow dynamic attribute assignment on cls
         _cls: Any = cls
+        qualified_name = f"{cls.__module__}.{cls.__qualname__}"
 
         # Collect type hints and defaults
         hints = get_type_hints(cls)
@@ -152,6 +223,30 @@ def material(
 
         # Compute layout (separates uniform, bool, and texture fields)
         layout, bool_fields, texture_fields = _compute_layout(hints, defaults)
+        layout_signature: _MaterialLayoutSignature = (
+            tuple(
+                (
+                    field.name,
+                    field.python_type,
+                    field.offset,
+                    field.size,
+                    field.num_floats,
+                )
+                for field in layout
+            ),
+            tuple(
+                (field.name, field.bit_index, field.def_name)
+                for field in bool_fields
+            ),
+            tuple(
+                (field.name, field.slot_index)
+                for field in texture_fields
+            ),
+        )
+        material_type_id = _logical_material_type_id(
+            qualified_name,
+            layout_signature,
+        )
         field_map = {f.name: f for f in layout}
         bool_field_map = {bf.name: bf for bf in bool_fields}
         texture_field_map = {tf.name: tf for tf in texture_fields}
@@ -232,7 +327,7 @@ def material(
         def to_shader_material(self: Any) -> ShaderMaterial:  # noqa: ANN401
             """Convert to the underlying ShaderMaterial for adding to Assets."""
             tex_list = self._textures if any(t is not None for t in self._textures) else None
-            return ShaderMaterial(
+            shader_material = ShaderMaterial(
                 base=self._base,
                 fragment_shader=_frag_shader,
                 vertex_shader=_vert_shader,
@@ -242,25 +337,32 @@ def material(
                 textures=tex_list,
                 bindings_wgsl=_wgsl,
             )
+            cast(Any, shader_material)._set_logical_type_id(material_type_id)
+            return shader_material
 
-        def from_mut(
+        def _from_borrowed(
             klass: type, shader_mat: ShaderMaterial | None,
         ) -> Any:  # noqa: ANN401
-            """Wrap a mutable ShaderMaterial for field-level access at runtime.
-
-            Use with materials.get_mut(handle) to modify uniforms at 60fps:
-
-                mat = MyMaterial.from_mut(materials.get_mut(handle))
-                mat.speed = 5.0  # writes directly to GPU buffer
-            """
             if shader_mat is None:
                 return None
-            inst: Any = object.__new__(klass)
+            inst: Any = _Material.__new__(klass)
             inst._shader_mat = shader_mat
             inst._data = None
             inst._base = None
             inst._shader_defs = None  # read/write through shader_mat
             return inst
+
+        def from_ref(
+            klass: type, shader_mat: ShaderMaterial | None,
+        ) -> Any:  # noqa: ANN401
+            """Wrap a read-only borrowed ShaderMaterial."""
+            return _from_borrowed(klass, shader_mat)
+
+        def from_mut(
+            klass: type, shader_mat: ShaderMaterial | None,
+        ) -> Any:  # noqa: ANN401
+            """Wrap a mutable borrowed ShaderMaterial."""
+            return _from_borrowed(klass, shader_mat)
 
         # Add property accessors for uniform fields
         for field in layout:
@@ -337,11 +439,13 @@ def material(
 
         _cls.__init__ = __init__
         _cls.to_shader_material = to_shader_material
+        _cls.from_ref = classmethod(from_ref)
         _cls.from_mut = classmethod(from_mut)
 
         # Phase 5 metadata: enables Assets[HologramMaterial], MeshMaterial3d[HologramMaterial]
         _cls.__pybevy_asset_type__ = ShaderMaterial
-        _cls.__pybevy_material_component__ = MeshMaterial3dShader
+        _cls.__pybevy_component_type__ = MeshMaterial3dShader
+        _cls.__pybevy_logical_type_id__ = material_type_id
 
         return cls
 

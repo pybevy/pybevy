@@ -36,7 +36,7 @@ def setup(
     image = asset_server.load_image("bevy/branding/bevy_bird_dark.png")
     sprite = Sprite.from_image(image)
     sprite.color = Color.srgb(5.0, 5.0, 5.0)  # Super bright to trigger bloom
-    sprite.custom_size = (160.0, 160.0)  # tuple, not Vec2
+    sprite.custom_size = Vec2(160.0, 160.0)
     commands.spawn(sprite)
 
     # Bright magenta circle mesh - will glow
