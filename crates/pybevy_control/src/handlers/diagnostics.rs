@@ -18,6 +18,10 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         result.insert("fps_average".into(), serde_json::json!(snap.fps_average));
         result.insert("fps_current".into(), serde_json::json!(snap.fps_current));
         result.insert("uptime_secs".into(), serde_json::json!(snap.uptime_secs));
+        result.insert(
+            "generation_uptime_secs".into(),
+            serde_json::json!(snap.generation_uptime_secs),
+        );
 
         // Scene: live count, matches list_entities / scene_summary.
         result.insert("entity_count".into(), serde_json::json!(entity_count));
@@ -207,6 +211,7 @@ mod tests {
         snap.entity_count = 42; // stale snapshot value; should be ignored
         snap.memory_mb = 128.0;
         snap.uptime_secs = 10.0;
+        snap.generation_uptime_secs = 4.0;
         world.insert_resource(snap);
 
         // World has 0 live entities. Even with a snapshot saying 42,
@@ -214,6 +219,8 @@ mod tests {
         let result = get_performance(&mut world).unwrap();
         assert_eq!(result["fps_average"], 60.0);
         assert_eq!(result["memory_mb"], 128.0);
+        assert_eq!(result["uptime_secs"], 10.0);
+        assert_eq!(result["generation_uptime_secs"], 4.0);
         assert_eq!(
             result["entity_count"], 0,
             "entity_count must be live, not from the cached snapshot"
@@ -266,6 +273,7 @@ mod tests {
         snap.fps_average = 60.0;
         snap.fps_current = 59.0;
         snap.uptime_secs = 100.0;
+        snap.generation_uptime_secs = 12.0;
         snap.entity_count = 50;
         snap.memory_mb = 256.0;
         snap.total_memory_mb = 512.0;
@@ -305,6 +313,8 @@ mod tests {
 
         let result = get_performance(&mut world).unwrap();
         assert_eq!(result["fps_average"], 60.0);
+        assert_eq!(result["uptime_secs"], 100.0);
+        assert_eq!(result["generation_uptime_secs"], 12.0);
         // entity_count is live, not from the snapshot. World has no entities
         // here, so the response is 0 even with snap.entity_count=50.
         assert_eq!(result["entity_count"], 0);

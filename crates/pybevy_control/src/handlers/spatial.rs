@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use bevy::{
     ecs::{entity::Entity, name::Name, world::World},
     math::Vec3A,
@@ -30,9 +32,19 @@ pub struct WorldAabb {
 }
 
 /// Compute world-space AABB for a single entity that has its own Aabb component.
-fn compute_entity_aabb(world: &World, entity: Entity) -> Option<WorldAabb> {
-    let aabb = world.get::<bevy::camera::primitives::Aabb>(entity)?;
-    let gt = world.get::<GlobalTransform>(entity)?;
+fn compute_entity_aabb(world: &World, entity: Entity) -> Result<Option<WorldAabb>, ControlError> {
+    let Some(aabb) = world.get::<bevy::camera::primitives::Aabb>(entity) else {
+        return Ok(None);
+    };
+    let Some(gt) = world.get::<GlobalTransform>(entity) else {
+        return Ok(None);
+    };
+    if !gt.affine().is_finite() || !aabb.center.is_finite() || !aabb.half_extents.is_finite() {
+        return Err(ControlError::invalid_params(format!(
+            "Entity {} has a non-finite GlobalTransform or Aabb",
+            entity.to_bits()
+        )));
+    }
 
     let center = aabb.center;
     let half = aabb.half_extents;
@@ -59,39 +71,55 @@ fn compute_entity_aabb(world: &World, entity: Entity) -> Option<WorldAabb> {
         world_max = world_max.max(transformed);
     }
 
-    Some(WorldAabb {
+    Ok(Some(WorldAabb {
         min: world_min,
         max: world_max,
         entity,
-    })
+    }))
 }
 
 /// Recursively collect world AABBs from all descendants that have Aabb.
-fn collect_descendant_aabbs(world: &World, entity: Entity) -> Vec<WorldAabb> {
+fn collect_descendant_aabbs(world: &World, entity: Entity) -> Result<Vec<WorldAabb>, ControlError> {
     let mut result = Vec::new();
     let Some(children) = world.get::<Children>(entity) else {
-        return result;
+        return Ok(result);
     };
     for child in children.iter() {
-        if let Some(aabb) = compute_entity_aabb(world, child) {
+        if let Some(aabb) = compute_entity_aabb(world, child)? {
             result.push(aabb);
         }
         // Recurse into grandchildren
-        result.extend(collect_descendant_aabbs(world, child));
+        result.extend(collect_descendant_aabbs(world, child)?);
     }
-    result
+    Ok(result)
+}
+
+fn collect_descendants(world: &World, root: Entity) -> HashSet<Entity> {
+    let mut descendants = HashSet::new();
+    let mut pending = vec![root];
+    while let Some(entity) = pending.pop() {
+        let Some(children) = world.get::<Children>(entity) else {
+            continue;
+        };
+        for child in children.iter() {
+            if descendants.insert(child) {
+                pending.push(child);
+            }
+        }
+    }
+    descendants
 }
 
 /// Compute world-space AABB by transforming local Aabb corners via GlobalTransform.
 /// Falls back to merging descendant AABBs for WorldAssetRoot/hierarchy entities.
 pub fn compute_world_aabb(world: &World, entity: Entity) -> Result<WorldAabb, ControlError> {
     // Fast path: entity has its own Aabb
-    if let Some(aabb) = compute_entity_aabb(world, entity) {
+    if let Some(aabb) = compute_entity_aabb(world, entity)? {
         return Ok(aabb);
     }
 
     // Fallback: merge AABBs from descendants (handles WorldAssetRoot/GLB hierarchies)
-    let descendant_aabbs = collect_descendant_aabbs(world, entity);
+    let descendant_aabbs = collect_descendant_aabbs(world, entity)?;
     if descendant_aabbs.is_empty() {
         return Err(ControlError::not_found(
             "Entity has no Aabb and no descendants with Aabb (no mesh in hierarchy?)",
@@ -132,57 +160,30 @@ pub fn aabb_min_distance(a: &WorldAabb, b: &WorldAabb) -> f32 {
 
 /// Penetration depth and dominant axis for overlapping AABBs.
 /// Returns (depth, axis_name) where axis_name is "X", "Y", or "Z".
-/// Skips axes where either AABB has near-zero extent (e.g. flat plane geometry).
 pub fn compute_penetration(a: &WorldAabb, b: &WorldAabb) -> (f32, &'static str) {
-    const EPS: f32 = 1e-4;
-
-    let overlap_x = (a.max.x.min(b.max.x) - a.min.x.max(b.min.x)).max(0.0);
-    let overlap_y = (a.max.y.min(b.max.y) - a.min.y.max(b.min.y)).max(0.0);
-    let overlap_z = (a.max.z.min(b.max.z) - a.min.z.max(b.min.z)).max(0.0);
-
-    let size_a_x = a.max.x - a.min.x;
-    let size_a_y = a.max.y - a.min.y;
-    let size_a_z = a.max.z - a.min.z;
-    let size_b_x = b.max.x - b.min.x;
-    let size_b_y = b.max.y - b.min.y;
-    let size_b_z = b.max.z - b.min.z;
-
-    let axis_eligible = |sa: f32, sb: f32| sa > EPS && sb > EPS;
-    let elig_x = axis_eligible(size_a_x, size_b_x);
-    let elig_y = axis_eligible(size_a_y, size_b_y);
-    let elig_z = axis_eligible(size_a_z, size_b_z);
-
-    // Fallback when no axis is eligible: preserve original min-overlap selection.
-    if !elig_x && !elig_y && !elig_z {
-        if overlap_x <= overlap_y && overlap_x <= overlap_z {
-            return (overlap_x, "X");
-        } else if overlap_y <= overlap_z {
-            return (overlap_y, "Y");
-        } else {
-            return (overlap_z, "Z");
-        }
-    }
-
-    // Pick minimum overlap among eligible axes only.
-    let mut best: Option<(f32, &'static str)> = None;
-    let mut consider = |elig: bool, depth: f32, name: &'static str| {
-        if !elig {
-            return;
-        }
-        match best {
-            Some((d, _)) if depth >= d => {}
-            _ => best = Some((depth, name)),
-        }
+    let axis_depth = |a_min: f32, a_max: f32, b_min: f32, b_max: f32| {
+        (a_max - b_min).min(b_max - a_min).max(0.0)
     };
-    consider(elig_x, overlap_x, "X");
-    consider(elig_y, overlap_y, "Y");
-    consider(elig_z, overlap_z, "Z");
-    best.unwrap()
+
+    let depth_x = axis_depth(a.min.x, a.max.x, b.min.x, b.max.x);
+    let depth_y = axis_depth(a.min.y, a.max.y, b.min.y, b.max.y);
+    let depth_z = axis_depth(a.min.z, a.max.z, b.min.z, b.max.z);
+
+    if depth_x <= depth_y && depth_x <= depth_z {
+        (depth_x, "X")
+    } else if depth_y <= depth_z {
+        (depth_y, "Y")
+    } else {
+        (depth_z, "Z")
+    }
 }
 
 /// Human-readable direction description.
 /// Threshold: ignore axes < 15% of dominant axis magnitude.
 pub fn describe_direction(dir: Vec3) -> String {
+    if !dir.is_finite() {
+        return "invalid direction (non-finite coordinates)".to_string();
+    }
     let abs_x = dir.x.abs();
     let abs_y = dir.y.abs();
     let abs_z = dir.z.abs();
@@ -237,6 +238,29 @@ pub fn is_generic_name(name: Option<&str>) -> bool {
     }
 }
 
+/// Per-request snapshot of how many entities carry each `Name`.
+///
+/// Label rendering needs name-uniqueness; computing it per entity makes
+/// entity-listing endpoints quadratic, so loops build this once and pass it
+/// to [`entity_label_with`].
+pub(crate) struct NameOccurrences(HashMap<String, usize>);
+
+impl NameOccurrences {
+    pub(crate) fn collect(world: &World) -> Self {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for entity in world.iter_entities() {
+            if let Some(name) = entity.get::<Name>() {
+                *counts.entry(name.as_str().to_string()).or_insert(0) += 1;
+            }
+        }
+        Self(counts)
+    }
+
+    fn is_unique(&self, candidate: &str) -> bool {
+        self.0.get(candidate).copied().unwrap_or(0) == 1
+    }
+}
+
 /// Walk up ChildOf chain to find the root ancestor (entity with no parent).
 /// Returns the entity itself if it has no parent.
 pub fn find_root_ancestor(world: &World, entity: Entity) -> Entity {
@@ -250,25 +274,52 @@ pub fn find_root_ancestor(world: &World, entity: Entity) -> Entity {
     current
 }
 
+fn share_hierarchy_root(world: &World, a: Entity, b: Entity) -> bool {
+    (world.get::<ChildOf>(a).is_some() || world.get::<ChildOf>(b).is_some())
+        && find_root_ancestor(world, a) == find_root_ancestor(world, b)
+}
+
 /// Walk up ChildOf chain (max 10 levels) to find first non-generic named ancestor.
-pub fn find_ancestor_name(world: &World, entity: Entity) -> Option<String> {
+fn find_ancestor_name(
+    world: &World,
+    entity: Entity,
+    occurrences: &NameOccurrences,
+) -> Option<String> {
     let mut current = entity;
+    let mut fallback = None;
     for _ in 0..10 {
-        let child_of = world.get::<ChildOf>(current)?;
+        let Some(child_of) = world.get::<ChildOf>(current) else {
+            break;
+        };
         let parent = child_of.parent();
         if let Some(name) = world.get::<Name>(parent)
             && !is_generic_name(Some(name.as_str()))
         {
-            return Some(name.as_str().to_string());
+            let candidate = name.as_str().to_string();
+            if occurrences.is_unique(&candidate) {
+                return Some(candidate);
+            }
+            fallback.get_or_insert(candidate);
         }
         current = parent;
     }
-    None
+    fallback
 }
 
 /// Get entity name or ID label for display.
 /// For generic GLB mesh children, appends the parent's name for context.
+///
+/// Builds a fresh name snapshot per call; loops over many entities should
+/// use [`entity_label_with`] with one [`NameOccurrences::collect`] instead.
 pub fn entity_label(world: &World, entity: Entity) -> String {
+    entity_label_with(world, entity, &NameOccurrences::collect(world))
+}
+
+pub(crate) fn entity_label_with(
+    world: &World,
+    entity: Entity,
+    occurrences: &NameOccurrences,
+) -> String {
     let name = world.get::<Name>(entity);
     let name_str = name.as_ref().map(|n| n.as_str());
 
@@ -277,9 +328,9 @@ pub fn entity_label(world: &World, entity: Entity) -> String {
         None => format!("{}", entity.to_bits()),
     };
 
-    // Append parent context for generic or unnamed entities that have a parent
-    if is_generic_name(name_str)
-        && let Some(ancestor) = find_ancestor_name(world, entity)
+    // Append parent context for generic, unnamed, or repeated imported names.
+    if (is_generic_name(name_str) || name_str.is_some_and(|name| !occurrences.is_unique(name)))
+        && let Some(ancestor) = find_ancestor_name(world, entity, occurrences)
     {
         return format!("{} [parent: {}]", base, ancestor);
     }
@@ -305,6 +356,17 @@ pub fn query_spatial(
 
     let pos_a = gt_a.translation();
     let pos_b = gt_b.translation();
+    let invalid_entities = [(ea, gt_a), (eb, gt_b)]
+        .into_iter()
+        .filter(|(_, transform)| !transform.affine().is_finite())
+        .map(|(entity, _)| entity_label(world, entity))
+        .collect::<Vec<_>>();
+    if !invalid_entities.is_empty() {
+        return Err(ControlError::invalid_params(format!(
+            "Spatial query requires finite GlobalTransform values; invalid entities: {}",
+            invalid_entities.join(", ")
+        )));
+    }
     let delta = pos_b - pos_a;
     let distance = delta.length();
     let direction = describe_direction(delta);
@@ -359,6 +421,11 @@ pub fn query_spatial_neighborhood(
         radius,
         max_results,
     } = params;
+    if !radius.is_finite() || radius < 0.0 {
+        return Err(ControlError::invalid_params(
+            "radius must be >= 0 and finite",
+        ));
+    }
     let center_entity = resolve_entity(world, &entity_ref)?;
 
     // Verify the entity actually has a Transform (not just a stale GlobalTransform)
@@ -371,13 +438,24 @@ pub fn query_spatial_neighborhood(
         .get::<GlobalTransform>(center_entity)
         .ok_or_else(|| ControlError::not_found("Center entity has no GlobalTransform"))?;
     let center_pos = gt_center.translation();
+    if !gt_center.affine().is_finite() {
+        return Err(ControlError::invalid_params(format!(
+            "Center entity {} has a non-finite GlobalTransform",
+            entity_label(world, center_entity)
+        )));
+    }
 
     // Collect all entities with GlobalTransform
     let mut query_state = world.query::<(Entity, &GlobalTransform)>();
     let mut neighbors: Vec<(Entity, f32, Vec3)> = Vec::new();
+    let mut invalid_entities = Vec::new();
 
     for (entity, gt) in query_state.iter(world) {
         if entity == center_entity {
+            continue;
+        }
+        if !gt.affine().is_finite() {
+            invalid_entities.push(entity_label(world, entity));
             continue;
         }
         let pos = gt.translation();
@@ -391,15 +469,17 @@ pub fn query_spatial_neighborhood(
     neighbors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let limit = max_results.unwrap_or(50);
-    let truncated = neighbors.len() > limit;
+    let total_count = neighbors.len();
+    let truncated = total_count > limit;
     let neighbors: Vec<_> = neighbors.into_iter().take(limit).collect();
 
+    let occurrences = NameOccurrences::collect(world);
     let results: Vec<serde_json::Value> = neighbors
         .iter()
         .map(|(entity, dist, pos)| {
             let dir = *pos - center_pos;
             serde_json::json!({
-                "entity": entity_label(world, *entity),
+                "entity": entity_label_with(world, *entity, &occurrences),
                 "distance": round6(*dist),
                 "position": [round6(pos.x), round6(pos.y), round6(pos.z)],
                 "direction": describe_direction(dir),
@@ -408,11 +488,14 @@ pub fn query_spatial_neighborhood(
         .collect();
 
     Ok(serde_json::json!({
-        "center": entity_label(world, center_entity),
+        "center": entity_label_with(world, center_entity, &occurrences),
         "center_position": [round6(center_pos.x), round6(center_pos.y), round6(center_pos.z)],
         "radius": radius,
         "count": results.len(),
+        "total_count": total_count,
         "truncated": truncated,
+        "invalid_count": invalid_entities.len(),
+        "invalid_entities": invalid_entities,
         "neighbors": results,
     }))
 }
@@ -429,44 +512,51 @@ pub fn check_overlaps(
         ground_y,
     } = params;
     let target = resolve_entity(world, &entity_ref)?;
+    if world
+        .get::<GlobalTransform>(target)
+        .is_some_and(|transform| !transform.affine().is_finite())
+    {
+        return Err(ControlError::invalid_params(format!(
+            "Entity {} has a non-finite GlobalTransform",
+            entity_label(world, target)
+        )));
+    }
     let target_aabb = compute_world_aabb(world, target)?;
-
-    // Find root ancestor for sibling filtering (walk full hierarchy, not just direct parent)
-    let target_root = if !include_siblings && world.get::<ChildOf>(target).is_some() {
-        Some(find_root_ancestor(world, target))
-    } else {
-        None
-    };
+    let target_descendants = collect_descendants(world, target);
 
     // Collect all entities with Aabb + GlobalTransform
     let mut query_state =
         world.query::<(Entity, &bevy::camera::primitives::Aabb, &GlobalTransform)>();
     let all_entities: Vec<Entity> = query_state.iter(world).map(|(e, _, _)| e).collect();
 
+    let occurrences = NameOccurrences::collect(world);
     let mut overlaps = Vec::new();
     let mut nearest_below: Option<(Entity, f32)> = None;
+    let mut invalid_entities = Vec::new();
 
     for entity in &all_entities {
-        if *entity == target {
+        if *entity == target || target_descendants.contains(entity) {
             continue;
         }
 
         // Skip entities sharing the same root ancestor (parented parts overlap by design)
-        if let Some(root) = target_root
-            && world.get::<ChildOf>(*entity).is_some()
-            && find_root_ancestor(world, *entity) == root
-        {
+        if !include_siblings && share_hierarchy_root(world, target, *entity) {
             continue;
         }
 
-        let Ok(other_aabb) = compute_world_aabb(world, *entity) else {
-            continue;
+        let other_aabb = match compute_world_aabb(world, *entity) {
+            Ok(aabb) => aabb,
+            Err(error) if error.code == crate::bridge::ErrorCode::InvalidParams => {
+                invalid_entities.push(entity_label(world, *entity));
+                continue;
+            }
+            Err(_) => continue,
         };
 
         if aabbs_overlap(&target_aabb, &other_aabb) {
             let (depth, axis) = compute_penetration(&target_aabb, &other_aabb);
             overlaps.push(serde_json::json!({
-                "entity": entity_label(world, *entity),
+                "entity": entity_label_with(world, *entity, &occurrences),
                 "penetration_depth": round6(depth),
                 "penetration_axis": axis,
             }));
@@ -491,33 +581,42 @@ pub fn check_overlaps(
         }
     }
 
-    let grounded = nearest_below
-        .as_ref()
-        .is_some_and(|(_, gap)| *gap <= max_float_gap);
+    let sunken_penetration = ground_y
+        .map(|gy| gy - target_aabb.min.y)
+        .filter(|penetration| *penetration > 0.001);
+    let on_ground_plane = ground_y.is_some_and(|gy| {
+        let gap = target_aabb.min.y - gy;
+        gap >= -0.001 && gap <= max_float_gap
+    });
+    let grounded = on_ground_plane
+        || nearest_below
+            .as_ref()
+            .is_some_and(|(_, gap)| *gap <= max_float_gap);
 
     let mut result = serde_json::json!({
-        "entity": entity_label(world, target),
+        "entity": entity_label_with(world, target, &occurrences),
         "overlap_count": overlaps.len(),
         "overlaps": overlaps,
         "grounded": grounded,
+        "invalid_count": invalid_entities.len(),
+        "invalid_entities": invalid_entities,
     });
 
     if let Some((below_entity, gap)) = nearest_below {
         result["nearest_surface_below"] = serde_json::json!({
-            "entity": entity_label(world, below_entity),
+            "entity": entity_label_with(world, below_entity, &occurrences),
             "gap": round6(gap),
         });
     } else {
         result["nearest_surface_below"] = serde_json::json!(null);
-        if !grounded {
-            result["floating"] = serde_json::json!(true);
-        }
+    }
+    if !grounded && sunken_penetration.is_none() {
+        result["floating"] = serde_json::json!(true);
     }
 
     // Ground penetration detection
-    if let Some(gy) = ground_y {
-        let penetration = gy - target_aabb.min.y;
-        if penetration > 0.001 {
+    if ground_y.is_some() {
+        if let Some(penetration) = sunken_penetration {
             result["sunken"] = serde_json::json!({
                 "penetration_depth": round6(penetration),
                 "world_aabb_min_y": round6(target_aabb.min.y),
@@ -551,9 +650,14 @@ pub fn check_all_overlaps(
     let entities: Vec<Entity> = query_state.iter(world).map(|(e, _, _)| e).collect();
 
     let mut aabbs: Vec<WorldAabb> = Vec::new();
+    let mut invalid_entities = Vec::new();
     for entity in &entities {
-        if let Ok(aabb) = compute_world_aabb(world, *entity) {
-            aabbs.push(aabb);
+        match compute_world_aabb(world, *entity) {
+            Ok(aabb) => aabbs.push(aabb),
+            Err(error) if error.code == crate::bridge::ErrorCode::InvalidParams => {
+                invalid_entities.push(entity_label(world, *entity));
+            }
+            Err(_) => {}
         }
     }
 
@@ -565,6 +669,7 @@ pub fn check_all_overlaps(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    let occurrences = NameOccurrences::collect(world);
     let mut overlaps = Vec::new();
     let mut floating_entities = Vec::new();
 
@@ -582,22 +687,16 @@ pub fn check_all_overlaps(
                 if !include_siblings {
                     // Skip overlaps between entities that share a common root ancestor
                     // (e.g., mesh children within the same GLB model hierarchy)
-                    let has_parent_i = world.get::<ChildOf>(aabbs[i].entity).is_some();
-                    let has_parent_j = world.get::<ChildOf>(aabbs[j].entity).is_some();
-                    if has_parent_i && has_parent_j {
-                        let root_i = find_root_ancestor(world, aabbs[i].entity);
-                        let root_j = find_root_ancestor(world, aabbs[j].entity);
-                        if root_i == root_j {
-                            has_ground_contact = true;
-                            continue;
-                        }
+                    if share_hierarchy_root(world, aabbs[i].entity, aabbs[j].entity) {
+                        has_ground_contact = true;
+                        continue;
                     }
                 }
                 let (depth, axis) = compute_penetration(&aabbs[i], &aabbs[j]);
                 if depth >= min_pen && overlaps.len() < max_res {
                     overlaps.push(serde_json::json!({
-                        "entity_a": entity_label(world, aabbs[i].entity),
-                        "entity_b": entity_label(world, aabbs[j].entity),
+                        "entity_a": entity_label_with(world, aabbs[i].entity, &occurrences),
+                        "entity_b": entity_label_with(world, aabbs[j].entity, &occurrences),
                         "penetration_depth": round6(depth),
                         "penetration_axis": axis,
                     }));
@@ -621,8 +720,13 @@ pub fn check_all_overlaps(
             }
         }
 
-        if !has_ground_contact && floating_entities.len() < 20 {
-            floating_entities.push(entity_label(world, aabbs[i].entity));
+        let sunken = ground_y.is_some_and(|gy| gy - aabbs[i].min.y > 0.001);
+        let on_ground_plane = ground_y.is_some_and(|gy| {
+            let gap = aabbs[i].min.y - gy;
+            gap >= -0.001 && gap <= max_float_gap
+        });
+        if !has_ground_contact && !on_ground_plane && !sunken && floating_entities.len() < 20 {
+            floating_entities.push(entity_label_with(world, aabbs[i].entity, &occurrences));
         }
     }
 
@@ -632,6 +736,8 @@ pub fn check_all_overlaps(
         "overlaps": overlaps,
         "floating_count": floating_entities.len(),
         "floating_entities": floating_entities,
+        "invalid_count": invalid_entities.len(),
+        "invalid_entities": invalid_entities,
     });
 
     // Ground penetration detection
@@ -641,7 +747,7 @@ pub fn check_all_overlaps(
             let penetration = gy - aabb.min.y;
             if penetration > 0.001 {
                 sunken_entities.push(serde_json::json!({
-                    "entity": entity_label(world, aabb.entity),
+                    "entity": entity_label_with(world, aabb.entity, &occurrences),
                     "penetration_depth": round6(penetration),
                     "world_aabb_min_y": round6(aabb.min.y),
                 }));
@@ -777,6 +883,14 @@ mod tests {
     }
 
     #[test]
+    fn describe_direction_rejects_non_finite_coordinates() {
+        assert_eq!(
+            describe_direction(Vec3::NAN),
+            "invalid direction (non-finite coordinates)"
+        );
+    }
+
+    #[test]
     fn describe_direction_small_below_threshold() {
         // dominant = 10.0, threshold = 1.5. x=0.5 is below threshold
         let result = describe_direction(Vec3::new(0.5, 10.0, 0.0));
@@ -853,6 +967,33 @@ mod tests {
     }
 
     #[test]
+    fn query_spatial_rejects_non_finite_global_transform() {
+        let mut world = World::new();
+        let invalid = world
+            .spawn((
+                Name::new("Invalid"),
+                GlobalTransform::from(Transform::from_translation(Vec3::NAN)),
+            ))
+            .id();
+        let valid = world
+            .spawn((Name::new("Valid"), GlobalTransform::default()))
+            .id();
+
+        let error = query_spatial(
+            &mut world,
+            QuerySpatialParams {
+                entity_a: EntityRef::Id(invalid.to_bits()),
+                entity_b: EntityRef::Id(valid.to_bits()),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(error.message.contains("Invalid"));
+        assert!(error.message.contains("requires finite GlobalTransform"));
+    }
+
+    #[test]
     fn query_spatial_neighborhood_radius_filtering() {
         let mut world = World::new();
         let center = world
@@ -886,6 +1027,59 @@ mod tests {
         assert_eq!(neighbors.len(), 1);
         let name = neighbors[0]["entity"].as_str().unwrap();
         assert!(name.contains("Near"));
+    }
+
+    #[test]
+    fn query_spatial_neighborhood_reports_non_finite_neighbors() {
+        let mut world = World::new();
+        let center = world
+            .spawn((
+                Name::new("Center"),
+                Transform::default(),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.spawn((
+            Name::new("Invalid"),
+            GlobalTransform::from(Transform::from_translation(Vec3::NAN)),
+        ));
+
+        let result = query_spatial_neighborhood(
+            &mut world,
+            QuerySpatialNeighborhoodParams {
+                entity: EntityRef::Id(center.to_bits()),
+                radius: 5.0,
+                max_results: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["count"], 0);
+        assert_eq!(result["invalid_count"], 1);
+        assert!(
+            result["invalid_entities"][0]
+                .as_str()
+                .unwrap()
+                .contains("Invalid")
+        );
+    }
+
+    #[test]
+    fn query_spatial_neighborhood_rejects_invalid_radius() {
+        for radius in [-1.0, f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            let error = query_spatial_neighborhood(
+                &mut World::new(),
+                QuerySpatialNeighborhoodParams {
+                    entity: EntityRef::Id(0),
+                    radius,
+                    max_results: None,
+                },
+            )
+            .unwrap_err();
+
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(error.message, "radius must be >= 0 and finite");
+        }
     }
 
     #[test]
@@ -959,6 +1153,21 @@ mod tests {
         assert!((result.max.x - 1.0).abs() < 1e-5);
         assert!((result.max.y - 1.0).abs() < 1e-5);
         assert!((result.max.z - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn compute_world_aabb_rejects_non_finite_transform() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0)),
+                GlobalTransform::from(Transform::from_translation(Vec3::NAN)),
+            ))
+            .id();
+
+        let error = compute_world_aabb(&world, entity).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(error.message.contains("non-finite"));
     }
 
     #[test]
@@ -1056,6 +1265,81 @@ mod tests {
         let overlaps = result["overlaps"].as_array().unwrap();
         assert!(!overlaps.is_empty());
         assert!(overlaps[0]["penetration_depth"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn check_overlaps_excludes_target_descendants() {
+        let mut world = World::new();
+        let target = world
+            .spawn((Name::new("model"), GlobalTransform::default()))
+            .id();
+        let child = world
+            .spawn((
+                Name::new("mesh"),
+                Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.entity_mut(target).add_child(child);
+
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Name("model".into()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["overlap_count"], 0);
+        assert_eq!(result["overlaps"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn parent_child_overlap_is_filtered_from_both_overlap_tools() {
+        let mut world = World::new();
+        let parent = world
+            .spawn((
+                Name::new("parent"),
+                Aabb::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let child = world
+            .spawn((
+                Name::new("child"),
+                Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.entity_mut(parent).add_child(child);
+
+        let one = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Name("child".into()),
+                include_siblings: false,
+                max_float_gap: 0.1,
+                ground_y: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(one["overlap_count"], 0);
+
+        let all = check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: None,
+                include_siblings: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(all["overlap_count"], 0);
     }
 
     #[test]
@@ -1361,6 +1645,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["count"], 2);
+        assert_eq!(result["total_count"], 5);
         assert_eq!(result["truncated"], true);
     }
 
@@ -1525,6 +1810,44 @@ mod tests {
     }
 
     #[test]
+    fn entity_label_repeated_name_uses_unique_ancestor() {
+        let mut world = World::new();
+        let root_a = world.spawn(Name::new("model_a")).id();
+        let root_b = world.spawn(Name::new("model_b")).id();
+        let scene_a = world.spawn(Name::new("Scene")).id();
+        let scene_b = world.spawn(Name::new("Scene")).id();
+        let mesh_a = world.spawn(Name::new("cube")).id();
+        let mesh_b = world.spawn(Name::new("cube")).id();
+        world.entity_mut(root_a).add_child(scene_a);
+        world.entity_mut(root_b).add_child(scene_b);
+        world.entity_mut(scene_a).add_child(mesh_a);
+        world.entity_mut(scene_b).add_child(mesh_b);
+
+        assert!(entity_label(&world, mesh_a).contains("[parent: model_a]"));
+        assert!(entity_label(&world, mesh_b).contains("[parent: model_b]"));
+    }
+
+    #[test]
+    fn entity_label_with_prebuilt_occurrences_matches_per_call_labels() {
+        let mut world = World::new();
+        let root_a = world.spawn(Name::new("model_a")).id();
+        let root_b = world.spawn(Name::new("model_b")).id();
+        let mesh_a = world.spawn(Name::new("cube")).id();
+        let mesh_b = world.spawn(Name::new("cube")).id();
+        let unnamed = world.spawn_empty().id();
+        world.entity_mut(root_a).add_child(mesh_a);
+        world.entity_mut(root_b).add_child(mesh_b);
+
+        let occurrences = NameOccurrences::collect(&world);
+        for entity in [root_a, root_b, mesh_a, mesh_b, unnamed] {
+            assert_eq!(
+                entity_label_with(&world, entity, &occurrences),
+                entity_label(&world, entity),
+            );
+        }
+    }
+
+    #[test]
     fn entity_label_no_parent_unchanged() {
         let mut world = World::new();
         let entity = world.spawn(Name::new("geometry_0")).id();
@@ -1561,6 +1884,33 @@ mod tests {
         assert!(result["sunken"].is_object());
         let depth = result["sunken"]["penetration_depth"].as_f64().unwrap();
         assert!((depth - 1.0).abs() < 1e-5);
+        assert!(result.get("floating").is_none());
+    }
+
+    #[test]
+    fn check_overlaps_uses_ground_y_as_support_plane() {
+        let mut world = World::new();
+        let entity = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 1.0, 0.5)),
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(entity.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: Some(0.0),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["grounded"], true);
+        assert!(result.get("floating").is_none());
+        assert!(result["sunken"].is_null());
     }
 
     #[test]
@@ -1611,6 +1961,63 @@ mod tests {
         assert_eq!(result["sunken_count"], 1);
         let sunken = result["sunken_entities"].as_array().unwrap();
         assert_eq!(sunken.len(), 1);
+        assert_eq!(result["floating_count"], 0);
+    }
+
+    #[test]
+    fn check_all_overlaps_reports_non_finite_entities_separately() {
+        let mut world = World::new();
+        world.spawn((
+            Name::new("Invalid"),
+            Aabb::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0)),
+            GlobalTransform::from(Transform::from_translation(Vec3::NAN)),
+        ));
+
+        let result = check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: Some(0.0),
+                include_siblings: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["invalid_count"], 1);
+        assert_eq!(result["floating_count"], 0);
+        assert_eq!(result["sunken_count"], 0);
+        assert!(
+            result["invalid_entities"][0]
+                .as_str()
+                .unwrap()
+                .contains("Invalid")
+        );
+    }
+
+    #[test]
+    fn check_all_overlaps_uses_ground_y_as_support_plane() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-0.5, 0.0, -0.5), Vec3::new(0.5, 1.0, 0.5)),
+            GlobalTransform::default(),
+        ));
+
+        let result = super::check_all_overlaps(
+            &mut world,
+            CheckAllOverlapsParams {
+                min_penetration: None,
+                max_results: None,
+                max_float_gap: 0.1,
+                ground_y: Some(0.0),
+                include_siblings: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["floating_count"], 0);
+        assert_eq!(result["sunken_count"], 0);
     }
 
     #[test]
@@ -1760,19 +2167,12 @@ mod tests {
 
     #[test]
     fn compute_penetration_cube_straddles_flat_ground() {
-        // Cube straddling a flat plane (Y extent = 0). Must not pick the degenerate Y axis.
-        // Cube is fully contained on X and Z within the plane, so overlap on those axes is 2.0.
+        // Separating the cube from the plane requires 1.0 on Y, but 16.0 on X or Z.
         let a = make_aabb(1, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]);
         let b = make_aabb(2, [-15.0, 0.0, -15.0], [15.0, 0.0, 15.0]);
         let (depth, axis) = compute_penetration(&a, &b);
-        assert_ne!(axis, "Y", "Y is degenerate and must be skipped");
-        assert!(axis == "X" || axis == "Z");
-        assert!(depth > 0.0, "expected positive depth, got {}", depth);
-        assert!(
-            (depth - 2.0).abs() < 1e-5,
-            "expected depth ~2.0, got {}",
-            depth
-        );
+        assert_eq!(axis, "Y");
+        assert!((depth - 1.0).abs() < 1e-5);
     }
 
     #[test]
@@ -1786,12 +2186,11 @@ mod tests {
     }
 
     #[test]
-    fn compute_penetration_one_axis_degenerate_excluded() {
-        // b is flat on X. Eligible axes Y (overlap 0.5) and Z (overlap 1.0). Y wins.
+    fn compute_penetration_flat_axis_uses_separation_distance() {
+        // Separating on X requires 1.0, while separating on Y requires 0.5.
         let a = make_aabb(1, [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
         let b = make_aabb(2, [1.0, 1.5, 1.0], [1.0, 4.0, 3.0]);
         let (depth, axis) = compute_penetration(&a, &b);
-        assert_ne!(axis, "X");
         assert_eq!(axis, "Y");
         assert!((depth - 0.5).abs() < 1e-5);
     }
@@ -1807,13 +2206,13 @@ mod tests {
     }
 
     #[test]
-    fn compute_penetration_thin_wall_skips_x() {
-        // Vertical thin wall: b has degenerate X. Picked axis must be Y or Z.
+    fn compute_penetration_thin_wall_uses_contact_normal() {
+        // Moving the cube 1.0 on X separates it from the wall; Y and Z require 6.0.
         let a = make_aabb(1, [-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]);
         let b = make_aabb(2, [0.0, -5.0, -5.0], [0.0, 5.0, 5.0]);
-        let (_depth, axis) = compute_penetration(&a, &b);
-        assert_ne!(axis, "X");
-        assert!(axis == "Y" || axis == "Z");
+        let (depth, axis) = compute_penetration(&a, &b);
+        assert_eq!(axis, "X");
+        assert!((depth - 1.0).abs() < 1e-5);
     }
 
     #[test]
