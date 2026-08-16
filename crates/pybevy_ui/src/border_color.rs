@@ -21,68 +21,77 @@ impl PyBorderColor {
         right: Option<PyColor>,
         bottom: Option<PyColor>,
         left: Option<PyColor>,
-    ) -> PyClassInitializer<Self> {
-        let base = color.map(Color::from).unwrap_or(Color::NONE);
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let base = color
+            .map(Color::try_from)
+            .transpose()?
+            .unwrap_or(Color::NONE);
         let bc = BorderColor {
-            top: top.map(Color::from).unwrap_or(base),
-            right: right.map(Color::from).unwrap_or(base),
-            bottom: bottom.map(Color::from).unwrap_or(base),
-            left: left.map(Color::from).unwrap_or(base),
+            top: top.map(Color::try_from).transpose()?.unwrap_or(base),
+            right: right.map(Color::try_from).transpose()?.unwrap_or(base),
+            bottom: bottom.map(Color::try_from).transpose()?.unwrap_or(base),
+            left: left.map(Color::try_from).transpose()?.unwrap_or(base),
         };
-        Self::from_owned(bc).into()
+        Ok(Self::from_owned(bc).into())
     }
 
     #[staticmethod]
     pub fn all(py: Python<'_>, color: PyColor) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(BorderColor::all(Color::from(color))))
+        let color = Color::try_from(color)?;
+        Py::new(py, Self::from_owned(BorderColor::all(color)))
     }
 
     #[getter]
     pub fn top(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.top, py)
+        PyColor::from_component_field(&self.storage, |border| &border.top, py)
     }
 
     #[setter]
     pub fn set_top(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.top = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.top = color;
         Ok(())
     }
 
     #[getter]
     pub fn right(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.right, py)
+        PyColor::from_component_field(&self.storage, |border| &border.right, py)
     }
 
     #[setter]
     pub fn set_right(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.right = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.right = color;
         Ok(())
     }
 
     #[getter]
     pub fn bottom(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.bottom, py)
+        PyColor::from_component_field(&self.storage, |border| &border.bottom, py)
     }
 
     #[setter]
     pub fn set_bottom(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.bottom = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.bottom = color;
         Ok(())
     }
 
     #[getter]
     pub fn left(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.left, py)
+        PyColor::from_component_field(&self.storage, |border| &border.left, py)
     }
 
     #[setter]
     pub fn set_left(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.left = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.left = color;
         Ok(())
     }
 
     pub fn set_all(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.set_all(Color::from(color));
+        let color = Color::try_from(color)?;
+        self.as_mut()?.set_all(color);
         Ok(())
     }
 

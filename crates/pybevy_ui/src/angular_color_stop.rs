@@ -24,23 +24,26 @@ impl From<PyAngularColorStop> for AngularColorStop {
 impl PyAngularColorStop {
     #[new]
     #[pyo3(signature = (color = None, angle = None, *, hint = 0.5))]
-    pub fn new(color: Option<PyColor>, angle: Option<f32>, hint: f32) -> Self {
-        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::WHITE);
-        PyAngularColorStop {
+    pub fn new(color: Option<PyColor>, angle: Option<f32>, hint: f32) -> PyResult<Self> {
+        let bevy_color = color
+            .map(Color::try_from)
+            .transpose()?
+            .unwrap_or(Color::WHITE);
+        Ok(PyAngularColorStop {
             inner: AngularColorStop {
                 color: bevy_color,
                 angle,
                 hint,
             },
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn auto(color: PyColor) -> Self {
-        let bevy_color: Color = color.into();
-        PyAngularColorStop {
+    pub fn auto(color: PyColor) -> PyResult<Self> {
+        let bevy_color = Color::try_from(color)?;
+        Ok(PyAngularColorStop {
             inner: AngularColorStop::auto(bevy_color),
-        }
+        })
     }
 
     pub fn with_hint(&self, hint: f32) -> Self {

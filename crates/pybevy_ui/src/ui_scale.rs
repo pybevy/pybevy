@@ -1,9 +1,13 @@
 use bevy::ui::UiScale;
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[pyresource(UiScale, no_clone, bridge)]
+fn clone_ui_scale(value: &UiScale) -> PyResult<UiScale> {
+    Ok(UiScale(value.0))
+}
+
+#[pyresource(UiScale, no_clone, bridge, clone_with = clone_ui_scale)]
 #[pyclass(name = "UiScale", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyUiScale {
@@ -15,13 +19,9 @@ impl PyUiScale {
     #[new]
     #[pyo3(signature = (scale = 1.0))]
     pub fn new(scale: f32) -> PyClassInitializer<Self> {
-        (
-            Self {
-                storage: ResourceStorage::owned(UiScale(scale)),
-            },
-            PyResource,
-        )
-            .into()
+        resource_initializer(Self {
+            storage: ResourceStorage::owned(UiScale(scale)),
+        })
     }
 
     #[getter]

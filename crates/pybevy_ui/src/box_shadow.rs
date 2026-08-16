@@ -1,6 +1,9 @@
-use bevy::{color::Color, ui::BoxShadow};
+use bevy::{
+    color::Color,
+    ui::{BoxShadow, ShadowStyle},
+};
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, ValueStorage};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
@@ -17,11 +20,17 @@ pub struct PyBoxShadow {
 impl PyBoxShadow {
     #[new]
     #[pyo3(signature = (shadows = None))]
-    pub fn new(shadows: Option<Vec<PyShadowStyle>>) -> PyClassInitializer<Self> {
+    pub fn new(shadows: Option<Vec<PyShadowStyle>>) -> PyResult<PyClassInitializer<Self>> {
         let shadow_styles = shadows
-            .map(|s| s.into_iter().map(|style| style.inner).collect())
+            .map(|styles| {
+                styles
+                    .into_iter()
+                    .map(ShadowStyle::try_from)
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?
             .unwrap_or_default();
-        Self::from_owned(BoxShadow(shadow_styles)).into()
+        Ok(Self::from_owned(BoxShadow(shadow_styles)).into())
     }
 
     #[staticmethod]
@@ -33,7 +42,7 @@ impl PyBoxShadow {
         spread_radius: PyVal,
         blur_radius: PyVal,
     ) -> PyResult<Py<Self>> {
-        let bevy_color: Color = color.into();
+        let bevy_color = Color::try_from(color)?;
         let (instance, base) = Self::from_owned(BoxShadow::new(
             bevy_color,
             x_offset.into(),
@@ -50,18 +59,23 @@ impl PyBoxShadow {
             .as_ref()?
             .0
             .iter()
-            .map(|s| PyShadowStyle::from(*s))
+            .map(|style| PyShadowStyle::from_borrowed(ValueStorage::read_only_snapshot(*style)))
             .collect())
     }
 
     #[setter]
     pub fn set_shadows(&mut self, shadows: Vec<PyShadowStyle>) -> PyResult<()> {
-        self.as_mut()?.0 = shadows.into_iter().map(|s| s.inner).collect();
+        let shadows = shadows
+            .into_iter()
+            .map(ShadowStyle::try_from)
+            .collect::<PyResult<Vec<_>>>()?;
+        self.as_mut()?.0 = shadows;
         Ok(())
     }
 
     pub fn push(&mut self, style: PyShadowStyle) -> PyResult<()> {
-        self.as_mut()?.0.push(style.inner);
+        let style = style.try_into()?;
+        self.as_mut()?.0.push(style);
         Ok(())
     }
 
@@ -87,15 +101,18 @@ impl PyBoxShadow {
         if index >= inner.0.len() {
             return Err(PyIndexError::new_err("shadow index out of range"));
         }
-        Ok(PyShadowStyle::from(inner.0[index]))
+        Ok(PyShadowStyle::from_borrowed(
+            ValueStorage::read_only_snapshot(inner.0[index]),
+        ))
     }
 
     pub fn __setitem__(&mut self, index: usize, style: PyShadowStyle) -> PyResult<()> {
-        let inner = self.as_mut()?;
+        let style = style.try_into()?;
+        let mut inner = self.as_mut()?;
         if index >= inner.0.len() {
             return Err(PyIndexError::new_err("shadow index out of range"));
         }
-        inner.0[index] = style.inner;
+        inner.0[index] = style;
         Ok(())
     }
 

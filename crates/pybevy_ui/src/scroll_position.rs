@@ -48,7 +48,7 @@ impl PyScrollPosition {
 
     #[setter]
     pub fn set_offset(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.0 = value.into();
+        self.as_mut()?.0 = value.try_into()?;
         Ok(())
     }
 
