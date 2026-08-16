@@ -5,6 +5,7 @@ use std::{cell::RefCell, collections::HashSet};
 use bevy::ecs::{
     component::ComponentId,
     entity::Entity,
+    hierarchy::{ChildOf, Children},
     world::{World, WorldId},
 };
 use pybevy_ecs::shared::{
@@ -21,6 +22,7 @@ use super::{
     component_type::PyComponentType,
     observer::{PyAdd, PyDespawn, PyDiscard, PyInsert, PyOn, PyRemove},
     observer_registry::{ObserverEntry, ObserverRegistry},
+    resource::is_resource_entity,
 };
 
 type StructuralInsert<'a> = Box<dyn FnOnce(&mut World) -> bool + 'a>;
@@ -47,7 +49,9 @@ impl Drop for ActiveLifecycleGuard {
 
 fn component_key(component: PyComponentType) -> usize {
     match component {
-        PyComponentType::Dynamic(type_ptr) | PyComponentType::Custom(type_ptr) => type_ptr as usize,
+        PyComponentType::Dynamic(type_ptr)
+        | PyComponentType::Resource(type_ptr)
+        | PyComponentType::Custom(type_ptr) => type_ptr as usize,
     }
 }
 
@@ -175,11 +179,39 @@ impl LifecycleMutationAdapter for MainLifecycleAdapter<'_> {
     }
 
     fn despawn_entity(&mut self, entity: Entity) {
+        // A lifecycle callback can parent a resource entity under this root
+        // after the boundary check, so detach any before Bevy's cascade runs.
+        detach_resource_descendants(self.world, entity);
         self.world.despawn(entity);
     }
 
     fn cleanup_despawned_entity(&mut self, entity: Entity) {
         ObserverRegistry::cleanup_on_entity_despawn(entity, self.world);
+    }
+}
+
+/// Break the parent link of every resource entity under `root` so Bevy's
+/// relationship cascade cannot despawn resource storage.
+fn detach_resource_descendants(world: &mut World, root: Entity) {
+    let mut pending = vec![root];
+    let mut seen = HashSet::new();
+    let mut detach = Vec::new();
+    while let Some(entity) = pending.pop() {
+        if !seen.insert(entity) || !world.entities().contains(entity) {
+            continue;
+        }
+        if entity != root && is_resource_entity(world, entity) {
+            detach.push(entity);
+            continue;
+        }
+        if let Some(children) = world.get::<Children>(entity) {
+            pending.extend(children.iter());
+        }
+    }
+    for entity in detach {
+        if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
+            entity_mut.remove::<ChildOf>();
+        }
     }
 }
 
@@ -249,6 +281,11 @@ pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> LifecycleMut
         if !seen.insert(entity) || !world.entities().contains(entity) {
             continue;
         }
+        // Never cascade into resource storage, even if a resource entity was
+        // parented under the despawn root.
+        if is_resource_entity(world, entity) {
+            continue;
+        }
         let children = world
             .get::<bevy::ecs::hierarchy::Children>(entity)
             .map(|children| children.iter().collect::<Vec<_>>())
@@ -260,7 +297,7 @@ pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> LifecycleMut
             super::world::PyWorld::get_entity_data_names(world, entity),
         ));
     }
-    if snapshots.is_empty() {
+    if snapshots.is_empty() && !is_resource_entity(world, root) {
         snapshots.push(RecursiveDespawnSnapshot::new(root, Vec::new()));
     }
     LifecycleMutationCore.despawn_recursive(
