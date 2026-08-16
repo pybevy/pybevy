@@ -1,59 +1,51 @@
 use bevy::{camera::MainPassResolutionOverride, math::UVec2};
-use pybevy_core::PyComponent;
+use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::pycomponent;
 use pybevy_math::uvec2::PyUVec2;
 use pyo3::prelude::*;
 
-#[pyclass(name = "MainPassResolutionOverride", extends = PyComponent, frozen, eq)]
-#[derive(Debug, PartialEq)]
+fn clone_main_pass_resolution_override(
+    value: &MainPassResolutionOverride,
+) -> MainPassResolutionOverride {
+    MainPassResolutionOverride(value.0)
+}
+
+#[pycomponent(
+    MainPassResolutionOverride,
+    no_clone,
+    bridge,
+    clone_with = clone_main_pass_resolution_override
+)]
+#[pyclass(name = "MainPassResolutionOverride", extends = PyComponent, frozen)]
+#[derive(Debug)]
 pub struct PyMainPassResolutionOverride {
-    resolution: UVec2,
-}
-
-impl PyMainPassResolutionOverride {
-    pub fn to_bevy(&self) -> MainPassResolutionOverride {
-        MainPassResolutionOverride(self.resolution)
-    }
-}
-
-impl From<MainPassResolutionOverride> for PyMainPassResolutionOverride {
-    fn from(value: MainPassResolutionOverride) -> Self {
-        PyMainPassResolutionOverride {
-            resolution: value.0,
-        }
-    }
+    pub(crate) storage: ComponentStorage<MainPassResolutionOverride>,
 }
 
 #[pymethods]
 impl PyMainPassResolutionOverride {
     #[new]
-    pub fn new(resolution: &PyUVec2) -> PyClassInitializer<Self> {
-        let res: UVec2 = resolution.into();
-        (
-            PyMainPassResolutionOverride { resolution: res },
+    pub fn new(value: &PyUVec2) -> PyResult<PyClassInitializer<Self>> {
+        let value: UVec2 = value.try_into()?;
+        Ok((
+            Self {
+                storage: ComponentStorage::owned(MainPassResolutionOverride(value)),
+            },
             PyComponent,
         )
-            .into()
+            .into())
     }
 
     #[getter]
-    pub fn resolution(&self) -> PyUVec2 {
-        self.resolution.into()
+    pub fn value(&self) -> PyResult<PyUVec2> {
+        Ok(self.storage.snapshot_field_as(|resolution| &resolution.0)?)
     }
 
-    #[getter]
-    pub fn width(&self) -> u32 {
-        self.resolution.x
-    }
-
-    #[getter]
-    pub fn height(&self) -> u32 {
-        self.resolution.y
-    }
-
-    pub fn __repr__(&self) -> String {
-        format!(
+    pub fn __repr__(&self) -> PyResult<String> {
+        let resolution = self.as_ref()?.0;
+        Ok(format!(
             "MainPassResolutionOverride({}x{})",
-            self.resolution.x, self.resolution.y
-        )
+            resolution.x, resolution.y
+        ))
     }
 }

@@ -66,6 +66,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<unit_markers::PyNoCpuCulling>()?;
     m.add_class::<unit_markers::PyNoFrustumCulling>()?;
     m.add_class::<unit_markers::PyCamera2d>()?;
+    m.add_class::<unit_markers::PyShadowLodOrigin>()?;
     m.add_class::<unit_markers::PyDepthPrepass>()?;
     m.add_class::<unit_markers::PyNormalPrepass>()?;
     m.add_class::<unit_markers::PyMotionVectorPrepass>()?;

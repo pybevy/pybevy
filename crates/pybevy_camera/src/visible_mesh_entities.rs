@@ -21,6 +21,7 @@ impl PyVisibleMeshEntities {
         )
             .into()
     }
+    #[getter]
     pub fn entities(&self) -> PyResult<Vec<PyEntity>> {
         Ok(self
             .as_ref()?

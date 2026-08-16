@@ -159,6 +159,10 @@ class Camera2d(Component):
     def __copy__(self) -> Camera2d: ...
     def __deepcopy__(self, memo: dict[int, object]) -> Camera2d: ...
 
+class ShadowLodOrigin(Component):
+    """Marks an entity as the origin for shadow-map level-of-detail selection."""
+    def __init__(self) -> None: ...
+
 class Camera3dDepthLoadOp:
     """Depth load operation for 3D cameras."""
 
@@ -374,6 +378,8 @@ class MsaaWriteback:
     Off: MsaaWriteback
     Auto: MsaaWriteback
     Always: MsaaWriteback
+
+    def __hash__(self) -> int: ...
 
 class Camera(Component):
     """Camera component that configures rendering.
@@ -1003,8 +1009,7 @@ class RenderLayers(Component):
     """Layer-based visibility filtering for cameras and entities.
 
     Cameras only render entities on matching layers.
-    Uses bitset (32 layers max, 0-31). By default, entities and cameras
-    are on layer 0.
+    By default, entities and cameras are on layer 0.
 
     Examples:
         >>> # Create entity on layer 1 (hidden from default camera)
@@ -1035,42 +1040,38 @@ class RenderLayers(Component):
 
     @staticmethod
     def layer(layer: int) -> RenderLayers:
-        """Create RenderLayers with only the specified layer enabled (0-31).
+        """Create RenderLayers with only the specified layer enabled.
 
         Args:
-            layer: Layer number (0-31)
+            layer: Layer number below the platform's integer bit width
 
         Returns:
             RenderLayers with only the specified layer enabled
 
         Raises:
-            ValueError: If layer is not between 0 and 31
+            ValueError: If layer is too large for Bevy's constant constructor
         """
 
     def with_(self, layer: int) -> RenderLayers:
         """Create a new RenderLayers with the specified layer added.
 
         Args:
-            layer: Layer number to add (0-31)
+            layer: Layer number to add
 
         Returns:
             New RenderLayers with the layer added
 
-        Raises:
-            ValueError: If layer is not between 0 and 31
         """
 
     def without(self, layer: int) -> RenderLayers:
         """Create a new RenderLayers with the specified layer removed.
 
         Args:
-            layer: Layer number to remove (0-31)
+            layer: Layer number to remove
 
         Returns:
             New RenderLayers with the layer removed
 
-        Raises:
-            ValueError: If layer is not between 0 and 31
         """
 
     def intersects(self, other: RenderLayers) -> bool:
@@ -1370,7 +1371,7 @@ class Projection(Component):
 class ClearColor(Resource):
     color: Color
 
-    def __init__(self, color: Color = Color.WHITE) -> None: ...
+    def __init__(self, color: Color = Color.srgb_u8(43, 44, 47)) -> None: ...
 
 
 class ClearColorConfig:
@@ -1453,13 +1454,16 @@ class InheritedVisibility(Component):
 
 
 class ViewVisibility(Component):
-    """Indicates if an entity should actually be rendered this frame.
+    """Indicates if an entity is visible to any active view this frame.
 
     This is computed by Bevy's visibility system, taking into account:
     - The entity's Visibility component
     - InheritedVisibility from ancestors
     - Frustum culling
     - RenderLayers filtering
+
+    Active views include cameras and shadow-casting lights. A true value does
+    not mean the entity is on screen in a particular camera.
 
     This is a read-only component that is automatically computed by Bevy.
     You cannot spawn entities with custom ViewVisibility values.
@@ -1472,7 +1476,7 @@ class ViewVisibility(Component):
         def check_rendered(query: Query[ViewVisibility]) -> None:
             for view_vis in query:
                 if view_vis.get():
-                    print("Entity will be rendered this frame")
+                    print("Entity is visible to at least one active view")
         ```
     """
     HIDDEN: ViewVisibility
@@ -1544,24 +1548,16 @@ class MainPassResolutionOverride(Component):
     at the specified resolution, regardless of the window or viewport size.
     """
 
-    def __init__(self, resolution: UVec2) -> None:
-        """Create a new MainPassResolutionOverride with the specified resolution.
+    def __init__(self, value: UVec2) -> None:
+        """Create a new MainPassResolutionOverride.
 
         Args:
-            resolution: The resolution to use for the main pass as UVec2(width, height).
+            value: The main-pass resolution in physical pixels.
         """
 
     @property
-    def resolution(self) -> UVec2:
-        """Get the resolution as UVec2."""
-
-    @property
-    def width(self) -> int:
-        """Get the width component of the resolution."""
-
-    @property
-    def height(self) -> int:
-        """Get the height component of the resolution."""
+    def value(self) -> UVec2:
+        """The main-pass resolution in physical pixels."""
 
 class CubemapLayout:
     """Defines the order of images in a packed cubemap image.
@@ -1596,6 +1592,7 @@ class CubemapFrusta(Component):
 
     def __init__(self) -> None: ...
 
+    @property
     def frusta(self) -> list[Frustum]:
         """Get all 6 frustums as a list."""
 
@@ -1614,6 +1611,7 @@ class VisibleMeshEntities(Component):
 
     def __init__(self) -> None: ...
 
+    @property
     def entities(self) -> list[Entity]:
         """Get all visible entities as a list."""
 
@@ -1690,11 +1688,14 @@ class ImageRenderTarget:
     def handle(self) -> Handle[ImageAsset]: ...
     @property
     def scale_factor(self) -> float: ...
+    def __eq__(self, other: object) -> bool: ...
 
 class ManualTextureViewHandle:
     def __init__(self, value: int) -> None: ...
     @property
     def value(self) -> int: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class NormalizedRenderTarget:
     """A normalized render target, matching Bevy's value-enum variants."""
@@ -1719,6 +1720,8 @@ class NormalizedRenderTarget:
         width: int
         height: int
         def __init__(self, width: int, height: int) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
 
 class DepthPrepass(Component):

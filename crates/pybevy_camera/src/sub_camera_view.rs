@@ -1,5 +1,5 @@
 use bevy::camera::SubCameraView;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 
@@ -39,26 +39,30 @@ impl From<&SubCameraView> for PySubCameraView {
     }
 }
 
-impl From<PySubCameraView> for SubCameraView {
-    fn from(scv: PySubCameraView) -> Self {
-        scv.storage.get().unwrap()
+impl TryFrom<PySubCameraView> for SubCameraView {
+    type Error = PyErr;
+
+    fn try_from(scv: PySubCameraView) -> Result<Self, Self::Error> {
+        Self::try_from(&scv)
     }
 }
 
-impl From<&PySubCameraView> for SubCameraView {
-    fn from(scv: &PySubCameraView) -> Self {
-        scv.storage.get().unwrap()
+impl TryFrom<&PySubCameraView> for SubCameraView {
+    type Error = PyErr;
+
+    fn try_from(scv: &PySubCameraView) -> Result<Self, Self::Error> {
+        Ok(scv.storage.get()?)
     }
 }
 
 impl PySubCameraView {
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&SubCameraView> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, SubCameraView>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut SubCameraView> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, SubCameraView>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -67,14 +71,27 @@ impl PySubCameraView {
 impl PySubCameraView {
     #[new]
     #[pyo3(signature = (full_size=None, offset=None, size=None))]
-    pub fn new(full_size: Option<PyUVec2>, offset: Option<PyVec2>, size: Option<PyUVec2>) -> Self {
+    pub fn new(
+        full_size: Option<PyUVec2>,
+        offset: Option<PyVec2>,
+        size: Option<PyUVec2>,
+    ) -> PyResult<Self> {
         let default = SubCameraView::default();
-        SubCameraView {
-            full_size: full_size.map(|v| v.into()).unwrap_or(default.full_size),
-            offset: offset.map(|v| v.into()).unwrap_or(default.offset),
-            size: size.map(|v| v.into()).unwrap_or(default.size),
+        Ok(SubCameraView {
+            full_size: full_size
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(default.full_size),
+            offset: offset
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(default.offset),
+            size: size
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(default.size),
         }
-        .into()
+        .into())
     }
 
     #[getter]
@@ -84,7 +101,7 @@ impl PySubCameraView {
 
     #[setter]
     pub fn set_full_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.full_size = value.into();
+        self.as_mut()?.full_size = value.try_into()?;
         Ok(())
     }
 
@@ -95,7 +112,7 @@ impl PySubCameraView {
 
     #[setter]
     pub fn set_offset(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.offset = value.into();
+        self.as_mut()?.offset = value.try_into()?;
         Ok(())
     }
 
@@ -106,7 +123,7 @@ impl PySubCameraView {
 
     #[setter]
     pub fn set_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.size = value.into();
+        self.as_mut()?.size = value.try_into()?;
         Ok(())
     }
 

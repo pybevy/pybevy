@@ -24,11 +24,20 @@ impl PyCubemapFrusta {
             .into()
     }
 
+    #[getter]
     pub fn frusta(&self, py: Python<'_>) -> PyResult<Vec<Py<PyFrustum>>> {
         let cf = self.as_ref()?;
         let mut result = Vec::with_capacity(6);
         for frustum in cf.frusta.iter() {
-            result.push(Py::new(py, PyFrustum::from_owned(*frustum))?);
+            result.push(Py::new(
+                py,
+                (
+                    PyFrustum {
+                        storage: ComponentStorage::read_only_snapshot(frustum),
+                    },
+                    PyComponent,
+                ),
+            )?);
         }
         Ok(result)
     }
@@ -40,7 +49,15 @@ impl PyCubemapFrusta {
             return Err(PyIndexError::new_err("Cubemap face index must be 0-5"));
         }
         let cf = self.as_ref()?;
-        Py::new(py, PyFrustum::from_owned(cf.frusta[index]))
+        Py::new(
+            py,
+            (
+                PyFrustum {
+                    storage: ComponentStorage::read_only_snapshot(&cf.frusta[index]),
+                },
+                PyComponent,
+            ),
+        )
     }
 
     pub fn __len__(&self) -> usize {

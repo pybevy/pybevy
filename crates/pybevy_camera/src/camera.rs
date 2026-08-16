@@ -14,18 +14,9 @@ use super::{
 };
 
 #[pycomponent(Camera, bridge, view_fields = [is_active])]
-#[pyclass(name = "Camera", extends = PyComponent, eq)]
+#[pyclass(name = "Camera", extends = PyComponent)]
 pub struct PyCamera {
     pub(crate) storage: ComponentStorage<Camera>,
-}
-
-impl PartialEq for PyCamera {
-    fn eq(&self, other: &Self) -> bool {
-        match (self.as_ref(), other.as_ref()) {
-            (Ok(a), Ok(b)) => a.is_active == b.is_active && a.order == b.order,
-            _ => false,
-        }
-    }
 }
 
 #[pymethods]
@@ -61,7 +52,7 @@ impl PyCamera {
             camera.viewport = Some(v.try_into()?);
         }
         if let Some(scv) = sub_camera_view {
-            camera.sub_camera_view = Some(scv.into());
+            camera.sub_camera_view = Some(scv.try_into()?);
         }
         Ok(Self::from_owned(camera).into())
     }
@@ -76,7 +67,7 @@ impl PyCamera {
 
     #[setter]
     pub fn set_viewport(&mut self, value: Option<&PyViewport>) -> PyResult<()> {
-        let camera = self.as_mut()?;
+        let mut camera = self.as_mut()?;
         camera.viewport = match value {
             Some(py_viewport) => Some(py_viewport.try_into()?),
             None => None,
@@ -149,14 +140,18 @@ impl PyCamera {
 
     #[setter]
     pub fn set_sub_camera_view(&mut self, value: Option<PySubCameraView>) -> PyResult<()> {
-        self.as_mut()?.sub_camera_view = value.map(|scv| scv.into());
+        let converted = match value {
+            Some(scv) => Some(bevy::camera::SubCameraView::try_from(scv)?),
+            None => None,
+        };
+        self.as_mut()?.sub_camera_view = converted;
         Ok(())
     }
 
     pub fn to_logical(&self, physical_size: PyUVec2) -> PyResult<Option<PyVec2>> {
         Ok(self
             .as_ref()?
-            .to_logical(physical_size.into())
+            .to_logical(physical_size.try_into()?)
             .map(|v| v.into()))
     }
 
@@ -214,10 +209,10 @@ impl PyCamera {
     ) -> PyResult<PyVec2> {
         let camera = self.as_ref()?;
         let transform = camera_transform.as_ref()?;
-        let viewport_pos = viewport_position.into();
+        let viewport_pos = viewport_position.try_into()?;
 
         camera
-            .viewport_to_world_2d(transform, viewport_pos)
+            .viewport_to_world_2d(&transform, viewport_pos)
             .map(|v| v.into())
             .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
     }
@@ -229,10 +224,10 @@ impl PyCamera {
     ) -> PyResult<PyVec2> {
         let camera = self.as_ref()?;
         let transform = camera_transform.as_ref()?;
-        let world_pos = world_position.into();
+        let world_pos = world_position.try_into()?;
 
         camera
-            .world_to_viewport(transform, world_pos)
+            .world_to_viewport(&transform, world_pos)
             .map(|v| v.into())
             .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
     }
@@ -244,10 +239,10 @@ impl PyCamera {
     ) -> PyResult<PyRay3d> {
         let camera = self.as_ref()?;
         let transform = camera_transform.as_ref()?;
-        let viewport_pos = viewport_position.into();
+        let viewport_pos = viewport_position.try_into()?;
 
         camera
-            .viewport_to_world(transform, viewport_pos)
+            .viewport_to_world(&transform, viewport_pos)
             .map(|ray| ray.into())
             .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
     }
@@ -259,10 +254,10 @@ impl PyCamera {
     ) -> PyResult<PyVec3> {
         let camera = self.as_ref()?;
         let transform = camera_transform.as_ref()?;
-        let world_pos = world_position.into();
+        let world_pos = world_position.try_into()?;
 
         camera
-            .world_to_viewport_with_depth(transform, world_pos)
+            .world_to_viewport_with_depth(&transform, world_pos)
             .map(|v| v.into())
             .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
     }

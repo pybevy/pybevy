@@ -1,6 +1,6 @@
 use bevy::{
     camera::{
-        Camera2d,
+        Camera2d, ShadowLodOrigin,
         visibility::{NoCpuCulling, NoFrustumCulling},
     },
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass},
@@ -121,6 +121,49 @@ impl PyCamera2d {
 
     pub fn __repr__(&self) -> &'static str {
         "Camera2d"
+    }
+}
+
+#[pycomponent(ShadowLodOrigin, unit, bridge)]
+#[pyclass(
+    name = "ShadowLodOrigin",
+    extends = PyComponent,
+    frozen,
+    eq,
+    skip_from_py_object
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PyShadowLodOrigin;
+
+impl From<ShadowLodOrigin> for PyShadowLodOrigin {
+    fn from(_: ShadowLodOrigin) -> Self {
+        PyShadowLodOrigin
+    }
+}
+
+impl From<PyShadowLodOrigin> for ShadowLodOrigin {
+    fn from(_: PyShadowLodOrigin) -> Self {
+        ShadowLodOrigin
+    }
+}
+
+impl TryFrom<&ShadowLodOrigin> for PyShadowLodOrigin {
+    type Error = PyErr;
+
+    fn try_from(_: &ShadowLodOrigin) -> PyResult<Self> {
+        Ok(PyShadowLodOrigin)
+    }
+}
+
+#[pymethods]
+impl PyShadowLodOrigin {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        (PyShadowLodOrigin, PyComponent).into()
+    }
+
+    pub fn __repr__(&self) -> &'static str {
+        "ShadowLodOrigin()"
     }
 }
 

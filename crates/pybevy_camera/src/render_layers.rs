@@ -1,7 +1,7 @@
 use bevy::camera::visibility::RenderLayers;
 use pybevy_core::{PyComponent, pycomponent::ComponentStorage};
 use pybevy_macros::pycomponent;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pycomponent(RenderLayers, bridge)]
 #[pyclass(name = "RenderLayers", extends = PyComponent, eq)]
@@ -39,51 +39,35 @@ impl PyRenderLayers {
     }
 
     #[staticmethod]
-    pub fn layer(py: Python<'_>, layer: u8) -> PyResult<Py<Self>> {
-        if layer > 31 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Layer must be between 0 and 31",
-            ));
+    pub fn layer(py: Python<'_>, layer: usize) -> PyResult<Py<Self>> {
+        if layer >= usize::BITS as usize {
+            return Err(PyValueError::new_err(format!(
+                "layer must be less than {} for RenderLayers.layer(); use from_layers() for higher layers",
+                usize::BITS
+            )));
         }
         Py::new(
             py,
             (
-                PyRenderLayers::from(RenderLayers::layer(layer as usize)),
+                PyRenderLayers::from(RenderLayers::layer(layer)),
                 PyComponent,
             ),
         )
     }
 
     #[pyo3(name = "with_")]
-    pub fn with_(slf: Py<Self>, py: Python<'_>, layer: u8) -> PyResult<Py<Self>> {
-        if layer > 31 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Layer must be between 0 and 31",
-            ));
-        }
-        let mut borrowed = slf.borrow_mut(py);
-        let current = borrowed.as_ref()?.clone();
-        *borrowed.as_mut()? = current.with(layer as usize);
-        drop(borrowed);
-        Ok(slf)
+    pub fn with_(&self, py: Python<'_>, layer: usize) -> PyResult<Py<Self>> {
+        let layers = self.as_ref()?.clone().with(layer);
+        Py::new(py, (PyRenderLayers::from(layers), PyComponent))
     }
 
-    #[pyo3(name = "without")]
-    pub fn without(slf: Py<Self>, py: Python<'_>, layer: u8) -> PyResult<Py<Self>> {
-        if layer > 31 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Layer must be between 0 and 31",
-            ));
-        }
-        let mut borrowed = slf.borrow_mut(py);
-        let current = borrowed.as_ref()?.clone();
-        *borrowed.as_mut()? = current.without(layer as usize);
-        drop(borrowed);
-        Ok(slf)
+    pub fn without(&self, py: Python<'_>, layer: usize) -> PyResult<Py<Self>> {
+        let layers = self.as_ref()?.clone().without(layer);
+        Py::new(py, (PyRenderLayers::from(layers), PyComponent))
     }
 
     pub fn intersects(&self, other: &PyRenderLayers) -> PyResult<bool> {
-        Ok(self.as_ref()?.intersects(other.as_ref()?))
+        Ok(self.as_ref()?.intersects(other.as_ref()?.reborrow()))
     }
 
     #[getter]
@@ -102,12 +86,12 @@ impl PyRenderLayers {
     }
 
     pub fn intersection(&self, py: Python<'_>, other: &PyRenderLayers) -> PyResult<Py<Self>> {
-        let result = self.as_ref()?.intersection(other.as_ref()?);
+        let result = self.as_ref()?.intersection(other.as_ref()?.reborrow());
         Py::new(py, (PyRenderLayers::from(result), PyComponent))
     }
 
     pub fn union(&self, py: Python<'_>, other: &PyRenderLayers) -> PyResult<Py<Self>> {
-        let result = self.as_ref()?.union(other.as_ref()?);
+        let result = self.as_ref()?.union(other.as_ref()?.reborrow());
         Py::new(py, (PyRenderLayers::from(result), PyComponent))
     }
 
@@ -116,7 +100,9 @@ impl PyRenderLayers {
         py: Python<'_>,
         other: &PyRenderLayers,
     ) -> PyResult<Py<Self>> {
-        let result = self.as_ref()?.symmetric_difference(other.as_ref()?);
+        let result = self
+            .as_ref()?
+            .symmetric_difference(other.as_ref()?.reborrow());
         Py::new(py, (PyRenderLayers::from(result), PyComponent))
     }
 
