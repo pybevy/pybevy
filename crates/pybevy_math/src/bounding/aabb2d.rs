@@ -1,8 +1,8 @@
 use bevy::math::{
-    Vec2,
+    Isometry2d, Vec2,
     bounding::{Aabb2d, BoundingVolume, IntersectsVolume},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
 use super::bounding_circle::PyBoundingCircle;
@@ -56,12 +56,12 @@ impl PyAabb2d {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Aabb2d> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Aabb2d>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Aabb2d> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Aabb2d>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -70,31 +70,34 @@ impl PyAabb2d {
 impl PyAabb2d {
     #[new]
     #[pyo3(signature = (center, half_size))]
-    pub fn new(center: PyVec2, half_size: PyVec2) -> Self {
-        let center_vec: Vec2 = center.into();
-        let half_size_vec: Vec2 = half_size.into();
-        PyAabb2d::from_aabb2d(Aabb2d::new(center_vec, half_size_vec))
+    pub fn new(center: PyVec2, half_size: PyVec2) -> PyResult<Self> {
+        let center_vec: Vec2 = center.try_into()?;
+        let half_size_vec: Vec2 = half_size.try_into()?;
+        Ok(PyAabb2d::from_aabb2d(Aabb2d::new(
+            center_vec,
+            half_size_vec,
+        )))
     }
 
     #[getter]
     pub fn min(&self) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(self.as_ref()?.min))
+        Ok(self.storage.borrow_field_as(|a| &a.min)?)
     }
 
     #[setter]
     pub fn set_min(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.min = value.into();
+        self.as_mut()?.min = value.try_into()?;
         Ok(())
     }
 
     #[getter]
     pub fn max(&self) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(self.as_ref()?.max))
+        Ok(self.storage.borrow_field_as(|a| &a.max)?)
     }
 
     #[setter]
     pub fn set_max(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.max = value.into();
+        self.as_mut()?.max = value.try_into()?;
         Ok(())
     }
 
@@ -107,7 +110,7 @@ impl PyAabb2d {
     }
 
     pub fn closest_point(&self, point: PyVec2) -> PyResult<PyVec2> {
-        let point_vec: Vec2 = point.into();
+        let point_vec: Vec2 = point.try_into()?;
         Ok(PyVec2::from_vec2(self.as_ref()?.closest_point(point_vec)))
     }
 
@@ -122,17 +125,17 @@ impl PyAabb2d {
     }
 
     pub fn grow(&self, amount: PyVec2) -> PyResult<PyAabb2d> {
-        let amount_vec: Vec2 = amount.into();
+        let amount_vec: Vec2 = amount.try_into()?;
         Ok(PyAabb2d::from_aabb2d(self.as_ref()?.grow(amount_vec)))
     }
 
     pub fn shrink(&self, amount: PyVec2) -> PyResult<PyAabb2d> {
-        let amount_vec: Vec2 = amount.into();
+        let amount_vec: Vec2 = amount.try_into()?;
         Ok(PyAabb2d::from_aabb2d(self.as_ref()?.shrink(amount_vec)))
     }
 
     pub fn scale_around_center(&self, scale: PyVec2) -> PyResult<PyAabb2d> {
-        let scale_vec: Vec2 = scale.into();
+        let scale_vec: Vec2 = scale.try_into()?;
         Ok(PyAabb2d::from_aabb2d(
             self.as_ref()?.scale_around_center(scale_vec),
         ))
@@ -160,10 +163,11 @@ impl PyAabb2d {
 
     #[staticmethod]
     pub fn from_point_cloud(isometry: PyIsometry2d, points: Vec<PyVec2>) -> PyResult<PyAabb2d> {
-        use bevy::math::Isometry2d;
-
         let iso: Isometry2d = isometry.into();
-        let point_refs: Vec<Vec2> = points.into_iter().map(|p| p.into()).collect();
+        let point_refs: Vec<Vec2> = points
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
 
         Ok(PyAabb2d::from_aabb2d(Aabb2d::from_point_cloud(
             iso,
@@ -184,17 +188,17 @@ impl PyAabb2d {
 #[pyclass(name = "Isometry2d", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyIsometry2d {
-    inner: bevy::math::Isometry2d,
+    inner: Isometry2d,
 }
 
-impl From<PyIsometry2d> for bevy::math::Isometry2d {
+impl From<PyIsometry2d> for Isometry2d {
     fn from(iso: PyIsometry2d) -> Self {
         iso.inner
     }
 }
 
-impl From<bevy::math::Isometry2d> for PyIsometry2d {
-    fn from(iso: bevy::math::Isometry2d) -> Self {
+impl From<Isometry2d> for PyIsometry2d {
+    fn from(iso: Isometry2d) -> Self {
         PyIsometry2d { inner: iso }
     }
 }
@@ -203,38 +207,39 @@ impl From<bevy::math::Isometry2d> for PyIsometry2d {
 impl PyIsometry2d {
     #[classattr]
     const IDENTITY: PyIsometry2d = PyIsometry2d {
-        inner: bevy::math::Isometry2d::IDENTITY,
+        inner: Isometry2d::IDENTITY,
     };
 
     #[new]
     #[pyo3(signature = (translation = PyVec2::ZERO, rotation = None))]
-    pub fn new(translation: PyVec2, rotation: Option<&crate::rot2::PyRot2>) -> Self {
+    pub fn new(translation: PyVec2, rotation: Option<&crate::rot2::PyRot2>) -> PyResult<Self> {
         let rot = rotation
-            .map(|r| r.inner())
+            .map(|rotation| rotation.inner())
+            .transpose()?
             .unwrap_or(bevy::math::Rot2::IDENTITY);
-        PyIsometry2d {
-            inner: bevy::math::Isometry2d::new(translation.into(), rot),
-        }
+        Ok(PyIsometry2d {
+            inner: Isometry2d::new(translation.try_into()?, rot),
+        })
     }
 
     #[staticmethod]
-    pub fn from_rotation(rotation: &crate::rot2::PyRot2) -> Self {
-        PyIsometry2d {
-            inner: bevy::math::Isometry2d::from_rotation(rotation.inner()),
-        }
+    pub fn from_rotation(rotation: &crate::rot2::PyRot2) -> PyResult<Self> {
+        Ok(PyIsometry2d {
+            inner: Isometry2d::from_rotation(rotation.inner()?),
+        })
     }
 
     #[staticmethod]
-    pub fn from_translation(translation: PyVec2) -> Self {
-        PyIsometry2d {
-            inner: bevy::math::Isometry2d::from_translation(translation.into()),
-        }
+    pub fn from_translation(translation: PyVec2) -> PyResult<Self> {
+        Ok(PyIsometry2d {
+            inner: Isometry2d::from_translation(translation.try_into()?),
+        })
     }
 
     #[staticmethod]
     pub fn from_xy(x: f32, y: f32) -> Self {
         PyIsometry2d {
-            inner: bevy::math::Isometry2d::from_xy(x, y),
+            inner: Isometry2d::from_xy(x, y),
         }
     }
 
@@ -260,12 +265,16 @@ impl PyIsometry2d {
         }
     }
 
-    pub fn transform_point(&self, point: PyVec2) -> PyVec2 {
-        PyVec2::from_vec2(self.inner.transform_point(point.into()))
+    pub fn transform_point(&self, point: PyVec2) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_vec2(
+            self.inner.transform_point(point.try_into()?),
+        ))
     }
 
-    pub fn inverse_transform_point(&self, point: PyVec2) -> PyVec2 {
-        PyVec2::from_vec2(self.inner.inverse_transform_point(point.into()))
+    pub fn inverse_transform_point(&self, point: PyVec2) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_vec2(
+            self.inner.inverse_transform_point(point.try_into()?),
+        ))
     }
 
     fn __repr__(&self) -> String {

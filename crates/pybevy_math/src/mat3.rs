@@ -1,5 +1,5 @@
 use bevy::math::{Mat3, Vec3};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
@@ -14,17 +14,21 @@ pub struct PyMat3 {
     storage: ValueStorage<Mat3>,
 }
 
-impl From<PyMat3> for Mat3 {
+impl TryFrom<PyMat3> for Mat3 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_mat: PyMat3) -> Self {
-        py_mat.storage.get().unwrap()
+    fn try_from(py_mat: PyMat3) -> PyResult<Self> {
+        Ok(py_mat.storage.get()?)
     }
 }
 
-impl From<&PyMat3> for Mat3 {
+impl TryFrom<&PyMat3> for Mat3 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_mat: &PyMat3) -> Self {
-        py_mat.storage.get().unwrap()
+    fn try_from(py_mat: &PyMat3) -> PyResult<Self> {
+        Ok(py_mat.storage.get()?)
     }
 }
 
@@ -50,8 +54,8 @@ impl PyMat3 {
     }
 
     #[inline(always)]
-    pub fn into_mat3(self) -> Mat3 {
-        self.into()
+    pub fn into_mat3(self) -> PyResult<Mat3> {
+        self.try_into()
     }
 
     #[inline(always)]
@@ -62,7 +66,7 @@ impl PyMat3 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Mat3> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Mat3>> {
         Ok(self.storage.as_ref()?)
     }
 }
@@ -99,9 +103,9 @@ impl PyMat3 {
     #[staticmethod]
     pub fn from_cols(x_axis: &PyVec3, y_axis: &PyVec3, z_axis: &PyVec3) -> PyResult<Self> {
         Ok(PyMat3::mat3(Mat3::from_cols(
-            x_axis.into(),
-            y_axis.into(),
-            z_axis.into(),
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
         )))
     }
 
@@ -117,17 +121,17 @@ impl PyMat3 {
 
     #[staticmethod]
     pub fn from_diagonal(diagonal: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat3::mat3(Mat3::from_diagonal(diagonal.into())))
+        Ok(PyMat3::mat3(Mat3::from_diagonal(diagonal.try_into()?)))
     }
 
     #[staticmethod]
     pub fn from_quat(quat: &PyQuat) -> PyResult<Self> {
-        Ok(PyMat3::mat3(Mat3::from_quat(quat.into())))
+        Ok(PyMat3::mat3(Mat3::from_quat(quat.try_into()?)))
     }
 
     #[staticmethod]
     pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> PyResult<Self> {
-        Ok(PyMat3::mat3(Mat3::from_axis_angle(axis.into(), angle)))
+        Ok(PyMat3::mat3(Mat3::from_axis_angle(axis.try_into()?, angle)))
     }
 
     #[staticmethod]
@@ -147,7 +151,9 @@ impl PyMat3 {
 
     #[staticmethod]
     pub fn from_translation(translation: &PyVec2) -> PyResult<Self> {
-        Ok(PyMat3::mat3(Mat3::from_translation(translation.into())))
+        Ok(PyMat3::mat3(Mat3::from_translation(
+            translation.try_into()?,
+        )))
     }
 
     #[staticmethod]
@@ -157,7 +163,7 @@ impl PyMat3 {
 
     #[staticmethod]
     pub fn from_scale(scale: &PyVec2) -> PyResult<Self> {
-        Ok(PyMat3::mat3(Mat3::from_scale(scale.into())))
+        Ok(PyMat3::mat3(Mat3::from_scale(scale.try_into()?)))
     }
 
     #[staticmethod]
@@ -167,9 +173,9 @@ impl PyMat3 {
         translation: &PyVec2,
     ) -> PyResult<Self> {
         Ok(PyMat3::mat3(Mat3::from_scale_angle_translation(
-            scale.into(),
+            scale.try_into()?,
             angle,
-            translation.into(),
+            translation.try_into()?,
         )))
     }
 
@@ -210,19 +216,25 @@ impl PyMat3 {
     }
 
     pub fn mul_vec3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.mul_vec3(rhs.into())))
+        Ok(PyVec3::from_vec3(self.as_ref()?.mul_vec3(rhs.try_into()?)))
     }
 
     pub fn mul_mat3(&self, rhs: &PyMat3) -> PyResult<Self> {
-        Ok(PyMat3::mat3(self.as_ref()?.mul_mat3(rhs.as_ref()?)))
+        Ok(PyMat3::mat3(
+            self.as_ref()?.mul_mat3(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn add_mat3(&self, rhs: &PyMat3) -> PyResult<Self> {
-        Ok(PyMat3::mat3(self.as_ref()?.add_mat3(rhs.as_ref()?)))
+        Ok(PyMat3::mat3(
+            self.as_ref()?.add_mat3(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn sub_mat3(&self, rhs: &PyMat3) -> PyResult<Self> {
-        Ok(PyMat3::mat3(self.as_ref()?.sub_mat3(rhs.as_ref()?)))
+        Ok(PyMat3::mat3(
+            self.as_ref()?.sub_mat3(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn mul_scalar(&self, rhs: f32) -> PyResult<Self> {
@@ -235,13 +247,13 @@ impl PyMat3 {
 
     pub fn transform_point2(&self, rhs: &PyVec2) -> PyResult<PyVec2> {
         Ok(PyVec2::from_vec2(
-            self.as_ref()?.transform_point2(rhs.into()),
+            self.as_ref()?.transform_point2(rhs.try_into()?),
         ))
     }
 
     pub fn transform_vector2(&self, rhs: &PyVec2) -> PyResult<PyVec2> {
         Ok(PyVec2::from_vec2(
-            self.as_ref()?.transform_vector2(rhs.into()),
+            self.as_ref()?.transform_vector2(rhs.try_into()?),
         ))
     }
 
@@ -277,7 +289,7 @@ impl PyMat3 {
         } else if let Ok(other_mat) = other.extract::<PyMat3>() {
             Ok(Py::new(py, PyMat3::mat3(self_mat * *other_mat.as_ref()?))?.into_any())
         } else if let Ok(vec) = other.extract::<PyVec3>() {
-            Ok(Py::new(py, PyVec3::from_vec3(self_mat * Vec3::from(&vec)))?.into_any())
+            Ok(Py::new(py, PyVec3::from_vec3(self_mat * Vec3::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

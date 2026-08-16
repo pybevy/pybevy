@@ -1,5 +1,5 @@
 use bevy::math::{Affine2, Mat2, Vec2};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3::PyMat3, vec2::PyVec2};
@@ -10,17 +10,21 @@ pub struct PyAffine2 {
     storage: ValueStorage<Affine2>,
 }
 
-impl From<PyAffine2> for Affine2 {
+impl TryFrom<PyAffine2> for Affine2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py: PyAffine2) -> Self {
-        py.storage.get().unwrap()
+    fn try_from(py: PyAffine2) -> PyResult<Self> {
+        Ok(py.storage.get()?)
     }
 }
 
-impl From<&PyAffine2> for Affine2 {
+impl TryFrom<&PyAffine2> for Affine2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py: &PyAffine2) -> Self {
-        py.storage.get().unwrap()
+    fn try_from(py: &PyAffine2) -> PyResult<Self> {
+        Ok(py.storage.get()?)
     }
 }
 
@@ -53,18 +57,18 @@ impl PyAffine2 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Affine2> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Affine2>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Affine2> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Affine2>> {
         Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Affine2 {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Affine2> {
+        Ok(self.storage.get()?)
     }
 
     pub const IDENTITY: PyAffine2 = PyAffine2::affine2(Affine2::IDENTITY);
@@ -92,24 +96,34 @@ impl PyAffine2 {
 
     #[new]
     #[pyo3(signature = (matrix2 = None, translation = None))]
-    pub fn new(matrix2: Option<PyMat2>, translation: Option<PyVec2>) -> Self {
-        let m2 = matrix2.map(|m| m.into()).unwrap_or(Mat2::IDENTITY);
-        let t = translation.map(|v| v.into()).unwrap_or(Vec2::ZERO);
-        PyAffine2::from_affine2(Affine2::from_mat2_translation(m2, t))
+    pub fn new(matrix2: Option<PyMat2>, translation: Option<PyVec2>) -> PyResult<Self> {
+        let m2 = matrix2
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or(Mat2::IDENTITY);
+        let t = translation
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or(Vec2::ZERO);
+        Ok(PyAffine2::from_affine2(Affine2::from_mat2_translation(
+            m2, t,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_cols(x_axis: PyVec2, y_axis: PyVec2, z_axis: PyVec2) -> Self {
-        PyAffine2::from_affine2(Affine2::from_cols(
-            x_axis.into(),
-            y_axis.into(),
-            z_axis.into(),
-        ))
+    pub fn from_cols(x_axis: PyVec2, y_axis: PyVec2, z_axis: PyVec2) -> PyResult<Self> {
+        Ok(PyAffine2::from_affine2(Affine2::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_scale(scale: PyVec2) -> Self {
-        PyAffine2::from_affine2(Affine2::from_scale(scale.into()))
+    pub fn from_scale(scale: PyVec2) -> PyResult<Self> {
+        Ok(PyAffine2::from_affine2(Affine2::from_scale(
+            scale.try_into()?,
+        )))
     }
 
     #[staticmethod]
@@ -118,30 +132,40 @@ impl PyAffine2 {
     }
 
     #[staticmethod]
-    pub fn from_translation(translation: PyVec2) -> Self {
-        PyAffine2::from_affine2(Affine2::from_translation(translation.into()))
+    pub fn from_translation(translation: PyVec2) -> PyResult<Self> {
+        Ok(PyAffine2::from_affine2(Affine2::from_translation(
+            translation.try_into()?,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_scale_angle_translation(scale: PyVec2, angle: f32, translation: PyVec2) -> Self {
-        PyAffine2::from_affine2(Affine2::from_scale_angle_translation(
-            scale.into(),
-            angle,
-            translation.into(),
+    pub fn from_scale_angle_translation(
+        scale: PyVec2,
+        angle: f32,
+        translation: PyVec2,
+    ) -> PyResult<Self> {
+        Ok(PyAffine2::from_affine2(
+            Affine2::from_scale_angle_translation(
+                scale.try_into()?,
+                angle,
+                translation.try_into()?,
+            ),
         ))
     }
 
     #[staticmethod]
-    pub fn from_mat2(matrix2: PyMat2) -> Self {
-        PyAffine2::from_affine2(Affine2::from_mat2(matrix2.into()))
+    pub fn from_mat2(matrix2: PyMat2) -> PyResult<Self> {
+        Ok(PyAffine2::from_affine2(Affine2::from_mat2(
+            matrix2.try_into()?,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_mat2_translation(matrix2: PyMat2, translation: PyVec2) -> Self {
-        PyAffine2::from_affine2(Affine2::from_mat2_translation(
-            matrix2.into(),
-            translation.into(),
-        ))
+    pub fn from_mat2_translation(matrix2: PyMat2, translation: PyVec2) -> PyResult<Self> {
+        Ok(PyAffine2::from_affine2(Affine2::from_mat2_translation(
+            matrix2.try_into()?,
+            translation.try_into()?,
+        )))
     }
 
     pub fn to_scale_angle_translation(&self) -> PyResult<(PyVec2, f32, PyVec2)> {
@@ -156,18 +180,20 @@ impl PyAffine2 {
 
     #[setter]
     pub fn set_matrix2(&mut self, value: PyMat2) -> PyResult<()> {
-        self.as_mut()?.matrix2 = value.into();
+        self.as_mut()?.matrix2 = value.try_into()?;
         Ok(())
     }
 
     #[getter]
     pub fn translation(&self) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.translation.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|a| &a.translation, |a| &mut a.translation)?)
     }
 
     #[setter]
     pub fn set_translation(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.translation = value.into();
+        self.as_mut()?.translation = value.try_into()?;
         Ok(())
     }
 
@@ -176,11 +202,17 @@ impl PyAffine2 {
     }
 
     pub fn transform_point2(&self, point: PyVec2) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.transform_point2(point.into()).into())
+        Ok(self
+            .as_ref()?
+            .transform_point2(point.try_into()?)
+            .try_into()?)
     }
 
     pub fn transform_vector2(&self, vector: PyVec2) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.transform_vector2(vector.into()).into())
+        Ok(self
+            .as_ref()?
+            .transform_vector2(vector.try_into()?)
+            .try_into()?)
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {
@@ -198,7 +230,7 @@ impl PyAffine2 {
     }
 
     fn __mul__(&self, other: &PyAffine2) -> PyResult<PyAffine2> {
-        Ok(PyAffine2::from_affine2(self.get() * other.get()))
+        Ok(PyAffine2::from_affine2(self.try_get()? * other.try_get()?))
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -212,8 +244,8 @@ impl PyAffine2 {
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
         if let Ok(other_affine) = other.extract::<PyAffine2>() {
             match op {
-                CompareOp::Eq => Ok(self.get() == other_affine.get()),
-                CompareOp::Ne => Ok(self.get() != other_affine.get()),
+                CompareOp::Eq => Ok(self.try_get()? == other_affine.try_get()?),
+                CompareOp::Ne => Ok(self.try_get()? != other_affine.try_get()?),
                 _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
             }
         } else {
@@ -230,17 +262,21 @@ pub struct PyMat2 {
     storage: ValueStorage<Mat2>,
 }
 
-impl From<PyMat2> for Mat2 {
+impl TryFrom<PyMat2> for Mat2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py: PyMat2) -> Self {
-        py.storage.get().unwrap()
+    fn try_from(py: PyMat2) -> PyResult<Self> {
+        Ok(py.storage.get()?)
     }
 }
 
-impl From<&PyMat2> for Mat2 {
+impl TryFrom<&PyMat2> for Mat2 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py: &PyMat2) -> Self {
-        py.storage.get().unwrap()
+    fn try_from(py: &PyMat2) -> PyResult<Self> {
+        Ok(py.storage.get()?)
     }
 }
 
@@ -267,13 +303,13 @@ impl PyMat2 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Mat2> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Mat2>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Mat2 {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Mat2> {
+        Ok(self.storage.get()?)
     }
 }
 
@@ -290,15 +326,24 @@ impl PyMat2 {
 
     #[new]
     #[pyo3(signature = (x_axis = None, y_axis = None))]
-    pub fn new(x_axis: Option<PyVec2>, y_axis: Option<PyVec2>) -> Self {
-        let x = x_axis.map(|v| v.into()).unwrap_or(Vec2::X);
-        let y = y_axis.map(|v| v.into()).unwrap_or(Vec2::Y);
-        PyMat2::from_mat2(Mat2::from_cols(x, y))
+    pub fn new(x_axis: Option<PyVec2>, y_axis: Option<PyVec2>) -> PyResult<Self> {
+        let x = x_axis
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or(Vec2::X);
+        let y = y_axis
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or(Vec2::Y);
+        Ok(PyMat2::from_mat2(Mat2::from_cols(x, y)))
     }
 
     #[staticmethod]
-    pub fn from_cols(x_axis: PyVec2, y_axis: PyVec2) -> Self {
-        PyMat2::from_mat2(Mat2::from_cols(x_axis.into(), y_axis.into()))
+    pub fn from_cols(x_axis: PyVec2, y_axis: PyVec2) -> PyResult<Self> {
+        Ok(PyMat2::from_mat2(Mat2::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]
@@ -312,13 +357,16 @@ impl PyMat2 {
     }
 
     #[staticmethod]
-    pub fn from_scale_angle(scale: PyVec2, angle: f32) -> Self {
-        PyMat2::from_mat2(Mat2::from_scale_angle(scale.into(), angle))
+    pub fn from_scale_angle(scale: PyVec2, angle: f32) -> PyResult<Self> {
+        Ok(PyMat2::from_mat2(Mat2::from_scale_angle(
+            scale.try_into()?,
+            angle,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_diagonal(diagonal: PyVec2) -> Self {
-        PyMat2::from_mat2(Mat2::from_diagonal(diagonal.into()))
+    pub fn from_diagonal(diagonal: PyVec2) -> PyResult<Self> {
+        Ok(PyMat2::from_mat2(Mat2::from_diagonal(diagonal.try_into()?)))
     }
 
     pub fn col(&self, index: usize) -> PyResult<PyVec2> {
@@ -352,11 +400,13 @@ impl PyMat2 {
     }
 
     pub fn mul_vec2(&self, rhs: PyVec2) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.mul_vec2(rhs.into()).into())
+        Ok(self.as_ref()?.mul_vec2(rhs.try_into()?).try_into()?)
     }
 
     pub fn mul_mat2(&self, rhs: &PyMat2) -> PyResult<PyMat2> {
-        Ok(PyMat2::from_mat2(self.as_ref()?.mul_mat2(rhs.as_ref()?)))
+        Ok(PyMat2::from_mat2(
+            self.as_ref()?.mul_mat2(rhs.as_ref()?.reborrow()),
+        ))
     }
 
     pub fn mul_scalar(&self, rhs: f32) -> PyResult<PyMat2> {
@@ -377,24 +427,28 @@ impl PyMat2 {
 
     fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if let Ok(scalar) = other.extract::<f32>() {
-            Ok(Py::new(py, PyMat2::from_mat2(self.get() * scalar))?.into_any())
+            Ok(Py::new(py, PyMat2::from_mat2(self.try_get()? * scalar))?.into_any())
         } else if let Ok(other_mat) = other.extract::<PyMat2>() {
-            Ok(Py::new(py, PyMat2::from_mat2(self.get() * other_mat.get()))?.into_any())
+            Ok(Py::new(
+                py,
+                PyMat2::from_mat2(self.try_get()? * other_mat.try_get()?),
+            )?
+            .into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
     }
 
     fn __add__(&self, other: &PyMat2) -> PyResult<PyMat2> {
-        Ok(PyMat2::from_mat2(self.get() + other.get()))
+        Ok(PyMat2::from_mat2(self.try_get()? + other.try_get()?))
     }
 
     fn __sub__(&self, other: &PyMat2) -> PyResult<PyMat2> {
-        Ok(PyMat2::from_mat2(self.get() - other.get()))
+        Ok(PyMat2::from_mat2(self.try_get()? - other.try_get()?))
     }
 
     fn __neg__(&self) -> PyResult<PyMat2> {
-        Ok(PyMat2::from_mat2(-self.get()))
+        Ok(PyMat2::from_mat2(-self.try_get()?))
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -408,8 +462,8 @@ impl PyMat2 {
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
         if let Ok(other_mat) = other.extract::<PyMat2>() {
             match op {
-                CompareOp::Eq => Ok(self.get() == other_mat.get()),
-                CompareOp::Ne => Ok(self.get() != other_mat.get()),
+                CompareOp::Eq => Ok(self.try_get()? == other_mat.try_get()?),
+                CompareOp::Ne => Ok(self.try_get()? != other_mat.try_get()?),
                 _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
             }
         } else {

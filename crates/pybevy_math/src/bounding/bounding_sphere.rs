@@ -3,11 +3,16 @@ use bevy::math::{
     bounding::{BoundingSphere, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 use super::aabb3d::PyAabb3d;
-use crate::vec3::PyVec3;
+use crate::{
+    vec3::PyVec3,
+    vec3a::{PyVec3A, extract_vec3a_from_any},
+};
 
+#[pyvalue]
 #[pyclass(name = "BoundingSphere", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingSphere {
@@ -37,51 +42,28 @@ impl From<&PyBoundingSphere> for BoundingSphere {
 impl From<BoundingSphere> for PyBoundingSphere {
     #[inline(always)]
     fn from(sphere: BoundingSphere) -> Self {
-        PyBoundingSphere::from_bounding_sphere(sphere)
-    }
-}
-
-impl FromBorrowedStorage<ValueStorage<BoundingSphere>> for PyBoundingSphere {
-    fn from_borrowed(storage: ValueStorage<BoundingSphere>) -> Self {
-        PyBoundingSphere { storage }
-    }
-}
-
-impl PyBoundingSphere {
-    #[inline(always)]
-    pub fn from_bounding_sphere(sphere: BoundingSphere) -> Self {
-        PyBoundingSphere {
-            storage: ValueStorage::owned(sphere),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<&BoundingSphere> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut BoundingSphere> {
-        Ok(self.storage.as_mut()?)
+        PyBoundingSphere::from_owned(sphere)
     }
 }
 
 #[pymethods]
 impl PyBoundingSphere {
     #[new]
-    pub fn new(center: PyVec3, radius: f32) -> Self {
-        let center_vec: Vec3 = center.into();
-        PyBoundingSphere::from_bounding_sphere(BoundingSphere::new(Vec3A::from(center_vec), radius))
+    pub fn new(center: &Bound<'_, PyAny>, radius: f32) -> PyResult<Self> {
+        Ok(PyBoundingSphere::from_owned(BoundingSphere::new(
+            extract_vec3a_from_any(center)?,
+            radius,
+        )))
     }
 
     #[getter]
-    pub fn center(&self) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.center.into()))
+    pub fn center(&self) -> PyResult<PyVec3A> {
+        Ok(self.storage.borrow_field_as(|s| &s.center)?)
     }
 
     #[setter]
-    pub fn set_center(&mut self, value: PyVec3) -> PyResult<()> {
-        self.as_mut()?.center = Vec3::from(value).into();
+    pub fn set_center(&mut self, value: PyVec3A) -> PyResult<()> {
+        self.as_mut()?.center = value.try_into()?;
         Ok(())
     }
 
@@ -89,10 +71,10 @@ impl PyBoundingSphere {
         Ok(self.as_ref()?.radius())
     }
 
-    pub fn closest_point(&self, point: PyVec3) -> PyResult<PyVec3> {
-        let point_vec: Vec3 = point.into();
+    pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+        let point = extract_vec3a_from_any(point)?;
         Ok(PyVec3::from_vec3(
-            self.as_ref()?.closest_point(Vec3A::from(point_vec)).into(),
+            self.as_ref()?.closest_point(point).into(),
         ))
     }
 
@@ -103,25 +85,21 @@ impl PyBoundingSphere {
 
     pub fn merge(&self, other: &PyBoundingSphere) -> PyResult<PyBoundingSphere> {
         let other_sphere: BoundingSphere = other.into();
-        Ok(PyBoundingSphere::from_bounding_sphere(
+        Ok(PyBoundingSphere::from_owned(
             self.as_ref()?.merge(&other_sphere),
         ))
     }
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_bounding_sphere(
-            self.as_ref()?.grow(amount),
-        ))
+        Ok(PyBoundingSphere::from_owned(self.as_ref()?.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_bounding_sphere(
-            self.as_ref()?.shrink(amount),
-        ))
+        Ok(PyBoundingSphere::from_owned(self.as_ref()?.shrink(amount)))
     }
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_bounding_sphere(
+        Ok(PyBoundingSphere::from_owned(
             self.as_ref()?.scale_around_center(scale),
         ))
     }
@@ -131,7 +109,7 @@ impl PyBoundingSphere {
     }
 
     pub fn aabb_3d(&self) -> PyResult<PyAabb3d> {
-        Ok(PyAabb3d::from_aabb3d(self.as_ref()?.aabb_3d()))
+        Ok(PyAabb3d::from_owned(self.as_ref()?.aabb_3d()))
     }
 
     pub fn intersects_sphere(&self, other: &PyBoundingSphere) -> PyResult<bool> {
@@ -151,16 +129,16 @@ impl PyBoundingSphere {
     ) -> PyResult<PyBoundingSphere> {
         use bevy::math::Isometry3d;
 
-        let iso: Isometry3d = isometry.into();
+        let iso: Isometry3d = isometry.try_into()?;
         let point_refs: Vec<Vec3A> = points
             .into_iter()
             .map(|p| {
-                let v: Vec3 = p.into();
-                v.into()
+                let v: Vec3 = p.try_into()?;
+                Ok(Vec3A::from(v))
             })
-            .collect();
+            .collect::<PyResult<Vec<_>>>()?;
 
-        Ok(PyBoundingSphere::from_bounding_sphere(
+        Ok(PyBoundingSphere::from_owned(
             BoundingSphere::from_point_cloud(iso, &point_refs),
         ))
     }

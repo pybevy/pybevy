@@ -1,5 +1,5 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
@@ -10,17 +10,21 @@ pub struct PyAffine3A {
     storage: ValueStorage<Affine3A>,
 }
 
-impl From<PyAffine3A> for Affine3A {
+impl TryFrom<PyAffine3A> for Affine3A {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_aff: PyAffine3A) -> Self {
-        py_aff.storage.get().unwrap()
+    fn try_from(py_aff: PyAffine3A) -> PyResult<Self> {
+        Ok(py_aff.storage.get()?)
     }
 }
 
-impl From<&PyAffine3A> for Affine3A {
+impl TryFrom<&PyAffine3A> for Affine3A {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_aff: &PyAffine3A) -> Self {
-        py_aff.storage.get().unwrap()
+    fn try_from(py_aff: &PyAffine3A) -> PyResult<Self> {
+        Ok(py_aff.storage.get()?)
     }
 }
 
@@ -53,13 +57,13 @@ impl PyAffine3A {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Affine3A> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Affine3A>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Affine3A {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Affine3A> {
+        Ok(self.storage.get()?)
     }
 }
 
@@ -76,11 +80,11 @@ impl PyAffine3A {
 
     #[new]
     #[pyo3(signature = (matrix3=PyMat3A::mat3a(Mat3A::IDENTITY), translation=PyVec3A::vec3a(Vec3A::ZERO)))]
-    pub fn new(matrix3: PyMat3A, translation: PyVec3A) -> Self {
-        PyAffine3A::from_affine3a(Affine3A {
-            matrix3: matrix3.into(),
-            translation: translation.into(),
-        })
+    pub fn new(matrix3: PyMat3A, translation: PyVec3A) -> PyResult<Self> {
+        Ok(PyAffine3A::from_affine3a(Affine3A {
+            matrix3: matrix3.try_into()?,
+            translation: translation.try_into()?,
+        }))
     }
 
     #[staticmethod]
@@ -89,31 +93,33 @@ impl PyAffine3A {
         y_axis: &PyVec3A,
         z_axis: &PyVec3A,
         w_axis: &PyVec3A,
-    ) -> Self {
-        PyAffine3A::from_affine3a(Affine3A::from_cols(
-            x_axis.into(),
-            y_axis.into(),
-            z_axis.into(),
-            w_axis.into(),
-        ))
+    ) -> PyResult<Self> {
+        Ok(PyAffine3A::from_affine3a(Affine3A::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+            w_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_translation(translation: &PyVec3) -> Self {
-        let t: Vec3 = translation.into();
-        PyAffine3A::from_affine3a(Affine3A::from_translation(t))
+    pub fn from_translation(translation: &PyVec3) -> PyResult<Self> {
+        let t: Vec3 = translation.try_into()?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::from_translation(t)))
     }
 
     #[staticmethod]
-    pub fn from_quat(rotation: &PyQuat) -> Self {
-        let q: Quat = rotation.into();
-        PyAffine3A::from_affine3a(Affine3A::from_quat(q))
+    pub fn from_quat(rotation: &PyQuat) -> PyResult<Self> {
+        let q: Quat = rotation.try_into()?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::from_quat(q)))
     }
 
     #[staticmethod]
-    pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> Self {
-        let a: Vec3 = axis.into();
-        PyAffine3A::from_affine3a(Affine3A::from_axis_angle(a, angle))
+    pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> PyResult<Self> {
+        let a: Vec3 = axis.try_into()?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::from_axis_angle(
+            a, angle,
+        )))
     }
 
     #[staticmethod]
@@ -132,9 +138,9 @@ impl PyAffine3A {
     }
 
     #[staticmethod]
-    pub fn from_scale(scale: &PyVec3) -> Self {
-        let s: Vec3 = scale.into();
-        PyAffine3A::from_affine3a(Affine3A::from_scale(s))
+    pub fn from_scale(scale: &PyVec3) -> PyResult<Self> {
+        let s: Vec3 = scale.try_into()?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::from_scale(s)))
     }
 
     #[staticmethod]
@@ -142,24 +148,28 @@ impl PyAffine3A {
         scale: &PyVec3,
         rotation: &PyQuat,
         translation: &PyVec3,
-    ) -> Self {
-        let s: Vec3 = scale.into();
-        let r: Quat = rotation.into();
-        let t: Vec3 = translation.into();
-        PyAffine3A::from_affine3a(Affine3A::from_scale_rotation_translation(s, r, t))
+    ) -> PyResult<Self> {
+        let s: Vec3 = scale.try_into()?;
+        let r: Quat = rotation.try_into()?;
+        let t: Vec3 = translation.try_into()?;
+        Ok(PyAffine3A::from_affine3a(
+            Affine3A::from_scale_rotation_translation(s, r, t),
+        ))
     }
 
     #[staticmethod]
-    pub fn from_rotation_translation(rotation: &PyQuat, translation: &PyVec3) -> Self {
-        let r: Quat = rotation.into();
-        let t: Vec3 = translation.into();
-        PyAffine3A::from_affine3a(Affine3A::from_rotation_translation(r, t))
+    pub fn from_rotation_translation(rotation: &PyQuat, translation: &PyVec3) -> PyResult<Self> {
+        let r: Quat = rotation.try_into()?;
+        let t: Vec3 = translation.try_into()?;
+        Ok(PyAffine3A::from_affine3a(
+            Affine3A::from_rotation_translation(r, t),
+        ))
     }
 
     #[staticmethod]
-    pub fn from_mat4(mat: &PyMat4) -> Self {
-        let m: Mat4 = mat.into();
-        PyAffine3A::from_affine3a(Affine3A::from_mat4(m))
+    pub fn from_mat4(mat: &PyMat4) -> PyResult<Self> {
+        let m: Mat4 = mat.try_into()?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::from_mat4(m)))
     }
 
     #[getter]
@@ -173,21 +183,27 @@ impl PyAffine3A {
     }
 
     pub fn transform_point3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
-        let v: Vec3 = rhs.into();
+        let v: Vec3 = rhs.try_into()?;
         Ok(self.as_ref()?.transform_point3(v).into())
     }
 
     pub fn transform_point3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.transform_point3a(rhs.into()).into())
+        Ok(self
+            .as_ref()?
+            .transform_point3a(rhs.try_into()?)
+            .try_into()?)
     }
 
     pub fn transform_vector3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
-        let v: Vec3 = rhs.into();
+        let v: Vec3 = rhs.try_into()?;
         Ok(self.as_ref()?.transform_vector3(v).into())
     }
 
     pub fn transform_vector3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.transform_vector3a(rhs.into()).into())
+        Ok(self
+            .as_ref()?
+            .transform_vector3a(rhs.try_into()?)
+            .try_into()?)
     }
 
     pub fn inverse(&self) -> PyResult<Self> {

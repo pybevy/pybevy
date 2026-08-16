@@ -1,5 +1,5 @@
 use bevy::math::{BVec3, Dir3, Vec3, Vec3Swizzles};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
@@ -14,17 +14,21 @@ pub struct PyVec3 {
     pub(crate) storage: ValueStorage<Vec3>,
 }
 
-impl From<PyVec3> for Vec3 {
+impl TryFrom<PyVec3> for Vec3 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: PyVec3) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: PyVec3) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
-impl From<&PyVec3> for Vec3 {
+impl TryFrom<&PyVec3> for Vec3 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: &PyVec3) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: &PyVec3) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
@@ -47,7 +51,7 @@ impl TryFrom<&PyVec3> for Dir3 {
     type Error = PyErr;
 
     fn try_from(py_vec: &PyVec3) -> Result<Self, Self::Error> {
-        let vec: Vec3 = py_vec.into();
+        let vec: Vec3 = py_vec.try_into()?;
         Dir3::try_from(vec).map_err(|err| PyValueError::new_err(err.to_string()))
     }
 }
@@ -67,8 +71,8 @@ impl PyVec3 {
     }
 
     #[inline(always)]
-    pub fn into_vec3(self) -> Vec3 {
-        self.into()
+    pub fn into_vec3(self) -> PyResult<Vec3> {
+        Ok(self.try_into()?)
     }
 
     #[inline(always)]
@@ -79,18 +83,18 @@ impl PyVec3 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Vec3> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Vec3>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Vec3> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Vec3>> {
         Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Vec3 {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Vec3> {
+        Ok(self.storage.get()?)
     }
 
     pub const ZERO: PyVec3 = PyVec3::vec3(Vec3::ZERO);
@@ -338,6 +342,10 @@ impl PyVec3 {
 
     pub fn is_nan(&self) -> PyResult<bool> {
         Ok(self.as_ref()?.is_nan())
+    }
+
+    pub fn abs_diff_eq(&self, rhs: &PyVec3, max_abs_diff: f32) -> PyResult<bool> {
+        Ok(self.as_ref()?.abs_diff_eq(*rhs.as_ref()?, max_abs_diff))
     }
 
     pub fn round(&self) -> PyResult<PyVec3> {

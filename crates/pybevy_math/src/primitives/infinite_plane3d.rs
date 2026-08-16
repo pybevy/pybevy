@@ -12,10 +12,10 @@ pub struct PyInfinitePlane3d {
 #[pymethods]
 impl PyInfinitePlane3d {
     #[new]
-    #[pyo3(signature = (normal = PyDir3::Y.as_vec3()))]
+    #[pyo3(signature = (normal = PyVec3::Y))]
     pub fn new(normal: PyVec3) -> PyResult<Self> {
         use bevy::math::Dir3;
-        let dir = Dir3::new(normal.into())
+        let dir = Dir3::new(normal.try_into()?)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
         Ok(Self {
             inner: InfinitePlane3d { normal: dir },
@@ -23,12 +23,12 @@ impl PyInfinitePlane3d {
     }
 
     #[staticmethod]
-    pub fn from_dir(normal: PyDir3) -> Self {
-        Self {
+    pub fn from_dir(normal: PyDir3) -> PyResult<Self> {
+        Ok(Self {
             inner: InfinitePlane3d {
-                normal: normal.into_dir3(),
+                normal: normal.into_dir3()?,
             },
-        }
+        })
     }
 
     #[getter]

@@ -1,5 +1,5 @@
 use bevy::math::{EulerRot, Quat};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
     Bound, IntoPyObjectExt, basic::CompareOp, exceptions::PyTypeError, prelude::*, types::PyAny,
 };
@@ -15,6 +15,24 @@ pub enum PyEulerRot {
     YZX,
     XYZ,
     XZY,
+    ZYZ,
+    ZXZ,
+    YXY,
+    YZY,
+    XYX,
+    XZX,
+    ZYXEx,
+    ZXYEx,
+    YXZEx,
+    YZXEx,
+    XYZEx,
+    XZYEx,
+    ZYZEx,
+    ZXZEx,
+    YXYEx,
+    YZYEx,
+    XYXEx,
+    XZXEx,
 }
 
 impl From<PyEulerRot> for EulerRot {
@@ -26,6 +44,24 @@ impl From<PyEulerRot> for EulerRot {
             PyEulerRot::YZX => EulerRot::YZX,
             PyEulerRot::XYZ => EulerRot::XYZ,
             PyEulerRot::XZY => EulerRot::XZY,
+            PyEulerRot::ZYZ => EulerRot::ZYZ,
+            PyEulerRot::ZXZ => EulerRot::ZXZ,
+            PyEulerRot::YXY => EulerRot::YXY,
+            PyEulerRot::YZY => EulerRot::YZY,
+            PyEulerRot::XYX => EulerRot::XYX,
+            PyEulerRot::XZX => EulerRot::XZX,
+            PyEulerRot::ZYXEx => EulerRot::ZYXEx,
+            PyEulerRot::ZXYEx => EulerRot::ZXYEx,
+            PyEulerRot::YXZEx => EulerRot::YXZEx,
+            PyEulerRot::YZXEx => EulerRot::YZXEx,
+            PyEulerRot::XYZEx => EulerRot::XYZEx,
+            PyEulerRot::XZYEx => EulerRot::XZYEx,
+            PyEulerRot::ZYZEx => EulerRot::ZYZEx,
+            PyEulerRot::ZXZEx => EulerRot::ZXZEx,
+            PyEulerRot::YXYEx => EulerRot::YXYEx,
+            PyEulerRot::YZYEx => EulerRot::YZYEx,
+            PyEulerRot::XYXEx => EulerRot::XYXEx,
+            PyEulerRot::XZXEx => EulerRot::XZXEx,
         }
     }
 }
@@ -42,15 +78,21 @@ impl From<Quat> for PyQuat {
     }
 }
 
-impl From<&PyQuat> for Quat {
-    fn from(py_quat: &PyQuat) -> Self {
-        py_quat.storage.get().unwrap()
+impl TryFrom<&PyQuat> for Quat {
+    type Error = PyErr;
+
+    #[inline(always)]
+    fn try_from(py_quat: &PyQuat) -> PyResult<Self> {
+        Ok(py_quat.storage.get()?)
     }
 }
 
-impl From<PyQuat> for Quat {
-    fn from(py_quat: PyQuat) -> Self {
-        py_quat.storage.get().unwrap()
+impl TryFrom<PyQuat> for Quat {
+    type Error = PyErr;
+
+    #[inline(always)]
+    fn try_from(py_quat: PyQuat) -> PyResult<Self> {
+        Ok(py_quat.storage.get()?)
     }
 }
 
@@ -75,18 +117,18 @@ impl PyQuat {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Quat> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Quat>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Quat> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Quat>> {
         Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Quat {
-        self.storage.get().unwrap()
+    pub fn try_get(&self) -> PyResult<Quat> {
+        Ok(self.storage.get()?)
     }
 
     pub const IDENTITY: PyQuat = PyQuat::quat(Quat::IDENTITY);
@@ -127,17 +169,17 @@ impl PyQuat {
     }
 
     #[staticmethod]
-    pub fn from_axis_angle(axis: PyVec3, angle: f32) -> Self {
-        PyQuat {
-            storage: ValueStorage::owned(Quat::from_axis_angle(axis.into(), angle)),
-        }
+    pub fn from_axis_angle(axis: PyVec3, angle: f32) -> PyResult<Self> {
+        Ok(PyQuat {
+            storage: ValueStorage::owned(Quat::from_axis_angle(axis.try_into()?, angle)),
+        })
     }
 
     #[staticmethod]
-    pub fn from_scaled_axis(v: PyVec3) -> Self {
-        PyQuat {
-            storage: ValueStorage::owned(Quat::from_scaled_axis(v.into())),
-        }
+    pub fn from_scaled_axis(v: PyVec3) -> PyResult<Self> {
+        Ok(PyQuat {
+            storage: ValueStorage::owned(Quat::from_scaled_axis(v.try_into()?)),
+        })
     }
 
     #[staticmethod]
@@ -169,7 +211,10 @@ impl PyQuat {
             ));
         }
         Ok(PyQuat {
-            storage: ValueStorage::owned(Quat::from_rotation_arc(start.into(), end.into())),
+            storage: ValueStorage::owned(Quat::from_rotation_arc(
+                start.try_into()?,
+                end.try_into()?,
+            )),
         })
     }
 
@@ -245,13 +290,13 @@ impl PyQuat {
 
     pub fn lerp(&self, rhs: &PyQuat, s: f32) -> PyResult<Self> {
         Ok(PyQuat {
-            storage: ValueStorage::owned(self.as_ref()?.lerp(rhs.get(), s)),
+            storage: ValueStorage::owned(self.as_ref()?.lerp(rhs.try_get()?, s)),
         })
     }
 
     pub fn slerp(&self, rhs: &PyQuat, s: f32) -> PyResult<Self> {
         Ok(PyQuat {
-            storage: ValueStorage::owned(self.as_ref()?.slerp(rhs.get(), s)),
+            storage: ValueStorage::owned(self.as_ref()?.slerp(rhs.try_get()?, s)),
         })
     }
 
@@ -266,18 +311,27 @@ impl PyQuat {
         Ok(self.as_ref()?.to_euler(order.into()))
     }
 
+    pub fn to_axis_angle(&self) -> PyResult<(PyVec3, f32)> {
+        let (axis, angle) = self.as_ref()?.to_axis_angle();
+        Ok((PyVec3::from_vec3(axis), angle))
+    }
+
+    pub fn to_scaled_axis(&self) -> PyResult<PyVec3> {
+        Ok(PyVec3::from_vec3(self.as_ref()?.to_scaled_axis()))
+    }
+
     pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python) -> PyResult<Py<PyAny>> {
         let self_quat = self.as_ref()?;
         if let Ok(other_quat) = other.extract::<PyQuat>() {
             Ok(Py::new(
                 py,
                 PyQuat {
-                    storage: ValueStorage::owned(*self_quat * other_quat.get()),
+                    storage: ValueStorage::owned(*self_quat * other_quat.try_get()?),
                 },
             )?
             .into_any())
         } else if let Ok(other_vec3) = other.extract::<PyVec3>() {
-            let v = *self_quat * other_vec3.get();
+            let v = *self_quat * other_vec3.try_get()?;
             Ok(Py::new(py, PyVec3::from_vec3(v))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
@@ -289,7 +343,7 @@ impl PyQuat {
         Py::new(
             py,
             PyQuat {
-                storage: ValueStorage::owned(other.get() * *self_quat),
+                storage: ValueStorage::owned(other.try_get()? * *self_quat),
             },
         )?
         .into_py_any(py)
@@ -302,8 +356,8 @@ impl PyQuat {
 
     pub fn __richcmp__(&self, other: &PyQuat, op: CompareOp) -> PyResult<bool> {
         match op {
-            CompareOp::Eq => Ok(self.get() == other.get()),
-            CompareOp::Ne => Ok(self.get() != other.get()),
+            CompareOp::Eq => Ok(self.try_get()? == other.try_get()?),
+            CompareOp::Ne => Ok(self.try_get()? != other.try_get()?),
             _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
         }
     }

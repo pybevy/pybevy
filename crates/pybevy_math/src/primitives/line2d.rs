@@ -12,12 +12,12 @@ pub struct PyLine2d {
 #[pymethods]
 impl PyLine2d {
     #[new]
-    pub fn new(direction: PyDir2) -> Self {
-        Self {
+    pub fn new(direction: PyDir2) -> PyResult<Self> {
+        Ok(Self {
             inner: Line2d {
-                direction: direction.into_dir2(),
+                direction: direction.into_dir2()?,
             },
-        }
+        })
     }
 
     #[getter]
@@ -26,8 +26,9 @@ impl PyLine2d {
     }
 
     #[setter]
-    pub fn set_direction(&mut self, direction: PyDir2) {
-        self.inner.direction = direction.into_dir2();
+    pub fn set_direction(&mut self, direction: PyDir2) -> PyResult<()> {
+        self.inner.direction = direction.into_dir2()?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 pub enum PyJumpAt {
     Start,
     End,
+    #[pyo3(name = "None_")]
     None,
     Both,
 }

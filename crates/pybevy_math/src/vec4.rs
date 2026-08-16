@@ -1,5 +1,5 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::vec3::PyVec3;
@@ -15,17 +15,21 @@ pub struct PyVec4 {
     pub(crate) storage: ValueStorage<Vec4>,
 }
 
-impl From<PyVec4> for Vec4 {
+impl TryFrom<PyVec4> for Vec4 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: PyVec4) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: PyVec4) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
-impl From<&PyVec4> for Vec4 {
+impl TryFrom<&PyVec4> for Vec4 {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_vec: &PyVec4) -> Self {
-        py_vec.storage.get().unwrap()
+    fn try_from(py_vec: &PyVec4) -> PyResult<Self> {
+        Ok(py_vec.storage.get()?)
     }
 }
 
@@ -51,8 +55,8 @@ impl PyVec4 {
     }
 
     #[inline(always)]
-    pub fn into_vec4(self) -> Vec4 {
-        self.into()
+    pub fn into_vec4(self) -> PyResult<Vec4> {
+        self.try_into()
     }
 
     #[inline(always)]
@@ -63,12 +67,12 @@ impl PyVec4 {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Vec4> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Vec4>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Vec4> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Vec4>> {
         Ok(self.storage.as_mut()?)
     }
 

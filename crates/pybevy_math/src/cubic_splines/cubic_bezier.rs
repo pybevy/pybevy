@@ -16,22 +16,22 @@ pub struct PyCubicBezier2d {
 #[pymethods]
 impl PyCubicBezier2d {
     #[new]
-    pub fn new(control_points: Vec<[PyVec2; 4]>) -> Self {
+    pub fn new(control_points: Vec<[PyVec2; 4]>) -> PyResult<Self> {
         let control_points: Vec<[Vec2; 4]> = control_points
             .into_iter()
             .map(|points| {
-                [
-                    points[0].clone().into(),
-                    points[1].clone().into(),
-                    points[2].clone().into(),
-                    points[3].clone().into(),
-                ]
+                Ok([
+                    points[0].clone().try_into()?,
+                    points[1].clone().try_into()?,
+                    points[2].clone().try_into()?,
+                    points[3].clone().try_into()?,
+                ])
             })
-            .collect();
+            .collect::<PyResult<Vec<_>>>()?;
 
-        PyCubicBezier2d {
+        Ok(PyCubicBezier2d {
             bezier: CubicBezier::new(control_points),
-        }
+        })
     }
 
     pub fn to_curve(&self, py: Python<'_>) -> PyResult<Py<PyCubicCurve2d>> {
