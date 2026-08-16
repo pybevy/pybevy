@@ -34,7 +34,8 @@ impl PyName {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        let name = self.as_ref()?.as_str();
+        let value = self.as_ref()?;
+        let name = value.as_str();
         Ok(format!("Name(\"{}\")", name))
     }
 
