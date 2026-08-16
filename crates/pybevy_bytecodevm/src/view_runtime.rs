@@ -227,11 +227,43 @@ impl CachedProgramKey {
 struct CachedProgram {
     key: CachedProgramKey,
     bytecode: Arc<CompiledBytecode>,
+    last_used: u64,
 }
+
+/// Upper bound on cached programs per View parameter; expressions embedding a
+/// per-frame Python constant produce a distinct program every call.
+const PROGRAM_CACHE_CAPACITY: usize = 256;
 
 #[derive(Debug, Default)]
 struct ProgramCache {
     buckets: HashMap<u64, Vec<CachedProgram>>,
+    len: usize,
+    clock: u64,
+}
+
+impl ProgramCache {
+    fn evict_least_recently_used(&mut self) {
+        let Some((&hash, index)) = self
+            .buckets
+            .iter()
+            .flat_map(|(hash, bucket)| {
+                bucket
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, cached)| (hash, index, cached.last_used))
+            })
+            .min_by_key(|&(_, _, last_used)| last_used)
+            .map(|(hash, index, _)| (hash, index))
+        else {
+            return;
+        };
+        let bucket = self.buckets.get_mut(&hash).expect("bucket exists");
+        bucket.swap_remove(index);
+        if bucket.is_empty() {
+            self.buckets.remove(&hash);
+        }
+        self.len -= 1;
+    }
 }
 
 /// Stable, per-parameter View metadata and programs shared across system runs.
@@ -290,15 +322,26 @@ impl CachedViewCore {
             .programs
             .lock()
             .map_err(|_| ViewRuntimeError::ProgramCachePoisoned)?;
-        let bucket = cache.buckets.entry(hash).or_default();
-        if let Some(cached) = bucket.iter().find(|cached| cached.key.canonical_eq(&key)) {
+        cache.clock += 1;
+        let clock = cache.clock;
+        if let Some(cached) = cache.buckets.get_mut(&hash).and_then(|bucket| {
+            bucket
+                .iter_mut()
+                .find(|cached| cached.key.canonical_eq(&key))
+        }) {
+            cached.last_used = clock;
             return Ok(Arc::clone(&cached.bytecode));
         }
+        if cache.len >= PROGRAM_CACHE_CAPACITY {
+            cache.evict_least_recently_used();
+        }
         let bytecode = key.compile();
-        bucket.push(CachedProgram {
+        cache.buckets.entry(hash).or_default().push(CachedProgram {
             key,
             bytecode: Arc::clone(&bytecode),
+            last_used: clock,
         });
+        cache.len += 1;
         Ok(bytecode)
     }
 }
@@ -1230,6 +1273,43 @@ impl BatchColumn {
     }
 }
 
+/// Validate tightly packed bytes before a backend copies them into a View field.
+///
+/// In addition to enforcing the exact byte length, this rejects non-canonical
+/// Rust `bool` representations. Writing any byte other than zero or one into a
+/// `bool` field would make later typed Rust access undefined behavior.
+pub fn validate_contiguous_field_bytes(
+    field_type: FieldType,
+    element_count: usize,
+    data: &[u8],
+) -> Result<(), ViewRuntimeError> {
+    let element_size = field_type.size_bytes();
+    let expected =
+        element_count
+            .checked_mul(element_size)
+            .ok_or(ViewRuntimeError::BufferSizeOverflow {
+                element_count,
+                element_size,
+            })?;
+    if data.len() != expected {
+        return Err(ViewRuntimeError::BufferSizeMismatch {
+            expected,
+            actual: data.len(),
+        });
+    }
+    if field_type == FieldType::Bool {
+        if let Some((index, value)) = data
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(_, value)| !matches!(value, 0 | 1))
+        {
+            return Err(ViewRuntimeError::InvalidBooleanBufferValue { index, value });
+        }
+    }
+    Ok(())
+}
+
 /// Prevalidated destination ticks armed immediately before possible writes.
 ///
 /// Drop deliberately performs only infallible pointer stores: no allocation,
@@ -1435,6 +1515,27 @@ pub enum ViewRuntimeError {
         /// Number of bytes reachable in the current element.
         element_extent: usize,
     },
+    /// The tightly packed byte length cannot be represented by `usize`.
+    BufferSizeOverflow {
+        /// Number of selected field elements.
+        element_count: usize,
+        /// Native byte width of one field element.
+        element_size: usize,
+    },
+    /// A tightly packed write buffer does not exactly cover the selected rows.
+    BufferSizeMismatch {
+        /// Required byte length.
+        expected: usize,
+        /// Supplied byte length.
+        actual: usize,
+    },
+    /// A Boolean write buffer contains a byte other than zero or one.
+    InvalidBooleanBufferValue {
+        /// Zero-based element index containing the invalid byte.
+        index: usize,
+        /// Invalid byte value.
+        value: u8,
+    },
     /// A gathered tick mask does not match its row range.
     TickMaskLengthMismatch {
         /// Table whose batch carries the invalid mask.
@@ -1623,6 +1724,21 @@ impl fmt::Display for ViewRuntimeError {
                 f,
                 "View subcolumn span offset={offset} size={type_size} exceeds element extent \
                  {element_extent}"
+            ),
+            Self::BufferSizeOverflow {
+                element_count,
+                element_size,
+            } => write!(
+                f,
+                "View buffer size overflows for {element_count} elements of {element_size} bytes"
+            ),
+            Self::BufferSizeMismatch { expected, actual } => write!(
+                f,
+                "Buffer size mismatch: expected {expected} bytes, got {actual}"
+            ),
+            Self::InvalidBooleanBufferValue { index, value } => write!(
+                f,
+                "Boolean View buffers accept only bytes 0 or 1; got {value} at index {index}"
             ),
             Self::TickMaskLengthMismatch {
                 table_id,
@@ -1852,8 +1968,14 @@ pub(crate) fn validate_stack_effects(
     for (instruction_index, op) in bytecode.bytecode.iter().enumerate() {
         let (instruction, inputs, output): (&'static str, &[StackKind], Option<StackKind>) =
             match op {
-                Op::PushField(_) => {
-                    stack.push(StackKind::Float);
+                Op::PushField(index) => {
+                    // Bool fields enter the VM as booleans, not floats.
+                    let field_type = bytecode.field_map[usize::from(*index)].field_type;
+                    stack.push(if field_type == FieldType::Bool {
+                        StackKind::Bool
+                    } else {
+                        StackKind::Float
+                    });
                     continue;
                 }
                 Op::PushInput(index) => {
@@ -1867,7 +1989,28 @@ pub(crate) fn validate_stack_effects(
                     stack.push(StackKind::Float);
                     continue;
                 }
-                Op::StoreField(_) => ("StoreField", &[StackKind::Float], None),
+                Op::StoreField(index) => {
+                    // A Bool destination accepts either kind (the VM converts
+                    // numeric >= 0.5); numeric destinations require a float.
+                    let field_type = bytecode.field_map[usize::from(*index)].field_type;
+                    let Some(actual) = stack.pop() else {
+                        return Err(ViewRuntimeError::StackUnderflow {
+                            instruction_index,
+                            instruction: "StoreField",
+                            required: 1,
+                            available: 0,
+                        });
+                    };
+                    if field_type != FieldType::Bool && actual == StackKind::Bool {
+                        return Err(ViewRuntimeError::StackTypeMismatch {
+                            instruction_index,
+                            instruction: "StoreField",
+                            expected: StackKind::Float.name(),
+                            actual: actual.name(),
+                        });
+                    }
+                    continue;
+                }
                 Op::Add => (
                     "Add",
                     &[StackKind::Float, StackKind::Float],
@@ -2100,9 +2243,14 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
     let mut stack: Vec<TrackedValue> = Vec::new();
     for (instruction_index, op) in bytecode.bytecode.iter().enumerate() {
         match *op {
-            Op::PushField(index) => stack.push(TrackedValue::Numeric(field_type_mask(
-                bytecode.field_map[usize::from(index)].field_type,
-            ))),
+            Op::PushField(index) => {
+                let field_type = bytecode.field_map[usize::from(index)].field_type;
+                stack.push(if field_type == FieldType::Bool {
+                    TrackedValue::Bool
+                } else {
+                    TrackedValue::Numeric(field_type_mask(field_type))
+                });
+            }
             Op::PushConst(_) | Op::Random => stack.push(TrackedValue::Numeric(0)),
             Op::StoreField(_) => {
                 stack.pop();
@@ -2351,6 +2499,55 @@ mod tests {
             column,
             _world: world,
         }
+    }
+
+    #[test]
+    fn contiguous_field_bytes_accept_exact_numeric_payloads() {
+        assert!(validate_contiguous_field_bytes(FieldType::F32, 2, &[0xff; 8]).is_ok());
+    }
+
+    #[test]
+    fn contiguous_field_bytes_accept_canonical_booleans() {
+        assert!(validate_contiguous_field_bytes(FieldType::Bool, 4, &[0, 1, 1, 0]).is_ok());
+    }
+
+    #[test]
+    fn contiguous_field_bytes_reject_noncanonical_boolean() {
+        let error = validate_contiguous_field_bytes(FieldType::Bool, 4, &[0, 1, 2, 0])
+            .expect_err("non-canonical Rust bool byte must fail closed");
+
+        assert!(matches!(
+            error,
+            ViewRuntimeError::InvalidBooleanBufferValue { index: 2, value: 2 }
+        ));
+    }
+
+    #[test]
+    fn contiguous_field_bytes_reject_size_mismatch() {
+        let error = validate_contiguous_field_bytes(FieldType::F32, 1, &[0; 3])
+            .expect_err("partial field payload must fail closed");
+
+        assert!(matches!(
+            error,
+            ViewRuntimeError::BufferSizeMismatch {
+                expected: 4,
+                actual: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn contiguous_field_bytes_reject_size_overflow() {
+        let error = validate_contiguous_field_bytes(FieldType::F64, usize::MAX, &[])
+            .expect_err("unrepresentable field buffer size must fail closed");
+
+        assert!(matches!(
+            error,
+            ViewRuntimeError::BufferSizeOverflow {
+                element_count: usize::MAX,
+                element_size: 8
+            }
+        ));
     }
 
     #[test]
@@ -3038,6 +3235,51 @@ mod tests {
         assert_eq!(second.constants, vec![2.0]);
         assert!(!Arc::ptr_eq(&first, &second));
         assert!(Arc::ptr_eq(&first, &first_again));
+    }
+
+    #[test]
+    fn program_cache_stays_bounded_under_varying_constants() {
+        let runtime = runtime(ComponentId::new(1), false);
+        let cache = runtime.cached();
+
+        // A per-frame varying constant produces a distinct program each call.
+        for frame in 0..(PROGRAM_CACHE_CAPACITY * 2) {
+            cache
+                .get_or_compile(CachedProgramKey::ReadOnly(RustExpr::Const(frame as f64)))
+                .unwrap();
+        }
+
+        let programs = cache.programs.lock().unwrap();
+        assert_eq!(programs.len, PROGRAM_CACHE_CAPACITY);
+        assert_eq!(
+            programs
+                .buckets
+                .values()
+                .map(|bucket| bucket.len())
+                .sum::<usize>(),
+            PROGRAM_CACHE_CAPACITY
+        );
+    }
+
+    #[test]
+    fn program_cache_eviction_keeps_recently_used_programs() {
+        let runtime = runtime(ComponentId::new(1), false);
+        let cache = runtime.cached();
+        let stable = RustExpr::Const(-1.0);
+
+        let first = cache
+            .get_or_compile(CachedProgramKey::ReadOnly(stable.clone()))
+            .unwrap();
+        for frame in 0..(PROGRAM_CACHE_CAPACITY * 2) {
+            cache
+                .get_or_compile(CachedProgramKey::ReadOnly(RustExpr::Const(frame as f64)))
+                .unwrap();
+            // Touch the stable program so churn evicts one-shot entries instead.
+            let again = cache
+                .get_or_compile(CachedProgramKey::ReadOnly(stable.clone()))
+                .unwrap();
+            assert!(Arc::ptr_eq(&first, &again));
+        }
     }
 
     #[test]
@@ -3900,6 +4142,153 @@ mod tests {
 
         assert_eq!(dense_value_and_tick(&world, first), (123, this_run));
         assert_eq!(dense_value_and_tick(&world, second), (2, this_run));
+    }
+
+    #[derive(Component)]
+    #[repr(C)]
+    struct BoolProbe {
+        flag: bool,
+        value: f32,
+    }
+
+    #[test]
+    fn bool_field_arithmetic_is_rejected_at_validation() {
+        let component_id = ComponentId::new(1);
+        let runtime = runtime(component_id, false);
+        let result = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::PushField(0), Op::PushConst(0), Op::Add],
+                constants: vec![1.0],
+                field_map: vec![field(component_id, 4, FieldType::Bool)],
+            }),
+            ProgramIntent::ReadOnly,
+        );
+
+        assert!(matches!(
+            result,
+            Err(ViewRuntimeError::StackTypeMismatch {
+                instruction: "Add",
+                expected: "float",
+                actual: "bool",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn bool_field_store_to_numeric_destination_is_rejected() {
+        let component_id = ComponentId::new(1);
+        let destination = field(component_id, 0, FieldType::F32);
+        let runtime = runtime(component_id, true);
+        let result = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![Op::PushField(1), Op::StoreField(0)],
+                constants: Vec::new(),
+                field_map: vec![destination, field(component_id, 4, FieldType::Bool)],
+            }),
+            ProgramIntent::Assignment { destination },
+        );
+
+        assert!(matches!(
+            result,
+            Err(ViewRuntimeError::StackTypeMismatch {
+                instruction: "StoreField",
+                expected: "float",
+                actual: "bool",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn bool_destination_accepts_numeric_and_boolean_values() {
+        let component_id = ComponentId::new(1);
+        let destination = field(component_id, 4, FieldType::Bool);
+        let runtime = runtime(component_id, true);
+
+        let numeric = runtime.validate_program(
+            assignment_program(destination),
+            ProgramIntent::Assignment { destination },
+        );
+        assert!(numeric.is_ok());
+
+        let boolean = runtime.validate_program(
+            Arc::new(CompiledBytecode {
+                bytecode: vec![
+                    Op::PushConst(0),
+                    Op::PushConst(0),
+                    Op::Eq,
+                    Op::StoreField(0),
+                ],
+                constants: vec![1.0],
+                field_map: vec![destination],
+            }),
+            ProgramIntent::Assignment { destination },
+        );
+        assert!(boolean.is_ok());
+    }
+
+    #[test]
+    fn bool_field_read_program_validates() {
+        let component_id = ComponentId::new(1);
+        let runtime = runtime(component_id, false);
+        let result = runtime.validate_program(
+            read_program(field(component_id, 4, FieldType::Bool)),
+            ProgramIntent::ReadOnly,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn bool_field_where_condition_validates_and_executes() {
+        let mut world = World::new();
+        let on = world
+            .spawn(BoolProbe {
+                flag: true,
+                value: 0.0,
+            })
+            .id();
+        let off = world
+            .spawn(BoolProbe {
+                flag: false,
+                value: 0.0,
+            })
+            .id();
+        let component_id = world.components().component_id::<BoolProbe>().unwrap();
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            HashSet::from([component_id]),
+            HashMap::from([(
+                component_id,
+                HashSet::from([(0, FieldType::Bool), (4, FieldType::F32)]),
+            )]),
+        );
+        // SAFETY: the World remains live and structurally unchanged until the
+        // runtime and lease are invalidated and dropped below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let destination = field(component_id, 4, FieldType::F32);
+        let expression = RustExpr::Where(
+            Box::new(RustExpr::Field {
+                component_id,
+                offset: 0,
+                field_type: FieldType::Bool,
+            }),
+            Box::new(RustExpr::Const(2.0)),
+            Box::new(RustExpr::Const(3.0)),
+        );
+        let program = runtime
+            .prepare_assignment_program(destination, &expression)
+            .unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        lease.execute_assignment(&program, false).unwrap();
+        runtime.validity().set_invalid();
+        drop(lease);
+        drop(runtime);
+
+        assert_eq!(world.entity(on).get::<BoolProbe>().unwrap().value, 2.0);
+        assert_eq!(world.entity(off).get::<BoolProbe>().unwrap().value, 3.0);
     }
 
     #[test]

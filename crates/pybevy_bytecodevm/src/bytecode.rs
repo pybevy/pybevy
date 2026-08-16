@@ -898,11 +898,12 @@ pub struct PooledVM {
 }
 
 impl PooledVM {
-    /// Get a VM from the thread-local pool, or create a new one
+    /// Get a reset VM from the thread-local pool, or create a new one
     pub fn acquire() -> Self {
-        let vm = VM_POOL
+        let mut vm = VM_POOL
             .with(|pool| pool.borrow_mut().pop())
             .unwrap_or_default();
+        vm.reset();
         Self { vm: Some(vm) }
     }
 
@@ -966,8 +967,8 @@ impl VM {
         x = (x ^ (x >> 13)).wrapping_mul(1597334677);
         x = x ^ (x >> 16);
 
-        // Convert to [0.0, 1.0)
-        (x as f64) / (u32::MAX as f64)
+        // Convert to [0.0, 1.0); dividing by 2^32 keeps x == u32::MAX below 1.
+        f64::from(x) / 4_294_967_296.0
     }
 
     /// Dispatch a single stack-only operation (everything except external loads/stores).
@@ -2155,6 +2156,43 @@ mod tests {
     }
 
     #[test]
+    fn random_stays_below_one_for_every_entity_index() {
+        fn modular_inverse(a: u32) -> u32 {
+            let mut inv = a;
+            for _ in 0..5 {
+                inv = inv.wrapping_mul(2u32.wrapping_sub(a.wrapping_mul(inv)));
+            }
+            inv
+        }
+        fn hash(mut x: u32) -> u32 {
+            x = x.wrapping_mul(747796405).wrapping_add(2891336453);
+            x = (x ^ (x >> 13)).wrapping_mul(1597334677);
+            x ^ (x >> 16)
+        }
+        // The hash is a bijection on u32; invert it to find the one entity
+        // index whose hash is u32::MAX (the worst case for the upper bound).
+        let x = u32::MAX;
+        let x = x ^ (x >> 16);
+        let w = x.wrapping_mul(modular_inverse(1597334677));
+        let w = w ^ (w >> 13) ^ (w >> 26);
+        let worst = w
+            .wrapping_sub(2891336453)
+            .wrapping_mul(modular_inverse(747796405));
+        assert_eq!(hash(worst), u32::MAX);
+
+        let mut compiler = Compiler::new();
+        compiler.emit(Op::Random);
+        let bytecode = compiler.finalize();
+        let mut vm = VM::new();
+        unsafe { vm.execute(&bytecode, &[], worst as usize) };
+        let value = vm.stack[0].as_float();
+        assert!(
+            (0.0..1.0).contains(&value),
+            "random() must stay in [0.0, 1.0), got {value}"
+        );
+    }
+
+    #[test]
     fn test_pooled_vm_acquire_and_release() {
         // Acquire a VM from pool
         let mut pooled = PooledVM::acquire();
@@ -2169,6 +2207,28 @@ mod tests {
         // Acquire again - should get a recycled VM
         let pooled2 = PooledVM::acquire();
         drop(pooled2);
+    }
+
+    #[test]
+    fn pooled_vm_acquire_clears_stale_state() {
+        {
+            let mut pooled = PooledVM::acquire();
+            let vm = pooled.get_mut();
+            vm.stack.push(StackValue::Float(42.0));
+            vm.entity_index = 7;
+            vm.set_native_f32(true);
+        }
+
+        // The dirty VM went back to the thread-local pool; the next acquire on
+        // this thread must not observe its state.
+        let mut pooled = PooledVM::acquire();
+        let vm = pooled.get_mut();
+        assert!(vm.stack.is_empty());
+        assert_eq!(vm.entity_index, 0);
+        assert!(
+            !vm.native_f32,
+            "stale native-f32 mode would change rounding"
+        );
     }
 
     #[test]

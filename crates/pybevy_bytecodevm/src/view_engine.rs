@@ -786,10 +786,9 @@ pub unsafe fn execute_batch_assignment(
         .collect();
 
     let tiled_ok = tiled_assignment_supported(bytecode);
-    let process_chunk = |chunk: &ChunkInfo| {
+    let process_chunk = |chunk: &ChunkInfo, scratch: &mut TiledScratch, vm: &mut VM| {
         let bases: Vec<*mut u8> = chunk.field_bases.iter().map(|p| p.0).collect();
         if tiled_ok {
-            let mut scratch = TiledScratch::new();
             // SAFETY: same pointer-validity contract as execute_batch_multi below; the
             // field bases/strides span the chunk's rows.
             unsafe {
@@ -798,12 +797,11 @@ pub unsafe fn execute_batch_assignment(
                     &bases,
                     &chunk.field_strides,
                     chunk.count,
-                    &mut scratch,
+                    scratch,
                 )
             }
             .expect("tiled_assignment_supported checked above");
         } else {
-            let mut vm = VM::new();
             // SAFETY: chunk bases and strides were derived from live table
             // columns and span exactly `chunk.count` scheduler-disjoint rows.
             unsafe {
@@ -815,13 +813,17 @@ pub unsafe fn execute_batch_assignment(
     #[cfg(feature = "parallel")]
     if parallel {
         use rayon::prelude::*;
-        chunks.par_iter().for_each(process_chunk);
+        chunks
+            .par_iter()
+            .for_each(|chunk| process_chunk(chunk, &mut TiledScratch::new(), &mut VM::new()));
         return;
     }
 
     let _ = parallel;
+    let mut scratch = TiledScratch::new();
+    let mut vm = VM::new();
     for chunk in &chunks {
-        process_chunk(chunk);
+        process_chunk(chunk, &mut scratch, &mut vm);
     }
 }
 
@@ -1370,6 +1372,17 @@ pub unsafe fn execute_query_assignment(
     filter: &ViewFilter,
     bytecode: &CompiledBytecode,
 ) {
+    // Fail-safe: every field pointer below is resolved relative to the single
+    // target component, so bytecode referencing any other component would
+    // read/write the wrong offsets. Skip rather than corrupt.
+    if bytecode
+        .field_map
+        .iter()
+        .any(|field| field.component_id != component_id)
+    {
+        return;
+    }
+
     let mut qb = QueryBuilder::<FilteredEntityMut>::new(world);
     qb.mut_id(component_id);
     for &id in &filter.with_ids {
@@ -1724,6 +1737,47 @@ mod tests {
         unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
 
         assert_eq!(values, [(1_u64 << 53) + 2, 0]);
+    }
+
+    #[test]
+    fn query_assignment_skips_bytecode_referencing_other_components() {
+        let mut world = World::new();
+        world.spawn(DenseValue(1.0));
+        world.spawn(DenseValue(2.0));
+        let component_id = world.components().component_id::<DenseValue>().unwrap();
+        let foreign = ComponentId::new(component_id.index() + 1000);
+
+        let filter = ViewFilter {
+            component_ids: HashSet::from([component_id]),
+            with_ids: Vec::new(),
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        // Reads the declared component but stores through a foreign field id;
+        // resolving that offset against DenseValue would write out of bounds.
+        let mut compiler = Compiler::new();
+        let read_idx = compiler.add_field(FieldId {
+            component_id,
+            offset: 0,
+            field_type: FieldType::F32,
+        });
+        let write_idx = compiler.add_field(FieldId {
+            component_id: foreign,
+            offset: 0,
+            field_type: FieldType::F32,
+        });
+        compiler.emit(Op::PushField(read_idx));
+        compiler.emit(Op::StoreField(write_idx));
+        let bytecode = compiler.finalize();
+
+        // SAFETY: the guard must reject this bytecode before any pointer use.
+        unsafe { execute_query_assignment(&mut world, component_id, &filter, &bytecode) };
+
+        let mut query = world.query::<&DenseValue>();
+        let mut values: Vec<f32> = query.iter(&world).map(|value| value.0).collect();
+        values.sort_by(f32::total_cmp);
+        assert_eq!(values, vec![1.0, 2.0]);
     }
 
     #[test]
