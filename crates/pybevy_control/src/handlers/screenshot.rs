@@ -1,22 +1,152 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    any::TypeId,
+    collections::{HashMap, HashSet, VecDeque},
     io::Cursor,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use base64::Engine;
 use bevy::{
+    camera::visibility::{RenderLayers, VisibilityClass},
     ecs::world::World,
     gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore},
+    light::cluster::ClusterVisibilityClass,
     prelude::*,
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
     window::PrimaryWindow,
 };
 use image::{ImageFormat, Rgb, RgbImage};
+use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
-use crate::bridge::{
-    ControlError, DebugCameraRequest, InternalOverlayUi, OverlaySuppression, PendingScreenshots,
+use crate::{
+    bridge::{
+        CaptureResponseKind, ControlError, DebugCameraRequest, EntityRef, InternalOverlayUi,
+        OverlaySuppression, PendingScreenshot, PendingScreenshots,
+    },
+    handlers::{
+        entity::resolve_entity,
+        frame_analysis::{
+            CapturedFrameMetadata, CapturedFrames, analyze_frame, resize_rgb_image_linear,
+        },
+    },
 };
+
+const ENTITY_CAPTURE_LAYER: usize = 63;
+
+#[derive(Resource)]
+pub struct EntityCaptureIsolationActive;
+
+pub struct EntityCaptureIsolation {
+    original_layers: Vec<(Entity, Option<RenderLayers>)>,
+    gizmo_configs: Vec<(TypeId, bool, RenderLayers)>,
+    scope: HashSet<Entity>,
+}
+
+impl EntityCaptureIsolation {
+    fn restore_world(self, world: &mut World) {
+        for (entity, original) in self.original_layers {
+            let Ok(mut entity_mut) = world.get_entity_mut(entity) else {
+                continue;
+            };
+            if let Some(layers) = original {
+                entity_mut.insert(layers);
+            } else {
+                entity_mut.remove::<RenderLayers>();
+            }
+        }
+        if let Some(mut store) = world.get_resource_mut::<GizmoConfigStore>() {
+            for (group, enabled, layers) in self.gizmo_configs {
+                if let Some((config, _)) = store.get_config_mut_dyn(&group) {
+                    config.enabled = enabled;
+                    config.render_layers = layers;
+                }
+            }
+        }
+        world.remove_resource::<EntityCaptureIsolationActive>();
+    }
+}
+
+fn collect_entity_capture_scope(world: &World, root: Entity) -> HashSet<Entity> {
+    let mut scope = HashSet::from([root]);
+    let mut pending = vec![root];
+    while let Some(entity) = pending.pop() {
+        let Some(children) = world.get::<Children>(entity) else {
+            continue;
+        };
+        for child in children.iter() {
+            if scope.insert(child) {
+                pending.push(child);
+            }
+        }
+    }
+    scope
+}
+
+fn begin_entity_capture_isolation(
+    world: &mut World,
+    entity_ref: &EntityRef,
+    with_gizmos: bool,
+) -> Result<EntityCaptureIsolation, ControlError> {
+    let root = resolve_entity(world, entity_ref)?;
+    let scope = collect_entity_capture_scope(world, root);
+    let support_class = TypeId::of::<ClusterVisibilityClass>();
+    let snapshots = {
+        let mut query = world.query::<(
+            Entity,
+            Option<&RenderLayers>,
+            Has<Camera>,
+            Option<&VisibilityClass>,
+        )>();
+        query
+            .iter(world)
+            .map(|(entity, layers, is_camera, visibility_class)| {
+                let is_support =
+                    visibility_class.is_some_and(|classes| classes.contains(&support_class));
+                (entity, layers.cloned(), is_camera, is_support)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut original_layers = Vec::new();
+    for (entity, original, is_camera, is_support) in snapshots {
+        let included = scope.contains(&entity) || is_camera || is_support;
+        let replacement = if included {
+            Some(RenderLayers::layer(ENTITY_CAPTURE_LAYER))
+        } else {
+            original
+                .as_ref()
+                .filter(|layers| layers.iter().any(|layer| layer == ENTITY_CAPTURE_LAYER))
+                .cloned()
+                .map(|layers| layers.without(ENTITY_CAPTURE_LAYER))
+        };
+        let Some(replacement) = replacement else {
+            continue;
+        };
+        if original.as_ref() == Some(&replacement) {
+            continue;
+        }
+        world.entity_mut(entity).insert(replacement);
+        original_layers.push((entity, original));
+    }
+    let mut gizmo_configs = Vec::new();
+    if with_gizmos && let Some(mut store) = world.get_resource_mut::<GizmoConfigStore>() {
+        for (group, config, _) in store.iter_mut() {
+            gizmo_configs.push((*group, config.enabled, config.render_layers.clone()));
+            config.enabled = true;
+            config.render_layers = RenderLayers::layer(ENTITY_CAPTURE_LAYER);
+        }
+    }
+    world.insert_resource(EntityCaptureIsolationActive);
+    Ok(EntityCaptureIsolation {
+        original_layers,
+        gizmo_configs,
+        scope,
+    })
+}
 
 /// Resource storing the latest GPU readback frame for headless screenshots.
 ///
@@ -25,6 +155,51 @@ use crate::bridge::{
 #[derive(Resource, Default)]
 pub struct HeadlessFrameBuffer {
     pub latest: Option<(Vec<u8>, u32, u32)>,
+    pub sequence: u64,
+}
+
+/// Cross-world render completion state for captures queued after live edits.
+#[derive(Resource, Clone, Default)]
+pub struct RenderFrameReadiness {
+    shared: Arc<RenderFrameReadinessState>,
+}
+
+#[derive(Default)]
+struct RenderFrameReadinessState {
+    requested_epoch: AtomicU64,
+    completed_epoch: AtomicU64,
+}
+
+impl RenderFrameReadiness {
+    pub fn request_frame(&self) -> u64 {
+        self.shared.requested_epoch.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub fn requested_epoch(&self) -> u64 {
+        self.shared.requested_epoch.load(Ordering::Acquire)
+    }
+
+    fn complete_requested_frame(&self) {
+        let requested = self.requested_epoch();
+        self.shared
+            .completed_epoch
+            .store(requested, Ordering::Release);
+    }
+
+    fn is_complete(&self, epoch: u64) -> bool {
+        self.shared.completed_epoch.load(Ordering::Acquire) >= epoch
+    }
+}
+
+/// Publish completion only after the render pipeline queue is empty at the
+/// end of a render-world frame.
+pub fn update_render_frame_readiness(
+    pipeline_cache: Res<bevy::render::render_resource::PipelineCache>,
+    readiness: Res<RenderFrameReadiness>,
+) {
+    if pipeline_cache.waiting_pipelines().next().is_none() {
+        readiness.complete_requested_frame();
+    }
 }
 
 /// Cleanup info for a debug camera set up for a screenshot.
@@ -37,16 +212,28 @@ pub struct DebugCameraCleanup {
     pub original_cameras: Vec<(Entity, bool)>,
 }
 
+/// Frames a queued capture may wait for its readback before it is failed and
+/// its visibility/camera state restored, so a capture that never completes
+/// cannot wedge `another_capture_is_active` or hang its request forever.
+pub(crate) const MAX_CAPTURE_WAIT_FRAMES: u32 = 600;
+
+pub(crate) const CAPTURE_DEADLINE_ERROR: &str =
+    "capture did not complete within the deadline (render readback never arrived)";
+pub(crate) const STALE_HEADLESS_FRAME_ERROR: &str = "capture did not receive a fresh headless frame before the deadline; the renderer may have stopped";
+
 /// Per-screenshot responder stored until the observer fires.
 pub struct ScreenshotResponder {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     pub max_width: Option<u32>,
     pub debug_cleanup: Option<DebugCameraCleanup>,
     pub ui_restore: Option<Vec<(Entity, Visibility)>>,
+    pub entity_isolation: Option<EntityCaptureIsolation>,
     /// If gizmos were toggled for this screenshot, the original enabled state to restore.
     pub gizmo_restore: Option<bool>,
     /// Extra JSON fields to merge into the screenshot response.
     pub extra_response: Option<serde_json::Value>,
+    pub response_kind: CaptureResponseKind,
+    pub frames_waited: u32,
 }
 
 /// Resource mapping screenshot Entity → responder info.
@@ -57,18 +244,23 @@ pub struct PendingScreenshotResponders {
 
 /// Staged debug screenshots waiting for the debug camera to render before capture.
 #[derive(Resource, Default)]
-struct StagedDebugScreenshots {
-    pending: Vec<StagedDebugScreenshot>,
+struct StagedScreenshots {
+    pending: Vec<StagedScreenshot>,
 }
 
-struct StagedDebugScreenshot {
+struct StagedScreenshot {
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     frames_remaining: u32,
     with_gizmos: bool,
+    gizmo_restore: Option<bool>,
     max_width: Option<u32>,
-    debug_cleanup: DebugCameraCleanup,
+    debug_cleanup: Option<DebugCameraCleanup>,
     ui_restore: Option<Vec<(Entity, Visibility)>>,
+    entity_isolation: Option<EntityCaptureIsolation>,
     extra_response: Option<serde_json::Value>,
+    response_kind: CaptureResponseKind,
+    baseline_headless_sequence: Option<u64>,
+    frames_waited: u32,
 }
 
 /// Resource tracking active timelines (multi-frame capture sequences).
@@ -91,6 +283,14 @@ pub struct ActiveTimeline {
     /// Whether this timeline holds an `OverlaySuppression` refcount
     /// (taken at first capture, released on completion).
     pub overlay_suppressed: bool,
+    pub hide_ui: bool,
+    pub with_gizmos: bool,
+    pub ui_restore: Option<Vec<(Entity, Visibility)>>,
+    pub gizmo_restore: Option<bool>,
+    /// Last headless readback sequence observed by this timeline.
+    pub headless_sequence: Option<u64>,
+    /// Frames spent waiting on spawned captures after the schedule drained.
+    pub stall_frames: u32,
 }
 
 /// Resource mapping screenshot Entity → (timeline_id, capture_index).
@@ -123,6 +323,21 @@ pub fn compute_schedule(total_frames: u32, capture_count: u32) -> VecDeque<u32> 
     schedule
 }
 
+fn another_capture_is_active(world: &World) -> bool {
+    world
+        .get_resource::<PendingScreenshotResponders>()
+        .is_some_and(|responders| !responders.map.is_empty())
+        || world
+            .get_resource::<StagedScreenshots>()
+            .is_some_and(|staged| !staged.pending.is_empty())
+        || world
+            .get_resource::<PendingTimelines>()
+            .is_some_and(|timelines| !timelines.active.is_empty())
+        || world
+            .get_resource::<super::turnaround::PendingTurnarounds>()
+            .is_some_and(|turnarounds| !turnarounds.active.is_empty())
+}
+
 /// Process pending screenshot requests (called each frame in Last schedule).
 ///
 /// Flow:
@@ -131,13 +346,15 @@ pub fn compute_schedule(total_frames: u32, capture_count: u32) -> VecDeque<u32> 
 /// 3. Count down staged debug screenshots
 /// 4. When staged screenshot is ready, spawn the Screenshot entity for capture
 pub fn process_pending_screenshots(world: &mut World) {
+    expire_stuck_screenshot_responders(world);
+
     let Some(mut pending) = world.remove_resource::<PendingScreenshots>() else {
         return;
     };
 
     if pending.pending.is_empty()
         && world
-            .get_resource::<StagedDebugScreenshots>()
+            .get_resource::<StagedScreenshots>()
             .is_none_or(|s| s.pending.is_empty())
     {
         world.insert_resource(pending);
@@ -148,6 +365,15 @@ pub fn process_pending_screenshots(world: &mut World) {
     let mut ready = Vec::new();
 
     for mut screenshot in pending.pending.drain(..) {
+        prepare_pending_screenshot_gizmos(world, &mut screenshot);
+        if screenshot.required_render_epoch.is_some_and(|epoch| {
+            world
+                .get_resource::<RenderFrameReadiness>()
+                .is_some_and(|readiness| !readiness.is_complete(epoch))
+        }) {
+            remaining.push(screenshot);
+            continue;
+        }
         if screenshot.frames_remaining > 0 {
             screenshot.frames_remaining -= 1;
             remaining.push(screenshot);
@@ -161,29 +387,74 @@ pub fn process_pending_screenshots(world: &mut World) {
 
     // Process ready screenshots
     for mut screenshot in ready {
-        // Always suppress the internal overlay (hot reload UI); released when
-        // the screenshot completes
-        suppress_internal_overlay(world);
-        // Additionally hide all authored UI if requested
-        let ui_restore = if screenshot.hide_ui {
-            Some(hide_ui_nodes(world))
+        if world.contains_resource::<EntityCaptureIsolationActive>()
+            || (screenshot.entity.is_some() && another_capture_is_active(world))
+        {
+            world
+                .resource_mut::<PendingScreenshots>()
+                .pending
+                .push(screenshot);
+            continue;
+        }
+
+        let debug_cleanup = if let Some(debug_req) = screenshot.debug_camera.take() {
+            match setup_debug_camera(world, &debug_req) {
+                Ok(cleanup) => cleanup,
+                Err(error) => {
+                    let _ = screenshot.response_tx.send(Err(error));
+                    if let Some(was_enabled) = screenshot.gizmo_restore {
+                        set_gizmos_enabled(world, was_enabled);
+                    }
+                    continue;
+                }
+            }
+            .into()
         } else {
             None
         };
 
-        if let Some(debug_req) = screenshot.debug_camera.take() {
-            // Set up debug camera and stage for extra frames
-            let cleanup = setup_debug_camera(world, &debug_req);
+        let entity_isolation = if let Some(entity_ref) = screenshot.entity.as_ref() {
+            match begin_entity_capture_isolation(world, entity_ref, screenshot.with_gizmos) {
+                Ok(isolation) => Some(isolation),
+                Err(error) => {
+                    let _ = screenshot.response_tx.send(Err(error));
+                    if let Some(cleanup) = debug_cleanup {
+                        cleanup_debug_camera_world(cleanup, world);
+                    }
+                    if let Some(was_enabled) = screenshot.gizmo_restore {
+                        set_gizmos_enabled(world, was_enabled);
+                    }
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
 
-            let mut staged = world.get_resource_or_insert_with(StagedDebugScreenshots::default);
-            staged.pending.push(StagedDebugScreenshot {
+        suppress_internal_overlay(world);
+        let ui_restore = screenshot.hide_ui.then(|| {
+            hide_ui_nodes(
+                world,
+                entity_isolation.as_ref().map(|isolation| &isolation.scope),
+            )
+        });
+
+        if debug_cleanup.is_some() {
+            let baseline_headless_sequence = headless_frame_sequence(world);
+            let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
+            staged.pending.push(StagedScreenshot {
                 response_tx: screenshot.response_tx,
-                frames_remaining: 2,
+                frames_remaining: if entity_isolation.is_some() { 4 } else { 2 },
                 with_gizmos: screenshot.with_gizmos,
+                gizmo_restore: screenshot.gizmo_restore,
                 max_width: screenshot.max_width,
-                debug_cleanup: cleanup,
+                debug_cleanup,
                 ui_restore,
+                entity_isolation,
                 extra_response: screenshot.extra_response,
+                response_kind: screenshot.response_kind,
+                baseline_headless_sequence,
+                frames_waited: 0,
             });
         } else {
             // Normal path: spawn Screenshot entity immediately
@@ -194,11 +465,11 @@ pub fn process_pending_screenshots(world: &mut World) {
                 .is_some();
 
             if has_window {
-                let gizmo_restore = if !screenshot.with_gizmos {
-                    set_gizmos_enabled(world, false)
-                } else {
-                    None
-                };
+                let gizmo_restore = screenshot.gizmo_restore.take().or_else(|| {
+                    (!screenshot.with_gizmos)
+                        .then(|| set_gizmos_enabled(world, false))
+                        .flatten()
+                });
 
                 let entity = world.spawn(Screenshot::primary_window()).id();
 
@@ -211,25 +482,36 @@ pub fn process_pending_screenshots(world: &mut World) {
                         max_width: screenshot.max_width,
                         debug_cleanup: None,
                         ui_restore,
+                        entity_isolation,
                         gizmo_restore,
                         extra_response: screenshot.extra_response,
+                        response_kind: screenshot.response_kind,
+                        frames_waited: 0,
                     },
                 );
             } else {
-                // Headless fallback: read from HeadlessFrameProvider
-                let result = capture_headless_frame(world, screenshot.max_width);
-                let result = merge_extra_response(result, screenshot.extra_response);
-                let _ = screenshot.response_tx.send(result);
-                release_internal_overlay(world);
-                if let Some(restore) = ui_restore {
-                    restore_ui_nodes(world, restore);
-                }
+                let baseline_headless_sequence = headless_frame_sequence(world);
+                let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
+                staged.pending.push(StagedScreenshot {
+                    response_tx: screenshot.response_tx,
+                    frames_remaining: if entity_isolation.is_some() { 4 } else { 2 },
+                    with_gizmos: screenshot.with_gizmos,
+                    gizmo_restore: screenshot.gizmo_restore,
+                    max_width: screenshot.max_width,
+                    debug_cleanup: None,
+                    ui_restore,
+                    entity_isolation,
+                    extra_response: screenshot.extra_response,
+                    response_kind: screenshot.response_kind,
+                    baseline_headless_sequence,
+                    frames_waited: 0,
+                });
             }
         }
     }
 
     // Process staged debug screenshots
-    if let Some(mut staged) = world.remove_resource::<StagedDebugScreenshots>() {
+    if let Some(mut staged) = world.remove_resource::<StagedScreenshots>() {
         let mut still_waiting = Vec::new();
 
         for mut s in staged.pending.drain(..) {
@@ -244,12 +526,26 @@ pub fn process_pending_screenshots(world: &mut World) {
                     .next()
                     .is_some();
 
-                if has_window {
-                    let gizmo_restore = if !s.with_gizmos {
-                        set_gizmos_enabled(world, false)
+                if !has_window
+                    && s.baseline_headless_sequence.is_some_and(|baseline| {
+                        headless_frame_sequence(world).is_none_or(|current| current <= baseline)
+                    })
+                {
+                    s.frames_waited += 1;
+                    if s.frames_waited > MAX_CAPTURE_WAIT_FRAMES {
+                        fail_staged_screenshot(world, s, STALE_HEADLESS_FRAME_ERROR);
                     } else {
-                        None
-                    };
+                        still_waiting.push(s);
+                    }
+                    continue;
+                }
+
+                if has_window {
+                    let gizmo_restore = s.gizmo_restore.take().or_else(|| {
+                        (!s.with_gizmos)
+                            .then(|| set_gizmos_enabled(world, false))
+                            .flatten()
+                    });
 
                     let entity = world.spawn(Screenshot::primary_window()).id();
 
@@ -260,20 +556,32 @@ pub fn process_pending_screenshots(world: &mut World) {
                         ScreenshotResponder {
                             response_tx: s.response_tx,
                             max_width: s.max_width,
-                            debug_cleanup: Some(s.debug_cleanup),
+                            debug_cleanup: s.debug_cleanup,
                             ui_restore: s.ui_restore,
+                            entity_isolation: s.entity_isolation,
                             gizmo_restore,
                             extra_response: s.extra_response,
+                            response_kind: s.response_kind,
+                            frames_waited: 0,
                         },
                     );
                 } else {
                     // Headless fallback
-                    let result = capture_headless_frame(world, s.max_width);
+                    let result = capture_headless_frame(world, s.max_width, s.response_kind);
                     let result = merge_extra_response(result, s.extra_response);
                     let _ = s.response_tx.send(result);
+                    if let Some(cleanup) = s.debug_cleanup {
+                        cleanup_debug_camera_world(cleanup, world);
+                    }
                     release_internal_overlay(world);
                     if let Some(restore) = s.ui_restore {
                         restore_ui_nodes(world, restore);
+                    }
+                    if let Some(isolation) = s.entity_isolation {
+                        isolation.restore_world(world);
+                    }
+                    if let Some(was_enabled) = s.gizmo_restore {
+                        set_gizmos_enabled(world, was_enabled);
                     }
                 }
             }
@@ -284,26 +592,143 @@ pub fn process_pending_screenshots(world: &mut World) {
     }
 }
 
+pub(crate) fn headless_frame_sequence(world: &World) -> Option<u64> {
+    world
+        .get_resource::<HeadlessFrameBuffer>()
+        .and_then(|buffer| buffer.latest.as_ref().map(|_| buffer.sequence))
+}
+
+fn fail_staged_screenshot(world: &mut World, staged: StagedScreenshot, message: &str) {
+    let _ = staged
+        .response_tx
+        .send(Err(ControlError::internal(message.to_string())));
+    if let Some(cleanup) = staged.debug_cleanup {
+        cleanup_debug_camera_world(cleanup, world);
+    }
+    release_internal_overlay(world);
+    if let Some(restore) = staged.ui_restore {
+        restore_ui_nodes(world, restore);
+    }
+    if let Some(isolation) = staged.entity_isolation {
+        isolation.restore_world(world);
+    }
+    if let Some(was_enabled) = staged.gizmo_restore {
+        set_gizmos_enabled(world, was_enabled);
+    }
+}
+
+/// Fail responders whose capture readback never arrived, restoring the
+/// visibility and camera state they held.
+fn expire_stuck_screenshot_responders(world: &mut World) {
+    let expired: Vec<(Entity, ScreenshotResponder)> = {
+        let Some(mut responders) = world.get_resource_mut::<PendingScreenshotResponders>() else {
+            return;
+        };
+        let stuck: Vec<Entity> = responders
+            .map
+            .iter_mut()
+            .filter_map(|(entity, responder)| {
+                responder.frames_waited += 1;
+                (responder.frames_waited > MAX_CAPTURE_WAIT_FRAMES).then_some(*entity)
+            })
+            .collect();
+        stuck
+            .into_iter()
+            .filter_map(|entity| {
+                responders
+                    .map
+                    .remove(&entity)
+                    .map(|responder| (entity, responder))
+            })
+            .collect()
+    };
+
+    for (entity, responder) in expired {
+        if let Ok(entity_mut) = world.get_entity_mut(entity) {
+            entity_mut.despawn();
+        }
+        let _ = responder
+            .response_tx
+            .send(Err(ControlError::internal(CAPTURE_DEADLINE_ERROR)));
+        release_internal_overlay(world);
+        if let Some(restore) = responder.ui_restore {
+            restore_ui_nodes(world, restore);
+        }
+        if let Some(was_enabled) = responder.gizmo_restore {
+            set_gizmos_enabled(world, was_enabled);
+        }
+        if let Some(isolation) = responder.entity_isolation {
+            isolation.restore_world(world);
+        }
+        if let Some(cleanup) = responder.debug_cleanup {
+            cleanup_debug_camera_world(cleanup, world);
+        }
+    }
+}
+
+/// Fail an active timeline, restoring the capture state it held.
+fn fail_timeline(
+    world: &mut World,
+    timeline_id: u64,
+    mut timeline: ActiveTimeline,
+    message: String,
+) {
+    if let Some(mut captures) = world.get_resource_mut::<TimelineCaptures>() {
+        captures.map.retain(|_, (id, _)| *id != timeline_id);
+    }
+    if let Some(cleanup) = timeline.debug_cleanup.take() {
+        cleanup_debug_camera_world(cleanup, world);
+    }
+    if timeline.overlay_suppressed {
+        release_internal_overlay(world);
+    }
+    if let Some(restore) = timeline.ui_restore.take() {
+        restore_ui_nodes(world, restore);
+    }
+    if let Some(was_enabled) = timeline.gizmo_restore.take() {
+        set_gizmos_enabled(world, was_enabled);
+    }
+    if let Some(tx) = timeline.response_tx.take() {
+        let _ = tx.send(Err(ControlError::internal(message)));
+    }
+}
+
 /// Process pending timelines: decrement schedule, spawn captures when ready.
 pub fn process_pending_timelines(world: &mut World) {
     let Some(mut timelines) = world.remove_resource::<PendingTimelines>() else {
         return;
     };
 
-    if timelines.active.is_empty() {
+    if timelines.active.is_empty() || world.contains_resource::<EntityCaptureIsolationActive>() {
         world.insert_resource(timelines);
         return;
     }
 
+    let has_window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .iter(world)
+        .next()
+        .is_some();
+    let current_headless_sequence = (!has_window)
+        .then(|| headless_frame_sequence(world))
+        .flatten();
+
     // Collect timeline IDs that need a capture this frame
     let mut captures_to_spawn: Vec<(u64, u32)> = Vec::new();
     let mut completed_ids: Vec<u64> = Vec::new();
+    let mut stalled_ids: Vec<u64> = Vec::new();
+    let mut stale_headless_ids: Vec<u64> = Vec::new();
 
     for (&id, timeline) in timelines.active.iter_mut() {
         if timeline.schedule.is_empty() {
             // All captures scheduled, waiting for collection
             if timeline.response_tx.is_none() {
                 completed_ids.push(id);
+            } else {
+                timeline.stall_frames += 1;
+                if timeline.stall_frames > MAX_CAPTURE_WAIT_FRAMES {
+                    stalled_ids.push(id);
+                }
             }
             continue;
         }
@@ -313,10 +738,24 @@ pub fn process_pending_timelines(world: &mut World) {
             if *front > 0 {
                 *front -= 1;
             } else {
+                if !has_window
+                    && timeline.headless_sequence.is_some_and(|baseline| {
+                        current_headless_sequence.is_none_or(|current| current <= baseline)
+                    })
+                {
+                    timeline.stall_frames += 1;
+                    if timeline.stall_frames > MAX_CAPTURE_WAIT_FRAMES {
+                        stale_headless_ids.push(id);
+                    }
+                    continue;
+                }
+
                 // Time to capture
                 let capture_index = timeline.next_capture_index;
                 timeline.next_capture_index += 1;
                 timeline.schedule.pop_front();
+                timeline.headless_sequence = current_headless_sequence;
+                timeline.stall_frames = 0;
                 captures_to_spawn.push((id, capture_index));
             }
         }
@@ -327,29 +766,37 @@ pub fn process_pending_timelines(world: &mut World) {
         timelines.active.remove(&id);
     }
 
-    // Suppress the internal hot-reload overlay for the duration of any
-    // timeline that is about to capture; released when the timeline
-    // completes. The refcount makes overlapping timelines compose.
+    for id in stalled_ids {
+        if let Some(timeline) = timelines.active.remove(&id) {
+            fail_timeline(world, id, timeline, CAPTURE_DEADLINE_ERROR.to_string());
+        }
+    }
+
+    for id in stale_headless_ids {
+        if let Some(timeline) = timelines.active.remove(&id) {
+            fail_timeline(world, id, timeline, STALE_HEADLESS_FRAME_ERROR.to_string());
+        }
+    }
+
+    // Apply capture visibility for the duration of each timeline when its
+    // first capture becomes ready. Restore it after the contact sheet is
+    // complete.
     for (id, _) in &captures_to_spawn {
-        let needs_suppress = timelines
-            .active
-            .get(id)
-            .is_some_and(|t| !t.overlay_suppressed);
-        if needs_suppress {
-            suppress_internal_overlay(world);
+        let capture_options = timelines.active.get(id).and_then(|timeline| {
+            (!timeline.overlay_suppressed).then_some((timeline.hide_ui, timeline.with_gizmos))
+        });
+        if let Some((hide_ui, with_gizmos)) = capture_options {
+            let (ui_restore, gizmo_restore) =
+                prepare_capture_visibility(world, hide_ui, with_gizmos);
             if let Some(timeline) = timelines.active.get_mut(id) {
                 timeline.overlay_suppressed = true;
+                timeline.ui_restore = ui_restore;
+                timeline.gizmo_restore = gizmo_restore;
             }
         }
     }
 
     world.insert_resource(timelines);
-
-    let has_window = world
-        .query_filtered::<Entity, With<PrimaryWindow>>()
-        .iter(world)
-        .next()
-        .is_some();
 
     if has_window {
         // Spawn screenshot entities for captures
@@ -364,28 +811,64 @@ pub fn process_pending_timelines(world: &mut World) {
         }
     } else {
         // Headless fallback: read from HeadlessFrameBuffer
-        if let Ok(rgb) = read_headless_frame(world) {
-            let mut overlay_releases: u32 = 0;
-            {
-                let mut timelines = world.resource_mut::<PendingTimelines>();
-                for (timeline_id, capture_index) in captures_to_spawn {
-                    if let Some(timeline) = timelines.active.get_mut(&timeline_id) {
-                        timeline.collected.push((capture_index, rgb.clone()));
-                        if timeline.collected.len() as u32 == timeline.total_captures {
-                            let result = composite_contact_sheet(timeline);
-                            if let Some(tx) = timeline.response_tx.take() {
-                                let _ = tx.send(result);
-                            }
-                            if timeline.overlay_suppressed {
-                                timeline.overlay_suppressed = false;
-                                overlay_releases += 1;
+        match read_headless_frame(world) {
+            Err(error) => {
+                // The capture slots were already consumed from the schedule,
+                // so these timelines cannot complete: fail them now.
+                for (timeline_id, _) in captures_to_spawn {
+                    let timeline = world
+                        .resource_mut::<PendingTimelines>()
+                        .active
+                        .remove(&timeline_id);
+                    if let Some(timeline) = timeline {
+                        fail_timeline(world, timeline_id, timeline, error.message.clone());
+                    }
+                }
+            }
+            Ok(rgb) => {
+                let mut overlay_releases: u32 = 0;
+                let mut camera_cleanups = Vec::new();
+                let mut ui_restores = Vec::new();
+                let mut gizmo_restores = Vec::new();
+                {
+                    let mut timelines = world.resource_mut::<PendingTimelines>();
+                    for (timeline_id, capture_index) in captures_to_spawn {
+                        if let Some(timeline) = timelines.active.get_mut(&timeline_id) {
+                            timeline.collected.push((capture_index, rgb.clone()));
+                            if timeline.collected.len() as u32 == timeline.total_captures {
+                                let result = composite_contact_sheet(timeline);
+                                if let Some(tx) = timeline.response_tx.take() {
+                                    let _ = tx.send(result);
+                                }
+                                if timeline.overlay_suppressed {
+                                    timeline.overlay_suppressed = false;
+                                    overlay_releases += 1;
+                                }
+                                if let Some(cleanup) = timeline.debug_cleanup.take() {
+                                    camera_cleanups.push(cleanup);
+                                }
+                                if let Some(restore) = timeline.ui_restore.take() {
+                                    ui_restores.push(restore);
+                                }
+                                if let Some(was_enabled) = timeline.gizmo_restore.take() {
+                                    gizmo_restores.push(was_enabled);
+                                }
                             }
                         }
                     }
                 }
-            }
-            for _ in 0..overlay_releases {
-                release_internal_overlay(world);
+                for cleanup in camera_cleanups {
+                    cleanup_debug_camera_world(cleanup, world);
+                }
+                for _ in 0..overlay_releases {
+                    release_internal_overlay(world);
+                }
+                for restore in ui_restores {
+                    restore_ui_nodes(world, restore);
+                }
+                for was_enabled in gizmo_restores {
+                    set_gizmos_enabled(world, was_enabled);
+                }
             }
         }
     }
@@ -404,14 +887,30 @@ fn set_gizmos_enabled(world: &mut World, enabled: bool) -> Option<bool> {
     }
 }
 
+/// Apply screenshot gizmo visibility before Python Update systems draw this frame.
+pub(crate) fn prepare_pending_screenshot_gizmos(
+    world: &mut World,
+    screenshot: &mut PendingScreenshot,
+) {
+    if !screenshot.with_gizmos && screenshot.gizmo_restore.is_none() {
+        screenshot.gizmo_restore = set_gizmos_enabled(world, false);
+    }
+}
+
 /// Hide authored UI Node entities by setting their visibility to Hidden.
 /// Returns a list of (entity, original_visibility) for restoration. Internal
 /// overlay entities are excluded: they are owned by `OverlaySuppression`.
-fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
+fn hide_ui_nodes(
+    world: &mut World,
+    keep_visible: Option<&HashSet<Entity>>,
+) -> Vec<(Entity, Visibility)> {
     let mut ui_entities: Vec<(Entity, Visibility)> = Vec::new();
     let mut query = world
         .query_filtered::<(Entity, &Visibility, &bevy::ui::Node), Without<InternalOverlayUi>>();
     for (entity, vis, _) in query.iter(world) {
+        if keep_visible.is_some_and(|keep| keep.contains(&entity)) {
+            continue;
+        }
         ui_entities.push((entity, *vis));
     }
     for (entity, _) in &ui_entities {
@@ -431,7 +930,7 @@ fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
 }
 
 /// Restore UI nodes hidden by `hide_ui_nodes` to their recorded visibility.
-fn restore_ui_nodes(world: &mut World, restore: Vec<(Entity, Visibility)>) {
+pub(crate) fn restore_ui_nodes(world: &mut World, restore: Vec<(Entity, Visibility)>) {
     for (entity, original_vis) in restore {
         if let Some(mut vis) = world.get_mut::<Visibility>(entity) {
             *vis = original_vis;
@@ -470,6 +969,19 @@ pub(crate) fn suppress_internal_overlay(world: &mut World) {
     }
 }
 
+pub(crate) fn prepare_capture_visibility(
+    world: &mut World,
+    hide_ui: bool,
+    with_gizmos: bool,
+) -> (Option<Vec<(Entity, Visibility)>>, Option<bool>) {
+    suppress_internal_overlay(world);
+    let ui_restore = hide_ui.then(|| hide_ui_nodes(world, None));
+    let gizmo_restore = (!with_gizmos)
+        .then(|| set_gizmos_enabled(world, false))
+        .flatten();
+    (ui_restore, gizmo_restore)
+}
+
 /// Release one `suppress_internal_overlay` hold.
 pub(crate) fn release_internal_overlay(world: &mut World) {
     if let Some(mut suppression) = world.get_resource_mut::<OverlaySuppression>() {
@@ -489,10 +1001,18 @@ pub(crate) fn release_internal_overlay(world: &mut World) {
 pub(crate) fn setup_debug_camera(
     world: &mut World,
     req: &DebugCameraRequest,
-) -> DebugCameraCleanup {
+) -> Result<DebugCameraCleanup, ControlError> {
+    setup_debug_camera_with_up(world, req, Vec3::Y)
+}
+
+pub(crate) fn setup_debug_camera_with_up(
+    world: &mut World,
+    req: &DebugCameraRequest,
+    up: Vec3,
+) -> Result<DebugCameraCleanup, ControlError> {
     let position = Vec3::from_array(req.position);
     let look_at = Vec3::from_array(req.look_at);
-    let target_transform = Transform::from_translation(position).looking_at(look_at, Vec3::Y);
+    let target_transform = Transform::from_translation(position).looking_at(look_at, up);
 
     // Collect all cameras and their active state
     let all_cameras: Vec<(Entity, bool)> = {
@@ -549,7 +1069,7 @@ pub(crate) fn setup_debug_camera(
             }
         }
 
-        DebugCameraCleanup {
+        Ok(DebugCameraCleanup {
             debug_entity: reuse,
             reused_state: Some((
                 original_transform,
@@ -557,8 +1077,19 @@ pub(crate) fn setup_debug_camera(
                 original_active,
             )),
             original_cameras: other_cameras,
-        }
+        })
     } else {
+        let has_camera2d = world
+            .query_filtered::<Entity, With<Camera2d>>()
+            .iter(world)
+            .next()
+            .is_some();
+        if has_camera2d {
+            return Err(ControlError::invalid_params(
+                "position/look_at screenshot overrides require a Camera3d; omit them when capturing a Camera2d scene",
+            ));
+        }
+
         // No Camera3d exists — spawn a new one.
         // Cascade crash is unlikely here since the scene probably has no directional lights.
         let original_cameras = all_cameras.clone();
@@ -576,10 +1107,33 @@ pub(crate) fn setup_debug_camera(
             ))
             .id();
 
-        DebugCameraCleanup {
+        Ok(DebugCameraCleanup {
             debug_entity,
             reused_state: None,
             original_cameras,
+        })
+    }
+}
+
+pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mut World) {
+    if let Some((original_transform, original_global_transform, was_active)) = cleanup.reused_state
+    {
+        if let Some(mut transform) = world.get_mut::<Transform>(cleanup.debug_entity) {
+            *transform = original_transform;
+        }
+        if let Some(mut global_transform) = world.get_mut::<GlobalTransform>(cleanup.debug_entity) {
+            *global_transform = original_global_transform;
+        }
+        if let Some(mut camera) = world.get_mut::<Camera>(cleanup.debug_entity) {
+            camera.is_active = was_active;
+        }
+    } else if world.get_entity(cleanup.debug_entity).is_ok() {
+        world.despawn(cleanup.debug_entity);
+    }
+
+    for (entity, was_active) in cleanup.original_cameras {
+        if let Some(mut camera) = world.get_mut::<Camera>(entity) {
+            camera.is_active = was_active;
         }
     }
 }
@@ -623,7 +1177,9 @@ pub fn screenshot_captured_observer(
     mut timelines: ResMut<PendingTimelines>,
     mut turnarounds: ResMut<super::turnaround::PendingTurnarounds>,
     mut turnaround_captures: ResMut<super::turnaround::TurnaroundCaptures>,
-    gizmo_store: Option<ResMut<GizmoConfigStore>>,
+    mut captured_frames: ResMut<CapturedFrames>,
+    hot_reload_generation: Option<Res<HotReloadGeneration>>,
+    mut gizmo_store: Option<ResMut<GizmoConfigStore>>,
     mut overlay_suppression: Option<ResMut<OverlaySuppression>>,
     mut commands: Commands,
     mut cameras: Query<&mut Camera>,
@@ -657,6 +1213,7 @@ pub fn screenshot_captured_observer(
 
         if let Some(timeline) = timelines.active.get_mut(&timeline_id) {
             timeline.collected.push((capture_index, rgb));
+            timeline.stall_frames = 0;
 
             // Check if all captures collected
             if timeline.collected.len() as u32 == timeline.total_captures {
@@ -671,6 +1228,21 @@ pub fn screenshot_captured_observer(
                     if let Some(suppression) = overlay_suppression.as_deref_mut() {
                         suppression.0 = suppression.0.saturating_sub(1);
                     }
+                }
+
+                if let Some(restore) = timeline.ui_restore.take() {
+                    for (ui_entity, original_vis) in restore {
+                        if let Ok(mut vis) = visibility_query.get_mut(ui_entity) {
+                            *vis = original_vis;
+                        }
+                    }
+                }
+
+                if let Some(was_enabled) = timeline.gizmo_restore.take()
+                    && let Some(store) = gizmo_store.as_deref_mut()
+                {
+                    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+                    config.enabled = was_enabled;
                 }
 
                 // Clean up debug camera if present
@@ -695,7 +1267,13 @@ pub fn screenshot_captured_observer(
     };
 
     let img = trigger.image.clone();
-    let result = encode_screenshot(img, responder.max_width);
+    let result = complete_screenshot_capture(
+        img,
+        responder.max_width,
+        responder.response_kind,
+        &mut captured_frames,
+        hot_reload_generation.map(|generation| generation.current),
+    );
     let result = merge_extra_response(result, responder.extra_response);
     let _ = responder.response_tx.send(result);
 
@@ -719,6 +1297,10 @@ pub fn screenshot_captured_observer(
     {
         let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
         config.enabled = was_enabled;
+    }
+
+    if let Some(isolation) = responder.entity_isolation {
+        commands.queue(move |world: &mut World| isolation.restore_world(world));
     }
 
     // Clean up debug camera if present
@@ -864,13 +1446,24 @@ fn merge_extra_response(
         return result;
     };
     let mut merged = match result {
-        Ok(sj) => serde_json::json!({
-            "screenshot": sj.get("image"),
-            "screenshot_width": sj.get("width"),
-            "screenshot_height": sj.get("height"),
-        }),
-        Err(_) => serde_json::json!({
+        Ok(screenshot) => {
+            let mut response = serde_json::json!({
+                "screenshot": screenshot.get("image"),
+                "screenshot_width": screenshot.get("width"),
+                "screenshot_height": screenshot.get("height"),
+            });
+            if let Some(response) = response.as_object_mut() {
+                for key in ["frame_id", "retained", "retention_reason"] {
+                    if let Some(value) = screenshot.get(key) {
+                        response.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+            response
+        }
+        Err(error) => serde_json::json!({
             "screenshot": null,
+            "screenshot_error": error.message,
         }),
     };
     if let (Some(base), serde_json::Value::Object(extra_map)) = (merged.as_object_mut(), extra) {
@@ -881,6 +1474,7 @@ fn merge_extra_response(
     Ok(merged)
 }
 
+#[cfg(test)]
 fn encode_screenshot(
     img: bevy::image::Image,
     max_width: Option<u32>,
@@ -890,29 +1484,60 @@ fn encode_screenshot(
     })?;
 
     // Discard alpha (stores HDR brightness) to get a clean RGB image
-    let rgb = dyn_img.to_rgb8();
-    encode_rgb_screenshot(rgb, max_width)
+    let rgb = resize_rgb_image_linear(dyn_img.to_rgb8(), max_width);
+    encode_rgb_screenshot(&rgb)
 }
 
-/// Encode an RgbImage as a base64 PNG string, optionally resizing.
-fn encode_rgb_screenshot(
-    mut rgb: RgbImage,
+fn complete_screenshot_capture(
+    img: bevy::image::Image,
     max_width: Option<u32>,
+    response_kind: CaptureResponseKind,
+    captured_frames: &mut CapturedFrames,
+    hot_reload_generation: Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
-    // Resize if max_width is set and image is wider
-    if let Some(max_w) = max_width
-        && rgb.width() > max_w
-    {
-        let scale = max_w as f64 / rgb.width() as f64;
-        let new_height = (rgb.height() as f64 * scale).round() as u32;
-        rgb = image::imageops::resize(
-            &rgb,
-            max_w,
-            new_height,
-            image::imageops::FilterType::Triangle,
-        );
-    }
+    let dyn_img = img.try_into_dynamic().map_err(|error| {
+        ControlError::internal(format!("Failed to convert screenshot image: {error:?}"))
+    })?;
+    complete_rgb_capture(
+        dyn_img.to_rgb8(),
+        max_width,
+        response_kind,
+        captured_frames,
+        hot_reload_generation,
+    )
+}
 
+fn complete_rgb_capture(
+    rgb: RgbImage,
+    max_width: Option<u32>,
+    response_kind: CaptureResponseKind,
+    captured_frames: &mut CapturedFrames,
+    hot_reload_generation: Option<u32>,
+) -> Result<serde_json::Value, ControlError> {
+    let rgb = Arc::new(resize_rgb_image_linear(rgb, max_width));
+    let (mut result, kind) = match response_kind {
+        CaptureResponseKind::Screenshot => (encode_rgb_screenshot(&rgb)?, "screenshot"),
+        CaptureResponseKind::UnretainedScreenshot => return encode_rgb_screenshot(&rgb),
+        CaptureResponseKind::Stats(options) => (analyze_frame(&rgb, &options)?, "stats"),
+    };
+    let retention = captured_frames.retain(
+        rgb,
+        CapturedFrameMetadata {
+            kind,
+            max_width,
+            hot_reload_generation,
+        },
+    );
+    retention.insert_into(
+        result
+            .as_object_mut()
+            .ok_or_else(|| ControlError::internal("Capture response was not an object"))?,
+    );
+    Ok(result)
+}
+
+/// Encode an RgbImage as a base64 PNG string.
+fn encode_rgb_screenshot(rgb: &RgbImage) -> Result<serde_json::Value, ControlError> {
     let width = rgb.width();
     let height = rgb.height();
 
@@ -970,9 +1595,20 @@ pub fn read_headless_frame(world: &World) -> Result<RgbImage, ControlError> {
 fn capture_headless_frame(
     world: &mut World,
     max_width: Option<u32>,
+    response_kind: CaptureResponseKind,
 ) -> Result<serde_json::Value, ControlError> {
     let rgb = read_headless_frame(world)?;
-    encode_rgb_screenshot(rgb, max_width)
+    let hot_reload_generation = world
+        .get_resource::<HotReloadGeneration>()
+        .map(|generation| generation.current);
+    let mut captured_frames = world.get_resource_or_insert_with(CapturedFrames::default);
+    complete_rgb_capture(
+        rgb,
+        max_width,
+        response_kind,
+        &mut captured_frames,
+        hot_reload_generation,
+    )
 }
 
 #[cfg(test)]
@@ -988,7 +1624,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::bridge::PendingScreenshot;
+    use crate::{bridge::PendingScreenshot, handlers::frame_analysis::FrameStatsOptions};
 
     #[test]
     fn compute_schedule_even_distribution() {
@@ -1037,7 +1673,7 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
         // Should reuse the existing entity, not spawn a new one
         assert_eq!(cleanup.debug_entity, cam_entity);
@@ -1057,6 +1693,22 @@ mod tests {
     }
 
     #[test]
+    fn setup_debug_camera_supports_a_vertical_top_view() {
+        let mut world = World::new();
+        let camera = world.spawn(Camera3d::default()).id();
+        let request = DebugCameraRequest {
+            position: [0.0, 10.0, 0.0],
+            look_at: [0.0, 0.0, 0.0],
+        };
+
+        setup_debug_camera_with_up(&mut world, &request, Vec3::Z).unwrap();
+
+        let transform = world.get::<Transform>(camera).unwrap();
+        assert!(transform.rotation.is_finite());
+        assert!(transform.forward().as_vec3().dot(Vec3::NEG_Y) > 0.999);
+    }
+
+    #[test]
     fn setup_debug_camera_disables_other_cameras() {
         let mut world = World::new();
         let cam_a = world
@@ -1070,7 +1722,7 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
         // One camera is reused (active), the other is disabled
         let reused = cleanup.debug_entity;
@@ -1092,11 +1744,88 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
         // Should have spawned a new camera (reused_state is None)
         assert!(cleanup.reused_state.is_none());
         assert!(world.get::<Camera3d>(cleanup.debug_entity).is_some());
+    }
+
+    #[test]
+    fn setup_debug_camera_rejects_camera2d_only_scene() {
+        let mut world = World::new();
+        let camera = world.spawn(Camera2d::default()).id();
+        let req = DebugCameraRequest {
+            position: [0.0, 0.0, 500.0],
+            look_at: [0.0, 0.0, 0.0],
+        };
+
+        let error = setup_debug_camera(&mut world, &req).err().unwrap();
+        assert!(error.message.contains("require a Camera3d"));
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<Camera3d>>()
+                .iter(&world)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn rejected_camera2d_override_restores_capture_state() {
+        let mut world = world_with_gizmos();
+        let camera = world.spawn(Camera2d::default()).id();
+        let ui = world.spawn((Visibility::Visible, Node::default())).id();
+        let (response_tx, mut response_rx) = oneshot::channel();
+        world.insert_resource(PendingScreenshots {
+            pending: vec![crate::bridge::PendingScreenshot {
+                response_tx,
+                frames_remaining: 0,
+                required_render_epoch: None,
+                with_gizmos: false,
+                gizmo_restore: None,
+                max_width: None,
+                debug_camera: Some(DebugCameraRequest {
+                    position: [0.0, 0.0, 500.0],
+                    look_at: [0.0, 0.0, 0.0],
+                }),
+                hide_ui: true,
+                entity: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+
+        let error = response_rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("require a Camera3d"));
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
+        assert!(
+            world
+                .get_resource::<OverlaySuppression>()
+                .is_none_or(|suppression| suppression.0 == 0)
+        );
+    }
+
+    #[test]
+    fn cleanup_debug_camera_world_despawns_temporary_camera() {
+        let mut world = World::new();
+        let cleanup = setup_debug_camera(
+            &mut world,
+            &DebugCameraRequest {
+                position: [10.0, 5.0, 0.0],
+                look_at: [0.0, 0.0, 0.0],
+            },
+        )
+        .unwrap();
+        let debug_entity = cleanup.debug_entity;
+
+        cleanup_debug_camera_world(cleanup, &mut world);
+
+        assert!(world.get_entity(debug_entity).is_err());
     }
 
     #[test]
@@ -1116,7 +1845,7 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
         // Should prefer the active camera
         assert_eq!(cleanup.debug_entity, active);
@@ -1132,30 +1861,61 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
-        // Simulate cleanup (same logic as turnaround handler)
-        if let Some((orig_transform, orig_global_transform, was_active)) = cleanup.reused_state {
-            if let Some(mut t) = world.get_mut::<Transform>(cleanup.debug_entity) {
-                *t = orig_transform;
-            }
-            if let Some(mut gt) = world.get_mut::<GlobalTransform>(cleanup.debug_entity) {
-                *gt = orig_global_transform;
-            }
-            if let Some(mut c) = world.get_mut::<Camera>(cleanup.debug_entity) {
-                c.is_active = was_active;
-            }
-        }
-        for (entity, was_active) in cleanup.original_cameras {
-            if let Some(mut c) = world.get_mut::<Camera>(entity) {
-                c.is_active = was_active;
-            }
-        }
+        cleanup_debug_camera_world(cleanup, &mut world);
 
         // Camera should be restored to original position
         let restored = world.get::<Transform>(cam).unwrap();
         assert_eq!(restored.translation, original_transform.translation);
         assert!(world.get::<Camera>(cam).unwrap().is_active);
+    }
+
+    #[test]
+    fn headless_debug_screenshot_restores_reused_camera() {
+        let mut world = world_with_gizmos();
+        let original_transform = Transform::from_xyz(1.0, 2.0, 3.0);
+        let camera = world
+            .spawn((
+                Camera3d::default(),
+                original_transform,
+                GlobalTransform::from(original_transform),
+            ))
+            .id();
+        let cleanup = setup_debug_camera(
+            &mut world,
+            &DebugCameraRequest {
+                position: [10.0, 5.0, 0.0],
+                look_at: [0.0, 0.0, 0.0],
+            },
+        )
+        .unwrap();
+        let (response_tx, _response_rx) = oneshot::channel();
+        world.insert_resource(StagedScreenshots {
+            pending: vec![StagedScreenshot {
+                response_tx,
+                frames_remaining: 0,
+                with_gizmos: false,
+                gizmo_restore: None,
+                max_width: None,
+                debug_cleanup: Some(cleanup),
+                ui_restore: None,
+                entity_isolation: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                baseline_headless_sequence: None,
+                frames_waited: 0,
+            }],
+        });
+        world.insert_resource(PendingScreenshots::default());
+
+        process_pending_screenshots(&mut world);
+
+        assert_eq!(
+            world.get::<Transform>(camera).unwrap().translation,
+            original_transform.translation
+        );
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
     }
 
     #[test]
@@ -1171,7 +1931,7 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
         // GlobalTransform should be updated to match the debug position
         let gt = world.get::<GlobalTransform>(cam).unwrap();
@@ -1198,7 +1958,7 @@ mod tests {
             position: [10.0, 5.0, 0.0],
             look_at: [0.0, 0.0, 0.0],
         };
-        let cleanup = setup_debug_camera(&mut world, &req);
+        let cleanup = setup_debug_camera(&mut world, &req).unwrap();
 
         // Spawned camera should have GlobalTransform set
         let gt = world.get::<GlobalTransform>(cleanup.debug_entity);
@@ -1306,11 +2066,15 @@ mod tests {
             pending: vec![PendingScreenshot {
                 response_tx: tx,
                 frames_remaining: 0,
+                required_render_epoch: None,
                 with_gizmos,
+                gizmo_restore: None,
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
+                entity: None,
                 extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
             }],
         });
         (world, rx)
@@ -1382,11 +2146,15 @@ mod tests {
             pending: vec![PendingScreenshot {
                 response_tx: tx,
                 frames_remaining: 2,
+                required_render_epoch: None,
                 with_gizmos: false,
+                gizmo_restore: None,
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
+                entity: None,
                 extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
             }],
         });
 
@@ -1395,12 +2163,82 @@ mod tests {
         // Should not have spawned a Screenshot yet
         let mut query = world.query::<&Screenshot>();
         assert_eq!(query.iter(&world).count(), 0);
-        // Gizmos should still be enabled (not toggled yet)
-        assert!(gizmos_enabled(&world));
+        // Suppression begins while the capture is still delayed, before the
+        // next Update systems can submit global gizmos.
+        assert!(!gizmos_enabled(&world));
         // Request should still be pending with decremented count
         let pending = world.resource::<PendingScreenshots>();
         assert_eq!(pending.pending.len(), 1);
         assert_eq!(pending.pending[0].frames_remaining, 1);
+        assert_eq!(pending.pending[0].gizmo_restore, Some(true));
+    }
+
+    #[test]
+    fn pending_capture_waits_for_its_required_render_epoch() {
+        let mut world = world_with_gizmos();
+        let readiness = RenderFrameReadiness::default();
+        let required_render_epoch = readiness.request_frame();
+        world.insert_resource(readiness.clone());
+        let (tx, _rx) = oneshot::channel();
+        world.insert_resource(PendingScreenshots {
+            pending: vec![PendingScreenshot {
+                response_tx: tx,
+                frames_remaining: 2,
+                required_render_epoch: Some(required_render_epoch),
+                with_gizmos: false,
+                gizmo_restore: None,
+                max_width: None,
+                debug_camera: None,
+                hide_ui: false,
+                entity: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+        assert_eq!(
+            world.resource::<PendingScreenshots>().pending[0].frames_remaining,
+            2
+        );
+
+        readiness.complete_requested_frame();
+        process_pending_screenshots(&mut world);
+        assert_eq!(
+            world.resource::<PendingScreenshots>().pending[0].frames_remaining,
+            1
+        );
+    }
+
+    #[test]
+    fn headless_ui_capture_waits_for_hidden_frame() {
+        let mut world = world_with_gizmos();
+        let ui = world.spawn((Visibility::Visible, Node::default())).id();
+        let (response_tx, _response_rx) = oneshot::channel();
+        world.insert_resource(PendingScreenshots {
+            pending: vec![PendingScreenshot {
+                response_tx,
+                frames_remaining: 0,
+                required_render_epoch: None,
+                with_gizmos: false,
+                gizmo_restore: None,
+                max_width: None,
+                debug_camera: None,
+                hide_ui: true,
+                entity: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+        let staged = world.resource::<StagedScreenshots>();
+        assert_eq!(staged.pending.len(), 1);
+        assert_eq!(staged.pending[0].frames_remaining, 1);
+        assert!(staged.pending[0].debug_cleanup.is_none());
+        assert_eq!(world.resource::<OverlaySuppression>().0, 1);
     }
 
     #[test]
@@ -1414,14 +2252,18 @@ mod tests {
             pending: vec![PendingScreenshot {
                 response_tx: tx,
                 frames_remaining: 0,
+                required_render_epoch: None,
                 with_gizmos: true,
+                gizmo_restore: None,
                 max_width: Some(512),
                 debug_camera: Some(DebugCameraRequest {
                     position: [10.0, 5.0, 0.0],
                     look_at: [0.0, 0.0, 0.0],
                 }),
                 hide_ui: false,
+                entity: None,
                 extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
             }],
         });
 
@@ -1434,7 +2276,7 @@ mod tests {
         assert!(gizmos_enabled(&world));
 
         // Staged screenshot should exist with with_gizmos preserved
-        let staged = world.resource::<StagedDebugScreenshots>();
+        let staged = world.resource::<StagedScreenshots>();
         assert_eq!(staged.pending.len(), 1);
         assert!(staged.pending[0].with_gizmos);
         assert_eq!(staged.pending[0].max_width, Some(512));
@@ -1455,15 +2297,20 @@ mod tests {
             reused_state: None,
             original_cameras: vec![],
         };
-        world.insert_resource(StagedDebugScreenshots {
-            pending: vec![StagedDebugScreenshot {
+        world.insert_resource(StagedScreenshots {
+            pending: vec![StagedScreenshot {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false, // Normal screenshot via debug camera
+                gizmo_restore: None,
                 max_width: None,
-                debug_cleanup: cleanup,
+                debug_cleanup: Some(cleanup),
                 ui_restore: None,
+                entity_isolation: None,
                 extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                baseline_headless_sequence: None,
+                frames_waited: 0,
             }],
         });
         // Need PendingScreenshots resource for the function to proceed
@@ -1525,6 +2372,12 @@ mod tests {
             next_capture_index: 0,
             collected: vec![(0, img)],
             overlay_suppressed: false,
+            hide_ui: true,
+            with_gizmos: false,
+            ui_restore: None,
+            gizmo_restore: None,
+            headless_sequence: None,
+            stall_frames: 0,
         };
 
         let result = composite_contact_sheet(&mut timeline);
@@ -1554,6 +2407,12 @@ mod tests {
             next_capture_index: 0,
             collected,
             overlay_suppressed: false,
+            hide_ui: true,
+            with_gizmos: false,
+            ui_restore: None,
+            gizmo_restore: None,
+            headless_sequence: None,
+            stall_frames: 0,
         };
 
         let result = composite_contact_sheet(&mut timeline).unwrap();
@@ -1576,6 +2435,12 @@ mod tests {
             next_capture_index: 0,
             collected: vec![],
             overlay_suppressed: false,
+            hide_ui: true,
+            with_gizmos: false,
+            ui_restore: None,
+            gizmo_restore: None,
+            headless_sequence: None,
+            stall_frames: 0,
         };
 
         let result = composite_contact_sheet(&mut timeline);
@@ -1596,6 +2461,12 @@ mod tests {
             next_capture_index: 0,
             collected: vec![(0, img)],
             overlay_suppressed: false,
+            hide_ui: true,
+            with_gizmos: false,
+            ui_restore: None,
+            gizmo_restore: None,
+            headless_sequence: None,
+            stall_frames: 0,
         };
 
         let result = composite_contact_sheet(&mut timeline).unwrap();
@@ -1605,7 +2476,7 @@ mod tests {
     #[test]
     fn hide_ui_nodes_empty_world() {
         let mut world = World::new();
-        let result = hide_ui_nodes(&mut world);
+        let result = hide_ui_nodes(&mut world, None);
         assert!(result.is_empty());
     }
 
@@ -1614,13 +2485,160 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn((Visibility::Visible, Node::default())).id();
 
-        let hidden = hide_ui_nodes(&mut world);
+        let hidden = hide_ui_nodes(&mut world, None);
         assert_eq!(hidden.len(), 1);
         assert_eq!(hidden[0].0, entity);
         assert_eq!(hidden[0].1, Visibility::Visible);
 
         let vis = world.get::<Visibility>(entity).unwrap();
         assert_eq!(*vis, Visibility::Hidden);
+    }
+
+    #[test]
+    fn entity_capture_isolates_subtree_camera_and_lighting_then_restores() {
+        let mut world = World::new();
+        let root = world
+            .spawn((Name::new("Target"), RenderLayers::layer(2)))
+            .id();
+        let child = world.spawn(ChildOf(root)).id();
+        let camera = world.spawn(Camera::default()).id();
+        let mut light_class = VisibilityClass::default();
+        light_class.push(TypeId::of::<ClusterVisibilityClass>());
+        let light = world.spawn(light_class).id();
+        let unrelated = world
+            .spawn(RenderLayers::layer(1).with(ENTITY_CAPTURE_LAYER).with(7))
+            .id();
+        let default_unrelated = world.spawn_empty().id();
+
+        let isolation = begin_entity_capture_isolation(
+            &mut world,
+            &EntityRef::Name("Target".to_string()),
+            false,
+        )
+        .unwrap();
+
+        for entity in [root, child, camera, light] {
+            assert_eq!(
+                world.get::<RenderLayers>(entity),
+                Some(&RenderLayers::layer(ENTITY_CAPTURE_LAYER))
+            );
+        }
+        assert_eq!(
+            world
+                .get::<RenderLayers>(unrelated)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![1, 7]
+        );
+        assert!(world.get::<RenderLayers>(default_unrelated).is_none());
+        assert!(world.contains_resource::<EntityCaptureIsolationActive>());
+
+        isolation.restore_world(&mut world);
+
+        assert_eq!(
+            world.get::<RenderLayers>(root),
+            Some(&RenderLayers::layer(2))
+        );
+        assert!(world.get::<RenderLayers>(child).is_none());
+        assert!(world.get::<RenderLayers>(camera).is_none());
+        assert!(world.get::<RenderLayers>(light).is_none());
+        assert_eq!(
+            world
+                .get::<RenderLayers>(unrelated)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![1, 7, ENTITY_CAPTURE_LAYER]
+        );
+        assert!(!world.contains_resource::<EntityCaptureIsolationActive>());
+    }
+
+    #[test]
+    fn entity_capture_keeps_targeted_ui_visible_when_hiding_authored_ui() {
+        let mut world = World::new();
+        let root = world
+            .spawn((Name::new("TargetUi"), Visibility::Visible, Node::default()))
+            .id();
+        let child = world
+            .spawn((ChildOf(root), Visibility::Visible, Node::default()))
+            .id();
+        let unrelated = world.spawn((Visibility::Visible, Node::default())).id();
+        let isolation = begin_entity_capture_isolation(
+            &mut world,
+            &EntityRef::Name("TargetUi".to_string()),
+            false,
+        )
+        .unwrap();
+
+        let hidden = hide_ui_nodes(&mut world, Some(&isolation.scope));
+
+        assert_eq!(*world.get::<Visibility>(root).unwrap(), Visibility::Visible);
+        assert_eq!(
+            *world.get::<Visibility>(child).unwrap(),
+            Visibility::Visible
+        );
+        assert_eq!(
+            *world.get::<Visibility>(unrelated).unwrap(),
+            Visibility::Hidden
+        );
+        assert_eq!(hidden, vec![(unrelated, Visibility::Visible)]);
+        isolation.restore_world(&mut world);
+    }
+
+    #[test]
+    fn missing_entity_capture_does_not_change_render_layers() {
+        let mut world = World::new();
+        let camera = world
+            .spawn((Camera::default(), RenderLayers::layer(4)))
+            .id();
+
+        let result = begin_entity_capture_isolation(
+            &mut world,
+            &EntityRef::Name("Missing".to_string()),
+            false,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            world.get::<RenderLayers>(camera),
+            Some(&RenderLayers::layer(4))
+        );
+        assert!(!world.contains_resource::<EntityCaptureIsolationActive>());
+    }
+
+    #[test]
+    fn entity_capture_with_gizmos_restores_group_render_layers() {
+        let mut world = world_with_gizmos();
+        world.spawn(Name::new("Target"));
+        {
+            let mut store = world.resource_mut::<GizmoConfigStore>();
+            let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+            config.enabled = false;
+            config.render_layers = RenderLayers::layer(5);
+        }
+
+        let isolation = begin_entity_capture_isolation(
+            &mut world,
+            &EntityRef::Name("Target".to_string()),
+            true,
+        )
+        .unwrap();
+        {
+            let store = world.resource::<GizmoConfigStore>();
+            let config = store.config::<DefaultGizmoConfigGroup>().0;
+            assert!(config.enabled);
+            assert_eq!(
+                config.render_layers,
+                RenderLayers::layer(ENTITY_CAPTURE_LAYER)
+            );
+        }
+
+        isolation.restore_world(&mut world);
+        let store = world.resource::<GizmoConfigStore>();
+        let config = store.config::<DefaultGizmoConfigGroup>().0;
+        assert!(!config.enabled);
+        assert_eq!(config.render_layers, RenderLayers::layer(5));
     }
 
     #[test]
@@ -1655,13 +2673,16 @@ mod tests {
         assert_eq!(world.resource::<OverlaySuppression>().0, 0);
     }
 
-    /// The internal overlay must be suppressed when a timeline capture fires.
-    /// Previously only capture_screenshot hid it; capture_timeline burned
-    /// the debug overlay into every contact-sheet frame.
+    /// Timeline captures hold visibility suppression for the contact sheet.
     #[test]
-    fn timeline_capture_suppresses_internal_overlay() {
-        let mut world = World::new();
+    fn timeline_capture_applies_capture_visibility() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 255, 255, 255], 1, 1)),
+            sequence: 1,
+        });
         let overlay = world.spawn((Visibility::Visible, InternalOverlayUi)).id();
+        let authored_ui = world.spawn((Node::default(), Visibility::Visible)).id();
 
         let (tx, _rx) = oneshot::channel();
         let mut pending = PendingTimelines::default();
@@ -1672,11 +2693,17 @@ mod tests {
                 max_width: None,
                 columns: 2,
                 debug_cleanup: None,
-                schedule: VecDeque::from([0]), // capture on this frame
-                total_captures: 1,
+                schedule: VecDeque::from([0, 5]), // capture on this frame, then later
+                total_captures: 2,
                 next_capture_index: 0,
                 collected: vec![],
                 overlay_suppressed: false,
+                hide_ui: true,
+                with_gizmos: false,
+                ui_restore: None,
+                gizmo_restore: None,
+                headless_sequence: None,
+                stall_frames: 0,
             },
         );
         world.insert_resource(pending);
@@ -1689,6 +2716,12 @@ mod tests {
             "overlay must be hidden while the timeline captures"
         );
         assert_eq!(
+            *world.get::<Visibility>(authored_ui).unwrap(),
+            Visibility::Hidden,
+            "authored UI must follow the timeline hide_ui option"
+        );
+        assert!(!gizmos_enabled(&world));
+        assert_eq!(
             world.resource::<OverlaySuppression>().0,
             1,
             "timeline must hold one suppression refcount"
@@ -1696,6 +2729,15 @@ mod tests {
         assert!(
             world.resource::<PendingTimelines>().active[&0].overlay_suppressed,
             "timeline must record its hold so completion releases exactly once"
+        );
+        assert!(
+            world.resource::<PendingTimelines>().active[&0]
+                .ui_restore
+                .is_some()
+        );
+        assert_eq!(
+            world.resource::<PendingTimelines>().active[&0].gizmo_restore,
+            Some(true)
         );
 
         // A second tick of the same timeline must not double-count
@@ -1713,6 +2755,232 @@ mod tests {
             *world.get::<Visibility>(plain).unwrap(),
             Visibility::Visible
         );
+    }
+
+    #[test]
+    fn stuck_responder_expires_with_error_and_restored_state() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(OverlaySuppression(1));
+        let ui = world.spawn((Visibility::Hidden, Node::default())).id();
+        let screenshot_entity = world.spawn_empty().id();
+
+        let (tx, mut rx) = oneshot::channel();
+        let mut responders = PendingScreenshotResponders::default();
+        responders.map.insert(
+            screenshot_entity,
+            ScreenshotResponder {
+                response_tx: tx,
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: Some(vec![(ui, Visibility::Visible)]),
+                entity_isolation: None,
+                gizmo_restore: Some(true),
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                frames_waited: MAX_CAPTURE_WAIT_FRAMES,
+            },
+        );
+        world.insert_resource(responders);
+        world.insert_resource(PendingScreenshots::default());
+        set_gizmos_enabled(&mut world, false);
+
+        process_pending_screenshots(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("deadline"));
+        assert!(
+            world
+                .resource::<PendingScreenshotResponders>()
+                .map
+                .is_empty()
+        );
+        assert!(
+            !another_capture_is_active(&world),
+            "expired responder must unwedge entity-isolated captures"
+        );
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert!(gizmos_enabled(&world));
+        assert!(world.get_entity(screenshot_entity).is_err());
+    }
+
+    #[test]
+    fn waiting_responder_below_deadline_is_kept() {
+        let mut world = world_with_gizmos();
+        let screenshot_entity = world.spawn_empty().id();
+        let (tx, mut rx) = oneshot::channel();
+        let mut responders = PendingScreenshotResponders::default();
+        responders.map.insert(
+            screenshot_entity,
+            ScreenshotResponder {
+                response_tx: tx,
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: None,
+                entity_isolation: None,
+                gizmo_restore: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                frames_waited: 0,
+            },
+        );
+        world.insert_resource(responders);
+        world.insert_resource(PendingScreenshots::default());
+
+        process_pending_screenshots(&mut world);
+
+        assert!(rx.try_recv().is_err(), "response must remain deferred");
+        let responders = world.resource::<PendingScreenshotResponders>();
+        assert_eq!(responders.map[&screenshot_entity].frames_waited, 1);
+    }
+
+    #[test]
+    fn stale_headless_frame_fails_instead_of_becoming_a_capture() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 0, 0, 255], 1, 1)),
+            sequence: 5,
+        });
+        world.insert_resource(OverlaySuppression(1));
+        world.insert_resource(PendingScreenshots::default());
+        let (tx, mut rx) = oneshot::channel();
+        world.insert_resource(StagedScreenshots {
+            pending: vec![StagedScreenshot {
+                response_tx: tx,
+                frames_remaining: 0,
+                with_gizmos: false,
+                gizmo_restore: None,
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: None,
+                entity_isolation: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                baseline_headless_sequence: Some(5),
+                frames_waited: MAX_CAPTURE_WAIT_FRAMES,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert_eq!(error.message, STALE_HEADLESS_FRAME_ERROR);
+        assert!(world.resource::<StagedScreenshots>().pending.is_empty());
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+    }
+
+    #[test]
+    fn newer_headless_frame_completes_the_staged_capture() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![0, 255, 0, 255], 1, 1)),
+            sequence: 6,
+        });
+        world.insert_resource(OverlaySuppression(1));
+        world.insert_resource(PendingScreenshots::default());
+        let (tx, mut rx) = oneshot::channel();
+        world.insert_resource(StagedScreenshots {
+            pending: vec![StagedScreenshot {
+                response_tx: tx,
+                frames_remaining: 0,
+                with_gizmos: false,
+                gizmo_restore: None,
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: None,
+                entity_isolation: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                baseline_headless_sequence: Some(5),
+                frames_waited: 0,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+
+        let capture = rx.try_recv().unwrap().unwrap();
+        assert_eq!(capture["width"], 1);
+        assert!(world.resource::<StagedScreenshots>().pending.is_empty());
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+    }
+
+    #[test]
+    fn stalled_timeline_fails_with_error_and_restored_state() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(OverlaySuppression(1));
+        let ui = world.spawn((Visibility::Hidden, Node::default())).id();
+        let (tx, mut rx) = oneshot::channel();
+        let mut timelines = PendingTimelines::default();
+        timelines.active.insert(
+            3,
+            ActiveTimeline {
+                response_tx: Some(tx),
+                max_width: None,
+                columns: 2,
+                debug_cleanup: None,
+                schedule: VecDeque::new(),
+                total_captures: 2,
+                next_capture_index: 2,
+                collected: vec![],
+                overlay_suppressed: true,
+                hide_ui: true,
+                with_gizmos: false,
+                ui_restore: Some(vec![(ui, Visibility::Visible)]),
+                gizmo_restore: Some(true),
+                headless_sequence: None,
+                stall_frames: MAX_CAPTURE_WAIT_FRAMES,
+            },
+        );
+        world.insert_resource(timelines);
+        let mut captures = TimelineCaptures::default();
+        let stale = world.spawn_empty().id();
+        captures.map.insert(stale, (3, 0));
+        world.insert_resource(captures);
+        set_gizmos_enabled(&mut world, false);
+
+        process_pending_timelines(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("deadline"));
+        assert!(world.resource::<PendingTimelines>().active.is_empty());
+        assert!(world.resource::<TimelineCaptures>().map.is_empty());
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert!(gizmos_enabled(&world));
+    }
+
+    #[test]
+    fn headless_timeline_without_frame_buffer_fails_instead_of_hanging() {
+        let mut world = world_with_gizmos();
+        let (tx, mut rx) = oneshot::channel();
+        let mut timelines = PendingTimelines::default();
+        timelines.active.insert(
+            0,
+            ActiveTimeline {
+                response_tx: Some(tx),
+                max_width: None,
+                columns: 2,
+                debug_cleanup: None,
+                schedule: VecDeque::from([0]),
+                total_captures: 1,
+                next_capture_index: 0,
+                collected: vec![],
+                overlay_suppressed: false,
+                hide_ui: false,
+                with_gizmos: true,
+                ui_restore: None,
+                gizmo_restore: None,
+                headless_sequence: None,
+                stall_frames: 0,
+            },
+        );
+        world.insert_resource(timelines);
+
+        process_pending_timelines(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("HeadlessFrameBuffer"));
+        assert!(world.resource::<PendingTimelines>().active.is_empty());
     }
 
     #[test]
@@ -1750,6 +3018,12 @@ mod tests {
                 next_capture_index: 0,
                 collected: vec![],
                 overlay_suppressed: false,
+                hide_ui: true,
+                with_gizmos: false,
+                ui_restore: None,
+                gizmo_restore: None,
+                headless_sequence: None,
+                stall_frames: 0,
             },
         );
         timelines.next_id = 1;
@@ -1831,6 +3105,53 @@ mod tests {
     }
 
     #[test]
+    fn window_image_completion_uses_the_numeric_analysis_path() {
+        let image = make_test_image(2, 1);
+        let mut frames = CapturedFrames::default();
+        let result = complete_screenshot_capture(
+            image,
+            None,
+            CaptureResponseKind::Stats(FrameStatsOptions {
+                grid: 1,
+                region: None,
+                sample_points: Some(vec![[1, 0]]),
+            }),
+            &mut frames,
+            Some(7),
+        )
+        .unwrap();
+
+        assert_eq!(result["overall"]["luma_mean"], 1.0);
+        assert_eq!(
+            result["samples"][0]["rgb"],
+            serde_json::json!([1.0, 1.0, 1.0])
+        );
+        assert!(result.get("image").is_none());
+        assert_eq!(result["retained"], true);
+    }
+
+    #[test]
+    fn depth_rgb_completion_does_not_enter_frame_retention() {
+        let image = make_test_image(1, 1);
+        let mut frames = CapturedFrames::default();
+        let result = complete_screenshot_capture(
+            image,
+            None,
+            CaptureResponseKind::UnretainedScreenshot,
+            &mut frames,
+            None,
+        )
+        .unwrap();
+
+        assert!(result.get("frame_id").is_none());
+        assert!(
+            frames
+                .compare("f_0000000000000000", "f_0000000000000000", 0.0)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn merge_extra_response_none_passes_through() {
         let result = Ok(serde_json::json!({"image": "abc", "width": 10, "height": 20}));
         let merged = merge_extra_response(result, None).unwrap();
@@ -1840,12 +3161,21 @@ mod tests {
 
     #[test]
     fn merge_extra_response_ok_merges_fields() {
-        let result = Ok(serde_json::json!({"image": "abc", "width": 10, "height": 20}));
+        let result = Ok(serde_json::json!({
+            "image": "abc",
+            "width": 10,
+            "height": 20,
+            "frame_id": "f_0001",
+            "retained": true,
+        }));
         let extra = Some(serde_json::json!({"depth_samples": {"hit_count": 3}, "custom": true}));
         let merged = merge_extra_response(result, extra).unwrap();
         assert_eq!(merged["screenshot"], "abc");
         assert_eq!(merged["screenshot_width"], 10);
         assert_eq!(merged["screenshot_height"], 20);
+        assert_eq!(merged["frame_id"], "f_0001");
+        assert_eq!(merged["retained"], true);
+        assert!(merged.get("retention_reason").is_none());
         assert_eq!(merged["depth_samples"]["hit_count"], 3);
         assert_eq!(merged["custom"], true);
     }
@@ -1856,8 +3186,16 @@ mod tests {
         let extra = Some(serde_json::json!({"reload": "ok", "entity_count": 42}));
         let merged = merge_extra_response(result, extra).unwrap();
         assert!(merged["screenshot"].is_null());
+        assert_eq!(merged["screenshot_error"], "fail");
         assert_eq!(merged["reload"], "ok");
         assert_eq!(merged["entity_count"], 42);
+    }
+
+    #[test]
+    fn merge_extra_response_ok_has_no_screenshot_error() {
+        let result = Ok(serde_json::json!({"image": "abc", "width": 10, "height": 20}));
+        let merged = merge_extra_response(result, Some(serde_json::json!({}))).unwrap();
+        assert!(merged.get("screenshot_error").is_none());
     }
 
     #[test]
@@ -1878,6 +3216,12 @@ mod tests {
                 next_capture_index: 0,
                 collected: vec![],
                 overlay_suppressed: false,
+                hide_ui: true,
+                with_gizmos: false,
+                ui_restore: None,
+                gizmo_restore: None,
+                headless_sequence: None,
+                stall_frames: 0,
             },
         );
         timelines.next_id = 1;
@@ -1899,6 +3243,10 @@ mod tests {
     #[test]
     fn process_pending_timelines_multiple_delays() {
         let mut world = World::new();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 255, 255, 255], 1, 1)),
+            sequence: 1,
+        });
         let (tx, _rx) = tokio::sync::oneshot::channel();
         let mut timelines = PendingTimelines::default();
         timelines.active.insert(
@@ -1913,6 +3261,12 @@ mod tests {
                 next_capture_index: 0,
                 collected: vec![],
                 overlay_suppressed: false,
+                hide_ui: true,
+                with_gizmos: false,
+                ui_restore: None,
+                gizmo_restore: None,
+                headless_sequence: None,
+                stall_frames: 0,
             },
         );
         timelines.next_id = 1;
@@ -1927,6 +3281,56 @@ mod tests {
         // schedule should now be [10, 10] (first 0 popped)
         assert_eq!(timeline.schedule.len(), 2);
         assert_eq!(timeline.schedule[0], 10);
+    }
+
+    #[test]
+    fn headless_timeline_waits_for_a_new_readback() {
+        let mut world = World::new();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 0, 0, 255], 1, 1)),
+            sequence: 5,
+        });
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let mut timelines = PendingTimelines::default();
+        timelines.active.insert(
+            0,
+            ActiveTimeline {
+                response_tx: Some(tx),
+                max_width: None,
+                columns: 1,
+                debug_cleanup: None,
+                schedule: VecDeque::from([0]),
+                total_captures: 1,
+                next_capture_index: 0,
+                collected: vec![],
+                overlay_suppressed: false,
+                hide_ui: false,
+                with_gizmos: true,
+                ui_restore: None,
+                gizmo_restore: None,
+                headless_sequence: Some(5),
+                stall_frames: 0,
+            },
+        );
+        world.insert_resource(timelines);
+
+        process_pending_timelines(&mut world);
+
+        let timeline = &world.resource::<PendingTimelines>().active[&0];
+        assert_eq!(timeline.schedule, VecDeque::from([0]));
+        assert_eq!(timeline.next_capture_index, 0);
+        assert!(rx.try_recv().is_err());
+
+        let mut frame = world.resource_mut::<HeadlessFrameBuffer>();
+        frame.latest = Some((vec![0, 255, 0, 255], 1, 1));
+        frame.sequence = 6;
+        drop(frame);
+
+        process_pending_timelines(&mut world);
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result["width"], 1);
+        assert_eq!(result["height"], 5);
     }
 
     #[test]
@@ -1960,7 +3364,7 @@ mod tests {
                 rgb.put_pixel(x, y, Rgb([100, 150, 200]));
             }
         }
-        let result = encode_rgb_screenshot(rgb, None).unwrap();
+        let result = encode_rgb_screenshot(&rgb).unwrap();
         assert_eq!(result["format"], "png");
         assert_eq!(result["width"], 4);
         assert_eq!(result["height"], 4);
@@ -1970,7 +3374,8 @@ mod tests {
     #[test]
     fn encode_rgb_screenshot_resizes() {
         let rgb = RgbImage::new(100, 50);
-        let result = encode_rgb_screenshot(rgb, Some(20)).unwrap();
+        let resized = resize_rgb_image_linear(rgb, Some(20));
+        let result = encode_rgb_screenshot(&resized).unwrap();
         assert_eq!(result["width"], 20);
         assert_eq!(result["height"], 10);
     }
@@ -1978,7 +3383,7 @@ mod tests {
     #[test]
     fn capture_headless_frame_no_buffer() {
         let mut world = World::new();
-        let result = capture_headless_frame(&mut world, None);
+        let result = capture_headless_frame(&mut world, None, CaptureResponseKind::Screenshot);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("HeadlessFrameBuffer"));
     }
@@ -1987,7 +3392,7 @@ mod tests {
     fn capture_headless_frame_no_frame_available() {
         let mut world = World::new();
         world.insert_resource(HeadlessFrameBuffer::default());
-        let result = capture_headless_frame(&mut world, None);
+        let result = capture_headless_frame(&mut world, None, CaptureResponseKind::Screenshot);
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("no frame"));
     }
@@ -2000,11 +3405,43 @@ mod tests {
         ];
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((rgba, 2, 2)),
+            sequence: 1,
         });
-        let result = capture_headless_frame(&mut world, None).unwrap();
+        let result =
+            capture_headless_frame(&mut world, None, CaptureResponseKind::Screenshot).unwrap();
         assert_eq!(result["width"], 2);
         assert_eq!(result["height"], 2);
         assert_eq!(result["format"], "png");
+        assert!(result["frame_id"].as_str().is_some());
+        assert_eq!(result["retained"], true);
+    }
+
+    #[test]
+    fn capture_headless_stats_returns_numbers_without_png_and_retains_frame() {
+        let mut world = World::new();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 0, 0, 255, 0, 255, 0, 255], 2, 1)),
+            sequence: 1,
+        });
+        let result = capture_headless_frame(
+            &mut world,
+            None,
+            CaptureResponseKind::Stats(FrameStatsOptions {
+                grid: 1,
+                region: None,
+                sample_points: Some(vec![[0, 0]]),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(result["width"], 2);
+        assert_eq!(
+            result["samples"][0]["rgb"],
+            serde_json::json!([1.0, 0.0, 0.0])
+        );
+        assert!(result.get("image").is_none());
+        assert!(result["frame_id"].as_str().is_some());
+        assert_eq!(result["retained"], true);
     }
 
     #[test]
@@ -2013,6 +3450,7 @@ mod tests {
         // 1x1 pixel: R=100, G=200, B=50, A=255
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![100, 200, 50, 255], 1, 1)),
+            sequence: 1,
         });
         let rgb = read_headless_frame(&world).unwrap();
         assert_eq!(rgb.width(), 1);

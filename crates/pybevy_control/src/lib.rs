@@ -1,6 +1,7 @@
 pub mod api_index;
 pub mod bridge;
 pub mod handlers;
+mod image_preview;
 pub mod plugin;
 pub mod protocol;
 pub mod resources;
