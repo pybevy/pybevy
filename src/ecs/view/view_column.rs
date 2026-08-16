@@ -23,13 +23,13 @@ use pybevy_bytecodevm::{
         python_clip, python_maximum, python_minimum, python_remainder, python_round, python_sign,
         read_field_value, write_field_value,
     },
-    view_runtime::{BatchColumn, ViewOperationGuard},
+    view_runtime::{BatchColumn, ViewOperationGuard, validate_contiguous_field_bytes},
 };
 use pybevy_core::FieldType;
 use pyo3::{
-    exceptions::PyRuntimeError,
+    exceptions::{PyIndexError, PyRuntimeError, PyTypeError},
     prelude::*,
-    types::{PyBytes, PyList},
+    types::{PyBytes, PyList, PySlice},
 };
 
 use crate::ecs::{component_type::PyComponentType, view::view::get_component_field_info};
@@ -101,6 +101,30 @@ pub struct PyViewColumn {
 }
 
 impl PyViewColumn {
+    fn normalize_index(&self, index: isize) -> PyResult<usize> {
+        let idx = if index < 0 {
+            let distance = index.unsigned_abs();
+            if distance > self.len {
+                return Err(PyIndexError::new_err(format!(
+                    "Index {} out of bounds (len = {})",
+                    index, self.len
+                )));
+            }
+            self.len - distance
+        } else {
+            index as usize
+        };
+
+        if idx >= self.len {
+            return Err(PyIndexError::new_err(format!(
+                "Index {} out of bounds (len = {})",
+                index, self.len
+            )));
+        }
+
+        Ok(idx)
+    }
+
     fn check_live(&self) -> PyResult<()> {
         if !self.validity_token.load(Ordering::Acquire) {
             return Err(PyRuntimeError::new_err("Accessing stale ViewColumn!"));
@@ -351,7 +375,7 @@ impl PyViewColumn {
 
     /// Create a sub-column view at a byte offset with a known `FieldType`.
     ///
-    /// Internal API — Rust callers should prefer this over `at_offset` to avoid string parsing.
+    /// Internal API: Rust callers should prefer this over `at_offset` to avoid string parsing.
     pub(crate) fn at_offset_typed(
         &self,
         offset: usize,
@@ -678,7 +702,7 @@ impl PyViewColumn {
         let viewcolumn_accessors = py.import("pybevy.ecs.view_accessors")?;
 
         match name {
-            // Transform fields — offsets derived from the actual type, validated by layout_assertions.rs
+            // Transform fields: offsets derived from the actual type, validated by layout_assertions.rs
             "rotation" => {
                 let quat_col = self
                     .at_offset_typed(mem::offset_of!(Transform, rotation), Some(FieldType::Vec4))?;
@@ -730,59 +754,31 @@ impl PyViewColumn {
     }
 
     /// Support indexing for Numba JIT compatibility.
-    fn __getitem__(&self, index: isize) -> PyResult<f64> {
+    fn __getitem__(&self, index: &Bound<'_, PyAny>) -> PyResult<f64> {
+        if index.is_instance_of::<PySlice>() {
+            return Err(PyTypeError::new_err(
+                "ViewColumn slices are not supported; use integer indexing",
+            ));
+        }
+        let index = index.extract::<isize>()?;
         let _operation = self.enter_operation()?;
         self.check_numeric()?;
-
-        let idx = if index < 0 {
-            let neg_idx = (-index) as usize;
-            if neg_idx > self.len {
-                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                    "Index {} out of bounds (len = {})",
-                    index, self.len
-                )));
-            }
-            self.len - neg_idx
-        } else {
-            index as usize
-        };
-
-        if idx >= self.len {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "Index {} out of bounds (len = {})",
-                index, self.len
-            )));
-        }
-
+        let idx = self.normalize_index(index)?;
         Ok(self.read_f64_at(idx))
     }
 
     /// Support item assignment for Numba JIT compatibility.
-    fn __setitem__(&mut self, index: isize, value: f64) -> PyResult<()> {
+    fn __setitem__(&mut self, index: &Bound<'_, PyAny>, value: f64) -> PyResult<()> {
+        if index.is_instance_of::<PySlice>() {
+            return Err(PyTypeError::new_err(
+                "ViewColumn slices are not supported; use integer indexing",
+            ));
+        }
+        let index = index.extract::<isize>()?;
         let _operation = self.enter_operation()?;
         self.check_writable()?;
         self.check_numeric()?;
-
-        let idx = if index < 0 {
-            let neg_idx = (-index) as usize;
-            if neg_idx > self.len {
-                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                    "Index {} out of bounds (len = {})",
-                    index, self.len
-                )));
-            }
-            self.len - neg_idx
-        } else {
-            index as usize
-        };
-
-        if idx >= self.len {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "Index {} out of bounds (len = {})",
-                index, self.len
-            )));
-        }
-
+        let idx = self.normalize_index(index)?;
         self.write_f64_at(idx, value);
         Ok(())
     }
@@ -823,20 +819,12 @@ impl PyViewColumn {
     pub fn write_from_buffer(&self, data: &[u8]) -> PyResult<()> {
         let _operation = self.enter_operation()?;
         self.check_writable()?;
-        let elem_size = self
+        let field_type = self
             .field_type
-            .ok_or_else(|| PyRuntimeError::new_err("Cannot write to a composite/struct column"))?
-            .size_bytes();
-        let expected_len = self.len * elem_size;
-        if data.len() != expected_len {
-            return Err(PyRuntimeError::new_err(format!(
-                "Buffer size mismatch: expected {} bytes ({} elements × {} bytes), got {}",
-                expected_len,
-                self.len,
-                elem_size,
-                data.len()
-            )));
-        }
+            .ok_or_else(|| PyRuntimeError::new_err("Cannot write to a composite/struct column"))?;
+        validate_contiguous_field_bytes(field_type, self.len, data)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let elem_size = field_type.size_bytes();
         for i in 0..self.len {
             let src_offset = i * elem_size;
             // Safety: source is a validated slice of the correct length; destination is a

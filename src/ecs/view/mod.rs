@@ -1,3 +1,6 @@
+use pybevy_core::public_error::{
+    ANY_OF_VIEW_UNSUPPORTED, OR_VIEW_UNSUPPORTED, RESOURCE_VIEW_DATA, RESOURCE_VIEW_FILTER,
+};
 use pyo3::{IntoPyObjectExt, exceptions::PyRuntimeError, prelude::*, types::PyType};
 use smallvec::SmallVec;
 
@@ -62,7 +65,16 @@ pub(crate) fn construct_view_class_item(
                 ty: comp_type,
                 mutable,
                 optional,
+                logical_type_id,
             } => {
+                if matches!(comp_type, PyComponentType::Resource(_)) {
+                    return Err(PyRuntimeError::new_err(RESOURCE_VIEW_DATA));
+                }
+                if logical_type_id.is_some() {
+                    return Err(PyRuntimeError::new_err(
+                        "Logical component specializations are supported by Query, not View",
+                    ));
+                }
                 if optional {
                     return Err(PyRuntimeError::new_err(
                         "Optional[T] is not supported in View. Use Query[tuple[T, Optional[U]]] instead.",
@@ -72,28 +84,49 @@ pub(crate) fn construct_view_class_item(
             }
             ParamType::Filter(filter) => match filter {
                 QueryFilter::With(with) => {
+                    if with
+                        .values
+                        .iter()
+                        .any(|ty| matches!(ty, PyComponentType::Resource(_)))
+                    {
+                        return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
+                    }
                     with_filters.extend(with.values.iter().cloned());
                 }
                 QueryFilter::Without(without) => {
+                    if without
+                        .values
+                        .iter()
+                        .any(|ty| matches!(ty, PyComponentType::Resource(_)))
+                    {
+                        return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
+                    }
                     without_filters.extend(without.values.iter().cloned());
                 }
                 QueryFilter::Changed(changed) => {
+                    if matches!(changed.component_type, PyComponentType::Resource(_)) {
+                        return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
+                    }
                     changed_filters.push(changed.component_type.clone());
                 }
                 QueryFilter::Added(added) => {
+                    if matches!(added.component_type, PyComponentType::Resource(_)) {
+                        return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
+                    }
                     added_filters.push(added.component_type.clone());
                 }
-                QueryFilter::Has(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "Has[T] filter is not supported in View. Use Query for per-entity Has checks.",
-                    ));
-                }
-                QueryFilter::AnyOf(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "AnyOf[T] filter is not supported in View. Use Query[T, AnyOf[...]] instead.",
-                    ));
+                QueryFilter::Or(_) => {
+                    return Err(PyRuntimeError::new_err(OR_VIEW_UNSUPPORTED));
                 }
             },
+            ParamType::Has(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "Has[T] query data is not supported in View. Use Query for per-entity Has checks.",
+                ));
+            }
+            ParamType::AnyOf(_) => {
+                return Err(PyRuntimeError::new_err(ANY_OF_VIEW_UNSUPPORTED));
+            }
             ParamType::Entity => {
                 has_entity = true;
             }
@@ -101,6 +134,16 @@ pub(crate) fn construct_view_class_item(
     }
 
     PyViewParam {
+        retained_types: PyViewParam::retain_custom_types(
+            py,
+            &components,
+            [
+                &with_filters,
+                &without_filters,
+                &changed_filters,
+                &added_filters,
+            ],
+        ),
         parameters: components,
         with_filters,
         without_filters,
