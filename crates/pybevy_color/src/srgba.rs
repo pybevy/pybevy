@@ -1,29 +1,36 @@
 use bevy::{
-    color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, color_difference::EuclideanDistance},
+    color::{
+        Alpha, ColorToPacked, Gray, LinearRgba, Luminance, Mix, Srgba,
+        color_difference::EuclideanDistance,
+    },
     math::StableInterpolate,
 };
-use pybevy_core::ValueStorage;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyList};
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba};
 
 #[pyclass(name = "Srgba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PySrgba {
-    storage: ValueStorage<Srgba>,
+    pub(crate) storage: ValueStorage<Srgba>,
 }
 
-impl From<PySrgba> for Srgba {
+impl TryFrom<PySrgba> for Srgba {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: PySrgba) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: PySrgba) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
-impl From<&PySrgba> for Srgba {
+impl TryFrom<&PySrgba> for Srgba {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: &PySrgba) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: &PySrgba) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
@@ -50,12 +57,12 @@ impl PySrgba {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Srgba> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Srgba>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Srgba> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Srgba>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -211,21 +218,23 @@ impl PySrgba {
     }
 
     pub fn mix(&self, other: &Self, factor: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.mix(other.as_ref()?, factor)))
+        Ok(PySrgba::srgba(
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
+        ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
 
     pub fn distance(&self, other: &Self) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance(other.as_ref()?))
+        Ok(self.as_ref()?.distance(other.as_ref()?.reborrow()))
     }
 
     pub fn distance_squared(&self, other: &Self) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance_squared(other.as_ref()?))
+        Ok(self.as_ref()?.distance_squared(other.as_ref()?.reborrow()))
     }
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
@@ -267,34 +276,25 @@ impl PySrgba {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PySrgba::from_srgba(Srgba::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PySrgba::from_srgba(Srgba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PySrgba::from_srgba(Srgba::rgb(v.x, v.y, v.z))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PySrgba::from_srgba(Srgba::rgb(v.x, v.y, v.z)))
     }
 
-    pub fn to_u8_array(&self) -> PyResult<[u8; 4]> {
+    pub fn to_u8_array(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let color = self.as_ref()?;
-        Ok([
-            (color.red * 255.0) as u8,
-            (color.green * 255.0) as u8,
-            (color.blue * 255.0) as u8,
-            (color.alpha * 255.0) as u8,
-        ])
+        Ok(PyList::new(py, ColorToPacked::to_u8_array(*color))?.unbind())
     }
 
-    pub fn to_u8_array_no_alpha(&self) -> PyResult<[u8; 3]> {
+    pub fn to_u8_array_no_alpha(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let color = self.as_ref()?;
-        Ok([
-            (color.red * 255.0) as u8,
-            (color.green * 255.0) as u8,
-            (color.blue * 255.0) as u8,
-        ])
+        Ok(PyList::new(py, ColorToPacked::to_u8_array_no_alpha(*color))?.unbind())
     }
 
     #[staticmethod]
@@ -318,7 +318,8 @@ impl PySrgba {
 
     pub fn interpolate_stable(&self, other: &Self, t: f32) -> PyResult<Self> {
         Ok(PySrgba::from_srgba(
-            self.as_ref()?.interpolate_stable(other.as_ref()?, t),
+            self.as_ref()?
+                .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))
     }
 

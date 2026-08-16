@@ -4,15 +4,31 @@ use bevy::{
     },
     math::StableInterpolate,
 };
-use pybevy_core::ValueStorage;
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Oklaba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOklaba {
-    storage: ValueStorage<Oklaba>,
+    pub(crate) storage: ValueStorage<Oklaba>,
+}
+
+impl TryFrom<&PyOklaba> for Oklaba {
+    type Error = PyErr;
+
+    #[inline(always)]
+    fn try_from(py_color: &PyOklaba) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
+    }
+}
+
+impl From<Oklaba> for PyOklaba {
+    #[inline(always)]
+    fn from(color: Oklaba) -> Self {
+        Self::oklaba(color)
+    }
 }
 
 impl PyOklaba {
@@ -22,11 +38,11 @@ impl PyOklaba {
         }
     }
 
-    fn as_ref(&self) -> PyResult<&Oklaba> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Oklaba>> {
         Ok(self.storage.as_ref()?)
     }
 
-    fn as_mut(&mut self) -> PyResult<&mut Oklaba> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Oklaba>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -157,22 +173,22 @@ impl PyOklaba {
 
     pub fn mix(&self, other: &PyOklaba, factor: f32) -> PyResult<Self> {
         Ok(PyOklaba::oklaba(
-            self.as_ref()?.mix(other.as_ref()?, factor),
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
 
     pub fn distance(&self, other: &PyOklaba) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance(other.as_ref()?))
+        Ok(self.as_ref()?.distance(other.as_ref()?.reborrow()))
     }
 
     pub fn distance_squared(&self, other: &PyOklaba) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance_squared(other.as_ref()?))
+        Ok(self.as_ref()?.distance_squared(other.as_ref()?.reborrow()))
     }
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
@@ -220,20 +236,32 @@ impl PyOklaba {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PyOklaba::oklaba(Oklaba::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PyOklaba::oklaba(Oklaba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PyOklaba::oklaba(Oklaba::lab(v.x, v.y, v.z))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PyOklaba::oklaba(Oklaba::lab(v.x, v.y, v.z)))
     }
 
     pub fn interpolate_stable(&self, other: &PyOklaba, t: f32) -> PyResult<Self> {
         Ok(PyOklaba::oklaba(
-            self.as_ref()?.interpolate_stable(other.as_ref()?, t),
+            self.as_ref()?
+                .interpolate_stable(other.as_ref()?.reborrow(), t),
+        ))
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.as_ref()?;
+        Ok(format!(
+            "Oklaba({}, {}, {}, {})",
+            fmt_f32(c.lightness),
+            fmt_f32(c.a),
+            fmt_f32(c.b),
+            fmt_f32(c.alpha),
         ))
     }
 }

@@ -1,26 +1,32 @@
-use bevy::color::{Alpha, Gray, LinearRgba, Luminance, Mix, color_difference::EuclideanDistance};
-use pybevy_core::ValueStorage;
-use pyo3::prelude::*;
+use bevy::color::{
+    Alpha, ColorToPacked, Gray, LinearRgba, Luminance, Mix, color_difference::EuclideanDistance,
+};
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pyo3::{prelude::*, types::PyList};
 
 use super::common::fmt_f32;
 
 #[pyclass(name = "LinearRgba", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLinearRgba {
-    storage: ValueStorage<LinearRgba>,
+    pub(crate) storage: ValueStorage<LinearRgba>,
 }
 
-impl From<PyLinearRgba> for LinearRgba {
+impl TryFrom<PyLinearRgba> for LinearRgba {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: PyLinearRgba) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: PyLinearRgba) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
-impl From<&PyLinearRgba> for LinearRgba {
+impl TryFrom<&PyLinearRgba> for LinearRgba {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: &PyLinearRgba) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: &PyLinearRgba) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
@@ -47,12 +53,12 @@ impl PyLinearRgba {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&LinearRgba> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, LinearRgba>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut LinearRgba> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, LinearRgba>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -139,22 +145,22 @@ impl PyLinearRgba {
 
     pub fn mix(&self, other: &Self, factor: f32) -> PyResult<Self> {
         Ok(PyLinearRgba::linear_rgba(
-            self.as_ref()?.mix(other.as_ref()?, factor),
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
 
     pub fn distance_squared(&self, other: &Self) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance_squared(other.as_ref()?))
+        Ok(self.as_ref()?.distance_squared(other.as_ref()?.reborrow()))
     }
 
     pub fn distance(&self, other: &Self) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance(other.as_ref()?))
+        Ok(self.as_ref()?.distance(other.as_ref()?.reborrow()))
     }
 
     pub fn to_tuple(&self) -> PyResult<(f32, f32, f32, f32)> {
@@ -286,34 +292,27 @@ impl PyLinearRgba {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PyLinearRgba::linear_rgba(LinearRgba::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PyLinearRgba::linear_rgba(LinearRgba::new(
+            v.x, v.y, v.z, v.w,
+        )))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PyLinearRgba::linear_rgba(LinearRgba::rgb(v.x, v.y, v.z))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PyLinearRgba::linear_rgba(LinearRgba::rgb(v.x, v.y, v.z)))
     }
 
-    pub fn to_u8_array(&self) -> PyResult<[u8; 4]> {
+    pub fn to_u8_array(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let color = self.as_ref()?;
-        Ok([
-            (color.red * 255.0) as u8,
-            (color.green * 255.0) as u8,
-            (color.blue * 255.0) as u8,
-            (color.alpha * 255.0) as u8,
-        ])
+        Ok(PyList::new(py, ColorToPacked::to_u8_array(*color))?.unbind())
     }
 
-    pub fn to_u8_array_no_alpha(&self) -> PyResult<[u8; 3]> {
+    pub fn to_u8_array_no_alpha(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let color = self.as_ref()?;
-        Ok([
-            (color.red * 255.0) as u8,
-            (color.green * 255.0) as u8,
-            (color.blue * 255.0) as u8,
-        ])
+        Ok(PyList::new(py, ColorToPacked::to_u8_array_no_alpha(*color))?.unbind())
     }
 
     #[staticmethod]

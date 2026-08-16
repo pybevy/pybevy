@@ -1,26 +1,30 @@
 use bevy::color::{Alpha, Gray, Hue, Lcha, LinearRgba, Luminance, Mix, Srgba};
-use pybevy_core::ValueStorage;
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Lcha", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLcha {
-    storage: ValueStorage<Lcha>,
+    pub(crate) storage: ValueStorage<Lcha>,
 }
 
-impl From<PyLcha> for Lcha {
+impl TryFrom<PyLcha> for Lcha {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: PyLcha) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: PyLcha) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
-impl From<&PyLcha> for Lcha {
+impl TryFrom<&PyLcha> for Lcha {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: &PyLcha) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: &PyLcha) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
@@ -47,12 +51,12 @@ impl PyLcha {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Lcha> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Lcha>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Lcha> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Lcha>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -164,11 +168,13 @@ impl PyLcha {
     }
 
     pub fn mix(&self, other: &PyLcha, factor: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.mix(other.as_ref()?, factor)))
+        Ok(PyLcha::lcha(
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
+        ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
@@ -206,9 +212,9 @@ impl PyLcha {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PyLcha::lcha(Lcha::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PyLcha::lcha(Lcha::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
@@ -219,9 +225,9 @@ impl PyLcha {
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PyLcha::lcha(Lcha::new(v.x, v.y, v.z, 1.0))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PyLcha::lcha(Lcha::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
@@ -244,5 +250,16 @@ impl PyLcha {
     pub fn method_set_hue(&mut self, hue: f32) -> PyResult<()> {
         self.as_mut()?.set_hue(hue);
         Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.as_ref()?;
+        Ok(format!(
+            "Lcha({}, {}, {}, {})",
+            fmt_f32(c.lightness),
+            fmt_f32(c.chroma),
+            fmt_f32(c.hue),
+            fmt_f32(c.alpha),
+        ))
     }
 }
