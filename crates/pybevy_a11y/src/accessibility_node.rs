@@ -1,4 +1,4 @@
-use accesskit::Node;
+use accesskit::{Node, Rect};
 use bevy::a11y::AccessibilityNode;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
@@ -180,7 +180,7 @@ impl PyAccessibilityNode {
     }
 
     pub fn set_bounds(&mut self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> PyResult<()> {
-        let rect = accesskit::Rect::new(min_x, min_y, max_x, max_y);
+        let rect = Rect::new(min_x, min_y, max_x, max_y);
         self.as_mut()?.0.set_bounds(rect);
         Ok(())
     }
