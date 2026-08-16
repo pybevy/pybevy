@@ -1,26 +1,30 @@
 use bevy::color::{Alpha, Gray, Hsva, Hue, LinearRgba, Mix, Saturation, Srgba};
-use pybevy_core::ValueStorage;
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Hsva", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHsva {
-    storage: ValueStorage<Hsva>,
+    pub(crate) storage: ValueStorage<Hsva>,
 }
 
-impl From<PyHsva> for Hsva {
+impl TryFrom<PyHsva> for Hsva {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: PyHsva) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: PyHsva) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
-impl From<&PyHsva> for Hsva {
+impl TryFrom<&PyHsva> for Hsva {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: &PyHsva) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: &PyHsva) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
@@ -47,12 +51,12 @@ impl PyHsva {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Hsva> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Hsva>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Hsva> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Hsva>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -148,11 +152,13 @@ impl PyHsva {
     }
 
     pub fn mix(&self, other: &PyHsva, factor: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(self.as_ref()?.mix(other.as_ref()?, factor)))
+        Ok(PyHsva::hsva(
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
+        ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
@@ -190,9 +196,9 @@ impl PyHsva {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PyHsva::hsva(Hsva::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PyHsva::hsva(Hsva::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
@@ -203,9 +209,9 @@ impl PyHsva {
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PyHsva::hsva(Hsva::new(v.x, v.y, v.z, 1.0))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PyHsva::hsva(Hsva::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
@@ -229,5 +235,16 @@ impl PyHsva {
     pub fn method_set_saturation(&mut self, saturation: f32) -> PyResult<()> {
         self.as_mut()?.set_saturation(saturation);
         Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.as_ref()?;
+        Ok(format!(
+            "Hsva({}, {}, {}, {})",
+            fmt_f32(c.hue),
+            fmt_f32(c.saturation),
+            fmt_f32(c.value),
+            fmt_f32(c.alpha),
+        ))
     }
 }

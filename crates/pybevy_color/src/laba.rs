@@ -2,15 +2,31 @@ use bevy::{
     color::{Alpha, Gray, Laba, LinearRgba, Luminance, Mix, Srgba},
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::ValueStorage;
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Laba", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLaba {
-    storage: ValueStorage<Laba>,
+    pub(crate) storage: ValueStorage<Laba>,
+}
+
+impl TryFrom<&PyLaba> for Laba {
+    type Error = PyErr;
+
+    #[inline(always)]
+    fn try_from(py_color: &PyLaba) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
+    }
+}
+
+impl From<Laba> for PyLaba {
+    #[inline(always)]
+    fn from(color: Laba) -> Self {
+        Self::laba(color)
+    }
 }
 
 impl PyLaba {
@@ -20,11 +36,11 @@ impl PyLaba {
         }
     }
 
-    fn as_ref(&self) -> PyResult<&Laba> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Laba>> {
         Ok(self.storage.as_ref()?)
     }
 
-    fn as_mut(&mut self) -> PyResult<&mut Laba> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Laba>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -142,11 +158,13 @@ impl PyLaba {
     }
 
     pub fn mix(&self, other: &PyLaba, factor: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(self.as_ref()?.mix(other.as_ref()?, factor)))
+        Ok(PyLaba::laba(
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
+        ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
@@ -194,20 +212,32 @@ impl PyLaba {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: Vec4 = color.into();
-        PyLaba::laba(Laba::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: Vec4 = color.try_into()?;
+        Ok(PyLaba::laba(Laba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: Vec3 = color.into();
-        PyLaba::laba(Laba::lab(v.x, v.y, v.z))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: Vec3 = color.try_into()?;
+        Ok(PyLaba::laba(Laba::lab(v.x, v.y, v.z)))
     }
 
     pub fn interpolate_stable(&self, other: &PyLaba, t: f32) -> PyResult<Self> {
         Ok(PyLaba::laba(
-            self.as_ref()?.interpolate_stable(other.as_ref()?, t),
+            self.as_ref()?
+                .interpolate_stable(other.as_ref()?.reborrow(), t),
+        ))
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.as_ref()?;
+        Ok(format!(
+            "Laba({}, {}, {}, {})",
+            fmt_f32(c.lightness),
+            fmt_f32(c.a),
+            fmt_f32(c.b),
+            fmt_f32(c.alpha),
         ))
     }
 }

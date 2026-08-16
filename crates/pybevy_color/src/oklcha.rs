@@ -2,28 +2,32 @@ use bevy::color::{
     Alpha, Gray, Hue, LinearRgba, Luminance, Mix, Oklcha, Srgba,
     color_difference::EuclideanDistance,
 };
-use pybevy_core::ValueStorage;
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Oklcha", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOklcha {
-    storage: ValueStorage<Oklcha>,
+    pub(crate) storage: ValueStorage<Oklcha>,
 }
 
-impl From<PyOklcha> for Oklcha {
+impl TryFrom<PyOklcha> for Oklcha {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: PyOklcha) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: PyOklcha) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
-impl From<&PyOklcha> for Oklcha {
+impl TryFrom<&PyOklcha> for Oklcha {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_color: &PyOklcha) -> Self {
-        py_color.storage.get().unwrap()
+    fn try_from(py_color: &PyOklcha) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
     }
 }
 
@@ -50,12 +54,12 @@ impl PyOklcha {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Oklcha> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Oklcha>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Oklcha> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Oklcha>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -168,22 +172,22 @@ impl PyOklcha {
 
     pub fn mix(&self, other: &PyOklcha, factor: f32) -> PyResult<Self> {
         Ok(PyOklcha::oklcha(
-            self.as_ref()?.mix(other.as_ref()?, factor),
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
 
     pub fn distance(&self, other: &PyOklcha) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance(other.as_ref()?))
+        Ok(self.as_ref()?.distance(other.as_ref()?.reborrow()))
     }
 
     pub fn distance_squared(&self, other: &PyOklcha) -> PyResult<f32> {
-        Ok(self.as_ref()?.distance_squared(other.as_ref()?))
+        Ok(self.as_ref()?.distance_squared(other.as_ref()?.reborrow()))
     }
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
@@ -219,9 +223,9 @@ impl PyOklcha {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PyOklcha::oklcha(Oklcha::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PyOklcha::oklcha(Oklcha::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
@@ -232,9 +236,9 @@ impl PyOklcha {
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PyOklcha::oklcha(Oklcha::new(v.x, v.y, v.z, 1.0))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PyOklcha::oklcha(Oklcha::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
@@ -257,5 +261,16 @@ impl PyOklcha {
     pub fn method_set_hue(&mut self, hue: f32) -> PyResult<()> {
         self.as_mut()?.set_hue(hue);
         Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.as_ref()?;
+        Ok(format!(
+            "Oklcha({}, {}, {}, {})",
+            fmt_f32(c.lightness),
+            fmt_f32(c.chroma),
+            fmt_f32(c.hue),
+            fmt_f32(c.alpha),
+        ))
     }
 }

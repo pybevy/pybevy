@@ -2,15 +2,31 @@ use bevy::{
     color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, Xyza},
     math::StableInterpolate,
 };
-use pybevy_core::ValueStorage;
+use pybevy_core::{StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyclass(name = "Xyza", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyXyza {
-    storage: ValueStorage<Xyza>,
+    pub(crate) storage: ValueStorage<Xyza>,
+}
+
+impl TryFrom<&PyXyza> for Xyza {
+    type Error = PyErr;
+
+    #[inline(always)]
+    fn try_from(py_color: &PyXyza) -> PyResult<Self> {
+        Ok(py_color.storage.get()?)
+    }
+}
+
+impl From<Xyza> for PyXyza {
+    #[inline(always)]
+    fn from(color: Xyza) -> Self {
+        Self::xyza(color)
+    }
 }
 
 impl PyXyza {
@@ -20,11 +36,11 @@ impl PyXyza {
         }
     }
 
-    fn as_ref(&self) -> PyResult<&Xyza> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Xyza>> {
         Ok(self.storage.as_ref()?)
     }
 
-    fn as_mut(&mut self) -> PyResult<&mut Xyza> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Xyza>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -156,11 +172,13 @@ impl PyXyza {
     }
 
     pub fn mix(&self, other: &PyXyza, factor: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(self.as_ref()?.mix(other.as_ref()?, factor)))
+        Ok(PyXyza::xyza(
+            self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
+        ))
     }
 
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
-        let result = self.as_ref()?.mix(other.as_ref()?, factor);
+        let result = self.as_ref()?.mix(other.as_ref()?.reborrow(), factor);
         *self.as_mut()? = result;
         Ok(())
     }
@@ -210,20 +228,32 @@ impl PyXyza {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> Self {
-        let v: bevy::math::Vec4 = color.into();
-        PyXyza::xyza(Xyza::new(v.x, v.y, v.z, v.w))
+    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
+        let v: bevy::math::Vec4 = color.try_into()?;
+        Ok(PyXyza::xyza(Xyza::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> Self {
-        let v: bevy::math::Vec3 = color.into();
-        PyXyza::xyza(Xyza::xyz(v.x, v.y, v.z))
+    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
+        let v: bevy::math::Vec3 = color.try_into()?;
+        Ok(PyXyza::xyza(Xyza::xyz(v.x, v.y, v.z)))
     }
 
     pub fn interpolate_stable(&self, other: &PyXyza, t: f32) -> PyResult<Self> {
         Ok(PyXyza::xyza(
-            self.as_ref()?.interpolate_stable(other.as_ref()?, t),
+            self.as_ref()?
+                .interpolate_stable(other.as_ref()?.reborrow(), t),
+        ))
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.as_ref()?;
+        Ok(format!(
+            "Xyza({}, {}, {}, {})",
+            fmt_f32(c.x),
+            fmt_f32(c.y),
+            fmt_f32(c.z),
+            fmt_f32(c.alpha),
         ))
     }
 }
