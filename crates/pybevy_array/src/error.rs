@@ -26,12 +26,16 @@ pub enum ArrayError {
     ZeroStep,
     /// Attempted to mutate a read-only array.
     NotWritable,
-    /// Operation on an array whose backing authority has been closed.
-    Closed,
+    /// Another operation currently holds incompatible access to shared storage.
+    AccessConflict,
     /// Two shapes could not be broadcast together.
     BroadcastMismatch { left: Vec<usize>, right: Vec<usize> },
     /// Checked arithmetic on shape/stride/allocation sizes overflowed.
     Overflow(&'static str),
+    /// A layout's shape and stride metadata is internally inconsistent.
+    InvalidLayout(&'static str),
+    /// A layout selects at least one element outside its backing allocation.
+    LayoutOutOfBounds { storage_len: usize },
     /// The requested owned backing allocation could not be reserved.
     AllocationFailed { dtype: ArrayDType, elements: usize },
     /// Arrays have a bounded dimensionality so recursive adapter conversion
@@ -43,6 +47,10 @@ pub enum ArrayError {
     AxisOutOfBounds { axis: usize, ndim: usize },
     /// A boolean mask's length does not equal the array's element count.
     MaskLengthMismatch { mask_len: usize, size: usize },
+    /// A boolean mask's dimensions do not match the indexed array.
+    MaskShapeMismatch { mask: Vec<usize>, array: Vec<usize> },
+    /// Masked assignment values are neither a scalar nor one per selected item.
+    MaskValueCountMismatch { values_len: usize, selected: usize },
     /// A borrowed array's backing data is no longer valid (the owning system
     /// finished, or access crossed threads).
     BorrowExpired(String),
@@ -75,12 +83,19 @@ impl fmt::Display for ArrayError {
             ArrayError::NotWritable => {
                 write!(f, "assignment destination is read-only")
             }
-            ArrayError::Closed => write!(f, "operation on a closed array"),
+            ArrayError::AccessConflict => {
+                write!(f, "array storage is already in use by another operation")
+            }
             ArrayError::BroadcastMismatch { left, right } => write!(
                 f,
                 "operands could not be broadcast together with shapes {left:?} {right:?}"
             ),
             ArrayError::Overflow(what) => write!(f, "integer overflow computing {what}"),
+            ArrayError::InvalidLayout(reason) => write!(f, "invalid array layout: {reason}"),
+            ArrayError::LayoutOutOfBounds { storage_len } => write!(
+                f,
+                "array layout selects data outside its backing storage of length {storage_len}"
+            ),
             ArrayError::AllocationFailed { dtype, elements } => write!(
                 f,
                 "could not allocate {elements} elements of dtype {}",
@@ -104,6 +119,17 @@ impl fmt::Display for ArrayError {
             ArrayError::MaskLengthMismatch { mask_len, size } => write!(
                 f,
                 "boolean mask length {mask_len} does not match array size {size}"
+            ),
+            ArrayError::MaskShapeMismatch { mask, array } => write!(
+                f,
+                "boolean mask shape {mask:?} does not match array shape {array:?}"
+            ),
+            ArrayError::MaskValueCountMismatch {
+                values_len,
+                selected,
+            } => write!(
+                f,
+                "masked assignment needs one value or {selected} selected values, got {values_len}"
             ),
             ArrayError::BorrowExpired(reason) => {
                 write!(f, "borrowed array data is no longer valid: {reason}")

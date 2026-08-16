@@ -1,5 +1,11 @@
 //! The bounded `Array` exposed through the PyO3 backend.
 
+use std::{
+    mem::replace,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
+
 use pybevy_bytecodevm::bytecode::Op;
 use pyo3::{
     basic::CompareOp,
@@ -15,19 +21,172 @@ use super::{
     kernels::{self, CmpKind, OperandRef, Reduce, extract_operand, gather_scalars, map_array_err},
     lens::ArrayLens,
 };
-use crate::{ArrayDType, DenseArrayCore, IndexOp, Scalar};
+use crate::{ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore, IndexOp, Layout, Scalar};
 
-/// A bounded, C-contiguous array. Float element-wise math runs on the
-/// dense VM; comparisons and reductions are exact per dtype.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingBorrowKind {
+    MutableF32,
+    MutableU8,
+}
+
+#[derive(Debug, Clone)]
+struct PendingBorrowedCore {
+    kind: PendingBorrowKind,
+    len: usize,
+    layout: Layout,
+    probe: Arc<dyn BorrowProbe>,
+}
+
+#[derive(Debug)]
+enum ArrayCoreState {
+    Pending(PendingBorrowedCore),
+    Ready(DenseArrayCore),
+    Closed,
+}
+
+/// Storage state for the Python array wrapper.
+///
+/// Pending values are allocated privately before an asset write transaction
+/// starts, then bound to the validated native pointer without allocation.
+#[derive(Debug)]
+pub struct ArrayCore {
+    state: ArrayCoreState,
+}
+
+impl From<DenseArrayCore> for ArrayCore {
+    fn from(core: DenseArrayCore) -> Self {
+        Self {
+            state: ArrayCoreState::Ready(core),
+        }
+    }
+}
+
+impl Deref for ArrayCore {
+    type Target = DenseArrayCore;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.state {
+            ArrayCoreState::Ready(core) => core,
+            ArrayCoreState::Pending(_) | ArrayCoreState::Closed => {
+                panic!("an unbound Array cannot escape its constructor")
+            }
+        }
+    }
+}
+
+impl DerefMut for ArrayCore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match &mut self.state {
+            ArrayCoreState::Ready(core) => core,
+            ArrayCoreState::Pending(_) | ArrayCoreState::Closed => {
+                panic!("an unbound Array cannot escape its constructor")
+            }
+        }
+    }
+}
+
+/// A bounded array. Float element-wise math runs on the dense VM; comparisons
+/// and reductions are exact per dtype.
 #[pyclass(name = "Array", module = "pybevy.array", skip_from_py_object)]
-#[derive(Clone)]
 pub struct PyArray {
-    pub core: DenseArrayCore,
+    pub core: ArrayCore,
 }
 
 impl PyArray {
-    fn wrap(core: DenseArrayCore) -> Self {
-        PyArray { core }
+    pub(crate) fn wrap(core: DenseArrayCore) -> Self {
+        PyArray { core: core.into() }
+    }
+
+    fn pending(
+        kind: PendingBorrowKind,
+        len: usize,
+        shape: &[usize],
+        probe: Arc<dyn BorrowProbe>,
+    ) -> PyResult<Self> {
+        let layout = Layout::c_contiguous(shape).map_err(map_array_err)?;
+        if layout.num_elements() != len {
+            return Err(map_array_err(crate::ArrayError::StorageLengthMismatch {
+                shape_elements: layout.num_elements(),
+                storage_len: len,
+            }));
+        }
+        Ok(Self {
+            core: ArrayCore {
+                state: ArrayCoreState::Pending(PendingBorrowedCore {
+                    kind,
+                    len,
+                    layout,
+                    probe,
+                }),
+            },
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn pending_borrowed_mut_f32(
+        len: usize,
+        shape: &[usize],
+        probe: Arc<dyn BorrowProbe>,
+    ) -> PyResult<Self> {
+        Self::pending(PendingBorrowKind::MutableF32, len, shape, probe)
+    }
+
+    #[doc(hidden)]
+    pub fn pending_borrowed_mut_u8(
+        len: usize,
+        shape: &[usize],
+        probe: Arc<dyn BorrowProbe>,
+    ) -> PyResult<Self> {
+        Self::pending(PendingBorrowKind::MutableU8, len, shape, probe)
+    }
+
+    unsafe fn bind(
+        &mut self,
+        expected: PendingBorrowKind,
+        storage: impl FnOnce(usize, Arc<dyn BorrowProbe>) -> ArrayStorage,
+    ) {
+        let state = replace(&mut self.core.state, ArrayCoreState::Closed);
+        let ArrayCoreState::Pending(pending) = state else {
+            panic!("Array binding requires a pending array")
+        };
+        assert_eq!(pending.kind, expected, "Array binding kind must match");
+        let PendingBorrowedCore {
+            len, layout, probe, ..
+        } = pending;
+        self.core.state = ArrayCoreState::Ready(
+            DenseArrayCore::from_parts(storage(len, probe), layout, true)
+                .expect("pending array layout was validated before pointer binding"),
+        );
+    }
+
+    /// Bind a prevalidated pending array to mutable contiguous `f32` storage.
+    ///
+    /// # Safety
+    /// `ptr` must identify the `len` elements validated when this pending array
+    /// was created and remain valid while its probe admits access.
+    #[doc(hidden)]
+    pub unsafe fn bind_borrowed_mut_f32(&mut self, ptr: *mut f32) {
+        // SAFETY: forwarded from this method's contract.
+        unsafe {
+            self.bind(PendingBorrowKind::MutableF32, |len, probe| {
+                ArrayStorage::borrowed_mut_f32(ptr, len, probe)
+            })
+        }
+    }
+
+    /// Bind a prevalidated pending array to mutable contiguous bytes.
+    ///
+    /// # Safety
+    /// `ptr` must identify the `len` elements validated when this pending array
+    /// was created and remain valid while its probe admits access.
+    #[doc(hidden)]
+    pub unsafe fn bind_borrowed_mut_u8(&mut self, ptr: *mut u8) {
+        // SAFETY: forwarded from this method's contract.
+        unsafe {
+            self.bind(PendingBorrowKind::MutableU8, |len, probe| {
+                ArrayStorage::borrowed_mut_u8(ptr, len, probe)
+            })
+        }
     }
 }
 
@@ -120,7 +279,7 @@ fn parse_index(index: &Bound<'_, PyAny>) -> PyResult<Vec<IndexOp>> {
 /// If `index` is a bounded boolean array, return its flattened mask. A non-bool
 /// bounded array (integer fancy indexing) is rejected; anything else is `None`
 /// so basic indexing handles it.
-fn as_bool_mask(index: &Bound<'_, PyAny>) -> PyResult<Option<Vec<bool>>> {
+fn as_bool_mask(index: &Bound<'_, PyAny>) -> PyResult<Option<(Vec<bool>, Vec<usize>)>> {
     let Ok(nd) = index.extract::<PyRef<'_, PyArray>>() else {
         return Ok(None);
     };
@@ -129,14 +288,43 @@ fn as_bool_mask(index: &Bound<'_, PyAny>) -> PyResult<Option<Vec<bool>>> {
             "only boolean-array advanced indexing is supported",
         ));
     }
-    Ok(Some(
+    let shape = nd.core.shape().to_vec();
+    Ok(Some((
         nd.core
             .to_scalars()
             .map_err(map_array_err)?
             .iter()
             .map(|s| s.to_bool())
             .collect(),
-    ))
+        shape,
+    )))
+}
+
+fn require_default_reduction_options(
+    dtype: Option<&Bound<'_, PyAny>>,
+    out: Option<&Bound<'_, PyAny>>,
+    keepdims: bool,
+    initial: Option<&Bound<'_, PyAny>>,
+    where_: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
+    for (name, value) in [("dtype", dtype), ("out", out), ("initial", initial)] {
+        if value.is_some() {
+            return Err(PyTypeError::new_err(format!(
+                "pybevy.array reductions only support {name}=None; call .to_numpy() for this option"
+            )));
+        }
+    }
+    if keepdims {
+        return Err(PyTypeError::new_err(
+            "pybevy.array reductions only support keepdims=False; call .to_numpy() for this option",
+        ));
+    }
+    if where_.is_some_and(|value| value.extract::<bool>().ok() != Some(true)) {
+        return Err(PyTypeError::new_err(
+            "pybevy.array reductions only support where=True; call .to_numpy() for this option",
+        ));
+    }
+    Ok(())
 }
 
 #[pymethods]
@@ -179,6 +367,19 @@ impl PyArray {
             .first()
             .copied()
             .ok_or_else(|| PyTypeError::new_err("len() of unsized object"))
+    }
+
+    // Mirrors NumPy: a single element converts, anything else is ambiguous.
+    fn __bool__(&self) -> PyResult<bool> {
+        if self.core.size() != 1 {
+            return Err(PyValueError::new_err(format!(
+                "the truth value of an array with {} elements is ambiguous; \
+                 use .any() or .all()",
+                self.core.size()
+            )));
+        }
+        let scalars = self.core.to_scalars().map_err(map_array_err)?;
+        Ok(scalars[0].to_bool())
     }
 
     // Reached only for attributes not defined on the class: point users at the
@@ -228,6 +429,14 @@ impl PyArray {
         Ok(PyArray::wrap(self.core.copy().map_err(map_array_err)?))
     }
 
+    fn __copy__(&self) -> PyResult<PyArray> {
+        self.copy()
+    }
+
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<PyArray> {
+        self.copy()
+    }
+
     fn astype(&self, dtype: &Bound<'_, PyAny>) -> PyResult<PyArray> {
         let dt = parse_dtype(Some(dtype))?
             .ok_or_else(|| PyTypeError::new_err("astype requires a dtype"))?;
@@ -239,28 +448,105 @@ impl PyArray {
         ArrayLens::new(slf.py(), slf)
     }
 
-    #[pyo3(signature = (axis=None))]
-    fn sum(&self, py: Python<'_>, axis: Option<usize>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (axis=None, dtype=None, out=None, keepdims=false, initial=None, r#where=None))]
+    fn sum(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        dtype: Option<Bound<'_, PyAny>>,
+        out: Option<Bound<'_, PyAny>>,
+        keepdims: bool,
+        initial: Option<Bound<'_, PyAny>>,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        require_default_reduction_options(
+            dtype.as_ref(),
+            out.as_ref(),
+            keepdims,
+            initial.as_ref(),
+            r#where.as_ref(),
+        )?;
         kernels::reduce(py, &self.core, Reduce::Sum, axis)
     }
-    #[pyo3(signature = (axis=None))]
-    fn mean(&self, py: Python<'_>, axis: Option<usize>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (axis=None, dtype=None, out=None, keepdims=false, r#where=None))]
+    fn mean(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        dtype: Option<Bound<'_, PyAny>>,
+        out: Option<Bound<'_, PyAny>>,
+        keepdims: bool,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        require_default_reduction_options(
+            dtype.as_ref(),
+            out.as_ref(),
+            keepdims,
+            None,
+            r#where.as_ref(),
+        )?;
         kernels::reduce(py, &self.core, Reduce::Mean, axis)
     }
-    #[pyo3(signature = (axis=None))]
-    fn min(&self, py: Python<'_>, axis: Option<usize>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (axis=None, out=None, keepdims=false, initial=None, r#where=None))]
+    fn min(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        out: Option<Bound<'_, PyAny>>,
+        keepdims: bool,
+        initial: Option<Bound<'_, PyAny>>,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        require_default_reduction_options(
+            None,
+            out.as_ref(),
+            keepdims,
+            initial.as_ref(),
+            r#where.as_ref(),
+        )?;
         kernels::reduce(py, &self.core, Reduce::Min, axis)
     }
-    #[pyo3(signature = (axis=None))]
-    fn max(&self, py: Python<'_>, axis: Option<usize>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (axis=None, out=None, keepdims=false, initial=None, r#where=None))]
+    fn max(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        out: Option<Bound<'_, PyAny>>,
+        keepdims: bool,
+        initial: Option<Bound<'_, PyAny>>,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        require_default_reduction_options(
+            None,
+            out.as_ref(),
+            keepdims,
+            initial.as_ref(),
+            r#where.as_ref(),
+        )?;
         kernels::reduce(py, &self.core, Reduce::Max, axis)
     }
-    #[pyo3(signature = (axis=None))]
-    fn all(&self, py: Python<'_>, axis: Option<usize>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (axis=None, out=None, keepdims=false, *, r#where=None))]
+    fn all(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        out: Option<Bound<'_, PyAny>>,
+        keepdims: bool,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        require_default_reduction_options(None, out.as_ref(), keepdims, None, r#where.as_ref())?;
         kernels::reduce(py, &self.core, Reduce::All, axis)
     }
-    #[pyo3(signature = (axis=None))]
-    fn any(&self, py: Python<'_>, axis: Option<usize>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (axis=None, out=None, keepdims=false, *, r#where=None))]
+    fn any(
+        &self,
+        py: Python<'_>,
+        axis: Option<isize>,
+        out: Option<Bound<'_, PyAny>>,
+        keepdims: bool,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        require_default_reduction_options(None, out.as_ref(), keepdims, None, r#where.as_ref())?;
         kernels::reduce(py, &self.core, Reduce::Any, axis)
     }
 
@@ -275,17 +561,26 @@ impl PyArray {
         dtype: Option<Bound<'_, PyAny>>,
         copy: Option<bool>,
     ) -> PyResult<Py<PyAny>> {
-        let _ = (dtype, copy); // NumPy casts/copies after consuming the result.
+        if copy == Some(false) {
+            return Err(PyValueError::new_err(
+                "pybevy.array.Array cannot provide a zero-copy NumPy view; \
+                 use copy=True or call .to_numpy() for an owned copy",
+            ));
+        }
+        let _ = dtype; // NumPy casts the owned result after consuming it.
         convert::to_numpy(py, &self.core)
     }
 
     fn __getitem__(&self, py: Python<'_>, index: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        if let Some(mask) = as_bool_mask(index)? {
-            let sub = self.core.mask_select(&mask).map_err(map_array_err)?;
+        if let Some((mask, mask_shape)) = as_bool_mask(index)? {
+            let sub = self
+                .core
+                .mask_select(&mask, &mask_shape)
+                .map_err(map_array_err)?;
             return Ok(Py::new(py, PyArray::wrap(sub))?.into_any());
         }
         let ops = parse_index(index)?;
-        let sub = self.core.slice_copy(&ops).map_err(map_array_err)?;
+        let sub = self.core.slice_view(&ops).map_err(map_array_err)?;
         if sub.ndim() == 0 {
             let scalar = sub.get(&[]).map_err(map_array_err)?;
             Ok(kernels::scalar_to_py(py, scalar))
@@ -302,7 +597,7 @@ impl PyArray {
         if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
             return Err(PyTypeError::new_err(hint::unsupported_list_assign()));
         }
-        if let Some(mask) = as_bool_mask(index)? {
+        if let Some((mask, mask_shape)) = as_bool_mask(index)? {
             let count = mask.iter().filter(|&&m| m).count();
             let values: Vec<Scalar> = {
                 let operand = extract_operand(value)?;
@@ -314,7 +609,7 @@ impl PyArray {
             };
             slf.borrow_mut()
                 .core
-                .mask_assign(&mask, &values)
+                .mask_assign(&mask, &mask_shape, &values)
                 .map_err(map_array_err)?;
             return Ok(());
         }
@@ -325,16 +620,25 @@ impl PyArray {
             let operand = extract_operand(value)?;
             gather_scalars(operand.as_kernel(), &target_shape)?
         };
-        let mut destination = slf.borrow_mut();
+        let destination = slf.borrow_mut();
         let offsets: Vec<usize> = plan.iter_offsets().collect();
-        let storage = destination.core.storage_mut().map_err(map_array_err)?;
+        let mut storage = destination.core.write_storage().map_err(map_array_err)?;
         for (i, off) in offsets.into_iter().enumerate() {
             storage.set(off, values[i]);
         }
         Ok(())
     }
 
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<PyArray> {
+    fn __richcmp__(
+        &self,
+        py: Python<'_>,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+    ) -> PyResult<Py<PyAny>> {
+        // Unsupported operands defer to the other object via NotImplemented.
+        let Ok(other) = extract_operand(other) else {
+            return Ok(py.NotImplemented());
+        };
         let kind = match op {
             CompareOp::Eq => CmpKind::Eq,
             CompareOp::Ne => CmpKind::Ne,
@@ -343,8 +647,8 @@ impl PyArray {
             CompareOp::Gt => CmpKind::Gt,
             CompareOp::Ge => CmpKind::Ge,
         };
-        let other = extract_operand(other)?;
-        kernels::compare(self.as_operand(), other.as_kernel(), kind)
+        let result = kernels::compare(self.as_operand(), other.as_kernel(), kind)?;
+        Ok(Py::new(py, result)?.into_any())
     }
 
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyArray> {
@@ -389,11 +693,30 @@ impl PyArray {
         }
         binary_other(self, other, Op::Pow, "power", false)
     }
+    fn __rpow__(&self, other: &Bound<'_, PyAny>, modulo: &Bound<'_, PyAny>) -> PyResult<PyArray> {
+        if !modulo.is_none() {
+            return Err(PyValueError::new_err("3-argument pow is not supported"));
+        }
+        binary_other(self, other, Op::Pow, "power", true)
+    }
+    fn __ipow__(
+        slf: &Bound<'_, Self>,
+        other: &Bound<'_, PyAny>,
+        modulo: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        if !modulo.is_none() {
+            return Err(PyValueError::new_err("3-argument pow is not supported"));
+        }
+        inplace_other(slf, other, Op::Pow, "power")
+    }
     fn __mod__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyArray> {
         binary_other(self, other, Op::Mod, "mod", false)
     }
     fn __rmod__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyArray> {
         binary_other(self, other, Op::Mod, "mod", true)
+    }
+    fn __imod__(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        inplace_other(slf, other, Op::Mod, "mod")
     }
     fn __neg__(&self) -> PyResult<PyArray> {
         unary(Op::Neg, "negative", self)

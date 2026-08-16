@@ -9,6 +9,7 @@ use pybevy_bytecodevm::{
     view_engine::compile_assignment,
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyIndexError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
 };
@@ -135,14 +136,13 @@ impl ArrayLens {
             validate_buffer_program(&bytecode, self.key, self.stride, &[self.field_type])
                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
 
-        let mut owner = self.owner.bind(py).borrow_mut();
-        owner.core.ensure_writable().map_err(map_array_err)?;
-        let storage = owner.core.storage_mut().map_err(map_array_err)?;
+        let owner = self.owner.bind(py).borrow_mut();
+        let mut storage = owner.core.write_storage().map_err(map_array_err)?;
         let base = storage.as_mut_contiguous_ptr().ok_or_else(|| {
             PyRuntimeError::new_err("array storage cannot provide a writable contiguous buffer")
         })?;
-        // SAFETY: the mutable PyO3 borrow and `storage_mut` keep exclusive access
-        // for this synchronous call. The writable check gates borrowed storage,
+        // SAFETY: the backing write guard keeps exclusive storage access for
+        // this synchronous call. The writable check gates borrowed storage,
         // and validation proves every lane is aligned and contained in `stride`.
         unsafe { execute_buffer_assignment(&validated, base, self.count) };
         Ok(())
@@ -151,6 +151,10 @@ impl ArrayLens {
 
 #[pymethods]
 impl ArrayLens {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.owner)
+    }
+
     fn __getitem__(slf: &Bound<'_, Self>, lane: isize) -> PyResult<Py<PyAny>> {
         Self::field_expression(slf, lane)
     }

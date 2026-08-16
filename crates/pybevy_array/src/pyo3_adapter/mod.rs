@@ -21,7 +21,7 @@ use std::sync::Arc;
 pub use array::PyArray;
 pub use dtype::PyDType;
 pub use lens::ArrayLens;
-use pyo3::{prelude::*, types::PyModule};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyModule};
 
 use crate::{ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore};
 
@@ -30,7 +30,7 @@ use crate::{ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore};
 /// bounded-array surface. Writing to the result raises because it is a copy.
 pub fn read_only_f32(data: Vec<f32>, shape: &[usize]) -> PyResult<PyArray> {
     let core = crate::kernels::read_only_f32_core(data, shape).map_err(kernels::map_kernel_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// Wrap external `float32` data as a read-only, zero-copy bounded array guarded
@@ -52,7 +52,7 @@ pub unsafe fn borrowed_read_only_f32(
     let storage = unsafe { ArrayStorage::borrowed_f32(ptr, len, probe) };
     // `from_storage` marks a read-only borrow frozen.
     let core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// Wrap external `float32` data as an in-place *mutable* zero-copy bounded array
@@ -72,7 +72,7 @@ pub unsafe fn borrowed_mut_f32(
     // SAFETY: forwarded to the caller's contract above.
     let storage = unsafe { ArrayStorage::borrowed_mut_f32(ptr, len, probe) };
     let core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// Wrap external `u8` data as a read-only zero-copy bounded array guarded by
@@ -91,7 +91,7 @@ pub unsafe fn borrowed_read_only_u8(
     // SAFETY: forwarded to the caller's contract above.
     let storage = unsafe { ArrayStorage::borrowed_u8(ptr, len, probe) };
     let core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// Wrap external `u8` data as an in-place mutable zero-copy bounded array.
@@ -108,14 +108,44 @@ pub unsafe fn borrowed_mut_u8(
     // SAFETY: forwarded to the caller's contract above.
     let storage = unsafe { ArrayStorage::borrowed_mut_u8(ptr, len, probe) };
     let core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// Wrap owned `uint8` data as a writable bounded array.
 pub fn owned_u8(data: Vec<u8>, shape: &[usize]) -> PyResult<PyArray> {
     let core = DenseArrayCore::from_storage(ArrayStorage::Uint8(data), shape)
         .map_err(kernels::map_array_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
+}
+
+/// Copy a bounded or real-NumPy array into owned `uint8` data and preserve its
+/// logical shape. Returns `None` when `obj` is neither supported array type.
+///
+/// NumPy inputs go through the adapter's private base-ndarray snapshot before
+/// Rust reads them, retaining the free-threading safety contract of
+/// `array()`/`asarray()`.
+pub fn extract_u8_array_data(obj: &Bound<'_, PyAny>) -> PyResult<Option<(Vec<u8>, Vec<usize>)>> {
+    let is_bounded = obj.extract::<PyRef<'_, PyArray>>().is_ok();
+    let is_numpy = convert::is_numpy_array(obj)?;
+    if !is_bounded && !is_numpy {
+        return Ok(None);
+    }
+
+    let core = convert::array_from_object(obj, None)?;
+    if core.dtype() != ArrayDType::Uint8 {
+        return Err(PyTypeError::new_err(format!(
+            "array data must have dtype uint8, got {}",
+            core.dtype().name()
+        )));
+    }
+    let shape = core.shape().to_vec();
+    let data = core
+        .to_scalars()
+        .map_err(kernels::map_array_err)?
+        .into_iter()
+        .map(|value| value.to_i64_trunc() as u8)
+        .collect();
+    Ok(Some((data, shape)))
 }
 
 /// Build the bounded array module: classes, functions, dtype constants, and
