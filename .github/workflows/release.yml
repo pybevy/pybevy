@@ -188,6 +188,28 @@ jobs:
           name: dist-${{ matrix.target }}-py${{ matrix.python-version }}
           path: dist
 
+  publish-testpypi:
+    name: Publish to TestPyPI
+    runs-on: ubuntu-latest
+    needs: [build-sdist, build-wheels]
+    if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pybevy
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
   # publish:
   #   name: Publish to PyPI
   #   runs-on: ubuntu-latest
