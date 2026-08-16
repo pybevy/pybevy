@@ -17,3 +17,6 @@ pybevy_mesh = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = ["gltf_animation", "bevy_render", "bevy_animation"]
+
+[lints]
+workspace = true

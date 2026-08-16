@@ -27,3 +27,6 @@ default = ["pybevy/mcp", "linux-display"]
 linux-display = ["pybevy/linux-display"]
 debug = ["pybevy/debug"]
 mcp = ["pybevy/mcp"]
+
+[lints]
+workspace = true

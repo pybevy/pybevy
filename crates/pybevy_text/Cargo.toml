@@ -16,3 +16,6 @@ pybevy_color = { workspace = true }
 pybevy_image = { workspace = true }
 pybevy_math = { workspace = true }
 numpy = { workspace = true }
+
+[lints]
+workspace = true

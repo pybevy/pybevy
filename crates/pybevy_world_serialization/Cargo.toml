@@ -15,3 +15,6 @@ pybevy_macros = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = ["bevy_world_serialization", "bevy_asset"]
+
+[lints]
+workspace = true

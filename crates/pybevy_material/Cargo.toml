@@ -11,3 +11,6 @@ homepage = "https://pybevy.com"
 pyo3 = { workspace = true, features = ["macros"] }
 bevy = { workspace = true, features = ["bevy_material"] }
 pybevy_macros = { workspace = true }
+
+[lints]
+workspace = true

@@ -15,3 +15,5 @@ pybevy_macros = { workspace = true }
 workspace = true
 features = ["bevy_image", "bevy_render"]
 
+[lints]
+workspace = true

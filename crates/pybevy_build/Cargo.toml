@@ -10,3 +10,6 @@ categories = ["development-tools::build-utils"]
 
 [dependencies]
 cargo_metadata = "0.19"
+
+[lints]
+workspace = true

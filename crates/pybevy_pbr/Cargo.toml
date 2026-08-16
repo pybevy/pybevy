@@ -22,3 +22,6 @@ pybevy_shader_types = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = ["bevy_pbr", "bevy_render"]
+
+[lints]
+workspace = true

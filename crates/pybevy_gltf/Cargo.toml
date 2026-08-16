@@ -17,3 +17,6 @@ pybevy_transform = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = ["bevy_gltf"]
+
+[lints]
+workspace = true

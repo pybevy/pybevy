@@ -44,3 +44,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

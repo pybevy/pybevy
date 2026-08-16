@@ -17,3 +17,6 @@ accesskit = { version = "0.24", default-features = false }
 workspace = true
 default-features = false
 features = ["bevy_window"]
+
+[lints]
+workspace = true

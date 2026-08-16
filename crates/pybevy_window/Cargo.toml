@@ -19,3 +19,5 @@ numpy = { workspace = true }
 workspace = true
 features = ["bevy_window"]
 
+[lints]
+workspace = true

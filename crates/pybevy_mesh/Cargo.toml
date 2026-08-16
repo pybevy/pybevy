@@ -23,3 +23,5 @@ numpy = { workspace = true }
 workspace = true
 features = ["bevy_mesh", "bevy_asset", "bevy_pbr", "bevy_sprite", "bevy_sprite_render"]
 
+[lints]
+workspace = true

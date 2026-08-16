@@ -16,3 +16,6 @@ pybevy_math = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
+
+[lints]
+workspace = true

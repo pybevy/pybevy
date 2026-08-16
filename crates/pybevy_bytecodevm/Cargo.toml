@@ -33,3 +33,5 @@ harness = false
 name = "view_assignment"
 harness = false
 
+[lints]
+workspace = true

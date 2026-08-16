@@ -13,3 +13,6 @@ bevy = { workspace = true, features = ["bevy_render"] }
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
 naga = "29"
+
+[lints]
+workspace = true

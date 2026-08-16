@@ -24,3 +24,5 @@ sha2 = { workspace = true }
 workspace = true
 features = []
 
+[lints]
+workspace = true

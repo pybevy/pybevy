@@ -26,3 +26,6 @@ features = [
     "area_light_luts",
     "zstd_rust",
 ]
+
+[lints]
+workspace = true

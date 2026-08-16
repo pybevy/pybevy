@@ -33,3 +33,5 @@ features = [
     "bevy_log",
 ]
 
+[lints]
+workspace = true

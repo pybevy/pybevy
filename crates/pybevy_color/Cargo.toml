@@ -16,3 +16,5 @@ pybevy_math = { workspace = true }
 workspace = true
 features = ["bevy_color"]
 
+[lints]
+workspace = true

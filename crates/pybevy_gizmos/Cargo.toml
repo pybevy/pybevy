@@ -15,3 +15,6 @@ pybevy_macros = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = ["bevy_gizmos"]
+
+[lints]
+workspace = true

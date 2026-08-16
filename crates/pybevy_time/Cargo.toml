@@ -15,3 +15,6 @@ pybevy_core = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = []
+
+[lints]
+workspace = true

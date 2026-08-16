@@ -19,3 +19,6 @@ numpy = { workspace = true }
 [dependencies.bevy]
 workspace = true
 features = ["bevy_sprite", "bevy_sprite_render", "bevy_camera"]
+
+[lints]
+workspace = true

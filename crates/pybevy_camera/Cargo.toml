@@ -28,3 +28,5 @@ features = [
     "bevy_camera",
 ]
 
+[lints]
+workspace = true

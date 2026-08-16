@@ -24,3 +24,5 @@ criterion = "0.5"
 name = "elementwise"
 harness = false
 
+[lints]
+workspace = true
