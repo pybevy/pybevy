@@ -54,9 +54,8 @@ pub enum BufferLensError {
 impl fmt::Display for BufferLensError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BufferLensError::ForeignField { got, expected } => write!(
-                formatter,
-                "expression references a field from another source (key {got}, expected {expected})"
+            BufferLensError::ForeignField { .. } => formatter.write_str(
+                "expression combines fields from different lenses; create one lens and reuse it on both sides of the assignment",
             ),
             BufferLensError::OffsetOutOfBounds {
                 offset,

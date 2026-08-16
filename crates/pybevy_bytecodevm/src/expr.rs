@@ -10,6 +10,22 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use super::bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op};
 
+/// Extract exactly `N` expression arguments, rejecting malformed `args` lists
+/// with a `TypeError`.
+fn expect_args<'py, const N: usize>(
+    op_name: &str,
+    args: &Bound<'py, PyAny>,
+) -> PyResult<[Bound<'py, PyAny>; N]> {
+    let args_list = args.extract::<Vec<Bound<'py, PyAny>>>()?;
+    let got = args_list.len();
+    <[Bound<'py, PyAny>; N]>::try_from(args_list).map_err(|_| {
+        PyTypeError::new_err(format!(
+            "{op_name} operation requires {N} argument{}, got {got}",
+            if N == 1 { "" } else { "s" }
+        ))
+    })
+}
+
 /// Abstract Syntax Tree node for lazy expressions
 #[derive(Debug, Clone)]
 pub enum RustExpr {
@@ -533,44 +549,44 @@ impl RustExpr {
             }
 
             "eq" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Eq", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Eq(Box::new(left), Box::new(right)))
             }
 
             "ne" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Ne", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Ne(Box::new(left), Box::new(right)))
             }
 
             "lt" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Lt", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Lt(Box::new(left), Box::new(right)))
             }
 
             "le" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Le", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Le(Box::new(left), Box::new(right)))
             }
 
             "gt" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Gt", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Gt(Box::new(left), Box::new(right)))
             }
 
             "ge" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Ge", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Ge(Box::new(left), Box::new(right)))
             }
 
@@ -593,65 +609,65 @@ impl RustExpr {
             }
 
             "and" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("And", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::And(Box::new(left), Box::new(right)))
             }
 
             "or" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Or", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Or(Box::new(left), Box::new(right)))
             }
 
             "not" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Not", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Not(Box::new(expr)))
             }
 
             "exp" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Exp", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Exp(Box::new(expr)))
             }
 
             "ln" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Ln", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Ln(Box::new(expr)))
             }
 
             "log10" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Log10", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Log10(Box::new(expr)))
             }
 
             "log2" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Log2", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Log2(Box::new(expr)))
             }
 
             "sign" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Sign", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Sign(Box::new(expr)))
             }
 
             "fract" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let [inner] = expect_args("Fract", &args)?;
+                let expr = Self::from_py_object_with(py, &inner, resolver)?;
                 Ok(RustExpr::Fract(Box::new(expr)))
             }
 
             "mod" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let [left, right] = expect_args("Mod", &args)?;
+                let left = Self::from_py_object_with(py, &left, resolver)?;
+                let right = Self::from_py_object_with(py, &right, resolver)?;
                 Ok(RustExpr::Mod(Box::new(left), Box::new(right)))
             }
 
@@ -1251,6 +1267,36 @@ mod tests {
 
         let error = RustExpr::compile_assignment(destination, &expression).unwrap_err();
         assert!(error.to_string().contains("dense input"));
+    }
+
+    #[test]
+    fn from_py_object_rejects_missing_args_without_panicking() {
+        Python::initialize();
+        Python::attach(|py| {
+            let namespace = py
+                .import("types")
+                .unwrap()
+                .getattr("SimpleNamespace")
+                .unwrap();
+            for op in [
+                "eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "exp", "ln", "log10",
+                "log2", "sign", "fract", "mod", "add", "clamp", "where",
+            ] {
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("op", op).unwrap();
+                kwargs
+                    .set_item("args", pyo3::types::PyList::empty(py))
+                    .unwrap();
+                let malformed = namespace.call((), Some(&kwargs)).unwrap();
+
+                let error = RustExpr::from_py_object(py, &malformed)
+                    .expect_err("empty args must be rejected");
+                assert!(
+                    error.to_string().contains("requires"),
+                    "op {op}: unexpected error {error}"
+                );
+            }
+        });
     }
 
     #[test]
