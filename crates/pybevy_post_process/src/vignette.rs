@@ -37,18 +37,24 @@ impl PyVignette {
         center: Option<PyVec2>,
         edge_compensation: f32,
         color: Option<PyColor>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let vignette = Vignette {
             intensity,
             radius,
             smoothness,
             roundness,
-            center: center.map(Into::into).unwrap_or(Vec2::new(0.5, 0.5)),
+            center: center
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(Vec2::new(0.5, 0.5)),
             edge_compensation,
-            color: color.map(Into::into).unwrap_or(Color::BLACK),
+            color: color
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or(Color::BLACK),
         };
 
-        Self::from_owned(vignette).into()
+        Ok(Self::from_owned(vignette).into())
     }
 
     #[getter]
@@ -102,7 +108,7 @@ impl PyVignette {
 
     #[setter]
     pub fn set_center(&mut self, center: PyVec2) -> PyResult<()> {
-        self.as_mut()?.center = center.into();
+        self.as_mut()?.center = center.try_into()?;
         Ok(())
     }
 
@@ -119,12 +125,13 @@ impl PyVignette {
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |vignette| &vignette.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = color.try_into()?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 }

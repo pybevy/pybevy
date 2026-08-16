@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(BloomCompositeMode)]
-#[pyclass(name = "BloomCompositeMode", eq, from_py_object)]
+#[pyclass(name = "BloomCompositeMode", eq, from_py_object, frozen, hash)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyBloomCompositeMode {
     EnergyConserving,

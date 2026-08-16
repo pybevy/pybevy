@@ -10,16 +10,21 @@ pub struct PyWinitSettings(pub(crate) WinitSettings);
 impl PyWinitSettings {
     #[new]
     #[pyo3(signature = (focused_mode = None, unfocused_mode = None))]
-    pub fn new(focused_mode: Option<PyUpdateMode>, unfocused_mode: Option<PyUpdateMode>) -> Self {
+    pub fn new(
+        focused_mode: Option<PyUpdateMode>,
+        unfocused_mode: Option<PyUpdateMode>,
+    ) -> PyResult<Self> {
         let defaults = WinitSettings::default();
-        PyWinitSettings(WinitSettings {
+        Ok(PyWinitSettings(WinitSettings {
             focused_mode: focused_mode
-                .map(Into::into)
+                .map(TryInto::try_into)
+                .transpose()?
                 .unwrap_or(defaults.focused_mode),
             unfocused_mode: unfocused_mode
-                .map(Into::into)
+                .map(TryInto::try_into)
+                .transpose()?
                 .unwrap_or(defaults.unfocused_mode),
-        })
+        }))
     }
 
     #[staticmethod]

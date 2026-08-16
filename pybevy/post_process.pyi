@@ -15,6 +15,8 @@ class BloomCompositeMode:
     EnergyConserving: BloomCompositeMode
     Additive: BloomCompositeMode
 
+    def __hash__(self) -> int: ...
+
 class BloomPrefilter:
     """Threshold filter for extracting bright regions before bloom."""
 

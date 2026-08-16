@@ -1,6 +1,5 @@
-use std::time::Duration;
-
 use bevy::winit::UpdateMode;
+use pybevy_core::duration_from_secs_f64;
 use pyo3::prelude::*;
 
 #[pyclass(
@@ -25,14 +24,14 @@ pub enum PyUpdateMode {
 impl PyUpdateMode {
     #[staticmethod]
     #[pyo3(signature = (wait = 1.0))]
-    pub fn reactive(wait: f64) -> Self {
-        UpdateMode::reactive(Duration::from_secs_f64(wait)).into()
+    pub fn reactive(wait: f64) -> PyResult<Self> {
+        Ok(UpdateMode::reactive(duration_from_secs_f64(wait)?).into())
     }
 
     #[staticmethod]
     #[pyo3(signature = (wait = 1.0))]
-    pub fn reactive_low_power(wait: f64) -> Self {
-        UpdateMode::reactive_low_power(Duration::from_secs_f64(wait)).into()
+    pub fn reactive_low_power(wait: f64) -> PyResult<Self> {
+        Ok(UpdateMode::reactive_low_power(duration_from_secs_f64(wait)?).into())
     }
 
     pub fn __repr__(&self) -> String {
@@ -52,9 +51,11 @@ impl PyUpdateMode {
     }
 }
 
-impl From<PyUpdateMode> for UpdateMode {
-    fn from(val: PyUpdateMode) -> Self {
-        match val {
+impl TryFrom<PyUpdateMode> for UpdateMode {
+    type Error = PyErr;
+
+    fn try_from(val: PyUpdateMode) -> PyResult<Self> {
+        Ok(match val {
             PyUpdateMode::Continuous() => UpdateMode::Continuous,
             PyUpdateMode::Reactive {
                 wait,
@@ -62,12 +63,12 @@ impl From<PyUpdateMode> for UpdateMode {
                 react_to_user_events,
                 react_to_window_events,
             } => UpdateMode::Reactive {
-                wait: Duration::from_secs_f64(wait),
+                wait: duration_from_secs_f64(wait)?,
                 react_to_device_events,
                 react_to_user_events,
                 react_to_window_events,
             },
-        }
+        })
     }
 }
 
