@@ -1,5 +1,7 @@
 pub mod api_index;
 pub mod bridge;
+pub mod client;
+mod client_pyo3;
 pub mod handlers;
 mod image_preview;
 pub mod plugin;
@@ -46,5 +48,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<api_index::PyApiIndex>()?;
     m.add_function(wrap_pyfunction!(rust_tool_definitions, &m)?)?;
     m.add_function(wrap_pyfunction!(rust_resource_definitions, &m)?)?;
+    client_pyo3::add_functions(&m)?;
     parent.add_submodule(&m)
 }
