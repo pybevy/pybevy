@@ -25,7 +25,11 @@ pub struct DebugSnapshot {
 
     pub fps_average: f32,
     pub fps_current: f32,
+    /// Process-wide uptime, sourced from the operating system.
     pub uptime_secs: f64,
+    /// Elapsed real time in the current Bevy app generation. This resets on a
+    /// full reload when Bevy's `Time<Real>` resource is recreated.
+    pub generation_uptime_secs: f64,
 
     pub entity_count: usize,
     /// Asset type name → count (e.g. "Mesh" → 9)

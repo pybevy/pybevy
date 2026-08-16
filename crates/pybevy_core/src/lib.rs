@@ -43,13 +43,14 @@ pub mod duration;
 pub mod entity;
 pub mod handle;
 pub mod hierarchy;
+pub mod live_sequence;
+pub mod logical_type;
 pub extern crate inventory;
 pub mod borrowed_array_anchor;
 pub mod bridge_inventory;
-pub mod live_sequence;
-pub mod logical_type;
 pub mod materializable;
 pub mod message;
+pub mod native_system_set;
 pub mod numpy_view_guard;
 pub mod plugin;
 pub mod public_error;
@@ -59,10 +60,28 @@ pub mod reload_request;
 pub mod resource;
 pub mod source_location;
 
-// Storage layer — re-exported from pybevy_storage
+// Storage layer, re-exported from pybevy_storage
+use std::any::TypeId;
+
+use bevy::ecs::{
+    component::{Component, ComponentId},
+    entity::Entity,
+    hierarchy::{ChildOf, Children},
+    resource::Resource,
+    world::{EntityRef, EntityWorldMut, World},
+};
+pub use logical_type::PyLogicalComponentParam;
 pub use pybevy_storage::{
-    LogicalTypeId, LogicalTypeMap, batch_columns, field_storage, pyasset, pycomponent, pyresource,
-    storage_error, storage_traits, validity_guard, value_storage, view_bridge,
+    DefaultPluginKind, LogicalTypeId, LogicalTypeMap, PluginGroupAddition, PluginGroupPlacement,
+    batch_columns, field_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
+    validity_guard, value_storage, view_bridge,
+};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::PyRuntimeError,
+    ffi::PyTypeObject,
+    prelude::*,
+    types::{PyList, PyType},
 };
 
 #[pyclass(name = "_FloatLiveList", skip_from_py_object)]
@@ -72,22 +91,6 @@ pub struct PyFloatLiveList {
 }
 
 impl_live_scalar_list!(PyFloatLiveList, "_FloatLiveList", Vec<f32>, f32);
-
-use std::any::TypeId;
-
-use bevy::ecs::{
-    component::{Component, ComponentId},
-    entity::Entity,
-    hierarchy::{ChildOf, Children},
-    world::{EntityRef, EntityWorldMut, World},
-};
-use pyo3::{
-    PyTypeInfo,
-    exceptions::PyRuntimeError,
-    ffi::PyTypeObject,
-    prelude::*,
-    types::{PyList, PyType},
-};
 
 /// Build a re-resolving [`ComponentStorage<B>`] for a native/bridge component reached
 /// from `world.get`/`world.get_mut`, or `None` if the entity or component is absent.
@@ -110,6 +113,23 @@ pub unsafe fn resolve_revalidating_component<B: Component>(
     entity_ref.get_by_id(component_id).ok()?;
     // SAFETY: identity verified above; the handle re-resolves the address per access.
     Some(unsafe { ComponentStorage::revalidating(world_ptr, entity_id, component_id, validity) })
+}
+
+/// Build revalidating storage for a native resource reached through its entity.
+///
+/// # Safety
+/// `world_ptr` must remain valid while `validity` permits access and must not be
+/// dereferenced in a way that conflicts with the declared access mode.
+pub unsafe fn resolve_revalidating_resource<B: Resource>(
+    entity_id: Entity,
+    world_ptr: *mut World,
+    validity: ValidityFlagWithMode,
+) -> Option<ResourceStorage<B>> {
+    let world = unsafe { &*world_ptr };
+    let component_id = world.components().component_id::<B>()?;
+    let entity_ref = world.get_entity(entity_id).ok()?;
+    entity_ref.get_by_id(component_id).ok()?;
+    Some(unsafe { ResourceStorage::revalidating(world_ptr, entity_id, component_id, validity) })
 }
 
 /// Resolve an [`EntityRef`] from a raw world pointer, or `None` if the entity is gone.
@@ -151,6 +171,10 @@ impl ComponentBridge for ChildOfBridge {
 
     fn can_insert(&self) -> bool {
         true
+    }
+
+    fn relationship_field(&self) -> Option<&'static str> {
+        Some("value")
     }
 
     fn register(&self, world: &mut World) -> ComponentId {
@@ -409,7 +433,7 @@ impl ComponentBridge for ChildrenBridge {
     }
 }
 
-pub use asset::{NativeAsset, PyAsset};
+pub use asset::{NativeAsset, PyAsset, PyMaterial};
 pub use asset_access::{ActiveAssetAccessError, ensure_no_live_asset_access};
 pub use asset_cleanup::AssetCleanupRegistration;
 pub use asset_id::{
@@ -423,39 +447,57 @@ pub use bridge_inventory::{
 };
 pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
-pub use duration::duration_from_py;
+pub use duration::{
+    duration_from_hz, duration_from_py, duration_from_secs_f64, positive_duration_from_secs_f64,
+    try_duration_from_hz, try_duration_from_secs_f64, try_positive_duration_from_secs_f64,
+};
 pub use entity::PyEntity;
-pub use handle::{PyHandle, extract_handle_from_any};
+pub use handle::{PyHandle, ensure_asset_type, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};
+pub use native_system_set::NativeSystemSetRegistration;
 pub use plugin::{PluginBridge, PluginBuild, PyPlugin};
 pub use pybevy_storage::{
     AccessMode, ActiveAssetAccess, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError,
-    AssetAccessRegistry, AssetBorrowCounter, AssetRuntimeCore, AssetRuntimeError, AssetStorage,
-    BorrowableStorage, ComponentStorage, ComponentStorageInner, FieldOffset, FieldStorage,
-    FieldStorageInner, FieldType, FilteredEntityAccess, FromBorrowedStorage, ResourceStorage,
-    ResourceStorageInner, StorageError, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode,
-    ValidityGuard, ValueStorage, ValueStorageInner, ViewBridge, ViewFieldAccess, allocate_id,
-    consume_unstored_id,
+    AssetAccessRegistry, AssetAccessScope, AssetBorrowCounter, AssetResourceReadGuard,
+    AssetResourceState, AssetResourceWriteGuard, AssetRuntimeCore, AssetRuntimeError, AssetStorage,
+    BorrowableStorage, ComponentStorage, ComponentStorageInner, ComponentWriteContext, FieldOffset,
+    FieldStorage, FieldStorageInner, FieldType, FilteredEntityAccess, FromBorrowedStorage,
+    PendingViewClaim, ReadViewClaim, ResourceStorage, ResourceStorageInner, StorageError,
+    StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage,
+    ValueStorageInner, ViewBridge, ViewCounters, ViewFieldAccess, allocate_id, computed_owned,
+    consume_unstored_id, ensure_asset_access_registry,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{
-    AssetBridge, AssetInputConverter, BatchComponent, BatchFieldMeta, BatchableField,
-    ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn, ComponentBridge,
-    ExtractFn, MessageBridge, PluginConfigs, PreparedBatchComponent, PreparedNativeBatch,
-    PreparedNativeUniform, PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch,
-    ResourceBridge, batch_field_meta_for, field_type_of, set_field_from_numpy,
+    AssetBridge, AssetEventRecord, AssetInputConverter, AssetLoadFailedRecord, BatchComponent,
+    BatchFieldMeta, BatchableField, ComponentBatchInsertFn, ComponentBatchMeta,
+    ComponentBatchPrepareFn, ComponentBridge, ExtractFn, MessageBridge, PluginConfigs,
+    PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform, PreparedNativeUniformWith,
+    PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch, ResourceBridge,
+    batch_field_meta_for, field_type_of, set_field_from_numpy,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,
     LastSystemError, PendingReloadRequest, PyResourceStorage, ReloadRequestMode, ReloadResult,
 };
-pub use resource::PyResource;
+pub use resource::{PyResource, resource_initializer};
 pub use uuid;
 
 pub fn register_core_bridges() {
     registry::global_registry::register_component_bridge(ChildOfBridge);
     registry::global_registry::register_component_bridge(ChildrenBridge);
     registry::rust_batch::register_rust_batch_bridge();
+}
+
+#[cfg(test)]
+mod bridge_policy_tests {
+    use super::*;
+
+    #[test]
+    fn hierarchy_bridges_report_insertion_policy() {
+        assert!(ChildOfBridge.can_insert());
+        assert!(!ChildrenBridge.can_insert());
+    }
 }

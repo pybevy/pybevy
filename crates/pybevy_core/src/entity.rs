@@ -3,7 +3,9 @@
 //! This module provides the Python binding for Bevy's Entity type.
 
 use bevy::ecs::entity::Entity;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+use crate::public_error::invalid_entity_bits;
 
 #[pyclass(name = "Entity", eq, hash, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,8 +37,10 @@ impl PyEntity {
 
     /// Create Entity from u64 bits representation
     #[staticmethod]
-    pub fn from_bits(bits: u64) -> Self {
-        PyEntity(Entity::from_bits(bits))
+    pub fn from_bits(bits: u64) -> PyResult<Self> {
+        Entity::try_from_bits(bits)
+            .map(PyEntity)
+            .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(bits)))
     }
 
     pub fn __repr__(&self) -> String {
@@ -53,7 +57,7 @@ mod tests {
         let entity = Entity::from_bits(42);
         let py_entity = PyEntity::from(entity);
         let bits = py_entity.to_bits();
-        let restored = PyEntity::from_bits(bits);
+        let restored = PyEntity::from_bits(bits).unwrap();
         assert_eq!(py_entity, restored);
     }
 
@@ -68,7 +72,7 @@ mod tests {
 
     #[test]
     fn into_bevy_entity() {
-        let py_entity = PyEntity::from_bits(99);
+        let py_entity = PyEntity::from_bits(99).unwrap();
         let bevy_entity: Entity = py_entity.into();
         assert_eq!(bevy_entity.to_bits(), 99);
     }
@@ -82,9 +86,9 @@ mod tests {
 
     #[test]
     fn equality_and_hash() {
-        let a = PyEntity::from_bits(10);
-        let b = PyEntity::from_bits(10);
-        let c = PyEntity::from_bits(20);
+        let a = PyEntity::from_bits(10).unwrap();
+        let b = PyEntity::from_bits(10).unwrap();
+        let c = PyEntity::from_bits(20).unwrap();
         assert_eq!(a, b);
         assert_ne!(a, c);
 
@@ -97,8 +101,17 @@ mod tests {
 
     #[test]
     fn repr_contains_entity() {
-        let e = PyEntity::from_bits(42);
+        let e = PyEntity::from_bits(42).unwrap();
         let repr = e.__repr__();
         assert!(repr.starts_with("Entity("));
+    }
+
+    #[test]
+    fn invalid_bits_are_rejected_instead_of_panicking() {
+        // A zero low word is an invalid entity index, whatever the generation
+        // in the high word. Bevy's Entity::from_bits panics on both.
+        for bits in [0u64, 0xFFFF_FFFF_0000_0000] {
+            assert!(PyEntity::from_bits(bits).is_err(), "{bits:#x} was accepted");
+        }
     }
 }

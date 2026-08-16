@@ -7,7 +7,7 @@
 use bevy::ecs::hierarchy::{ChildOf, Children};
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
-use crate::{ComponentStorage, PyComponent, PyEntity};
+use crate::{ComponentStorage, PyComponent, PyEntity, StorageMut, StorageRef};
 
 #[pyclass(name = "ChildOf", extends = PyComponent, frozen)]
 #[derive(Debug)]
@@ -56,12 +56,12 @@ impl PyChildOf {
     }
 
     #[inline(always)]
-    pub fn as_ref(&self) -> PyResult<&ChildOf> {
+    pub fn as_ref(&self) -> PyResult<StorageRef<'_, ChildOf>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    pub fn as_mut(&mut self) -> PyResult<&mut ChildOf> {
+    pub fn as_mut(&mut self) -> PyResult<StorageMut<'_, ChildOf>> {
         Ok(self.storage.as_mut()?)
     }
 }
@@ -69,12 +69,26 @@ impl PyChildOf {
 #[pymethods]
 impl PyChildOf {
     #[new]
-    pub fn new(parent: PyEntity) -> PyClassInitializer<Self> {
-        Self::from_owned(ChildOf(parent.0)).into()
+    pub fn new(value: PyEntity) -> PyClassInitializer<Self> {
+        Self::from_owned(ChildOf(value.0)).into()
+    }
+
+    /// Bevy's `ChildOf(pub Entity)` payload.
+    ///
+    /// Read-only, unlike the Rust field: Bevy's relationship hooks only run on
+    /// insert/replace, so writing this in place would leave the old parent's
+    /// `Children` stale. Replace the whole component to reparent.
+    #[getter]
+    pub fn value(&self) -> PyResult<PyEntity> {
+        Ok(PyEntity(self.as_ref()?.0))
     }
 
     pub fn parent(&self) -> PyResult<PyEntity> {
         Ok(PyEntity(self.as_ref()?.parent()))
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("ChildOf({})", self.as_ref()?.parent()))
     }
 
     pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
@@ -85,7 +99,7 @@ impl PyChildOf {
 /// Auto-managed list of child entities.
 ///
 /// Maintained by Bevy when ChildOf relationships change.
-/// Not modifiable directly — add/remove ChildOf on children instead.
+/// Not modifiable directly: add/remove ChildOf on children instead.
 #[pyclass(name = "Children", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyChildren {
