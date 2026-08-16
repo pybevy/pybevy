@@ -14,7 +14,7 @@ use pybevy_core::{
 };
 use pybevy_macros::pyasset;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
-use pybevy_wgpu::{
+use pybevy_render::{
     extent3d::PyExtent3d, texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
 };
 use pyo3::{

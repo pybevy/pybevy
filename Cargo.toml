@@ -83,7 +83,6 @@ pybevy_image = { path = "./crates/pybevy_image", version = "=0.2.1" }
 pybevy_pbr = { path = "./crates/pybevy_pbr", version = "=0.2.1" }
 pybevy_shader = { path = "./crates/pybevy_shader", version = "=0.2.1" }
 pybevy_shader_types = { path = "./crates/pybevy_shader_types", version = "=0.2.1" }
-pybevy_wgpu = { path = "./crates/pybevy_wgpu", version = "=0.2.1" }
 pybevy_world_serialization = { path = "./crates/pybevy_world_serialization", version = "=0.2.1" }
 pybevy_control = { path = "./crates/pybevy_control", version = "=0.2.1" }
 pybevy_reload = { path = "./crates/pybevy_reload", version = "=0.2.1" }
@@ -111,7 +110,6 @@ pybevy_material = { workspace = true }
 pybevy_mesh = { workspace = true }
 pybevy_render = { workspace = true }
 pybevy_shader = { workspace = true }
-pybevy_wgpu = { workspace = true }
 pybevy_sprite = { workspace = true }
 pybevy_ecs = { workspace = true }
 pybevy_ui = { workspace = true }

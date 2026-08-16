@@ -13,7 +13,7 @@ pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
 pybevy_math = { workspace = true }
 pybevy_color = { workspace = true }
-pybevy_wgpu = { workspace = true }
+pybevy_render = { workspace = true }
 pybevy_array = { workspace = true, features = ["pyo3"] }
 image = { version = "0.25.6", default-features = false, features = ["jpeg", "png", "bmp", "dds", "exr", "hdr", "qoi", "pnm", "tga", "tiff", "webp"] }
 

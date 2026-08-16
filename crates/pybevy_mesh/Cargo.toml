@@ -14,7 +14,6 @@ pybevy_macros = { workspace = true }
 pybevy_math = { workspace = true }
 pybevy_image = { workspace = true }
 pybevy_render = { workspace = true }
-pybevy_wgpu = { workspace = true }
 pybevy_array = { workspace = true, features = ["pyo3"] }
 pybevy_transform = { workspace = true }
 numpy = { workspace = true }

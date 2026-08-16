@@ -12,9 +12,9 @@ from pybevy.ecs import Batchable, Component, Entity
 from pybevy.image import RenderAssetUsages
 from pybevy.math import Dir3, Quat, Vec2, Vec3
 from pybevy.pbr import StandardMaterial
+from pybevy.render import VertexFormat
 from pybevy.sprite import ColorMaterial
 from pybevy.transform import Transform
-from pybevy.wgpu import VertexFormat
 
 class MeshPlugin(Plugin):
     def __init__(self) -> None: ...

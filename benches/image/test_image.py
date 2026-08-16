@@ -7,8 +7,8 @@ from pybevy.app import App, MinimalPlugins, Startup, Update
 from pybevy.assets import AssetPlugin, Assets
 from pybevy.ecs import Commands, Query, ResMut
 from pybevy.image import Image, ImagePlugin
+from pybevy.render import Extent3d
 from pybevy.sprite import Sprite
-from pybevy.wgpu import Extent3d
 
 # 4K RGBA image = 3840 * 2160 * 4 bytes = ~33MB
 image_width = 3840

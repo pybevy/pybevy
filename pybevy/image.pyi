@@ -8,7 +8,7 @@ from pybevy.array import Array
 from pybevy.assets import Asset, Handle
 from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
-from pybevy.wgpu import Extent3d, TextureDimension, TextureFormat
+from pybevy.render import Extent3d, TextureDimension, TextureFormat
 
 class ImageFormat(Enum):
     """Image encoding format for saving/exporting images.
@@ -217,7 +217,7 @@ class Image(Asset):
     Examples:
         ```python
         from pybevy.image import Image
-        from pybevy.wgpu import Extent3d, TextureFormat
+        from pybevy.render import Extent3d, TextureFormat
         from pybevy.color import Color
 
         # Create a basic texture
@@ -263,7 +263,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
 
             # Create white 64x64 texture
             img = Image(Extent3d(64, 64, 1))
@@ -400,7 +400,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
 
             img = Image(Extent3d(64, 64, 1))
             # 64 * 64 * 4 bytes (RGBA8)
@@ -438,7 +438,7 @@ class Image(Asset):
         Example:
             >>> from pybevy.image import Image
             >>> from pybevy.image import ImageSampler
-            >>> from pybevy.wgpu import Extent3d
+            >>> from pybevy.render import Extent3d
             >>> img = Image(Extent3d(64, 64, 1))
             >>> img.sampler = ImageSampler.linear()  # Smooth filtering
             >>> img.sampler = ImageSampler.nearest()  # Pixel-perfect filtering
@@ -475,7 +475,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
             img = Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])
 
             with img.data() as pixels:
@@ -502,7 +502,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
             img = Image(Extent3d(64, 64, 1))
 
             with img.data_mut() as pixels:
@@ -532,7 +532,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
             from pybevy.math import UVec3
 
             img = Image(Extent3d(64, 64, 1))
@@ -558,7 +558,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
             from pybevy.math import UVec3
 
             img = Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])  # Red
@@ -593,7 +593,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d, TextureFormat
+            from pybevy.render import Extent3d, TextureFormat
             from pybevy.math import UVec3
 
             img = Image.new_fill(Extent3d(64, 64, 1), TextureFormat.Rgba8UnormSrgb, bytes([0, 0, 0, 255]))
@@ -626,7 +626,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
 
             img = Image(Extent3d(64, 64, 1))
 
@@ -662,7 +662,7 @@ class Image(Asset):
         Example:
             ```python
             from pybevy.image import Image
-            from pybevy.wgpu import Extent3d
+            from pybevy.render import Extent3d
             import numpy as np
 
             img = Image(Extent3d(64, 64, 1))
