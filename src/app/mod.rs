@@ -2,6 +2,13 @@ use bevy::ecs::{schedule::InternedScheduleLabel, world::World};
 use pybevy_ecs::shared::schedule::ScheduleKind;
 use pyo3::prelude::*;
 
+pybevy_core::register_native_system_set!(
+    intern_animation_systems,
+    bevy::app::AnimationSystems,
+    module = "app",
+    name = "AnimationSystems"
+);
+
 pub mod app;
 pub mod app_exit;
 pub mod chained_systems;
@@ -77,11 +84,13 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     app.add_class::<app::PyApp>()?;
     app.add_class::<PyStage>()?;
     app.add_class::<app_exit::PyAppExit>()?;
+    app_exit::register_app_exit_variants(&app)?;
     app.add_class::<chained_systems::PyChainedSystems>()?;
     app.add_class::<chained_systems::PyChainedSystemSets>()?;
     app.add_class::<hot_reload::bindings::PyAppReloadState>()?;
     app.add_class::<hot_reload::bindings::PyHotReloadControl>()?;
     app.add_class::<hot_reload::bindings::PyHotReloadPlugin>()?;
+    app.add_class::<hot_reload::watcher::PyFileWatcher>()?;
     app.add_class::<plugins::PyDefaultPlugins>()?;
     app.add_class::<plugins::PyPluginGroupBuilder>()?;
     app.add_class::<plugins::PyMinimalPlugins>()?;
