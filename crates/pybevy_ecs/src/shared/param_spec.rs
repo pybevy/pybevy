@@ -27,7 +27,7 @@ use bevy::ecs::{
 };
 
 use super::{
-    access_sets::{QueryParamAccess, build_resource_access},
+    access_sets::{QueryParamAccess, build_resource_accesses},
     access_validation::{ComponentAccess, ComponentAccessConflict, ParamAccess, QueryFilters},
 };
 
@@ -41,6 +41,28 @@ pub trait BackendKeys {
     type MessageKey;
 }
 
+/// Scheduler access required by a parameter independently of the Python
+/// binding's apparent mutability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchedulerAccess {
+    Shared,
+    Exclusive,
+}
+
+impl SchedulerAccess {
+    pub const fn from_mutable(mutable: bool) -> Self {
+        if mutable {
+            Self::Exclusive
+        } else {
+            Self::Shared
+        }
+    }
+
+    pub const fn is_exclusive(self) -> bool {
+        matches!(self, Self::Exclusive)
+    }
+}
+
 /// One data component of a Query/View parameter.
 pub struct ComponentSpec<K: BackendKeys> {
     pub key: K::ComponentKey,
@@ -51,6 +73,11 @@ pub struct ComponentSpec<K: BackendKeys> {
     /// (for example, class-name or type-identity strings).
     pub label: String,
     pub mutable: bool,
+    pub scheduler_access: SchedulerAccess,
+    /// Whether this item returns the component value to the interpreter.
+    /// Tick-filter helper entries resolve the same component id without
+    /// materializing its opaque storage.
+    pub materializes: bool,
     pub optional: bool,
 }
 
@@ -68,11 +95,9 @@ pub struct QuerySpec<K: BackendKeys> {
     pub without: Vec<FilterSpec<K>>,
     pub changed: Vec<FilterSpec<K>>,
     pub added: Vec<FilterSpec<K>>,
-    /// Has/AnyOf components: resolved so the runtime query builder finds their
-    /// ids registered, but they contribute no access and no filter. `Has`
-    /// matches regardless of the component's presence; `AnyOf` has OR
-    /// semantics that a conjunctive `With` cannot express. Omitting both is
-    /// conservative: it only costs parallelism, never soundness.
+    /// Has components: resolved so the runtime query builder finds their ids,
+    /// but they contribute no access and no filter because Has matches every
+    /// entity regardless of the component's presence.
     pub resolve_only: Vec<K::ComponentKey>,
 }
 
@@ -91,6 +116,8 @@ impl<K: BackendKeys> Default for QuerySpec<K> {
 
 /// Backend-neutral shape of one system parameter.
 pub enum ParamSpec<K: BackendKeys> {
+    /// Value supplied by the previous stage of a compound pipe; no World access.
+    Input,
     Query(QuerySpec<K>),
     View(QuerySpec<K>),
     Res {
@@ -102,11 +129,13 @@ pub enum ParamSpec<K: BackendKeys> {
         /// Display name for conflict messages.
         name: String,
         mutable: bool,
+        scheduler_access: SchedulerAccess,
     },
     Assets {
         key: K::AssetKey,
-        /// Conflict-validation key; distinct asset collections must produce
-        /// distinct strings.
+        /// Conflict-validation key for the physical `Assets<T>` resource;
+        /// logical wrappers over the same collection must produce the same
+        /// string.
         vkey: String,
         /// Display name for conflict messages.
         name: String,
@@ -114,6 +143,7 @@ pub enum ParamSpec<K: BackendKeys> {
     },
     MessageReader {
         key: K::MessageKey,
+        scheduler_access: SchedulerAccess,
     },
     MessageWriter {
         key: K::MessageKey,
@@ -123,6 +153,10 @@ pub enum ParamSpec<K: BackendKeys> {
     },
     World,
     Commands,
+    Gizmos {
+        key: K::ResourceKey,
+        name: String,
+    },
     Local,
     Observer,
 }
@@ -148,6 +182,14 @@ pub struct ResolvedMessage {
     pub writes: Vec<ComponentId>,
 }
 
+/// Resolved ids for an asset parameter. The primary id is `Assets<T>` and
+/// auxiliary reads cover shared registry state used by the runtime adapter.
+#[derive(Default, Clone)]
+pub struct ResolvedAsset {
+    pub primary: Option<ComponentId>,
+    pub aux_reads: Vec<ComponentId>,
+}
+
 /// Resolves backend keys to `ComponentId`s during the access walk.
 ///
 /// Implementations must REGISTER ids (not just look them up) wherever the
@@ -157,19 +199,32 @@ pub struct ResolvedMessage {
 /// nothing.
 pub trait KeyResolver<K: BackendKeys> {
     fn component_id(&mut self, world: &mut World, key: &K::ComponentKey) -> Option<ComponentId>;
+    fn component_scheduler_access(
+        &mut self,
+        _world: &World,
+        _key: &K::ComponentKey,
+        _component_id: ComponentId,
+        requested: SchedulerAccess,
+        _materializes: bool,
+        _mutable: bool,
+    ) -> SchedulerAccess {
+        requested
+    }
     fn resource_ids(&mut self, world: &mut World, key: &K::ResourceKey) -> ResolvedResource;
-    fn asset_id(&mut self, world: &mut World, key: &K::AssetKey) -> Option<ComponentId>;
+    fn asset_ids(&mut self, world: &mut World, key: &K::AssetKey) -> ResolvedAsset;
     fn message_ids(
         &mut self,
         world: &mut World,
         key: &K::MessageKey,
         write: bool,
     ) -> ResolvedMessage;
+    fn gizmo_config_id(&mut self, world: &mut World) -> ComponentId;
     /// Resources the backend's run scaffold touches on EVERY run regardless of
     /// the parameter list (generation guard, profiling epilogue, error sinks).
     /// The walk appends these to the declared reads unconditionally so a
     /// backend cannot forget them; the differential tests pin the common set.
     fn infrastructure_reads(&mut self, world: &mut World) -> Vec<ComponentId>;
+    fn resource_marker_id(&mut self, world: &mut World) -> Option<ComponentId>;
 }
 
 /// Everything `System::initialize` needs from the access walk.
@@ -193,8 +248,10 @@ fn push_unique(ids: &mut Vec<ComponentId>, id: ComponentId) {
 /// One `FilteredAccess` per Query/View parameter, so a filter on one query
 /// never narrows another parameter's declared access (that would fabricate
 /// disjointness and let the scheduler parallelize conflicting systems).
-/// Resource-like access is gathered into a single shared `FilteredAccess`
-/// appended at the end.
+/// Each resource-like id gets its own `FilteredAccess`, matching Bevy's
+/// `add_resource_read`/`add_resource_write` behavior. Combining resource ids
+/// would create a false conjunctive archetype filter because resources live on
+/// separate entities.
 ///
 /// Exclusive systems (any `World` parameter) declare NO access, exactly like
 /// Bevy's `ExclusiveFunctionSystem` (its initialize returns
@@ -225,11 +282,19 @@ pub fn build_declared_access<K: BackendKeys>(
                     let Some(id) = resolver.component_id(world, &comp.key) else {
                         continue;
                     };
+                    let scheduler_access = resolver.component_scheduler_access(
+                        world,
+                        &comp.key,
+                        id,
+                        comp.scheduler_access,
+                        comp.materializes,
+                        comp.mutable,
+                    );
                     // A required component gates the access, so it also
                     // contributes a `With` (added by `build`). An optional
                     // component may be absent while the query still matches,
                     // so it contributes access without a `With`.
-                    match (comp.mutable, comp.optional) {
+                    match (scheduler_access.is_exclusive(), comp.optional) {
                         (true, false) => access.writes.push(id),
                         (false, false) => access.reads.push(id),
                         (true, true) => access.optional_writes.push(id),
@@ -258,15 +323,32 @@ pub fn build_declared_access<K: BackendKeys>(
                         access.reads.push(id);
                     }
                 }
-                // Has/AnyOf: no access, no filter (see `QuerySpec::resolve_only`).
+                // Has: no access, no filter (see `QuerySpec::resolve_only`).
                 for key in &spec.resolve_only {
                     let _ = resolver.component_id(world, key);
                 }
 
                 param_accesses.push(access.build());
             }
-            ParamSpec::Res { key, mutable, .. } => {
+            ParamSpec::Res {
+                key,
+                scheduler_access,
+                ..
+            } => {
                 let resolved = resolver.resource_ids(world, key);
+                if let Some(id) = resolved.primary {
+                    if scheduler_access.is_exclusive() {
+                        push_unique(&mut resources_to_write, id);
+                    } else {
+                        push_unique(&mut resources_to_read, id);
+                    }
+                }
+                for id in resolved.aux_reads {
+                    push_unique(&mut resources_to_read, id);
+                }
+            }
+            ParamSpec::Assets { key, mutable, .. } => {
+                let resolved = resolver.asset_ids(world, key);
                 if let Some(id) = resolved.primary {
                     if *mutable {
                         push_unique(&mut resources_to_write, id);
@@ -278,22 +360,21 @@ pub fn build_declared_access<K: BackendKeys>(
                     push_unique(&mut resources_to_read, id);
                 }
             }
-            ParamSpec::Assets { key, mutable, .. } => {
-                if let Some(id) = resolver.asset_id(world, key) {
-                    if *mutable {
-                        push_unique(&mut resources_to_write, id);
-                    } else {
-                        push_unique(&mut resources_to_read, id);
-                    }
+            ParamSpec::MessageReader {
+                key,
+                scheduler_access,
+            } => {
+                let write = scheduler_access.is_exclusive();
+                let resolved = resolver.message_ids(world, key, write);
+                for id in resolved.writes {
+                    push_unique(&mut resources_to_write, id);
+                }
+                for id in resolved.reads {
+                    push_unique(&mut resources_to_read, id);
                 }
             }
-            ParamSpec::MessageReader { key }
-            | ParamSpec::MessageWriter { key }
-            | ParamSpec::MessageMutator { key } => {
-                let write = matches!(
-                    param,
-                    ParamSpec::MessageWriter { .. } | ParamSpec::MessageMutator { .. }
-                );
+            ParamSpec::MessageWriter { key } | ParamSpec::MessageMutator { key } => {
+                let write = true;
                 let resolved = resolver.message_ids(world, key, write);
                 for id in resolved.writes {
                     push_unique(&mut resources_to_write, id);
@@ -305,11 +386,14 @@ pub fn build_declared_access<K: BackendKeys>(
             ParamSpec::World => {
                 needs_world = true;
             }
+            ParamSpec::Gizmos { .. } => {
+                push_unique(&mut resources_to_read, resolver.gizmo_config_id(world));
+            }
             // A `Commands` param defers every structural mutation into its
             // queue (applied at apply_deferred); entity reservation goes
             // through the atomic entity allocator. Local and Observer carry no
             // world access. All three declare nothing.
-            ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {}
+            ParamSpec::Input | ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {}
         }
     }
 
@@ -324,10 +408,12 @@ pub fn build_declared_access<K: BackendKeys>(
         for access in param_accesses {
             set.add(access);
         }
-        set.add(build_resource_access(
-            &resources_to_read,
-            &resources_to_write,
-        ));
+        let resource_marker = resolver.resource_marker_id(world);
+        for access in
+            build_resource_accesses(&resources_to_read, &resources_to_write, resource_marker)
+        {
+            set.add(access);
+        }
         set
     };
 
@@ -344,6 +430,8 @@ pub fn build_declared_access<K: BackendKeys>(
 /// `component_vkey` maps a component key to the validation key: a stable
 /// pre-world key at construction/registration time (name string or type
 /// pointer), or the resolved `ComponentId` when a `World` is available.
+/// `resource_marker_vkey` is the canonical identity of Bevy's `IsResource`
+/// marker and must not be derived from a display name.
 /// `message_vkey` supplies the corresponding channel identity and display name.
 ///
 /// Disjointness filters include an implicit `With` for every queried
@@ -353,6 +441,8 @@ pub fn build_declared_access<K: BackendKeys>(
 pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
     params: &[ParamSpec<K>],
     mut component_vkey: impl FnMut(&K::ComponentKey) -> VK,
+    mut resource_vkey: impl FnMut(&K::ResourceKey) -> VK,
+    resource_marker_vkey: VK,
     mut message_vkey: impl FnMut(&K::MessageKey) -> (String, String),
 ) -> Vec<ParamAccess<VK>> {
     params
@@ -365,35 +455,40 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                     .map(|c| ComponentAccess {
                         key: component_vkey(&c.key),
                         name: c.name.clone(),
-                        mutable: c.mutable,
+                        mutable: c.scheduler_access.is_exclusive(),
                     })
                     .collect();
 
                 let mut filters = QueryFilters::default();
                 for c in &spec.components {
-                    filters.with.insert(c.label.clone());
+                    if !c.optional {
+                        filters.with.insert(component_vkey(&c.key));
+                    }
                 }
                 for f in &spec.with {
-                    filters.with.insert(f.label.clone());
+                    filters.with.insert(component_vkey(&f.key));
                 }
                 for f in &spec.without {
-                    filters.without.insert(f.label.clone());
+                    filters.without.insert(component_vkey(&f.key));
                 }
                 for f in spec.changed.iter().chain(&spec.added) {
-                    filters.with.insert(f.label.clone());
+                    filters.with.insert(component_vkey(&f.key));
                 }
 
                 ParamAccess::Components { accesses, filters }
             }
             ParamSpec::Res {
-                vkey: Some(vkey),
+                key,
+                vkey: Some(_),
                 name,
                 mutable,
+                scheduler_access,
                 ..
             } => ParamAccess::Resource {
-                key: *vkey,
+                key: resource_vkey(key),
+                marker: resource_marker_vkey.clone(),
                 name: name.clone(),
-                mutable: *mutable,
+                mutable: scheduler_access.is_exclusive() || *mutable,
             },
             ParamSpec::Res { vkey: None, .. } => ParamAccess::None,
             ParamSpec::Assets {
@@ -406,21 +501,35 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 name: name.clone(),
                 mutable: *mutable,
             },
-            ParamSpec::MessageReader { key }
-            | ParamSpec::MessageWriter { key }
-            | ParamSpec::MessageMutator { key } => {
+            ParamSpec::MessageReader {
+                key,
+                scheduler_access,
+            } => {
                 let (key, name) = message_vkey(key);
                 ParamAccess::Message {
                     key,
                     name,
-                    mutable: matches!(
-                        param,
-                        ParamSpec::MessageWriter { .. } | ParamSpec::MessageMutator { .. }
-                    ),
+                    mutable: scheduler_access.is_exclusive(),
+                }
+            }
+            ParamSpec::MessageWriter { key } | ParamSpec::MessageMutator { key } => {
+                let (key, name) = message_vkey(key);
+                ParamAccess::Message {
+                    key,
+                    name,
+                    mutable: true,
                 }
             }
             ParamSpec::World => ParamAccess::World,
-            ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => ParamAccess::None,
+            ParamSpec::Gizmos { key, name } => ParamAccess::Resource {
+                key: resource_vkey(key),
+                marker: resource_marker_vkey.clone(),
+                name: name.clone(),
+                mutable: false,
+            },
+            ParamSpec::Input | ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {
+                ParamAccess::None
+            }
         })
         .collect()
 }
@@ -431,6 +540,10 @@ pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflic
         || conflict.existing_name.starts_with("Message<")
     {
         "message"
+    } else if conflict.comp_name.starts_with("Assets<")
+        || conflict.existing_name.starts_with("Assets<")
+    {
+        "asset"
     } else {
         "component"
     };
@@ -459,31 +572,72 @@ pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflic
     )
 }
 
+/// Interpreter-neutral reason a parameter is rejected in a run condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionRejection {
+    Input,
+    World,
+    Commands,
+    Gizmos,
+    MessageWriter,
+    MessageMutator,
+    MessageReader,
+    OpaqueMessageReader,
+    ResMut,
+    OpaqueResource,
+    MutableAssets,
+    MutableQuery,
+    OpaqueQuery,
+    MutableView,
+    OpaqueView,
+}
+
 /// Describe why a parameter is rejected in a run condition, or `None` if the
 /// parameter is read-only and therefore allowed. A run condition may only read
 /// the world: it is evaluated under Bevy's read-only system contract and its
 /// deferred operations (e.g. `Commands`) are never applied.
-pub fn condition_param_rejection<K: BackendKeys>(param: &ParamSpec<K>) -> Option<&'static str> {
+pub fn condition_param_rejection<K: BackendKeys>(
+    param: &ParamSpec<K>,
+) -> Option<ConditionRejection> {
     match param {
-        ParamSpec::World => Some("World (exclusive world access)"),
-        ParamSpec::Commands => Some("Commands (queued mutations are never applied to conditions)"),
-        ParamSpec::MessageWriter { .. } => {
-            Some("MessageWriter (writing messages mutates the world)")
-        }
-        ParamSpec::MessageMutator { .. } => {
-            Some("MessageMutator (reading, mutating, and writing messages mutates the world)")
-        }
-        ParamSpec::MessageReader { .. } => Some(
-            "MessageReader (advancing the read cursor mutates reader state; \
-             read messages in a regular system instead)",
-        ),
-        ParamSpec::Res { mutable: true, .. } => Some("ResMut (mutable resource access)"),
-        ParamSpec::Assets { mutable: true, .. } => Some("mutable Assets (mutable asset access)"),
+        ParamSpec::Input => Some(ConditionRejection::Input),
+        ParamSpec::World => Some(ConditionRejection::World),
+        ParamSpec::Commands => Some(ConditionRejection::Commands),
+        ParamSpec::Gizmos { .. } => Some(ConditionRejection::Gizmos),
+        ParamSpec::MessageWriter { .. } => Some(ConditionRejection::MessageWriter),
+        ParamSpec::MessageMutator { .. } => Some(ConditionRejection::MessageMutator),
+        ParamSpec::MessageReader {
+            scheduler_access: SchedulerAccess::Exclusive,
+            ..
+        } => Some(ConditionRejection::OpaqueMessageReader),
+        ParamSpec::MessageReader { .. } => Some(ConditionRejection::MessageReader),
+        ParamSpec::Res { mutable: true, .. } => Some(ConditionRejection::ResMut),
+        ParamSpec::Res {
+            scheduler_access: SchedulerAccess::Exclusive,
+            ..
+        } => Some(ConditionRejection::OpaqueResource),
+        ParamSpec::Assets { mutable: true, .. } => Some(ConditionRejection::MutableAssets),
         ParamSpec::Query(spec) if spec.components.iter().any(|c| c.mutable) => {
-            Some("Query with a Mut component (mutable component access)")
+            Some(ConditionRejection::MutableQuery)
+        }
+        ParamSpec::Query(spec)
+            if spec
+                .components
+                .iter()
+                .any(|c| c.scheduler_access.is_exclusive()) =>
+        {
+            Some(ConditionRejection::OpaqueQuery)
         }
         ParamSpec::View(spec) if spec.components.iter().any(|c| c.mutable) => {
-            Some("View with a Mut component (mutable component access)")
+            Some(ConditionRejection::MutableView)
+        }
+        ParamSpec::View(spec)
+            if spec
+                .components
+                .iter()
+                .any(|c| c.scheduler_access.is_exclusive()) =>
+        {
+            Some(ConditionRejection::OpaqueView)
         }
         _ => None,
     }
@@ -515,19 +669,40 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
     params
         .iter()
         .map(|param| match param {
+            ParamSpec::Input => "input".to_string(),
             ParamSpec::Query(spec) => describe_query_spec("query", spec),
             ParamSpec::View(spec) => describe_query_spec("view", spec),
-            ParamSpec::Res { vkey, mutable, .. } => format!(
-                "res mutable={} vkey={}",
+            ParamSpec::Res {
+                vkey,
                 mutable,
+                scheduler_access,
+                ..
+            } => format!(
+                "res mutable={} scheduler={} vkey={}",
+                mutable,
+                if scheduler_access.is_exclusive() {
+                    "exclusive"
+                } else {
+                    "shared"
+                },
                 if vkey.is_some() { "present" } else { "none" }
             ),
             ParamSpec::Assets { mutable, .. } => format!("assets mutable={mutable}"),
-            ParamSpec::MessageReader { .. } => "message_reader".to_string(),
+            ParamSpec::MessageReader {
+                scheduler_access, ..
+            } => format!(
+                "message_reader scheduler={}",
+                if scheduler_access.is_exclusive() {
+                    "exclusive"
+                } else {
+                    "shared"
+                }
+            ),
             ParamSpec::MessageWriter { .. } => "message_writer".to_string(),
             ParamSpec::MessageMutator { .. } => "message_mutator".to_string(),
             ParamSpec::World => "world".to_string(),
             ParamSpec::Commands => "commands".to_string(),
+            ParamSpec::Gizmos { .. } => "gizmos".to_string(),
             ParamSpec::Local => "local".to_string(),
             ParamSpec::Observer => "observer".to_string(),
         })
@@ -558,12 +733,12 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
 /// shifts either backend's lowering fails that backend's suite against the
 /// same expectation: the drift tripwire for the extraction campaign.
 pub const LOWERING_CORPUS_GOLDEN: &[&str] = &[
-    "query components=[Position(mut), Velocity(read,opt)] \
+    "query components=[Position(mut), Velocity(opaque,opt)] \
      with=1 without=1 changed=1 added=0 resolve_only=1",
     "view components=[Transform(mut)] with=0 without=0 changed=1 added=0 resolve_only=0",
-    "res mutable=false vkey=present",
+    "res mutable=false scheduler=shared vkey=present",
     "assets mutable=true",
-    "message_reader",
+    "message_reader scheduler=shared",
     "message_writer",
     "message_mutator",
     "world",
@@ -580,7 +755,13 @@ fn describe_query_spec<K: BackendKeys>(kind: &str, spec: &QuerySpec<K>) -> Strin
             format!(
                 "{}({}{})",
                 c.name,
-                if c.mutable { "mut" } else { "read" },
+                if c.mutable {
+                    "mut"
+                } else if c.scheduler_access.is_exclusive() {
+                    "opaque"
+                } else {
+                    "read"
+                },
                 if c.optional { ",opt" } else { "" }
             )
         })
@@ -599,7 +780,7 @@ fn describe_query_spec<K: BackendKeys>(kind: &str, spec: &QuerySpec<K>) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use bevy::ecs::{
         component::Component,
@@ -625,6 +806,8 @@ mod tests {
     struct Infra1;
     #[derive(Component)]
     struct Infra2;
+    #[derive(Component)]
+    struct GizmoConfigMarker;
 
     struct MockKeys;
     impl BackendKeys for MockKeys {
@@ -638,10 +821,11 @@ mod tests {
     struct MockResolver {
         components: HashMap<&'static str, ComponentId>,
         resources: HashMap<&'static str, ResolvedResource>,
-        assets: HashMap<&'static str, ComponentId>,
+        assets: HashMap<&'static str, ResolvedAsset>,
         messages: HashMap<&'static str, ResolvedMessage>,
         infra: Vec<ComponentId>,
         component_calls: Vec<&'static str>,
+        opaque_components: HashSet<&'static str>,
     }
 
     impl KeyResolver<MockKeys> for MockResolver {
@@ -650,12 +834,28 @@ mod tests {
             self.components.get(key).copied()
         }
 
+        fn component_scheduler_access(
+            &mut self,
+            _world: &World,
+            key: &&'static str,
+            _component_id: ComponentId,
+            requested: SchedulerAccess,
+            materializes: bool,
+            mutable: bool,
+        ) -> SchedulerAccess {
+            if mutable || (materializes && self.opaque_components.contains(key)) {
+                SchedulerAccess::Exclusive
+            } else {
+                requested
+            }
+        }
+
         fn resource_ids(&mut self, _world: &mut World, key: &&'static str) -> ResolvedResource {
             self.resources.get(key).cloned().unwrap_or_default()
         }
 
-        fn asset_id(&mut self, _world: &mut World, key: &&'static str) -> Option<ComponentId> {
-            self.assets.get(key).copied()
+        fn asset_ids(&mut self, _world: &mut World, key: &&'static str) -> ResolvedAsset {
+            self.assets.get(key).cloned().unwrap_or_default()
         }
 
         fn message_ids(
@@ -669,6 +869,14 @@ mod tests {
 
         fn infrastructure_reads(&mut self, _world: &mut World) -> Vec<ComponentId> {
             self.infra.clone()
+        }
+
+        fn gizmo_config_id(&mut self, world: &mut World) -> ComponentId {
+            world.register_component::<GizmoConfigMarker>()
+        }
+
+        fn resource_marker_id(&mut self, _world: &mut World) -> Option<ComponentId> {
+            None
         }
     }
 
@@ -702,8 +910,16 @@ mod tests {
             name: key.to_string(),
             label: key.to_string(),
             mutable,
+            scheduler_access: SchedulerAccess::from_mutable(mutable),
+            materializes: true,
             optional,
         }
+    }
+
+    fn opaque_comp(key: &'static str, optional: bool) -> ComponentSpec<MockKeys> {
+        let mut component = comp(key, false, optional);
+        component.scheduler_access = SchedulerAccess::Exclusive;
+        component
     }
 
     fn filter(key: &'static str) -> FilterSpec<MockKeys> {
@@ -759,6 +975,44 @@ mod tests {
     }
 
     #[test]
+    fn opaque_component_read_declares_write_but_keeps_read_binding() {
+        let (mut world, mut resolver) = setup();
+        let t_id = resolver.components["T"];
+        let spec = QuerySpec {
+            components: vec![opaque_comp("T", false)],
+            ..Default::default()
+        };
+        assert!(!spec.components[0].mutable);
+
+        let declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::Query(spec)],
+            &mut resolver,
+        );
+
+        assert!(declared.set.combined_access().has_write(t_id));
+    }
+
+    #[test]
+    fn opaque_optional_and_anyof_items_declare_unfiltered_writes() {
+        let (mut world, mut resolver) = setup();
+        let t_id = resolver.components["T"];
+        let u_id = resolver.components["U"];
+        let spec = QuerySpec {
+            components: vec![opaque_comp("T", true), opaque_comp("U", true)],
+            ..Default::default()
+        };
+        let declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::Query(spec)],
+            &mut resolver,
+        );
+
+        assert!(declared.set.combined_access().has_write(t_id));
+        assert!(declared.set.combined_access().has_write(u_id));
+    }
+
+    #[test]
     fn changed_filter_declares_read_and_conflicts_with_writer() {
         let (mut world, mut resolver) = setup();
         let b_id = resolver.components["B"];
@@ -777,6 +1031,41 @@ mod tests {
         let native = world.query_filtered::<&mut B, ()>();
         let native = set_of(native.component_access().clone());
         assert!(!declared.set.is_compatible(&native));
+    }
+
+    #[test]
+    fn opaque_component_presence_and_tick_filters_remain_reads() {
+        let (mut world, mut resolver) = setup();
+        let b_id = resolver.components["B"];
+        resolver.opaque_components.insert("B");
+        let mut tick_branch = comp("B", false, true);
+        tick_branch.materializes = false;
+        let spec = QuerySpec {
+            components: vec![comp("A", false, false)],
+            changed: vec![filter("B")],
+            resolve_only: vec!["B"],
+            ..Default::default()
+        };
+        let declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::Query(spec)],
+            &mut resolver,
+        );
+
+        assert!(declared.set.combined_access().has_read(b_id));
+        assert!(!declared.set.combined_access().has_write(b_id));
+
+        let or_spec = QuerySpec {
+            components: vec![comp("A", false, false), tick_branch],
+            ..Default::default()
+        };
+        let or_declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::Query(or_spec)],
+            &mut resolver,
+        );
+        assert!(or_declared.set.combined_access().has_read(b_id));
+        assert!(!or_declared.set.combined_access().has_write(b_id));
     }
 
     #[test]
@@ -844,12 +1133,14 @@ mod tests {
                 vkey: Some(1),
                 name: "R1".to_string(),
                 mutable: false,
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::<MockKeys>::Res {
                 key: "r2",
                 vkey: Some(2),
                 name: "R2".to_string(),
                 mutable: true,
+                scheduler_access: SchedulerAccess::Exclusive,
             },
         ];
         let declared = build_declared_access(&mut world, &params, &mut resolver);
@@ -869,10 +1160,41 @@ mod tests {
     }
 
     #[test]
+    fn opaque_resource_read_routes_to_scheduler_write() {
+        let (mut world, mut resolver) = setup();
+        let resource = world.register_component::<R1>();
+        resolver.resources.insert(
+            "opaque",
+            ResolvedResource {
+                primary: Some(resource),
+                aux_reads: vec![],
+            },
+        );
+        let params = [ParamSpec::<MockKeys>::Res {
+            key: "opaque",
+            vkey: Some(1),
+            name: "Opaque".to_string(),
+            mutable: false,
+            scheduler_access: SchedulerAccess::Exclusive,
+        }];
+
+        let declared = build_declared_access(&mut world, &params, &mut resolver);
+        assert!(declared.resources_to_write.contains(&resource));
+        assert!(declared.set.combined_access().has_write(resource));
+    }
+
+    #[test]
     fn assets_route_by_mutability() {
         let (mut world, mut resolver) = setup();
         let mesh = world.register_component::<R1>();
-        resolver.assets.insert("Mesh", mesh);
+        let registry = world.register_component::<R2>();
+        resolver.assets.insert(
+            "Mesh",
+            ResolvedAsset {
+                primary: Some(mesh),
+                aux_reads: vec![registry],
+            },
+        );
 
         let params = [ParamSpec::<MockKeys>::Assets {
             key: "Mesh",
@@ -882,6 +1204,7 @@ mod tests {
         }];
         let declared = build_declared_access(&mut world, &params, &mut resolver);
         assert!(declared.set.combined_access().has_write(mesh));
+        assert!(declared.set.combined_access().has_read(registry));
     }
 
     #[test]
@@ -907,9 +1230,11 @@ mod tests {
         let params = [
             ParamSpec::<MockKeys>::MessageReader {
                 key: "KeyboardInput",
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::<MockKeys>::MessageReader {
                 key: "KeyboardInput",
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::<MockKeys>::MessageWriter { key: "Collision" },
         ];
@@ -942,7 +1267,10 @@ mod tests {
         );
         let reader = build_declared_access(
             &mut world,
-            &[ParamSpec::<MockKeys>::MessageReader { key: "Tick" }],
+            &[ParamSpec::<MockKeys>::MessageReader {
+                key: "Tick",
+                scheduler_access: SchedulerAccess::Shared,
+            }],
             &mut reader_resolver,
         );
         let mut writer_resolver = MockResolver::default();
@@ -960,6 +1288,31 @@ mod tests {
         );
 
         assert!(!reader.set.is_compatible(&writer.set));
+    }
+
+    #[test]
+    fn opaque_message_reader_declares_channel_write() {
+        let mut world = World::new();
+        let channel = world.register_component::<R1>();
+        let mut resolver = MockResolver::default();
+        resolver.messages.insert(
+            "Custom",
+            ResolvedMessage {
+                reads: vec![],
+                writes: vec![channel],
+            },
+        );
+        let declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::MessageReader {
+                key: "Custom",
+                scheduler_access: SchedulerAccess::Exclusive,
+            }],
+            &mut resolver,
+        );
+
+        assert!(declared.resources_to_write.contains(&channel));
+        assert!(declared.set.combined_access().has_write(channel));
     }
 
     #[test]
@@ -990,7 +1343,10 @@ mod tests {
         );
         let reader = build_declared_access(
             &mut world,
-            &[ParamSpec::<MockKeys>::MessageReader { key: "Tick" }],
+            &[ParamSpec::<MockKeys>::MessageReader {
+                key: "Tick",
+                scheduler_access: SchedulerAccess::Shared,
+            }],
             &mut reader_resolver,
         );
 
@@ -1067,6 +1423,7 @@ mod tests {
                 vkey: Some(1),
                 name: "R1".to_string(),
                 mutable: false,
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::<MockKeys>::World,
         ];
@@ -1103,7 +1460,13 @@ mod tests {
             mut_query("T", QuerySpec::default()),
             mut_query("T", QuerySpec::default()),
         ];
-        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
         assert!(validate_access(&accesses).is_err());
     }
 
@@ -1125,8 +1488,40 @@ mod tests {
                 },
             ),
         ];
-        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
         assert!(validate_access(&accesses).is_ok());
+    }
+
+    #[test]
+    fn validation_optional_item_does_not_imply_with_disjointness() {
+        let params = [
+            ParamSpec::Query(QuerySpec {
+                components: vec![comp("T", true, false), comp("A", false, true)],
+                ..Default::default()
+            }),
+            mut_query(
+                "T",
+                QuerySpec {
+                    without: vec![filter("A")],
+                    ..Default::default()
+                },
+            ),
+        ];
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
+
+        assert!(validate_access(&accesses).is_err());
     }
 
     #[test]
@@ -1149,7 +1544,13 @@ mod tests {
                 },
             ),
         ];
-        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
         assert!(validate_access(&accesses).is_ok());
     }
 
@@ -1161,10 +1562,17 @@ mod tests {
                 vkey: None,
                 name: "AssetServer".to_string(),
                 mutable: false,
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::<MockKeys>::World,
         ];
-        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
         // vkey: None lowers to ParamAccess::None, so World sees no conflict.
         assert!(validate_access(&accesses).is_ok());
     }
@@ -1175,24 +1583,38 @@ mod tests {
             ParamSpec::<MockKeys>::World,
             mut_query("T", QuerySpec::default()),
         ];
-        let accesses = to_param_accesses(&params, |k| *k, |k| ((*k).to_string(), (*k).to_string()));
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
         let err = validate_access(&accesses).unwrap_err();
         assert_eq!(err.existing_name, "World");
     }
 
     #[test]
     fn condition_rejects_world_commands_messages_and_mut_access() {
-        let rejected: [ParamSpec<MockKeys>; 7] = [
+        let rejected: [ParamSpec<MockKeys>; 8] = [
             ParamSpec::World,
             ParamSpec::Commands,
+            ParamSpec::Gizmos {
+                key: "gizmo_config",
+                name: "GizmoConfigStore".to_string(),
+            },
             ParamSpec::MessageWriter { key: "M" },
-            ParamSpec::MessageReader { key: "M" },
+            ParamSpec::MessageReader {
+                key: "M",
+                scheduler_access: SchedulerAccess::Shared,
+            },
             ParamSpec::MessageMutator { key: "M" },
             ParamSpec::Res {
                 key: "r",
                 vkey: Some(1),
                 name: "R".to_string(),
                 mutable: true,
+                scheduler_access: SchedulerAccess::Exclusive,
             },
             mut_query("T", QuerySpec::default()),
         ];
@@ -1207,6 +1629,7 @@ mod tests {
                 vkey: Some(1),
                 name: "R".to_string(),
                 mutable: false,
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::Query(QuerySpec {
                 components: vec![comp("T", false, false)],
@@ -1225,6 +1648,63 @@ mod tests {
     }
 
     #[test]
+    fn condition_rejects_pipe_input() {
+        assert_eq!(
+            condition_param_rejection(&ParamSpec::<MockKeys>::Input),
+            Some(ConditionRejection::Input)
+        );
+    }
+
+    #[test]
+    fn condition_rejects_each_opaque_python_access_shape() {
+        let component = ParamSpec::<MockKeys>::Query(QuerySpec {
+            components: vec![opaque_comp("T", false)],
+            ..Default::default()
+        });
+        let resource = ParamSpec::<MockKeys>::Res {
+            key: "r",
+            vkey: Some(1),
+            name: "R".to_string(),
+            mutable: false,
+            scheduler_access: SchedulerAccess::Exclusive,
+        };
+        let message = ParamSpec::<MockKeys>::MessageReader {
+            key: "M",
+            scheduler_access: SchedulerAccess::Exclusive,
+        };
+
+        assert_eq!(
+            condition_param_rejection(&component),
+            Some(ConditionRejection::OpaqueQuery)
+        );
+        assert_eq!(
+            condition_param_rejection(&resource),
+            Some(ConditionRejection::OpaqueResource)
+        );
+        assert_eq!(
+            condition_param_rejection(&message),
+            Some(ConditionRejection::OpaqueMessageReader)
+        );
+    }
+
+    #[test]
+    fn gizmos_declare_their_config_store_read() {
+        let (mut world, mut resolver) = setup();
+        let config_id = world.register_component::<GizmoConfigMarker>();
+        let declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::Gizmos {
+                key: "gizmo_config",
+                name: "GizmoConfigStore".to_string(),
+            }],
+            &mut resolver,
+        );
+
+        assert!(declared.resources_to_read.contains(&config_id));
+        assert!(declared.resources_to_write.is_empty());
+    }
+
+    #[test]
     fn describe_renders_canonical_strings() {
         let params: [ParamSpec<MockKeys>; 6] = [
             ParamSpec::Query(QuerySpec {
@@ -1239,6 +1719,7 @@ mod tests {
                 vkey: Some(1),
                 name: "Time".to_string(),
                 mutable: false,
+                scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::Assets {
                 key: "Mesh",
@@ -1246,7 +1727,10 @@ mod tests {
                 name: "Mesh".to_string(),
                 mutable: true,
             },
-            ParamSpec::MessageReader { key: "Collision" },
+            ParamSpec::MessageReader {
+                key: "Collision",
+                scheduler_access: SchedulerAccess::Shared,
+            },
             ParamSpec::MessageMutator { key: "Collision" },
             ParamSpec::Commands,
         ];
@@ -1255,9 +1739,9 @@ mod tests {
             vec![
                 "query components=[Position(mut), Velocity(read,opt)] \
                  with=1 without=1 changed=1 added=0 resolve_only=0",
-                "res mutable=false vkey=present",
+                "res mutable=false scheduler=shared vkey=present",
                 "assets mutable=true",
-                "message_reader",
+                "message_reader scheduler=shared",
                 "message_mutator",
                 "commands",
             ]
