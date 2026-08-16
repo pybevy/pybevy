@@ -21,7 +21,7 @@ pub(crate) mod lifecycle_mutation;
 #[allow(unused_imports)]
 pub use pybevy_core::{PyChildOf, PyChildren, PyChildrenIterator, PyEntity};
 #[allow(unused_imports)]
-pub use pybevy_core::{PyF32List, field_storage::FieldStorage, value_storage::ValueStorage};
+pub use pybevy_core::{PyFloatLiveList, field_storage::FieldStorage, value_storage::ValueStorage};
 pub mod local;
 pub(crate) mod logical_type;
 pub mod message;
@@ -70,7 +70,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_function(wrap_pyfunction!(system_config::system, m)?)?;
     ecs.add_function(wrap_pyfunction!(system_config::system_set, m)?)?;
     ecs.add_class::<lazy_wrapper_proxy::PyLazyWrapperProxy>()?;
-    ecs.add_class::<PyF32List>()?;
+    ecs.add_class::<PyFloatLiveList>()?;
     ecs.add_class::<PyEntity>()?;
     ecs.add_class::<entity_commands::PyEntityCommands>()?;
     ecs.add_class::<entity_commands::PyRelatedSpawnerCommands>()?;

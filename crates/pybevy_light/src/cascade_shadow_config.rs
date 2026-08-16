@@ -1,5 +1,5 @@
 use bevy::light::CascadeShadowConfig;
-use pybevy_core::{ComponentStorage, PyComponent, PyF32List};
+use pybevy_core::{ComponentStorage, PyComponent, PyFloatLiveList};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
@@ -46,7 +46,7 @@ impl PyCascadeShadowConfig {
     }
 
     #[getter]
-    pub fn bounds(&self) -> PyResult<PyF32List> {
+    pub fn bounds(&self) -> PyResult<PyFloatLiveList> {
         Ok(self.storage.borrow_field_as(|c| &c.bounds)?)
     }
 
