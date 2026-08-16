@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     mem,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -10,7 +11,7 @@ use std::{
 };
 
 use bevy::{
-    app::{App, AppExit, Last, PreStartup, PreUpdate},
+    app::{App, AppExit, Last, PreStartup},
     ecs::{
         message::MessageWriter,
         resource::Resource,
@@ -19,20 +20,20 @@ use bevy::{
         world::World,
     },
     log::LogPlugin,
-    time::Time,
+    time::{Real, Time},
 };
 use pybevy_core::{
-    AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, LastSystemError, PyMessage,
+    AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, LastSystemError,
     PyPlugin as PyPluginBase, added_plugins::AddedPythonPlugins, allocate_id, consume_unstored_id,
     plugin::plugin_registry, register_wrapped_reflect_types,
 };
 use pybevy_ecs::shared::schedule::{
     StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
 };
-use pybevy_reload::{HotReloadGeneration, SystemStage};
+use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
 use pyo3::{
-    IntoPyObjectExt,
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    IntoPyObjectExt, PyTraverseError, PyVisit,
+    exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyList, PyModule, PyTuple, PyType},
@@ -41,12 +42,14 @@ use pyo3::{
 use crate::{
     app::{
         PyStage,
-        app_exit::PyAppExit,
+        app_exit::materialize_app_exit,
         chained_systems::{PyChainedSystemSets, PyChainedSystems},
         error_messages,
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
             cleanup::clear_entities_and_resources,
+            registry::DynamicSystemRegistry,
+            runtime_pyo3::collect_system_names,
             state::HotReloadState,
         },
         plugin::{PyPlugin, PyPluginGroup},
@@ -59,12 +62,17 @@ use crate::{
         messages::ensure_builtin_message_resources,
         observer_registry::ObserverRegistry,
         python_message::{install_python_message_store, register_python_message},
+        resource_type::PyResourceType,
         state::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
-            apply_state_transitions, canonicalize_state_schedule_label,
-            canonicalize_transition_schedule_label, insert_state_machine_resources,
+            canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
+            ensure_state_transition_system_registered, insert_state_machine_resources,
+            state_member_type,
         },
-        system_config::{build_scheduled_system, build_set_config},
+        system_config::{
+            InstalledSystemSetConfigs, build_scheduled_system, build_set_config,
+            system_set_config_identity,
+        },
         system_interpreter::ObserverRuntimeSinks,
         world::PyWorld,
     },
@@ -128,11 +136,13 @@ pub(crate) fn _test_force_cleanup() {
 /// Raise collected system errors: single error preserves its type,
 /// multiple errors are wrapped in an ExceptionGroup.
 fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) -> PyResult<()> {
-    let mut errors = error_state.lock().unwrap();
+    let errors = {
+        let mut error_guard = lock_or_recover(error_state);
+        std::mem::take(&mut *error_guard)
+    };
     if errors.is_empty() {
         return Ok(());
     }
-    let errors = std::mem::take(&mut *errors);
     if errors.len() == 1 {
         return Err(errors.into_iter().next().unwrap());
     }
@@ -194,7 +204,7 @@ fn check_system_errors_and_exit(
     error_check: Res<SystemErrorCheck>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let lock = error_check.errors.lock().unwrap();
+    let lock = lock_or_recover(&error_check.errors);
     if !lock.is_empty() {
         exit.write(AppExit::from_code(1));
     }
@@ -204,7 +214,7 @@ fn check_system_errors_and_exit(
 /// MCP. Runs in `Last`. The timestamp is read here at drain time, not when the
 /// error occurred, so it can lag one frame; acceptable for MCP display and it
 /// keeps `run_unsafe`'s parallel error path free of any world access.
-fn drain_last_system_error(world: &mut World) {
+pub(crate) fn drain_last_system_error(world: &mut World) {
     let buffered = {
         let Some(buf) = world.get_resource::<LastErrorBuffer>() else {
             return;
@@ -216,7 +226,7 @@ fn drain_last_system_error(world: &mut World) {
         return;
     };
     let timestamp = world
-        .get_resource::<Time>()
+        .get_resource::<Time<Real>>()
         .map(|t| t.elapsed_secs_f64())
         .unwrap_or(0.0);
     if let Some(mut last_error) = world.get_resource_mut::<LastSystemError>() {
@@ -350,6 +360,9 @@ pub struct PyApp {
     /// When is_reload_temp=true, systems are stored here instead of added to Bevy
     pending_systems: RefCell<Vec<(PyStage, Vec<Py<PyAny>>)>>,
 
+    /// System-set configurations collected while loading a reload generation.
+    pending_set_configs: RefCell<Vec<(PyStage, Vec<Py<PyAny>>)>>,
+
     /// Storage for resource instances during hot reload
     /// When is_reload_temp=true, resources are stored here instead of added to Bevy
     pending_resources: RefCell<Vec<Py<PyAny>>>,
@@ -368,9 +381,10 @@ pub struct PyApp {
     /// When is_reload_temp=true, observer functions are stored here for re-registration
     pending_observers: RefCell<Vec<Py<PyAny>>>,
 
-    /// Storage for plugin info during hot reload
-    /// When is_reload_temp=true, plugin names are recorded for delta detection
+    /// Storage for plugin names used to seed and compare hot-reload definitions.
     pending_plugins: RefCell<Vec<String>>,
+
+    pending_system_names: RefCell<HashSet<String>>,
 
     /// Whether @entrypoint decorator has been applied
     /// run() requires this unless PYBEVY_TESTING env var is set
@@ -452,12 +466,14 @@ impl PyApp {
             hot_reload_state: temp_state,
             is_reload_temp: Cell::new(true),
             pending_systems: RefCell::new(Vec::new()),
+            pending_set_configs: RefCell::new(Vec::new()),
             pending_resources: RefCell::new(Vec::new()),
             pending_states: RefCell::new(Vec::new()),
             pending_state_systems: RefCell::new(Vec::new()),
             pending_messages: RefCell::new(Vec::new()),
             pending_observers: RefCell::new(Vec::new()),
             pending_plugins: RefCell::new(Vec::new()),
+            pending_system_names: RefCell::new(HashSet::new()),
             entrypoint_set: Cell::new(false),
             filesystem_active: RefCell::new(None),
         }
@@ -467,6 +483,10 @@ impl PyApp {
     /// This is called after create_app() has been called on the temp app
     pub(crate) fn take_pending_systems(&self) -> Vec<(PyStage, Vec<Py<PyAny>>)> {
         self.pending_systems.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn take_pending_set_configs(&self) -> Vec<(PyStage, Vec<Py<PyAny>>)> {
+        self.pending_set_configs.borrow_mut().drain(..).collect()
     }
 
     /// Extract pending resources from a temp reload app
@@ -495,48 +515,15 @@ impl PyApp {
         self.pending_observers.borrow_mut().drain(..).collect()
     }
 
-    /// Extract pending plugin names from a temp reload app
-    /// Used for plugin delta detection during hot reload
+    /// Extract plugin names for hot-reload baseline or delta detection.
     pub(crate) fn take_pending_plugins(&self) -> Vec<String> {
         self.pending_plugins.borrow_mut().drain(..).collect()
     }
 
     /// Ensure the state transition system is registered (called from init_state/insert_state)
     fn ensure_state_transition_system_registered(&self) -> PyResult<()> {
-        static REGISTERED_APPS: Mutex<Option<HashSet<AppId>>> = Mutex::new(None);
-
-        // Check if this app has already registered the system
-        {
-            let mut registered = REGISTERED_APPS.lock().unwrap();
-            if registered.is_none() {
-                *registered = Some(HashSet::new());
-            }
-
-            if registered.as_ref().unwrap().contains(&self.app_id) {
-                return Ok(());
-            }
-
-            // Mark this app as registered
-            registered.as_mut().unwrap().insert(self.app_id);
-        }
-
         self.with_bevy_app(|app| {
-            // Wrap the apply_state_transitions function in a closure for PreUpdate
-            let system_fn = move |py: Python, world: &mut World| apply_state_transitions(py, world);
-
-            // Add state transition processing to PreUpdate so it runs
-            // after First (where transitions may be queued) and before Update
-            if !app.world().resource::<Schedules>().contains(PreUpdate) {
-                app.init_schedule(PreUpdate);
-            }
-            app.add_systems(PreUpdate, move |world: &mut World| {
-                Python::attach(|py| {
-                    if let Err(e) = system_fn(py, world) {
-                        eprintln!("State transition error: {}", e);
-                    }
-                });
-            });
-
+            ensure_state_transition_system_registered(app.world_mut());
             Ok::<(), PyErr>(())
         })?;
 
@@ -546,6 +533,63 @@ impl PyApp {
 
 #[pymethods]
 impl PyApp {
+    /// Report the declarations a reload generation is still holding.
+    ///
+    /// A reload-temp App collects the scene's systems, resources, messages and
+    /// observers before `create_app` drains them. Each of those reaches its
+    /// defining module's dict, which can reach this App again, so without a
+    /// traverse an entrypoint that raises mid-collection leaks the whole scene
+    /// generation. `hot_reload_state` is deliberately not traversed: its loader
+    /// lives behind a shared `Arc`/`Mutex` with several Rust owners, and
+    /// `__traverse__` must neither double-count nor block (docs/safety.md).
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        // Skip any field mid-mutation: traverse must not panic or block.
+        if let Ok(staged) = self.pending_systems.try_borrow() {
+            for (_, systems) in staged.iter() {
+                for system in systems {
+                    visit.call(system)?;
+                }
+            }
+        }
+        if let Ok(staged) = self.pending_set_configs.try_borrow() {
+            for (_, configs) in staged.iter() {
+                for config in configs {
+                    visit.call(config)?;
+                }
+            }
+        }
+        if let Ok(resources) = self.pending_resources.try_borrow() {
+            for resource in resources.iter() {
+                visit.call(resource)?;
+            }
+        }
+        if let Ok(states) = self.pending_states.try_borrow() {
+            for state in states.iter() {
+                visit.call(&state.state_type)?;
+                visit.call(&state.initial_state)?;
+            }
+        }
+        if let Ok(staged) = self.pending_state_systems.try_borrow() {
+            for entry in staged.iter() {
+                visit.call(&entry.schedule)?;
+                for system in &entry.systems {
+                    visit.call(system)?;
+                }
+            }
+        }
+        if let Ok(messages) = self.pending_messages.try_borrow() {
+            for message in messages.iter() {
+                visit.call(message)?;
+            }
+        }
+        if let Ok(observers) = self.pending_observers.try_borrow() {
+            for observer in observers.iter() {
+                visit.call(observer)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Internal regression-test diagnostic. Includes Bevy infrastructure and
     /// retired hot-reload systems still present in schedule graphs.
     fn _debug_schedule_system_count(&self) -> PyResult<usize> {
@@ -627,12 +671,14 @@ impl PyApp {
             hot_reload_state: HotReloadState::new(),
             is_reload_temp: Cell::new(false),
             pending_systems: RefCell::new(Vec::new()),
+            pending_set_configs: RefCell::new(Vec::new()),
             pending_resources: RefCell::new(Vec::new()),
             pending_states: RefCell::new(Vec::new()),
             pending_state_systems: RefCell::new(Vec::new()),
             pending_messages: RefCell::new(Vec::new()),
             pending_observers: RefCell::new(Vec::new()),
             pending_plugins: RefCell::new(Vec::new()),
+            pending_system_names: RefCell::new(HashSet::new()),
             entrypoint_set: Cell::new(false),
             filesystem_active: RefCell::new(None),
         })
@@ -645,6 +691,13 @@ impl PyApp {
         systems: Bound<'_, PyTuple>,
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
+
+        if !pyself.is_reload_temp.get() {
+            let mut names = pyself.pending_system_names.borrow_mut();
+            for system in systems.iter() {
+                collect_system_names(&system, &mut names);
+            }
+        }
 
         // Parse schedule parameter - can be either PyStage or state schedule label
         enum ScheduleType {
@@ -895,15 +948,6 @@ impl PyApp {
                 (plugin_arg, plugin_type)
             };
 
-            // Record plugin name for delta detection during reload
-            if pyself.borrow(py).is_reload_temp.get() {
-                let name = plugin_type
-                    .name()
-                    .and_then(|n| n.extract::<String>())
-                    .unwrap_or_else(|_| "UnknownPlugin".to_string());
-                pyself.borrow(py).pending_plugins.borrow_mut().push(name);
-            }
-
             // Validate that the instance is actually a Plugin or PluginGroup
             // Check both PyPlugin types:
             // - crate::app::plugin::PyPlugin for main crate plugins
@@ -970,38 +1014,49 @@ impl PyApp {
                 }
             }
 
+            let name = plugin_type
+                .name()
+                .and_then(|n| n.extract::<String>())
+                .unwrap_or_else(|_| "UnknownPlugin".to_string());
+            pyself.borrow(py).pending_plugins.borrow_mut().push(name);
+
             // Check if this plugin has already been added (important for hot reload)
             let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
             let type_key = type_ptr as usize;
             let qualified_name = plugin_qualified_name(type_ptr, py);
-            let already_added = {
+            let is_reload = pyself.borrow(py).is_reload_temp.get();
+            let bridge = plugin_registry::get_by_py_type(type_ptr);
+            let native_already_added = if is_reload {
+                false
+            } else if let Some(bridge) = bridge.as_ref() {
+                pyself
+                    .borrow(py)
+                    .with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
+                        Ok(bridge.is_added(bevy_app))
+                    })?
+            } else {
+                false
+            };
+            let python_already_added = {
                 let app_borrow = pyself.borrow(py);
                 app_borrow
                     .plugin_registry
-                    .borrow_mut()
-                    .check_and_insert(type_key, qualified_name.as_deref())
+                    .borrow()
+                    .contains(type_key, qualified_name.as_deref())
             };
 
-            if already_added {
+            if native_already_added || python_already_added {
                 // Skip this plugin - it was already added in a previous generation
                 // This prevents "RecreationAttempt" errors with winit and other singleton plugins
-                eprintln!("   Skipping already-added plugin: {}", plugin_type.name()?);
-                continue;
-            }
-
-            // If this is a PluginGroupBuilder, also register its source type (e.g., DefaultPlugins)
-            // This prevents duplicates when mixing DefaultPlugins and DefaultPlugins().build()
-            if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
-                let builder = plugin_instance.cast_exact::<PyPluginGroupBuilder>()?;
-                if let Some(source_type_id) = builder.borrow().source_type {
-                    let source_ptr = source_type_id.as_ptr();
-                    let source_name = plugin_qualified_name(source_ptr, py);
-                    let app_borrow = pyself.borrow(py);
-                    app_borrow
-                        .plugin_registry
-                        .borrow_mut()
-                        .insert(source_ptr as usize, source_name.as_deref());
+                pyself
+                    .borrow(py)
+                    .plugin_registry
+                    .borrow_mut()
+                    .insert(type_key, qualified_name.as_deref());
+                if is_verbose() {
+                    eprintln!("   Skipping already-added plugin: {}", plugin_type.name()?);
                 }
+                continue;
             }
 
             // Call the appropriate method based on plugin type:
@@ -1012,8 +1067,6 @@ impl PyApp {
             // During reload (is_reload_temp), skip built-in/bridge plugins that need
             // BEVY_APPS access (which temp apps lack), but let custom Python plugins
             // run build() so their systems/resources are captured in pending collections.
-            let is_reload = pyself.borrow(py).is_reload_temp.get();
-
             if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
                 if !is_reload {
                     // PluginGroupBuilder has build(app) that applies configuration
@@ -1028,7 +1081,7 @@ impl PyApp {
                 // Regular Plugin
                 if !is_reload {
                     // Normal path: try bridge first, then Python build()
-                    if let Some(bridge) = plugin_registry::get_by_py_type(type_ptr) {
+                    if let Some(bridge) = bridge.as_ref() {
                         // Use the PluginBridge to build the plugin
                         pyself
                             .borrow(py)
@@ -1043,7 +1096,7 @@ impl PyApp {
                     // Reload: only run build() for custom Python plugins.
                     // Skip bridge-backed and native Rust plugins because a
                     // collection-only reload wrapper has no live App slot.
-                    let has_bridge = plugin_registry::get_by_py_type(type_ptr).is_some();
+                    let has_bridge = bridge.is_some();
                     let is_native = plugin_type
                         .getattr("__module__")
                         .and_then(|m| m.extract::<String>())
@@ -1051,9 +1104,24 @@ impl PyApp {
                         .unwrap_or(false);
 
                     if !has_bridge && !is_native {
-                        // Custom Python plugin — call build() to capture
+                        // Custom Python plugin: call build() to capture
                         // systems/resources in pending collections
                         plugin_instance.call_method1("build", (app_bound,))?;
+                    }
+                }
+            }
+
+            // Register only after a successful build, so a failed add can be retried.
+            {
+                let app_borrow = pyself.borrow(py);
+                let mut registry = app_borrow.plugin_registry.borrow_mut();
+                registry.insert(type_key, qualified_name.as_deref());
+                if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
+                    let builder = plugin_instance.cast_exact::<PyPluginGroupBuilder>()?;
+                    if let Some(source_type_id) = builder.borrow().source_type {
+                        let source_ptr = source_type_id.as_ptr();
+                        let source_name = plugin_qualified_name(source_ptr, py);
+                        registry.insert(source_ptr as usize, source_name.as_deref());
                     }
                 }
             }
@@ -1096,8 +1164,16 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
 
-        // Skip during hot reload — resources are preserved or re-inserted via insert_resource
+        // Full reload clears custom resources, so capture the default instance
+        // alongside values supplied through insert_resource for reconstruction.
         if pyself.is_reload_temp.get() {
+            let resource_type: Bound<'_, PyType> = resource.extract()?;
+            let _ = PyResourceType::try_from((&resource_type, py))?;
+            let resource_instance = PyWorld::default_resource_instance(py, &resource_type)?;
+            pyself
+                .pending_resources
+                .borrow_mut()
+                .push(resource_instance);
             return Ok(pyself.into());
         }
 
@@ -1228,18 +1304,7 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
 
-        // Get state type from the value
-        let state_type = initial_state.bind(py).get_type();
-
-        // Validate it's a @state decorated type
-        if !state_type.hasattr("__pybevy_state__")? {
-            return Err(PyTypeError::new_err(format!(
-                "Type '{}' is not a valid state type. Did you forget the @state decorator?",
-                state_type.name()?
-            )));
-        }
-
-        let state_type_unbind = state_type.unbind();
+        let state_type_unbind = state_member_type(py, initial_state.bind(py))?;
 
         if pyself.is_reload_temp.get() {
             pyself
@@ -1363,10 +1428,11 @@ impl PyApp {
         self.ensure_active()?;
 
         // Clear any previous errors before running
-        {
-            let mut error_lock = self.system_error.lock().unwrap();
-            error_lock.clear();
-        }
+        let previous_errors = {
+            let mut error_lock = lock_or_recover(&self.system_error);
+            std::mem::take(&mut *error_lock)
+        };
+        drop(previous_errors);
 
         let app_id = self.app_id;
         let last_exit = self.last_exit.clone();
@@ -1490,13 +1556,24 @@ impl PyApp {
         // Reset Python's SIGINT handler to default before detaching GIL
         // This allows Bevy's native TerminalCtrlCHandlerPlugin to handle Ctrl-C directly
         // without Python intercepting the signal first
-        if let Ok(signal_module) = PyModule::import(py, "signal") {
-            let sig_dfl = signal_module.getattr("SIG_DFL")?;
-            let sigint = signal_module.getattr("SIGINT")?;
-            if let Err(e) = signal_module.call_method1("signal", (sigint, sig_dfl)) {
-                eprintln!("Warning: Failed to reset Python's SIGINT handler: {}", e);
+        let previous_sigint = match PyModule::import(py, "signal") {
+            Ok(signal_module) => {
+                let sig_dfl = signal_module.getattr("SIG_DFL")?;
+                let sigint = signal_module.getattr("SIGINT")?;
+                let previous = signal_module.call_method1("getsignal", (&sigint,))?;
+                match signal_module.call_method1("signal", (sigint, sig_dfl)) {
+                    // getsignal returns None for handlers not installed from Python;
+                    // signal() rejects None, so such handlers are left untouched.
+                    Ok(_) if !previous.is_none() => Some(previous.unbind()),
+                    Ok(_) => None,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to reset Python's SIGINT handler: {}", e);
+                        None
+                    }
+                }
             }
-        }
+            Err(_) => None,
+        };
 
         // Capture app_id before detaching GIL
         let app_id = self.app_id;
@@ -1504,7 +1581,7 @@ impl PyApp {
         let last_exit = self.last_exit.clone();
 
         // Release GIL before running to avoid deadlock with Python systems.
-        py.detach(|| {
+        let run_result = py.detach(|| {
             let mut guard = begin_main_app_operation(app_id, AppOperation::Run)?;
             {
                 let app = guard.app_mut();
@@ -1528,7 +1605,20 @@ impl PyApp {
             // to prevent stale entries when function objects are recycled
             clear_system_param_cache();
             Ok::<(), PyErr>(())
-        })?;
+        });
+
+        if let Some(previous) = previous_sigint {
+            let restored = PyModule::import(py, "signal").and_then(|signal_module| {
+                let sigint = signal_module.getattr("SIGINT")?;
+                signal_module.call_method1("signal", (sigint, previous.bind(py)))?;
+                Ok(())
+            });
+            if let Err(e) = restored {
+                eprintln!("Warning: Failed to restore Python's SIGINT handler: {}", e);
+            }
+        }
+
+        run_result?;
 
         // After the event loop exits, check for system errors and raise them
         raise_collected_errors(py, &error_state)?;
@@ -1542,12 +1632,22 @@ impl PyApp {
 
         let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
         let qualified_name = plugin_qualified_name(type_ptr, py);
-        let is_added = self
+        let python_added = self
             .plugin_registry
             .borrow()
             .contains(type_ptr as usize, qualified_name.as_deref());
 
-        Ok(is_added)
+        if python_added {
+            return Ok(true);
+        }
+
+        let Some(bridge) = plugin_registry::get_by_py_type(type_ptr) else {
+            return Ok(false);
+        };
+
+        self.with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
+            Ok(bridge.is_added(bevy_app))
+        })
     }
 
     /// Get the hot reload state for CLI integration
@@ -1567,6 +1667,8 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
         pyself.hot_reload_state.set_loader(loader.unbind());
+        let initial_plugins: HashSet<String> = pyself.take_pending_plugins().into_iter().collect();
+        let initial_systems = mem::take(&mut *pyself.pending_system_names.borrow_mut());
 
         // Add the hot reload system to the app if not already added
         pyself.with_bevy_app(|app| {
@@ -1576,6 +1678,15 @@ impl PyApp {
                 pyself.hot_reload_state.clone(),
                 pyself.system_error.clone(),
             );
+            if !initial_plugins.is_empty()
+                && let Some(mut tracker) = app.world_mut().get_resource_mut::<PluginTracker>()
+            {
+                tracker.known_plugins = initial_plugins;
+            }
+            if let Some(mut registry) = app.world_mut().get_resource_mut::<DynamicSystemRegistry>()
+            {
+                registry.set_system_baseline(initial_systems);
+            }
             Ok::<(), PyErr>(())
         })?;
 
@@ -1587,9 +1698,9 @@ impl PyApp {
     /// Returns the AppExit value if an exit has been requested, None otherwise.
     /// This allows checking exit status programmatically for conditional logic or tests.
     /// Can be called before or after run() to check the exit status.
-    pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<PyAppExit>>> {
+    pub fn should_exit(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         if let Some(exit) = lock_or_recover(&self.last_exit).clone() {
-            return Py::new(py, (PyAppExit::from(exit), PyMessage)).map(Some);
+            return materialize_app_exit(py, &exit).map(Some);
         }
 
         let exit = BEVY_APPS
@@ -1602,8 +1713,7 @@ impl PyApp {
         if let Some(exit) = &exit {
             *lock_or_recover(&self.last_exit) = Some(exit.clone());
         }
-        exit.map(|exit| Py::new(py, (PyAppExit::from(exit), PyMessage)))
-            .transpose()
+        exit.map(|exit| materialize_app_exit(py, &exit)).transpose()
     }
 
     /// Initialize a schedule and add it to the app
@@ -1641,10 +1751,11 @@ impl PyApp {
         self.ensure_active()?;
 
         // Clear any previous errors before running
-        {
-            let mut error_lock = self.system_error.lock().unwrap();
-            error_lock.clear();
-        }
+        let previous_errors = {
+            let mut error_lock = lock_or_recover(&self.system_error);
+            std::mem::take(&mut *error_lock)
+        };
+        drop(previous_errors);
 
         let app_id = self.app_id;
 
@@ -1675,11 +1786,11 @@ impl PyApp {
             ));
         }
 
-        // The live schedule graph survives hot reload. Its labels are stable
-        // qualified names and persistent conditions refresh module-level
-        // callables themselves, so replaying configuration would only create
-        // duplicate graph edges and condition nodes.
         if pyself.is_reload_temp.get() {
+            pyself
+                .pending_set_configs
+                .borrow_mut()
+                .push((schedule, sets.iter().map(Bound::unbind).collect()));
             return Ok(pyself.into());
         }
 
@@ -1694,7 +1805,9 @@ impl PyApp {
             for set in sets.iter() {
                 if let Ok(chained) = set.extract::<PyChainedSystemSets>() {
                     let mut configs = Vec::new();
+                    let mut identities = Vec::new();
                     for member in chained.sets.bind(set.py()).iter() {
+                        identities.push(system_set_config_identity(&member)?);
                         configs.push(build_set_config(
                             &member,
                             generation,
@@ -1715,10 +1828,20 @@ impl PyApp {
                             metadata: Chain::Chained(Default::default()),
                         },
                     );
+                    let mut installed = app
+                        .world_mut()
+                        .get_resource_or_insert_with(InstalledSystemSetConfigs::default);
+                    for identity in identities {
+                        installed.insert(schedule, identity);
+                    }
                 } else {
+                    let identity = system_set_config_identity(&set)?;
                     let config =
                         build_set_config(&set, generation, error_state.clone(), system_stage)?;
                     app.configure_sets(label, config);
+                    app.world_mut()
+                        .get_resource_or_insert_with(InstalledSystemSetConfigs::default)
+                        .insert(schedule, identity);
                 }
             }
             Ok(())

@@ -235,7 +235,7 @@ def main() -> None:
             phase_frame_times.clear()
 
             if phase_idx[0] >= len(counts):
-                exit_writer.write(AppExit.SUCCESS)
+                exit_writer.write(AppExit.Success())
 
     window = Window()
     window.present_mode = PresentMode.AutoNoVsync

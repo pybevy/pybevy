@@ -34,7 +34,7 @@ def track_damage(
         flush=True,
     )
     if counter.tick >= 5:
-        app_exit.write(AppExit.SUCCESS)
+        app_exit.write(AppExit.Success())
 
 
 @entrypoint

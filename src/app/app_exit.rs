@@ -1,59 +1,47 @@
 use std::num::NonZero;
 
 use bevy::app::AppExit;
-use pybevy_macros::pymessage;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-use crate::ecs::message::PyMessage;
+#[derive(Debug, Clone, PartialEq)]
+enum AppExitValue {
+    Success,
+    Error { code: NonZero<u8> },
+}
 
-#[pymessage(AppExit, writable)]
-#[pyclass(name = "AppExit", extends = PyMessage, frozen, eq)]
-#[derive(Debug, PartialEq)]
-pub struct PyAppExit(pub(crate) AppExit);
-
-impl From<AppExit> for PyAppExit {
-    fn from(exit: AppExit) -> Self {
-        Self(exit)
+impl From<&AppExit> for AppExitValue {
+    fn from(value: &AppExit) -> Self {
+        match value {
+            AppExit::Success => Self::Success,
+            AppExit::Error(code) => Self::Error { code: *code },
+        }
     }
 }
 
-impl From<&AppExit> for PyAppExit {
-    fn from(exit: &AppExit) -> Self {
-        Self(exit.clone())
+impl From<AppExitValue> for AppExit {
+    fn from(value: AppExitValue) -> Self {
+        match value {
+            AppExitValue::Success => Self::Success,
+            AppExitValue::Error { code } => Self::Error(code),
+        }
     }
+}
+
+#[pyenum(AppExit, message, writable, mirror = AppExitValue)]
+#[pyclass(module = "pybevy.app", name = "AppExit")]
+pub enum PyAppExit {
+    Success(),
+    #[py_bevy(tuple)]
+    Error {
+        code: NonZero<u8>,
+    },
 }
 
 impl TryFrom<&PyAppExit> for AppExit {
     type Error = PyErr;
 
-    fn try_from(py_exit: &PyAppExit) -> Result<Self, <Self as TryFrom<&PyAppExit>>::Error> {
-        Ok(py_exit.0.clone())
-    }
-}
-
-#[pymethods]
-impl PyAppExit {
-    #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        (Self(AppExit::Success), PyMessage).into()
-    }
-
-    #[classattr]
-    #[pyo3(name = "SUCCESS")]
-    pub fn success() -> PyResult<Py<Self>> {
-        Python::attach(|py| Py::new(py, (Self(AppExit::Success), PyMessage)))
-    }
-
-    #[staticmethod]
-    pub fn error(py: Python, code: NonZero<u8>) -> PyResult<Py<Self>> {
-        Py::new(py, (Self(AppExit::Error(code)), PyMessage))
-    }
-
-    pub fn is_success(&self) -> bool {
-        self.0.is_success()
-    }
-
-    pub fn is_error(&self) -> bool {
-        self.0.is_error()
+    fn try_from(value: &PyAppExit) -> PyResult<Self> {
+        Ok(value.inner.clone().into())
     }
 }

@@ -76,7 +76,7 @@ def track_and_report(
         flush=True,
     )
     if stats.tick >= 5:
-        app_exit.write(AppExit.SUCCESS)
+        app_exit.write(AppExit.Success())
 
 
 @entrypoint

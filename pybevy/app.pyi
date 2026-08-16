@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import Any, ClassVar, Literal, TypeVar, overload
+from typing import Any, ClassVar, Final, Literal, TypeVar, overload
 
 from pybevy.ecs import (
     ConditionalSystem,
@@ -17,12 +17,20 @@ from pybevy.ecs import (
     SystemSetEnum,
 )
 
-type SystemFn = Callable[..., None]
-type SystemFns = tuple[SystemFn, ...] | SystemFn | ChainedSystems | ConditionalSystem | SystemConfig
+type SystemFn = Callable[..., object]
+type SystemFns = (
+    tuple[SystemFn | ConditionalSystem | SystemConfig, ...]
+    | SystemFn
+    | ChainedSystems
+    | ConditionalSystem
+    | SystemConfig
+)
 type SystemChainItem = SystemFn | ConditionalSystem | SystemConfig
 type SystemSetChainItem = SystemSet | SystemSetEnum | SystemSetConfig
 
 T = TypeVar("T")
+
+AnimationSystems: Final[SystemSet]
 
 class ChainedSystems:
     """Wrapper for a sequence of systems that should be executed sequentially."""
@@ -35,11 +43,7 @@ class ChainedSystemSets:
 @overload
 def chain(*systems: SystemChainItem) -> ChainedSystems: ...
 @overload
-def chain(*sets: SystemSetChainItem) -> ChainedSystemSets: ...
-
-def chain(  # type: ignore[misc]
-    *systems: SystemChainItem | SystemSetChainItem,
-) -> ChainedSystems | ChainedSystemSets:
+def chain(*sets: SystemSetChainItem) -> ChainedSystemSets:
     """Chain multiple systems or system sets to run sequentially.
 
     Chained systems will execute in the order they are provided, with each
@@ -66,6 +70,7 @@ def chain(  # type: ignore[misc]
         app.configure_sets(Update, chain(Sets.Input, Sets.Movement, Sets.Audit))
         ```
     """
+
 
 def _test_get_app_count() -> int:
     """TEST ONLY: Get the count of Apps currently in thread-local storage.
@@ -180,7 +185,7 @@ class PluginGroup:
         app.add_plugins(DefaultPlugins)
 
         # Use build() for configuration
-        app.add_plugins(DefaultPlugins.build().disable(AudioPlugin))
+        app.add_plugins(DefaultPlugins().build().disable(AudioPlugin))
         ```
     """
     def build(self) -> PluginGroupBuilder:
@@ -226,6 +231,9 @@ class PluginGroupBuilder(PluginGroup):
     def add(self, plugin: Plugin) -> PluginGroupBuilder:
         """Add a plugin to the end of the group.
 
+        Python-defined plugins are supported here because the end position can
+        be applied after the native group without re-entering a borrowed App.
+
         Args:
             plugin: Plugin instance to add
 
@@ -235,6 +243,10 @@ class PluginGroupBuilder(PluginGroup):
 
     def add_before(self, target: type[Plugin], plugin: Plugin) -> PluginGroupBuilder:
         """Add a plugin before the target plugin.
+
+        Relative placement currently requires a native PyBevy plugin wrapper;
+        Python-defined plugins raise ``TypeError``. Their ``build(app)`` method
+        cannot safely run from inside Bevy's borrowed native group builder.
 
         Args:
             target: Plugin class to insert before
@@ -246,6 +258,10 @@ class PluginGroupBuilder(PluginGroup):
 
     def add_after(self, target: type[Plugin], plugin: Plugin) -> PluginGroupBuilder:
         """Add a plugin after the target plugin.
+
+        Relative placement currently requires a native PyBevy plugin wrapper;
+        Python-defined plugins raise ``TypeError``. Use :meth:`add` when an
+        end-of-group Python plugin is sufficient.
 
         Args:
             target: Plugin class to insert after
@@ -283,10 +299,10 @@ class DefaultPlugins(PluginGroup):
         app.add_plugins(DefaultPlugins)
 
         # Configure a specific plugin
-        app.add_plugins(DefaultPlugins.set(WindowPlugin(primary_window=...)))
+        app.add_plugins(DefaultPlugins().set(WindowPlugin(primary_window=...)))
 
         # Disable specific plugins
-        app.add_plugins(DefaultPlugins.build().disable(AudioPlugin))
+        app.add_plugins(DefaultPlugins().build().disable(AudioPlugin))
         ```
     """
 
@@ -305,7 +321,7 @@ class DefaultPlugins(PluginGroup):
 
         Example:
             >>> from pybevy.window import WindowPlugin, Window
-            >>> DefaultPlugins.set(WindowPlugin(primary_window=Window(title="Game")))
+            >>> DefaultPlugins().set(WindowPlugin(primary_window=Window(title="Game")))
         """
 
     def build(self) -> PluginGroupBuilder:
@@ -315,7 +331,7 @@ class DefaultPlugins(PluginGroup):
             PluginGroupBuilder for chaining configuration methods
 
         Example:
-            >>> DefaultPlugins.build().disable(AudioPlugin)
+            >>> DefaultPlugins().build().disable(AudioPlugin)
         """
 
     def _apply_to_app(self, app: App) -> None:
@@ -364,7 +380,7 @@ class AppReloadState:
         """Request a hot reload on the next frame."""
     def set_pending_partial_reload(self) -> None:
         """Request a partial hot reload (Update/Last systems only)."""
-    def trigger_reload_if_needed(self, default_mode_is_partial: bool) -> None:
+    def trigger_reload_if_needed(self) -> None:
         """Trigger reload if not already pending, using current default mode."""
     def get_default_mode(self) -> str:
         """Get the current default reload mode ('Full' or 'Partial')."""
@@ -426,7 +442,7 @@ class HotReloadControl(Resource):
 
 class App:
     def __init__(self) -> None: ...
-    def add_systems(self, stage: Stage | OnEnterSchedule | OnExitSchedule | OnTransitionSchedule, *systems: SystemFns) -> App: ...
+    def add_systems(self, schedule: Stage | OnEnterSchedule | OnExitSchedule | OnTransitionSchedule, *systems: SystemFns) -> App: ...
     def initialize(self) -> None: ...
     def finish(self) -> None: ...
     def update(self) -> None: ...
@@ -503,11 +519,11 @@ class App:
             ```python
             def check_quit(app_exit_writer: MessageWriter[AppExit]) -> None:
                 # Request exit after some condition
-                app_exit_writer.send(AppExit.SUCCESS)
+                app_exit_writer.write(AppExit.Success())
 
             def verify_exit(app: Res[App]) -> None:
                 exit_status = app.should_exit()
-                if exit_status and exit_status.is_success():
+                if isinstance(exit_status, AppExit.Success):
                     print("App is exiting successfully")
             ```
         """
@@ -580,9 +596,6 @@ class App:
         - Custom Python resources
         """
 
-    # Hot reload support (for CLI dev/watch mode)
-    @property
-    def _state(self) -> AppReloadState: ...
     def _set_hot_reload_loader(
         self, loader: Callable[[], Callable[[], App]]
     ) -> App: ...
@@ -721,10 +734,13 @@ class ScheduleRunnerPlugin(Plugin):
         """
 
 class AppExit(Message):
-    SUCCESS: ClassVar[AppExit]
+    """Exit status emitted by a Bevy application."""
 
-    def __init__(self) -> None: ...
-    @staticmethod
-    def error(code: int) -> AppExit: ...
-    def is_success(self) -> bool: ...
-    def is_error(self) -> bool: ...
+    class Success(AppExit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Error(AppExit):
+        __match_args__: ClassVar[tuple[Literal["code"]]]
+        code: int
+        def __init__(self, code: int) -> None: ...
