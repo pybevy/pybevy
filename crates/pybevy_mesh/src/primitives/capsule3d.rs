@@ -16,19 +16,22 @@ impl From<Capsule3dMeshBuilder> for PyCapsule3dMeshBuilder {
 
 #[pymethods]
 impl PyCapsule3dMeshBuilder {
-    pub fn rings(mut self_: PyRefMut<'_, Self>, rings: u32) -> PyRefMut<'_, Self> {
-        self_.0.rings = rings;
-        self_
+    pub fn rings(&self, py: Python<'_>, rings: u32) -> PyResult<Py<Self>> {
+        let mut builder = self.0;
+        builder.rings = rings;
+        Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
-    pub fn longitudes(mut self_: PyRefMut<'_, Self>, longitudes: u32) -> PyRefMut<'_, Self> {
-        self_.0.longitudes = longitudes;
-        self_
+    pub fn longitudes(&self, py: Python<'_>, longitudes: u32) -> PyResult<Py<Self>> {
+        let mut builder = self.0;
+        builder.longitudes = longitudes;
+        Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
-    pub fn latitudes(mut self_: PyRefMut<'_, Self>, latitudes: u32) -> PyRefMut<'_, Self> {
-        self_.0.latitudes = latitudes;
-        self_
+    pub fn latitudes(&self, py: Python<'_>, latitudes: u32) -> PyResult<Py<Self>> {
+        let mut builder = self.0;
+        builder.latitudes = latitudes;
+        Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

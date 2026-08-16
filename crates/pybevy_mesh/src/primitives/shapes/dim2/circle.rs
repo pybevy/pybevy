@@ -44,9 +44,9 @@ impl PyCircle {
         self.0.perimeter()
     }
 
-    pub fn closest_point(&self, point: PyVec2) -> PyVec2 {
-        let bevy_point: Vec2 = point.into();
-        PyVec2::from_vec2(self.0.closest_point(bevy_point))
+    pub fn closest_point(&self, point: PyVec2) -> PyResult<PyVec2> {
+        let bevy_point: Vec2 = point.try_into()?;
+        Ok(PyVec2::from_vec2(self.0.closest_point(bevy_point)))
     }
 
     pub fn mesh(&self, py: Python<'_>) -> PyResult<Py<PyCircleMeshBuilder>> {

@@ -19,7 +19,7 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
         return Ok(v.borrow().0.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyCuboid>() {
-        return Ok(v.borrow().0.mesh().build());
+        return Ok(PyCuboid::as_ref(&v.borrow())?.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyCylinder>() {
         return Ok(v.borrow().0.mesh().build());
@@ -40,7 +40,7 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
         return Ok(v.borrow().0.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyPlane3d>() {
-        return Ok(v.borrow().0.mesh().build());
+        return Ok(PyPlane3d::as_ref(&v.borrow())?.mesh().build());
     }
     // 2D primitives
     if let Ok(v) = asset.cast::<PyCircle>() {
@@ -53,16 +53,16 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
         return Ok(v.borrow().0.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyEllipse>() {
-        return Ok(v.borrow().0.mesh().build());
+        return Ok(PyEllipse::as_ref(&v.borrow())?.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyRectangle>() {
-        return Ok(v.borrow().0.mesh().build());
+        return Ok(PyRectangle::as_ref(&v.borrow())?.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyRegularPolygon>() {
         return Ok(v.borrow().0.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyRhombus>() {
-        return Ok(v.borrow().0.mesh().build());
+        return Ok(PyRhombus::as_ref(&v.borrow())?.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyTriangle2d>() {
         return Ok(v.borrow().0.mesh().build());

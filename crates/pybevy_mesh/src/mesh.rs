@@ -3,16 +3,16 @@ use std::{fmt::Display, sync::Arc};
 use bevy::{
     asset::RenderAssetUsages,
     math::{Quat, Vec3},
-    mesh::{Indices, Mesh, MeshAccessError, MeshVertexAttributeId, VertexAttributeValues},
+    mesh::{Indices, Mesh, MeshVertexAttributeId, PrimitiveTopology, VertexAttributeValues},
     transform::components::Transform,
 };
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
-use pybevy_array::{BorrowProbe, PyArray, borrowed_mut_f32, borrowed_read_only_f32};
+use pybevy_array::{BorrowProbe, PyArray, borrowed_read_only_f32};
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, PyAsset, StorageError,
+    AssetInputConverter, AssetStorage, PyAsset,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     content_hash::CanonicalContentHasher,
-    numpy_view_guard::PyNumpyViewGuard,
+    numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
 };
 use pybevy_image::image::PyRenderAssetUsages;
 use pybevy_macros::pyasset;
@@ -55,12 +55,59 @@ impl AssetInputConverter for PyMesh {
     }
 }
 
+fn extract_attribute_values(
+    attribute: &PyMeshVertexAttribute,
+    values: &Bound<'_, PyAny>,
+) -> PyResult<VertexAttributeValues> {
+    let attr_values = if let Ok(vref) = values.extract::<PyRef<PyVertexAttributeValues>>() {
+        vref.0.clone()
+    } else {
+        PyVertexAttributeValues::new(values)?.0
+    };
+
+    if attribute.0 == Mesh::ATTRIBUTE_COLOR
+        && !matches!(attr_values, VertexAttributeValues::Float32x4(_))
+    {
+        return Err(PyValueError::new_err(
+            "Color attribute must have shape (N, 4)",
+        ));
+    }
+
+    Ok(attr_values)
+}
+
+fn check_flat_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
+    let indexed = mesh
+        .try_indices_option()
+        .map_err(|error| mesh_operation_error("compute_flat_normals", error))?
+        .is_some();
+    if indexed {
+        return Err(PyValueError::new_err(
+            "compute_flat_normals requires non-indexed geometry; call duplicate_vertices() \
+             first, or use compute_smooth_normals()",
+        ));
+    }
+    let topology = mesh.primitive_topology();
+    if topology != PrimitiveTopology::TriangleList {
+        return Err(PyValueError::new_err(format!(
+            "compute_flat_normals requires PrimitiveTopology.TriangleList (got {topology:?})"
+        )));
+    }
+    Ok(())
+}
+
 macro_rules! mesh_with {
-    ($s:expr, $f:expr) => {{ $f((*$s).as_ref()?) }};
+    ($s:expr, $f:expr) => {{
+        let mesh = (*$s).as_ref()?;
+        $f(&mesh)
+    }};
 }
 
 macro_rules! mesh_with_mut {
-    ($s:expr, $f:expr) => {{ $f((*$s).as_mut()?) }};
+    ($s:expr, $f:expr) => {{
+        let mut mesh = (*$s).as_mut()?;
+        $f(&mut mesh)
+    }};
 }
 
 /// Normalize a positions/normals argument to a contiguous `(N, 3)` f32 array:
@@ -139,6 +186,22 @@ fn mesh_payload_hash(mesh: &Mesh) -> PyResult<String> {
     }
 }
 
+impl PyMesh {
+    /// Clone the mesh, apply an in-place operation to the copy, and return the copy.
+    fn cloned_with(
+        &self,
+        py: Python<'_>,
+        apply: impl FnOnce(&mut Self) -> PyResult<()>,
+    ) -> PyResult<Py<Self>> {
+        let copy = Py::new(py, Self::from_owned(self.as_ref()?.clone()))?;
+        {
+            let mut guard = copy.borrow_mut(py);
+            apply(&mut guard)?;
+        }
+        Ok(copy)
+    }
+}
+
 #[pymethods]
 impl PyMesh {
     #[classattr]
@@ -212,6 +275,13 @@ impl PyMesh {
         Ok(mesh_with!(self, |mesh: &Mesh| mesh.asset_usage.into()))
     }
 
+    #[setter]
+    pub fn set_asset_usage(&mut self, usage: PyRenderAssetUsages) -> PyResult<()> {
+        let usage = usage.into();
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.asset_usage = usage);
+        Ok(())
+    }
+
     #[getter]
     pub fn enable_raytracing(&self) -> PyResult<bool> {
         Ok(mesh_with!(self, |mesh: &Mesh| mesh.enable_raytracing))
@@ -235,21 +305,24 @@ impl PyMesh {
         &mut self,
         attribute: &PyMeshVertexAttribute,
     ) -> PyResult<Option<PyVertexAttributeValues>> {
-        match mesh_with_mut!(self, |mesh: &mut Mesh| mesh
-            .try_remove_attribute(attribute.0.id))
-        {
-            Ok(values) => Ok(Some(values.into())),
-            Err(MeshAccessError::NotFound) => Ok(None),
-            Err(error) => Err(mesh_operation_error("remove_attribute", error)),
+        let present = mesh_with!(self, |mesh: &Mesh| mesh
+            .try_contains_attribute(attribute.0.id))
+        .map_err(|error| mesh_operation_error("remove_attribute", error))?;
+        if !present {
+            return Ok(None);
         }
+        let values = mesh_with_mut!(self, |mesh: &mut Mesh| mesh
+            .try_remove_attribute(attribute.0.id)
+            .expect("read preflight confirmed mutable attribute storage and presence"));
+        Ok(Some(values.into()))
     }
 
-    pub fn with_removed_attribute<'py>(
-        mut pyself: PyRefMut<'py, Self>,
+    pub fn with_removed_attribute(
+        &self,
+        py: Python<'_>,
         attribute: &PyMeshVertexAttribute,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.remove_attribute(attribute)?;
-        Ok(pyself)
+    ) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.remove_attribute(attribute).map(|_| ()))
     }
 
     /// Return the versioned SHA-256 digest of vertex attributes, topology, and indices.
@@ -258,38 +331,23 @@ impl PyMesh {
     }
 
     pub fn with_inserted_attribute<'py>(
-        mut pyself: PyRefMut<'py, Self>,
+        &self,
+        py: Python<'py>,
         attribute: &PyMeshVertexAttribute,
         values: &Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let attr_values = if let Ok(vref) = values.extract::<PyRef<PyVertexAttributeValues>>() {
-            vref.0.clone()
-        } else {
-            PyVertexAttributeValues::new(values)?.0
-        };
-
-        // Validate COLOR attribute format before inserting
-        if attribute.0 == Mesh::ATTRIBUTE_COLOR
-            && !matches!(attr_values, VertexAttributeValues::Float32x4(_))
-        {
-            return Err(PyValueError::new_err(
-                "Color attribute must have shape (N, 4)",
-            ));
-        }
-
-        mesh_with_mut!(pyself, |mesh: &mut Mesh| {
-            mesh.insert_attribute(attribute.0, attr_values);
-        });
-
-        Ok(pyself)
+    ) -> PyResult<Py<Self>> {
+        let attr_values = extract_attribute_values(attribute, values)?;
+        let mut mesh = self.as_ref()?.clone();
+        mesh.insert_attribute(attribute.0, attr_values);
+        Py::new(py, Self::from_owned(mesh))
     }
 
     pub fn with_inserted_indices<'py>(
-        mut pyself: PyRefMut<'py, Self>,
+        &self,
+        py: Python<'py>,
         indices: &Bound<'py, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.insert_indices(indices)?;
-        Ok(pyself)
+    ) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.insert_indices(indices))
     }
 
     pub fn insert_attribute<'py>(
@@ -297,11 +355,7 @@ impl PyMesh {
         attribute: &PyMeshVertexAttribute,
         values: &Bound<'py, PyAny>,
     ) -> PyResult<()> {
-        let attr_values = if let Ok(vref) = values.extract::<PyRef<PyVertexAttributeValues>>() {
-            vref.0.clone()
-        } else {
-            PyVertexAttributeValues::new(values)?.0
-        };
+        let attr_values = extract_attribute_values(attribute, values)?;
 
         mesh_with_mut!(self, |mesh: &mut Mesh| {
             mesh.insert_attribute(attribute.0, attr_values);
@@ -336,138 +390,155 @@ impl PyMesh {
         })
     }
 
-    pub fn with_generated_tangents<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.generate_tangents()?;
-        Ok(pyself)
+    pub fn with_generated_tangents(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.generate_tangents())
     }
 
     pub fn generate_tangents(&mut self) -> PyResult<()> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| { mesh.generate_tangents() })
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate tangents: {}", e)))
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .generate_tangents()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate tangents: {e}")))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
     pub fn compute_normals(&mut self) -> PyResult<()> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_compute_normals())
-            .map_err(|error| mesh_operation_error("compute_normals", error))
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .try_compute_normals()
+            .map_err(|error| mesh_operation_error("compute_normals", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
     pub fn compute_flat_normals(&mut self) -> PyResult<()> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_compute_flat_normals())
-            .map_err(|error| mesh_operation_error("compute_flat_normals", error))
+        let mesh = self.as_ref()?;
+        check_flat_normal_preconditions(&mesh)?;
+        drop(mesh);
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .try_compute_flat_normals()
+            .map_err(|error| mesh_operation_error("compute_flat_normals", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
     pub fn compute_smooth_normals(&mut self) -> PyResult<()> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_compute_smooth_normals())
-            .map_err(|error| mesh_operation_error("compute_smooth_normals", error))
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .try_compute_smooth_normals()
+            .map_err(|error| mesh_operation_error("compute_smooth_normals", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
-    pub fn with_computed_normals<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.compute_normals()?;
-        Ok(pyself)
+    pub fn with_computed_normals(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.compute_normals())
     }
 
-    pub fn with_computed_flat_normals<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.compute_flat_normals()?;
-        Ok(pyself)
+    pub fn with_computed_flat_normals(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.compute_flat_normals())
     }
 
-    pub fn with_computed_smooth_normals<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.compute_smooth_normals()?;
-        Ok(pyself)
+    pub fn with_computed_smooth_normals(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.compute_smooth_normals())
     }
 
     pub fn duplicate_vertices(&mut self) -> PyResult<()> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_duplicate_vertices())
-            .map_err(|error| mesh_operation_error("duplicate_vertices", error))
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .try_duplicate_vertices()
+            .map_err(|error| mesh_operation_error("duplicate_vertices", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
-    pub fn with_duplicated_vertices<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.duplicate_vertices()?;
-        Ok(pyself)
+    pub fn with_duplicated_vertices(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.duplicate_vertices())
     }
 
     pub fn invert_winding(&mut self) -> PyResult<()> {
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.invert_winding())
-            .map_err(|error| mesh_operation_error("invert_winding", error))
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .invert_winding()
+            .map_err(|error| mesh_operation_error("invert_winding", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
-    pub fn with_inverted_winding<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.invert_winding()?;
-        Ok(pyself)
+    pub fn with_inverted_winding(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.invert_winding())
     }
 
     pub fn merge(&mut self, other: &PyMesh) -> PyResult<()> {
         let other = other.storage.as_ref()?.clone();
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.merge(&other))
-            .map_err(|error| mesh_operation_error("merge", error))
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .merge(&other)
+            .map_err(|error| mesh_operation_error("merge", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
     pub fn transform_by(&mut self, transform: &PyTransform) -> PyResult<()> {
         let transform: Transform = transform.as_ref()?.clone();
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_transform_by(transform))
-            .map_err(|error| mesh_operation_error("transform_by", error))
+        mesh_with!(self, |mesh: &Mesh| mesh
+            .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
+        .map_err(|error| mesh_operation_error("transform_by", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh
+            .try_transform_by(transform)
+            .expect("read preflight confirmed mutable attribute storage"));
+        Ok(())
     }
 
-    pub fn transformed_by<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-        transform: &PyTransform,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.transform_by(transform)?;
-        Ok(pyself)
+    pub fn transformed_by(&self, py: Python<'_>, transform: &PyTransform) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.transform_by(transform))
     }
 
     pub fn translate_by(&mut self, translation: PyVec3) -> PyResult<()> {
-        let translation: Vec3 = translation.into();
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_translate_by(translation))
-            .map_err(|error| mesh_operation_error("translate_by", error))
+        let translation: Vec3 = translation.try_into()?;
+        mesh_with!(self, |mesh: &Mesh| mesh
+            .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
+        .map_err(|error| mesh_operation_error("translate_by", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh
+            .try_translate_by(translation)
+            .expect("read preflight confirmed mutable attribute storage"));
+        Ok(())
     }
 
-    pub fn translated_by<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-        translation: PyVec3,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.translate_by(translation)?;
-        Ok(pyself)
+    pub fn translated_by(&self, py: Python<'_>, translation: PyVec3) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.translate_by(translation))
     }
 
     pub fn rotate_by(&mut self, rotation: PyQuat) -> PyResult<()> {
-        let rotation: Quat = rotation.into();
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_rotate_by(rotation))
-            .map_err(|error| mesh_operation_error("rotate_by", error))
+        let rotation: Quat = rotation.try_into()?;
+        mesh_with!(self, |mesh: &Mesh| mesh
+            .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
+        .map_err(|error| mesh_operation_error("rotate_by", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh
+            .try_rotate_by(rotation)
+            .expect("read preflight confirmed mutable attribute storage"));
+        Ok(())
     }
 
-    pub fn rotated_by<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-        rotation: PyQuat,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.rotate_by(rotation)?;
-        Ok(pyself)
+    pub fn rotated_by(&self, py: Python<'_>, rotation: PyQuat) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.rotate_by(rotation))
     }
 
     pub fn scale_by(&mut self, scale: PyVec3) -> PyResult<()> {
-        let scale: Vec3 = scale.into();
-        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_scale_by(scale))
-            .map_err(|error| mesh_operation_error("scale_by", error))
+        let scale: Vec3 = scale.try_into()?;
+        mesh_with!(self, |mesh: &Mesh| mesh
+            .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
+        .map_err(|error| mesh_operation_error("scale_by", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh
+            .try_scale_by(scale)
+            .expect("read preflight confirmed mutable attribute storage"));
+        Ok(())
     }
 
-    pub fn scaled_by<'py>(
-        mut pyself: PyRefMut<'py, Self>,
-        scale: PyVec3,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        pyself.scale_by(scale)?;
-        Ok(pyself)
+    pub fn scaled_by(&self, py: Python<'_>, scale: PyVec3) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.scale_by(scale))
     }
 
     pub fn has_morph_targets(&self) -> PyResult<bool> {
@@ -543,46 +614,36 @@ impl PyMesh {
 
     pub fn set_positions(&mut self, py: Python<'_>, positions: &Bound<'_, PyAny>) -> PyResult<()> {
         let positions = asarray_2d_f32(py, positions)?;
+        let shape = positions.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err("Positions must have shape (N, 3)"));
+        }
+        let data = positions.as_slice()?;
+        let values: Vec<[f32; 3]> = data
+            .chunks_exact(3)
+            .map(|row| [row[0], row[1], row[2]])
+            .collect();
         mesh_with_mut!(self, |mesh: &mut Mesh| {
-            let shape = positions.shape();
-            if shape.len() != 2 || shape[1] != 3 {
-                return Err(PyValueError::new_err("Positions must have shape (N, 3)"));
-            }
-
-            let data = positions.as_slice()?;
-            let n = shape[0];
-            let values: Vec<[f32; 3]> = (0..n)
-                .map(|i| {
-                    let idx = i * 3;
-                    [data[idx], data[idx + 1], data[idx + 2]]
-                })
-                .collect();
-
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, values);
-            Ok(())
-        })
+        });
+        Ok(())
     }
 
     pub fn set_normals(&mut self, py: Python<'_>, normals: &Bound<'_, PyAny>) -> PyResult<()> {
         let normals = asarray_2d_f32(py, normals)?;
+        let shape = normals.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err("Normals must have shape (N, 3)"));
+        }
+        let data = normals.as_slice()?;
+        let values: Vec<[f32; 3]> = data
+            .chunks_exact(3)
+            .map(|row| [row[0], row[1], row[2]])
+            .collect();
         mesh_with_mut!(self, |mesh: &mut Mesh| {
-            let shape = normals.shape();
-            if shape.len() != 2 || shape[1] != 3 {
-                return Err(PyValueError::new_err("Normals must have shape (N, 3)"));
-            }
-
-            let data = normals.as_slice()?;
-            let n = shape[0];
-            let values: Vec<[f32; 3]> = (0..n)
-                .map(|i| {
-                    let idx = i * 3;
-                    [data[idx], data[idx + 1], data[idx + 2]]
-                })
-                .collect();
-
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, values);
-            Ok(())
-        })
+        });
+        Ok(())
     }
 }
 
@@ -599,13 +660,8 @@ impl PyMesh {
         // Atomically claim a read view (increment + verify no writer), closing
         // the check-then-acquire race under free-threading. On any later error
         // the guard's Drop releases it.
-        if !this.storage.view_counters().try_acquire_read() {
-            return Err(StorageError::AssetViewsLive.into());
-        }
-        let guard = PyNumpyViewGuard::from_acquired(
-            this.storage.view_counters().reads.clone(),
-            slf.clone().unbind().into_any(),
-        );
+        let claim = this.storage.prepare_read_view()?;
+        let guard = PyNumpyViewGuard::from_acquired(claim, slf.clone().unbind().into_any());
         let validity = this.storage.validity_flag();
         let mesh = this.storage.as_ref()?;
         let Some(values) = mesh.attribute(id) else {
@@ -631,29 +687,55 @@ impl PyMesh {
         id: MeshVertexAttributeId,
     ) -> PyResult<Py<MeshBoundedContextMut>> {
         let mut this = slf.borrow_mut();
-        let writes = this.storage.view_counters().writes.clone();
-        let validity = this.storage.validity_flag();
-        // Atomically claim the exclusive write, then take the &mut through the
-        // leased path (no self-conflicting no-views check). Race-free under
-        // free-threading; the guard owns the count so early returns release it.
-        if !this.storage.view_counters().try_acquire_write() {
-            return Err(StorageError::AssetViewsLive.into());
-        }
-        let guard = PyNumpyViewGuard::from_acquired(writes, slf.clone().unbind().into_any());
-        let anchor = Arc::new(AssetBorrowAnchorMut::new(validity, guard));
-        let mesh = this.storage.as_mut_write_leased()?;
-        let Some(values) = mesh.attribute_mut(id) else {
-            return Err(PyRuntimeError::new_err("Mesh does not have attribute"));
+        let layout = {
+            let mesh = this.storage.as_ref()?;
+            let values = mesh
+                .attribute(id)
+                .ok_or_else(|| PyRuntimeError::new_err("Mesh does not have attribute"))?;
+            attribute_f32_layout(values)?
         };
-        let (ptr, len, shape) = attribute_f32_view_mut(values)?;
+        let validity = this.storage.validity_flag();
+        let claim = this.storage.prepare_write_view()?;
+        let guard = PendingNumpyViewGuard::from_acquired(claim, slf.clone().unbind().into_any());
+        let anchor = Arc::new(AssetBorrowAnchorMut::new(validity, guard));
         let probe: Arc<dyn BorrowProbe> = anchor.clone();
-        // SAFETY: `ptr` is the unique alias to a live `[f32; N]` attribute
-        // obtained via `as_mut` (validity checked, zero views), and the write
-        // count acquired here blocks every other view and `as_mut` for the
-        // array's life; the anchor gates each read/write on this thread.
-        let nd = unsafe { borrowed_mut_f32(ptr, len, &shape, probe)? };
-        let array = Py::new(py, nd)?;
-        Py::new(py, MeshBoundedContextMut { array, anchor })
+        let array = Py::new(
+            py,
+            PyArray::pending_borrowed_mut_f32(layout.len, layout.shape(), probe)?,
+        )?;
+        let context = Py::new(
+            py,
+            MeshBoundedContextMut {
+                array: array.clone_ref(py),
+                anchor: anchor.clone(),
+            },
+        )?;
+
+        let mut transaction = this.storage.begin_write_view(anchor.pending_claim())?;
+        let current = transaction
+            .preflight()
+            .attribute(id)
+            .ok_or_else(|| PyRuntimeError::new_err("Mesh does not have attribute"))?;
+        if attribute_f32_layout(current)? != layout {
+            return Err(PyRuntimeError::new_err(
+                "Mesh attribute layout changed during view acquisition",
+            ));
+        }
+
+        let mesh = transaction.commit();
+        let values = mesh
+            .attribute_mut(id)
+            .expect("preflight confirmed the mesh attribute exists");
+        let ptr = attribute_f32_ptr_mut(values, layout);
+        {
+            let mut pending = array.borrow_mut(py);
+            // SAFETY: the committed transaction returned the same validated
+            // attribute under the exclusive view claim retained by `anchor`.
+            unsafe { pending.bind_borrowed_mut_f32(ptr) };
+        };
+        anchor.commit();
+        drop(transaction);
+        Ok(context)
     }
 }
 
@@ -677,24 +759,57 @@ fn attribute_f32_view(values: &VertexAttributeValues) -> PyResult<(*const f32, u
     }
 }
 
-/// A raw mutable `f32` view of a float32 vertex attribute.
-fn attribute_f32_view_mut(
-    values: &mut VertexAttributeValues,
-) -> PyResult<(*mut f32, usize, Vec<usize>)> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FloatAttributeLayout {
+    len: usize,
+    shape: [usize; 2],
+    ndim: usize,
+}
+
+impl FloatAttributeLayout {
+    fn shape(&self) -> &[usize] {
+        &self.shape[..self.ndim]
+    }
+}
+
+fn attribute_f32_layout(values: &VertexAttributeValues) -> PyResult<FloatAttributeLayout> {
     match values {
-        VertexAttributeValues::Float32(v) => Ok((v.as_mut_ptr(), v.len(), vec![v.len()])),
-        VertexAttributeValues::Float32x2(v) => {
-            Ok((v.as_mut_ptr() as *mut f32, v.len() * 2, vec![v.len(), 2]))
-        }
-        VertexAttributeValues::Float32x3(v) => {
-            Ok((v.as_mut_ptr() as *mut f32, v.len() * 3, vec![v.len(), 3]))
-        }
-        VertexAttributeValues::Float32x4(v) => {
-            Ok((v.as_mut_ptr() as *mut f32, v.len() * 4, vec![v.len(), 4]))
-        }
+        VertexAttributeValues::Float32(v) => Ok(FloatAttributeLayout {
+            len: v.len(),
+            shape: [v.len(), 0],
+            ndim: 1,
+        }),
+        VertexAttributeValues::Float32x2(v) => Ok(FloatAttributeLayout {
+            len: v.len() * 2,
+            shape: [v.len(), 2],
+            ndim: 2,
+        }),
+        VertexAttributeValues::Float32x3(v) => Ok(FloatAttributeLayout {
+            len: v.len() * 3,
+            shape: [v.len(), 3],
+            ndim: 2,
+        }),
+        VertexAttributeValues::Float32x4(v) => Ok(FloatAttributeLayout {
+            len: v.len() * 4,
+            shape: [v.len(), 4],
+            ndim: 2,
+        }),
         _ => Err(PyRuntimeError::new_err(
             "only float32 attributes are exposed as bounded arrays",
         )),
+    }
+}
+
+fn attribute_f32_ptr_mut(
+    values: &mut VertexAttributeValues,
+    layout: FloatAttributeLayout,
+) -> *mut f32 {
+    match (values, layout.shape()) {
+        (VertexAttributeValues::Float32(values), [_]) => values.as_mut_ptr(),
+        (VertexAttributeValues::Float32x2(values), [_, 2]) => values.as_mut_ptr().cast(),
+        (VertexAttributeValues::Float32x3(values), [_, 3]) => values.as_mut_ptr().cast(),
+        (VertexAttributeValues::Float32x4(values), [_, 4]) => values.as_mut_ptr().cast(),
+        _ => unreachable!("preflight fixed the mesh attribute layout"),
     }
 }
 

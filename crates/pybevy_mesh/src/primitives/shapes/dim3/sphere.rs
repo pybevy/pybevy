@@ -41,8 +41,8 @@ impl PySphere {
         self.0.volume()
     }
 
-    pub fn closest_point(&self, point: &PyVec3) -> PyVec3 {
-        self.0.closest_point(point.into()).into()
+    pub fn closest_point(&self, point: &PyVec3) -> PyResult<PyVec3> {
+        Ok(self.0.closest_point(point.try_into()?).try_into()?)
     }
 
     pub fn __repr__(&self) -> String {

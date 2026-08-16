@@ -1,7 +1,7 @@
-use bevy::mesh::Mesh2d;
-use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
+use bevy::mesh::{Mesh, Mesh2d};
+use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
 use pybevy_macros::pyhandle;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::prelude::*;
 
 #[pyhandle(Mesh2d)]
 #[pyclass(name = "Mesh2d", extends = PyComponent, eq, frozen, skip_from_py_object)]
@@ -28,15 +28,7 @@ impl PyMesh2d {
     pub fn new(mesh: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(mesh)?;
 
-        // Validate asset type
-        if let Some(name) = handle.asset_type_name()
-            && name != "Mesh"
-        {
-            return Err(PyTypeError::new_err(format!(
-                "AssetType `{}` does not match expected type `Mesh`",
-                name
-            )));
-        }
+        ensure_asset_type::<Mesh>(&handle)?;
 
         Ok((Self(handle), PyComponent).into())
     }

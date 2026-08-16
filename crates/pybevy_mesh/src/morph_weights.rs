@@ -45,7 +45,7 @@ impl PyMorphWeights {
 
     #[setter]
     pub fn set_weights(&mut self, weights: Vec<f32>) -> PyResult<()> {
-        let morph = self.as_mut()?;
+        let mut morph = self.as_mut()?;
         let mutable_weights = morph.weights_mut();
         if weights.len() != mutable_weights.len() {
             return Err(PyValueError::new_err(format!(
@@ -59,7 +59,8 @@ impl PyMorphWeights {
     }
 
     pub fn get_weight(&self, index: usize) -> PyResult<f32> {
-        let weights = self.as_ref()?.weights();
+        let morph = self.as_ref()?;
+        let weights = morph.weights();
         weights.get(index).copied().ok_or_else(|| {
             PyValueError::new_err(format!(
                 "Index {} out of bounds for {} weights",
@@ -70,7 +71,8 @@ impl PyMorphWeights {
     }
 
     pub fn set_weight(&mut self, index: usize, value: f32) -> PyResult<()> {
-        let weights = self.as_mut()?.weights_mut();
+        let mut morph = self.as_mut()?;
+        let weights = morph.weights_mut();
         if index >= weights.len() {
             return Err(PyValueError::new_err(format!(
                 "Index {} out of bounds for {} weights",

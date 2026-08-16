@@ -20,13 +20,13 @@ impl PyPlaneMeshBuilder {
     #[staticmethod]
     #[allow(clippy::new_ret_no_self)]
     pub fn new(py: Python, normal: PyDir3, size: PyVec2) -> PyResult<Py<PyAny>> {
-        let builder = PlaneMeshBuilder::new(normal.into(), size.into());
+        let builder = PlaneMeshBuilder::new(normal.try_into()?, size.try_into()?);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec2) -> PyResult<Py<PyAny>> {
-        let builder = PlaneMeshBuilder::from_size(size.into());
+        let builder = PlaneMeshBuilder::from_size(size.try_into()?);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
@@ -36,19 +36,16 @@ impl PyPlaneMeshBuilder {
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
-    pub fn normal(mut pyself: PyRefMut<Self>, normal: PyDir3) -> PyRefMut<Self> {
-        pyself.0 = pyself.0.normal(normal.into());
-        pyself
+    pub fn normal(&self, py: Python<'_>, normal: PyDir3) -> PyResult<Py<Self>> {
+        Py::new(py, (Self(self.0.normal(normal.try_into()?)), PyMeshBuilder))
     }
 
-    pub fn size(mut pyself: PyRefMut<Self>, width: f32, height: f32) -> PyRefMut<Self> {
-        pyself.0 = pyself.0.size(width, height);
-        pyself
+    pub fn size(&self, py: Python<'_>, width: f32, height: f32) -> PyResult<Py<Self>> {
+        Py::new(py, (Self(self.0.size(width, height)), PyMeshBuilder))
     }
 
-    pub fn subdivisions(mut pyself: PyRefMut<Self>, subdivisions: u32) -> PyRefMut<Self> {
-        pyself.0 = pyself.0.subdivisions(subdivisions);
-        pyself
+    pub fn subdivisions(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
+        Py::new(py, (Self(self.0.subdivisions(subdivisions)), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
