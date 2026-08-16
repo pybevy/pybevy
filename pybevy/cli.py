@@ -1,14 +1,16 @@
+import argparse
+import ctypes
 import gc
 import os
+import signal
 import sys
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
-import click
-
 from .util.hot_reload import (
+    resolve_changed_files,
     setup_component_caching,
     watch_for_changes,
 )
@@ -22,23 +24,157 @@ else:
         App = object
 
 
-@click.group()
-def main() -> None:
-    """A command-line interface for pybevy."""
+class CliUsageError(ValueError):
+    """A stable usage error raised by command implementations."""
 
 
-@main.command()
-@click.argument("script_path", type=click.Path(exists=True))
-@click.option(
-    "--hot-reload",
-    is_flag=True,
-    help="Enable hot reloading by restarting the app on file changes.",
-)
-@click.option(
-    "--verbose",
-    is_flag=True,
-    help="Enable verbose debug output for hot reload operations.",
-)
+def _echo(message: object = "", *, err: bool = False) -> None:
+    """Write user-facing CLI output without a third-party console dependency."""
+    print(message, file=sys.stderr if err else sys.stdout, flush=True)
+
+
+def _existing_path(value: str) -> str:
+    if not os.path.exists(value):
+        raise argparse.ArgumentTypeError(f"path does not exist: {value}")
+    return value
+
+
+def _add_reload_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Use full reload mode (despawn entities, reload all systems including Startup)",
+    )
+    parser.add_argument(
+        "--pause",
+        action="store_true",
+        help="Start paused: open the renderer but don't load the scene until Space is pressed.",
+    )
+    parser.add_argument(
+        "--resolution",
+        help="Window resolution as WIDTHxHEIGHT (e.g. 1920x1080).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug output for hot reload operations.",
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pybevy",
+        description="A command-line interface for pybevy.",
+        allow_abbrev=False,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = commands.add_parser(
+        "run",
+        help="Run a pybevy script in-process.",
+        description="Run a pybevy script in-process.",
+        allow_abbrev=False,
+    )
+    run_parser.add_argument("script_path", metavar="SCRIPT_PATH", type=_existing_path)
+    run_parser.add_argument(
+        "--hot-reload",
+        action="store_true",
+        help="Enable hot reloading by restarting the app on file changes.",
+    )
+    run_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug output for hot reload operations.",
+    )
+    run_parser.set_defaults(handler=run, command_parser=run_parser)
+
+    dev_parser = commands.add_parser(
+        "dev",
+        help="Run a pybevy script in development mode with hot reload.",
+        description="Run a pybevy script in development mode with hot reload.",
+        allow_abbrev=False,
+    )
+    dev_parser.add_argument("script_path", metavar="SCRIPT_PATH", type=_existing_path)
+    _add_reload_options(dev_parser)
+    dev_parser.set_defaults(handler=dev, command_parser=dev_parser)
+
+    watch_parser = commands.add_parser(
+        "watch",
+        help="Watch and run a pybevy script with hot reload (alias for dev).",
+        description="Watch and run a pybevy script with hot reload (alias for dev).",
+        allow_abbrev=False,
+    )
+    watch_parser.add_argument("script_path", metavar="SCRIPT_PATH", type=_existing_path)
+    _add_reload_options(watch_parser)
+    watch_parser.set_defaults(handler=watch_command, command_parser=watch_parser)
+
+    eject_parser = commands.add_parser(
+        "mcp-eject",
+        help="Eject MCP definitions to editable files.",
+        description="Eject MCP definitions to editable files for customization.",
+        allow_abbrev=False,
+    )
+    eject_parser.add_argument(
+        "--output",
+        "-o",
+        default=".pybevy/mcp",
+        help="Output directory for ejected definitions",
+    )
+    eject_parser.set_defaults(handler=mcp_eject, command_parser=eject_parser)
+
+    mcp_parser = commands.add_parser(
+        "mcp",
+        help="Start MCP bridge for AI agent integration.",
+        description="Start MCP bridge for AI agent integration.",
+        allow_abbrev=False,
+    )
+    mcp_parser.add_argument(
+        "script_path",
+        metavar="SCRIPT_PATH",
+        nargs="?",
+        type=_existing_path,
+    )
+    mcp_parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help="Transport mode: stdio (default) or http (Streamable HTTP).",
+    )
+    mcp_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host for HTTP transport (default 127.0.0.1).",
+    )
+    mcp_parser.add_argument(
+        "--port",
+        default=8080,
+        type=int,
+        help="Port for HTTP transport (default 8080).",
+    )
+    mcp_parser.add_argument(
+        "--record",
+        action="store_true",
+        help="Record MCP calls to .pybevy/logs/ as JSONL + screenshots.",
+    )
+    mcp_parser.set_defaults(handler=mcp_command, command_parser=mcp_parser)
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run the PyBevy command-line interface."""
+    parser = _build_parser()
+    namespace = parser.parse_args(argv)
+    values = vars(namespace)
+    handler = values.pop("handler")
+    command_parser = values.pop("command_parser")
+    values.pop("command")
+    try:
+        handler(**values)
+    except CliUsageError as error:
+        command_parser.error(str(error))
+
+
 def run(script_path: str, hot_reload: bool, verbose: bool) -> None:
     """
     Run a pybevy script in-process.
@@ -48,30 +184,9 @@ def run(script_path: str, hot_reload: bool, verbose: bool) -> None:
     _run_script(script_path, hot_reload, verbose=verbose)
 
 
-@main.command()
-@click.argument("script_path", type=click.Path(exists=True))
-@click.option(
-    "--full",
-    is_flag=True,
-    help="Use full reload mode (despawn entities, reload all systems including Startup)",
-)
-@click.option(
-    "--pause",
-    is_flag=True,
-    help="Start paused: open the renderer but don't load the scene until Space is pressed.",
-)
-@click.option(
-    "--resolution",
-    type=str,
-    default=None,
-    help="Window resolution as WIDTHxHEIGHT (e.g. 1920x1080).",
-)
-@click.option(
-    "--verbose",
-    is_flag=True,
-    help="Enable verbose debug output for hot reload operations.",
-)
-def dev(script_path: str, full: bool, pause: bool, resolution: str | None, verbose: bool) -> None:
+def dev(
+    script_path: str, full: bool, pause: bool, resolution: str | None, verbose: bool
+) -> None:
     """
     Run a pybevy script in development mode with hot-reload enabled.
 
@@ -83,36 +198,22 @@ def dev(script_path: str, full: bool, pause: bool, resolution: str | None, verbo
     """
     partial_reload = not full  # Default to partial reload
     if partial_reload:
-        click.echo("Running in development mode with fast PARTIAL hot-reload (default)...")
+        _echo("Running in development mode with fast PARTIAL hot-reload (default)...")
     else:
-        click.echo("Running in development mode with FULL hot-reload...")
-    _run_script(script_path, hot_reload=True, partial_reload=partial_reload, pause=pause, resolution=resolution, verbose=verbose)
+        _echo("Running in development mode with FULL hot-reload...")
+    _run_script(
+        script_path,
+        hot_reload=True,
+        partial_reload=partial_reload,
+        pause=pause,
+        resolution=resolution,
+        verbose=verbose,
+    )
 
 
-@main.command("watch")
-@click.argument("script_path", type=click.Path(exists=True))
-@click.option(
-    "--full",
-    is_flag=True,
-    help="Use full reload mode (despawn entities, reload all systems including Startup)",
-)
-@click.option(
-    "--pause",
-    is_flag=True,
-    help="Start paused: open the renderer but don't load the scene until Space is pressed.",
-)
-@click.option(
-    "--resolution",
-    type=str,
-    default=None,
-    help="Window resolution as WIDTHxHEIGHT (e.g. 1920x1080).",
-)
-@click.option(
-    "--verbose",
-    is_flag=True,
-    help="Enable verbose debug output for hot reload operations.",
-)
-def watch_command(script_path: str, full: bool, pause: bool, resolution: str | None, verbose: bool) -> None:
+def watch_command(
+    script_path: str, full: bool, pause: bool, resolution: str | None, verbose: bool
+) -> None:
     """
     Watch and run a pybevy script with hot-reload (alias for dev command).
 
@@ -123,14 +224,19 @@ def watch_command(script_path: str, full: bool, pause: bool, resolution: str | N
     """
     partial_reload = not full  # Default to partial reload
     if partial_reload:
-        click.echo("Running in watch mode with fast PARTIAL hot-reload (default)...")
+        _echo("Running in watch mode with fast PARTIAL hot-reload (default)...")
     else:
-        click.echo("Running in watch mode with FULL hot-reload...")
-    _run_script(script_path, hot_reload=True, partial_reload=partial_reload, pause=pause, resolution=resolution, verbose=verbose)
+        _echo("Running in watch mode with FULL hot-reload...")
+    _run_script(
+        script_path,
+        hot_reload=True,
+        partial_reload=partial_reload,
+        pause=pause,
+        resolution=resolution,
+        verbose=verbose,
+    )
 
 
-@main.command("mcp-eject")
-@click.option("--output", "-o", default=".pybevy/mcp", help="Output directory for ejected definitions")
 def mcp_eject(output: str) -> None:
     """Eject MCP definitions to editable files for customization.
 
@@ -145,7 +251,9 @@ def mcp_eject(output: str) -> None:
 
     output_dir = Path(output)
     if output_dir.exists():
-        click.echo(f"Error: Output directory '{output}' already exists. Remove it first or use --output.")
+        _echo(
+            f"Error: Output directory '{output}' already exists. Remove it first or use --output."
+        )
         raise SystemExit(1)
 
     # Get built-in definitions from Python definitions + Rust ApiIndex
@@ -172,10 +280,8 @@ def mcp_eject(output: str) -> None:
     pack_toml = (
         '[pack]\nname = "my-mcp-pack"\nversion = "0.1.0"\n'
         'description = "Custom MCP capability pack"\n\n'
-        "[compatibility]\n# pybevy = \">=0.1.0\"\n\n"
-        "[tools]\nexclude = []\n\n"
-        + "\n".join(override_lines)
-        + "\n"
+        '[compatibility]\n# pybevy = ">=0.1.0"\n\n'
+        "[tools]\nexclude = []\n\n" + "\n".join(override_lines) + "\n"
     )
     (output_dir / "pack.toml").write_text(pack_toml)
 
@@ -186,10 +292,10 @@ def mcp_eject(output: str) -> None:
 
 This project has an editable MCP pack at `{output}/`.
 
-- `pack.toml` — uncomment `[overrides.tools]` lines to patch tool descriptions
-- `instructions.md` — edit these instructions (auto-injected into LLM context on connect)
-- `prompts.md` — on-demand prompts (loaded via prompts/get)
-- `guides/*.md` — add or override guides (`*.default.md` are read-only reference copies)
+- `pack.toml`: uncomment `[overrides.tools]` lines to patch tool descriptions
+- `instructions.md`: edit these instructions (auto-injected into LLM context on connect)
+- `prompts.md`: on-demand prompts (loaded via prompts/get)
+- `guides/*.md`: add or override guides (`*.default.md` are read-only reference copies)
 
 When a tool description is misleading or missing context for this project,
 suggest editing `{output}/pack.toml` to the user.
@@ -203,13 +309,16 @@ suggest editing `{output}/pack.toml` to the user.
             name = prompt["name"]
             description = prompt.get("description", "")
             content = prompt.get("content", "")
-            parts.append(f"---\nname: {name}\ndescription: {description}\n---\n{content}")
+            parts.append(
+                f"---\nname: {name}\ndescription: {description}\n---\n{content}"
+            )
         (output_dir / "prompts.md").write_text("\n".join(parts) + "\n")
 
     # Copy built-in guides as *.default.md (reference only, not loaded)
     guide_count = 0
     try:
         import pybevy as _pybevy_pkg
+
         pybevy_pkg_dir = Path(_pybevy_pkg.__path__[0])
         guides_src = pybevy_pkg_dir / "mcp" / "guides"
         if guides_src.is_dir():
@@ -222,36 +331,27 @@ suggest editing `{output}/pack.toml` to the user.
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(md_file.read_text())
                 guide_count += 1
-    except (ImportError, Exception) as e:
-        click.echo(f"  (could not copy guides: {e})")
+    except Exception as e:
+        _echo(f"  (could not copy guides: {e})")
 
-    click.echo(f"Ejected MCP definitions to '{output}/':")
-    click.echo("  instructions.md (auto-injected into LLM context on connect)")
-    click.echo(f"  pack.toml with {len(tools)} tool overrides (commented out)")
+    _echo(f"Ejected MCP definitions to '{output}/':")
+    _echo("  instructions.md (auto-injected into LLM context on connect)")
+    _echo(f"  pack.toml with {len(tools)} tool overrides (commented out)")
     if prompts_list:
-        click.echo(f"  prompts.md with {len(prompts_list)} prompt(s)")
+        _echo(f"  prompts.md with {len(prompts_list)} prompt(s)")
     if guide_count:
-        click.echo(f"  {guide_count} guide(s) as *.default.md reference files")
-    click.echo("")
-    click.echo("To customize:")
-    click.echo("  - Edit instructions.md to change what the LLM sees on connect")
-    click.echo("  - Edit pack.toml to patch tool descriptions")
-    click.echo("  - Copy guides/foo.default.md -> guides/foo.md to override a guide")
-    click.echo("  - Add new guides/foo.md or guides/subdir/foo.md for custom guides")
+        _echo(f"  {guide_count} guide(s) as *.default.md reference files")
+    _echo("")
+    _echo("To customize:")
+    _echo("  - Edit instructions.md to change what the LLM sees on connect")
+    _echo("  - Edit pack.toml to patch tool descriptions")
+    _echo("  - Copy guides/foo.default.md -> guides/foo.md to override a guide")
+    _echo("  - Add new guides/foo.md or guides/subdir/foo.md for custom guides")
 
 
-@main.command("mcp")
-@click.argument("script_path", type=click.Path(exists=True), required=False)
-@click.option(
-    "--transport",
-    type=click.Choice(["stdio", "http"]),
-    default="stdio",
-    help="Transport mode: stdio (default) or http (Streamable HTTP).",
-)
-@click.option("--host", default="127.0.0.1", help="Host for HTTP transport (default 127.0.0.1).")
-@click.option("--port", default=8080, type=int, help="Port for HTTP transport (default 8080).")
-@click.option("--record", is_flag=True, default=False, help="Record MCP calls to .pybevy/logs/ as JSONL + screenshots.")
-def mcp_command(script_path: str | None, transport: str, host: str, port: int, record: bool) -> None:
+def mcp_command(
+    script_path: str | None, transport: str, host: str, port: int, record: bool
+) -> None:
     """Start MCP bridge for AI agent integration.
 
     Launches an MCP server that AI agents (Codex, Claude Code, Cursor, etc.)
@@ -262,34 +362,50 @@ def mcp_command(script_path: str | None, transport: str, host: str, port: int, r
     """
     if transport == "http":
         if script_path:
-            click.echo(
+            _echo(
                 "Warning: scene_path is ignored with HTTP transport; "
                 "each session creates its own bridge.",
                 err=True,
             )
         from .mcp.http_transport import run_mcp_http
+
         run_mcp_http(host=host, port=port, record=record)
     else:
         from .mcp.bridge import McpBridge
+
         bridge = McpBridge(scene_path=script_path, record=record)
         bridge.run()
 
 
-@main.command("hub")
-@click.option("--port", default=8419, type=int, help="Port for the Hub HTTP server.")
-def hub_command(port: int) -> None:
-    """Start the PyBevy Hub — renderer process manager.
+def _bind_lifetime_to_parent() -> None:
+    """Die with the parent process when running under the test suite.
 
-    Manages PyBevy engine subprocesses for headless/sandboxed environments.
-    The MCP bridge can delegate to the Hub when no local display is available.
+    pytest-timeout's thread method ends the runner with os._exit, which skips
+    every finally block: a spawned scene would outlive the run and spin at
+    full CPU. PR_SET_PDEATHSIG delivers SIGTERM to this process when its
+    parent dies, whatever the cause.
     """
-    from .mcp.hub import run_hub
-    run_hub(port=port)
+    if os.environ.get("PYBEVY_TESTING") != "1" or sys.platform != "linux":
+        return
+    pr_set_pdeathsig = 1
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(pr_set_pdeathsig, signal.SIGTERM, 0, 0, 0)
+    except (OSError, AttributeError):
+        return
+    # The parent may have died before prctl took effect; reparenting to init
+    # (or a subreaper) means the signal will never come.
+    if os.getppid() == 1:
+        os.kill(os.getpid(), signal.SIGTERM)
 
 
 def _run_script(
-    script_path: str, hot_reload: bool, partial_reload: bool = True, pause: bool = False,
-    resolution: str | None = None, verbose: bool = False,
+    script_path: str,
+    hot_reload: bool,
+    partial_reload: bool = True,
+    pause: bool = False,
+    resolution: str | None = None,
+    verbose: bool = False,
 ) -> None:
     """
     Internal function to run a pybevy script with optional hot-reload.
@@ -298,10 +414,19 @@ def _run_script(
         script_path: Path to the Python script to run.
         hot_reload: Whether to enable hot reloading.
         partial_reload: If True, use partial reload mode (Update/Last systems only). Defaults to True for faster reloads.
-        pause: If True, start paused — renderer opens but scene isn't loaded until Space is pressed.
+        pause: If True, start paused (the renderer opens but the scene is not
+            loaded until Space is pressed).
         resolution: Window resolution as "WIDTHxHEIGHT" (e.g. "1920x1080").
         verbose: If True, enable verbose debug output for hot reload operations.
     """
+    _bind_lifetime_to_parent()
+
+    # Resolve while os.getcwd() is still the real one: loading the app can
+    # change it, and a later abspath() would then rebuild a relative script
+    # path against the wrong root, where the reload registers the scene module
+    # under a foreign path and silently serves stale first-generation classes.
+    script_path = os.path.abspath(script_path)
+
     # Set environment variable for Rust code to check
     if verbose:
         os.environ["PYBEVY_VERBOSE"] = "1"
@@ -314,16 +439,27 @@ def _run_script(
     else:
         os.environ.pop("PYBEVY_START_PAUSED", None)
 
+    # Lets AssetPlugin turn on bevy's asset watcher, so shader and texture edits
+    # land like Python edits do.
+    if hot_reload:
+        os.environ["PYBEVY_HOT_RELOAD"] = "1"
+    else:
+        os.environ.pop("PYBEVY_HOT_RELOAD", None)
+
     # Set window resolution for Rust code
     if resolution:
         parts = resolution.lower().split("x")
         if len(parts) != 2:
-            raise click.BadParameter(f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080).")
+            raise CliUsageError(
+                f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080)."
+            )
         try:
             int(parts[0])
             int(parts[1])
         except ValueError as err:
-            raise click.BadParameter(f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080).") from err
+            raise CliUsageError(
+                f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080)."
+            ) from err
         os.environ["PYBEVY_WINDOW_RESOLUTION"] = resolution
     else:
         os.environ.pop("PYBEVY_WINDOW_RESOLUTION", None)
@@ -368,16 +504,17 @@ def _run_script(
                     # This keeps component class identity stable across reloads
                     setup_component_caching(enabled=True, verbose=verbose)
                     if verbose:
-                        click.echo("   → Component caching ENABLED (partial reload)")
+                        _echo("   → Component caching ENABLED (partial reload)")
                 else:
                     # Full reload: disable component caching and clear cache
                     # This allows component structure changes to take effect
                     setup_component_caching(enabled=False, verbose=verbose)
                     if verbose:
-                        click.echo("   → Component caching disabled (full reload)")
+                        _echo("   → Component caching disabled (full reload)")
 
                 # Flush user modules (selective via import graph when available)
                 from .util.hot_reload import flush_user_modules
+
                 flushed = flush_user_modules(
                     parent_dir,
                     verbose=verbose,
@@ -385,13 +522,14 @@ def _run_script(
                     changed_files=changed_files,
                 )
                 if verbose:
-                    click.echo(f"   → Flushed {len(flushed)} user modules from sys.modules")
+                    _echo(f"   → Flushed {len(flushed)} user modules from sys.modules")
 
                 # Execute a fresh copy and register it in sys.modules so that
                 # `import <module_name>` (run_code, numba cache loading,
                 # pickling) resolves to the live scene classes. __name__ is the
                 # module name, so `if __name__ == "__main__"` blocks don't run.
                 from .util.hot_reload import exec_scene_module
+
                 module_globals = exec_scene_module(module_name, verbose=verbose)
             else:
                 # Standalone script without package - use run_path
@@ -405,22 +543,28 @@ def _run_script(
                     if not _component_cache_enabled:
                         setup_component_caching(enabled=True, verbose=verbose)
                     if verbose:
-                        click.echo(
+                        _echo(
                             "   → Component caching ENABLED (partial reload, standalone)"
                         )
                 else:
                     # Full reload (F5): clear component cache but keep caching enabled if it was on
                     # This invalidates stale components while maintaining workflow preference
                     import pybevy
+
                     pybevy.clear_component_cache(verbose=verbose)
                     if verbose:
                         if _component_cache_enabled:
-                            click.echo("   → Component cache CLEARED (full reload, caching still enabled)")
+                            _echo(
+                                "   → Component cache CLEARED (full reload, caching still enabled)"
+                            )
                         else:
-                            click.echo("   → Component caching DISABLED (full reload, standalone)")
+                            _echo(
+                                "   → Component caching DISABLED (full reload, standalone)"
+                            )
 
                 # Flush user modules (selective via import graph when available)
                 from .util.hot_reload import flush_user_modules
+
                 flush_user_modules(
                     parent_dir,
                     verbose=verbose,
@@ -439,6 +583,7 @@ def _run_script(
                 # duplicated every class and numba's cache pickled an
                 # unimportable module name).
                 from .util.hot_reload import exec_scene_module
+
                 module_name = os.path.splitext(os.path.basename(abs_path))[0]
                 module_globals = exec_scene_module(
                     module_name, file_path=abs_path, verbose=verbose
@@ -451,6 +596,7 @@ def _run_script(
             # Look for functions decorated with @entrypoint
             # Common names for @entrypoint decorated functions
             import inspect
+
             app_function_names = ["main", "create_app", "app", "run"]
 
             def is_entrypoint_decorated(obj: object) -> bool:
@@ -462,21 +608,25 @@ def _run_script(
                 if not callable(obj):
                     return False
                 # Check if it has __wrapped__ (decorated with @wraps)
-                if not hasattr(obj, '__wrapped__'):
+                if not hasattr(obj, "__wrapped__"):
                     return False
                 try:
                     # Check the wrapped function's signature
                     wrapped_sig = inspect.signature(obj.__wrapped__)  # type: ignore[attr-defined]
                     params = list(wrapped_sig.parameters.values())
                     # Should have single parameter named 'app'
-                    if len(params) == 1 and params[0].name == 'app':
+                    if len(params) == 1 and params[0].name == "app":
                         # Try calling with no args - if it works, it's @entrypoint decorated
                         try:
                             # Don't actually call it, just verify it can be called
                             wrapper_sig = inspect.signature(obj, follow_wrapped=False)
                             wrapper_params = list(wrapper_sig.parameters.values())
                             # Wrapper should have optional parameter
-                            if len(wrapper_params) == 1 and wrapper_params[0].default is not inspect.Parameter.empty:
+                            if (
+                                len(wrapper_params) == 1
+                                and wrapper_params[0].default
+                                is not inspect.Parameter.empty
+                            ):
                                 return True
                         except Exception:
                             pass
@@ -492,10 +642,10 @@ def _run_script(
 
             # Fallback: scan all callables for @entrypoint pattern
             for name, obj in module_globals.items():
-                if name.startswith('_'):
+                if name.startswith("_"):
                     continue  # Skip private functions
                 if is_entrypoint_decorated(obj):
-                    click.echo(f"   → Found @entrypoint decorated function: {name}")
+                    _echo(f"   → Found @entrypoint decorated function: {name}")
                     return obj  # type: ignore
 
             raise RuntimeError(
@@ -503,7 +653,7 @@ def _run_script(
                 "Example: @entrypoint\\ndef main(app: App) -> App: ..."
             )
         except Exception as e:
-            click.echo(f"Failed to load create_app function: {e}")
+            _echo(f"Failed to load create_app function: {e}")
             raise
 
     def load_full_app(script_path: str) -> App:
@@ -524,7 +674,7 @@ def _run_script(
         partial_mode: bool = False,
     ) -> None:
         """Background thread that watches for file changes and *requests* a reload"""
-        click.echo("Watching for changes in current directory...")
+        _echo("Watching for changes in current directory...")
 
         # Use shared file watcher from PyBevy utilities
         watch_for_changes(
@@ -534,10 +684,10 @@ def _run_script(
             changed_files_cache=changed_files_cache,  # type: ignore[arg-type]
             partial_mode=partial_mode,
             verbose=False,  # CLI already has its own output formatting
-            log_prefix="",  # CLI uses click.echo for output
+            log_prefix="",  # CLI writes watcher output directly
         )
 
-        click.echo("Watcher thread exiting.")
+        _echo("Watcher thread exiting.")
 
     def run_app_with_error_handling(app: App, reload_state: object | None) -> None:
         """Run the app with proper error handling and reporting"""
@@ -554,15 +704,19 @@ def _run_script(
 
                     # Check reload mode from state
                     is_partial = False
-                    if reload_state is not None and hasattr(reload_state, "is_partial_reload"):
+                    if reload_state is not None and hasattr(
+                        reload_state, "is_partial_reload"
+                    ):
                         is_partial = reload_state.is_partial_reload()  # type: ignore
 
                     if verbose:
-                        click.echo(f"🔄 Hot reload: partial={is_partial}, changed_files={len(files) if isinstance(files, set) else 0}")
+                        _echo(
+                            f"🔄 Hot reload: partial={is_partial}, changed_files={len(files) if isinstance(files, set) else 0}"
+                        )
 
                     # Load entrypoint with selective reload based on mode
                     result = load_create_app_function(
-                        script_path, files if (is_partial and files) else None
+                        script_path, resolve_changed_files(is_partial, files)
                     )
 
                     # Clear cache after loading
@@ -574,11 +728,11 @@ def _run_script(
             app.run()
         except KeyboardInterrupt:
             # This should not happen, since pybevy catches the keyboard interrupts
-            click.echo("\nApplication interrupted by user")
+            _echo("\nApplication interrupted by user")
             sys.exit(0)
         except Exception as e:
-            click.echo(f"\nError running application: {e}")
-            click.echo("Traceback:")
+            _echo(f"\nError running application: {e}")
+            _echo("Traceback:")
             traceback.print_exc()
             sys.exit(1)
 
@@ -586,10 +740,10 @@ def _run_script(
     stop_event: threading.Event | None = None
 
     if hot_reload:
-        click.echo("Starting with hot-reload enabled...")
+        _echo("Starting with hot-reload enabled...")
         if pause:
-            click.echo("Start paused — press Space in the window to load the scene.")
-        click.echo(f"Loading initial app from {script_path}...")
+            _echo("Start paused: press Space in the window to load the scene.")
+        _echo(f"Loading initial app from {script_path}...")
 
         # Store the partial_reload mode for use in loader
         changed_files_cache["partial_mode"] = partial_reload
@@ -599,13 +753,14 @@ def _run_script(
         if partial_reload:
             setup_component_caching(enabled=True, verbose=verbose)
             if verbose:
-                click.echo("🔧 Component caching initialized for partial reload mode")
+                _echo("🔧 Component caching initialized for partial reload mode")
 
         app = load_full_app(script_path)
 
         # Build import graph for selective module flushing
         try:
             from .util.import_graph import ImportGraph
+
             graph = ImportGraph(
                 watch_root=os.path.dirname(os.path.abspath(script_path)),
                 entry_file=os.path.abspath(script_path),
@@ -613,18 +768,18 @@ def _run_script(
             graph.build()
             import_graph_holder["graph"] = graph
             if verbose:
-                click.echo(
+                _echo(
                     f"📊 Import graph built: {graph.file_count} files, "
                     f"{graph.edge_count} edges"
                 )
         except Exception as e:
             if verbose:
-                click.echo(f"⚠️ Import graph build failed (full flush will be used): {e}")
+                _echo(f"⚠️ Import graph build failed (full flush will be used): {e}")
 
         reload_state: object | None = getattr(app, "_state", None)
 
         if reload_state is None:
-            click.echo("App does not have _state attribute. Hot-reload not available.")
+            _echo("App does not have _state attribute. Hot-reload not available.")
             run_app_with_error_handling(app, None)
             return
 
@@ -637,31 +792,31 @@ def _run_script(
         )
         watcher.start()
 
-        click.echo("Hot-reload ready! App running in main thread...")
+        _echo("Hot-reload ready! App running in main thread...")
 
         try:
             run_app_with_error_handling(app, reload_state)
         finally:
             if stop_event and watcher:
-                click.echo("\nApplication exited. Stopping watcher thread...")
+                _echo("\nApplication exited. Stopping watcher thread...")
                 stop_event.set()
                 watcher.join(timeout=2.0)
                 if watcher.is_alive():
-                    click.echo("Watcher thread did not stop in time.")
+                    _echo("Watcher thread did not stop in time.")
                 else:
-                    click.echo("Watcher thread stopped.")
+                    _echo("Watcher thread stopped.")
 
     else:
-        click.echo(f"Loading and running {script_path}...")
+        _echo(f"Loading and running {script_path}...")
         try:
             app = load_full_app(script_path)
             run_app_with_error_handling(app, None)
             del app
             gc.collect()
 
-            click.echo("Application exited normally")
+            _echo("Application exited normally")
         except Exception as e:
-            click.echo(f"Failed to load app: {e}")
+            _echo(f"Failed to load app: {e}")
             traceback.print_exc()
             sys.exit(1)
 
