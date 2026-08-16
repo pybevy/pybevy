@@ -1,38 +1,51 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
 /// Global frame buffer: entity bits → latest frame bytes.
 /// Written by Rust `collect_readback_frames` system, read by Python `poll_readback_frame`.
-static READBACK_FRAMES: OnceLock<Mutex<HashMap<u64, Vec<u8>>>> = OnceLock::new();
+static READBACK_FRAMES: OnceLock<Mutex<HashMap<u64, Arc<Vec<u8>>>>> = OnceLock::new();
 
-fn frames_map() -> &'static Mutex<HashMap<u64, Vec<u8>>> {
+fn frames_map() -> &'static Mutex<HashMap<u64, Arc<Vec<u8>>>> {
     READBACK_FRAMES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Latest frame with dimensions, for headless screenshot support.
 /// Written by `collect_readback_frames`, read by `HeadlessFrameProvider`.
-static LATEST_FRAME: OnceLock<Mutex<Option<(Vec<u8>, u32, u32)>>> = OnceLock::new();
+static LATEST_FRAME: OnceLock<Mutex<Option<(Arc<Vec<u8>>, u32, u32, u64)>>> = OnceLock::new();
+static LATEST_FRAME_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn latest_frame_slot() -> &'static Mutex<Option<(Vec<u8>, u32, u32)>> {
+fn latest_frame_slot() -> &'static Mutex<Option<(Arc<Vec<u8>>, u32, u32, u64)>> {
     LATEST_FRAME.get_or_init(|| Mutex::new(None))
 }
 
 /// Poll the latest readback frame with dimensions. Used by the control server
 /// for headless screenshots.
 pub fn poll_latest_frame() -> Option<(Vec<u8>, u32, u32)> {
-    latest_frame_slot().lock().ok()?.clone()
+    let (frame, width, height, _) = latest_frame_slot().lock().ok()?.clone()?;
+    Some((unwrap_frame(frame), width, height))
+}
+
+/// Poll the latest readback frame and the sequence assigned when it arrived.
+pub fn poll_latest_frame_with_sequence() -> Option<(Vec<u8>, u32, u32, u64)> {
+    let (frame, width, height, sequence) = latest_frame_slot().lock().ok()?.clone()?;
+    Some((unwrap_frame(frame), width, height, sequence))
+}
+
+/// Take the bytes without copying when this is the last reference.
+fn unwrap_frame(frame: Arc<Vec<u8>>) -> Vec<u8> {
+    Arc::try_unwrap(frame).unwrap_or_else(|shared| shared.as_ref().clone())
 }
 
 /// Called from Python to get the latest readback frame for a camera entity.
 /// Returns None if no frame is available yet.
 pub fn poll_frame(entity_bits: u64) -> Option<Vec<u8>> {
     let mut map = frames_map().lock().ok()?;
-    map.remove(&entity_bits)
+    map.remove(&entity_bits).map(unwrap_frame)
 }
 
 /// List all entity bits that currently have readback frames available.
@@ -65,7 +78,7 @@ use bevy::{
     },
 };
 use crossbeam_channel::{Receiver, Sender};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Component on camera entities: receives pixel data from render world
 /// Attached to cameras with RenderToBuffer component to enable frame extraction
@@ -74,14 +87,24 @@ pub struct FrameReceiver {
     pub(crate) receiver: Receiver<Vec<u8>>,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) bytes_per_pixel: u32,
 }
 
 impl FrameReceiver {
     pub fn new(width: u32, height: u32) -> (Self, Sender<Vec<u8>>) {
+        Self::with_bytes_per_pixel(width, height, 4)
+    }
+
+    pub fn with_bytes_per_pixel(
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u32,
+    ) -> (Self, Sender<Vec<u8>>) {
         let (sender, receiver) = crossbeam_channel::unbounded();
         (
             FrameReceiver {
                 receiver,
+                bytes_per_pixel,
                 width,
                 height,
             },
@@ -123,9 +146,19 @@ impl ImageCopier {
         render_device: &RenderDevice,
         sender: Sender<Vec<u8>>,
     ) -> Self {
-        // Calculate padded bytes per row (wgpu requires 256-byte alignment)
-        // Multiply by 4 (bytes per pixel for RGBA) BEFORE alignment
-        let padded_bytes_per_row = RenderDevice::align_copy_bytes_per_row((width * 4) as usize);
+        Self::with_bytes_per_pixel(src_image, width, height, 4, render_device, sender)
+    }
+
+    pub fn with_bytes_per_pixel(
+        src_image: Handle<Image>,
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u32,
+        render_device: &RenderDevice,
+        sender: Sender<Vec<u8>>,
+    ) -> Self {
+        let padded_bytes_per_row =
+            RenderDevice::align_copy_bytes_per_row((width * bytes_per_pixel) as usize);
 
         let buffer = render_device.create_buffer(&BufferDescriptor {
             label: Some("readback_buffer"),
@@ -168,13 +201,20 @@ pub fn attach_image_copier(
     image_handle: Handle<Image>,
     width: u32,
     height: u32,
+    bytes_per_pixel: u32,
     render_device: &RenderDevice,
 ) -> FrameReceiver {
-    // Create FrameReceiver and get its sender
-    let (frame_receiver, sender) = FrameReceiver::new(width, height);
+    let (frame_receiver, sender) =
+        FrameReceiver::with_bytes_per_pixel(width, height, bytes_per_pixel);
 
-    // Create ImageCopier with the sender
-    let copier = ImageCopier::new(image_handle, width, height, render_device, sender);
+    let copier = ImageCopier::with_bytes_per_pixel(
+        image_handle,
+        width,
+        height,
+        bytes_per_pixel,
+        render_device,
+        sender,
+    );
 
     // Add both components to the entity
     commands
@@ -195,8 +235,22 @@ struct ImageCopiers(pub Vec<ImageCopier>);
 pub struct ImageCopyPlugin;
 
 impl Plugin for ImageCopyPlugin {
-    fn build(&self, app: &mut App) {
-        debug!("[ImageCopyPlugin] build() called - setting up GPU readback");
+    fn build(&self, _app: &mut App) {
+        debug!("[ImageCopyPlugin] build() called - readback wiring deferred to finish()");
+    }
+
+    // All wiring happens in finish(), which Bevy runs after every plugin's
+    // build(): a RenderPlugin added later in the plugin list (ImageCopyPlugin
+    // before DefaultPlugins) has created the RenderApp by then, so plugin
+    // order cannot silently disable readback.
+    fn finish(&self, app: &mut App) {
+        // A scene on MinimalPlugins, or with RenderPlugin disabled, has no
+        // RenderApp and no `Assets<Image>`. Readback cannot work there, so add
+        // nothing at all rather than panicking or leaving systems that will.
+        if app.get_sub_app(RenderApp).is_none() {
+            warn!("[ImageCopyPlugin] no RenderApp: GPU readback and screenshots are unavailable");
+            return;
+        }
 
         // Main-world systems:
         // 1. Auto-attach readback to render-target cameras
@@ -242,10 +296,24 @@ fn auto_attach_readback(
             };
             let width = image.width();
             let height = image.height();
+            let format = image.texture_descriptor.format;
+            // The copy buffer and the row-padding strip must both use the real
+            // texel size; a block-compressed or planar target has none.
+            let Some(bytes_per_pixel) = format
+                .block_copy_size(None)
+                .filter(|_| format.block_dimensions() == (1, 1))
+            else {
+                warn!(
+                    "[auto_attach_readback] Skipping entity {:?}: render target format {:?} \
+                     has no single texel size, so its frames cannot be read back",
+                    entity, format
+                );
+                continue;
+            };
 
             debug!(
-                "[auto_attach_readback] Attaching readback to entity {:?} ({}x{})",
-                entity, width, height
+                "[auto_attach_readback] Attaching readback to entity {:?} ({}x{}, {} bytes/pixel)",
+                entity, width, height, bytes_per_pixel
             );
             attach_image_copier(
                 &mut commands,
@@ -253,6 +321,7 @@ fn auto_attach_readback(
                 handle.clone(),
                 width,
                 height,
+                bytes_per_pixel,
                 &render_device,
             );
         }
@@ -265,12 +334,19 @@ pub fn collect_readback_frames(receivers: Query<(Entity, &FrameReceiver)>) {
     let Ok(mut map) = frames_map().lock() else {
         return;
     };
+    if !map.is_empty() {
+        let live: HashSet<u64> = receivers
+            .iter()
+            .map(|(entity, _)| entity.to_bits())
+            .collect();
+        map.retain(|entity_bits, _| live.contains(entity_bits));
+    }
+    let mut headline: Option<(u64, Arc<Vec<u8>>, u32, u32)> = None;
     for (entity, receiver) in receivers.iter() {
         if let Some(raw) = receiver.try_recv() {
             let w = receiver.width as usize;
             let h = receiver.height as usize;
-            let bpp = 4usize;
-            let unpadded_row = w * bpp;
+            let unpadded_row = w * receiver.bytes_per_pixel as usize;
             let padded_row = RenderDevice::align_copy_bytes_per_row(unpadded_row);
 
             let stripped = if padded_row == unpadded_row {
@@ -287,12 +363,23 @@ pub fn collect_readback_frames(receivers: Query<(Entity, &FrameReceiver)>) {
                 }
                 out
             };
-            // Also store in LATEST_FRAME for the headless frame buffer system
-            if let Ok(mut latest) = latest_frame_slot().lock() {
-                *latest = Some((stripped.clone(), receiver.width, receiver.height));
+            let stripped = Arc::new(stripped);
+            let bits = entity.to_bits();
+            if headline
+                .as_ref()
+                .is_none_or(|(current, ..)| bits < *current)
+            {
+                headline = Some((bits, Arc::clone(&stripped), receiver.width, receiver.height));
             }
-            map.insert(entity.to_bits(), stripped);
+            map.insert(bits, stripped);
         }
+    }
+
+    if let Some((_, frame, width, height)) = headline
+        && let Ok(mut latest) = latest_frame_slot().lock()
+    {
+        let sequence = LATEST_FRAME_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
+        *latest = Some((frame, width, height, sequence));
     }
 }
 

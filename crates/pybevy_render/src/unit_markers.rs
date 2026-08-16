@@ -133,7 +133,7 @@ impl PyNoIndirectDrawing {
 ///
 /// When added to a camera entity, enables GPU-based occlusion culling
 /// which can improve performance by not rendering objects hidden behind
-/// other objects.
+/// other objects. The camera must also have a `DepthPrepass` component.
 #[pycomponent(OcclusionCulling, unit, bridge)]
 #[pyclass(name = "OcclusionCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

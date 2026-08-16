@@ -29,7 +29,11 @@ impl Plugin for ImageCopyPlugin {
 fn update_headless_frame_buffer(
     mut buffer: ResMut<pybevy_control::handlers::screenshot::HeadlessFrameBuffer>,
 ) {
-    if let Some(frame) = pybevy_render::readback::poll_latest_frame() {
-        buffer.latest = Some(frame);
+    if let Some((bytes, width, height, sequence)) =
+        pybevy_render::readback::poll_latest_frame_with_sequence()
+        && sequence > buffer.sequence
+    {
+        buffer.latest = Some((bytes, width, height));
+        buffer.sequence = sequence;
     }
 }
