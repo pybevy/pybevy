@@ -8,8 +8,8 @@ use bevy::{
     },
     prelude::ReflectDefault,
     reflect::{
-        PartialReflect, ReflectMut, TypeInfo, TypeRegistry,
-        enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo},
+        PartialReflect, ReflectMut, ReflectRef, TypeInfo, TypeRegistry,
+        enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo, VariantType},
         list::DynamicList,
         structs::{DynamicStruct, StructInfo},
         tuple::DynamicTuple,
@@ -17,6 +17,8 @@ use bevy::{
     },
 };
 use serde_json::{Map, Value};
+
+use super::json_float::{float_to_json, nonfinite_float_from_json};
 
 /// Errors from reflection-based mutation
 #[derive(Debug)]
@@ -36,13 +38,13 @@ pub enum ReflectError {
 }
 
 /// Try reflection-based field mutation on a component.
-/// Returns list of updated field names on success.
+/// Returns each written field mapped to its post-write JSON value.
 pub fn reflect_set_component(
     world: &mut World,
     entity: Entity,
     type_id: TypeId,
     fields: &Map<String, Value>,
-) -> Result<Vec<String>, ReflectError> {
+) -> Result<Map<String, Value>, ReflectError> {
     // Clone AppTypeRegistry Arc — cheap, avoids borrow conflict with entity_mut later
     let registry_arc = world
         .get_resource::<AppTypeRegistry>()
@@ -60,6 +62,46 @@ pub fn reflect_set_component(
         .clone();
 
     let type_info = registration.type_info();
+    if matches!(type_info, TypeInfo::Enum(_)) {
+        let replacement = enum_component_replacement(fields, type_id, type_info, &type_registry)?;
+
+        let entity_ref = world
+            .get_entity(entity)
+            .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+        let mut candidate = reflect_component
+            .reflect(entity_ref)
+            .ok_or(ReflectError::ComponentNotOnEntity)?
+            .reflect_clone()
+            .map_err(|error| {
+                ReflectError::FieldError(format!(
+                    "variant: component cannot be cloned for an atomic update: {error}"
+                ))
+            })?;
+
+        // A reflected enum may accept an incomplete dynamic variant while a
+        // concrete enum rejects it. Validate against a detached concrete clone
+        // before calling ReflectComponent::apply, whose implementation is
+        // infallible and would otherwise panic on attacker-controlled input.
+        candidate
+            .try_apply(replacement.as_ref())
+            .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
+
+        let post = match candidate.reflect_ref() {
+            ReflectRef::Enum(value) => Value::String(value.variant_name().to_string()),
+            _ => Value::Null,
+        };
+
+        drop(type_registry);
+        let entity_mut = world
+            .get_entity_mut(entity)
+            .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+        reflect_component.apply(entity_mut, candidate.as_partial_reflect());
+
+        // get_component reports `variant` as a bare name, and set_component
+        // accepts that same form, so the post-state has to use it too.
+        return Ok(Map::from_iter([("variant".to_string(), post)]));
+    }
+
     let struct_info = match type_info {
         TypeInfo::Struct(info) => info,
         _ => {
@@ -78,33 +120,30 @@ pub fn reflect_set_component(
         converted.push((actual_name, reflected));
     }
 
-    // Drop registry lock before mutable world access
-    drop(type_registry);
-
-    // Get mutable component via reflection
-    let mut entity_mut = world
-        .get_entity_mut(entity)
+    let entity_ref = world
+        .get_entity(entity)
         .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+    let mut candidate = reflect_component
+        .reflect(entity_ref)
+        .ok_or(ReflectError::ComponentNotOnEntity)?
+        .to_dynamic();
 
-    let Some(mut reflected) = reflect_component.reflect_mut(&mut entity_mut) else {
-        return Err(ReflectError::ComponentNotOnEntity);
-    };
-
-    // Apply each converted field
-    let mut updated = Vec::new();
-    match reflected.reflect_mut() {
+    // Apply every field to a detached candidate. `try_apply` may leave its target
+    // partially modified on error, so it must not operate on the live component.
+    let mut updated_names = Vec::with_capacity(converted.len());
+    match candidate.reflect_mut() {
         ReflectMut::Struct(s) => {
             for (name, value) in converted {
                 if let Some(field) = s.field_mut(&name) {
                     field
                         .try_apply(value.as_ref())
                         .map_err(|e| ReflectError::FieldError(format!("{name}: {e}")))?;
-                    updated.push(name);
                 } else {
                     return Err(ReflectError::FieldError(format!(
                         "{name}: field not found on component"
                     )));
                 }
+                updated_names.push(name);
             }
         }
         _ => {
@@ -112,7 +151,228 @@ pub fn reflect_set_component(
         }
     }
 
+    drop(type_registry);
+    let entity_mut = world
+        .get_entity_mut(entity)
+        .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+    reflect_component.apply(entity_mut, candidate.as_ref());
+
+    let entity_ref = world
+        .get_entity(entity)
+        .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+    let reflected = reflect_component
+        .reflect(entity_ref)
+        .ok_or(ReflectError::ComponentNotOnEntity)?;
+    let ReflectRef::Struct(fields) = reflected.reflect_ref() else {
+        return Err(ReflectError::NotAStruct);
+    };
+    let updated = updated_names
+        .into_iter()
+        .map(|name| {
+            let value = fields.field(&name).map_or(Value::Null, reflect_to_json);
+            (name, value)
+        })
+        .collect();
+
     Ok(updated)
+}
+
+/// Component-shaped math types that `scene::vector_to_json` renders as arrays.
+/// Keep this list in lockstep with that function so a field looks the same
+/// whether it came from get_component or from a set_component post-state.
+fn vector_field_names(short_type_path: &str) -> Option<&'static [&'static str]> {
+    match short_type_path {
+        "Vec2" => Some(&["x", "y"]),
+        "Vec3" => Some(&["x", "y", "z"]),
+        "Vec4" | "Quat" => Some(&["x", "y", "z", "w"]),
+        _ => None,
+    }
+}
+
+/// Read named fields off a component via reflection, for reporting the state
+/// after a write that did not go through `reflect_set_component`.
+pub fn reflect_read_fields<'a>(
+    world: &World,
+    entity: Entity,
+    type_id: TypeId,
+    names: impl IntoIterator<Item = &'a String>,
+) -> Map<String, Value> {
+    let mut out = Map::new();
+    let Some(registry_arc) = world.get_resource::<AppTypeRegistry>() else {
+        return out;
+    };
+    let registry = registry_arc.read();
+    let component = registry
+        .get(type_id)
+        .and_then(|registration| registration.data::<ReflectComponent>())
+        .and_then(|reflect| {
+            world
+                .get_entity(entity)
+                .ok()
+                .and_then(|e| reflect.reflect(e))
+        });
+    let Some(component) = component else {
+        return out;
+    };
+    let fields = match component.reflect_ref() {
+        ReflectRef::Struct(fields) => fields,
+        // An enum component has no named fields; it reports the same bare `variant`
+        // name that get_component returns and set_component accepts.
+        ReflectRef::Enum(value) => {
+            let variant = Value::String(value.variant_name().to_string());
+            for name in names {
+                let value = if name == "variant" {
+                    variant.clone()
+                } else {
+                    Value::Null
+                };
+                out.insert(name.clone(), value);
+            }
+            return out;
+        }
+        _ => return out,
+    };
+    for name in names {
+        let value = fields.field(name).map_or(Value::Null, reflect_to_json);
+        out.insert(name.clone(), value);
+    }
+    out
+}
+
+/// Convert a reflected value to a JSON value for post-write read-back.
+/// Best-effort: numeric primitives pass through, structs/tuples/lists/enums recurse.
+/// Falls back to Value::Null when the type is not representable.
+pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
+    // Primitives via try_downcast_ref
+    if let Some(v) = value.try_downcast_ref::<f32>() {
+        return float_to_json(f64::from(*v));
+    }
+    if let Some(v) = value.try_downcast_ref::<f64>() {
+        return float_to_json(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<i8>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<i16>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<i32>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<i64>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<isize>() {
+        return serde_json::json!(*v as i64);
+    }
+    if let Some(v) = value.try_downcast_ref::<u8>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<u16>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<u32>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<u64>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<usize>() {
+        return serde_json::json!(*v as u64);
+    }
+    if let Some(v) = value.try_downcast_ref::<bool>() {
+        return serde_json::json!(*v);
+    }
+    if let Some(v) = value.try_downcast_ref::<String>() {
+        return Value::String(v.clone());
+    }
+
+    match value.reflect_ref() {
+        ReflectRef::Struct(s) => {
+            // Math vectors serialize as arrays, matching what get_component
+            // reports and what set_component accepts back.
+            if let Some(names) = vector_field_names(value.reflect_short_type_path()) {
+                return Value::Array(
+                    names
+                        .iter()
+                        .map(|name| s.field(name).map_or(Value::Null, reflect_to_json))
+                        .collect(),
+                );
+            }
+            let mut map = Map::new();
+            for i in 0..s.field_len() {
+                let name = s.name_at(i).unwrap_or("").to_string();
+                let v = s.field_at(i).map(reflect_to_json).unwrap_or(Value::Null);
+                map.insert(name, v);
+            }
+            Value::Object(map)
+        }
+        ReflectRef::TupleStruct(t) => {
+            let mut arr = Vec::with_capacity(t.field_len());
+            for i in 0..t.field_len() {
+                arr.push(t.field(i).map(reflect_to_json).unwrap_or(Value::Null));
+            }
+            Value::Array(arr)
+        }
+        ReflectRef::Tuple(t) => {
+            let mut arr = Vec::with_capacity(t.field_len());
+            for i in 0..t.field_len() {
+                arr.push(t.field(i).map(reflect_to_json).unwrap_or(Value::Null));
+            }
+            Value::Array(arr)
+        }
+        ReflectRef::List(l) => {
+            let mut arr = Vec::with_capacity(l.len());
+            for i in 0..l.len() {
+                arr.push(l.get(i).map(reflect_to_json).unwrap_or(Value::Null));
+            }
+            Value::Array(arr)
+        }
+        ReflectRef::Array(a) => {
+            let mut arr = Vec::with_capacity(a.len());
+            for i in 0..a.len() {
+                arr.push(a.get(i).map(reflect_to_json).unwrap_or(Value::Null));
+            }
+            Value::Array(arr)
+        }
+        ReflectRef::Enum(e) => {
+            let variant_name = e.variant_name().to_string();
+            // Option<T>: unwrap None to Value::Null, Some(x) to inner JSON
+            if variant_name == "None" {
+                return Value::Null;
+            }
+            if variant_name == "Some" && e.field_len() == 1 {
+                return e.field_at(0).map(reflect_to_json).unwrap_or(Value::Null);
+            }
+            let inner = match e.variant_type() {
+                VariantType::Unit => Value::Null,
+                VariantType::Tuple => {
+                    if e.field_len() == 1 {
+                        e.field_at(0).map(reflect_to_json).unwrap_or(Value::Null)
+                    } else {
+                        let mut arr = Vec::with_capacity(e.field_len());
+                        for i in 0..e.field_len() {
+                            arr.push(e.field_at(i).map(reflect_to_json).unwrap_or(Value::Null));
+                        }
+                        Value::Array(arr)
+                    }
+                }
+                VariantType::Struct => {
+                    let mut map = Map::new();
+                    for i in 0..e.field_len() {
+                        let name = e.name_at(i).unwrap_or("").to_string();
+                        let v = e.field_at(i).map(reflect_to_json).unwrap_or(Value::Null);
+                        map.insert(name, v);
+                    }
+                    Value::Object(map)
+                }
+            };
+            let mut obj = Map::new();
+            obj.insert(variant_name, inner);
+            Value::Object(obj)
+        }
+        _ => Value::Null,
+    }
 }
 
 /// Create a component from JSON fields via reflection and insert it into an entity.
@@ -149,38 +409,43 @@ pub fn reflect_spawn_component(
     // Apply JSON fields if any
     if !fields.is_empty() {
         let type_info = registration.type_info();
-        let struct_info = match type_info {
-            TypeInfo::Struct(info) => info,
-            _ => {
-                return Err(ReflectError::NotAStruct);
+        match type_info {
+            TypeInfo::Enum(_) => {
+                let replacement =
+                    enum_component_replacement(fields, type_id, type_info, &type_registry)?;
+                default_component
+                    .try_apply(replacement.as_ref())
+                    .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
             }
-        };
+            TypeInfo::Struct(struct_info) => match default_component.reflect_mut() {
+                ReflectMut::Struct(s) => {
+                    for (field_name, field_value) in fields {
+                        let actual_name =
+                            resolve_field_name(field_name, struct_info).ok_or_else(|| {
+                                ReflectError::FieldError(format!("{field_name}: field not found"))
+                            })?;
+                        let reflected = json_field_to_reflect(
+                            field_name,
+                            field_value,
+                            struct_info,
+                            &type_registry,
+                        )
+                        .map_err(|e| ReflectError::FieldError(format!("{field_name}: {e}")))?;
 
-        match default_component.reflect_mut() {
-            ReflectMut::Struct(s) => {
-                for (field_name, field_value) in fields {
-                    let actual_name =
-                        resolve_field_name(field_name, struct_info).ok_or_else(|| {
-                            ReflectError::FieldError(format!("{field_name}: field not found"))
-                        })?;
-                    let reflected =
-                        json_field_to_reflect(field_name, field_value, struct_info, &type_registry)
-                            .map_err(|e| ReflectError::FieldError(format!("{field_name}: {e}")))?;
-
-                    if let Some(field) = s.field_mut(&actual_name) {
-                        field
-                            .try_apply(reflected.as_ref())
-                            .map_err(|e| ReflectError::FieldError(format!("{field_name}: {e}")))?;
-                    } else {
-                        return Err(ReflectError::FieldError(format!(
-                            "{field_name}: field not found on component"
-                        )));
+                        if let Some(field) = s.field_mut(&actual_name) {
+                            field.try_apply(reflected.as_ref()).map_err(|e| {
+                                ReflectError::FieldError(format!("{field_name}: {e}"))
+                            })?;
+                        } else {
+                            return Err(ReflectError::FieldError(format!(
+                                "{field_name}: field not found on component"
+                            )));
+                        }
                     }
                 }
-            }
-            _ => {
-                return Err(ReflectError::NotAStruct);
-            }
+                _ => return Err(ReflectError::NotAStruct),
+            },
+            _ => return Err(ReflectError::NotAStruct),
         }
     }
 
@@ -197,6 +462,46 @@ pub fn reflect_spawn_component(
     );
 
     Ok(())
+}
+
+fn enum_component_replacement(
+    fields: &Map<String, Value>,
+    type_id: TypeId,
+    type_info: &'static TypeInfo,
+    registry: &TypeRegistry,
+) -> Result<Box<dyn PartialReflect>, ReflectError> {
+    if fields.contains_key("variant") {
+        if fields.len() == 1 {
+            return json_to_reflect(
+                fields.get("variant").unwrap(),
+                type_id,
+                Some(type_info),
+                registry,
+            )
+            .map_err(|error| ReflectError::FieldError(format!("variant: {error}")));
+        }
+        return json_to_reflect(
+            &Value::Object(fields.clone()),
+            type_id,
+            Some(type_info),
+            registry,
+        )
+        .map_err(|error| ReflectError::FieldError(format!("variant: {error}")));
+    }
+
+    if fields.len() == 1 {
+        return json_to_reflect(
+            &Value::Object(fields.clone()),
+            type_id,
+            Some(type_info),
+            registry,
+        )
+        .map_err(|error| ReflectError::FieldError(format!("variant: {error}")));
+    }
+
+    Err(ReflectError::FieldError(
+        "enum component updates require a tagged 'variant' payload or one variant key".to_string(),
+    ))
 }
 
 /// Resolve a field name on a struct, handling Python reserved word aliasing.
@@ -249,24 +554,106 @@ fn json_to_reflect(
     }
 
     match value {
-        Value::Number(n) => convert_number(n, target_type_id),
-        Value::Bool(b) => Ok(Box::new(*b)),
-        Value::String(s) => {
-            // If targeting an enum, treat string as a unit variant name
-            if let Some(TypeInfo::Enum(enum_info)) = target_type_info
-                && enum_info.variant(s).is_some()
-            {
-                let mut dynamic = DynamicEnum::default();
-                dynamic.set_represented_type(target_type_info);
-                dynamic.set_variant(s, DynamicVariant::Unit);
-                return Ok(Box::new(dynamic));
+        Value::Number(n) => convert_number(n, target_type_id, target_type_info),
+        Value::Bool(b) => {
+            if target_type_id == TypeId::of::<bool>() {
+                Ok(Box::new(*b))
+            } else {
+                Err(format!(
+                    "cannot convert bool {b} to {}",
+                    target_type_name(target_type_info)
+                ))
             }
-            Ok(Box::new(s.clone()))
+        }
+        Value::String(s) => {
+            if target_type_id == TypeId::of::<f32>()
+                && let Some(value) = nonfinite_float_from_json(value)
+            {
+                return Ok(Box::new(value as f32));
+            }
+            if target_type_id == TypeId::of::<f64>()
+                && let Some(value) = nonfinite_float_from_json(value)
+            {
+                return Ok(Box::new(value));
+            }
+            if let Some(TypeInfo::Enum(enum_info)) = target_type_info {
+                let variant = enum_info.variant(s).ok_or_else(|| {
+                    let valid = (0..enum_info.variant_len())
+                        .filter_map(|index| enum_info.variant_at(index))
+                        .map(VariantInfo::name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("unknown variant '{s}'. Valid variants: {valid}")
+                })?;
+                return default_enum_variant(s, variant, target_type_info, registry);
+            }
+            if target_type_id == TypeId::of::<String>() {
+                Ok(Box::new(s.clone()))
+            } else {
+                Err(format!(
+                    "cannot convert string {s:?} to {}",
+                    target_type_name(target_type_info)
+                ))
+            }
         }
         Value::Array(arr) => convert_array(arr, target_type_id, target_type_info, registry),
         Value::Object(obj) => convert_object(obj, target_type_id, target_type_info, registry),
         Value::Null => Err("null values not supported".into()),
     }
+}
+
+fn default_enum_variant(
+    variant_name: &str,
+    variant_info: &VariantInfo,
+    type_info: Option<&'static TypeInfo>,
+    registry: &TypeRegistry,
+) -> Result<Box<dyn PartialReflect>, String> {
+    let default_field = |type_id: TypeId, field_name: &str| {
+        registry
+            .get(type_id)
+            .and_then(|registration| registration.data::<ReflectDefault>())
+            .map(ReflectDefault::default)
+            .ok_or_else(|| {
+                format!(
+                    "variant '{variant_name}' requires field '{field_name}' and its type has no reflected default"
+                )
+            })
+    };
+
+    let variant = match variant_info {
+        VariantInfo::Unit(_) => DynamicVariant::Unit,
+        VariantInfo::Tuple(info) => {
+            let mut tuple = DynamicTuple::default();
+            for index in 0..info.field_len() {
+                let field = info.field_at(index).ok_or_else(|| {
+                    format!("variant '{variant_name}' is missing field metadata at index {index}")
+                })?;
+                tuple.insert_boxed(default_field(field.type_id(), &format!(".{index}"))?);
+            }
+            DynamicVariant::Tuple(tuple)
+        }
+        VariantInfo::Struct(info) => {
+            let mut value = DynamicStruct::default();
+            for index in 0..info.field_len() {
+                let field = info.field_at(index).ok_or_else(|| {
+                    format!("variant '{variant_name}' is missing field metadata at index {index}")
+                })?;
+                value.insert_boxed(field.name(), default_field(field.type_id(), field.name())?);
+            }
+            DynamicVariant::Struct(value)
+        }
+    };
+
+    let mut dynamic = DynamicEnum::default();
+    dynamic.set_represented_type(type_info);
+    dynamic.set_variant(variant_name, variant);
+    Ok(Box::new(dynamic))
+}
+
+fn target_type_name(target_type_info: Option<&'static TypeInfo>) -> &'static str {
+    target_type_info
+        .map(|info| info.type_path_table().short_path())
+        .unwrap_or("the requested field type")
 }
 
 /// Check if an enum type is `Option<T>` (has exactly "None" and "Some" variants).
@@ -410,8 +797,28 @@ fn convert_object(
         return Ok(Box::new(dynamic));
     }
 
-    // Enum handling: object with exactly one key = variant name
+    // Enum handling. Accept both the compact one-key form and the tagged form
+    // returned by component introspection.
     if let Some(TypeInfo::Enum(enum_info)) = target_type_info {
+        if let Some(Value::String(variant_name)) = obj.get("variant") {
+            let variant_info = enum_info.variant(variant_name).ok_or_else(|| {
+                let valid: Vec<&str> = (0..enum_info.variant_len())
+                    .filter_map(|i| enum_info.variant_at(i).map(|variant| variant.name()))
+                    .collect();
+                format!(
+                    "unknown variant '{variant_name}'. Valid variants: {}",
+                    valid.join(", ")
+                )
+            })?;
+            let payload = tagged_enum_payload(obj, variant_info)?;
+            return convert_enum_variant(
+                variant_name,
+                &payload,
+                enum_info,
+                target_type_info,
+                registry,
+            );
+        }
         if obj.len() != 1 {
             return Err(format!(
                 "enum value must be an object with exactly one key (the variant name), got {} keys",
@@ -429,6 +836,43 @@ fn convert_object(
     }
 
     Err("cannot convert object to non-struct type".into())
+}
+
+fn tagged_enum_payload(
+    obj: &Map<String, Value>,
+    variant_info: &VariantInfo,
+) -> Result<Value, String> {
+    let mut fields = obj.clone();
+    fields.remove("variant");
+
+    match variant_info {
+        VariantInfo::Unit(_) if fields.is_empty() => Ok(Value::Null),
+        VariantInfo::Unit(_) => Err("unit variant does not accept payload fields".to_string()),
+        VariantInfo::Struct(_) => Ok(Value::Object(fields)),
+        VariantInfo::Tuple(info) if info.field_len() == 1 => {
+            if fields.len() != 1 {
+                return Err(format!(
+                    "single-value tuple variant expects one payload field, got {}",
+                    fields.len()
+                ));
+            }
+            Ok(fields.into_values().next().unwrap())
+        }
+        VariantInfo::Tuple(info) => {
+            let values = (0..info.field_len())
+                .map(|index| {
+                    fields
+                        .remove(&index.to_string())
+                        .ok_or_else(|| format!("tuple variant is missing payload field '{index}'"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if fields.is_empty() {
+                Ok(Value::Array(values))
+            } else {
+                Err("tuple variant has unknown payload fields".to_string())
+            }
+        }
+    }
 }
 
 /// Convert a named variant + JSON value into a DynamicEnum.
@@ -547,6 +991,7 @@ fn build_dynamic_struct_from_fields(
 fn convert_number(
     n: &serde_json::Number,
     target_type_id: TypeId,
+    target_type_info: Option<&'static TypeInfo>,
 ) -> Result<Box<dyn PartialReflect>, String> {
     if target_type_id == TypeId::of::<f32>() {
         Ok(Box::new(
@@ -611,12 +1056,10 @@ fn convert_number(
                 as isize,
         ))
     } else {
-        // Fall back: try f32 (most common in Bevy components)
-        Ok(Box::new(
-            n.as_f64()
-                .ok_or_else(|| format!("expected number (falling back to f32), got {n}"))?
-                as f32,
-        ))
+        let target = target_type_info
+            .map(|info| info.type_path_table().short_path())
+            .unwrap_or("the requested field type");
+        Err(format!("cannot convert number {n} to {target}"))
     }
 }
 
@@ -628,9 +1071,49 @@ mod tests {
         ecs::reflect::AppTypeRegistry,
         math::{UVec2, Vec3},
         prelude::*,
+        reflect::Typed,
+        ui::GridTrack,
     };
 
     use super::*;
+
+    #[test]
+    fn non_numeric_target_rejects_number_without_fallback() {
+        let error = convert_number(
+            &serde_json::Number::from(10),
+            TypeId::of::<GridTrack>(),
+            Some(GridTrack::type_info()),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "cannot convert number 10 to GridTrack");
+    }
+
+    #[test]
+    fn non_bool_target_rejects_bool_without_fallback() {
+        let error = json_to_reflect(
+            &serde_json::json!(true),
+            TypeId::of::<GridTrack>(),
+            Some(GridTrack::type_info()),
+            &TypeRegistry::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "cannot convert bool true to GridTrack");
+    }
+
+    #[test]
+    fn non_string_target_rejects_string_without_fallback() {
+        let error = json_to_reflect(
+            &serde_json::json!("Auto"),
+            TypeId::of::<GridTrack>(),
+            Some(GridTrack::type_info()),
+            &TypeRegistry::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "cannot convert string \"Auto\" to GridTrack");
+    }
 
     /// Helper to set up a minimal world with type registry and Transform registered.
     fn setup_world_with_transform() -> (App, Entity) {
@@ -670,7 +1153,14 @@ mod tests {
             })
         );
         let updated = result.unwrap();
-        assert_eq!(updated, vec!["translation"]);
+        // Vec3 reports as an array, the same shape get_component emits.
+        assert_eq!(
+            updated,
+            Map::from_iter([(
+                "translation".to_string(),
+                serde_json::json!([10.0, 20.0, 30.0])
+            )])
+        );
 
         let t = world.get::<Transform>(entity).unwrap();
         assert_eq!(t.translation, Vec3::new(10.0, 20.0, 30.0));
@@ -697,6 +1187,28 @@ mod tests {
 
         let t = world.get::<Transform>(entity).unwrap();
         assert_eq!(t.translation, Vec3::new(10.0, 20.0, 30.0));
+    }
+
+    #[test]
+    fn reflected_nonfinite_floats_round_trip_as_distinct_strings() {
+        let (mut app, entity) = setup_world_with_transform();
+        let world = app.world_mut();
+        let fields = Map::from_iter([(
+            "translation".to_string(),
+            serde_json::json!(["NaN", "Infinity", "-Infinity"]),
+        )]);
+
+        let updated =
+            reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields).unwrap();
+
+        assert_eq!(
+            updated["translation"],
+            serde_json::json!(["NaN", "Infinity", "-Infinity"])
+        );
+        let translation = world.get::<Transform>(entity).unwrap().translation;
+        assert!(translation.x.is_nan());
+        assert_eq!(translation.y, f32::INFINITY);
+        assert_eq!(translation.z, f32::NEG_INFINITY);
     }
 
     #[test]
@@ -806,7 +1318,7 @@ mod tests {
     #[test]
     fn convert_number_isize() {
         let n = serde_json::Number::from(42i64);
-        let result = super::convert_number(&n, TypeId::of::<isize>());
+        let result = super::convert_number(&n, TypeId::of::<isize>(), None);
         assert!(result.is_ok());
         let boxed = result.unwrap();
         let val = boxed.try_downcast_ref::<isize>().unwrap();
@@ -816,7 +1328,7 @@ mod tests {
     #[test]
     fn convert_number_isize_negative() {
         let n = serde_json::Number::from(-5i64);
-        let result = super::convert_number(&n, TypeId::of::<isize>());
+        let result = super::convert_number(&n, TypeId::of::<isize>(), None);
         assert!(result.is_ok());
         let boxed = result.unwrap();
         let val = boxed.try_downcast_ref::<isize>().unwrap();
@@ -826,7 +1338,7 @@ mod tests {
     #[test]
     fn convert_number_usize() {
         let n = serde_json::Number::from(100u64);
-        let result = super::convert_number(&n, TypeId::of::<usize>());
+        let result = super::convert_number(&n, TypeId::of::<usize>(), None);
         assert!(result.is_ok());
         let boxed = result.unwrap();
         let val = boxed.try_downcast_ref::<usize>().unwrap();
@@ -842,6 +1354,32 @@ mod tests {
         VariantB,
     }
 
+    #[derive(Reflect, Default)]
+    #[reflect(Default)]
+    struct TestEnumPayload {
+        value: u32,
+    }
+
+    #[derive(Component, Reflect)]
+    #[reflect(Component)]
+    enum TestPayloadEnumComponent {
+        First(TestEnumPayload),
+        Second(TestEnumPayload),
+    }
+
+    #[derive(Reflect)]
+    struct TestIncompleteEnumPayload {
+        retained: u32,
+        required: u32,
+    }
+
+    #[derive(Component, Reflect)]
+    #[reflect(Component)]
+    enum TestIncompletePayloadEnumComponent {
+        First(TestIncompleteEnumPayload),
+        Second(TestIncompleteEnumPayload),
+    }
+
     #[test]
     fn reflect_set_non_struct_returns_not_a_struct() {
         let mut app = App::new();
@@ -855,7 +1393,141 @@ mod tests {
         let fields = Map::new();
         let result =
             reflect_set_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
-        assert!(matches!(result, Err(ReflectError::NotAStruct)));
+        assert!(matches!(result, Err(ReflectError::FieldError(_))));
+    }
+
+    #[test]
+    fn reflect_set_enum_component_replaces_variant() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn(TestEnumComponent::VariantA).id();
+        let mut fields = Map::new();
+        fields.insert("variant".into(), serde_json::json!("VariantB"));
+
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+
+        assert_eq!(
+            result.unwrap(),
+            Map::from_iter([("variant".to_string(), serde_json::json!("VariantB"))])
+        );
+        assert!(matches!(
+            world.get::<TestEnumComponent>(entity),
+            Some(TestEnumComponent::VariantB)
+        ));
+    }
+
+    #[test]
+    fn reflect_set_enum_component_replaces_a_payload_variant() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestEnumPayload>();
+        app.register_type::<TestPayloadEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TestPayloadEnumComponent::First(TestEnumPayload {
+                value: 1,
+            }))
+            .id();
+        let fields = Map::from_iter([
+            ("variant".to_string(), serde_json::json!("Second")),
+            ("value".to_string(), serde_json::json!({"value": 42})),
+        ]);
+
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestPayloadEnumComponent>(),
+            &fields,
+        );
+
+        assert_eq!(
+            result.unwrap(),
+            Map::from_iter([("variant".to_string(), serde_json::json!("Second"))])
+        );
+        let Some(TestPayloadEnumComponent::Second(payload)) =
+            world.get::<TestPayloadEnumComponent>(entity)
+        else {
+            panic!("payload enum variant was not replaced");
+        };
+        assert_eq!(payload.value, 42);
+    }
+
+    #[test]
+    fn reflect_set_enum_component_defaults_a_payload_when_available() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestEnumPayload>();
+        app.register_type::<TestPayloadEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TestPayloadEnumComponent::First(TestEnumPayload {
+                value: 7,
+            }))
+            .id();
+        let fields = Map::from_iter([("variant".to_string(), serde_json::json!("Second"))]);
+
+        reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestPayloadEnumComponent>(),
+            &fields,
+        )
+        .unwrap();
+
+        let Some(TestPayloadEnumComponent::Second(payload)) =
+            world.get::<TestPayloadEnumComponent>(entity)
+        else {
+            panic!("payload enum variant was not replaced");
+        };
+        assert_eq!(payload.value, 0);
+    }
+
+    #[test]
+    fn reflect_set_enum_component_rejects_incomplete_variant_atomically() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestIncompleteEnumPayload>();
+        app.register_type::<TestIncompletePayloadEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TestIncompletePayloadEnumComponent::First(
+                TestIncompleteEnumPayload {
+                    retained: 7,
+                    required: 11,
+                },
+            ))
+            .id();
+        let fields = Map::from_iter([
+            ("variant".to_string(), serde_json::json!("Second")),
+            ("value".to_string(), serde_json::json!({"retained": 42})),
+        ]);
+
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestIncompletePayloadEnumComponent>(),
+            &fields,
+        );
+
+        assert!(matches!(result, Err(ReflectError::FieldError(_))));
+        let Some(TestIncompletePayloadEnumComponent::First(payload)) =
+            world.get::<TestIncompletePayloadEnumComponent>(entity)
+        else {
+            panic!("failed enum update changed the live variant");
+        };
+        assert_eq!(payload.retained, 7);
+        assert_eq!(payload.required, 11);
     }
 
     #[test]
@@ -877,8 +1549,7 @@ mod tests {
     }
 
     #[test]
-    fn reflect_spawn_non_struct_with_fields_returns_not_a_struct() {
-        // Enum with fields should return NotAStruct (can't apply struct fields)
+    fn reflect_spawn_enum_with_variant_field_succeeds() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.register_type::<TestEnumComponent>();
@@ -892,7 +1563,11 @@ mod tests {
 
         let result =
             reflect_spawn_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
-        assert!(matches!(result, Err(ReflectError::NotAStruct)));
+        assert!(result.is_ok());
+        assert!(matches!(
+            world.get::<TestEnumComponent>(entity),
+            Some(TestEnumComponent::VariantB)
+        ));
     }
 
     /// A component with an Option<Vec3> field for testing Option unwrapping.
@@ -973,7 +1648,7 @@ mod tests {
     #[test]
     fn convert_number_error_includes_type_info() {
         let n = serde_json::Number::from_f64(std::f64::consts::PI).unwrap();
-        let result = super::convert_number(&n, TypeId::of::<i32>());
+        let result = super::convert_number(&n, TypeId::of::<i32>(), None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
