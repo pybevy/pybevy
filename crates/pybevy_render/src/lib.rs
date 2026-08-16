@@ -10,6 +10,7 @@ pub mod readback;
 pub mod temporal_jitter;
 pub mod texture_dimension;
 pub mod texture_format;
+pub mod texture_view_dimension;
 pub mod unit_markers;
 pub mod vertex_format;
 pub mod wgpu_error_handler;
@@ -45,6 +46,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<extent3d::PyExtent3d>()?;
     m.add_class::<texture_dimension::PyTextureDimension>()?;
     m.add_class::<texture_format::PyTextureFormat>()?;
+    m.add_class::<texture_view_dimension::PyTextureViewDimension>()?;
     m.add_class::<vertex_format::PyVertexFormat>()?;
     m.add_class::<msaa::PyMsaa>()?;
     m.add_class::<mip_bias::PyMipBias>()?;

@@ -1,5 +1,5 @@
 use bevy::render::view::{ColorGradingGlobal, ColorGradingSection};
-use pybevy_core::{FromBorrowedStorage, field_storage::FieldStorage, value_storage::ValueStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -25,12 +25,12 @@ impl PyColorGradingSection {
     }
 
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&ColorGradingSection> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, ColorGradingSection>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut ColorGradingSection> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, ColorGradingSection>> {
         Ok(self.storage.as_mut()?)
     }
 }

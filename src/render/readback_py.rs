@@ -1,7 +1,7 @@
 use bevy::{app::App, prelude::*, render::renderer::RenderDevice};
-use pybevy_core::{PluginBuild, PyHandle};
+use pybevy_core::{PluginBuild, PyHandle, public_error::invalid_entity_bits};
 use pybevy_macros::pyplugin;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
 use crate::app::{app::PyApp, plugin::PyPlugin};
@@ -57,7 +57,8 @@ pub fn spawn_image_copier(
 
         let (frame_receiver, sender) = FrameReceiver::new(width, height);
         let copier = ImageCopier::new(handle, width, height, render_device, sender);
-        let entity = Entity::from_bits(camera_entity);
+        let entity = Entity::try_from_bits(camera_entity)
+            .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(camera_entity)))?;
 
         bevy_app
             .world_mut()
@@ -72,7 +73,8 @@ pub fn spawn_image_copier(
 #[pyfunction]
 pub fn try_receive_frame(app: &Bound<'_, PyApp>, camera_entity: u64) -> PyResult<Option<Vec<u8>>> {
     app.borrow().with_bevy_app(|bevy_app| {
-        let entity = Entity::from_bits(camera_entity);
+        let entity = Entity::try_from_bits(camera_entity)
+            .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(camera_entity)))?;
 
         let entity_ref = bevy_app.world().get_entity(entity).map_err(|_| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -94,7 +96,7 @@ pub fn try_receive_frame(app: &Bound<'_, PyApp>, camera_entity: u64) -> PyResult
 
 /// Poll the global readback frame buffer for the latest frame from a camera entity.
 ///
-/// This does NOT require PyApp access — safe to call from within ECS systems.
+/// This does NOT require PyApp access: safe to call from within ECS systems.
 /// The Rust-side `collect_readback_frames` system populates this buffer each frame.
 ///
 /// Returns None if no frame is available yet.

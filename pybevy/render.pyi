@@ -1,10 +1,6 @@
 from typing import ClassVar
 
-import numpy as np
-import numpy.typing as npt
-
 from pybevy.app import App, Plugin
-from pybevy.assets import Asset
 from pybevy.ecs import Component
 from pybevy.math import Vec2
 from pybevy.pbr import StandardMaterial as StandardMaterial
@@ -26,7 +22,7 @@ class Extent3d:
         """Depth for 3D textures, or number of array layers for 2D array textures."""
 
 class TextureDimension:
-    """Texture dimension - 1D, 2D, or 3D."""
+    """Texture dimension: 1D, 2D, or 3D."""
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -86,17 +82,18 @@ class VertexFormat:
     Unorm8x4Bgra: ClassVar[VertexFormat]
 
 class TextureFormat:
-    """Texture format enumeration - controls how pixel data is interpreted."""
+    """Texture format controlling how pixel data is interpreted."""
 
     def __eq__(self, other: object) -> bool: ...
 
-    # CamelCase variants (PyO3 enum members)
     R8Unorm: ClassVar[TextureFormat]
     R8Snorm: ClassVar[TextureFormat]
     R8Uint: ClassVar[TextureFormat]
     R8Sint: ClassVar[TextureFormat]
     R16Uint: ClassVar[TextureFormat]
     R16Sint: ClassVar[TextureFormat]
+    R16Unorm: ClassVar[TextureFormat]
+    R16Snorm: ClassVar[TextureFormat]
     R16Float: ClassVar[TextureFormat]
     Rg8Unorm: ClassVar[TextureFormat]
     Rg8Snorm: ClassVar[TextureFormat]
@@ -107,6 +104,8 @@ class TextureFormat:
     R32Float: ClassVar[TextureFormat]
     Rg16Uint: ClassVar[TextureFormat]
     Rg16Sint: ClassVar[TextureFormat]
+    Rg16Unorm: ClassVar[TextureFormat]
+    Rg16Snorm: ClassVar[TextureFormat]
     Rg16Float: ClassVar[TextureFormat]
     Rgba8Unorm: ClassVar[TextureFormat]
     Rgba8UnormSrgb: ClassVar[TextureFormat]
@@ -115,20 +114,30 @@ class TextureFormat:
     Rgba8Sint: ClassVar[TextureFormat]
     Bgra8Unorm: ClassVar[TextureFormat]
     Bgra8UnormSrgb: ClassVar[TextureFormat]
+    Rgb9e5Ufloat: ClassVar[TextureFormat]
+    Rgb10a2Uint: ClassVar[TextureFormat]
     Rgb10a2Unorm: ClassVar[TextureFormat]
     Rg11b10Ufloat: ClassVar[TextureFormat]
+    R64Uint: ClassVar[TextureFormat]
     Rg32Uint: ClassVar[TextureFormat]
     Rg32Sint: ClassVar[TextureFormat]
     Rg32Float: ClassVar[TextureFormat]
     Rgba16Uint: ClassVar[TextureFormat]
     Rgba16Sint: ClassVar[TextureFormat]
+    Rgba16Unorm: ClassVar[TextureFormat]
+    Rgba16Snorm: ClassVar[TextureFormat]
     Rgba16Float: ClassVar[TextureFormat]
     Rgba32Uint: ClassVar[TextureFormat]
     Rgba32Sint: ClassVar[TextureFormat]
     Rgba32Float: ClassVar[TextureFormat]
-    Depth32Float: ClassVar[TextureFormat]
+    Stencil8: ClassVar[TextureFormat]
+    Depth16Unorm: ClassVar[TextureFormat]
     Depth24Plus: ClassVar[TextureFormat]
     Depth24PlusStencil8: ClassVar[TextureFormat]
+    Depth32Float: ClassVar[TextureFormat]
+    Depth32FloatStencil8: ClassVar[TextureFormat]
+    NV12: ClassVar[TextureFormat]
+    P010: ClassVar[TextureFormat]
     Bc1RgbaUnorm: ClassVar[TextureFormat]
     Bc1RgbaUnormSrgb: ClassVar[TextureFormat]
     Bc2RgbaUnorm: ClassVar[TextureFormat]
@@ -143,6 +152,16 @@ class TextureFormat:
     Bc6hRgbFloat: ClassVar[TextureFormat]
     Bc7RgbaUnorm: ClassVar[TextureFormat]
     Bc7RgbaUnormSrgb: ClassVar[TextureFormat]
+    Etc2Rgb8Unorm: ClassVar[TextureFormat]
+    Etc2Rgb8UnormSrgb: ClassVar[TextureFormat]
+    Etc2Rgb8A1Unorm: ClassVar[TextureFormat]
+    Etc2Rgb8A1UnormSrgb: ClassVar[TextureFormat]
+    Etc2Rgba8Unorm: ClassVar[TextureFormat]
+    Etc2Rgba8UnormSrgb: ClassVar[TextureFormat]
+    EacR11Unorm: ClassVar[TextureFormat]
+    EacR11Snorm: ClassVar[TextureFormat]
+    EacRg11Unorm: ClassVar[TextureFormat]
+    EacRg11Snorm: ClassVar[TextureFormat]
 
 class PowerPreference:
     """GPU power preference for adapter selection."""
@@ -151,6 +170,8 @@ class PowerPreference:
     LowPower: ClassVar[PowerPreference]
     HighPerformance: ClassVar[PowerPreference]
 
+    def __hash__(self) -> int: ...
+
 class Face:
     """Face culling mode."""
 
@@ -158,6 +179,18 @@ class Face:
     Back: ClassVar[Face]
 
 PyFace = Face
+
+class TextureViewDimension:
+    """Dimension used when interpreting a texture through a view."""
+
+    def __eq__(self, other: object) -> bool: ...
+
+    D1: ClassVar[TextureViewDimension]
+    D2: ClassVar[TextureViewDimension]
+    D2Array: ClassVar[TextureViewDimension]
+    Cube: ClassVar[TextureViewDimension]
+    CubeArray: ClassVar[TextureViewDimension]
+    D3: ClassVar[TextureViewDimension]
 
 class RenderPlugin(Plugin):
     """Configures the rendering pipeline.
@@ -300,6 +333,8 @@ class ColorGrading(Component):
 
     Provides control over exposure, temperature, tint, hue, saturation,
     and section-specific adjustments for shadows, midtones, and highlights.
+    Global exposure and post-saturation work without HDR. Other global and
+    tonal-section controls require Hdr on the camera.
     """
 
     def __init__(
@@ -367,6 +402,8 @@ class Msaa(Component):
         ```
     """
 
+    def __init__(self) -> None: ...
+
     Off: Msaa
     """No anti-aliasing (1 sample)."""
 
@@ -427,7 +464,7 @@ class MipBias(Component):
 
     Often used in conjunction with antialiasing post-process effects to reduce
     texture blurriness. A negative value (the default of -1.0) samples sharper
-    mip levels.
+    mip levels. It only affects images whose mip_level_count is greater than 1.
 
     Examples:
         >>> mip_bias = MipBias(-1.0)
@@ -452,11 +489,11 @@ class OcclusionCulling(Component):
     behind other opaque or alpha-tested objects. This can significantly improve
     performance in scenes with high depth complexity.
 
-    Note: Occlusion culling currently requires a DepthPrepass component on the
-    camera. If no depth prepass is present, this component will be ignored.
+    A DepthPrepass component is required on the same camera. Using
+    OcclusionCulling without it can prevent the camera from rendering.
 
     Examples:
-        >>> commands.spawn(Camera3d(), Camera(), DepthPrepass(), OcclusionCulling())
+        >>> commands.spawn(Camera3d(), DepthPrepass(), OcclusionCulling())
     """
 
     def __init__(self) -> None:
@@ -487,59 +524,3 @@ class NoIndirectDrawing(Component):
 
     def __init__(self) -> None:
         """Create a NoIndirectDrawing marker component."""
-
-class StorageBuffer(Asset):
-    """A GPU storage buffer asset.
-
-    Storage buffers allow passing large amounts of data to shaders.
-    Data can be provided as numpy arrays, lists of floats, or raw bytes.
-
-    Examples:
-        ```python
-        import numpy as np
-        from pybevy.render import StorageBuffer
-
-        # From numpy array
-        data = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
-        buf = StorageBuffer(data)
-
-        # From list of floats
-        buf = StorageBuffer([1.0, 2.0, 3.0, 4.0])
-
-        # Empty buffer of given byte size
-        buf = StorageBuffer.empty(1024)
-
-        # Update contents
-        buf.set_data(np.zeros(100, dtype=np.float32))
-        ```
-    """
-
-    def __init__(
-        self, data: npt.NDArray[np.float32] | list[float] | bytes | None = None
-    ) -> None:
-        """Create a StorageBuffer with optional initial data.
-
-        Args:
-            data: Initial buffer data. Can be a numpy array, list of floats, or
-                raw bytes. If None, creates an empty default buffer.
-        """
-
-    @staticmethod
-    def empty(size: int) -> StorageBuffer:
-        """Create an empty storage buffer with the given byte size.
-
-        Args:
-            size: Buffer size in bytes.
-        """
-
-    def set_data(self, data: npt.NDArray[np.float32] | list[float] | bytes) -> None:
-        """Update the buffer contents.
-
-        Args:
-            data: New buffer data. Can be a numpy array, list of floats, or raw bytes.
-        """
-
-    def __len__(self) -> int:
-        """Return the buffer size in bytes."""
-
-    def __repr__(self) -> str: ...
