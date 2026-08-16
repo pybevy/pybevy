@@ -19,12 +19,16 @@ use crate::{ArrayDType, ArrayError, DenseArrayCore, Scalar, kernels as core_kern
 
 pub fn map_array_err(err: ArrayError) -> PyErr {
     match err {
-        ArrayError::IndexOutOfBounds { .. } | ArrayError::TooManyIndices { .. } => {
+        ArrayError::IndexOutOfBounds { .. }
+        | ArrayError::TooManyIndices { .. }
+        | ArrayError::MaskShapeMismatch { .. } => {
             pyo3::exceptions::PyIndexError::new_err(err.to_string())
         }
         ArrayError::NotWritable => PyValueError::new_err(err.to_string()),
         ArrayError::UnsupportedDType { .. } => PyTypeError::new_err(err.to_string()),
-        ArrayError::BorrowExpired(_) => PyRuntimeError::new_err(err.to_string()),
+        ArrayError::BorrowExpired(_) | ArrayError::AccessConflict => {
+            PyRuntimeError::new_err(err.to_string())
+        }
         ArrayError::AllocationFailed { .. } => PyMemoryError::new_err(err.to_string()),
         _ => PyValueError::new_err(err.to_string()),
     }
@@ -117,13 +121,13 @@ pub fn float_elementwise(
 ) -> PyResult<PyArray> {
     let core = core_kernels::float_elementwise_borrowed(op_name, ops, constants, operands)
         .map_err(map_kernel_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// Element-wise comparison producing a bool array.
 pub fn compare(a: OperandRef<'_>, b: OperandRef<'_>, kind: CmpKind) -> PyResult<PyArray> {
     let core = core_kernels::compare_borrowed(a, b, kind).map_err(map_kernel_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 /// `where(condition, a, b)`.
@@ -133,17 +137,17 @@ pub fn where_select(
     b: OperandRef<'_>,
 ) -> PyResult<PyArray> {
     let core = core_kernels::where_select_borrowed(cond, a, b).map_err(map_kernel_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 pub fn isfinite(a: &DenseArrayCore) -> PyResult<PyArray> {
     let core = core_kernels::isfinite(a).map_err(map_kernel_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 pub fn isclose(a: OperandRef<'_>, b: OperandRef<'_>) -> PyResult<PyArray> {
     let core = core_kernels::isclose_borrowed(a, b).map_err(map_kernel_err)?;
-    Ok(PyArray { core })
+    Ok(PyArray::wrap(core))
 }
 
 pub fn allclose(a: OperandRef<'_>, b: OperandRef<'_>) -> PyResult<bool> {
@@ -154,16 +158,35 @@ pub fn array_equal(a: &DenseArrayCore, b: &DenseArrayCore) -> PyResult<bool> {
     core_kernels::array_equal(a, b).map_err(map_kernel_err)
 }
 
+/// Resolve a possibly negative `axis` NumPy-style against `ndim`.
+fn normalize_axis(axis: isize, ndim: usize) -> PyResult<usize> {
+    let resolved = if axis < 0 {
+        axis.checked_add(ndim as isize)
+    } else {
+        Some(axis)
+    };
+    resolved
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "axis {axis} is out of bounds for array of dimension {ndim}"
+            ))
+        })
+}
+
 /// Reduce over the whole array (returning a scalar) or along `axis` (returning
 /// a new array).
 pub fn reduce(
     py: Python<'_>,
     core: &DenseArrayCore,
     kind: Reduce,
-    axis: Option<usize>,
+    axis: Option<isize>,
 ) -> PyResult<Py<PyAny>> {
+    let axis = axis
+        .map(|axis| normalize_axis(axis, core.ndim()))
+        .transpose()?;
     match core_kernels::reduce(core, kind, axis).map_err(map_kernel_err)? {
         Reduced::Scalar(s) => Ok(scalar_to_py(py, s)),
-        Reduced::Array(core) => Ok(Py::new(py, PyArray { core })?.into_any()),
+        Reduced::Array(core) => Ok(Py::new(py, PyArray::wrap(core))?.into_any()),
     }
 }

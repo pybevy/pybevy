@@ -1,17 +1,18 @@
 //! Shared bounded array domain for PyBevy.
 //!
-//! The always-available core owns dtype metadata, typed owned storage, shape/stride and
-//! basic-slice planning, broadcasting plans, casting, copy materialization,
-//! and neutral error variants. The `numeric` feature adds interpreter-neutral
-//! element-wise kernels over these layouts, and the `pyo3` feature adds the
-//! CPython class/module adapter. Other backends consume the same core and
-//! numeric modules through their own adapter leaves.
+//! The always-available core owns dtype metadata, shared typed storage,
+//! shape/stride and basic-slice planning, broadcasting plans, casting, copy
+//! materialization, and neutral error variants. The `numeric` feature adds
+//! interpreter-neutral element-wise kernels over these layouts, and the `pyo3`
+//! feature adds the CPython class/module adapter. Other backends consume the
+//! same core and numeric modules through their own adapter leaves.
 //!
-//! Storage uses typed enum variants, so the core contains no `unsafe`.
+//! Storage uses typed enum variants behind operation-scoped access guards.
 //!
 //! See the array compatibility and design documentation for the supported
 //! surface and overall design.
 
+mod backing;
 mod broadcast;
 mod core;
 mod dtype;

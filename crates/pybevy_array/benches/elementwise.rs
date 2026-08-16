@@ -3,9 +3,11 @@
 //! Run with:
 //! `RUSTFLAGS="-C target-cpu=native" cargo bench -p pybevy_array --bench elementwise`
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::sync::Arc;
+
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use pybevy_array::{
-    ArrayStorage, DenseArrayCore,
+    ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore, IndexOp,
     kernels::{
         Operand, OperandRef, evaluate_float_expression, float_elementwise,
         float_elementwise_borrowed,
@@ -123,20 +125,23 @@ fn bench_array_chain(c: &mut Criterion) {
     let b = core(1.0);
     let c_values = core(2.0);
 
-    group.bench_function("eager_cloned", |bencher| {
+    group.bench_function("eager_copied", |bencher| {
         bencher.iter(|| {
             let product = float_elementwise(
                 "multiply",
                 vec![Op::PushInput(0), Op::PushInput(1), Op::Mul],
                 vec![],
-                vec![Operand::Array(b.clone()), Operand::Array(c_values.clone())],
+                vec![
+                    Operand::Array(b.copy().unwrap()),
+                    Operand::Array(c_values.copy().unwrap()),
+                ],
             )
             .unwrap();
             let output = float_elementwise(
                 "add",
                 add_ops(),
                 vec![],
-                vec![Operand::Array(a.clone()), Operand::Array(product)],
+                vec![Operand::Array(a.copy().unwrap()), Operand::Array(product)],
             )
             .unwrap();
             black_box(output);
@@ -176,10 +181,83 @@ fn bench_array_chain(c: &mut Criterion) {
     group.finish();
 }
 
+#[derive(Debug)]
+struct AlwaysLive;
+
+impl BorrowProbe for AlwaysLive {
+    fn check_read(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn check_write(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn bench_reshape_views(c: &mut Criterion) {
+    let mut group = c.benchmark_group("reshape_view");
+    for elements in [16, N] {
+        let owned = DenseArrayCore::zeros(ArrayDType::Float32, &[elements]).unwrap();
+        group.bench_with_input(
+            BenchmarkId::new("owned", elements),
+            &elements,
+            |bencher, &elements| bencher.iter(|| black_box(owned.reshape(&[1, elements]).unwrap())),
+        );
+
+        let mut borrowed_values = vec![0.0_f32; elements];
+        // SAFETY: the backing vector remains allocated and uniquely owned for
+        // the complete benchmark, and the probe admits access on this thread.
+        let borrowed_storage = unsafe {
+            ArrayStorage::borrowed_mut_f32(
+                borrowed_values.as_mut_ptr(),
+                borrowed_values.len(),
+                Arc::new(AlwaysLive),
+            )
+        };
+        let borrowed = DenseArrayCore::from_storage(borrowed_storage, &[elements]).unwrap();
+        group.bench_with_input(
+            BenchmarkId::new("borrowed", elements),
+            &elements,
+            |bencher, &elements| {
+                bencher.iter(|| black_box(borrowed.reshape(&[1, elements]).unwrap()))
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_basic_index_views(c: &mut Criterion) {
+    let mut group = c.benchmark_group("basic_index_view");
+    for rows in [4, N / 4] {
+        let source = DenseArrayCore::zeros(ArrayDType::Float32, &[rows, 4]).unwrap();
+        group.bench_with_input(BenchmarkId::new("row", rows), &rows, |bencher, &rows| {
+            bencher.iter(|| {
+                black_box(
+                    source
+                        .slice_view(&[IndexOp::Index((rows - 1) as isize)])
+                        .unwrap(),
+                )
+            })
+        });
+        group.bench_with_input(BenchmarkId::new("column", rows), &rows, |bencher, _| {
+            bencher.iter(|| {
+                black_box(
+                    source
+                        .slice_view(&[IndexOp::full(), IndexOp::Index(1)])
+                        .unwrap(),
+                )
+            })
+        });
+    }
+    group.finish();
+}
+
 fn benches(c: &mut Criterion) {
     bench(c, "elementwise_add", &add_ops());
     bench(c, "elementwise_heavy_sqrt", &heavy_ops());
     bench_array_chain(c);
+    bench_reshape_views(c);
+    bench_basic_index_views(c);
 }
 
 criterion_group!(benches_group, benches);

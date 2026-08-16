@@ -1,8 +1,11 @@
-//! `DenseArrayCore`: owned storage plus a validated layout. Element-wise
-//! numeric execution lives in `pybevy_bytecodevm`; this type owns construction,
-//! layout, basic-slice planning, casting, and copy materialization.
+//! `DenseArrayCore`: shared storage plus a validated per-array layout.
+//! Element-wise numeric execution lives in `pybevy_bytecodevm`; this type owns
+//! construction, view planning, casting, and copy materialization.
+
+use std::sync::Arc;
 
 use crate::{
+    backing::{ArrayBacking, ArrayReadGuard, ArrayWriteGuard},
     dtype::ArrayDType,
     error::{ArrayError, ArrayResult},
     scalar::Scalar,
@@ -21,25 +24,11 @@ pub enum AxisReduce {
     Any,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct DenseArrayCore {
-    storage: ArrayStorage,
+    backing: Arc<ArrayBacking>,
     layout: Layout,
     writable: bool,
-}
-
-impl Clone for DenseArrayCore {
-    fn clone(&self) -> Self {
-        // `ArrayStorage::clone` downgrades a mutable borrow to a read-only one,
-        // so a clone can never become a second writable alias.
-        let storage = self.storage.clone();
-        let writable = self.writable && !storage.is_read_only_borrow();
-        DenseArrayCore {
-            storage,
-            layout: self.layout.clone(),
-            writable,
-        }
-    }
 }
 
 impl DenseArrayCore {
@@ -57,7 +46,7 @@ impl DenseArrayCore {
         // writable.
         let writable = !storage.is_read_only_borrow();
         Ok(DenseArrayCore {
-            storage,
+            backing: ArrayBacking::new(storage),
             layout: Layout::c_contiguous(shape)?,
             writable,
         })
@@ -67,7 +56,8 @@ impl DenseArrayCore {
     /// always is; borrowed data consults its liveness probe). Adapters call this
     /// once at the start of each read operation to surface a clean error.
     pub fn ensure_readable(&self) -> ArrayResult<()> {
-        self.storage.ensure_readable()
+        drop(self.read_storage()?);
+        Ok(())
     }
 
     /// Verify the array is writable for the current operation: not frozen, and
@@ -76,17 +66,19 @@ impl DenseArrayCore {
         if !self.writable {
             return Err(ArrayError::NotWritable);
         }
-        self.storage.ensure_writable()
+        drop(self.write_storage()?);
+        Ok(())
     }
 
     /// Construct directly from a validated layout and storage (offsets in the
     /// layout must stay within storage). Used by adapters that build views.
-    pub fn from_parts(storage: ArrayStorage, layout: Layout, writable: bool) -> Self {
-        DenseArrayCore {
-            storage,
+    pub fn from_parts(storage: ArrayStorage, layout: Layout, writable: bool) -> ArrayResult<Self> {
+        layout.validate_bounds(storage.len())?;
+        Ok(DenseArrayCore {
+            backing: ArrayBacking::new(storage),
             layout,
             writable,
-        }
+        })
     }
 
     pub fn zeros(dtype: ArrayDType, shape: &[usize]) -> ArrayResult<Self> {
@@ -155,7 +147,7 @@ impl DenseArrayCore {
     }
 
     pub fn dtype(&self) -> ArrayDType {
-        self.storage.dtype()
+        self.backing.dtype()
     }
 
     pub fn shape(&self) -> &[usize] {
@@ -170,23 +162,24 @@ impl DenseArrayCore {
         &self.layout
     }
 
-    pub fn storage(&self) -> &ArrayStorage {
-        &self.storage
+    pub(crate) fn read_storage(&self) -> ArrayResult<ArrayReadGuard> {
+        self.backing.try_read()
     }
 
     /// Mutable storage access for offset-addressed writes (e.g. slice
     /// assignment). Errors if the array is read-only. Callers must keep offsets
     /// within storage; plan them through [`Self::plan`].
-    pub fn storage_mut(&mut self) -> ArrayResult<&mut ArrayStorage> {
-        self.ensure_writable()?;
-        Ok(&mut self.storage)
+    pub(crate) fn write_storage(&self) -> ArrayResult<ArrayWriteGuard> {
+        if !self.writable {
+            return Err(ArrayError::NotWritable);
+        }
+        self.backing.try_write()
     }
 
     /// Cast and write every logical element from an equally-shaped owned
     /// result into this array. The source is materialized before destination
     /// mutation, which keeps self-aliasing and overlapping borrowed views safe.
     pub fn assign_from(&mut self, source: &DenseArrayCore) -> ArrayResult<()> {
-        self.ensure_writable()?;
         source.ensure_readable()?;
         if self.shape() != source.shape() {
             return Err(ArrayError::BroadcastMismatch {
@@ -196,8 +189,9 @@ impl DenseArrayCore {
         }
         let values = source.to_scalars()?;
         let layout = self.layout.clone();
+        let mut storage = self.write_storage()?;
         for (offset, value) in layout.iter_offsets().zip(values) {
-            self.storage.set(offset, value);
+            storage.set(offset, value);
         }
         Ok(())
     }
@@ -211,7 +205,7 @@ impl DenseArrayCore {
     }
 
     pub fn itemsize(&self) -> usize {
-        self.storage.dtype().itemsize()
+        self.dtype().itemsize()
     }
 
     pub fn is_writable(&self) -> bool {
@@ -224,6 +218,17 @@ impl DenseArrayCore {
 
     pub fn set_read_only(&mut self) {
         self.writable = false;
+    }
+
+    /// Create another layout over the same backing storage.
+    pub fn view(&self, layout: Layout) -> ArrayResult<Self> {
+        self.ensure_readable()?;
+        layout.validate_bounds(self.backing.len())?;
+        Ok(Self {
+            backing: self.backing.clone(),
+            layout,
+            writable: self.writable,
+        })
     }
 
     fn flat_offset(&self, indices: &[usize]) -> ArrayResult<usize> {
@@ -254,16 +259,16 @@ impl DenseArrayCore {
 
     /// Read one element by full multi-index.
     pub fn get(&self, indices: &[usize]) -> ArrayResult<Scalar> {
-        self.storage.ensure_readable()?;
-        Ok(self.storage.get(self.flat_offset(indices)?))
+        let storage = self.read_storage()?;
+        Ok(storage.get(self.flat_offset(indices)?))
     }
 
     /// Write one element by full multi-index. Errors if read-only or if a
     /// mutable borrow's probe rejects the write (e.g. after the system ends).
     pub fn set(&mut self, indices: &[usize], value: Scalar) -> ArrayResult<()> {
-        self.ensure_writable()?;
+        let mut storage = self.write_storage()?;
         let offset = self.flat_offset(indices)?;
-        self.storage.set(offset, value);
+        storage.set(offset, value);
         Ok(())
     }
 
@@ -275,27 +280,22 @@ impl DenseArrayCore {
 
     /// All elements in row-major order as neutral scalars.
     pub fn to_scalars(&self) -> ArrayResult<Vec<Scalar>> {
-        self.storage.ensure_readable()?;
+        let storage = self.read_storage()?;
         Ok(self
             .layout
             .iter_offsets()
-            .map(|off| self.storage.get(off))
+            .map(|off| storage.get(off))
             .collect())
     }
 
     fn materialize(&self, layout: &Layout) -> ArrayResult<DenseArrayCore> {
-        self.storage.ensure_readable()?;
-        let dtype = self.storage.dtype();
+        let storage = self.read_storage()?;
+        let dtype = self.dtype();
         let mut out = ArrayStorage::zeros(dtype, layout.num_elements())?;
         for (i, off) in layout.iter_offsets().enumerate() {
-            out.set(i, self.storage.get(off));
+            out.set(i, storage.get(off));
         }
-        Ok(DenseArrayCore {
-            storage: out,
-            layout: Layout::c_contiguous(&layout.shape)
-                .expect("sub-selection element count already bounded"),
-            writable: true,
-        })
+        DenseArrayCore::from_storage(out, &layout.shape)
     }
 
     /// A C-contiguous, writable, independent copy of this array's elements.
@@ -309,22 +309,23 @@ impl DenseArrayCore {
         self.materialize(&plan)
     }
 
-    /// Cast to `dtype`, producing a new contiguous array (NumPy `astype`).
-    pub fn astype(&self, dtype: ArrayDType) -> ArrayResult<DenseArrayCore> {
-        self.storage.ensure_readable()?;
-        let mut out = ArrayStorage::zeros(dtype, self.size())?;
-        for (i, off) in self.layout.iter_offsets().enumerate() {
-            out.set(i, self.storage.get(off));
-        }
-        Ok(DenseArrayCore {
-            storage: out,
-            layout: Layout::c_contiguous(&self.layout.shape)
-                .expect("shape element count already bounded"),
-            writable: true,
-        })
+    /// Share the selection described by `ops` with this array's backing.
+    pub fn slice_view(&self, ops: &[IndexOp]) -> ArrayResult<DenseArrayCore> {
+        self.view(self.layout.index(ops)?)
     }
 
-    /// Reshape to `new_shape` (same element count), returning a contiguous copy.
+    /// Cast to `dtype`, producing a new contiguous array (NumPy `astype`).
+    pub fn astype(&self, dtype: ArrayDType) -> ArrayResult<DenseArrayCore> {
+        let storage = self.read_storage()?;
+        let mut out = ArrayStorage::zeros(dtype, self.size())?;
+        for (i, off) in self.layout.iter_offsets().enumerate() {
+            out.set(i, storage.get(off));
+        }
+        DenseArrayCore::from_storage(out, &self.layout.shape)
+    }
+
+    /// Reshape to `new_shape` (same element count). C-contiguous arrays share
+    /// their backing storage; other layouts produce a writable contiguous copy.
     pub fn reshape(&self, new_shape: &[usize]) -> ArrayResult<DenseArrayCore> {
         let want = checked_num_elements(new_shape)?;
         if want != self.size() {
@@ -333,12 +334,18 @@ impl DenseArrayCore {
                 to: new_shape.to_vec(),
             });
         }
-        let mut copied = self.copy()?;
-        copied.layout = Layout::c_contiguous(new_shape)?;
-        Ok(copied)
+        let mut layout = Layout::c_contiguous(new_shape)?;
+        if self.is_c_contiguous() {
+            layout.offset = self.layout.offset;
+            self.view(layout)
+        } else {
+            let mut copied = self.copy()?;
+            copied.layout = layout;
+            Ok(copied)
+        }
     }
 
-    /// Flatten to one dimension (contiguous copy).
+    /// Flatten to one dimension, sharing C-contiguous storage when possible.
     pub fn ravel(&self) -> ArrayResult<DenseArrayCore> {
         let n = self.size();
         self.reshape(&[n])
@@ -399,15 +406,26 @@ impl DenseArrayCore {
         DenseArrayCore::from_storage(out, &result_shape)
     }
 
-    /// Select the elements where `mask` is true, returning a 1-D array. `mask`
-    /// must have one entry per element in row-major order.
-    pub fn mask_select(&self, mask: &[bool]) -> ArrayResult<DenseArrayCore> {
+    fn validate_mask(&self, mask: &[bool], mask_shape: &[usize]) -> ArrayResult<()> {
+        if mask_shape != self.shape() {
+            return Err(ArrayError::MaskShapeMismatch {
+                mask: mask_shape.to_vec(),
+                array: self.shape().to_vec(),
+            });
+        }
         if mask.len() != self.size() {
             return Err(ArrayError::MaskLengthMismatch {
                 mask_len: mask.len(),
                 size: self.size(),
             });
         }
+        Ok(())
+    }
+
+    /// Select the elements where `mask` is true, returning a 1-D array. The
+    /// mask shape must equal the array shape.
+    pub fn mask_select(&self, mask: &[bool], mask_shape: &[usize]) -> ArrayResult<DenseArrayCore> {
+        self.validate_mask(mask, mask_shape)?;
         let scalars = self.to_scalars()?;
         let selected: Vec<Scalar> = scalars
             .iter()
@@ -423,28 +441,35 @@ impl DenseArrayCore {
 
     /// Assign into the elements where `mask` is true. `values` is either a
     /// single broadcast scalar or one value per selected element (row-major).
-    pub fn mask_assign(&mut self, mask: &[bool], values: &[Scalar]) -> ArrayResult<()> {
-        if mask.len() != self.size() {
-            return Err(ArrayError::MaskLengthMismatch {
-                mask_len: mask.len(),
-                size: self.size(),
+    pub fn mask_assign(
+        &mut self,
+        mask: &[bool],
+        mask_shape: &[usize],
+        values: &[Scalar],
+    ) -> ArrayResult<()> {
+        // Gate on the probe (not just the frozen flag) before validating arguments, so a
+        // mutable borrow whose system has ended or whose context has closed reports that
+        // rather than an incidental shape error.
+        self.ensure_writable()?;
+        self.validate_mask(mask, mask_shape)?;
+        let selected = mask.iter().filter(|&&item| item).count();
+        if values.len() != 1 && values.len() != selected {
+            return Err(ArrayError::MaskValueCountMismatch {
+                values_len: values.len(),
+                selected,
             });
         }
-        // Gate on the probe (not just the frozen flag), so a mutable borrow
-        // whose system has ended or whose context has closed rejects the write
-        // instead of dereferencing freed memory.
-        self.ensure_writable()?;
-        // Contiguous base array (offset 0): row-major position == storage index.
-        let storage = &mut self.storage;
+        let offsets = self.layout.iter_offsets();
+        let mut storage = self.write_storage()?;
         let mut vi = 0;
-        for (pos, &m) in mask.iter().enumerate() {
+        for (offset, &m) in offsets.zip(mask) {
             if m {
                 let value = if values.len() == 1 {
                     values[0]
                 } else {
                     values[vi]
                 };
-                storage.set(pos, value);
+                storage.set(offset, value);
                 vi += 1;
             }
         }

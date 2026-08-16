@@ -110,19 +110,22 @@ fn resolve_slice(
         Some(s) => clamp(s),
     };
 
+    // The span is divided by |step| as an unsigned magnitude: negating
+    // `isize::MIN` overflows, and `a[::-2**63]` is an ordinary Python slice.
+    let magnitude = step.unsigned_abs();
     let length = if step < 0 {
         if stop_i < start_i {
-            (start_i - stop_i - 1) / (-step) + 1
+            (start_i - stop_i - 1) as usize / magnitude + 1
         } else {
             0
         }
     } else if start_i < stop_i {
-        (stop_i - start_i - 1) / step + 1
+        (stop_i - start_i - 1) as usize / magnitude + 1
     } else {
         0
     };
 
-    Ok((start_i, length as usize))
+    Ok((start_i, length))
 }
 
 /// Shape, strides (in elements, possibly negative), and a base offset. A
@@ -155,7 +158,69 @@ impl Layout {
     }
 
     pub fn is_c_contiguous(&self) -> bool {
-        self.strides == c_contiguous_strides(&self.shape)
+        if self.shape.contains(&0) {
+            return true;
+        }
+        let mut expected = 1_i128;
+        for (&size, &stride) in self.shape.iter().zip(&self.strides).rev() {
+            if size > 1 && stride as i128 != expected {
+                return false;
+            }
+            let Ok(size) = i128::try_from(size) else {
+                return false;
+            };
+            let Some(next) = expected.checked_mul(size) else {
+                return false;
+            };
+            expected = next;
+        }
+        true
+    }
+
+    /// Validate that every offset selected by this layout is within a backing
+    /// allocation of `storage_len` elements.
+    pub fn validate_bounds(&self, storage_len: usize) -> ArrayResult<()> {
+        if self.shape.len() != self.strides.len() {
+            return Err(ArrayError::InvalidLayout(
+                "shape and stride ranks do not match",
+            ));
+        }
+        let elements = checked_num_elements(&self.shape)?;
+        if elements == 0 {
+            if self.offset <= storage_len {
+                return Ok(());
+            }
+            return Err(ArrayError::LayoutOutOfBounds { storage_len });
+        }
+
+        let mut minimum =
+            i128::try_from(self.offset).map_err(|_| ArrayError::Overflow("layout base offset"))?;
+        let mut maximum = minimum;
+        for (&size, &stride) in self.shape.iter().zip(&self.strides) {
+            let count =
+                i128::try_from(size - 1).map_err(|_| ArrayError::Overflow("layout axis length"))?;
+            let span = count
+                .checked_mul(stride as i128)
+                .ok_or(ArrayError::Overflow("layout stride span"))?;
+            if span < 0 {
+                minimum = minimum
+                    .checked_add(span)
+                    .ok_or(ArrayError::Overflow("layout minimum offset"))?;
+            } else {
+                maximum = maximum
+                    .checked_add(span)
+                    .ok_or(ArrayError::Overflow("layout maximum offset"))?;
+            }
+        }
+
+        if minimum < 0
+            || usize::try_from(maximum)
+                .ok()
+                .is_none_or(|offset| offset >= storage_len)
+        {
+            return Err(ArrayError::LayoutOutOfBounds { storage_len });
+        }
+        Ok(())
     }
 
     /// Plan a basic-index selection, producing a sub-layout over the same
@@ -193,11 +258,15 @@ impl Layout {
                         offset += start_i * stride;
                     }
                     shape.push(length);
-                    strides.push(
-                        stride
-                            .checked_mul(*step)
-                            .ok_or(ArrayError::Overflow("slice stride"))?,
-                    );
+                    strides.push(match stride.checked_mul(*step) {
+                        Some(product) => product,
+                        // A step only advances the iterator across an axis that
+                        // keeps more than one element, so a product this extreme
+                        // is never applied to an offset. Keep the parent stride
+                        // instead of rejecting a slice Python accepts.
+                        None if length <= 1 => stride,
+                        None => return Err(ArrayError::Overflow("slice stride")),
+                    });
                 }
                 None => {
                     shape.push(size);
@@ -208,7 +277,10 @@ impl Layout {
         Ok(Layout {
             shape,
             strides,
-            offset: offset.max(0) as usize,
+            // Bounds-checked indices and slices keep `offset` non-negative; a
+            // negative value would mean the layout escaped the backing buffer,
+            // so surface it instead of silently clamping to 0.
+            offset: usize::try_from(offset).map_err(|_| ArrayError::Overflow("layout offset"))?,
         })
     }
 

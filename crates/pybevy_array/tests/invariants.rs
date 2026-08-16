@@ -4,7 +4,8 @@
 //! slice or broadcast stride ever yields an offset outside its storage.
 
 use pybevy_array::{
-    ArrayStorage, DenseArrayCore, IndexOp, Layout, Scalar, broadcast_shapes, broadcast_strides,
+    ArrayError, ArrayStorage, DenseArrayCore, IndexOp, Layout, Scalar, broadcast_shapes,
+    broadcast_strides,
 };
 
 fn contiguous_f64(shape: &[usize]) -> DenseArrayCore {
@@ -110,6 +111,20 @@ fn negative_indices_match_positive_counterparts() {
 }
 
 #[test]
+fn negative_resulting_offset_errors_instead_of_clamping() {
+    let malformed = Layout {
+        shape: vec![2],
+        strides: vec![-1],
+        offset: 0,
+    };
+
+    assert!(matches!(
+        malformed.index(&[IndexOp::Index(1)]),
+        Err(ArrayError::Overflow("layout offset"))
+    ));
+}
+
+#[test]
 fn slice_copy_reads_exactly_the_planned_offsets() {
     let shapes: [&[usize]; 4] = [&[6], &[2, 3], &[3, 2], &[2, 2, 2]];
     for shape in shapes {
@@ -124,7 +139,7 @@ fn slice_copy_reads_exactly_the_planned_offsets() {
         let plan = array.plan(&ops).unwrap();
         let expected: Vec<Scalar> = plan
             .iter_offsets()
-            .map(|o| array.storage().get(o))
+            .map(|offset| Scalar::F64(offset as f64))
             .collect();
         let copy = array.slice_copy(&ops).unwrap();
         assert_eq!(copy.to_scalars().unwrap(), expected);

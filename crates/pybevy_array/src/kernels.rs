@@ -17,7 +17,7 @@ use pybevy_bytecodevm::{
 
 use crate::{
     ArrayDType, ArrayError, ArrayStorage, AxisReduce, DenseArrayCore, Layout, Scalar,
-    broadcast_shapes, broadcast_strides, checked_num_elements,
+    backing::ArrayReadGuard, broadcast_shapes, broadcast_strides, checked_num_elements,
 };
 
 /// Neutral kernel failure. Each adapter maps this to its interpreter's
@@ -35,6 +35,16 @@ pub enum KernelError {
 
 fn unsupported_dtype(op: &'static str, dtype: ArrayDType) -> KernelError {
     KernelError::Array(ArrayError::UnsupportedDType { op, dtype })
+}
+
+/// Reserve an empty result/gather buffer, failing with `AllocationFailed` for
+/// unallocatable sizes.
+fn try_alloc_vec<T>(dtype: ArrayDType, elements: usize) -> Result<Vec<T>, KernelError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(elements)
+        .map_err(|_| KernelError::Array(ArrayError::AllocationFailed { dtype, elements }))?;
+    Ok(values)
 }
 
 /// A left/right operand: a bounded array or a broadcast scalar. The scalar
@@ -88,33 +98,36 @@ fn broadcast_operands(operands: &[OperandRef<'_>]) -> Result<Vec<usize>, KernelE
 /// Materialize an array operand, broadcast to `target_shape`, as an `f64`
 /// column for the dense VM.
 fn gather_f64(core: &DenseArrayCore, target_shape: &[usize]) -> Result<Vec<f64>, KernelError> {
-    core.ensure_readable().map_err(KernelError::Array)?;
+    let storage = core.read_storage().map_err(KernelError::Array)?;
+    let n = checked_num_elements(target_shape).map_err(KernelError::Array)?;
     let strides = broadcast_strides(core.layout(), target_shape).map_err(KernelError::Array)?;
     let view = Layout {
         shape: target_shape.to_vec(),
         strides,
         offset: core.layout().offset,
     };
-    Ok(view
-        .iter_offsets()
-        .map(|off| core.storage().get(off).to_f64())
-        .collect())
+    let mut values = try_alloc_vec::<f64>(ArrayDType::Float64, n)?;
+    values.extend(view.iter_offsets().map(|off| storage.get(off).to_f64()));
+    Ok(values)
 }
 
 /// Materialize an array operand, broadcast to `target_shape`, as an `f32`
 /// column while retaining native f32 rounding in the dense VM.
 fn gather_f32(core: &DenseArrayCore, target_shape: &[usize]) -> Result<Vec<f32>, KernelError> {
-    core.ensure_readable().map_err(KernelError::Array)?;
+    let storage = core.read_storage().map_err(KernelError::Array)?;
+    let n = checked_num_elements(target_shape).map_err(KernelError::Array)?;
     let strides = broadcast_strides(core.layout(), target_shape).map_err(KernelError::Array)?;
     let view = Layout {
         shape: target_shape.to_vec(),
         strides,
         offset: core.layout().offset,
     };
-    Ok(view
-        .iter_offsets()
-        .map(|off| core.storage().get(off).to_f64() as f32)
-        .collect())
+    let mut values = try_alloc_vec::<f32>(ArrayDType::Float32, n)?;
+    values.extend(
+        view.iter_offsets()
+            .map(|off| storage.get(off).to_f64() as f32),
+    );
+    Ok(values)
 }
 
 /// Broadcast an operand to `target_shape` as neutral scalars (exact for ints).
@@ -141,7 +154,8 @@ pub fn gather_scalars_borrowed(
             Ok(values)
         }
         OperandRef::Array(core) => {
-            core.ensure_readable().map_err(KernelError::Array)?;
+            let storage = core.read_storage().map_err(KernelError::Array)?;
+            let n = checked_num_elements(target_shape).map_err(KernelError::Array)?;
             let strides =
                 broadcast_strides(core.layout(), target_shape).map_err(KernelError::Array)?;
             let view = Layout {
@@ -149,10 +163,9 @@ pub fn gather_scalars_borrowed(
                 strides,
                 offset: core.layout().offset,
             };
-            Ok(view
-                .iter_offsets()
-                .map(|off| core.storage().get(off))
-                .collect())
+            let mut values = try_alloc_vec::<Scalar>(core.dtype(), n)?;
+            values.extend(view.iter_offsets().map(|off| storage.get(off)));
+            Ok(values)
         }
     }
 }
@@ -185,68 +198,90 @@ fn float_result_dtype(
 /// C-contiguous, offset 0, shape already `result_shape`, F32/F64 storage; scalars:
 /// broadcast), return the columns. Otherwise `None` and the caller gathers + falls back
 /// to the scalar dense VM (handling broadcast and non-contiguous views).
-fn contiguous_columns<'a>(
-    operands: &'a [OperandRef<'a>],
+enum LockedInput {
+    Scalar(Scalar),
+    Array(ArrayReadGuard),
+}
+
+impl LockedInput {
+    fn column(&self, n: usize) -> Option<ColumnRef<'_>> {
+        match self {
+            LockedInput::Scalar(value) => Some(ColumnRef::broadcast(value.to_f64())),
+            LockedInput::Array(storage) => match &**storage {
+                ArrayStorage::Float64(values) => values.get(..n).map(ColumnRef::from_f64_slice),
+                _ => {
+                    // SAFETY: `ArrayReadGuard` checked borrowed validity and
+                    // remains alive for the returned column's whole use.
+                    unsafe { storage.as_f32_contiguous_unchecked() }
+                        .and_then(|values| values.get(..n))
+                        .map(ColumnRef::from_f32_slice)
+                }
+            },
+        }
+    }
+}
+
+fn lock_contiguous_inputs(
+    operands: &[OperandRef<'_>],
     result_shape: &[usize],
     n: usize,
-) -> Option<Vec<ColumnRef<'a>>> {
+) -> Option<Vec<LockedInput>> {
     operands
         .iter()
         .map(|op| match op {
-            OperandRef::Scalar(v) => Some(ColumnRef::broadcast(v.to_f64())),
+            OperandRef::Scalar(value) => Some(LockedInput::Scalar(*value)),
             OperandRef::Array(core) => {
                 if core.layout().offset != 0
                     || !core.is_c_contiguous()
                     || core.shape() != result_shape
-                    || core.ensure_readable().is_err()
                 {
                     return None;
                 }
-                let storage = core.storage();
-                match storage {
-                    ArrayStorage::Float64(v) => v.get(..n).map(ColumnRef::from_f64_slice),
+                let storage = core.read_storage().ok()?;
+                let has_column = match &*storage {
+                    ArrayStorage::Float64(values) => values.len() >= n,
                     _ => {
-                        // SAFETY: `ensure_readable` passed above on this thread. The
-                        // returned column is consumed immediately by the kernel without
-                        // Python re-entry or world mutation.
+                        // SAFETY: the guard checked borrowed validity and no
+                        // reference escapes this length probe.
                         unsafe { storage.as_f32_contiguous_unchecked() }
-                            .and_then(|values| values.get(..n))
-                            .map(ColumnRef::from_f32_slice)
+                            .is_some_and(|values| values.len() >= n)
                     }
-                }
+                };
+                has_column.then_some(LockedInput::Array(storage))
             }
         })
         .collect()
 }
 
-/// Return one zero-copy contiguous floating-point column for a whole-array
-/// reduction. Non-contiguous, offset, expired, and non-floating arrays fall back
-/// to logical row-major materialization.
-fn contiguous_column(core: &DenseArrayCore, len: usize) -> Option<ColumnRef<'_>> {
-    if core.layout().offset != 0 || !core.is_c_contiguous() || core.ensure_readable().is_err() {
+/// Lock one zero-copy contiguous floating-point input for a whole-array
+/// reduction. Non-contiguous, offset, expired, and non-floating arrays fall
+/// back to logical row-major materialization.
+fn lock_contiguous_input(core: &DenseArrayCore, len: usize) -> Option<LockedInput> {
+    if core.layout().offset != 0 || !core.is_c_contiguous() {
         return None;
     }
-
-    let storage = core.storage();
-    match storage {
-        ArrayStorage::Float64(values) => values.get(..len).map(ColumnRef::from_f64_slice),
+    let storage = core.read_storage().ok()?;
+    let has_column = match &*storage {
+        ArrayStorage::Float64(values) => values.len() >= len,
         _ => {
-            // SAFETY: readability passed above on this thread. The reduction
-            // consumes the column without Python re-entry or world mutation.
+            // SAFETY: the read guard checked validity and remains live.
             unsafe { storage.as_f32_contiguous_unchecked() }
-                .and_then(|values| values.get(..len))
-                .map(ColumnRef::from_f32_slice)
+                .is_some_and(|values| values.len() >= len)
         }
-    }
+    };
+    has_column.then_some(LockedInput::Array(storage))
 }
 
 /// Whole-array float reduction with identical ordering for contiguous and
 /// materialized inputs.
 fn reduce_float(core: &DenseArrayCore, op: ReduceOp) -> Result<f64, KernelError> {
     let len = core.size();
-    if let Some(source) = contiguous_column(core, len) {
+    if let Some(input) = lock_contiguous_input(core, len) {
+        let source = input
+            .column(len)
+            .expect("locked contiguous input exposes its validated column");
         let mut scratch = TiledScratch::new();
-        // SAFETY: `contiguous_column` returned a source valid over `0..len`.
+        // SAFETY: the locked input exposes a source valid over `0..len`.
         Ok(unsafe { run_reduce(op, &source, len, &mut scratch) })
     } else {
         let values: Vec<f64> = core
@@ -264,8 +299,11 @@ fn reduce_float(core: &DenseArrayCore, op: ReduceOp) -> Result<f64, KernelError>
 /// # Safety
 /// `fill` must write every element in `0..n` without reading the destination and
 /// must return only after all elements are initialized.
-unsafe fn build_output_f64(n: usize, fill: impl FnOnce(&ColumnMut<'_>)) -> Vec<f64> {
-    let mut output = Vec::<f64>::with_capacity(n);
+unsafe fn build_output_f64(
+    n: usize,
+    fill: impl FnOnce(&ColumnMut<'_>),
+) -> Result<Vec<f64>, KernelError> {
+    let mut output = try_alloc_vec::<f64>(ArrayDType::Float64, n)?;
     // SAFETY: the allocation has capacity for `n` writable f64 locations. The
     // caller guarantees that `fill` writes all of them before they become visible.
     let destination = unsafe {
@@ -280,7 +318,7 @@ unsafe fn build_output_f64(n: usize, fill: impl FnOnce(&ColumnMut<'_>)) -> Vec<f
     // SAFETY: the caller guarantees that a returning `fill` initialized all `n`
     // elements. If `fill` panics, this line is skipped and the length remains zero.
     unsafe { output.set_len(n) };
-    output
+    Ok(output)
 }
 
 /// f32 counterpart of [`build_output_f64`].
@@ -288,8 +326,11 @@ unsafe fn build_output_f64(n: usize, fill: impl FnOnce(&ColumnMut<'_>)) -> Vec<f
 /// # Safety
 /// `fill` must write every element in `0..n` without reading the destination and
 /// must return only after all elements are initialized.
-unsafe fn build_output_f32(n: usize, fill: impl FnOnce(&ColumnMut<'_>)) -> Vec<f32> {
-    let mut output = Vec::<f32>::with_capacity(n);
+unsafe fn build_output_f32(
+    n: usize,
+    fill: impl FnOnce(&ColumnMut<'_>),
+) -> Result<Vec<f32>, KernelError> {
+    let mut output = try_alloc_vec::<f32>(ArrayDType::Float32, n)?;
     // SAFETY: the allocation has capacity for `n` writable f32 locations. The
     // caller guarantees that `fill` writes all of them before they become visible.
     let destination = unsafe {
@@ -304,7 +345,7 @@ unsafe fn build_output_f32(n: usize, fill: impl FnOnce(&ColumnMut<'_>)) -> Vec<f
     // SAFETY: the caller guarantees that a returning `fill` initialized all `n`
     // elements. If `fill` panics, this line is skipped and the length remains zero.
     unsafe { output.set_len(n) };
-    output
+    Ok(output)
 }
 
 /// Run a float-producing dense program over `operands`, returning a new array.
@@ -343,12 +384,28 @@ fn float_elementwise_impl(
     let result_shape = broadcast_operands(operands)?;
     let out_dtype = float_result_dtype(op_name, operands)?;
     let n = checked_num_elements(&result_shape).map_err(KernelError::Array)?;
+    // Programs with out-of-range indices skip the tiled fast paths so the
+    // dense validator reports them instead of the executors panicking.
+    let indices_in_range = ops.iter().all(|op| match op {
+        Op::PushInput(index) => usize::from(*index) < operands.len(),
+        Op::PushConst(index) => usize::from(*index) < constants.len(),
+        _ => true,
+    });
 
     // Native f32 programs round every intermediate in the f32 domain.
     if out_dtype == ArrayDType::Float32
+        && indices_in_range
         && f32_native_eligible(ops)
-        && let Some(srcs) = contiguous_columns(operands, &result_shape, n)
+        && let Some(inputs) = lock_contiguous_inputs(operands, &result_shape, n)
     {
+        let srcs: Vec<ColumnRef<'_>> = inputs
+            .iter()
+            .map(|input| {
+                input
+                    .column(n)
+                    .expect("locked contiguous input exposes its validated column")
+            })
+            .collect();
         let mut scratch = TiledScratch::new();
         let fill = |destination: &ColumnMut<'_>| {
             // SAFETY: sources are valid length-n columns and the destination is
@@ -358,16 +415,25 @@ fn float_elementwise_impl(
         };
         // SAFETY: `run_map_f32` writes every destination row before returning and
         // never reads the fresh destination allocation.
-        let out = unsafe { build_output_f32(n, fill) };
+        let out = unsafe { build_output_f32(n, fill) }?;
         return DenseArrayCore::from_storage(ArrayStorage::Float32(out), &result_shape)
             .map_err(KernelError::Array);
     }
 
     // Vectorizable arithmetic over directly usable contiguous columns. Broadcast,
-    // non-contiguous, borrowed, and unsupported programs use the scalar dense path.
-    if map_supported(ops)
-        && let Some(srcs) = contiguous_columns(operands, &result_shape, n)
+    // non-contiguous, and unsupported programs use the scalar dense path.
+    if indices_in_range
+        && map_supported(ops)
+        && let Some(inputs) = lock_contiguous_inputs(operands, &result_shape, n)
     {
+        let srcs: Vec<ColumnRef<'_>> = inputs
+            .iter()
+            .map(|input| {
+                input
+                    .column(n)
+                    .expect("locked contiguous input exposes its validated column")
+            })
+            .collect();
         let mut scratch = TiledScratch::new();
         let storage = match out_dtype {
             ArrayDType::Float64 => {
@@ -379,7 +445,7 @@ fn float_elementwise_impl(
                 };
                 // SAFETY: `run_map` writes every destination row before returning
                 // and never reads the fresh destination allocation.
-                let out = unsafe { build_output_f64(n, fill) };
+                let out = unsafe { build_output_f64(n, fill) }?;
                 ArrayStorage::Float64(out)
             }
             ArrayDType::Float32 => {
@@ -391,7 +457,7 @@ fn float_elementwise_impl(
                 };
                 // SAFETY: `run_map` writes every destination row before returning
                 // and never reads the fresh destination allocation.
-                let out = unsafe { build_output_f32(n, fill) };
+                let out = unsafe { build_output_f32(n, fill) }?;
                 ArrayStorage::Float32(out)
             }
             _ => unreachable!("float_result_dtype only yields float dtypes"),
@@ -417,7 +483,8 @@ fn float_elementwise_impl(
             .collect();
         let program = DenseProgram::new(ops.to_vec(), constants.to_vec(), operands.len())
             .map_err(KernelError::Dense)?;
-        let mut out = vec![0.0f32; n];
+        let mut out = try_alloc_vec::<f32>(ArrayDType::Float32, n)?;
+        out.resize(n, 0.0);
         execute_dense(&program, &inputs, DenseOutput::F32(&mut out)).map_err(KernelError::Dense)?;
         return DenseArrayCore::from_storage(ArrayStorage::Float32(out), &result_shape)
             .map_err(KernelError::Array);
@@ -441,7 +508,8 @@ fn float_elementwise_impl(
 
     let program = DenseProgram::new(ops.to_vec(), constants.to_vec(), operands.len())
         .map_err(KernelError::Dense)?;
-    let mut out = vec![0.0f64; n];
+    let mut out = try_alloc_vec::<f64>(ArrayDType::Float64, n)?;
+    out.resize(n, 0.0);
     execute_dense(&program, &inputs, DenseOutput::F64(&mut out)).map_err(KernelError::Dense)?;
     let storage = ArrayStorage::Float64(out);
     DenseArrayCore::from_storage(storage, &result_shape).map_err(KernelError::Array)
@@ -482,7 +550,8 @@ pub fn evaluate_float_expression(
 
     let result_shape = broadcast_operands(&operands)?;
     let n = checked_num_elements(&result_shape).map_err(KernelError::Array)?;
-    let mut output = vec![false; n];
+    let mut output = try_alloc_vec::<bool>(ArrayDType::Bool, n)?;
+    output.resize(n, false);
     match dtype {
         ArrayDType::Float32 => {
             let columns: Vec<Vec<f32>> = arrays

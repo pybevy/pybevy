@@ -27,6 +27,11 @@ fn try_filled_vec<T: Clone>(dtype: ArrayDType, len: usize, value: T) -> ArrayRes
 /// crate stays dependency-free. `check_read` returns `Ok` while the borrowed
 /// data is safe to read on the current thread, and `Err(reason)` once it is not
 /// (owning system finished, or cross-thread access).
+///
+/// An implementation that retains an interpreter object may be stored in a
+/// shared backing only when that owner cannot reach the returned array. A
+/// cyclic owner requires backend-specific, independently traversed references
+/// instead of sharing one opaque interpreter reference through this trait.
 pub trait BorrowProbe: Send + Sync + std::fmt::Debug {
     fn check_read(&self) -> Result<(), String>;
     /// Whether the borrowed data may be *written* on the current thread. The
@@ -130,47 +135,6 @@ pub enum ArrayStorage {
         slice: BorrowedMutU8Slice,
         probe: Arc<dyn BorrowProbe>,
     },
-}
-
-impl Clone for ArrayStorage {
-    fn clone(&self) -> Self {
-        match self {
-            ArrayStorage::Float32(v) => ArrayStorage::Float32(v.clone()),
-            ArrayStorage::Float64(v) => ArrayStorage::Float64(v.clone()),
-            ArrayStorage::Int64(v) => ArrayStorage::Int64(v.clone()),
-            ArrayStorage::Int32(v) => ArrayStorage::Int32(v.clone()),
-            ArrayStorage::Uint32(v) => ArrayStorage::Uint32(v.clone()),
-            ArrayStorage::Uint16(v) => ArrayStorage::Uint16(v.clone()),
-            ArrayStorage::Uint8(v) => ArrayStorage::Uint8(v.clone()),
-            ArrayStorage::Bool(v) => ArrayStorage::Bool(v.clone()),
-            ArrayStorage::BorrowedF32 { slice, probe } => ArrayStorage::BorrowedF32 {
-                slice: *slice,
-                probe: probe.clone(),
-            },
-            // A clone of a mutable borrow is DOWNGRADED to a read-only borrow of
-            // the same data, so there is never a second writable alias.
-            ArrayStorage::BorrowedMutF32 { slice, probe } => ArrayStorage::BorrowedF32 {
-                slice: BorrowedF32Slice {
-                    ptr: slice.ptr as *const f32,
-                    len: slice.len,
-                },
-                probe: probe.clone(),
-            },
-            ArrayStorage::BorrowedU8 { slice, probe } => ArrayStorage::BorrowedU8 {
-                slice: *slice,
-                probe: probe.clone(),
-            },
-            // Cloning a mutable borrow downgrades it to read-only, preventing a
-            // second writable alias.
-            ArrayStorage::BorrowedMutU8 { slice, probe } => ArrayStorage::BorrowedU8 {
-                slice: BorrowedU8Slice {
-                    ptr: slice.ptr.cast_const(),
-                    len: slice.len,
-                },
-                probe: probe.clone(),
-            },
-        }
-    }
 }
 
 impl PartialEq for ArrayStorage {
@@ -295,9 +259,9 @@ impl ArrayStorage {
     /// storage. Bit-packed boolean storage and read-only borrows have no such
     /// pointer.
     ///
-    /// The caller must have passed [`Self::ensure_writable`], retain exclusive
-    /// access to this storage, and use the pointer only for a synchronous
-    /// operation that cannot re-enter Python or otherwise invalidate a borrow.
+    /// The caller must retain a backing write guard and use the pointer only
+    /// for a synchronous operation that cannot re-enter Python or otherwise
+    /// invalidate a borrow.
     pub(crate) fn as_mut_contiguous_ptr(&mut self) -> Option<*mut u8> {
         match self {
             ArrayStorage::Float32(values) => Some(values.as_mut_ptr().cast()),
@@ -518,15 +482,15 @@ impl ArrayStorage {
             ArrayStorage::Uint8(v) => v[flat] = value.to_i64_trunc() as u8,
             ArrayStorage::Bool(v) => v[flat] = value.to_bool(),
             ArrayStorage::BorrowedF32 { .. } => {
-                // Read-only borrow: gated by `writable = false` + `storage_mut()`.
+                // Read-only borrow: gated by `writable = false` and the backing's
+                // write-guard acquisition.
                 unreachable!("write to a read-only borrowed array");
             }
             ArrayStorage::BorrowedMutF32 { slice, .. } => {
                 assert!(flat < slice.len, "index out of bounds for borrowed storage");
-                // SAFETY: `flat < slice.len` asserted; the caller ran
-                // `ensure_writable()` (probe `check_write`) for this operation on
-                // the probe's owning thread, and the exclusive write count makes
-                // this the unique alias, so the write cannot race.
+                // SAFETY: `flat < slice.len` asserted; the backing write guard
+                // passed the probe's `check_write` on its owning thread, and
+                // the exclusive asset claim makes this the unique alias.
                 unsafe { *slice.ptr.add(flat) = value.to_f64() as f32 };
             }
             ArrayStorage::BorrowedU8 { .. } => {
@@ -534,8 +498,8 @@ impl ArrayStorage {
             }
             ArrayStorage::BorrowedMutU8 { slice, .. } => {
                 assert!(flat < slice.len, "index out of bounds for borrowed storage");
-                // SAFETY: bounds are asserted, `ensure_writable` passed, and the
-                // exclusive write lease makes this the unique alias.
+                // SAFETY: bounds are asserted, the backing write guard passed
+                // the probe, and the asset write lease makes this unique.
                 unsafe { *slice.ptr.add(flat) = value.to_i64_trunc() as u8 };
             }
         }

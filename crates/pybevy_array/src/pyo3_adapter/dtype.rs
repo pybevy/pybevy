@@ -1,6 +1,10 @@
 //! PyO3-facing dtype object and callable scalar cast.
 
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyString};
+use pyo3::{
+    exceptions::{PyOverflowError, PyTypeError},
+    prelude::*,
+    types::PyString,
+};
 
 use super::kernels;
 use crate::{ArrayDType, Scalar};
@@ -42,13 +46,13 @@ impl PyDType {
             return self.inner == other.inner;
         }
         if let Ok(name) = other.extract::<String>() {
-            return ArrayDType::from_name(&name) == Some(self.inner);
+            return name == self.inner.name();
         }
         false
     }
 
-    fn __hash__(&self) -> u64 {
-        self.inner as u64
+    fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+        PyString::new(py, self.inner.name()).hash()
     }
 
     #[getter]
@@ -57,9 +61,31 @@ impl PyDType {
     }
 
     /// Cast a Python scalar to this dtype, returning a plain Python scalar.
+    /// Out-of-range Python integers raise OverflowError, matching NumPy 2.
     fn __call__(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let scalar = kernels::extract_scalar(value)?;
+        if let Scalar::I64(v) = scalar {
+            check_integer_range(v, self.inner)?;
+        }
         Ok(kernels::cast_scalar_to_py(py, scalar, self.inner))
+    }
+}
+
+fn check_integer_range(value: i64, dtype: ArrayDType) -> PyResult<()> {
+    let in_range = match dtype {
+        ArrayDType::Int64 | ArrayDType::Float32 | ArrayDType::Float64 | ArrayDType::Bool => true,
+        ArrayDType::Int32 => i32::try_from(value).is_ok(),
+        ArrayDType::Uint32 => u32::try_from(value).is_ok(),
+        ArrayDType::Uint16 => u16::try_from(value).is_ok(),
+        ArrayDType::Uint8 => u8::try_from(value).is_ok(),
+    };
+    if in_range {
+        Ok(())
+    } else {
+        Err(PyOverflowError::new_err(format!(
+            "Python integer {value} out of bounds for {}",
+            dtype.name()
+        )))
     }
 }
 

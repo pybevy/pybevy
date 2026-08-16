@@ -13,7 +13,7 @@ use super::{
 use crate::{ArrayDType, ArrayStorage, DenseArrayCore, Scalar};
 
 fn wrap(core: DenseArrayCore) -> PyArray {
-    PyArray { core }
+    PyArray::wrap(core)
 }
 
 enum ExtractedCore<'py> {
@@ -168,19 +168,16 @@ fn linspace(
     dtype: Option<Bound<'_, PyAny>>,
 ) -> PyResult<PyArray> {
     let dt = parse_dtype(dtype.as_ref())?.unwrap_or(ArrayDType::Float64);
-    let mut values: Vec<f64> = Vec::with_capacity(num);
+    // The storage layer reserves fallibly, so an impossible `num` raises.
+    let mut storage = ArrayStorage::zeros(dt, num).map_err(map_array_err)?;
     if num == 1 {
-        values.push(start);
+        storage.set(0, Scalar::F64(start));
     } else if num > 1 {
         let step = (stop - start) / (num - 1) as f64;
-        for i in 0..num {
-            values.push(start + i as f64 * step);
+        for i in 0..num - 1 {
+            storage.set(i, Scalar::F64(start + i as f64 * step));
         }
-        values[num - 1] = stop; // NumPy pins the endpoint exactly.
-    }
-    let mut storage = ArrayStorage::zeros(dt, num).map_err(map_array_err)?;
-    for (i, &v) in values.iter().enumerate() {
-        storage.set(i, Scalar::F64(v));
+        storage.set(num - 1, Scalar::F64(stop)); // NumPy pins the endpoint exactly.
     }
     Ok(wrap(
         DenseArrayCore::from_storage(storage, &[num]).map_err(map_array_err)?,
@@ -282,7 +279,7 @@ fn reduce_fn(
     py: Python<'_>,
     a: &Bound<'_, PyAny>,
     kind: Reduce,
-    axis: Option<usize>,
+    axis: Option<isize>,
 ) -> PyResult<Py<PyAny>> {
     let a = as_core(a)?;
     kernels::reduce(py, a.as_ref(), kind, axis)
@@ -295,7 +292,7 @@ macro_rules! reduction {
         fn $fn_name(
             py: Python<'_>,
             a: &Bound<'_, PyAny>,
-            axis: Option<usize>,
+            axis: Option<isize>,
         ) -> PyResult<Py<PyAny>> {
             reduce_fn(py, a, $kind, axis)
         }
