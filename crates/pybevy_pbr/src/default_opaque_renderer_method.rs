@@ -22,19 +22,20 @@ impl PyDefaultOpaqueRendererMethod {
             OpaqueRendererMethod::Deferred => DefaultOpaqueRendererMethod::deferred(),
             OpaqueRendererMethod::Auto => DefaultOpaqueRendererMethod::forward(),
         };
-        Self::from_owned(resource).into()
+        Self::from_owned(resource)
     }
 
     #[staticmethod]
     pub fn forward(py: Python) -> PyResult<Py<Self>> {
-        let (obj, base) = Self::from_owned(DefaultOpaqueRendererMethod::forward());
-        Py::new(py, (obj, base))
+        Py::new(py, Self::from_owned(DefaultOpaqueRendererMethod::forward()))
     }
 
     #[staticmethod]
     pub fn deferred(py: Python) -> PyResult<Py<Self>> {
-        let (obj, base) = Self::from_owned(DefaultOpaqueRendererMethod::deferred());
-        Py::new(py, (obj, base))
+        Py::new(
+            py,
+            Self::from_owned(DefaultOpaqueRendererMethod::deferred()),
+        )
     }
 
     pub fn set_to_forward(&mut self) -> PyResult<()> {

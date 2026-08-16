@@ -19,6 +19,14 @@ pybevy_render = { workspace = true }
 numpy = { workspace = true }
 pybevy_shader_types = { workspace = true }
 
+[features]
+# Forwards bevy's gated field so this crate can name it. Enabled by the root
+# crate on non-Apple targets only: Metal's 16-sampler-per-stage limit.
+pbr_anisotropy_texture = ["bevy/pbr_anisotropy_texture"]
+pbr_transmission_textures = ["bevy/pbr_transmission_textures"]
+pbr_specular_textures = ["bevy/pbr_specular_textures"]
+pbr_multi_layer_material_textures = ["bevy/pbr_multi_layer_material_textures"]
+
 [dependencies.bevy]
 workspace = true
 features = ["bevy_pbr", "bevy_render"]

@@ -26,7 +26,8 @@ impl PyLightmap {
         Ok(Self::from_owned(Lightmap {
             image,
             uv_rect: uv_rect
-                .map(Into::into)
+                .map(TryInto::try_into)
+                .transpose()?
                 .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0)),
             bicubic_sampling,
         })
@@ -47,12 +48,12 @@ impl PyLightmap {
 
     #[getter]
     pub fn uv_rect(&self) -> PyResult<PyRect> {
-        Ok(self.as_ref()?.uv_rect.into())
+        Ok(self.storage.borrow_field_as(|l| &l.uv_rect)?)
     }
 
     #[setter]
     pub fn set_uv_rect(&mut self, rect: PyRect) -> PyResult<()> {
-        self.as_mut()?.uv_rect = rect.into();
+        self.as_mut()?.uv_rect = rect.try_into()?;
         Ok(())
     }
 

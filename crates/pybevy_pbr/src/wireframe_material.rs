@@ -1,6 +1,9 @@
-use bevy::{color::Color, pbr::wireframe::WireframeMaterial};
+use bevy::{
+    color::Color,
+    pbr::wireframe::{WireframeMaterial, WireframeTopology},
+};
 use pybevy_color::color::PyColor;
-use pybevy_core::{AssetStorage, PyAsset};
+use pybevy_core::{AssetStorage, PyAsset, ValueStorage};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
@@ -19,29 +22,36 @@ impl PyWireframeMaterial {
     #[pyo3(signature = (
         color = Color::WHITE.into(),
         line_width = 1.0,
-        topology = PyWireframeTopology::Triangles
+        topology = None
     ))]
     pub fn new(
         color: PyColor,
         line_width: f32,
-        topology: PyWireframeTopology,
-    ) -> PyClassInitializer<Self> {
+        topology: Option<PyRef<'_, PyWireframeTopology>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let color = color.try_into()?;
         let material = WireframeMaterial {
-            color: color.into(),
+            color,
             line_width,
-            topology: topology.into(),
+            topology: topology
+                .map(|topology| topology.0)
+                .unwrap_or(WireframeTopology::Triangles),
         };
-        Self::from_owned(material).into()
+        Ok(Self::from_owned(material).into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        let storage: ValueStorage<Color> = self
+            .storage
+            .borrow_field(|material| &material.color, |material| &mut material.color)?;
+        PyColor::from_storage(storage, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = color.try_into()?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 
@@ -57,13 +67,13 @@ impl PyWireframeMaterial {
     }
 
     #[getter]
-    pub fn topology(&self) -> PyResult<PyWireframeTopology> {
-        Ok(self.as_ref()?.topology.into())
+    pub fn topology(&self, py: Python<'_>) -> PyResult<Py<PyWireframeTopology>> {
+        Py::new(py, PyWireframeTopology::from_owned(self.as_ref()?.topology))
     }
 
     #[setter]
-    pub fn set_topology(&mut self, value: PyWireframeTopology) -> PyResult<()> {
-        self.as_mut()?.topology = value.into();
+    pub fn set_topology(&mut self, value: PyRef<'_, PyWireframeTopology>) -> PyResult<()> {
+        self.as_mut()?.topology = value.0;
         Ok(())
     }
 }

@@ -5,12 +5,16 @@ use bevy::{
     pbr::{MaterialPlugin, MeshMaterial3d, StandardMaterial},
 };
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, NativeAsset, PluginBuild, PyAsset, PyComponent, PyHandle,
-    PyPlugin, extract_handle_from_any,
+    AssetInputConverter, AssetStorage, ComponentStorage, LogicalTypeId, NativeAsset, PluginBuild,
+    PyComponent, PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
+    public_error::{
+        SHADER_DEFS_WITHOUT_NAMES, expected_float_sequence, non_negative_argument,
+        too_many_shader_def_names,
+    },
 };
-use pybevy_macros::{pyasset, pyhandle, pyplugin};
+use pybevy_macros::{pyasset, pycomponent, pyplugin};
 use pyo3::{
-    exceptions::{PyIndexError, PyTypeError},
+    exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
     types::PyList,
 };
@@ -20,8 +24,8 @@ use crate::{
     standard_material::PyStandardMaterial,
 };
 
-#[pyasset(ShaderMaterial, bridge, not_loadable, input_converter)]
-#[pyclass(name = "ShaderMaterial", extends = PyAsset, skip_from_py_object)]
+#[pyasset(ShaderMaterial, bridge, not_loadable, input_converter, material)]
+#[pyclass(name = "ShaderMaterial", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
     pub storage: AssetStorage<ShaderMaterial>,
@@ -40,6 +44,26 @@ impl AssetInputConverter for PyShaderMaterial {
     }
 }
 
+fn checked_index(value: isize, name: &str) -> PyResult<usize> {
+    usize::try_from(value).map_err(|_| PyIndexError::new_err(non_negative_argument(name, value)))
+}
+
+fn validate_shader_defs(shader_defs: u32, shader_def_names: &[String]) -> PyResult<()> {
+    let name_count = shader_def_names.len();
+    if name_count > u32::BITS as usize {
+        return Err(PyValueError::new_err(too_many_shader_def_names(name_count)));
+    }
+    let named_bits = match name_count {
+        0 => 0,
+        count if count == u32::BITS as usize => u32::MAX,
+        count => (1_u32 << count) - 1,
+    };
+    if shader_defs & !named_bits != 0 {
+        return Err(PyValueError::new_err(SHADER_DEFS_WITHOUT_NAMES));
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl PyShaderMaterial {
     #[new]
@@ -56,9 +80,8 @@ impl PyShaderMaterial {
         textures: Option<Py<PyList>>,
         bindings_wgsl: Option<String>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let mut py_mat = base.extract::<PyRefMut<'_, PyStandardMaterial>>()?;
-        let std_mat: StandardMaterial = py_mat.take()?;
-
+        let shader_def_names = shader_def_names.unwrap_or_default();
+        validate_shader_defs(shader_defs, &shader_def_names)?;
         let mut params = ShaderParams::default();
 
         if let Some(data) = data {
@@ -95,6 +118,9 @@ impl PyShaderMaterial {
             }
         }
 
+        let mut py_mat = base.extract::<PyRefMut<'_, PyStandardMaterial>>()?;
+        let std_mat: StandardMaterial = py_mat.take()?;
+
         let material = ShaderMaterial {
             base: std_mat,
             extension: ShaderMaterialExtension {
@@ -106,11 +132,22 @@ impl PyShaderMaterial {
                 fragment_shader_path: fragment_shader,
                 vertex_shader_path: vertex_shader,
                 shader_defs,
-                shader_def_names: shader_def_names.unwrap_or_default(),
+                shader_def_names,
+                logical_type_id: None,
                 bindings_wgsl,
             },
         };
         Ok(Self::from_owned(material).into())
+    }
+
+    #[getter]
+    fn _logical_type_id(&self) -> PyResult<Option<u64>> {
+        Ok(self.as_ref()?.extension.logical_type_id)
+    }
+
+    fn _set_logical_type_id(&mut self, logical_type_id: u64) -> PyResult<()> {
+        self.as_mut()?.extension.logical_type_id = Some(logical_type_id);
+        Ok(())
     }
 
     fn get_shader_defs(&self) -> PyResult<u32> {
@@ -118,61 +155,71 @@ impl PyShaderMaterial {
     }
 
     fn set_shader_defs(&mut self, defs: u32) -> PyResult<()> {
+        {
+            let material = self.as_ref()?;
+            validate_shader_defs(defs, &material.extension.shader_def_names)?;
+        }
         self.as_mut()?.extension.shader_defs = defs;
         Ok(())
     }
 
-    fn set_texture(&mut self, slot: usize, handle: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn set_texture(&mut self, slot: isize, handle: &Bound<'_, PyAny>) -> PyResult<()> {
+        let slot = checked_index(slot, "texture slot")?;
+        if slot >= MAX_TEXTURE_SLOTS {
+            return Err(PyIndexError::new_err(format!(
+                "texture slot {} out of range (max {})",
+                slot,
+                MAX_TEXTURE_SLOTS - 1
+            )));
+        }
         let py_handle = extract_handle_from_any(handle)?;
         let typed: Handle<Image> = (&py_handle).try_into()?;
-        let mat = self.as_mut()?;
+        let mut mat = self.as_mut()?;
         match slot {
             0 => mat.extension.texture_0 = Some(typed),
             1 => mat.extension.texture_1 = Some(typed),
             2 => mat.extension.texture_2 = Some(typed),
             3 => mat.extension.texture_3 = Some(typed),
-            _ => {
-                return Err(PyIndexError::new_err(format!(
-                    "texture slot {} out of range (max {})",
-                    slot,
-                    MAX_TEXTURE_SLOTS - 1
-                )));
-            }
+            _ => unreachable!("slot was range-checked"),
         }
         Ok(())
     }
 
-    fn clear_texture(&mut self, slot: usize) -> PyResult<()> {
-        let mat = self.as_mut()?;
+    fn clear_texture(&mut self, slot: isize) -> PyResult<()> {
+        let slot = checked_index(slot, "texture slot")?;
+        if slot >= MAX_TEXTURE_SLOTS {
+            return Err(PyIndexError::new_err(format!(
+                "texture slot {} out of range (max {})",
+                slot,
+                MAX_TEXTURE_SLOTS - 1
+            )));
+        }
+        let mut mat = self.as_mut()?;
         match slot {
             0 => mat.extension.texture_0 = None,
             1 => mat.extension.texture_1 = None,
             2 => mat.extension.texture_2 = None,
             3 => mat.extension.texture_3 = None,
-            _ => {
-                return Err(PyIndexError::new_err(format!(
-                    "texture slot {} out of range (max {})",
-                    slot,
-                    MAX_TEXTURE_SLOTS - 1
-                )));
-            }
+            _ => unreachable!("slot was range-checked"),
         }
         Ok(())
     }
 
-    fn set_data_float(&mut self, index: usize, value: f32) -> PyResult<()> {
+    fn set_data_float(&mut self, index: isize, value: f32) -> PyResult<()> {
+        let index = checked_index(index, "data index")?;
         if index >= 256 {
             return Err(PyIndexError::new_err(format!(
                 "float index {} out of range (max 255)",
                 index
             )));
         }
-        let mat = self.as_mut()?;
+        let mut mat = self.as_mut()?;
         mat.extension.params.data[index / 4][index % 4] = value;
         Ok(())
     }
 
-    fn get_data_float(&self, index: usize) -> PyResult<f32> {
+    fn get_data_float(&self, index: isize) -> PyResult<f32> {
+        let index = checked_index(index, "data index")?;
         if index >= 256 {
             return Err(PyIndexError::new_err(format!(
                 "float index {} out of range (max 255)",
@@ -183,15 +230,23 @@ impl PyShaderMaterial {
         Ok(mat.extension.params.data[index / 4][index % 4])
     }
 
-    fn set_data_floats(&mut self, start: usize, values: Vec<f32>) -> PyResult<()> {
-        let end = start + values.len();
+    fn set_data_floats(&mut self, start: isize, values: &Bound<'_, PyAny>) -> PyResult<()> {
+        let start = checked_index(start, "start")?;
+        let values = values.extract::<Vec<f32>>().map_err(|_| {
+            let actual = values
+                .get_type()
+                .name()
+                .map_or_else(|_| "object".into(), |name| name.to_string());
+            PyTypeError::new_err(expected_float_sequence(actual))
+        })?;
+        let end = start.saturating_add(values.len());
         if end > 256 {
             return Err(PyIndexError::new_err(format!(
                 "float range {}..{} exceeds buffer (max 256)",
                 start, end
             )));
         }
-        let mat = self.as_mut()?;
+        let mut mat = self.as_mut()?;
         for (i, &val) in values.iter().enumerate() {
             let idx = start + i;
             mat.extension.params.data[idx / 4][idx % 4] = val;
@@ -199,8 +254,10 @@ impl PyShaderMaterial {
         Ok(())
     }
 
-    fn get_data_floats(&self, start: usize, count: usize) -> PyResult<Vec<f32>> {
-        let end = start + count;
+    fn get_data_floats(&self, start: isize, count: isize) -> PyResult<Vec<f32>> {
+        let start = checked_index(start, "start")?;
+        let count = checked_index(count, "count")?;
+        let end = start.saturating_add(count);
         if end > 256 {
             return Err(PyIndexError::new_err(format!(
                 "float range {}..{} exceeds buffer (max 256)",
@@ -240,46 +297,79 @@ impl PluginBuild for PyShaderMaterialPlugin {
     }
 }
 
-#[pyhandle(MeshMaterial3d::<ShaderMaterial>, "MeshMaterial3dShader")]
-#[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, frozen, skip_from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
-pub struct PyMeshMaterial3dShader(pub(crate) PyHandle);
-
-impl TryFrom<&PyMeshMaterial3dShader> for MeshMaterial3d<ShaderMaterial> {
-    type Error = PyErr;
-
-    fn try_from(value: &PyMeshMaterial3dShader) -> Result<Self, Self::Error> {
-        Ok(MeshMaterial3d((&value.0).try_into()?))
-    }
+#[pycomponent(MeshMaterial3d<ShaderMaterial>, bridge)]
+#[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, skip_from_py_object)]
+#[derive(Debug, PartialEq)]
+pub struct PyMeshMaterial3dShader {
+    pub(crate) storage: ComponentStorage<MeshMaterial3d<ShaderMaterial>>,
+    logical_type_id: Option<LogicalTypeId>,
 }
 
-impl From<&MeshMaterial3d<ShaderMaterial>> for PyMeshMaterial3dShader {
-    fn from(value: &MeshMaterial3d<ShaderMaterial>) -> Self {
-        PyMeshMaterial3dShader((&value.0).into())
-    }
+fn extract_shader_material_handle(
+    handle: &Bound<'_, PyAny>,
+) -> PyResult<(Handle<ShaderMaterial>, Option<LogicalTypeId>)> {
+    let handle = extract_handle_from_any(handle)?;
+
+    ensure_asset_type::<ShaderMaterial>(&handle)?;
+
+    let logical_type_id = handle.logical_type_id();
+    Ok(((&handle).try_into()?, logical_type_id))
 }
 
 #[pymethods]
 impl PyMeshMaterial3dShader {
     #[new]
     pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(handle)?;
-
-        // Validate asset type
-        if let Some(name) = handle.asset_type_name()
-            && name != "ShaderMaterial"
-        {
-            return Err(PyTypeError::new_err(format!(
-                "AssetType `{}` does not match expected type `ShaderMaterial`",
-                name
-            )));
-        }
-
-        Ok((Self(handle), PyComponent).into())
+        let (handle, logical_type_id) = extract_shader_material_handle(handle)?;
+        let (mut component, base) = Self::from_owned(MeshMaterial3d(handle));
+        component.logical_type_id = logical_type_id;
+        Ok((component, base).into())
     }
 
     #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {
-        Ok(self.0.clone())
+        Ok(PyHandle::from(&self.as_ref()?.0).with_logical_type_id(self.logical_type_id))
+    }
+
+    #[setter]
+    pub fn set_handle(&mut self, handle: &Bound<'_, PyAny>) -> PyResult<()> {
+        let (handle, logical_type_id) = extract_shader_material_handle(handle)?;
+        if let Some(expected) = self.logical_type_id
+            && logical_type_id != Some(expected)
+        {
+            return Err(PyTypeError::new_err(
+                "Material type mismatch: the handle is untyped or belongs to a different @material class",
+            ));
+        }
+        self.as_mut()?.0 = handle;
+        Ok(())
+    }
+
+    #[getter]
+    fn _logical_type_id(&self) -> Option<u64> {
+        self.logical_type_id.map(LogicalTypeId::get)
+    }
+
+    fn _with_logical_type_id(
+        slf: Py<Self>,
+        py: Python<'_>,
+        logical_type_id: u64,
+    ) -> PyResult<Py<Self>> {
+        let logical_type_id = LogicalTypeId::new(logical_type_id);
+        if slf.borrow(py).logical_type_id != Some(logical_type_id) {
+            return Err(PyTypeError::new_err(
+                "Material type mismatch: the handle is untyped or belongs to a different @material class",
+            ));
+        }
+        Ok(slf)
+    }
+
+    fn _materialize_logical_type_id(
+        slf: Py<Self>,
+        py: Python<'_>,
+        logical_type_id: u64,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).logical_type_id = Some(LogicalTypeId::new(logical_type_id));
+        Ok(slf)
     }
 }
