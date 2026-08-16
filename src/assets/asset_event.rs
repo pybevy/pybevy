@@ -1,98 +1,118 @@
-use bevy::asset::{Asset, AssetEvent};
-use pybevy_core::handle::PyHandle;
-use pyo3::prelude::*;
+use bevy::{
+    asset::{Asset, AssetEvent},
+    image::Image,
+};
+use pybevy_core::{AssetEventRecord, MaterializedPyAssetId, PyAssetId};
+use pybevy_macros::pyenum;
+use pyo3::{prelude::*, types::PyType};
 
-use crate::ecs::message::PyMessage;
+use super::asset_type::PyAssetTypeParam;
+use crate::ecs::messages::{MessageType, PyMessageType};
 
-#[pyclass(name = "AssetEventType", eq, eq_int, frozen, skip_from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PyAssetEventType {
-    Added,
-    Modified,
-    Removed,
-    Unused,
-    LoadedWithDependencies,
+#[derive(Debug, Clone, PartialEq)]
+enum AssetEventValue {
+    Added { id: PyAssetId },
+    Modified { id: PyAssetId },
+    Removed { id: PyAssetId },
+    Unused { id: PyAssetId },
+    LoadedWithDependencies { id: PyAssetId },
+}
+
+impl<A: Asset> From<&AssetEvent<A>> for AssetEventValue {
+    fn from(event: &AssetEvent<A>) -> Self {
+        match event {
+            AssetEvent::Added { id } => Self::Added {
+                id: PyAssetId::from(id),
+            },
+            AssetEvent::Modified { id } => Self::Modified {
+                id: PyAssetId::from(id),
+            },
+            AssetEvent::Removed { id } => Self::Removed {
+                id: PyAssetId::from(id),
+            },
+            AssetEvent::Unused { id } => Self::Unused {
+                id: PyAssetId::from(id),
+            },
+            AssetEvent::LoadedWithDependencies { id } => Self::LoadedWithDependencies {
+                id: PyAssetId::from(id),
+            },
+        }
+    }
+}
+
+impl From<AssetEventRecord> for AssetEventValue {
+    fn from(event: AssetEventRecord) -> Self {
+        match event {
+            AssetEventRecord::Added { id } => Self::Added {
+                id: PyAssetId::from_untyped(id),
+            },
+            AssetEventRecord::Modified { id } => Self::Modified {
+                id: PyAssetId::from_untyped(id),
+            },
+            AssetEventRecord::Removed { id } => Self::Removed {
+                id: PyAssetId::from_untyped(id),
+            },
+            AssetEventRecord::Unused { id } => Self::Unused {
+                id: PyAssetId::from_untyped(id),
+            },
+            AssetEventRecord::LoadedWithDependencies { id } => Self::LoadedWithDependencies {
+                id: PyAssetId::from_untyped(id),
+            },
+        }
+    }
+}
+
+#[pyenum(
+    AssetEvent<Image>,
+    message,
+    no_bridge,
+    mirror = AssetEventValue
+)]
+#[pyclass(module = "pybevy.assets", name = "AssetEvent")]
+pub enum PyAssetEvent {
+    Added {
+        #[py_type(MaterializedPyAssetId)]
+        id: PyAssetId,
+    },
+    Modified {
+        #[py_type(MaterializedPyAssetId)]
+        id: PyAssetId,
+    },
+    Removed {
+        #[py_type(MaterializedPyAssetId)]
+        id: PyAssetId,
+    },
+    Unused {
+        #[py_type(MaterializedPyAssetId)]
+        id: PyAssetId,
+    },
+    LoadedWithDependencies {
+        #[py_type(MaterializedPyAssetId)]
+        id: PyAssetId,
+    },
 }
 
 #[pymethods]
-impl PyAssetEventType {
-    fn __repr__(&self) -> &'static str {
-        match self {
-            PyAssetEventType::Added => "AssetEventType.Added",
-            PyAssetEventType::Modified => "AssetEventType.Modified",
-            PyAssetEventType::Removed => "AssetEventType.Removed",
-            PyAssetEventType::Unused => "AssetEventType.Unused",
-            PyAssetEventType::LoadedWithDependencies => "AssetEventType.LoadedWithDependencies",
-        }
-    }
-
-    fn __str__(&self) -> &'static str {
-        match self {
-            PyAssetEventType::Added => "Added",
-            PyAssetEventType::Modified => "Modified",
-            PyAssetEventType::Removed => "Removed",
-            PyAssetEventType::Unused => "Unused",
-            PyAssetEventType::LoadedWithDependencies => "LoadedWithDependencies",
-        }
-    }
-}
-
-#[pyclass(name = "AssetEvent", extends = PyMessage, skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyAssetEvent {
-    #[pyo3(get)]
-    pub handle: PyHandle,
-
-    #[pyo3(get)]
-    pub event_type: PyAssetEventType,
-}
-
 impl PyAssetEvent {
-    pub fn from_bevy<A: Asset>(event: &AssetEvent<A>) -> Self {
-        let (id, event_type) = match event {
-            AssetEvent::Added { id } => (*id, PyAssetEventType::Added),
-            AssetEvent::Modified { id } => (*id, PyAssetEventType::Modified),
-            AssetEvent::Removed { id } => (*id, PyAssetEventType::Removed),
-            AssetEvent::Unused { id } => (*id, PyAssetEventType::Unused),
-            AssetEvent::LoadedWithDependencies { id } => {
-                (*id, PyAssetEventType::LoadedWithDependencies)
-            }
-        };
-
-        PyAssetEvent {
-            handle: PyHandle::from(&id),
-            event_type,
-        }
+    #[classmethod]
+    #[pyo3(signature = (key, /))]
+    pub fn __class_getitem__(
+        _cls: &Bound<'_, PyType>,
+        key: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let asset_type = key.cast::<PyType>()?;
+        let asset_param = PyAssetTypeParam::try_from_py_type(asset_type)?;
+        Ok(Py::new(
+            key.py(),
+            PyMessageType(MessageType::AssetEvent(asset_param.type_ptr())),
+        )?
+        .into_any())
     }
 }
 
-#[pymethods]
-impl PyAssetEvent {
-    pub fn is_added(&self) -> bool {
-        self.event_type == PyAssetEventType::Added
-    }
-
-    pub fn is_modified(&self) -> bool {
-        self.event_type == PyAssetEventType::Modified
-    }
-
-    pub fn is_removed(&self) -> bool {
-        self.event_type == PyAssetEventType::Removed
-    }
-
-    pub fn is_unused(&self) -> bool {
-        self.event_type == PyAssetEventType::Unused
-    }
-
-    pub fn is_loaded_with_dependencies(&self) -> bool {
-        self.event_type == PyAssetEventType::LoadedWithDependencies
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "AssetEvent(handle={:?}, type={})",
-            self.handle,
-            self.event_type.__str__()
-        )
-    }
+pub fn materialize_asset_event_record(
+    py: Python<'_>,
+    event: AssetEventRecord,
+) -> PyResult<Py<PyAny>> {
+    materialize_asset_event_inner(py, AssetEventValue::from(event))
 }

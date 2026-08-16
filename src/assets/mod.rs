@@ -1,4 +1,5 @@
 pub mod asset_event;
+pub mod asset_load_failed_event;
 pub mod asset_server;
 pub mod asset_server_mode;
 pub mod asset_type;
@@ -13,12 +14,25 @@ pub mod unapproved_path_mode;
 use std::{env::current_dir, path::PathBuf};
 
 use bevy::{asset::AssetPlugin, log::warn};
-use pybevy_core::PyPlugin;
 #[allow(unused_imports)]
 pub use pybevy_core::{NativeAsset, PyAsset, PyAssetPath};
+use pybevy_core::{PyPlugin, plugin::add_plugin_if_missing};
 use pyo3::prelude::*;
 
 use crate::app::app::PyApp;
+
+pybevy_core::register_native_system_set!(
+    intern_asset_tracking_systems,
+    bevy::asset::AssetTrackingSystems,
+    module = "assets",
+    name = "AssetTrackingSystems"
+);
+pybevy_core::register_native_system_set!(
+    intern_asset_event_systems,
+    bevy::asset::AssetEventSystems,
+    module = "assets",
+    name = "AssetEventSystems"
+);
 
 /// Returns a configured AssetPlugin that uses the ./assets directory
 /// relative to the current working directory.
@@ -43,8 +57,16 @@ pub(crate) fn configured_asset_plugin() -> AssetPlugin {
 
     AssetPlugin {
         file_path: assets_path.to_string_lossy().to_string(),
+        // Under hot reload, edits to assets should land the same way edits to
+        // Python do. Off otherwise so shipped apps do not carry a watcher.
+        watch_for_changes_override: Some(hot_reload_enabled()),
         ..Default::default()
     }
+}
+
+/// Whether the CLI launched this process with hot reload enabled.
+pub(crate) fn hot_reload_enabled() -> bool {
+    std::env::var("PYBEVY_HOT_RELOAD").is_ok_and(|value| value == "1")
 }
 
 #[pyclass(name = "AssetPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
@@ -60,9 +82,15 @@ impl PyAssetPlugin {
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
         app.borrow().with_bevy_app(|bevy_app| {
-            bevy_app.add_plugins(configured_asset_plugin());
+            add_plugin_if_missing(bevy_app, configured_asset_plugin());
             Ok(())
         })
+    }
+
+    /// Whether edits to files under `assets/` are picked up while the app runs.
+    #[getter]
+    pub fn watch_for_changes_override(&self) -> Option<bool> {
+        configured_asset_plugin().watch_for_changes_override
     }
 }
 
@@ -70,8 +98,12 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let assets = PyModule::new(m.py(), "assets")?;
     assets.add_class::<PyAssetPlugin>()?;
     assets.add_class::<PyAsset>()?;
+    assets.add_class::<pybevy_core::PyAssetIndex>()?;
+    assets.add_class::<pybevy_core::PyAssetId>()?;
+    pybevy_core::asset_id::register_asset_id_variants(&assets)?;
     assets.add_class::<asset_event::PyAssetEvent>()?;
-    assets.add_class::<asset_event::PyAssetEventType>()?;
+    asset_event::register_asset_event_variants(&assets)?;
+    assets.add_class::<asset_load_failed_event::PyAssetLoadFailedEvent>()?;
     assets.add_class::<asset_server::PyAssetServer>()?;
     assets.add_class::<asset_type::PyAssetTypeParam>()?;
     assets.add_class::<assets::PyAssets>()?;
