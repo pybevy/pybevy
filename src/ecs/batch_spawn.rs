@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
 use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
-use pybevy_core::{PreparedBatchComponent, PreparedUniformComponent, registry::global_registry};
+use pybevy_core::{
+    LogicalTypeId, PreparedBatchComponent, PreparedUniformComponent,
+    public_error::RESOURCE_COMPONENT_SPAWN, registry::global_registry,
+};
 use pybevy_ecs::shared::batch_spawn::{
     BatchCardinality, BatchSpawnCore, BatchSpawnPlan, BatchTypeKey, PreparedBatchInserter,
 };
 use pyo3::{
-    exceptions::PyValueError,
+    exceptions::{PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyTuple, PyType},
@@ -33,6 +36,7 @@ enum ComponentData {
         name: String,
         component_type: PyComponentType,
         prepared: Box<dyn PreparedUniformComponent>,
+        logical_type: Option<Option<LogicalTypeId>>,
     },
 }
 
@@ -46,6 +50,7 @@ struct MainPreparedInserter {
     component_type: PyComponentType,
     name: String,
     payload: PreparedPayload,
+    logical_type: Option<Option<LogicalTypeId>>,
 }
 
 impl PreparedBatchInserter for MainPreparedInserter {
@@ -77,12 +82,26 @@ impl PreparedBatchInserter for MainPreparedInserter {
                 prepared.insert(self.component_id, entities, world);
             }
         }
+        if let (Some(logical_type), Some(native_type)) =
+            (self.logical_type, self.component_type.type_id())
+        {
+            for &entity in entities {
+                crate::ecs::commands::update_entity_logical_type(
+                    world,
+                    entity,
+                    native_type,
+                    logical_type,
+                );
+            }
+        }
     }
 }
 
 fn component_type_key(component_type: PyComponentType) -> usize {
     match component_type {
-        PyComponentType::Dynamic(type_ptr) | PyComponentType::Custom(type_ptr) => type_ptr as usize,
+        PyComponentType::Dynamic(type_ptr)
+        | PyComponentType::Resource(type_ptr)
+        | PyComponentType::Custom(type_ptr) => type_ptr as usize,
     }
 }
 
@@ -128,6 +147,7 @@ impl SpawnBatchCommand {
                     name,
                     component_type,
                     prepared,
+                    logical_type: crate::ecs::commands::component_logical_type(&component)?,
                 });
             }
         }
@@ -171,32 +191,36 @@ impl SpawnBatchCommand {
 
         // Resolving/registering component identities is allowed to mutate the
         // World's type registry, but happens before any target entity exists.
-        let insertions = self
-            .components
-            .into_iter()
-            .map(|component| match component {
-                ComponentData::Batch {
-                    name,
-                    component_type,
-                    prepared,
-                } => Box::new(MainPreparedInserter {
-                    component_id: component_type.register_simple(world),
-                    component_type,
-                    name,
-                    payload: PreparedPayload::Columnar(prepared),
-                }) as Box<dyn PreparedBatchInserter>,
-                ComponentData::Uniform {
-                    name,
-                    component_type,
-                    prepared,
-                } => Box::new(MainPreparedInserter {
-                    component_id: component_type.register_simple(world),
-                    component_type,
-                    name,
-                    payload: PreparedPayload::Uniform(prepared),
-                }) as Box<dyn PreparedBatchInserter>,
-            })
-            .collect();
+        let insertions = Python::attach(|py| {
+            self.components
+                .into_iter()
+                .map(|component| match component {
+                    ComponentData::Batch {
+                        name,
+                        component_type,
+                        prepared,
+                    } => Box::new(MainPreparedInserter {
+                        component_id: component_type.register_simple(world, py),
+                        component_type,
+                        name,
+                        payload: PreparedPayload::Columnar(prepared),
+                        logical_type: None,
+                    }) as Box<dyn PreparedBatchInserter>,
+                    ComponentData::Uniform {
+                        name,
+                        component_type,
+                        prepared,
+                        logical_type,
+                    } => Box::new(MainPreparedInserter {
+                        component_id: component_type.register_simple(world, py),
+                        component_type,
+                        name,
+                        payload: PreparedPayload::Uniform(prepared),
+                        logical_type,
+                    }) as Box<dyn PreparedBatchInserter>,
+                })
+                .collect()
+        });
 
         let validated =
             BatchSpawnCore::validate(BatchSpawnPlan::new(self.explicit_count, insertions))
@@ -212,6 +236,29 @@ impl SpawnBatchCommand {
 
         Ok(committed.entities)
     }
+}
+
+pub(crate) fn prepare_iter_batch(
+    py: Python<'_>,
+    batch: &Bound<'_, PyAny>,
+) -> PyResult<Vec<SpawnBatchCommand>> {
+    let iter = batch.call_method0("__iter__")?;
+    let mut prepared = Vec::new();
+    loop {
+        match iter.call_method0("__next__") {
+            Ok(bundle) => {
+                let components = if let Ok(tuple) = bundle.cast::<PyTuple>() {
+                    tuple.clone()
+                } else {
+                    PyTuple::new(py, [&bundle])?
+                };
+                prepared.push(SpawnBatchCommand::new(py, &components, Some(1))?);
+            }
+            Err(error) if error.is_instance_of::<PyStopIteration>(py) => break,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(prepared)
 }
 
 fn validate_prepared_metadata(
@@ -337,6 +384,7 @@ fn prepare_uniform(
             let prepared = bridge.prepare_uniform(component)?;
             Ok((bridge.name().to_owned(), prepared))
         }
+        PyComponentType::Resource(_) => Err(PyTypeError::new_err(RESOURCE_COMPONENT_SPAWN)),
         PyComponentType::Custom(raw_type_ptr) => {
             let name = get_python_type_name(py, raw_type_ptr);
 

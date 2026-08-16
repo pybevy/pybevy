@@ -1,37 +1,54 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    any::TypeId,
+    sync::{Arc, Mutex},
+};
 
 use bevy::ecs::{
+    component::ComponentId,
     entity::Entity,
     hierarchy::ChildOf,
     ptr::OwningPtr,
+    resource::IsResource,
     system::Commands,
     world::{CommandQueue, World},
 };
-use pybevy_core::registry::global_registry;
+use pybevy_core::{
+    ComponentBridge, LogicalTypeId, LogicalTypeMap, PyLogicalComponentParam,
+    custom_resource::validate_hierarchy_link,
+    ensure_no_live_asset_access,
+    public_error::{
+        IS_RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE,
+        RESOURCE_COMPONENT_SPAWN, RESOURCE_ENTITY_DESPAWN,
+    },
+    registry::global_registry,
+};
 use pybevy_ecs::shared::{
+    bundle_validation::first_duplicate_indices,
     parity_trace::{CanonValue, ParityOpKind, ParityRunHandle, PendingParityOp},
     system_runtime::ErrorPolicy,
 };
 use pyo3::{
-    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
-    ffi::PyTypeObject,
+    PyTraverseError, PyVisit,
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyTuple, PyType},
 };
 
 use super::{
     PyEntity,
-    component_type::{PyComponentType, register_custom_component},
+    component_type::{
+        PreparedCustomComponentRegistration, PyComponentType, register_prepared_custom_component,
+    },
     entity_commands::PyEntityCommands,
-    helpers::{type_utils::get_python_type_name, validity_guard::ValidityFlag},
+    helpers::validity_guard::ValidityFlag,
+    resource::hierarchy_contains_resource_entity,
     resource_type::PyResourceType,
     world::PyWorld,
 };
 use crate::ecs::{
-    batch_spawn::SpawnBatchCommand,
+    batch_spawn::{SpawnBatchCommand, prepare_iter_batch},
     component_layout::{
-        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
-        serialize_to_wrapper,
+        ComponentLayout, ComponentLayoutExt, ComponentStorageType, serialize_to_wrapper,
     },
     component_wrapper::*,
     dynamic_system::{BufferedSystemError, SystemErrorBuffer, lock_or_recover},
@@ -60,6 +77,8 @@ pub(crate) fn trigger_event_helper(
 
     if commands.is_world {
         let world = commands.world_mut()?;
+        ensure_no_live_asset_access(world, "commands.trigger()")
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         let observers = world
             .get_resource::<ObserverRegistry>()
             .map(|registry| registry.snapshot_user_event(&event, target_entity))
@@ -122,6 +141,55 @@ pub(crate) fn trigger_event_helper(
     Ok(())
 }
 
+pub(crate) fn reject_resource_spawn_components(
+    py: Python,
+    components: &Bound<'_, PyTuple>,
+) -> PyResult<()> {
+    for component in components.iter() {
+        if matches!(
+            PyComponentType::try_from((&component.get_type(), py))?,
+            PyComponentType::Resource(_)
+        ) {
+            return Err(PyTypeError::new_err(RESOURCE_COMPONENT_SPAWN));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn normalize_spawn_components<'py>(
+    components: &Bound<'py, PyTuple>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    if components.len() == 1 {
+        let first = components.get_item(0)?;
+        if let Ok(bundle) = first.cast_exact::<PyTuple>() {
+            return Ok(bundle.clone());
+        }
+    }
+    Ok(components.clone())
+}
+
+pub(crate) fn validate_component_bundle(
+    py: Python,
+    components: &Bound<'_, PyTuple>,
+) -> PyResult<()> {
+    let mut keys = Vec::with_capacity(components.len());
+    let mut names = Vec::with_capacity(components.len());
+
+    for component in components.iter() {
+        let component_type = PyComponentType::try_from((&component.get_type(), py))?;
+        keys.push(component_type.validation_identity());
+        names.push(component.get_type().name()?.to_string());
+    }
+
+    if let Some((first, duplicate)) = first_duplicate_indices(keys) {
+        return Err(PyValueError::new_err(format!(
+            "component bundle contains duplicate '{}'; it was already supplied as '{}'",
+            names[duplicate], names[first]
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub(crate) struct CommandErrorSink {
     error_state: Arc<Mutex<Vec<PyErr>>>,
@@ -162,24 +230,6 @@ impl CommandErrorSink {
         });
     }
 }
-
-/// Wrapper to make PyTypeObject pointer Send-safe by storing it as usize
-/// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
-#[derive(Copy, Clone)]
-struct SendTypePtr(usize);
-
-impl SendTypePtr {
-    fn new(ptr: *const PyTypeObject) -> Self {
-        SendTypePtr(ptr as usize)
-    }
-
-    fn as_ptr(&self) -> *const PyTypeObject {
-        self.0 as *const PyTypeObject
-    }
-}
-
-unsafe impl Send for SendTypePtr {}
-unsafe impl Sync for SendTypePtr {}
 
 /// Wrapper around Bevy's Commands system parameter.
 /// Commands queue operations to be applied to the World after the system completes.
@@ -282,14 +332,18 @@ impl PyCommands {
     ///
     /// # Safety
     /// `queue` must outlive the wrapper and must not be accessed concurrently.
-    unsafe fn from_queue_temporary(queue: &mut CommandQueue, validity: ValidityFlag) -> Self {
+    unsafe fn from_queue_temporary(
+        queue: &mut CommandQueue,
+        validity: ValidityFlag,
+        error_sink: Option<CommandErrorSink>,
+    ) -> Self {
         Self {
             commands_ptr: queue as *mut CommandQueue as *mut (),
             is_world: false,
             is_queue: true,
             _world_ref: None,
             validity,
-            error_sink: None,
+            error_sink,
             parity_trace: None,
         }
     }
@@ -302,6 +356,10 @@ impl PyCommands {
     /// Get a clone of the validity flag for sharing with child structures
     pub(crate) fn validity(&self) -> ValidityFlag {
         self.validity.clone()
+    }
+
+    pub(crate) fn error_sink(&self) -> Option<CommandErrorSink> {
+        self.error_sink.clone()
     }
 
     // validity-checked raw pointer access, see docs/safety.md
@@ -326,6 +384,15 @@ impl PyCommands {
             ));
         }
         Ok(unsafe { &mut *(self.commands_ptr as *mut World) })
+    }
+
+    pub(crate) fn check_native_asset_access(&self, operation: &str) -> PyResult<()> {
+        if !self.is_world {
+            return Ok(());
+        }
+        let world = self.world_mut()?;
+        ensure_no_live_asset_access(world, operation)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
     /// Get world access if this is world-backed, otherwise return None
@@ -468,6 +535,14 @@ impl PyCommands {
     }
 }
 
+/// Report a failure from a deferred command through the system error pipeline.
+pub(crate) fn report_deferred_error(sink: &Option<CommandErrorSink>, context: &str, error: PyErr) {
+    match sink {
+        Some(sink) => sink.record(error),
+        None => eprintln!("Error: {context}: {error:?}"),
+    }
+}
+
 fn entity_not_found_error(entity_id: Entity) -> PyErr {
     PyValueError::new_err(format!("Entity {entity_id:?} does not exist in the world"))
 }
@@ -491,6 +566,108 @@ fn ensure_entities_exist(world: &World, entity_ids: &[Entity]) -> PyResult<()> {
     Ok(())
 }
 
+pub(crate) fn component_logical_type(
+    component: &Bound<'_, PyAny>,
+) -> PyResult<Option<Option<LogicalTypeId>>> {
+    let Ok(value) = component.getattr("_logical_type_id") else {
+        return Ok(None);
+    };
+    Ok(Some(
+        value.extract::<Option<u64>>()?.map(LogicalTypeId::new),
+    ))
+}
+
+pub(crate) fn update_entity_logical_type(
+    world: &mut World,
+    entity: Entity,
+    native_type: std::any::TypeId,
+    logical_type: Option<LogicalTypeId>,
+) {
+    match logical_type {
+        Some(logical_type) => {
+            if let Some(mut map) = world.get_mut::<LogicalTypeMap>(entity) {
+                map.insert(native_type, logical_type);
+            } else {
+                let mut map = LogicalTypeMap::default();
+                map.insert(native_type, logical_type);
+                world.entity_mut(entity).insert(map);
+            }
+        }
+        None => {
+            let remove_map = world
+                .get_mut::<LogicalTypeMap>(entity)
+                .is_some_and(|mut map| {
+                    map.remove(native_type);
+                    map.is_empty()
+                });
+            if remove_map {
+                world.entity_mut(entity).remove::<LogicalTypeMap>();
+            }
+        }
+    }
+}
+
+pub(crate) fn entity_logical_type_matches(
+    world: &World,
+    entity: Entity,
+    component_type: PyComponentType,
+    logical_type: LogicalTypeId,
+) -> bool {
+    component_type.type_id().is_some_and(|native_type| {
+        world
+            .get::<LogicalTypeMap>(entity)
+            .is_some_and(|map| map.matches(native_type, logical_type))
+    })
+}
+
+fn insert_custom_wrapper_bytes(
+    world: &mut World,
+    entity_id: Entity,
+    component_id: ComponentId,
+    wrapper_size: WrapperSize,
+    bytes: &[u8],
+) {
+    let mut entity = world.entity_mut(entity_id);
+    insert_wrapper_bytes(&mut entity, component_id, wrapper_size, bytes)
+        .expect("prepared custom wrapper registration must match its serialized bytes");
+}
+
+enum PreparedCustomComponentValue {
+    Wrapper {
+        bytes: Vec<u8>,
+        wrapper_size: WrapperSize,
+        retained_type: Py<PyType>,
+    },
+    PyObject(Py<PyAny>),
+}
+
+fn prepare_custom_component(
+    component: &Bound<'_, PyAny>,
+) -> PyResult<(
+    PreparedCustomComponentRegistration,
+    PreparedCustomComponentValue,
+)> {
+    let component_type = component.get_type();
+    let registration = PreparedCustomComponentRegistration::from_python_class(&component_type)?;
+    let value = match registration.storage_type() {
+        ComponentStorageType::Wrapper(wrapper_size) => {
+            let layout = ComponentLayout::from_annotations(&component_type)?;
+            debug_assert_eq!(layout.wrapper_size, wrapper_size);
+            let bytes = serialize_to_wrapper(component, &layout)?;
+            debug_assert_eq!(bytes.len(), wrapper_size.size_bytes());
+            PreparedCustomComponentValue::Wrapper {
+                bytes,
+                wrapper_size,
+                retained_type: component_type.unbind(),
+            }
+        }
+        ComponentStorageType::PyObject => {
+            PreparedCustomComponentValue::PyObject(component.clone().unbind())
+        }
+    };
+    Ok((registration, value))
+}
+
 /// Helper function to insert components to an entity
 pub(crate) fn insert_components_to_entity_helper(
     commands: &PyCommands,
@@ -498,6 +675,8 @@ pub(crate) fn insert_components_to_entity_helper(
     entity_id: Entity,
     components: &Bound<'_, PyTuple>,
 ) -> PyResult<()> {
+    validate_component_bundle(py, components)?;
+
     let trace_operations = if commands.parity_trace.is_some() {
         components
             .iter()
@@ -527,6 +706,7 @@ pub(crate) fn insert_components_to_entity_helper(
     }
 
     if commands.is_world {
+        commands.check_native_asset_access("entity.insert()")?;
         let validity = commands.validity.clone();
         let world = commands.world_mut()?;
         ensure_entity_exists(world, entity_id)?;
@@ -560,7 +740,11 @@ pub(crate) fn insert_components_to_entity_helper(
         // commands cross into the later lifecycle application closure.
         let mut structural_queue = CommandQueue::default();
         let temporary = unsafe {
-            PyCommands::from_queue_temporary(&mut structural_queue, commands.validity.clone())
+            PyCommands::from_queue_temporary(
+                &mut structural_queue,
+                commands.validity.clone(),
+                commands.error_sink.clone(),
+            )
         };
         insert_components_to_entity(&temporary, py, entity_id, components)?;
         commands.execute_or_queue(move |world| {
@@ -609,16 +793,23 @@ fn insert_components_to_entity(
                 let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
                     PyRuntimeError::new_err("Dynamic component type not registered")
                 })?;
+                let logical_type = component_logical_type(&component)?;
+                let native_type = bridge.bevy_type_id();
 
                 if commands.is_world {
                     // Direct world access - insert immediately via bridge
                     let world = commands.world_mut()?;
+                    validate_relationship_component(world, entity_id, &component, bridge.as_ref())?;
                     bridge.insert(world, entity_id, &component)?;
+                    if let Some(logical_type) = logical_type {
+                        update_entity_logical_type(world, entity_id, native_type, logical_type);
+                    }
                 } else {
                     // Commands - need to queue the operation
                     // Clone data needed for the deferred operation
                     let py_obj = component.clone().unbind();
                     let bridge_name = bridge.name();
+                    let error_sink = commands.error_sink.clone();
 
                     commands.execute_or_queue(move |world: &mut World| {
                         if !entity_exists(world, entity_id) {
@@ -632,202 +823,111 @@ fn insert_components_to_entity(
                             let type_ptr = type_obj.as_type_ptr();
 
                             // Get the bridge again (it's registered globally)
-                            if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr)
-                                && let Err(e) = bridge.insert(world, entity_id, component_bound)
-                            {
-                                eprintln!(
-                                    "Failed to insert dynamic component '{}': {}",
-                                    bridge_name, e
-                                );
+                            if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) {
+                                if let Err(error) = validate_relationship_component(
+                                    world,
+                                    entity_id,
+                                    component_bound,
+                                    bridge.as_ref(),
+                                ) {
+                                    match &error_sink {
+                                        Some(sink) => sink.record(error),
+                                        None => eprintln!(
+                                            "Failed to validate dynamic component '{}': relationship is invalid",
+                                            bridge_name
+                                        ),
+                                    }
+                                    return;
+                                }
+                                match bridge.insert(world, entity_id, component_bound) {
+                                    Ok(()) => {
+                                        if let Some(logical_type) = logical_type {
+                                            update_entity_logical_type(
+                                                world,
+                                                entity_id,
+                                                native_type,
+                                                logical_type,
+                                            );
+                                        }
+                                    }
+                                    Err(error) => report_deferred_error(
+                                        &error_sink,
+                                        &format!(
+                                            "Failed to insert component '{bridge_name}' via Commands"
+                                        ),
+                                        error,
+                                    ),
+                                }
                             }
                         });
                     })?;
                 }
             }
-            PyComponentType::Custom(raw_type_ptr) => {
-                // Custom component insertion - needs different handling for Commands vs World
-                let py_obj = component.clone().unbind();
-
-                // Wrap the type pointer to make it Send-safe
-                let type_ptr = SendTypePtr::new(raw_type_ptr);
-
-                // Get the component name from the Python type for the descriptor
-                // PERF: do this in the PyComponentType::Custom creation to avoid doing it repeatedly
-                let name = Python::attach(|py| get_python_type_name(py, type_ptr.as_ptr()));
+            PyComponentType::Resource(_) => {
+                return Err(PyTypeError::new_err(RESOURCE_COMPONENT_INSERT));
+            }
+            PyComponentType::Custom(_) => {
+                let (registration, prepared_value) = prepare_custom_component(&component)?;
 
                 if commands.is_world {
-                    // Direct world access - get world ref once and use throughout
                     let world = commands.world_mut()?;
-
-                    // Determine storage type and potentially serialize to wrapper
-                    let (component_id, wrapper_data) = Python::attach(|py| {
-                        // Register the component
-                        let component_id =
-                            register_custom_component(world, type_ptr.as_ptr(), name.clone());
-
-                        // Determine storage type
-                        // SAFETY: registered type pointers live for the interpreter lifetime
-                        let py_type = unsafe {
-                            pyo3::Bound::from_borrowed_ptr(
-                                py,
-                                type_ptr.as_ptr() as *mut pyo3::ffi::PyObject,
-                            )
-                        };
-
-                        let storage_type = if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                            ComponentStorageType::from_python_class(cls)
-                                .unwrap_or(ComponentStorageType::PyObject)
-                        } else {
-                            ComponentStorageType::PyObject
-                        };
-
-                        // Serialize if needed
-                        let wrapper_data = match storage_type {
-                            ComponentStorageType::Wrapper(_) => {
-                                // Serialize to bytes
-                                if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                                    if let Ok(layout) = ComponentLayout::from_annotations(cls) {
-                                        serialize_to_wrapper(&component.clone(), &layout).ok()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                            ComponentStorageType::PyObject => None,
-                        };
-
-                        (component_id, wrapper_data)
-                    });
-
-                    // Insert immediately
-                    if let Some(bytes) = wrapper_data {
-                        // Wrapper storage - insert the appropriate wrapper
-                        let wrapper_size = WrapperSize::for_size(bytes.len())
-                            .expect("Wrapper size should be valid");
-
-                        macro_rules! insert_wrapper {
-                            ($size:expr, $wrapper_type:ty) => {
-                                if wrapper_size == $size {
-                                    let mut wrapper = <$wrapper_type>::default();
-                                    wrapper.data[..bytes.len()].copy_from_slice(&bytes);
-
-                                    OwningPtr::make(wrapper, |ptr| {
-                                        let mut entity = world.entity_mut(entity_id);
-                                        unsafe {
-                                            entity.insert_by_id(component_id, ptr);
-                                        }
-                                    });
-                                }
-                            };
-                        }
-
-                        insert_wrapper!(WrapperSize::W8, ComponentWrapper8);
-                        insert_wrapper!(WrapperSize::W16, ComponentWrapper16);
-                        insert_wrapper!(WrapperSize::W32, ComponentWrapper32);
-                        insert_wrapper!(WrapperSize::W64, ComponentWrapper64);
-                        insert_wrapper!(WrapperSize::W128, ComponentWrapper128);
-                        insert_wrapper!(WrapperSize::W256, ComponentWrapper256);
-                        insert_wrapper!(WrapperSize::W512, ComponentWrapper512);
-                        insert_wrapper!(WrapperSize::W1024, ComponentWrapper1024);
-                    } else {
-                        // PyObject storage - use existing path
-                        OwningPtr::make(py_obj, |ptr| {
-                            let mut entity = world.entity_mut(entity_id);
-                            unsafe {
-                                entity.insert_by_id(component_id, ptr);
-                            }
-                        });
-                    }
-                } else {
-                    // Determine storage type and serialize for deferred command
-                    let wrapper_data = Python::attach(|py| {
-                        // SAFETY: registered type pointers live for the interpreter lifetime
-                        let py_type = unsafe {
-                            pyo3::Bound::from_borrowed_ptr(
-                                py,
-                                type_ptr.as_ptr() as *mut pyo3::ffi::PyObject,
-                            )
-                        };
-
-                        if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                            // Check storage type to determine if we need to serialize
-                            let _ = ComponentStorageType::from_python_class(cls);
-                        }
-
-                        let storage_type = if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                            ComponentStorageType::from_python_class(cls)
-                                .unwrap_or(ComponentStorageType::PyObject)
-                        } else {
-                            ComponentStorageType::PyObject
-                        };
-
-                        // Serialize if needed
-                        match storage_type {
-                            ComponentStorageType::Wrapper(_) => {
-                                if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                                    if let Ok(layout) = ComponentLayout::from_annotations(cls) {
-                                        serialize_to_wrapper(&component.clone(), &layout).ok()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                            ComponentStorageType::PyObject => None,
-                        }
-                    });
-
-                    // Commands - queue the operation for later
-                    commands.execute_or_queue(move |world: &mut World| {
-                        if !entity_exists(world, entity_id) {
-                            return;
-                        }
-
-                        // Register the component when the command is applied
-                        let component_id =
-                            register_custom_component(world, type_ptr.as_ptr(), name);
-
-                        if let Some(bytes) = wrapper_data {
-                            // Wrapper storage
-                            let wrapper_size = WrapperSize::for_size(bytes.len())
-                                .expect("Wrapper size should be valid");
-
-                            macro_rules! insert_wrapper {
-                                ($size:expr, $wrapper_type:ty) => {
-                                    if wrapper_size == $size {
-                                        let mut wrapper = <$wrapper_type>::default();
-                                        wrapper.data[..bytes.len()].copy_from_slice(&bytes);
-
-                                        OwningPtr::make(wrapper, |ptr| {
-                                            let mut entity = world.entity_mut(entity_id);
-                                            unsafe {
-                                                entity.insert_by_id(component_id, ptr);
-                                            }
-                                        });
-                                    }
-                                };
-                            }
-
-                            insert_wrapper!(WrapperSize::W8, ComponentWrapper8);
-                            insert_wrapper!(WrapperSize::W16, ComponentWrapper16);
-                            insert_wrapper!(WrapperSize::W32, ComponentWrapper32);
-                            insert_wrapper!(WrapperSize::W64, ComponentWrapper64);
-                            insert_wrapper!(WrapperSize::W128, ComponentWrapper128);
-                            insert_wrapper!(WrapperSize::W256, ComponentWrapper256);
-                            insert_wrapper!(WrapperSize::W512, ComponentWrapper512);
-                            insert_wrapper!(WrapperSize::W1024, ComponentWrapper1024);
-                        } else {
-                            // PyObject storage
-                            OwningPtr::make(py_obj, |ptr| {
+                    let component_id = register_prepared_custom_component(world, &registration);
+                    match prepared_value {
+                        PreparedCustomComponentValue::Wrapper {
+                            bytes,
+                            wrapper_size,
+                            ..
+                        } => insert_custom_wrapper_bytes(
+                            world,
+                            entity_id,
+                            component_id,
+                            wrapper_size,
+                            &bytes,
+                        ),
+                        PreparedCustomComponentValue::PyObject(value) => {
+                            OwningPtr::make(value, |ptr| {
                                 let mut entity = world.entity_mut(entity_id);
+                                // SAFETY: the prepared registration selected
+                                // Py<PyAny> storage for this exact component ID.
                                 unsafe {
                                     entity.insert_by_id(component_id, ptr);
                                 }
                             });
                         }
+                    }
+                } else {
+                    commands.execute_or_queue(move |world: &mut World| {
+                        Python::attach(move |_py| {
+                            if !entity_exists(world, entity_id) {
+                                return;
+                            }
+
+                            let component_id =
+                                register_prepared_custom_component(world, &registration);
+                            match prepared_value {
+                                PreparedCustomComponentValue::Wrapper {
+                                    bytes,
+                                    wrapper_size,
+                                    retained_type: _retained_type,
+                                } => insert_custom_wrapper_bytes(
+                                    world,
+                                    entity_id,
+                                    component_id,
+                                    wrapper_size,
+                                    &bytes,
+                                ),
+                                PreparedCustomComponentValue::PyObject(value) => {
+                                    OwningPtr::make(value, |ptr| {
+                                        let mut entity = world.entity_mut(entity_id);
+                                        // SAFETY: the prepared registration selected
+                                        // Py<PyAny> storage for this exact component ID.
+                                        unsafe {
+                                            entity.insert_by_id(component_id, ptr);
+                                        }
+                                    });
+                                }
+                            }
+                        });
                     })?;
                 }
             }
@@ -835,6 +935,20 @@ fn insert_components_to_entity(
     }
 
     Ok(())
+}
+
+fn validate_relationship_component(
+    world: &World,
+    child: Entity,
+    component: &Bound<'_, PyAny>,
+    bridge: &dyn ComponentBridge,
+) -> PyResult<()> {
+    let Some(field) = bridge.relationship_field() else {
+        return Ok(());
+    };
+    let parent = component.getattr(field)?.extract::<PyEntity>()?.0;
+    validate_hierarchy_link(world, child, parent)
+        .map_err(|error| PyTypeError::new_err(error.to_string()))
 }
 
 /// Helper function to add a child to an entity
@@ -846,10 +960,23 @@ pub(crate) fn add_child_helper(
     if commands.is_world {
         let world = commands.world_mut()?;
         ensure_entities_exist(world, &[parent_id, child_id])?;
+        validate_hierarchy_link(world, child_id, parent_id)
+            .map_err(|error| PyTypeError::new_err(error.to_string()))?;
+        ensure_no_live_asset_access(world, "entity.add_child()")
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(parent_id).add_child(child_id);
     } else {
+        let error_sink = commands.error_sink.clone();
         commands.execute_or_queue(move |world| {
             if entity_exists(world, parent_id) && entity_exists(world, child_id) {
+                if let Err(error) = validate_hierarchy_link(world, child_id, parent_id) {
+                    let error = PyTypeError::new_err(error.to_string());
+                    match &error_sink {
+                        Some(sink) => sink.record(error),
+                        None => eprintln!("Error: Failed to add child via Commands: {error:?}"),
+                    }
+                    return;
+                }
                 world.entity_mut(parent_id).add_child(child_id);
             }
         })?;
@@ -867,6 +994,8 @@ pub(crate) fn remove_children_helper(
         let world = commands.world_mut()?;
         ensure_entity_exists(world, parent_id)?;
         ensure_entities_exist(world, child_ids)?;
+        ensure_no_live_asset_access(world, "entity.remove_children()")
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(parent_id).detach_children(child_ids);
     } else {
         let child_ids = child_ids.to_vec();
@@ -895,6 +1024,8 @@ pub(crate) fn clear_children_helper(commands: &PyCommands, parent_id: Entity) ->
     if commands.is_world {
         let world = commands.world_mut()?;
         ensure_entity_exists(world, parent_id)?;
+        ensure_no_live_asset_access(world, "entity.clear_children()")
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(parent_id).detach_all_children();
     } else {
         commands.execute_or_queue(move |world| {
@@ -915,10 +1046,23 @@ pub(crate) fn set_parent_helper(
     if commands.is_world {
         let world = commands.world_mut()?;
         ensure_entities_exist(world, &[child_id, parent_id])?;
+        validate_hierarchy_link(world, child_id, parent_id)
+            .map_err(|error| PyTypeError::new_err(error.to_string()))?;
+        ensure_no_live_asset_access(world, "entity.set_parent()")
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(child_id).insert(ChildOf(parent_id));
     } else {
+        let error_sink = commands.error_sink.clone();
         commands.execute_or_queue(move |world| {
             if entity_exists(world, child_id) && entity_exists(world, parent_id) {
+                if let Err(error) = validate_hierarchy_link(world, child_id, parent_id) {
+                    let error = PyTypeError::new_err(error.to_string());
+                    match &error_sink {
+                        Some(sink) => sink.record(error),
+                        None => eprintln!("Error: Failed to set parent via Commands: {error:?}"),
+                    }
+                    return;
+                }
                 world.entity_mut(child_id).insert(ChildOf(parent_id));
             }
         })?;
@@ -931,6 +1075,8 @@ pub(crate) fn remove_parent_helper(commands: &PyCommands, child_id: Entity) -> P
     if commands.is_world {
         let world = commands.world_mut()?;
         ensure_entity_exists(world, child_id)?;
+        ensure_no_live_asset_access(world, "entity.remove_parent()")
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(child_id).remove::<ChildOf>();
     } else {
         commands.execute_or_queue(move |world| {
@@ -952,15 +1098,25 @@ pub(crate) fn remove_components_from_entity_helper(
     // Collect component types for lifecycle events
     let mut component_types = Vec::new();
     for component in components.iter() {
+        if let Ok(logical) = component.extract::<PyRef<'_, PyLogicalComponentParam>>() {
+            component_types.push((
+                PyComponentType::Dynamic(logical.component_type_ptr()),
+                Some(logical.logical_type_id()),
+            ));
+            continue;
+        }
         let component_type_obj = component.cast::<PyType>().map_err(|_| {
             PyTypeError::new_err(
                 "remove() expects component types (classes), not instances. Use Foo instead of Foo()",
             )
         })?;
-        component_types.push(PyComponentType::try_from((component_type_obj, py))?);
+        component_types.push((PyComponentType::try_from((component_type_obj, py))?, None));
     }
 
-    for component_type in component_types {
+    for (component_type, logical_type) in component_types {
+        if matches!(component_type, PyComponentType::Resource(_)) {
+            return Err(PyTypeError::new_err(RESOURCE_COMPONENT_REMOVE));
+        }
         if let PyComponentType::Dynamic(type_ptr) = component_type
             && global_registry::get_bridge_by_py_type(type_ptr)
                 .is_some_and(|bridge| bridge.name() == "Children")
@@ -969,13 +1125,37 @@ pub(crate) fn remove_components_from_entity_helper(
                 "Cannot remove Children component - it is auto-managed by Bevy. Remove ChildOf components instead.",
             ));
         }
+        if let PyComponentType::Dynamic(type_ptr) = component_type
+            && global_registry::get_bridge_by_py_type(type_ptr)
+                .is_some_and(|bridge| bridge.bevy_type_id() == TypeId::of::<IsResource>())
+        {
+            return Err(PyTypeError::new_err(IS_RESOURCE_COMPONENT_REMOVE));
+        }
         if commands.is_world {
             let world = commands.world_mut()?;
             ensure_entity_exists(world, entity_id)?;
+            if let Some(logical_type) = logical_type
+                && !entity_logical_type_matches(world, entity_id, component_type, logical_type)
+            {
+                continue;
+            }
+            ensure_no_live_asset_access(world, "entity.remove()")
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             crate::ecs::lifecycle_mutation::remove(world, entity_id, component_type);
+            if let Some(native_type) = component_type.type_id() {
+                update_entity_logical_type(world, entity_id, native_type, None);
+            }
         } else {
             commands.execute_or_queue(move |world| {
+                if let Some(logical_type) = logical_type
+                    && !entity_logical_type_matches(world, entity_id, component_type, logical_type)
+                {
+                    return;
+                }
                 crate::ecs::lifecycle_mutation::remove(world, entity_id, component_type);
+                if let Some(native_type) = component_type.type_id() {
+                    update_entity_logical_type(world, entity_id, native_type, None);
+                }
             })?;
         }
     }
@@ -985,8 +1165,13 @@ pub(crate) fn remove_components_from_entity_helper(
 
 #[pymethods]
 impl PyCommands {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self._world_ref)
+    }
+
     pub fn spawn_empty(&self, _py: Python<'_>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
+        self.check_native_asset_access("commands.spawn_empty()")?;
 
         let entity = self.execute_returning(
             |world| world.spawn_empty().id(),
@@ -1000,6 +1185,11 @@ impl PyCommands {
     #[pyo3(signature = (*components))]
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
+        let components_to_insert = normalize_spawn_components(components)?;
+
+        reject_resource_spawn_components(py, &components_to_insert)?;
+        validate_component_bundle(py, &components_to_insert)?;
+        self.check_native_asset_access("commands.spawn()")?;
 
         let entity_id = self.execute_returning(
             |world| world.spawn_empty().id(),
@@ -1007,52 +1197,34 @@ impl PyCommands {
         )?;
         self.trace_spawn(entity_id);
 
-        // Handle two cases:
-        // 1. spawn(CompA(), CompB()) - multiple args passed directly
-        // 2. spawn((CompA(), CompB())) - single tuple arg
-        let components_to_insert = if components.len() == 1 {
-            // Check if the single argument is itself a tuple
-            let first_item = components.get_item(0)?;
-            if first_item.is_instance_of::<PyTuple>() {
-                // Case 2: User passed a tuple, extract it
-                first_item.extract::<Bound<'_, PyTuple>>()?
-            } else {
-                // Case 1: Single component
-                components.clone()
-            }
-        } else {
-            // Case 1: Multiple components passed as separate args
-            components.clone()
-        };
-
         insert_components_to_entity_helper(self, py, entity_id, &components_to_insert)?;
 
         Ok(PyEntityCommands::with_commands(entity_id, self))
     }
 
-    #[pyo3(signature = (*args, count=None))]
+    #[pyo3(signature = (*components, count=None))]
     pub fn spawn_batch(
         &self,
         py: Python,
-        args: &Bound<'_, PyTuple>,
+        components: &Bound<'_, PyTuple>,
         count: Option<usize>,
     ) -> PyResult<Py<PyAny>> {
         self.check_valid()?;
 
-        // Detect legacy iterable path: single arg that is a list or has __iter__ but is not a Component
-        if args.len() == 1 && count.is_none() {
-            let first = args.get_item(0)?;
+        // A single list or iterator is treated as component bundles.
+        if components.len() == 1 && count.is_none() {
+            let first = components.get_item(0)?;
             if first.is_instance_of::<pyo3::types::PyList>() || first.hasattr("__next__")? {
-                self.spawn_batch_iter(py, first)?;
+                self.spawn_batch_iter(py, &first)?;
                 return Ok(py.None());
             }
         }
 
-        // Batch/uniform path
-        let command = SpawnBatchCommand::new(py, args, count)?;
-        let trace_payloads = self.prepare_uniform_batch_trace_payloads(args)?;
+        let command = SpawnBatchCommand::new(py, components, count)?;
+        let trace_payloads = self.prepare_uniform_batch_trace_payloads(components)?;
 
         if self.is_world {
+            self.check_native_asset_access("commands.spawn_batch()")?;
             let entities = command.apply(self.world_mut()?)?;
             let entity_list: Vec<PyEntity> = entities.into_iter().map(PyEntity).collect();
             Ok(entity_list.into_pyobject(py)?.into())
@@ -1082,32 +1254,44 @@ impl PyCommands {
         }
     }
 
-    // FIXME: is this needed anymore?
     #[pyo3(name = "_spawn_batch_iter")]
-    fn spawn_batch_iter(&self, py: Python, batch: Bound<'_, PyAny>) -> PyResult<()> {
-        let iter = batch.call_method0("__iter__")?;
-        loop {
-            match iter.call_method0("__next__") {
-                Ok(bundle) => {
-                    let entity_id = self.execute_returning(
-                        |world| world.spawn_empty().id(),
-                        |commands| commands.spawn_empty().id(),
-                    )?;
-                    self.trace_spawn(entity_id);
-
-                    // Extract components from the bundle tuple
-                    let components_tuple = bundle.extract::<Bound<'_, PyTuple>>()?;
-
-                    insert_components_to_entity_helper(self, py, entity_id, &components_tuple)?;
-                }
-                Err(e) => {
-                    if e.is_instance_of::<PyStopIteration>(py) {
-                        break;
-                    }
-                    return Err(e);
+    fn spawn_batch_iter(&self, py: Python, batch: &Bound<'_, PyAny>) -> PyResult<()> {
+        let prepared = prepare_iter_batch(py, batch)?;
+        if self.is_world {
+            self.check_native_asset_access("commands.spawn_batch()")?;
+            let world = self.world_mut()?;
+            for command in prepared {
+                for entity in command.apply(world)? {
+                    self.trace_spawn(entity);
                 }
             }
+            return Ok(());
         }
+
+        let mut batches = Vec::with_capacity(prepared.len());
+        for command in prepared {
+            let entities = {
+                let commands = self.commands_mut()?;
+                (0..command.spawn_count())
+                    .map(|_| commands.spawn_empty().id())
+                    .collect::<Vec<_>>()
+            };
+            for &entity in &entities {
+                self.trace_spawn(entity);
+            }
+            batches.push((command, entities));
+        }
+        let error_sink = self.error_sink.clone().ok_or_else(|| {
+            PyRuntimeError::new_err("Deferred spawn_batch requires an App-owned error sink")
+        })?;
+        self.commands_mut()?.queue(move |world: &mut World| {
+            for (command, entities) in batches {
+                if let Err(error) = command.apply_to(world, entities) {
+                    error_sink.record(error);
+                    break;
+                }
+            }
+        });
         Ok(())
     }
 
@@ -1136,18 +1320,34 @@ impl PyCommands {
 
     pub fn despawn(&self, entity: &PyEntity) -> PyResult<()> {
         self.check_valid()?;
+        self.check_native_asset_access("commands.despawn()")?;
         let entity_id = entity.0;
         self.trace_target_op(ParityOpKind::Despawn, entity_id);
 
         if self.is_world {
             let world = self.world_mut()?;
+            if hierarchy_contains_resource_entity(world, entity_id) {
+                return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
+            }
             crate::ecs::lifecycle_mutation::despawn_recursive(world, entity_id);
         } else {
             // Deferred commands
             // We need to collect component types before queuing the despawn
             // This is tricky because we can't access the world yet
             // For now, we'll collect component types in the deferred command
+            let error_sink = self.error_sink.clone();
             self.execute_or_queue(move |world| {
+                // The world is only reachable at flush time, so a resource-entity
+                // despawn reports through the system error sink instead of the
+                // queuing call.
+                if hierarchy_contains_resource_entity(world, entity_id) {
+                    report_deferred_error(
+                        &error_sink,
+                        "Failed to despawn via Commands",
+                        PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN),
+                    );
+                    return;
+                }
                 crate::ecs::lifecycle_mutation::despawn_recursive(world, entity_id);
             })?;
         }
@@ -1167,6 +1367,7 @@ impl PyCommands {
 
         // Convert the bound resource to a Py<PyAny>
         let resource_instance: Py<PyAny> = resource.unbind();
+        self.check_native_asset_access("commands.insert_resource()")?;
 
         if self.is_world {
             // Direct insertion into world
@@ -1175,11 +1376,16 @@ impl PyCommands {
             // Queue a command to insert the resource later
             // Clone resource_instance for the command closure
             let resource_clone = resource_instance.clone_ref(py);
+            let error_sink = self.error_sink.clone();
 
             self.execute_or_queue(move |world: &mut World| {
                 Python::attach(|py| {
                     if let Err(e) = py_resource_type.insert_into_world(world, py, resource_clone) {
-                        eprintln!("Error: Failed to insert resource via Commands: {:?}", e);
+                        report_deferred_error(
+                            &error_sink,
+                            "Failed to insert resource via Commands",
+                            e,
+                        );
                     }
                 });
             })?;
@@ -1209,16 +1415,22 @@ impl PyCommands {
         } else {
             None
         };
+        self.check_native_asset_access("commands.remove_resource()")?;
 
         if self.is_world {
             // Direct removal from world
             py_resource_type.remove_from_world(self.world_mut()?, py)?;
         } else {
             // Queue a command to remove the resource later
+            let error_sink = self.error_sink.clone();
             self.execute_or_queue(move |world: &mut World| {
                 Python::attach(|py| {
                     if let Err(e) = py_resource_type.remove_from_world(world, py) {
-                        eprintln!("Error: Failed to remove resource via Commands: {:?}", e);
+                        report_deferred_error(
+                            &error_sink,
+                            "Failed to remove resource via Commands",
+                            e,
+                        );
                     }
                 });
             })?;
