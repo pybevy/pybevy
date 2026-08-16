@@ -14,6 +14,7 @@ pub mod dynamic_system;
 pub mod entity_commands;
 pub mod filter;
 pub mod helpers;
+pub mod kwarg_hint;
 pub mod lazy_wrapper_proxy;
 pub(crate) mod lifecycle_mutation;
 
@@ -39,6 +40,7 @@ pub mod resource_type;
 pub mod state;
 pub mod system;
 pub mod system_config;
+pub mod system_input;
 pub(crate) mod system_interpreter;
 pub mod view;
 pub mod world;
@@ -63,11 +65,14 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<system_config::PySystemConfig>()?;
     ecs.add_class::<system_config::PySystemSet>()?;
     ecs.add_class::<system_config::PySystemSetConfig>()?;
+    ecs.add_class::<system_input::PyIn>()?;
+    ecs.add_class::<system_input::PyInParam>()?;
     ecs.add_class::<custom_component::PyCustomComponent>()?;
     ecs.add_class::<custom_batch::PyCustomComponentBatch>()?;
     ecs.add_class::<pybevy_core::PyRustComponentBatch>()?;
     ecs.add_function(wrap_pyfunction!(conditional_system::run_if, m)?)?;
     ecs.add_function(wrap_pyfunction!(system_config::system, m)?)?;
+    ecs.add_function(wrap_pyfunction!(system_config::pipe, m)?)?;
     ecs.add_function(wrap_pyfunction!(system_config::system_set, m)?)?;
     ecs.add_class::<lazy_wrapper_proxy::PyLazyWrapperProxy>()?;
     ecs.add_class::<PyFloatLiveList>()?;
@@ -86,6 +91,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<PyChildren>()?;
     ecs.add_class::<PyChildrenIterator>()?;
     ecs.add_class::<local::PyLocal>()?;
+    ecs.add_class::<logical_type::PyLogicalTypeMap>()?;
     ecs.add_class::<mutable::PyMut>()?;
     // Name from pybevy_ecs crate
     pybevy_ecs::add_ecs_classes(&ecs)?;
@@ -113,12 +119,14 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<filter::filters::PyAdded>()?;
     ecs.add_class::<filter::filters::PyHas>()?;
     ecs.add_class::<filter::filters::PyAnyOf>()?;
+    ecs.add_class::<filter::filters::PyOr>()?;
     ecs.add_class::<query::PyQuery>()?;
     ecs.add_class::<query::single::PySingle>()?;
     ecs.add_class::<query::single_runtime::PySingleQuery>()?;
     ecs.add_class::<resource::PyRes>()?;
     ecs.add_class::<resource::PyResMut>()?;
     ecs.add_class::<resource::PyResParam>()?;
+    ecs.add_class::<resource::PyIsResource>()?;
     // Re-export PyResource so Python can import it from pybevy.ecs
     ecs.add_class::<resource::PyResource>()?;
     ecs.add_class::<state::PyState>()?;
