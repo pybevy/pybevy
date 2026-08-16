@@ -7,7 +7,7 @@ use pybevy_ecs::shared::parity_trace::CanonValue;
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple},
+    types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType},
 };
 
 const MAX_CANON_DEPTH: usize = 64;
@@ -47,15 +47,16 @@ fn canonicalize_inner(
         return Ok(CanonValue::String(value.extract()?));
     }
     if let Ok(handle) = value.extract::<PyRef<'_, PyHandle>>() {
+        let asset_id = match handle.untyped_id() {
+            bevy::asset::UntypedAssetId::Index { index, .. } => index.to_bits().to_string(),
+            bevy::asset::UntypedAssetId::Uuid { uuid, .. } => uuid.as_u128().to_string(),
+        };
         return Ok(CanonValue::Map(BTreeMap::from([
             (
                 "asset_type".to_string(),
                 CanonValue::String(handle.asset_type_name().unwrap_or("Unknown").to_string()),
             ),
-            (
-                "asset_id".to_string(),
-                CanonValue::Int(handle.id().to_string()),
-            ),
+            ("asset_id".to_string(), CanonValue::Int(asset_id)),
         ])));
     }
     if let Ok(dictionary) = value.cast::<PyDict>() {
@@ -150,6 +151,9 @@ fn canonicalize_inner(
             }
         }
     }
+    if let Some(variant_name) = nested_variant_name(&value_type) {
+        fields.insert("variant".to_string(), CanonValue::String(variant_name));
+    }
     let omitted_field_was_present =
         depth == 0 && omitted_root_field.is_some_and(|name| value.hasattr(name).unwrap_or(false));
     if !fields.is_empty() || omitted_field_was_present {
@@ -177,6 +181,24 @@ fn canonicalize_inner(
     }
 
     Err(unhashable(value, "unsupported payload shape"))
+}
+
+fn nested_variant_name(value_type: &Bound<'_, PyType>) -> Option<String> {
+    let qualname = value_type
+        .getattr("__qualname__")
+        .ok()?
+        .extract::<String>()
+        .ok()?;
+    let (owner, variant) = qualname.rsplit_once('.')?;
+    let owner = owner.rsplit('.').next().unwrap_or(owner);
+    let bases = value_type.getattr("__bases__").ok()?;
+    let bases = bases.cast::<PyTuple>().ok()?;
+    let inherits_owner = bases.iter().any(|base| {
+        base.getattr("__name__")
+            .and_then(|name| name.extract::<String>())
+            .is_ok_and(|name| name == owner)
+    });
+    inherits_owner.then(|| variant.to_string())
 }
 
 fn unhashable(value: &Bound<'_, PyAny>, reason: &str) -> PyErr {
