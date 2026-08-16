@@ -5,7 +5,10 @@
 //! - `NativeAsset`: Trait for accessing the underlying Bevy asset
 
 use bevy::asset::Asset;
-use pyo3::prelude::*;
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyTuple},
+};
 
 /// Base class for all PyBevy asset wrappers
 ///
@@ -14,6 +17,23 @@ use pyo3::prelude::*;
 #[pyclass(name = "Asset", subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAsset;
+
+/// Base class for `@material` classes, so `Assets[T]` accepts them.
+#[pyclass(name = "Material", extends = PyAsset, subclass, skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyMaterial;
+
+#[pymethods]
+impl PyMaterial {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    pub fn new(
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyAsset).add_subclass(PyMaterial)
+    }
+}
 
 /// Trait for PyBevy asset wrappers
 ///
