@@ -29,7 +29,7 @@ def _apply() -> None:
     """Wrap registered static factories with ``_ConstantFactory`` descriptors."""
     from .audio import PlaybackSettings, Volume
     from .camera import Exposure, Visibility
-    from .color import Color, Laba, LinearRgba, Oklaba, Srgba, Xyza
+    from .color import Color, Hwba, Laba, LinearRgba, Oklaba, Srgba, Xyza
     from .image import RenderAssetUsages
     from .light import SunDisk
     from .math import Affine2, IVec2, Quat, Rot2, URect, UVec2, UVec3, Vec2, Vec3, Vec4
@@ -44,6 +44,7 @@ def _apply() -> None:
         (Color, ["WHITE", "BLACK", "NONE"]),
         (LinearRgba, ["BLACK", "WHITE", "NONE", "NAN"]),
         (Srgba, ["BLACK", "WHITE", "NONE"]),
+        (Hwba, ["BLACK", "WHITE"]),
         (Laba, ["BLACK", "WHITE"]),
         (Oklaba, ["BLACK", "WHITE"]),
         (Xyza, ["BLACK", "WHITE"]),

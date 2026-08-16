@@ -22,7 +22,7 @@ Bevy (Rust):
 
 PyBevy:
     @material(fragment_shader="shaders/examples/shader_defs.wgsl")
-    class CustomMaterial:
+    class CustomMaterial(Material):
         color: LinearRgba = LinearRgba(0.0, 0.0, 1.0, 1.0)
         is_red: bool = False  # automatically becomes #ifdef IS_RED
 """
@@ -34,7 +34,7 @@ SHADER_ASSET_PATH = "shaders/examples/shader_defs.wgsl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)
-class CustomMaterial:
+class CustomMaterial(Material):
     """Custom material with a color uniform and an IS_RED shader def."""
     color: LinearRgba = LinearRgba(0.0, 0.0, 1.0, 1.0)
     is_red: bool = False
@@ -43,7 +43,7 @@ class CustomMaterial:
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
-    materials: ResMut[Assets[CustomMaterial]],  # type: ignore[type-var]
+    materials: ResMut[Assets[CustomMaterial]],
 ) -> None:
     # Blue cube — uses the uniform color directly
     commands.spawn(

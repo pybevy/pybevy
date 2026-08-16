@@ -2,11 +2,22 @@ from collections.abc import Callable
 from typing import Protocol, TypeVar, overload
 
 from .app import App, Plugin
-from .ecs import Component, Resource
+from .ecs import Component, Event, Message, Resource
 
 CT = TypeVar("CT", bound=Component)
 RT = TypeVar("RT", bound=Resource)
 PL = TypeVar("PL", bound=Plugin)
+MT = TypeVar("MT", bound=Message)
+ET = TypeVar("ET", bound=Event)
+
+def message(cls: type[MT]) -> type[MT]:
+    """Validate and mark a custom Message subclass.
+
+    The message channel must still be registered with ``app.add_message(cls)``.
+    """
+
+def event(cls: type[ET]) -> type[ET]:
+    """Validate and mark a custom Event subclass used by observers."""
 
 @overload
 def component(cls: type[CT]) -> type[CT]: ...
@@ -26,6 +37,9 @@ def component(  # type: ignore[misc]
         storage: Explicit storage mode. Use ``"python"`` to opt into PyObject
             storage. When omitted, wrapper storage is required; if the
             component has non-primitive fields a ``TypeError`` is raised.
+            Read queries over Python storage use a shallow read proxy and
+            declare exclusive scheduler access. Nested objects remain live and
+            do not automatically mark the component changed.
 
     Example:
         ```python
@@ -114,18 +128,7 @@ class EntrypointDecoratorResult(Protocol):
     @overload
     def __call__(self, app: App) -> App: ...
 
-def material(
-    fragment_shader: str | None = None,
-    vertex_shader: str | None = None,
-) -> Callable[[type], type]:
-    """Decorator to define a custom shader material.
-
-    Generates WGSL struct declarations and handles std140 packing automatically.
-
-    Args:
-        fragment_shader: Asset path to custom fragment shader (relative to assets/ directory).
-        vertex_shader: Asset path to custom vertex shader (relative to assets/ directory).
-    """
+from .material import material as material
 
 def entrypoint(func: Callable[[App], App]) -> EntrypointDecoratorResult:
     """Decorator for the main app entry point function.

@@ -5,12 +5,11 @@ use bevy::{
         world::World,
     },
     input::{ButtonInput, keyboard::KeyCode},
-    platform::time::Instant,
     time::{Real, Time},
 };
 use pybevy_reload::{
-    HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode, ReloadProgress,
-    ReloadProgressPhase, StartPaused, emit_reload_progress, is_verbose, perform_reload,
+    HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode, StartPaused, is_verbose,
+    perform_reload,
 };
 use pyo3::prelude::*;
 
@@ -64,10 +63,6 @@ pub(crate) fn compact_retired_generation_systems(world: &mut World) {
             let _ = schedule.initialize(world);
         });
     }
-}
-
-fn publish_reload_error(world: &mut World, message: String) {
-    publish_reload_diagnostic(world, message, None);
 }
 
 fn publish_reload_diagnostic(world: &mut World, message: String, traceback: Option<String>) {

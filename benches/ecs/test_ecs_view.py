@@ -71,7 +71,7 @@ def _warmup_numba() -> None:
 
     def warmup(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
-            col = batch.column_mut(Transform)
+            col = batch.column_mut(Transform).translation.x
             _ = numba_sum(col)
 
     app.add_systems(Startup, setup)
@@ -92,7 +92,7 @@ def _setup_view_numba_sum(entity_count: int) -> App:
     def measure_view(view: View[Mut[Transform]]) -> None:
         total = 0.0
         for batch in view.iter_batches():
-            col = batch.column_mut(Transform)
+            col = batch.column_mut(Transform).translation.x
             total += numba_sum(col)
 
     app = App()
@@ -305,8 +305,9 @@ def test_physics_view_numba_10000(benchmark: BenchmarkFixture) -> None:
 
     def physics_view(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
-            pos = batch.column_mut(Transform)
-            vel = batch.column_mut(Transform)
+            transform = batch.column_mut(Transform)
+            pos = transform.translation.x
+            vel = transform.translation.y
             numba_physics(pos, vel, 0.016)
 
     app = App()

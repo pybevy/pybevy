@@ -7,7 +7,7 @@ reacquire its component on each frame. Click and hold the square to drag it.
 
 from dataclasses import dataclass
 
-from pybevy.input import MouseButton, MouseInput
+from pybevy.input import ButtonInput, MouseButton
 from pybevy.prelude import *
 from pybevy.window import PrimaryWindow, Window
 
@@ -27,7 +27,7 @@ def setup(commands: Commands) -> None:
 
 
 def drag(
-    mouse: Res[MouseInput],
+    mouse: Res[ButtonInput[MouseButton]],
     state: ResMut[DragState],
     windows: Query[Window, With[PrimaryWindow]],
     objects: Query[tuple[Entity, Mut[Transform]], With[Sprite]],

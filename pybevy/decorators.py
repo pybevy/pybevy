@@ -1,14 +1,118 @@
 import dataclasses
 import os
 import sys
+import types
 from collections.abc import Callable
 from functools import wraps
-from typing import TypeVar
+from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
 
 from .app import Plugin
-from .ecs import Component, Resource
+from .ecs import Component, Event, Message, Resource
+from .material import material as material
 
 RT = TypeVar("RT", bound=Resource)
+MT = TypeVar("MT", bound=Message)
+ET = TypeVar("ET", bound=Event)
+
+_component_cache: dict[str, type[Component]] = {}
+_component_layout_signatures: dict[str, tuple[object, ...]] = {}
+_component_layout_reload_required: set[str] = set()
+_resource_cache: dict[str, type[Resource]] = {}
+_component_cache_enabled = False
+
+
+def message(cls: type[MT]) -> type[MT]:
+    """Validate and mark a custom buffered-message class.
+
+    The class must still inherit from :class:`Message`, and its channel must
+    still be registered with ``app.add_message(cls)``. The decorator is a
+    declaration aid; it does not mutate an App or register global state.
+    """
+    if not issubclass(cls, Message):
+        raise TypeError(f"{cls.__name__} must inherit from Message.")
+    cls.__pybevy_message_decorated__ = True
+    return cls
+
+
+def event(cls: type[ET]) -> type[ET]:
+    """Validate and mark a custom observer-event class.
+
+    The class must still inherit from :class:`Event`. Observers remain
+    explicitly registered with ``app.add_observer(...)``.
+    """
+    if not issubclass(cls, Event):
+        raise TypeError(f"{cls.__name__} must inherit from Event.")
+    cls.__pybevy_event_decorated__ = True
+    return cls
+
+
+def _annotation_name(annotation: object) -> str:
+    if annotation is type(None):
+        return "None"
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, Union):
+        return " | ".join(_annotation_name(member) for member in get_args(annotation))
+    if origin is not None:
+        return str(annotation).removeprefix("typing.")
+    return getattr(annotation, "__name__", str(annotation).removeprefix("typing."))
+
+
+def _validated_resource_value(annotation: object, value: object) -> tuple[bool, object]:
+    if annotation is Any:
+        return True, value
+    if annotation is int:
+        return type(value) is int, value
+    if annotation is float:
+        if type(value) is int:
+            return True, float(value)
+        return type(value) is float, value
+    if annotation is bool:
+        return type(value) is bool, value
+    if annotation is str:
+        return type(value) is str, value
+    if annotation is None or annotation is type(None):
+        return value is None, value
+
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, Union):
+        for member in get_args(annotation):
+            valid, converted = _validated_resource_value(member, value)
+            if valid:
+                return True, converted
+        return False, value
+    if origin is not None:
+        try:
+            return isinstance(value, origin), value
+        except TypeError:
+            return True, value
+    if isinstance(annotation, type):
+        return isinstance(value, annotation), value
+    return True, value
+
+
+def _install_resource_assignment_validation(cls: type[RT]) -> None:
+    original_setattr = cls.__setattr__
+    resolved_hints: dict[str, object] | None = None
+
+    def checked_setattr(instance: RT, name: str, value: object) -> None:
+        nonlocal resolved_hints
+        if resolved_hints is None:
+            try:
+                resolved_hints = get_type_hints(type(instance))
+            except (NameError, TypeError):
+                resolved_hints = dict(getattr(type(instance), "__annotations__", {}))
+
+        annotation = resolved_hints.get(name)
+        if annotation is not None:
+            valid, value = _validated_resource_value(annotation, value)
+            if not valid:
+                raise TypeError(
+                    f"{name}: expected {_annotation_name(annotation)}, "
+                    f"got {type(value).__name__}"
+                )
+        original_setattr(instance, name, value)
+
+    cls.__setattr__ = checked_setattr  # type: ignore[method-assign,assignment]
 
 
 def resource(cls: type[RT]) -> type[RT]:
@@ -18,48 +122,103 @@ def resource(cls: type[RT]) -> type[RT]:
     AND the inheritance are required - using only one will cause a runtime error.
 
     Example:
+        from dataclasses import dataclass
+
         @resource
+        @dataclass
         class GameState(Resource):  # MUST inherit from Resource
             score: int = 0
     """
     if not issubclass(cls, Resource):
         raise TypeError(f"{cls.__name__} must inherit from Resource.")
 
+    key = f"{cls.__module__}.{cls.__qualname__}"
+    if _component_cache_enabled and key in _resource_cache:
+        return _resource_cache[key]  # type: ignore[return-value]
+
+    if not dataclasses.is_dataclass(cls) and cls.__init__ is object.__init__:
+        original_new = cls.__new__
+
+        def guarded_new(resource_type: type[RT], *args: object, **kwargs: object) -> RT:
+            if (
+                (args or kwargs)
+                and not dataclasses.is_dataclass(resource_type)
+                and resource_type.__init__ is object.__init__
+            ):
+                fields = getattr(resource_type, "__annotations__", {})
+                field_hint = f" for its data fields ({', '.join(fields)})" if fields else ""
+                raise TypeError(
+                    f"{resource_type.__name__} does not define a constructor{field_hint}. "
+                    "Add @dataclass below @resource, or define __init__ before passing "
+                    "constructor arguments."
+                )
+            return original_new(resource_type)
+
+        cls.__new__ = staticmethod(guarded_new)  # type: ignore[method-assign]
+
     # Mark the resource as properly decorated
     # This allows us to detect resources missing the @resource decorator
     cls.__pybevy_resource_decorated__ = True
+    _install_resource_assignment_validation(cls)
+
+    if _component_cache_enabled:
+        _resource_cache[key] = cls
 
     return cls
 
 
 CT = TypeVar("CT", bound=Component)
 
-# Component caching for hot reload support
-_component_cache: dict[str, type[Component]] = {}
-_component_cache_enabled = False
-
-
 def clear_component_cache(verbose: bool = False) -> None:
-    """Clear the component cache. Called before full reload to allow fresh component definitions."""
-    global _component_cache
+    """Clear cached custom ECS types before a full reload."""
+    global _component_cache, _component_layout_signatures, _resource_cache
     if verbose:
-        print(f"🗑️  Clearing component cache ({len(_component_cache)} components)")
+        print(
+            "🗑️  Clearing ECS type cache "
+            f"({len(_component_cache)} components, {len(_resource_cache)} resources)"
+        )
     _component_cache.clear()
+    _component_layout_signatures.clear()
+    _resource_cache.clear()
+    # Avoid importing pybevy.material eagerly (it imports native rendering types).
+    # If it has been used, a full reload must invalidate its logical class aliases too.
+    material_module = sys.modules.get("pybevy.material")
+    if material_module is not None:
+        clear_material_cache = getattr(
+            material_module, "_clear_material_type_cache", None
+        )
+        if clear_material_cache is not None:
+            clear_material_cache()
     if verbose:
-        print(f"✅ Component cache cleared (now {len(_component_cache)} components)")
+        print("✅ ECS type cache cleared")
+
+
+def _component_layout_reload_names() -> tuple[str, ...]:
+    return tuple(sorted(_component_layout_reload_required))
+
+
+def _commit_component_layout_reload() -> None:
+    _component_layout_reload_required.clear()
 
 
 def enable_component_caching(enabled: bool, verbose: bool = False) -> None:
-    """Enable or disable component caching.
+    """Enable or disable custom ECS type caching.
 
     When enabled (partial reload mode), component classes are cached by qualified name
-    to ensure system references remain valid across reloads.
+    and resource classes retain the same identity across reloads.
 
     When disabled (full reload mode), components are freshly registered each time.
     """
     global _component_cache_enabled
     prev_state = _component_cache_enabled
     _component_cache_enabled = enabled
+    material_module = sys.modules.get("pybevy.material")
+    if material_module is not None:
+        set_material_caching = getattr(
+            material_module, "_set_material_type_caching", None
+        )
+        if set_material_caching is not None:
+            set_material_caching(enabled)
     if verbose:
         print(f"🔧 Component caching: {prev_state} → {enabled}")
     if not enabled:
@@ -98,11 +257,11 @@ def component(
     def _apply(cls: type[CT]) -> type[CT]:
         return _register_component(cls, storage=storage)
 
-    # Called as @component (no parentheses) — cls is the class itself
+    # Called as @component (no parentheses): cls is the class itself
     if cls is not None:
         return _register_component(cls, storage=storage)
 
-    # Called as @component(...) — return the actual decorator
+    # Called as @component(...): return the actual decorator
     return _apply
 
 
@@ -171,21 +330,47 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
 
     # Generate cache key from fully qualified name
     key = f"{cls.__module__}.{cls.__qualname__}"
+    try:
+        field_hints = get_type_hints(cls)
+    except Exception:
+        field_hints = getattr(cls, "__annotations__", {})
+    layout_signature = (
+        "python" if storage == "python" else "wrapper",
+        tuple(
+            (name, _component_annotation_identity(annotation))
+            for name, annotation in field_hints.items()
+            if not name.startswith("_")
+        ),
+    )
 
     # Check if verbose mode is enabled
     verbose = os.environ.get("PYBEVY_VERBOSE") == "1"
 
     # Return cached component if caching is enabled and component exists in cache
     if _component_cache_enabled and key in _component_cache:
+        if _component_layout_signatures.get(key) == layout_signature:
+            if verbose:
+                print(f"Using CACHED component: {key}")
+            return _component_cache[key]  # type: ignore
+        _component_layout_reload_required.add(key)
         if verbose:
-            print(f"Using CACHED component: {key}")
-        return _component_cache[key]  # type: ignore
+            print(f"Component layout changed; replacing cached component: {key}")
 
     # Mark the component as properly decorated
     cls.__pybevy_component_decorated__ = True  # type: ignore[attr-defined]
 
     # Add from_numpy() classmethod for wrapper-storage components
-    if storage != "python":
+    if storage == "python":
+
+        @classmethod  # type: ignore[misc]  # dynamic classmethod on decorated class
+        def from_numpy(klass: type, **_kwargs: object) -> object:
+            raise TypeError(
+                f'{klass.__name__}.from_numpy() is not supported for storage="python" components; '
+                "spawn component instances instead"
+            )
+
+        cls.from_numpy = from_numpy
+    else:
 
         @classmethod  # type: ignore[misc]  # dynamic classmethod on decorated class
         def from_numpy(klass: type, **kwargs: object) -> object:
@@ -203,11 +388,26 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         if verbose:
             print(f"Caching NEW component: {key}")
         _component_cache[key] = cls
+        _component_layout_signatures[key] = layout_signature
     else:
         if verbose:
             print(f"Using FRESH component (caching disabled): {key}")
 
     return cls
+
+
+def _component_annotation_identity(annotation: object) -> object:
+    origin = get_origin(annotation)
+    if origin is not None:
+        return (
+            _component_annotation_identity(origin),
+            tuple(_component_annotation_identity(arg) for arg in get_args(annotation)),
+        )
+    module = getattr(annotation, "__module__", None)
+    qualname = getattr(annotation, "__qualname__", None)
+    if module is not None and qualname is not None:
+        return module, qualname
+    return repr(annotation)
 
 
 def _create_view_column_proxy(cls: type[Component]) -> None:
@@ -318,18 +518,6 @@ def plugin(cls: type[PL]) -> type[PL]:
     cls.__pybevy_plugin_decorated__ = True
 
     return cls
-
-
-def material(
-    fragment_shader: str | None = None,
-    vertex_shader: str | None = None,
-) -> Callable[[type], type]:
-    """Decorator to define a custom shader material.
-
-    See pybevy.material for full implementation and docs.
-    """
-    from .material import material as _material_impl
-    return _material_impl(fragment_shader=fragment_shader, vertex_shader=vertex_shader)
 
 
 def entrypoint(func: Callable) -> Callable:

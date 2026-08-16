@@ -260,13 +260,28 @@ class Vec2Expr(Expr):
     component-level access.
     """
 
+    component_id: int
+    base_field_name: str
+    base_offset: int
+
+    def __init__(
+        self,
+        component_id: int,
+        base_field_name: str,
+        base_offset: int,
+    ) -> None: ...
+
     @property
     def x(self) -> FieldExpr:
         """X component of the Vec2."""
+    @x.setter
+    def x(self, value: Expr | float | int) -> None: ...
 
     @property
     def y(self) -> FieldExpr:
         """Y component of the Vec2."""
+    @y.setter
+    def y(self, value: Expr | float | int) -> None: ...
 
 # Module-level functional API
 def const(value: float) -> Expr: ...

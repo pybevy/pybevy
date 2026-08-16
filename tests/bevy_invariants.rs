@@ -9,7 +9,10 @@
 use std::any::TypeId;
 
 use bevy::{
-    ecs::query::{FilteredAccess, FilteredAccessSet},
+    ecs::{
+        component::StorageType,
+        query::{FilteredAccess, FilteredAccessSet},
+    },
     prelude::*,
     state::app::StatesPlugin,
 };
@@ -21,6 +24,27 @@ struct TestComponent {
 
 #[derive(Component)]
 struct Marker;
+
+#[derive(Resource, Default)]
+struct ResourceStorageInvariant;
+
+#[test]
+fn test_resources_use_sparse_set_storage() {
+    //! INVARIANT: Bevy resources use sparse-set component storage.
+    //!
+    //! PyBevy resource wrappers and stable non-inline resource projections may
+    //! remain live while the resource entity changes archetype. Table storage
+    //! would relocate the resource during that move and invalidate the pointer.
+
+    let mut world = World::new();
+    let resource_id = world.init_resource::<ResourceStorageInvariant>();
+    let info = world
+        .components()
+        .get_info(resource_id)
+        .expect("initialized resource has component info");
+
+    assert_eq!(info.storage_type(), StorageType::SparseSet);
+}
 
 #[derive(States, Clone, Debug, Default, Eq, Hash, PartialEq)]
 enum TransitionContractState {
@@ -841,13 +865,12 @@ fn test_or_filter_cannot_be_represented_conjunctively() {
     //! only A (and one that has only B). An Or filter is a disjunction and
     //! cannot be flattened into a conjunction of and_with calls.
     //!
-    //! Relied on by: PyBevy declares no filter narrowing for `AnyOf[...]`,
-    //! because and_with(A) + and_with(B) would wrongly claim the query only
-    //! touches archetypes that contain BOTH A and B.
+    //! Relied on by: PyBevy does not flatten either `Or[...]` filters or the
+    //! presence condition of `AnyOf[...]` query data into conjunctive scheduler
+    //! narrowing, because and_with(A) + and_with(B) would claim BOTH are needed.
     //!
-    //! Reevaluate if it fails: the `AnyOf(_)` arm in
-    //! query_filters_from_query_param (which contributes no with/without) must be
-    //! reconsidered.
+    //! Reevaluate if it fails: the conservative Or/AnyOf lowering in the shared
+    //! access declaration must be reconsidered.
 
     let mut world = World::new();
     let only_a = world.spawn(SchedA).id();
@@ -870,6 +893,29 @@ fn test_or_filter_cannot_be_represented_conjunctively() {
         "Or<(With<A>, With<B>)> must match an entity with both"
     );
     assert_eq!(matched.len(), 3, "exactly the three matching entities");
+}
+
+#[test]
+fn test_anyof_is_optional_query_data_with_a_presence_requirement() {
+    //! INVARIANT: Bevy 0.19 `AnyOf<(&A, &B)>` returns two optional values and
+    //! excludes entities that contain neither component.
+
+    let mut world = World::new();
+    world.spawn(SchedA);
+    world.spawn(SchedB);
+    world.spawn((SchedA, SchedB));
+    world.spawn_empty();
+
+    let mut query = world.query::<AnyOf<(&SchedA, &SchedB)>>();
+    let rows: Vec<(bool, bool)> = query
+        .iter(&world)
+        .map(|(a, b)| (a.is_some(), b.is_some()))
+        .collect();
+
+    assert_eq!(rows.len(), 3);
+    assert!(rows.contains(&(true, false)));
+    assert!(rows.contains(&(false, true)));
+    assert!(rows.contains(&(true, true)));
 }
 
 #[test]

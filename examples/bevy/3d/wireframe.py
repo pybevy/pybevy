@@ -7,7 +7,13 @@ Demonstrates:
 - Excluding objects from wireframe
 """
 
-from pybevy.pbr import NoWireframe, Wireframe, WireframeColor, WireframeConfig
+from pybevy.pbr import (
+    NoWireframe,
+    Wireframe,
+    WireframeColor,
+    WireframeConfig,
+    WireframePlugin,
+)
 from pybevy.prelude import *
 
 
@@ -124,6 +130,7 @@ def toggle_wireframe(
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
+        .add_plugins(WireframePlugin())
         .add_systems(Startup, setup)
         .add_systems(Update, toggle_wireframe)
     )

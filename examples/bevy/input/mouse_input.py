@@ -10,11 +10,11 @@ Note: PyBevy uses MessageReader[MouseWheel] for scroll events instead of
 AccumulatedMouseScroll resource (which doesn't exist yet).
 """
 
-from pybevy.input import AccumulatedMouseMotion, MouseInput, MouseWheel
+from pybevy.input import AccumulatedMouseMotion, ButtonInput, MouseButton, MouseWheel
 from pybevy.prelude import *
 
 
-def mouse_click_system(mouse_button_input: Res[MouseInput]) -> None:
+def mouse_click_system(mouse_button_input: Res[ButtonInput[MouseButton]]) -> None:
     """Print mouse button press/release events."""
     if mouse_button_input.pressed(MouseButton.Left()):
         print("left mouse currently pressed")

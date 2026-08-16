@@ -38,7 +38,7 @@ class PyObjectPosition(Component):
     x: float
     y: float
     z: float
-    data: str
+    data: list[int]
 
 
 @component
@@ -71,14 +71,17 @@ def _setup_query_wrapper_read(entity_count: int) -> App:
     return app
 
 
-def _setup_query_pyobject_read(entity_count: int) -> App:
+def _setup_query_pyobject_read(entity_count: int, *, nested_size: int = 1) -> App:
     """Setup app for PyObject storage query read benchmark."""
 
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
                 PyObjectPosition(
-                    x=float(i), y=float(i * 2), z=float(i * 3), data="test"
+                    x=float(i),
+                    y=float(i * 2),
+                    z=float(i * 3),
+                    data=[0] * nested_size,
                 )
             )
 
@@ -127,7 +130,7 @@ def _setup_query_pyobject_write(entity_count: int) -> App:
         for i in range(entity_count):
             commands.spawn(
                 PyObjectPosition(
-                    x=float(i), y=float(i * 2), z=float(i * 3), data="test"
+                    x=float(i), y=float(i * 2), z=float(i * 3), data=[0]
                 ),
                 Marker(),
             )
@@ -185,6 +188,16 @@ def test_read_query_wrapper(benchmark: BenchmarkFixture, entity_count: int) -> N
 def test_read_query_pyobject(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark Query read with PyObject storage."""
     app = _setup_query_pyobject_read(entity_count)
+    benchmark(app.update)
+
+
+@pytest.mark.parametrize("nested_size", [0, 10_000])
+def test_read_query_pyobject_graph_size(
+    benchmark: BenchmarkFixture,
+    nested_size: int,
+) -> None:
+    """Query-row cost stays independent of an unread nested object graph."""
+    app = _setup_query_pyobject_read(250, nested_size=nested_size)
     benchmark(app.update)
 
 

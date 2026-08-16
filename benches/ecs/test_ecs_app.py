@@ -134,6 +134,16 @@ def test_query_iter_100_empty_entities(benchmark: BenchmarkFixture) -> None:
     benchmark(app.update)
 
 
+def test_world_spawn_empty_idle_asset_barrier(benchmark: BenchmarkFixture) -> None:
+    """Track the no-live-asset fast path on immediate structural writes."""
+    app = App().add_plugins(MinimalPlugins)
+
+    def run(world: World) -> None:
+        benchmark(world.spawn_empty)
+
+    app.world(run)
+
+
 def test_query_iter_100_transforms(benchmark: BenchmarkFixture) -> None:
     """Benchmark query with 100 Transform entities."""
 

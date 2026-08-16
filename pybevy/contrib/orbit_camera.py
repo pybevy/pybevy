@@ -13,11 +13,11 @@ from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
 from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
 from ..input import (
+    ButtonInput,
     ButtonState,
     KeyboardInput,
     KeyCode,
     MouseButton,
-    MouseInput,
     MouseMotion,
     MouseWheel,
 )
@@ -63,7 +63,7 @@ class OrbitCameraState(Resource):
 
 def orbit_camera_control_system(
     query: Query[tuple[Mut[Transform], Mut[OrbitCamera]]],
-    mouse_buttons: Res[MouseInput],
+    mouse_buttons: Res[ButtonInput[MouseButton]],
     keyboard_input: MessageReader[KeyboardInput],
     mouse_motion: MessageReader[MouseMotion],
     mouse_wheel: MessageReader[MouseWheel],
@@ -127,7 +127,7 @@ def orbit_camera_control_system(
 
         transform.translation = Vec3(x, y, z)
         # Look at target with proper up vector
-        transform.looking_at(camera.target, Vec3.Y)
+        transform.look_at(camera.target, Vec3.Y)
 
 
 @plugin

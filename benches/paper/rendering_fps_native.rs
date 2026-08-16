@@ -38,7 +38,7 @@ fn setup(
     //   half_extent = (sqrt(max_count) + 1) * 1.2 / 2
     //   distance = half_extent / tan(22.5°) ≈ half_extent * 2.5
     let max_count = *ENTITY_COUNTS.last().unwrap();
-    let max_side = (max_count as f32).sqrt() as f32 + 1.0;
+    let max_side = (max_count as f32).sqrt() + 1.0;
     let half_extent = max_side * 1.2 / 2.0;
     let cam_dist = half_extent * 2.5;
     commands.spawn((

@@ -16,7 +16,7 @@ Controls:
 
 import math
 
-from pybevy.input import AccumulatedMouseMotion, MouseInput
+from pybevy.input import AccumulatedMouseMotion, ButtonInput, MouseButton
 from pybevy.prelude import *
 
 
@@ -79,7 +79,7 @@ def setup(
 def orbit(
     camera_query: Single[Mut[Transform], With[Camera3d]],
     camera_settings: Res[CameraSettings],
-    mouse_buttons: Res[MouseInput],
+    mouse_buttons: Res[ButtonInput[MouseButton]],
     mouse_motion: Res[AccumulatedMouseMotion],
     time: Res[Time],
 ) -> None:

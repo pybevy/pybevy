@@ -6,6 +6,7 @@ from . import (
     assets,
     audio,
     camera,
+    collections,
     color,
     core_pipeline,
     ecs,
@@ -36,7 +37,9 @@ from .decorators import (
     clear_component_cache,
     component,
     enable_component_caching,
+    event,
     is_component_decorated,
+    message,
     plugin,
     resource,
 )
@@ -44,7 +47,7 @@ from .ecs import system_set
 
 _apply_constant_descriptors()
 
-# CLI import is optional (requires watchfiles)
+# Keep top-level CLI import optional for constrained embedding environments.
 try:
     from .cli import main
 except ImportError:
@@ -54,8 +57,9 @@ __all__ = [
     "main",
     # decorators
     "component",
+    "event",
+    "message",
     "resource",
-    # "event",
     "plugin",
     "system_set",
     # hot reload utilities
@@ -70,6 +74,7 @@ __all__ = [
     "assets",
     "audio",
     "camera",
+    "collections",
     "color",
     "core_pipeline",
     "ecs",
