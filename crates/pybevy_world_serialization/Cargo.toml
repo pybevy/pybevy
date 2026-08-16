@@ -14,7 +14,11 @@ pybevy_macros = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = ["bevy_world_serialization", "bevy_asset"]
+features = ["bevy_world_serialization", "bevy_asset", "bevy_log"]
+
+[dev-dependencies]
+ron = "0.12"
+serde = "1.0"
 
 [lints]
 workspace = true

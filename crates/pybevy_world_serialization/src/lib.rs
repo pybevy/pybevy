@@ -1,6 +1,8 @@
+mod custom_component;
 pub mod dynamic_world;
 pub mod dynamic_world_root;
 pub mod instance_id;
+pub mod live_world;
 pub mod world_asset;
 pub mod world_asset_root;
 pub mod world_instance_ready;
@@ -55,6 +57,8 @@ impl PyWorldSerializationPlugin {
 impl PluginBuild for PyWorldSerializationPlugin {
     fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         app.add_plugins(bevy::world_serialization::WorldSerializationPlugin);
+        let registry = app.world().resource::<AppTypeRegistry>().clone();
+        custom_component::register_custom_component_reflection(&mut registry.write());
         app.add_observer(world_instance_ready_bridge);
         Ok(())
     }

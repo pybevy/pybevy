@@ -5076,6 +5076,8 @@ dependencies = [
  "pybevy_core",
  "pybevy_macros",
  "pyo3",
+ "ron",
+ "serde",
 ]
 
 [[package]]

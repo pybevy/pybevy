@@ -24,6 +24,7 @@ pub(crate) mod app;
 pub(crate) mod assets;
 pub(crate) mod ecs;
 pub(crate) mod render;
+pub(crate) mod world_serialization;
 
 #[cfg(feature = "mcp")]
 fn remove_component_for_control(
@@ -117,6 +118,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     assets::add_module(m)?;
     ecs::add_module(m)?;
     render::add_module(m)?;
+    world_serialization::add_api(m)?;
     ecs::system_config::register_native_system_sets(m)?;
 
     // Enrich "math" module with meshable primitives from pybevy_mesh.

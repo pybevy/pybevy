@@ -1,3 +1,8 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use bevy::world_serialization::InstanceId;
 use pyo3::prelude::*;
 
@@ -12,8 +17,7 @@ impl PyInstanceId {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
         self.0.hash(&mut hasher);
         hasher.finish()
     }
