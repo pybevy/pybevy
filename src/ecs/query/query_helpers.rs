@@ -1,3 +1,7 @@
+use pybevy_core::{
+    LogicalTypeId, PyLogicalComponentParam,
+    public_error::{ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER},
+};
 use pyo3::{
     IntoPyObjectExt, PyTypeInfo,
     exceptions::PyTypeError,
@@ -11,12 +15,12 @@ use crate::ecs::{
     component_type::PyComponentType,
     filter::{
         QueryFilter,
-        filters::{PyAdded, PyAnyOf, PyChanged, PyHas, PyWith, PyWithout},
+        filters::{PyAdded, PyAnyOf, PyChanged, PyHas, PyOr, PyWith, PyWithout},
     },
     mutable::PyMut,
     query::{
         ParamType,
-        query_param::{PyQueryParam, QueryData},
+        query_param::{AnyOfItem, PyQueryParam, QueryData},
     },
 };
 
@@ -33,11 +37,13 @@ pub(crate) fn extract_param_type_from_query_param(
             ));
         }
 
-        let (mutable, component_type) = extract_component_with_mutability(py, &inner)?;
+        let (mutable, component_type, logical_type_id) =
+            extract_component_with_mutability(py, &inner)?;
         return ok_single(ParamType::Component {
             ty: component_type,
             mutable,
             optional: true,
+            logical_type_id,
         });
     }
 
@@ -47,12 +53,14 @@ pub(crate) fn extract_param_type_from_query_param(
         && origin.is(PyMut::type_object(py))
     {
         // This is Mut[Component] - extract with mutability
-        let (mutable, component_type) = extract_component_with_mutability(py, key)?;
+        let (mutable, component_type, logical_type_id) =
+            extract_component_with_mutability(py, key)?;
 
         return ok_single(ParamType::Component {
             ty: component_type,
             mutable,
             optional: false,
+            logical_type_id,
         });
     }
 
@@ -67,9 +75,19 @@ pub(crate) fn extract_param_type_from_query_param(
         let args = generic_alias.getattr("__args__")?;
 
         let mut values = SmallVec::<[ParamType; 2]>::new();
+        let mut contains_or_filter = false;
         for arg in args.cast::<PyTuple>()?.iter() {
+            contains_or_filter |= arg.is_instance_of::<PyOr>();
             let (_, new_values) = extract_param_type_from_query_param(py, &arg)?;
             values.extend(new_values);
+        }
+
+        if contains_or_filter
+            && values
+                .iter()
+                .any(|value| !matches!(value, ParamType::Filter(_)))
+        {
+            return Err(PyTypeError::new_err(OR_IS_FILTER));
         }
 
         Ok((false, values))
@@ -82,27 +100,31 @@ pub(crate) fn extract_param_type_from_query_param(
     } else if key.is_instance_of::<PyAdded>() {
         ok_single(QueryFilter::Added(key.extract::<PyAdded>()?).into())
     } else if key.is_instance_of::<PyHas>() {
-        ok_single(QueryFilter::Has(key.extract::<PyHas>()?).into())
+        ok_single(ParamType::Has(key.extract::<PyHas>()?))
     } else if key.is_instance_of::<PyAnyOf>() {
-        ok_single(QueryFilter::AnyOf(key.extract::<PyAnyOf>()?).into())
+        ok_single(ParamType::AnyOf(key.extract::<PyAnyOf>()?.items))
+    } else if key.is_instance_of::<PyOr>() {
+        ok_single(QueryFilter::Or(key.extract::<PyOr>()?).into())
     } else if key.is(PyEntity::type_object(py)) {
         ok_single(ParamType::Entity)
     } else {
         // Plain component type (not wrapped in Mut[])
-        let (mutable, component_type) = extract_component_with_mutability(py, key)?;
+        let (mutable, component_type, logical_type_id) =
+            extract_component_with_mutability(py, key)?;
         ok_single(ParamType::Component {
             ty: component_type,
             mutable,
             optional: false,
+            logical_type_id,
         })
     }
 }
 
 /// Extract component type and check if it's wrapped in Mut[]
-fn extract_component_with_mutability(
+pub(crate) fn extract_component_with_mutability(
     py: Python,
     key: &Bound<'_, PyAny>,
-) -> Result<(bool, PyComponentType), PyErr> {
+) -> Result<(bool, PyComponentType, Option<LogicalTypeId>), PyErr> {
     // Check if this is a generic alias (Mut[Component]) by checking for __origin__ attribute
     let (mutable, type_key) = if let Ok(origin) = key.getattr("__origin__") {
         if origin.is(PyMut::type_object(py)) {
@@ -118,15 +140,63 @@ fn extract_component_with_mutability(
         (false, key.clone())
     };
 
+    if let Ok(logical) = type_key.extract::<PyRef<'_, PyLogicalComponentParam>>() {
+        return Ok((
+            mutable,
+            PyComponentType::Dynamic(logical.component_type_ptr()),
+            Some(logical.logical_type_id()),
+        ));
+    }
+
     let comp_type = PyComponentType::try_from((type_key.cast::<PyType>()?, py))?;
-    Ok((mutable, comp_type))
+    if mutable && !comp_type.supports_mutable_access() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "{} is a read-only resource and cannot be queried through Mut",
+            comp_type.display_name(py)
+        )));
+    }
+    Ok((mutable, comp_type, None))
+}
+
+pub(crate) fn parse_anyof_items(
+    py: Python<'_>,
+    key: &Bound<'_, PyAny>,
+) -> PyResult<SmallVec<[AnyOfItem; 4]>> {
+    if key.is_instance_of::<PyTuple>() {
+        return Err(PyTypeError::new_err(ANY_OF_TUPLE_REQUIRED));
+    }
+    let origin = key
+        .getattr("__origin__")
+        .map_err(|_| PyTypeError::new_err(ANY_OF_TUPLE_REQUIRED))?;
+    if !origin.is(py.get_type::<PyTuple>()) {
+        return Err(PyTypeError::new_err(ANY_OF_TUPLE_REQUIRED));
+    }
+    let args = key.getattr("__args__")?.cast_into::<PyTuple>()?;
+    if args.is_empty() {
+        return Err(PyTypeError::new_err(ANY_OF_EMPTY));
+    }
+    args.iter()
+        .map(|item| {
+            let (mutable, ty, logical_type_id) = extract_component_with_mutability(py, &item)?;
+            Ok(AnyOfItem {
+                ty,
+                mutable,
+                logical_type_id,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn extract_component_type_from_query_param(
     py: Python,
     key: &Bound<'_, PyAny>,
 ) -> Result<PyComponentType, PyErr> {
-    let (_mutable, comp_type) = extract_component_with_mutability(py, key)?;
+    let (_mutable, comp_type, logical_type_id) = extract_component_with_mutability(py, key)?;
+    if logical_type_id.is_some() {
+        return Err(PyTypeError::new_err(
+            "Logical component specializations must be Query data; they are not supported inside component filters",
+        ));
+    }
     Ok(comp_type)
 }
 
@@ -213,8 +283,7 @@ pub(crate) fn construct_query_class_item_with_options(
                     || item.is_instance_of::<PyWithout>()
                     || item.is_instance_of::<PyChanged>()
                     || item.is_instance_of::<PyAdded>()
-                    || item.is_instance_of::<PyHas>()
-                    || item.is_instance_of::<PyAnyOf>();
+                    || item.is_instance_of::<PyOr>();
 
                 // Check if this is a tuple of filters
                 let is_filter_tuple = if item.is_instance_of::<PyGenericAlias>() {
@@ -229,8 +298,7 @@ pub(crate) fn construct_query_class_item_with_options(
                                             || arg.is_instance_of::<PyWithout>()
                                             || arg.is_instance_of::<PyChanged>()
                                             || arg.is_instance_of::<PyAdded>()
-                                            || arg.is_instance_of::<PyHas>()
-                                            || arg.is_instance_of::<PyAnyOf>()
+                                            || arg.is_instance_of::<PyOr>()
                                     })
                                 } else {
                                     false
@@ -271,30 +339,45 @@ pub(crate) fn construct_query_class_item_with_options(
         }
     };
 
+    let data: SmallVec<[QueryData; 16]> = param_types
+        .iter()
+        .filter_map(|param| match param {
+            ParamType::Entity => Some(QueryData::Entity),
+            ParamType::Component {
+                ty: comp_type,
+                mutable,
+                optional,
+                logical_type_id,
+            } => Some(QueryData::Component {
+                ty: *comp_type,
+                mutable: *mutable,
+                optional: *optional,
+                logical_type_id: *logical_type_id,
+            }),
+            ParamType::Has(has) => Some(QueryData::Has {
+                ty: has.component_type,
+            }),
+            ParamType::AnyOf(items) => Some(QueryData::AnyOf {
+                items: items.clone(),
+            }),
+            ParamType::Filter(_) => None,
+        })
+        .collect();
+    let filters: SmallVec<[QueryFilter; 4]> = param_types
+        .into_iter()
+        .filter_map(|param| match param {
+            ParamType::Filter(filter) => Some(filter),
+            ParamType::Entity
+            | ParamType::Component { .. }
+            | ParamType::Has(_)
+            | ParamType::AnyOf(_) => None,
+        })
+        .collect();
+
     PyQueryParam {
-        data: param_types
-            .iter()
-            .filter_map(|param| match param {
-                ParamType::Entity => Some(QueryData::Entity),
-                ParamType::Component {
-                    ty: comp_type,
-                    mutable,
-                    optional,
-                } => Some(QueryData::Component {
-                    ty: comp_type.clone(),
-                    mutable: *mutable,
-                    optional: *optional,
-                }),
-                ParamType::Filter(_) => None,
-            })
-            .collect(),
-        filters: param_types
-            .into_iter()
-            .filter_map(|param| match param {
-                ParamType::Filter(filter) => Some(filter),
-                ParamType::Entity | ParamType::Component { .. } => None,
-            })
-            .collect(),
+        retained_types: PyQueryParam::retain_custom_types(py, &data, &filters),
+        data,
+        filters,
         single,
         single_entity_enforced,
     }

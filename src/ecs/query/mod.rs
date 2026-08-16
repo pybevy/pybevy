@@ -1,5 +1,8 @@
+use pybevy_core::LogicalTypeId;
+
 use crate::ecs::{
-    component_type::PyComponentType, filter::QueryFilter,
+    component_type::PyComponentType,
+    filter::{QueryFilter, filters::PyHas},
     query::query_helpers::construct_query_class_item,
 };
 
@@ -14,6 +17,7 @@ use pyo3::{
     prelude::*,
     types::{PyAny, PyType},
 };
+use smallvec::SmallVec;
 
 pub(crate) enum ParamType {
     Entity,
@@ -21,7 +25,10 @@ pub(crate) enum ParamType {
         ty: PyComponentType,
         mutable: bool,
         optional: bool,
+        logical_type_id: Option<LogicalTypeId>,
     },
+    Has(PyHas),
+    AnyOf(SmallVec<[query_param::AnyOfItem; 4]>),
     Filter(QueryFilter),
 }
 

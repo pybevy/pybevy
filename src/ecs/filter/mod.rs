@@ -1,4 +1,4 @@
-use filters::{PyAdded, PyAnyOf, PyChanged, PyHas, PyWith, PyWithout};
+use filters::{PyAdded, PyChanged, PyOr, PyWith, PyWithout};
 use pyo3::{prelude::*, types::PyAny};
 use smallvec::{SmallVec, smallvec};
 
@@ -19,10 +19,25 @@ pub(crate) enum QueryFilter {
     Changed(PyChanged),
     /// Components that have been added
     Added(PyAdded),
-    /// Components that are present
-    Has(PyHas),
-    /// Any of the specified components
-    AnyOf(PyAnyOf),
+    /// At least one of the nested query filters
+    Or(PyOr),
+}
+
+impl QueryFilter {
+    /// Every component type this filter references, in declaration order.
+    pub(crate) fn component_types(&self) -> SmallVec<[PyComponentType; 4]> {
+        match self {
+            Self::With(filter) => filter.values.clone(),
+            Self::Without(filter) => filter.values.clone(),
+            Self::Or(filter) => filter
+                .values
+                .iter()
+                .flat_map(Self::component_types)
+                .collect(),
+            Self::Changed(filter) => smallvec![filter.component_type],
+            Self::Added(filter) => smallvec![filter.component_type],
+        }
+    }
 }
 
 /// Helper function to parse multiple component types from a filter parameter.
@@ -32,7 +47,7 @@ pub(crate) enum QueryFilter {
 /// - `(A, B)` - Plain tuple syntax (returns error, requires explicit tuple[])
 /// - `A` - Single component type
 ///
-/// Used by filters that accept multiple components: With, Without, AnyOf
+/// Used by filters that accept multiple components: With and Without.
 pub(crate) fn parse_multi_component_filter(
     py: Python,
     key: &Bound<'_, PyAny>,
