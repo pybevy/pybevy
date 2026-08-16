@@ -1,29 +1,36 @@
-use bevy::input::gamepad::{
-    GamepadAxisChangedEvent as GamepadAxisChanged,
-    GamepadButtonChangedEvent as GamepadButtonChanged, GamepadButtonStateChangedEvent,
-    GamepadConnection, GamepadConnectionEvent,
+use bevy::{
+    ecs::entity::Entity,
+    input::gamepad::{
+        GamepadAxisChangedEvent, GamepadButtonChangedEvent, GamepadButtonStateChangedEvent,
+        GamepadConnection, GamepadConnectionEvent,
+    },
 };
+use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
-use pybevy_macros::pymessage;
+use pybevy_macros::{pyenum, pymessage};
 use pyo3::prelude::*;
 
 use crate::{
     button_state::PyButtonState, gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton,
 };
 
-#[pymessage(GamepadButtonChanged)]
-#[pyclass(name = "GamepadButtonChanged", extends = PyMessage, skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyGamepadButtonChanged {
+#[pymessage(GamepadButtonChangedEvent)]
+#[pyclass(name = "GamepadButtonChangedEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PyGamepadButtonChangedEvent {
+    pub entity: PyEntity,
     pub button: PyGamepadButton,
+    pub state: PyButtonState,
     pub value: f32,
 }
 
-impl PyGamepadButtonChanged {
-    pub fn from_bevy(event: &GamepadButtonChanged) -> (Self, PyMessage) {
+impl PyGamepadButtonChangedEvent {
+    pub fn from_bevy(event: &GamepadButtonChangedEvent) -> (Self, PyMessage) {
         (
-            PyGamepadButtonChanged {
+            PyGamepadButtonChangedEvent {
+                entity: event.entity.into(),
                 button: event.button.into(),
+                state: event.state.into(),
                 value: event.value,
             },
             PyMessage,
@@ -31,25 +38,52 @@ impl PyGamepadButtonChanged {
     }
 }
 
-impl From<&GamepadButtonChanged> for PyGamepadButtonChanged {
-    fn from(event: &GamepadButtonChanged) -> Self {
-        PyGamepadButtonChanged {
+impl From<&GamepadButtonChangedEvent> for PyGamepadButtonChangedEvent {
+    fn from(event: &GamepadButtonChangedEvent) -> Self {
+        PyGamepadButtonChangedEvent {
+            entity: event.entity.into(),
             button: event.button.into(),
+            state: event.state.into(),
             value: event.value,
         }
     }
 }
 
 #[pymethods]
-impl PyGamepadButtonChanged {
+impl PyGamepadButtonChangedEvent {
     #[new]
-    fn new(button: PyGamepadButton, value: f32) -> PyClassInitializer<Self> {
-        (PyGamepadButtonChanged { button, value }, PyMessage).into()
+    #[pyo3(signature = (button, value, *, state = PyButtonState::Released(), entity = None))]
+    fn new(
+        button: PyGamepadButton,
+        value: f32,
+        state: PyButtonState,
+        entity: Option<PyEntity>,
+    ) -> PyClassInitializer<Self> {
+        (
+            PyGamepadButtonChangedEvent {
+                entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
+                button,
+                state,
+                value,
+            },
+            PyMessage,
+        )
+            .into()
+    }
+
+    #[getter]
+    fn entity(&self) -> PyEntity {
+        self.entity
     }
 
     #[getter]
     fn button(&self) -> PyGamepadButton {
         self.button
+    }
+
+    #[getter]
+    fn state(&self) -> PyButtonState {
+        self.state
     }
 
     #[getter]
@@ -59,24 +93,26 @@ impl PyGamepadButtonChanged {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadButtonChanged(button={:?}, value={})",
+            "GamepadButtonChangedEvent(button={:?}, value={})",
             self.button, self.value
         )
     }
 }
 
-#[pymessage(GamepadAxisChanged)]
-#[pyclass(name = "GamepadAxisChanged", extends = PyMessage, skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyGamepadAxisChanged {
+#[pymessage(GamepadAxisChangedEvent)]
+#[pyclass(name = "GamepadAxisChangedEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PyGamepadAxisChangedEvent {
+    pub entity: PyEntity,
     pub axis: PyGamepadAxis,
     pub value: f32,
 }
 
-impl PyGamepadAxisChanged {
-    pub fn from_bevy(event: &GamepadAxisChanged) -> (Self, PyMessage) {
+impl PyGamepadAxisChangedEvent {
+    pub fn from_bevy(event: &GamepadAxisChangedEvent) -> (Self, PyMessage) {
         (
-            PyGamepadAxisChanged {
+            PyGamepadAxisChangedEvent {
+                entity: event.entity.into(),
                 axis: event.axis.into(),
                 value: event.value,
             },
@@ -85,9 +121,10 @@ impl PyGamepadAxisChanged {
     }
 }
 
-impl From<&GamepadAxisChanged> for PyGamepadAxisChanged {
-    fn from(event: &GamepadAxisChanged) -> Self {
-        PyGamepadAxisChanged {
+impl From<&GamepadAxisChangedEvent> for PyGamepadAxisChangedEvent {
+    fn from(event: &GamepadAxisChangedEvent) -> Self {
+        PyGamepadAxisChangedEvent {
+            entity: event.entity.into(),
             axis: event.axis.into(),
             value: event.value,
         }
@@ -95,10 +132,24 @@ impl From<&GamepadAxisChanged> for PyGamepadAxisChanged {
 }
 
 #[pymethods]
-impl PyGamepadAxisChanged {
+impl PyGamepadAxisChangedEvent {
     #[new]
-    fn new(axis: PyGamepadAxis, value: f32) -> PyClassInitializer<Self> {
-        (PyGamepadAxisChanged { axis, value }, PyMessage).into()
+    #[pyo3(signature = (axis, value, *, entity = None))]
+    fn new(axis: PyGamepadAxis, value: f32, entity: Option<PyEntity>) -> PyClassInitializer<Self> {
+        (
+            PyGamepadAxisChangedEvent {
+                entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
+                axis,
+                value,
+            },
+            PyMessage,
+        )
+            .into()
+    }
+
+    #[getter]
+    fn entity(&self) -> PyEntity {
+        self.entity
     }
 
     #[getter]
@@ -113,81 +164,83 @@ impl PyGamepadAxisChanged {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadAxisChanged(axis={:?}, value={})",
+            "GamepadAxisChangedEvent(axis={:?}, value={})",
             self.axis, self.value
         )
     }
 }
 
-#[pymessage(GamepadConnectionEvent)]
-#[pyclass(name = "GamepadConnection", extends = PyMessage, eq, skip_from_py_object)]
+#[pyenum(GamepadConnection, empty_tuple, no_repr)]
+#[pyclass(
+    name = "GamepadConnection",
+    module = "pybevy.input",
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
-pub struct PyGamepadConnection {
-    pub connected: bool,
-    pub name: Option<String>,
-    pub vendor_id: Option<u16>,
-    pub product_id: Option<u16>,
+pub enum PyGamepadConnection {
+    Connected {
+        name: String,
+        vendor_id: Option<u16>,
+        product_id: Option<u16>,
+    },
+    Disconnected(),
 }
 
+#[pymethods]
 impl PyGamepadConnection {
-    pub fn from_bevy(event: &GamepadConnectionEvent) -> (Self, PyMessage) {
-        let (connected, name, vendor_id, product_id) = match &event.connection {
-            GamepadConnection::Connected {
+    fn __repr__(&self) -> String {
+        match self {
+            PyGamepadConnection::Connected {
                 name,
                 vendor_id,
                 product_id,
-            } => (true, Some(name.clone()), *vendor_id, *product_id),
-            GamepadConnection::Disconnected => (false, None, None, None),
-        };
-
-        (
-            PyGamepadConnection {
-                connected,
-                name,
-                vendor_id,
-                product_id,
-            },
-            PyMessage,
-        )
+            } => format!(
+                "GamepadConnection.Connected(name={name:?}, vendor_id={}, product_id={})",
+                optional_id(*vendor_id),
+                optional_id(*product_id)
+            ),
+            PyGamepadConnection::Disconnected() => "GamepadConnection.Disconnected()".to_string(),
+        }
     }
 }
 
-impl From<&GamepadConnectionEvent> for PyGamepadConnection {
-    fn from(event: &GamepadConnectionEvent) -> Self {
-        let (connected, name, vendor_id, product_id) = match &event.connection {
-            GamepadConnection::Connected {
-                name,
-                vendor_id,
-                product_id,
-            } => (true, Some(name.clone()), *vendor_id, *product_id),
-            GamepadConnection::Disconnected => (false, None, None, None),
-        };
+fn optional_id(id: Option<u16>) -> String {
+    id.map_or_else(|| "None".to_string(), |id| id.to_string())
+}
 
-        PyGamepadConnection {
-            connected,
-            name,
-            vendor_id,
-            product_id,
+#[pymessage(GamepadConnectionEvent)]
+#[pyclass(name = "GamepadConnectionEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PyGamepadConnectionEvent {
+    pub gamepad: PyEntity,
+    pub connection: PyGamepadConnection,
+}
+
+impl PyGamepadConnectionEvent {
+    pub fn from_bevy(event: &GamepadConnectionEvent) -> (Self, PyMessage) {
+        (Self::from(event), PyMessage)
+    }
+}
+
+impl From<&GamepadConnectionEvent> for PyGamepadConnectionEvent {
+    fn from(event: &GamepadConnectionEvent) -> Self {
+        PyGamepadConnectionEvent {
+            gamepad: event.gamepad.into(),
+            connection: event.connection.clone().into(),
         }
     }
 }
 
 #[pymethods]
-impl PyGamepadConnection {
+impl PyGamepadConnectionEvent {
     #[new]
-    #[pyo3(signature = (connected, name=None, vendor_id=None, product_id=None))]
-    fn new(
-        connected: bool,
-        name: Option<String>,
-        vendor_id: Option<u16>,
-        product_id: Option<u16>,
-    ) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (gamepad, connection))]
+    fn new(gamepad: PyEntity, connection: PyGamepadConnection) -> PyClassInitializer<Self> {
         (
-            PyGamepadConnection {
-                connected,
-                name,
-                vendor_id,
-                product_id,
+            PyGamepadConnectionEvent {
+                gamepad,
+                connection,
             },
             PyMessage,
         )
@@ -195,61 +248,46 @@ impl PyGamepadConnection {
     }
 
     #[getter]
+    fn gamepad(&self) -> PyEntity {
+        self.gamepad
+    }
+
+    #[getter]
+    fn connection(&self) -> PyGamepadConnection {
+        self.connection.clone()
+    }
+
     fn connected(&self) -> bool {
-        self.connected
+        matches!(self.connection, PyGamepadConnection::Connected { .. })
     }
 
-    #[getter]
-    fn name(&self) -> Option<String> {
-        self.name.clone()
-    }
-
-    #[getter]
-    fn vendor_id(&self) -> Option<u16> {
-        self.vendor_id
-    }
-
-    #[getter]
-    fn product_id(&self) -> Option<u16> {
-        self.product_id
+    fn disconnected(&self) -> bool {
+        matches!(self.connection, PyGamepadConnection::Disconnected())
     }
 
     fn __repr__(&self) -> String {
-        if self.connected {
-            let name_str = match &self.name {
-                Some(n) => n.as_str(),
-                None => "Unknown",
-            };
-            let vendor_str = match self.vendor_id {
-                Some(v) => format!("0x{:04X}", v),
-                None => "None".to_string(),
-            };
-            let product_str = match self.product_id {
-                Some(p) => format!("0x{:04X}", p),
-                None => "None".to_string(),
-            };
-            format!(
-                "GamepadConnection(connected=True, name=\"{}\", vendor_id={}, product_id={})",
-                name_str, vendor_str, product_str
-            )
-        } else {
-            "GamepadConnection(connected=False)".to_string()
-        }
+        format!(
+            "GamepadConnectionEvent(gamepad={:?}, connection={})",
+            self.gamepad,
+            self.connection.__repr__()
+        )
     }
 }
 
 #[pymessage(GamepadButtonStateChangedEvent)]
-#[pyclass(name = "GamepadButtonStateChanged", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "GamepadButtonStateChangedEvent", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
-pub struct PyGamepadButtonStateChanged {
+pub struct PyGamepadButtonStateChangedEvent {
+    pub entity: PyEntity,
     pub button: PyGamepadButton,
     pub state: PyButtonState,
 }
 
-impl PyGamepadButtonStateChanged {
+impl PyGamepadButtonStateChangedEvent {
     pub fn from_bevy(event: &GamepadButtonStateChangedEvent) -> (Self, PyMessage) {
         (
-            PyGamepadButtonStateChanged {
+            PyGamepadButtonStateChangedEvent {
+                entity: event.entity.into(),
                 button: event.button.into(),
                 state: event.state.into(),
             },
@@ -258,9 +296,10 @@ impl PyGamepadButtonStateChanged {
     }
 }
 
-impl From<&GamepadButtonStateChangedEvent> for PyGamepadButtonStateChanged {
+impl From<&GamepadButtonStateChangedEvent> for PyGamepadButtonStateChangedEvent {
     fn from(event: &GamepadButtonStateChangedEvent) -> Self {
-        PyGamepadButtonStateChanged {
+        PyGamepadButtonStateChangedEvent {
+            entity: event.entity.into(),
             button: event.button.into(),
             state: event.state.into(),
         }
@@ -268,10 +307,28 @@ impl From<&GamepadButtonStateChangedEvent> for PyGamepadButtonStateChanged {
 }
 
 #[pymethods]
-impl PyGamepadButtonStateChanged {
+impl PyGamepadButtonStateChangedEvent {
     #[new]
-    fn new(button: PyGamepadButton, state: PyButtonState) -> PyClassInitializer<Self> {
-        (PyGamepadButtonStateChanged { button, state }, PyMessage).into()
+    #[pyo3(signature = (button, state, *, entity = None))]
+    fn new(
+        button: PyGamepadButton,
+        state: PyButtonState,
+        entity: Option<PyEntity>,
+    ) -> PyClassInitializer<Self> {
+        (
+            PyGamepadButtonStateChangedEvent {
+                entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
+                button,
+                state,
+            },
+            PyMessage,
+        )
+            .into()
+    }
+
+    #[getter]
+    fn entity(&self) -> PyEntity {
+        self.entity
     }
 
     #[getter]
@@ -286,7 +343,7 @@ impl PyGamepadButtonStateChanged {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadButtonStateChanged(button={:?}, state={:?})",
+            "GamepadButtonStateChangedEvent(button={:?}, state={:?})",
             self.button, self.state
         )
     }

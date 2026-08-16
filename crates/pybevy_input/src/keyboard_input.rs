@@ -1,52 +1,56 @@
-use bevy::ecs::entity::Entity;
+use bevy::{ecs::entity::Entity, input::keyboard::KeyboardInput};
 use pybevy_core::{PyEntity, PyMessage};
 use pyo3::prelude::*;
 
-use crate::{button_state::PyButtonState, key_code::PyKeyCode};
+use crate::{
+    button_state::PyButtonState,
+    key::PyKey,
+    key_code::{PyKeyCode, materialize_key_code},
+};
 
 #[pyclass(name = "KeyboardInput", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyKeyboardInput {
-    pub key_code: PyKeyCode,
+    pub key_code: bevy::input::keyboard::KeyCode,
+    pub logical_key: PyKey,
     pub state: PyButtonState,
-    pub logical_key: Option<String>,
-    pub shift: bool,
-    pub ctrl: bool,
-    pub alt: bool,
-    pub super_key: bool,
-    pub repeat: bool,
     pub text: Option<String>,
+    pub repeat: bool,
     pub window: PyEntity,
+}
+
+impl PyKeyboardInput {
+    pub fn from_bevy_event(event: &KeyboardInput) -> PyResult<Self> {
+        Ok(Self {
+            key_code: event.key_code,
+            logical_key: PyKey::try_from(&event.logical_key)?,
+            state: event.state.into(),
+            text: event.text.as_ref().map(ToString::to_string),
+            repeat: event.repeat,
+            window: event.window.into(),
+        })
+    }
 }
 
 #[pymethods]
 impl PyKeyboardInput {
     #[new]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (key_code, state, *, shift=false, ctrl=false, alt=false, super_key=false, repeat=false, logical_key=None, text=None, window=None))]
+    #[pyo3(signature = (key_code, logical_key, state, text=None, repeat=false, window=None))]
     fn new(
-        key_code: PyKeyCode,
+        key_code: &PyKeyCode,
+        logical_key: PyKey,
         state: PyButtonState,
-        shift: bool,
-        ctrl: bool,
-        alt: bool,
-        super_key: bool,
-        repeat: bool,
-        logical_key: Option<String>,
         text: Option<String>,
+        repeat: bool,
         window: Option<PyEntity>,
     ) -> PyClassInitializer<Self> {
         (
             PyKeyboardInput {
-                key_code,
-                state,
+                key_code: key_code.to_bevy(),
                 logical_key,
-                shift,
-                ctrl,
-                alt,
-                super_key,
-                repeat,
+                state,
                 text,
+                repeat,
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
             },
             PyMessage,
@@ -55,8 +59,13 @@ impl PyKeyboardInput {
     }
 
     #[getter]
-    fn key_code(&self) -> PyKeyCode {
-        self.key_code
+    fn key_code(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        materialize_key_code(py, self.key_code)
+    }
+
+    #[getter]
+    fn logical_key(&self) -> PyKey {
+        self.logical_key.clone()
     }
 
     #[getter]
@@ -65,38 +74,13 @@ impl PyKeyboardInput {
     }
 
     #[getter]
-    fn logical_key(&self) -> Option<String> {
-        self.logical_key.clone()
-    }
-
-    #[getter]
-    fn shift(&self) -> bool {
-        self.shift
-    }
-
-    #[getter]
-    fn ctrl(&self) -> bool {
-        self.ctrl
-    }
-
-    #[getter]
-    fn alt(&self) -> bool {
-        self.alt
-    }
-
-    #[getter]
-    fn super_key(&self) -> bool {
-        self.super_key
+    fn text(&self) -> Option<String> {
+        self.text.clone()
     }
 
     #[getter]
     fn repeat(&self) -> bool {
         self.repeat
-    }
-
-    #[getter]
-    fn text(&self) -> Option<String> {
-        self.text.clone()
     }
 
     #[getter]

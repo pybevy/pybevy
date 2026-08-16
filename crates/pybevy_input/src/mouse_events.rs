@@ -125,9 +125,9 @@ impl PyMouseMotion {
         self.delta.clone()
     }
 
-    fn __repr__(&self) -> String {
-        let d = self.delta.get();
-        format!("MouseMotion(delta=Vec2({}, {}))", d.x, d.y)
+    fn __repr__(&self) -> PyResult<String> {
+        let d = self.delta.try_get()?;
+        Ok(format!("MouseMotion(delta=Vec2({}, {}))", d.x, d.y))
     }
 }
 

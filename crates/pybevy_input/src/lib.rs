@@ -11,6 +11,7 @@ pub mod gamepad_rumble_intensity;
 pub mod gamepad_rumble_request;
 pub mod gamepad_settings;
 pub mod gesture_events;
+pub mod key;
 pub mod key_code;
 pub mod keyboard_events;
 pub mod keyboard_input;
@@ -19,12 +20,21 @@ pub mod mouse_button;
 pub mod mouse_events;
 pub mod mouse_input;
 pub mod mouse_scroll_unit;
+pub mod native_key;
+pub mod native_key_code;
 pub mod plugin;
 pub mod touch_input;
 pub mod touch_phase;
 pub mod touches;
 
 use pyo3::prelude::*;
+
+pybevy_core::register_native_system_set!(
+    intern_input_systems,
+    bevy::input::InputSystems,
+    module = "input",
+    name = "InputSystems"
+);
 
 pub mod prelude {
     pub use crate::{
@@ -50,7 +60,11 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<gamepad_settings::PyButtonSettings>()?;
     m.add_class::<gamepad_settings::PyAxisSettings>()?;
     m.add_class::<gamepad_settings::PyButtonAxisSettings>()?;
+    m.add_class::<native_key_code::PyNativeKeyCode>()?;
     m.add_class::<key_code::PyKeyCode>()?;
+    key_code::register_key_code_variants(&m)?;
+    m.add_class::<key::PyKey>()?;
+    m.add_class::<native_key::PyNativeKey>()?;
     m.add_class::<mouse_button::PyMouseButton>()?;
     m.add_class::<mouse_events::PyMouseButtonInput>()?;
     m.add_class::<mouse_input::PyMouseInput>()?;
@@ -60,10 +74,11 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<touch_input::PyTouchInput>()?;
     m.add_class::<touch_phase::PyTouchPhase>()?;
 
-    m.add_class::<gamepad_events::PyGamepadButtonChanged>()?;
-    m.add_class::<gamepad_events::PyGamepadAxisChanged>()?;
+    m.add_class::<gamepad_events::PyGamepadButtonChangedEvent>()?;
+    m.add_class::<gamepad_events::PyGamepadAxisChangedEvent>()?;
     m.add_class::<gamepad_events::PyGamepadConnection>()?;
-    m.add_class::<gamepad_events::PyGamepadButtonStateChanged>()?;
+    m.add_class::<gamepad_events::PyGamepadConnectionEvent>()?;
+    m.add_class::<gamepad_events::PyGamepadButtonStateChangedEvent>()?;
     m.add_class::<gesture_events::PyPinchGesture>()?;
     m.add_class::<gesture_events::PyRotationGesture>()?;
     m.add_class::<gesture_events::PyDoubleTapGesture>()?;

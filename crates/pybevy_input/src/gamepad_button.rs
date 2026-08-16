@@ -8,7 +8,8 @@ use pyo3::prelude::*;
     module = "pybevy.input",
     eq,
     frozen,
-    from_py_object
+    from_py_object,
+    hash
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGamepadButton {
@@ -31,7 +32,10 @@ pub enum PyGamepadButton {
     DPadDown(),
     DPadLeft(),
     DPadRight(),
-    Other { value: u8 },
+    #[py_bevy(tuple)]
+    Other {
+        value: u8,
+    },
 }
 
 #[pymethods]

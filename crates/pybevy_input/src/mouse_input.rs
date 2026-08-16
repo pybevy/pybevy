@@ -1,5 +1,5 @@
 use bevy::input::{ButtonInput, mouse::MouseButton};
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -15,13 +15,9 @@ pub struct PyMouseInput {
 impl PyMouseInput {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
-        (
-            Self {
-                storage: ResourceStorage::owned(ButtonInput::default()),
-            },
-            PyResource,
-        )
-            .into()
+        resource_initializer(Self {
+            storage: ResourceStorage::owned(ButtonInput::default()),
+        })
     }
 
     pub fn just_pressed(&self, button: PyMouseButton) -> PyResult<bool> {
@@ -70,7 +66,31 @@ impl PyMouseInput {
         Ok(released)
     }
 
+    pub fn any_just_released(&self, buttons: Vec<PyMouseButton>) -> PyResult<bool> {
+        let bevy_buttons: Vec<MouseButton> = buttons.into_iter().map(|b| b.into()).collect();
+        Ok(self.as_ref()?.any_just_released(bevy_buttons))
+    }
+
+    pub fn all_just_pressed(&self, buttons: Vec<PyMouseButton>) -> PyResult<bool> {
+        let bevy_buttons: Vec<MouseButton> = buttons.into_iter().map(|b| b.into()).collect();
+        Ok(self.as_ref()?.all_just_pressed(bevy_buttons))
+    }
+
+    pub fn all_just_released(&self, buttons: Vec<PyMouseButton>) -> PyResult<bool> {
+        let bevy_buttons: Vec<MouseButton> = buttons.into_iter().map(|b| b.into()).collect();
+        Ok(self.as_ref()?.all_just_released(bevy_buttons))
+    }
+
     fn __repr__(&self) -> String {
-        "MouseInput(...)".to_string()
+        match self.as_ref() {
+            Ok(input) => {
+                let pressed: Vec<String> = input
+                    .get_pressed()
+                    .map(|button| format!("{:?}", button))
+                    .collect();
+                format!("MouseInput(pressed=[{}])", pressed.join(", "))
+            }
+            Err(_) => "MouseInput(<invalid>)".to_string(),
+        }
     }
 }
