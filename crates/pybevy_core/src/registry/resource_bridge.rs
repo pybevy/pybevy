@@ -11,11 +11,12 @@ use std::any::TypeId;
 
 use bevy::ecs::{
     component::ComponentId,
-    world::{World, unsafe_world_cell::UnsafeWorldCell},
+    entity::Entity,
+    world::{EntityRef, World, unsafe_world_cell::UnsafeWorldCell},
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
-use crate::ValidityFlagWithMode;
+use crate::{FilteredEntityAccess, ValidityFlagWithMode};
 
 /// Trait that bridges a Bevy resource to its Python wrapper.
 ///
@@ -45,6 +46,46 @@ pub trait ResourceBridge: Send + Sync + 'static {
 
     /// Human-readable name for error messages
     fn name(&self) -> &'static str;
+
+    fn is_mutable(&self) -> bool;
+
+    /// Whether Full hot reload must preserve this resource verbatim.
+    ///
+    /// Use this for engine-owned registries whose `Default` value is not
+    /// equivalent to the state assembled by plugin initialization. Replacing
+    /// such a resource would invalidate the native systems that remain in the
+    /// app across Python scene reloads.
+    fn preserve_on_reload(&self) -> bool;
+
+    fn extract(
+        &self,
+        entity: &mut FilteredEntityAccess,
+        component_id: ComponentId,
+        validity: ValidityFlagWithMode,
+        py: Python,
+    ) -> PyResult<Py<PyAny>>;
+
+    fn entity_contains(&self, entity: &EntityRef) -> bool;
+
+    /// # Safety
+    /// `world_ptr` and `validity` must satisfy the returned wrapper's shared-access lifetime.
+    unsafe fn extract_from_entity_ref(
+        &self,
+        entity_id: Entity,
+        world_ptr: *mut World,
+        validity: ValidityFlagWithMode,
+        py: Python,
+    ) -> PyResult<Option<Py<PyAny>>>;
+
+    /// # Safety
+    /// `world_ptr` and `validity` must satisfy the returned wrapper's mutable-access lifetime.
+    unsafe fn extract_from_entity_mut(
+        &self,
+        entity_id: Entity,
+        world_ptr: *mut World,
+        validity: ValidityFlagWithMode,
+        py: Python,
+    ) -> PyResult<Option<Py<PyAny>>>;
 
     /// Get resource from world (read-only access)
     ///
@@ -156,6 +197,7 @@ pub trait ResourceBridge: Send + Sync + 'static {
     ///
     /// Returns `true` if the resource was reset, `false` if the type has no Default impl
     /// (declared with `no_default` flag). Used during hot reload to restore Bevy-plugin
-    /// resources to their initial state.
+    /// resources to their initial state unless [`Self::preserve_on_reload`]
+    /// opts the resource out of replacement.
     fn reset_to_default(&self, world: &mut World) -> bool;
 }

@@ -15,7 +15,10 @@ use bevy::{
     prelude::Resource,
 };
 
-use super::{component_layout::ComponentStorageType, component_wrapper::WrapperSize};
+use super::{
+    component_layout::{ComponentStorageType, WrapperComponentSchema},
+    component_wrapper::WrapperSize,
+};
 
 /// Creates a Bevy [`ComponentDescriptor`] for a wrapper-stored custom component.
 ///
@@ -86,16 +89,22 @@ pub fn register_custom_component_descriptor<D: PythonObjectDescriptor>(
 /// a stable type-object identity; storing it as a `usize` (not a raw pointer)
 /// keeps this resource `Send`/`Sync` with no `unsafe impl`.
 ///
-/// The `storage_types` map (keyed by [`ComponentId`]) is the **single source of
-/// truth** for the storage-flip guard: reuse of a cached `ComponentId` is
-/// allowed only when its recorded [`ComponentStorageType`] still matches the one
-/// requested this spawn. See [`register_custom_component_guarded`].
+/// The storage and schema maps (keyed by [`ComponentId`]) are the **single
+/// source of truth** for the registration guard: reuse of a cached
+/// `ComponentId` is allowed only when its recorded [`ComponentStorageType`] and
+/// wrapper schema still match the live class. See
+/// [`register_custom_component_guarded`].
 #[derive(Resource, Default)]
 pub struct CustomComponentRegistry {
     by_id: HashMap<usize, ComponentId>,
+    /// `module.qualname` each type identity was recorded under. A type object
+    /// freed while its alias survives leaves the address reusable by an
+    /// unrelated class, so the address alone is not an identity.
+    alias_names: HashMap<usize, Option<String>>,
     alias_generations: HashMap<usize, u32>,
     by_name: HashMap<String, ComponentId>,
     storage_types: HashMap<ComponentId, ComponentStorageType>,
+    wrapper_schemas: HashMap<ComponentId, WrapperComponentSchema>,
 }
 
 impl CustomComponentRegistry {
@@ -111,9 +120,27 @@ impl CustomComponentRegistry {
         &self.by_id
     }
 
+    /// Logical component names and their stable Bevy component IDs.
+    ///
+    /// Hot-reload aliases are collapsed by full `module.qualname`, so each
+    /// logical Python component appears once.
+    pub fn ids_by_qualified_name(&self) -> impl Iterator<Item = (&str, ComponentId)> + '_ {
+        self.by_name.iter().map(|(name, id)| (name.as_str(), *id))
+    }
+
     /// The storage type a `ComponentId` was registered with, if known.
     pub fn storage_type(&self, id: ComponentId) -> Option<ComponentStorageType> {
         self.storage_types.get(&id).copied()
+    }
+
+    /// The stable field schema for a wrapper-stored component.
+    pub fn wrapper_schema(&self, id: ComponentId) -> Option<&WrapperComponentSchema> {
+        self.wrapper_schemas.get(&id)
+    }
+
+    /// Resolve a live logical custom component by its qualified Python name.
+    pub fn id_by_qualified_name(&self, name: &str) -> Option<ComponentId> {
+        self.by_name.get(name).copied()
     }
 
     /// Number of interpreter type identities retained for live/rollback reload generations.
@@ -135,6 +162,7 @@ impl CustomComponentRegistry {
             .collect::<Vec<_>>();
         for type_id in &removed {
             self.by_id.remove(type_id);
+            self.alias_names.remove(type_id);
             self.alias_generations.remove(type_id);
         }
         removed
@@ -145,14 +173,14 @@ impl CustomComponentRegistry {
 /// keep its adapter-local side tables in sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterOutcome {
-    /// The exact type-id was already registered with an unchanged storage type;
+    /// The exact type-id was already registered with unchanged storage and schema;
     /// `id` is the cached `ComponentId` and nothing was mutated.
     Reused(ComponentId),
     /// Hot reload: a new type-id was aliased to an existing, name-matched,
-    /// storage-compatible `ComponentId`.
+    /// storage- and schema-compatible `ComponentId`.
     Aliased(ComponentId),
     /// A fresh `ComponentId` was registered. `evicted` is a prior `ComponentId`
-    /// orphaned by a storage-incompatible name collision, whose backend
+    /// orphaned by a storage- or schema-incompatible name collision, whose backend
     /// side-table entries the caller must drop.
     Registered {
         id: ComponentId,
@@ -180,13 +208,13 @@ impl RegisterOutcome {
 /// the interpreter-agnostic orchestration:
 ///
 /// 1. **Fast path / RCE guard.** If this exact `type_id` is cached *and* its
-///    recorded storage type is unchanged, reuse the cached `ComponentId`.
+///    recorded storage type and schema are unchanged, reuse the cached `ComponentId`.
 ///    Otherwise fall through: reusing a cached id across a PyObject<->Wrapper
 ///    flip (or a wrapper-size change) would write data shaped for the new layout
 ///    into a column laid out - and dropped - as the old one (type confusion / an
 ///    out-of-bounds copy).
 /// 2. **Hot-reload alias.** If a previous generation registered the same
-///    `qualified_name` with a compatible storage type, alias the new `type_id`
+///    `qualified_name` with compatible storage and field schema, alias the new `type_id`
 ///    to that `ComponentId` so entities from before the reload stay queryable.
 /// 3. **Fresh registration.** Otherwise allocate a new `ComponentId` (evicting a
 ///    storage-incompatible name collision first) via
@@ -197,6 +225,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
     name: &str,
     qualified_name: Option<&str>,
     storage_type: ComponentStorageType,
+    wrapper_schema: Option<&WrapperComponentSchema>,
     generation: u32,
 ) -> RegisterOutcome {
     if !world.contains_resource::<CustomComponentRegistry>() {
@@ -211,14 +240,26 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
         .resource::<CustomComponentRegistry>()
         .by_id
         .get(&type_id)
-        .copied();
+        .copied()
+        .filter(|_| {
+            world
+                .resource::<CustomComponentRegistry>()
+                .alias_names
+                .get(&type_id)
+                .map(|recorded| recorded.as_deref() == qualified_name)
+                .unwrap_or(false)
+        });
     if let Some(id) = cached {
         let stored = world
             .resource::<CustomComponentRegistry>()
             .storage_types
             .get(&id)
             .copied();
-        if stored == Some(storage_type) {
+        let stored_schema = world
+            .resource::<CustomComponentRegistry>()
+            .wrapper_schemas
+            .get(&id);
+        if stored == Some(storage_type) && stored_schema == wrapper_schema {
             world
                 .resource_mut::<CustomComponentRegistry>()
                 .alias_generations
@@ -245,13 +286,21 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
                 .storage_types
                 .get(&existing_id)
                 .copied();
-            if existing_storage == Some(storage_type) {
-                // Storage-compatible (identical column layout): alias the new
-                // type-id onto the existing ComponentId.
+            let existing_schema = world
+                .resource::<CustomComponentRegistry>()
+                .wrapper_schemas
+                .get(&existing_id);
+            if existing_storage == Some(storage_type) && existing_schema == wrapper_schema {
+                // Storage- and schema-compatible: alias the new type-id onto
+                // the existing ComponentId.
                 world
                     .resource_mut::<CustomComponentRegistry>()
                     .by_id
                     .insert(type_id, existing_id);
+                world
+                    .resource_mut::<CustomComponentRegistry>()
+                    .alias_names
+                    .insert(type_id, qualified_name.map(str::to_owned));
                 world
                     .resource_mut::<CustomComponentRegistry>()
                     .alias_generations
@@ -270,6 +319,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
     if let Some(stale) = evicted {
         let mut reg = world.resource_mut::<CustomComponentRegistry>();
         reg.storage_types.remove(&stale);
+        reg.wrapper_schemas.remove(&stale);
         let stale_type_ids = reg
             .by_id
             .iter()
@@ -277,6 +327,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
             .collect::<Vec<_>>();
         reg.by_id.retain(|_, id| *id != stale);
         for type_id in stale_type_ids {
+            reg.alias_names.remove(&type_id);
             reg.alias_generations.remove(&type_id);
         }
     }
@@ -285,8 +336,13 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
 
     let mut reg = world.resource_mut::<CustomComponentRegistry>();
     reg.by_id.insert(type_id, id);
+    reg.alias_names
+        .insert(type_id, qualified_name.map(str::to_owned));
     reg.alias_generations.insert(type_id, generation);
     reg.storage_types.insert(id, storage_type);
+    if let Some(schema) = wrapper_schema {
+        reg.wrapper_schemas.insert(id, schema.clone());
+    }
     if let Some(qname) = qualified_name {
         reg.by_name.insert(qname.to_string(), id);
     }
@@ -297,6 +353,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_layout::{FieldInfo, PrimitiveType, WrapperComponentSchema};
 
     #[test]
     fn test_create_wrapper_descriptor_w8() {
@@ -386,17 +443,30 @@ mod tests {
         ComponentStorageType::PyObject
     }
 
+    fn schema(storage: ComponentStorageType) -> Option<WrapperComponentSchema> {
+        match storage {
+            ComponentStorageType::Wrapper(wrapper_size) => Some(WrapperComponentSchema {
+                fields: Vec::new(),
+                data_size: 0,
+                wrapper_size,
+            }),
+            ComponentStorageType::PyObject => None,
+        }
+    }
+
     fn guarded(
         world: &mut World,
         type_id: usize,
         storage: ComponentStorageType,
     ) -> RegisterOutcome {
+        let wrapper_schema = schema(storage);
         register_custom_component_guarded::<TestObjectDescriptor>(
             world,
             type_id,
             "Foo",
             Some("m.Foo"),
             storage,
+            wrapper_schema.as_ref(),
             0,
         )
     }
@@ -462,6 +532,56 @@ mod tests {
     }
 
     #[test]
+    fn guarded_hot_reload_same_size_changed_schema_rehomes() {
+        let mut world = World::new();
+        let schema_a = WrapperComponentSchema {
+            fields: vec![FieldInfo {
+                name: "x".to_string(),
+                offset: 0,
+                field_type: PrimitiveType::F64,
+            }],
+            data_size: 8,
+            wrapper_size: WrapperSize::W8,
+        };
+        let schema_b = WrapperComponentSchema {
+            fields: vec![FieldInfo {
+                name: "enabled".to_string(),
+                offset: 0,
+                field_type: PrimitiveType::Bool,
+            }],
+            data_size: 1,
+            wrapper_size: WrapperSize::W8,
+        };
+        let a = register_custom_component_guarded::<TestObjectDescriptor>(
+            &mut world,
+            0x1000,
+            "Foo",
+            Some("m.Foo"),
+            w8(),
+            Some(&schema_a),
+            0,
+        );
+        let b = register_custom_component_guarded::<TestObjectDescriptor>(
+            &mut world,
+            0x2000,
+            "Foo",
+            Some("m.Foo"),
+            w8(),
+            Some(&schema_b),
+            1,
+        );
+
+        assert!(matches!(b, RegisterOutcome::Registered { evicted: Some(id), .. } if id == a.id()));
+        assert_ne!(a.id(), b.id());
+        assert_eq!(
+            world
+                .resource::<CustomComponentRegistry>()
+                .wrapper_schema(b.id()),
+            Some(&schema_b)
+        );
+    }
+
+    #[test]
     fn guarded_hot_reload_changed_storage_rehomes() {
         // New type object, same qualified_name, storage changed (w8 -> w32):
         // fresh id, evict the old one.
@@ -476,6 +596,73 @@ mod tests {
         );
     }
 
+    /// A freed type object leaves its address reusable. Reusing the cached
+    /// ComponentId for whatever class lands there next put unrelated components
+    /// in one column, so `Query[Foo]` yielded `Bar` instances.
+    #[test]
+    fn guarded_rejects_a_recycled_address_belonging_to_another_class() {
+        let mut world = World::new();
+        let foo = register_custom_component_guarded::<TestObjectDescriptor>(
+            &mut world,
+            0x1000,
+            "Foo",
+            Some("m.Foo"),
+            pyobj(),
+            None,
+            0,
+        );
+        // Same address, different class: must not reuse Foo's ComponentId.
+        let bar = register_custom_component_guarded::<TestObjectDescriptor>(
+            &mut world,
+            0x1000,
+            "Bar",
+            Some("m.Bar"),
+            pyobj(),
+            None,
+            0,
+        );
+        assert_ne!(foo.id(), bar.id());
+        assert_eq!(
+            world.resource::<CustomComponentRegistry>().get(0x1000),
+            Some(bar.id())
+        );
+    }
+
+    #[test]
+    fn guarded_reuse_still_requires_only_a_matching_name() {
+        let mut world = World::new();
+        let a = guarded(&mut world, 0x1000, pyobj());
+        let b = guarded(&mut world, 0x1000, pyobj());
+        assert_eq!(b, RegisterOutcome::Reused(a.id()));
+    }
+
+    /// A class with no qualified name keeps the previous address-only reuse:
+    /// there is nothing to verify against, and refusing would re-register on
+    /// every spawn.
+    #[test]
+    fn guarded_unnamed_classes_still_reuse_by_address() {
+        let mut world = World::new();
+        let first = register_custom_component_guarded::<TestObjectDescriptor>(
+            &mut world,
+            0x1000,
+            "Foo",
+            None,
+            pyobj(),
+            None,
+            0,
+        );
+        let second = register_custom_component_guarded::<TestObjectDescriptor>(
+            &mut world,
+            0x1000,
+            "Foo",
+            None,
+            pyobj(),
+            None,
+            0,
+        );
+        assert_eq!(second, RegisterOutcome::Reused(first.id()));
+    }
+
     #[test]
     fn guarded_hot_reload_aliases_are_bounded_by_generation() {
         let mut world = World::new();
@@ -486,6 +673,7 @@ mod tests {
                 "Foo",
                 Some("m.Foo"),
                 pyobj(),
+                None,
                 generation,
             );
             world

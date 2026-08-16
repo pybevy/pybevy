@@ -9,6 +9,7 @@ use pybevy_core::{
     registry::global_registry,
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyType},
@@ -18,7 +19,6 @@ use super::{
     component_layout::{ComponentLayout, ComponentLayoutExt, PrimitiveType, PrimitiveTypeExt},
     component_type::register_custom_component,
     component_wrapper::*,
-    helpers::type_utils::get_python_type_name,
 };
 
 /// Batch component for custom Python @component classes.
@@ -43,6 +43,14 @@ pub struct PyCustomComponentBatch {
 
 #[pymethods]
 impl PyCustomComponentBatch {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.component_cls)?;
+        for (_, array) in &self.field_arrays {
+            visit.call(array)?;
+        }
+        Ok(())
+    }
+
     #[new]
     #[pyo3(signature = (cls, **kwargs))]
     fn new(
@@ -379,8 +387,7 @@ impl BatchComponent for CustomComponentBatchBridge {
     ) -> PyResult<()> {
         let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
         let type_ptr = batch.component_cls.bind(py).as_type_ptr();
-        let name = get_python_type_name(py, type_ptr);
-        let component_id = register_custom_component(world, type_ptr, name);
+        let component_id = register_custom_component(world, type_ptr, py);
         let mut prepared = prepare_custom_batch(py, &batch)?;
         prepared.insert(component_id, entities, world);
 

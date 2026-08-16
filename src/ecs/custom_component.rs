@@ -1,23 +1,23 @@
 //! Custom component storage and field access for Python-defined components.
 //!
 //! This module implements field access for custom Python components decorated with `@component`.
-//! Components are stored as borrowed pointers to PyObject in Bevy's ECS (returned from queries).
+//! Components retain the Python object stored in Bevy's ECS while a proxy is alive.
 //!
 //! # Safety
 //!
-//! Borrowed references use ValidityFlag to ensure pointers are only dereferenced during
-//! system execution. After system completes, ValidityFlag is invalidated and any access
-//! to borrowed components will raise a runtime error.
+//! References use ValidityFlag to ensure the component access remains inside its declared
+//! execution window. The owned Python reference prevents a removed component from leaving
+//! an escaped proxy with a dangling object pointer.
 
 use bevy::ecs::{entity::Entity, world::unsafe_world_cell::UnsafeWorldCell};
-use pybevy_ecs::shared::run_scaffold::RunTicks;
-use pyo3::{prelude::*, types::PyAny};
+use pybevy_ecs::shared::run_ticks::RunTicks;
+use pyo3::{PyTraverseError, PyVisit, prelude::*, types::PyAny};
 
 use crate::ecs::{component::PyComponent, helpers::validity_guard::ValidityFlagWithMode};
 
-/// Storage for custom Python components - borrowed pointer to ECS-managed Python object
+/// Storage for a custom Python component proxy.
 struct CustomComponentStorage {
-    ptr: *mut pyo3::ffi::PyObject,
+    object: Py<PyAny>,
     validity: ValidityFlagWithMode,
     component_id: bevy::ecs::component::ComponentId,
     /// Entity this component belongs to (for change tracking outside iteration context)
@@ -28,9 +28,8 @@ struct CustomComponentStorage {
     run_ticks: Option<RunTicks>,
 }
 
-// SAFETY: PyObject pointers are stable (GC doesn't move objects),
-// ValidityFlag ensures pointer lifetime is bounded by system execution,
-// entity and world_ptr are only dereferenced when ValidityFlag is valid
+// SAFETY: Py<PyAny> follows PyO3's cross-thread ownership rules. World access is
+// fenced by ValidityFlag and pinned to its owning thread.
 unsafe impl Send for CustomComponentStorage {}
 unsafe impl Sync for CustomComponentStorage {}
 
@@ -57,6 +56,10 @@ pub struct PyCustomComponent {
 
 #[pymethods]
 impl PyCustomComponent {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.storage.object)
+    }
+
     /// Intercept field access to forward to underlying Python object
     fn __getattribute__<'py>(
         slf: PyRef<'py, Self>,
@@ -109,18 +112,16 @@ impl PyCustomComponent {
 }
 
 impl PyCustomComponent {
-    /// Create borrowed reference to ECS-stored component
+    /// Create a proxy for an ECS-stored component.
     ///
     /// # Safety
     ///
     /// Caller must ensure:
-    /// - `py_obj_ptr` points to a valid PyObject for the duration of `validity`
     /// - ValidityFlag is invalidated when system execution completes
     /// - `component_id` is the correct ComponentId for this component type
-    /// - `entity` is valid in the world for the duration of `validity`
     /// - `world_cell` references the matching World for the duration of `validity`
-    pub fn from_borrowed(
-        py_obj_ptr: *mut pyo3::ffi::PyObject,
+    pub fn from_object(
+        object: Py<PyAny>,
         validity: ValidityFlagWithMode,
         component_id: bevy::ecs::component::ComponentId,
         entity: Entity,
@@ -133,7 +134,7 @@ impl PyCustomComponent {
         };
         PyCustomComponent {
             storage: CustomComponentStorage {
-                ptr: py_obj_ptr,
+                object,
                 validity,
                 component_id,
                 entity,
@@ -150,8 +151,6 @@ impl PyCustomComponent {
 
     /// Get the underlying Python object
     fn get_py_object<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
-        // SAFETY: ValidityFlag ensures ptr is valid during system execution
-        // from_borrowed_ptr creates a reference without incrementing refcount
-        unsafe { Bound::from_borrowed_ptr(py, self.storage.ptr) }
+        self.storage.object.bind(py).clone()
     }
 }

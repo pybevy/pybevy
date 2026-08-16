@@ -40,8 +40,10 @@ static GLOBAL_COMPONENT_BRIDGES: OnceLock<RwLock<GlobalBridgeRegistry>> = OnceLo
 /// Internal storage for the global registry
 #[derive(Default)]
 struct GlobalBridgeRegistry {
-    /// PyTypeObject* → Bridge
+    /// Maps PyTypeObject pointers to bridges.
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn ComponentBridge>>,
+    /// Maps Bevy TypeIds to canonical bridges.
+    by_type_id: HashMap<TypeId, Arc<dyn ComponentBridge>>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -70,9 +72,11 @@ pub fn register_component_bridge_arc(bridge: Arc<dyn ComponentBridge>) {
         return;
     }
 
+    let type_id = bridge.bevy_type_id();
     let registry = get_global_registry();
     let mut guard = registry.write().expect("Global registry lock poisoned");
-    guard.by_py_type.insert(ptr, bridge);
+    guard.by_py_type.insert(ptr, bridge.clone());
+    guard.by_type_id.insert(type_id, bridge);
 }
 
 /// Register an additional Python class for an existing component bridge.
@@ -113,18 +117,14 @@ pub fn contains_py_type(ptr: *const PyTypeObject) -> bool {
     guard.by_py_type.contains_key(&ptr)
 }
 
-/// Get the number of registered component bridges (for debugging/testing)
-pub fn bridge_count() -> usize {
-    let registry = get_global_registry();
-    let guard = registry.read().expect("Global registry lock poisoned");
-    guard.by_py_type.len()
-}
-
-/// Get all registered component bridges
+/// Get all unique registered component bridges.
+///
+/// Alias Python classes share a bridge with their canonical component type and
+/// therefore appear only once in this enumeration.
 pub fn all_component_bridges() -> Vec<Arc<dyn ComponentBridge>> {
     let registry = get_global_registry();
     let guard = registry.read().expect("Global registry lock poisoned");
-    guard.by_py_type.values().cloned().collect()
+    guard.by_type_id.values().cloned().collect()
 }
 
 /// Global registry for resource bridge type pointers
@@ -133,8 +133,10 @@ static GLOBAL_RESOURCE_BRIDGES: OnceLock<RwLock<GlobalResourceBridgeRegistry>> =
 /// Internal storage for the global resource registry
 #[derive(Default)]
 struct GlobalResourceBridgeRegistry {
-    /// PyTypeObject* → Bridge
+    /// Maps PyTypeObject pointers to bridges.
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn ResourceBridge>>,
+    /// Maps Bevy TypeIds to canonical bridges.
+    by_type_id: HashMap<TypeId, Arc<dyn ResourceBridge>>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -161,11 +163,13 @@ pub fn register_resource_bridge_arc(bridge: Arc<dyn ResourceBridge>) {
         return;
     }
 
+    let type_id = bridge.bevy_type_id();
     let registry = get_global_resource_registry();
     let mut guard = registry
         .write()
         .expect("Global resource registry lock poisoned");
-    guard.by_py_type.insert(ptr, bridge);
+    guard.by_py_type.insert(ptr, bridge.clone());
+    guard.by_type_id.insert(type_id, bridge);
 }
 
 /// Register an additional Python class for an existing resource bridge.
@@ -212,22 +216,16 @@ pub fn contains_resource_py_type(ptr: *const PyTypeObject) -> bool {
     guard.by_py_type.contains_key(&ptr)
 }
 
-/// Get the number of registered resource bridges (for debugging/testing)
-pub fn resource_bridge_count() -> usize {
-    let registry = get_global_resource_registry();
-    let guard = registry
-        .read()
-        .expect("Global resource registry lock poisoned");
-    guard.by_py_type.len()
-}
-
-/// Get all registered resource bridges
+/// Get all unique registered resource bridges.
+///
+/// Alias Python classes share a bridge with their canonical resource type and
+/// therefore appear only once in this enumeration.
 pub fn all_resource_bridges() -> Vec<Arc<dyn ResourceBridge>> {
     let registry = get_global_resource_registry();
     let guard = registry
         .read()
         .expect("Global resource registry lock poisoned");
-    guard.by_py_type.values().cloned().collect()
+    guard.by_type_id.values().cloned().collect()
 }
 
 /// Global registry for asset bridge type pointers
@@ -236,10 +234,12 @@ static GLOBAL_ASSET_BRIDGES: OnceLock<RwLock<GlobalAssetBridgeRegistry>> = OnceL
 /// Internal storage for the global asset registry
 #[derive(Default)]
 struct GlobalAssetBridgeRegistry {
-    /// PyTypeObject* → Bridge
+    /// Maps PyTypeObject pointers to bridges.
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn AssetBridge>>,
-    /// TypeId → Bridge (for lookups from Bevy types)
+    /// Maps TypeIds to bridges for lookups from Bevy types.
     by_type_id: HashMap<TypeId, Arc<dyn AssetBridge>>,
+    /// Maps bridge names to bridges for lookups by asset type name.
+    by_name: HashMap<&'static str, Arc<dyn AssetBridge>>,
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -267,11 +267,13 @@ pub fn register_asset_bridge_arc(bridge: Arc<dyn AssetBridge>) {
     }
 
     let type_id = bridge.bevy_type_id();
+    let name = bridge.name();
     let registry = get_global_asset_registry();
     let mut guard = registry
         .write()
         .expect("Global asset registry lock poisoned");
     guard.by_py_type.insert(ptr, bridge.clone());
+    guard.by_name.insert(name, bridge.clone());
     guard.by_type_id.insert(type_id, bridge);
 }
 
@@ -295,15 +297,6 @@ pub fn contains_asset_py_type(ptr: *const PyTypeObject) -> bool {
     guard.by_py_type.contains_key(&ptr)
 }
 
-/// Get the number of registered asset bridges (for debugging/testing)
-pub fn asset_bridge_count() -> usize {
-    let registry = get_global_asset_registry();
-    let guard = registry
-        .read()
-        .expect("Global asset registry lock poisoned");
-    guard.by_py_type.len()
-}
-
 /// Get an asset bridge by Bevy TypeId
 ///
 /// Returns the bridge if found, None otherwise.
@@ -325,11 +318,7 @@ pub fn get_asset_bridge_by_name(name: &str) -> Option<Arc<dyn AssetBridge>> {
     let guard = registry
         .read()
         .expect("Global asset registry lock poisoned");
-    guard
-        .by_py_type
-        .values()
-        .find(|b| b.name() == name)
-        .cloned()
+    guard.by_name.get(name).cloned()
 }
 
 /// Global registry for component TypeId lookups
@@ -340,7 +329,7 @@ static GLOBAL_TYPE_ID_REGISTRY: OnceLock<RwLock<TypeIdRegistry>> = OnceLock::new
 /// Internal storage for the TypeId registry
 #[derive(Default)]
 struct TypeIdRegistry {
-    /// PyTypeObject* → TypeId
+    /// Maps PyTypeObject pointers to TypeIds.
     by_py_type: HashMap<*const PyTypeObject, TypeId>,
 }
 
@@ -391,9 +380,9 @@ static GLOBAL_MESSAGE_BRIDGES: OnceLock<RwLock<GlobalMessageBridgeRegistry>> = O
 /// Internal storage for the global message registry
 #[derive(Default)]
 struct GlobalMessageBridgeRegistry {
-    /// PyTypeObject* → Bridge
+    /// Maps PyTypeObject pointers to bridges.
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn MessageBridge>>,
-    /// TypeId → Bridge (for lookups from Bevy types)
+    /// Maps TypeIds to bridges for lookups from Bevy types.
     by_type_id: HashMap<TypeId, Arc<dyn MessageBridge>>,
 }
 
@@ -450,15 +439,6 @@ pub fn contains_message_py_type(ptr: *const PyTypeObject) -> bool {
     guard.by_py_type.contains_key(&ptr)
 }
 
-/// Get the number of registered message bridges (for debugging/testing)
-pub fn message_bridge_count() -> usize {
-    let registry = get_global_message_registry();
-    let guard = registry
-        .read()
-        .expect("Global message registry lock poisoned");
-    guard.by_py_type.len()
-}
-
 /// Get a message bridge by Bevy TypeId
 ///
 /// Returns the bridge if found, None otherwise.
@@ -489,7 +469,7 @@ static GLOBAL_BATCH_BRIDGES: OnceLock<RwLock<GlobalBatchBridgeRegistry>> = OnceL
 /// Internal storage for the global batch registry
 #[derive(Default)]
 struct GlobalBatchBridgeRegistry {
-    /// PyTypeObject* → Bridge
+    /// Maps PyTypeObject pointers to bridges.
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn BatchComponent>>,
 }
 

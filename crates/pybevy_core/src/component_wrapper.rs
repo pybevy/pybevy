@@ -1,4 +1,10 @@
-use bevy::ecs::component::Component;
+use std::{error::Error, fmt};
+
+use bevy::ecs::{
+    component::{Component, ComponentId},
+    ptr::OwningPtr,
+    world::EntityWorldMut,
+};
 
 /// Fixed-size wrapper structs for storing custom Python components.
 ///
@@ -192,6 +198,47 @@ impl WrapperSize {
         }
     }
 
+    /// Get the wrapper's data pointer from its mutable component base address.
+    ///
+    /// Unlike [`Self::get_mut_ptr`], this does not request `DerefMut` and therefore
+    /// does not mark the component changed. The caller can defer change detection
+    /// until it actually writes through the returned pointer.
+    ///
+    /// # Safety
+    /// `base` must be a writable pointer to the wrapper type selected by `self`.
+    pub unsafe fn get_data_ptr_from_base(&self, base: *mut u8) -> *mut u8 {
+        // SAFETY: the caller guarantees that `base` points to the wrapper selected
+        // by this match and that its allocation is writable.
+        unsafe {
+            match self {
+                WrapperSize::W8 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper8>()).data).cast::<u8>()
+                }
+                WrapperSize::W16 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper16>()).data).cast::<u8>()
+                }
+                WrapperSize::W32 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper32>()).data).cast::<u8>()
+                }
+                WrapperSize::W64 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper64>()).data).cast::<u8>()
+                }
+                WrapperSize::W128 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper128>()).data).cast::<u8>()
+                }
+                WrapperSize::W256 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper256>()).data).cast::<u8>()
+                }
+                WrapperSize::W512 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper512>()).data).cast::<u8>()
+                }
+                WrapperSize::W1024 => {
+                    std::ptr::addr_of_mut!((*base.cast::<ComponentWrapper1024>()).data).cast::<u8>()
+                }
+            }
+        }
+    }
+
     /// Get a const pointer to the wrapper's data array (cast to mutable for lazy proxy).
     /// This centralizes the pattern of casting Ptr to the correct wrapper type.
     ///
@@ -287,6 +334,101 @@ impl WrapperSize {
             }
         }
     }
+}
+
+/// A checked dynamic wrapper insertion failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WrapperInsertionError {
+    UnknownComponent,
+    UnregisteredWrapper,
+    DescriptorMismatch,
+    ByteLength { expected: usize, actual: usize },
+}
+
+impl fmt::Display for WrapperInsertionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownComponent => formatter.write_str("unknown wrapper component id"),
+            Self::UnregisteredWrapper => {
+                formatter.write_str("component id is not registered as this wrapper storage type")
+            }
+            Self::DescriptorMismatch => {
+                formatter.write_str("wrapper schema does not match the Bevy component descriptor")
+            }
+            Self::ByteLength { expected, actual } => write!(
+                formatter,
+                "wrapper byte length is {actual}, expected {expected}"
+            ),
+        }
+    }
+}
+
+impl Error for WrapperInsertionError {}
+
+/// Insert already validated wrapper bytes through Bevy's dynamic component API.
+///
+/// The descriptor and byte length checks make the unsafe `insert_by_id` boundary
+/// reusable by commands, world deserialization, and control adapters.
+pub fn insert_wrapper_bytes(
+    entity: &mut EntityWorldMut<'_>,
+    component_id: ComponentId,
+    wrapper_size: WrapperSize,
+    bytes: &[u8],
+) -> Result<(), WrapperInsertionError> {
+    let expected = wrapper_size.size_bytes();
+    if bytes.len() != expected {
+        return Err(WrapperInsertionError::ByteLength {
+            expected,
+            actual: bytes.len(),
+        });
+    }
+    let registered_storage = entity
+        .world()
+        .get_resource::<crate::custom_component::CustomComponentRegistry>()
+        .and_then(|registry| registry.storage_type(component_id));
+    if registered_storage
+        != Some(crate::component_layout::ComponentStorageType::Wrapper(
+            wrapper_size,
+        ))
+    {
+        return Err(WrapperInsertionError::UnregisteredWrapper);
+    }
+    let descriptor = entity
+        .world()
+        .components()
+        .get_info(component_id)
+        .ok_or(WrapperInsertionError::UnknownComponent)?;
+    if descriptor.layout() != wrapper_size.mem_layout() {
+        return Err(WrapperInsertionError::DescriptorMismatch);
+    }
+
+    macro_rules! insert_wrapper {
+        ($wrapper_type:ty) => {{
+            let mut wrapper = <$wrapper_type>::default();
+            wrapper.data.copy_from_slice(bytes);
+            OwningPtr::make(wrapper, |ptr| {
+                // SAFETY: the component is recorded in the private custom
+                // registry with this wrapper size, its descriptor layout and
+                // owning value type were checked above, and its ComponentId
+                // belongs to entity.world().
+                unsafe {
+                    entity.insert_by_id(component_id, ptr);
+                }
+            });
+        }};
+    }
+
+    match wrapper_size {
+        WrapperSize::W8 => insert_wrapper!(ComponentWrapper8),
+        WrapperSize::W16 => insert_wrapper!(ComponentWrapper16),
+        WrapperSize::W32 => insert_wrapper!(ComponentWrapper32),
+        WrapperSize::W64 => insert_wrapper!(ComponentWrapper64),
+        WrapperSize::W128 => insert_wrapper!(ComponentWrapper128),
+        WrapperSize::W256 => insert_wrapper!(ComponentWrapper256),
+        WrapperSize::W512 => insert_wrapper!(ComponentWrapper512),
+        WrapperSize::W1024 => insert_wrapper!(ComponentWrapper1024),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -418,5 +560,18 @@ mod tests {
 
         assert_eq!(size_of::<ComponentWrapper1024>(), 1024);
         assert_eq!(align_of::<ComponentWrapper1024>(), 8);
+    }
+
+    #[test]
+    fn data_pointer_from_mutable_base_addresses_wrapper_data() {
+        let mut wrapper = ComponentWrapper32::default();
+        let base = std::ptr::addr_of_mut!(wrapper).cast::<u8>();
+        // SAFETY: `base` points to a live writable ComponentWrapper32.
+        let data = unsafe { WrapperSize::W32.get_data_ptr_from_base(base) };
+
+        assert_eq!(data, wrapper.data.as_mut_ptr());
+        // SAFETY: the returned pointer addresses the first byte of wrapper.data.
+        unsafe { data.write(7) };
+        assert_eq!(wrapper.data[0], 7);
     }
 }

@@ -9,7 +9,7 @@ use bevy::{
     color::{Color, Srgba},
     math::{Quat, Vec2, Vec3, Vec4},
 };
-use pybevy_storage::FieldType;
+use pybevy_storage::{FieldType, batch_columns::BatchValueConstraint};
 
 /// A component field type that can be populated from numpy float32 data.
 ///
@@ -146,6 +146,14 @@ pub struct BatchFieldMeta {
     pub name: &'static str,
     pub numpy_columns: usize,
     pub numpy_dtype: &'static str,
+    pub constraints: &'static [BatchValueConstraint],
+}
+
+impl BatchFieldMeta {
+    pub const fn with_constraints(mut self, constraints: &'static [BatchValueConstraint]) -> Self {
+        self.constraints = constraints;
+        self
+    }
 }
 
 /// Type-inference helper: compiler resolves T from the `&field` reference.
@@ -154,6 +162,7 @@ pub fn batch_field_meta_for<T: BatchableField>(_field: &T, name: &'static str) -
         name,
         numpy_columns: T::NUMPY_COLUMNS,
         numpy_dtype: T::NUMPY_DTYPE,
+        constraints: &[],
     }
 }
 
@@ -350,6 +359,7 @@ mod tests {
         assert_eq!(meta.name, "speed");
         assert_eq!(meta.numpy_columns, 1);
         assert_eq!(meta.numpy_dtype, "float32");
+        assert!(meta.constraints.is_empty());
     }
 
     #[test]
@@ -358,5 +368,13 @@ mod tests {
         let meta = batch_field_meta_for(&val, "position");
         assert_eq!(meta.name, "position");
         assert_eq!(meta.numpy_columns, 3);
+    }
+
+    #[test]
+    fn batch_field_meta_carries_declared_constraints() {
+        let val = Vec3::ZERO;
+        let meta = batch_field_meta_for(&val, "position")
+            .with_constraints(&[BatchValueConstraint::Finite]);
+        assert_eq!(meta.constraints, &[BatchValueConstraint::Finite]);
     }
 }

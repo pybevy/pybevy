@@ -86,11 +86,11 @@ pub(crate) fn extract_primitive_from_py(
         PrimitiveType::Bool => PrimitiveValue::Bool(value.extract()?),
         PrimitiveType::Vec3 => {
             let py_vec3: PyRef<PyVec3> = value.extract()?;
-            PrimitiveValue::Vec3((&*py_vec3).into())
+            PrimitiveValue::Vec3((&*py_vec3).try_into()?)
         }
         PrimitiveType::Vec2 => {
             let py_vec2: PyRef<PyVec2> = value.extract()?;
-            PrimitiveValue::Vec2((&*py_vec2).into())
+            PrimitiveValue::Vec2((&*py_vec2).try_into()?)
         }
     })
 }

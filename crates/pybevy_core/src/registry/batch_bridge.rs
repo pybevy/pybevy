@@ -1,4 +1,8 @@
-use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+use bevy::ecs::{
+    component::{Component, ComponentId},
+    entity::Entity,
+    world::World,
+};
 use pyo3::prelude::*;
 
 /// A Python batch object converted into fully owned Rust values.
@@ -27,7 +31,7 @@ impl<T> PreparedNativeBatch<T> {
     }
 }
 
-impl<T: bevy::ecs::component::Component> PreparedBatchComponent for PreparedNativeBatch<T> {
+impl<T: Component> PreparedBatchComponent for PreparedNativeBatch<T> {
     fn count(&self) -> usize {
         self.values.len()
     }
@@ -49,6 +53,31 @@ pub struct PreparedNativeUniform<T> {
     value: T,
 }
 
+/// Prepared uniform value for a component copied by an explicit adapter.
+pub struct PreparedNativeUniformWith<T> {
+    value: T,
+    clone_with: fn(&T) -> T,
+}
+
+impl<T> PreparedNativeUniformWith<T> {
+    pub fn new(value: T, clone_with: fn(&T) -> T) -> Self {
+        Self { value, clone_with }
+    }
+}
+
+impl<T> PreparedUniformComponent for PreparedNativeUniformWith<T>
+where
+    T: Component,
+{
+    fn insert(&mut self, _component_id: ComponentId, entities: &[Entity], world: &mut World) {
+        for &entity in entities {
+            world
+                .entity_mut(entity)
+                .insert((self.clone_with)(&self.value));
+        }
+    }
+}
+
 impl<T> PreparedNativeUniform<T> {
     pub fn new(value: T) -> Self {
         Self { value }
@@ -57,7 +86,7 @@ impl<T> PreparedNativeUniform<T> {
 
 impl<T> PreparedUniformComponent for PreparedNativeUniform<T>
 where
-    T: bevy::ecs::component::Component + Clone,
+    T: Component + Clone,
 {
     fn insert(&mut self, _component_id: ComponentId, entities: &[Entity], world: &mut World) {
         for &entity in entities {
