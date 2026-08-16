@@ -7,6 +7,16 @@ native Rust bytecode for high-performance batch operations.
 
 from typing import Any, Union
 
+_READ_ONLY_VIEW_ASSIGNMENT = (
+    "Cannot assign through a read-only View column; use column_mut() with View[Mut[T]]"
+)
+
+
+def _assignment_parent(parent: Any) -> Any:  # noqa: ANN401
+    if parent is None:
+        raise RuntimeError(_READ_ONLY_VIEW_ASSIGNMENT)
+    return parent
+
 
 class Expr:
     """
@@ -69,11 +79,11 @@ class Expr:
         return Expr(op="pow", args=[other, self])
 
     def __mod__(self, other: Union["Expr", float, int]) -> "Expr":
-        """Modulo: self % other"""
+        """Python modulo: the nonzero result has the divisor's sign."""
         return Expr(op="mod", args=[self, other])
 
     def __rmod__(self, other: Union["Expr", float, int]) -> "Expr":
-        """Right modulo: other % self"""
+        """Python modulo other % self, with the divisor's sign."""
         return Expr(op="mod", args=[other, self])
 
     def __neg__(self) -> "Expr":
@@ -149,15 +159,15 @@ class Expr:
         return Expr(op="ceil", args=[self])
 
     def round(self) -> "Expr":
-        """Round function: round(self)"""
+        """Round to the nearest integer, breaking ties toward even."""
         return Expr(op="round", args=[self])
 
     def min(self, other: Union["Expr", float, int]) -> "Expr":
-        """Minimum: min(self, other)"""
+        """Element-wise minimum, propagating NaN."""
         return Expr(op="min", args=[self, other])
 
     def max(self, other: Union["Expr", float, int]) -> "Expr":
-        """Maximum: max(self, other)"""
+        """Element-wise maximum, propagating NaN."""
         return Expr(op="max", args=[self, other])
 
     def clamp(
@@ -165,7 +175,7 @@ class Expr:
         min_val: Union["Expr", float, int],
         max_val: Union["Expr", float, int],
     ) -> "Expr":
-        """Clamp value between min and max: clamp(self, min_val, max_val)"""
+        """Clip between bounds; NaN propagates and reversed bounds return max_val."""
         return Expr(op="clamp", args=[self, min_val, max_val])
 
     def exp(self) -> "Expr":
@@ -185,15 +195,15 @@ class Expr:
         return Expr(op="log2", args=[self])
 
     def sign(self) -> "Expr":
-        """Sign function: returns -1.0, 0.0, or 1.0"""
+        """Return -1.0, 0.0, or 1.0 by sign, propagating NaN."""
         return Expr(op="sign", args=[self])
 
     def fract(self) -> "Expr":
-        """Fractional part: fract(self) = self - floor(self)"""
+        """Signed fractional part: fract(self) = self - trunc(self)."""
         return Expr(op="fract", args=[self])
 
     def mod(self, other: Union["Expr", float, int]) -> "Expr":
-        """Modulo: self % other"""
+        """Python modulo: the nonzero result has the divisor's sign."""
         return Expr(op="mod", args=[self, other])
 
     def lerp(
@@ -358,7 +368,7 @@ class FieldExpr(Expr):
             component_id: Bevy's ComponentId (internal identifier)
             field_name: Human-readable field name for debugging ("x", "y", etc.)
             offset: Byte offset of this field within the component struct
-            field_type: Type of the field (F32, F64, I32, I64, U32, U64, Bool)
+            field_type: Type of the field (F32, F64, I32, I64, U8, U32, U64, Bool)
         """
         # Store as "field" operation with component_id, field_name, offset, field_type
         super().__init__(op="field", args=[component_id, field_name, offset, field_type])
@@ -420,14 +430,8 @@ class FieldExpr(Expr):
             # Set y to computed expression
             y.set(y * 2.0 + 1.0)
         """
-        if self._parent_proxy is not None:
-            # Use the parent proxy's assignment mechanism
-            self._parent_proxy._trigger_assignment(self.field_name, value)
-        else:
-            raise RuntimeError(
-                f"Cannot set field {self.field_name}: no parent proxy available. "
-                "Make sure you're using column_mut() to get a mutable column proxy."
-            )
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(self.field_name, value)
 
     def __repr__(self) -> str:
         return f"Field({self.field_name})"
@@ -600,10 +604,8 @@ class Vec3Expr:
     @x.setter
     def x(self, value: Expr | float | int) -> None:
         """Set the x component using an expression or constant."""
-        if self._parent_proxy is not None:
-            # Trigger assignment through the parent ViewColMut
-            field_name = f"{self.base_field_name}.x"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.x", value)
 
     @property
     def y(self) -> FieldExpr:
@@ -619,9 +621,8 @@ class Vec3Expr:
     @y.setter
     def y(self, value: Expr | float | int) -> None:
         """Set the y component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.y"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.y", value)
 
     @property
     def z(self) -> FieldExpr:
@@ -637,9 +638,8 @@ class Vec3Expr:
     @z.setter
     def z(self, value: Expr | float | int) -> None:
         """Set the z component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.z"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.z", value)
 
     def set(self, vec3_expr: Union["Vec3Expression", "Vec3Expr"]) -> None:
         """
@@ -654,22 +654,10 @@ class Vec3Expr:
         Args:
             vec3_expr: A Vec3Expression or Vec3Expr to assign
         """
-        if self._parent_proxy is not None:
-            # Trigger three assignments in sequence
-            self._parent_proxy._trigger_assignment(
-                f"{self.base_field_name}.x", vec3_expr.x
-            )
-            self._parent_proxy._trigger_assignment(
-                f"{self.base_field_name}.y", vec3_expr.y
-            )
-            self._parent_proxy._trigger_assignment(
-                f"{self.base_field_name}.z", vec3_expr.z
-            )
-        else:
-            raise RuntimeError(
-                f"Cannot set Vec3 field {self.base_field_name}: no parent proxy available. "
-                "Make sure you're using column_mut() to get a mutable column proxy."
-            )
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.x", vec3_expr.x)
+        parent._trigger_assignment(f"{self.base_field_name}.y", vec3_expr.y)
+        parent._trigger_assignment(f"{self.base_field_name}.z", vec3_expr.z)
 
     def __repr__(self) -> str:
         return f"Vec3Field({self.base_field_name})"
@@ -709,9 +697,8 @@ class Vec2Expr:
     @x.setter
     def x(self, value: Expr | float | int) -> None:
         """Set the x component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.x"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.x", value)
 
     @property
     def y(self) -> FieldExpr:
@@ -727,9 +714,8 @@ class Vec2Expr:
     @y.setter
     def y(self, value: Expr | float | int) -> None:
         """Set the y component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.y"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.y", value)
 
     def __repr__(self) -> str:
         return f"Vec2Field({self.base_field_name})"
@@ -767,58 +753,62 @@ class QuatExpr:
     @property
     def x(self) -> FieldExpr:
         """Access the x component (first f32 in Quat)"""
-        return FieldExpr(
+        proxy = FieldExpr(
             self.component_id, f"{self.base_field_name}.x", self.base_offset + 0
         )
+        proxy._set_parent(self._parent_proxy)
+        return proxy
 
     @x.setter
     def x(self, value: Expr | float | int) -> None:
         """Set the x component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.x"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.x", value)
 
     @property
     def y(self) -> FieldExpr:
         """Access the y component (second f32 in Quat)"""
-        return FieldExpr(
+        proxy = FieldExpr(
             self.component_id, f"{self.base_field_name}.y", self.base_offset + 4
         )
+        proxy._set_parent(self._parent_proxy)
+        return proxy
 
     @y.setter
     def y(self, value: Expr | float | int) -> None:
         """Set the y component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.y"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.y", value)
 
     @property
     def z(self) -> FieldExpr:
         """Access the z component (third f32 in Quat)"""
-        return FieldExpr(
+        proxy = FieldExpr(
             self.component_id, f"{self.base_field_name}.z", self.base_offset + 8
         )
+        proxy._set_parent(self._parent_proxy)
+        return proxy
 
     @z.setter
     def z(self, value: Expr | float | int) -> None:
         """Set the z component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.z"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.z", value)
 
     @property
     def w(self) -> FieldExpr:
         """Access the w component (fourth f32 in Quat)"""
-        return FieldExpr(
+        proxy = FieldExpr(
             self.component_id, f"{self.base_field_name}.w", self.base_offset + 12
         )
+        proxy._set_parent(self._parent_proxy)
+        return proxy
 
     @w.setter
     def w(self, value: Expr | float | int) -> None:
         """Set the w component using an expression or constant."""
-        if self._parent_proxy is not None:
-            field_name = f"{self.base_field_name}.w"
-            self._parent_proxy._trigger_assignment(field_name, value)
+        parent = _assignment_parent(self._parent_proxy)
+        parent._trigger_assignment(f"{self.base_field_name}.w", value)
 
     def __repr__(self) -> str:
         return f"QuatField({self.base_field_name})"
@@ -936,17 +926,17 @@ def ceil(x: Expr | float | int) -> Expr:
 
 
 def round(x: Expr | float | int) -> Expr:
-    """Round function."""
+    """Round to the nearest integer, breaking ties toward even."""
     return _ensure_expr(x).round()
 
 
 def min(a: Expr | float | int, b: Expr | float | int) -> Expr:
-    """Minimum of two values."""
+    """Element-wise minimum, propagating NaN."""
     return _ensure_expr(a).min(b)
 
 
 def max(a: Expr | float | int, b: Expr | float | int) -> Expr:
-    """Maximum of two values."""
+    """Element-wise maximum, propagating NaN."""
     return _ensure_expr(a).max(b)
 
 
@@ -955,7 +945,7 @@ def clamp(
     min_val: Expr | float | int,
     max_val: Expr | float | int,
 ) -> Expr:
-    """Clamp value between min and max."""
+    """Clip between bounds; NaN propagates and reversed bounds return max_val."""
     return _ensure_expr(x).clamp(min_val, max_val)
 
 
@@ -980,17 +970,17 @@ def log2(x: Expr | float | int) -> Expr:
 
 
 def sign(x: Expr | float | int) -> Expr:
-    """Sign function: returns -1.0, 0.0, or 1.0."""
+    """Return -1.0, 0.0, or 1.0 by sign, propagating NaN."""
     return _ensure_expr(x).sign()
 
 
 def fract(x: Expr | float | int) -> Expr:
-    """Fractional part: fract(x) = x - floor(x)."""
+    """Signed fractional part: fract(x) = x - trunc(x)."""
     return _ensure_expr(x).fract()
 
 
 def mod(a: Expr | float | int, b: Expr | float | int) -> Expr:
-    """Modulo operation."""
+    """Python modulo; a nonzero result has the divisor's sign."""
     return _ensure_expr(a).mod(b)
 
 

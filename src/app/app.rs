@@ -2,7 +2,6 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     mem,
-    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -33,7 +32,7 @@ use pybevy_ecs::shared::schedule::{
 use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
-    exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyList, PyModule, PyTuple, PyType},

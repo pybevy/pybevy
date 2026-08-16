@@ -4,8 +4,9 @@ Numba extension for ViewColumn opaque handles.
 This module teaches Numba how to JIT-compile functions that operate on
 ViewColumn handles with zero-copy access to Bevy ECS component storage.
 
-Safety: The validity token is checked at the Numba call boundary (in unbox()),
-preventing segfaults from use-after-free bugs.
+Safety: Run-scoped validity and thread affinity are checked at the Numba call
+boundary (in unbox()), preventing stale pointer exposure after the originating
+system returns.
 """
 
 import operator
@@ -14,8 +15,9 @@ try:
     import numba  # type: ignore[import-untyped]
     from numba import types  # type: ignore[import-untyped]
     from numba.core import cgutils  # type: ignore[import-untyped]
+    from numba.core.errors import TypingError  # type: ignore[import-untyped]
     from numba.core.imputils import lower_builtin  # type: ignore[import-untyped]
-    from numba.extending import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+    from numba.extending import (  # type: ignore[import-untyped]
         intrinsic,
         make_attribute_wrapper,
         models,
@@ -44,7 +46,9 @@ class ViewColumnType(types.Type):
     - ViewColumnType('i8') for int64 columns
     """
 
-    def __init__(self, dtype: str = 'f4') -> None:
+    def __init__(self, dtype: str = "f4") -> None:
+        if dtype not in _SUPPORTED_DTYPES:
+            raise ValueError(f"unsupported Numba ViewColumn dtype: {dtype}")
         self.dtype = dtype
         self.name = f"ViewColumn[{dtype}]"
         super(ViewColumnType, self).__init__(name=self.name)
@@ -55,18 +59,32 @@ class ViewColumnType(types.Type):
         return (self.name, self.dtype)
 
 
-view_column_type_f32 = ViewColumnType('f4')
-view_column_type_f64 = ViewColumnType('f8')
-view_column_type_i32 = ViewColumnType('i4')
-view_column_type_i64 = ViewColumnType('i8')
-# TODO: is this needed anymore - backwards compatibility alias
-view_column_type = view_column_type_f32
-
 # Dtype code constants (must match unbox logic)
 _DTYPE_F32 = 0
 _DTYPE_F64 = 1
 _DTYPE_I32 = 2
 _DTYPE_I64 = 3
+
+_SUPPORTED_DTYPES = frozenset(("f4", "f8", "i4", "i8"))
+_DTYPE_CODES = {
+    "f4": _DTYPE_F32,
+    "f8": _DTYPE_F64,
+    "i4": _DTYPE_I32,
+    "i8": _DTYPE_I64,
+}
+
+view_column_type_f32 = ViewColumnType("f4")
+view_column_type_f64 = ViewColumnType("f8")
+view_column_type_i32 = ViewColumnType("i4")
+view_column_type_i64 = ViewColumnType("i8")
+view_column_type = view_column_type_f32
+
+_NUMBA_TYPES = {
+    "f4": view_column_type_f32,
+    "f8": view_column_type_f64,
+    "i4": view_column_type_i32,
+    "i8": view_column_type_i64,
+}
 
 
 @typeof_impl.register(ViewColumn)
@@ -76,23 +94,19 @@ def typeof_view_column(val, c):
 
     Returns dtype-specialized type for compile-time optimization.
     """
-    match val.dtype:
-        case 'f8':
-            return view_column_type_f64
-        case 'i4':
-            return view_column_type_i32
-        case 'i8':
-            return view_column_type_i64
-        case _:
-            return view_column_type_f32
-
-
+    try:
+        return _NUMBA_TYPES[val.dtype]
+    except KeyError:
+        raise TypingError(
+            f"Numba ViewColumn does not support dtype {val.dtype!r}; "
+            "supported dtypes are f4, f8, i4, and i8"
+        ) from None
 
 
 @register_model(ViewColumnType)
 class ViewColumnModel(models.StructModel):
     """
-    Native representation: struct { ptr, len, stride, dtype_code }
+    Native representation: struct { ptr, len, stride, dtype_code, writable }
 
     This is the C struct that exists during JIT compilation.
     The Python ViewColumn object is "unboxed" into this struct.
@@ -106,6 +120,9 @@ class ViewColumnModel(models.StructModel):
             ("len", types.intp),  # Length
             ("stride", types.intp),  # Stride in bytes
             ("is_f64", types.int8),  # Kept for backwards compat; now holds dtype_code
+            # Numba's parallel gufunc ABI stores boolean struct fields as i8.
+            # Keep the representation identical across unbox and parfor calls.
+            ("writable", types.int8),
         ]
         models.StructModel.__init__(self, dmm, fe_type, members)
 
@@ -114,8 +131,7 @@ make_attribute_wrapper(ViewColumnType, "ptr", "ptr")
 make_attribute_wrapper(ViewColumnType, "len", "len")
 make_attribute_wrapper(ViewColumnType, "stride", "stride")
 make_attribute_wrapper(ViewColumnType, "is_f64", "is_f64")
-
-
+make_attribute_wrapper(ViewColumnType, "writable", "writable")
 
 
 @numba.extending.unbox(ViewColumnType)
@@ -123,7 +139,7 @@ def unbox_view_column(typ, obj, c):
     """
     Convert Python ViewColumn object to native struct.
 
-    If the validity token is poisoned (system ended), this raises
+    If the run-scoped capability is stale (system ended), this raises
     a RuntimeError instead of causing a segfault.
     """
     # Create native struct
@@ -134,7 +150,7 @@ def unbox_view_column(typ, obj, c):
     is_valid_int = c.pyapi.object_istrue(is_valid_obj)
 
     # Convert i32 result from object_istrue to i1 boolean for if_else
-    is_valid = c.builder.icmp_signed('!=', is_valid_int, is_valid_int.type(0))
+    is_valid = c.builder.icmp_signed("!=", is_valid_int, is_valid_int.type(0))
 
     # THE POISON PILL CHECK
     with c.builder.if_else(is_valid) as (valid, invalid):
@@ -143,38 +159,35 @@ def unbox_view_column(typ, obj, c):
             ptr_obj = c.pyapi.object_getattr_string(obj, "ptr")
             len_obj = c.pyapi.object_getattr_string(obj, "len")
             stride_obj = c.pyapi.object_getattr_string(obj, "stride")
-            dtype_obj = c.pyapi.object_getattr_string(obj, "dtype")
+            writable_obj = c.pyapi.object_getattr_string(obj, "writable")
 
             # Convert to native values
             view_val.ptr = c.pyapi.number_as_ssize_t(ptr_obj)
             view_val.len = c.pyapi.number_as_ssize_t(len_obj)
             view_val.stride = c.pyapi.number_as_ssize_t(stride_obj)
-
-            # Determine dtype_code: 0=f32, 1=f64, 2=i32, 3=i64
-            # Check dtype strings in order
-            f8_str = c.pyapi.unserialize(c.pyapi.serialize_object("f8"))
-            i4_str = c.pyapi.unserialize(c.pyapi.serialize_object("i4"))
-            i8_str = c.pyapi.unserialize(c.pyapi.serialize_object("i8"))
-
-            is_f8 = c.pyapi.object_richcompare(dtype_obj, f8_str, "==")
-            is_f8_int = c.pyapi.object_istrue(is_f8)
-            is_f8_bool = c.builder.icmp_signed('!=', is_f8_int, is_f8_int.type(0))
-
-            is_i4 = c.pyapi.object_richcompare(dtype_obj, i4_str, "==")
-            is_i4_int = c.pyapi.object_istrue(is_i4)
-            is_i4_bool = c.builder.icmp_signed('!=', is_i4_int, is_i4_int.type(0))
-
-            is_i8 = c.pyapi.object_richcompare(dtype_obj, i8_str, "==")
-            is_i8_int = c.pyapi.object_istrue(is_i8)
-            is_i8_bool = c.builder.icmp_signed('!=', is_i8_int, is_i8_int.type(0))
-
-            # Build dtype_code: f8->1, i4->2, i8->3, else->0
+            writable_int = c.pyapi.object_istrue(writable_obj)
+            writable_bool = c.builder.icmp_signed(
+                "!=", writable_int, writable_int.type(0)
+            )
             i8_type = c.context.get_value_type(types.int8)
-            code = i8_type(0)  # default f32
-            code = c.builder.select(is_f8_bool, i8_type(1), code)
-            code = c.builder.select(is_i4_bool, i8_type(2), code)
-            code = c.builder.select(is_i8_bool, i8_type(3), code)
-            view_val.is_f64 = code
+            view_val.writable = c.builder.select(
+                writable_bool, i8_type(1), i8_type(0)
+            )
+
+            # `typeof_view_column` admits only the four supported dtypes, so
+            # unboxing uses the compile-time-specialized type without a runtime
+            # fallback that could reinterpret another width as f32.
+            view_val.is_f64 = i8_type(_DTYPE_CODES[typ.dtype])
+
+            # All object_getattr/unserialize/richcompare calls above return new
+            # references. Release them once their native values are captured.
+            for temporary in (
+                ptr_obj,
+                len_obj,
+                stride_obj,
+                writable_obj,
+            ):
+                c.pyapi.decref(temporary)
 
         with invalid:
             c.pyapi.err_set_string(
@@ -184,14 +197,14 @@ def unbox_view_column(typ, obj, c):
                 "Do not store ViewColumn objects in global variables.",
             )
 
+    c.pyapi.decref(is_valid_obj)
+
     # Check for Python errors and return NativeValue
     # The second argument indicates if there was an error during conversion
     err_ptr = c.pyapi.err_occurred()
     is_error = cgutils.is_not_null(c.builder, err_ptr)
 
     return numba.core.pythonapi.NativeValue(view_val._getvalue(), is_error=is_error)
-
-
 
 
 @overload(len)
@@ -202,8 +215,10 @@ def view_column_len(view_col):
     This compiles to native code that reads the len field.
     """
     if isinstance(view_col, ViewColumnType):
+
         def len_impl(view_col):
             return view_col.len
+
         return len_impl
 
 
@@ -223,26 +238,29 @@ def _view_column_getitem_impl(typingctx, view_col_t, idx_t):
 
     def codegen(context, builder, sig, args):
         view_val, idx_val = args
-        view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+        view = cgutils.create_struct_proxy(sig.args[0])(
+            context, builder, value=view_val
+        )
+        idx = _guard_view_column_index(context, builder, view, idx_val)
 
         # Calculate offset: i * stride
-        offset = builder.mul(idx_val, view.stride)
+        offset = builder.mul(idx, view.stride)
 
         # Calculate address: ptr + offset
         addr = builder.add(view.ptr, offset)
 
-        if dtype == 'f8':
+        if dtype == "f8":
             # f64 path: load 8 bytes as f64
             f64_ptr_t = context.get_value_type(types.float64).as_pointer()
             ptr64 = builder.inttoptr(addr, f64_ptr_t)
             return builder.load(ptr64)
-        if dtype == 'i4':
+        if dtype == "i4":
             # i32 path: load 4 bytes as i32, convert to f64
             i32_ptr_t = context.get_value_type(types.int32).as_pointer()
             ptr32 = builder.inttoptr(addr, i32_ptr_t)
             val32 = builder.load(ptr32)
             return builder.sitofp(val32, context.get_value_type(types.float64))
-        if dtype == 'i8':
+        if dtype == "i8":
             # i64 path: load 8 bytes as i64, convert to f64
             i64_ptr_t = context.get_value_type(types.int64).as_pointer()
             ptr64 = builder.inttoptr(addr, i64_ptr_t)
@@ -261,9 +279,50 @@ def _view_column_getitem_impl(typingctx, view_col_t, idx_t):
 def view_column_getitem_overload(view_col, idx):
     """High-level typing for view[i] - returns float64"""
     if isinstance(view_col, ViewColumnType) and isinstance(idx, types.Integer):
+
         def getitem_impl(view_col, idx):
             return _view_column_getitem_impl(view_col, idx)
+
         return getitem_impl
+
+
+def _guard_view_column_writable(context, builder, view) -> None:
+    """Raise from native code before a read-only handle can be written."""
+    is_read_only = builder.icmp_signed("==", view.writable, view.writable.type(0))
+    with cgutils.if_unlikely(builder, is_read_only):
+        context.call_conv.return_user_exc(
+            builder,
+            RuntimeError,
+            (
+                "Cannot write through a read-only ViewColumn; "
+                "use batch.column_mut() and View[Mut[T]]",
+            ),
+        )
+
+
+def _index_as_intp(builder, idx_val, intp_t):
+    """Cast an integer index value to the native pointer-sized integer type."""
+    if idx_val.type.width < intp_t.width:
+        return builder.sext(idx_val, intp_t)
+    if idx_val.type.width > intp_t.width:
+        return builder.trunc(idx_val, intp_t)
+    return idx_val
+
+
+def _guard_view_column_index(context, builder, view, idx_val):
+    """Raise before native code indexes outside a ViewColumn's live row range."""
+    idx = _index_as_intp(builder, idx_val, view.len.type)
+    zero = view.len.type(0)
+    is_negative = builder.icmp_signed("<", idx, zero)
+    is_too_large = builder.icmp_signed(">=", idx, view.len)
+    is_oob = builder.or_(is_negative, is_too_large)
+    with cgutils.if_unlikely(builder, is_oob):
+        context.call_conv.return_user_exc(
+            builder,
+            IndexError,
+            ("ViewColumn index out of bounds",),
+        )
+    return idx
 
 
 @intrinsic
@@ -281,10 +340,14 @@ def _view_column_setitem_impl(typingctx, view_col_t, idx_t, val_t):
 
     def codegen(context, builder, sig, args):
         view_val, idx_val, value_val = args
-        view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+        view = cgutils.create_struct_proxy(sig.args[0])(
+            context, builder, value=view_val
+        )
+        _guard_view_column_writable(context, builder, view)
+        idx = _guard_view_column_index(context, builder, view, idx_val)
 
         # Calculate offset
-        offset = builder.mul(idx_val, view.stride)
+        offset = builder.mul(idx, view.stride)
         addr = builder.add(view.ptr, offset)
 
         # Convert input to float64 first (handles int, float32, float64)
@@ -295,20 +358,20 @@ def _view_column_setitem_impl(typingctx, view_col_t, idx_t, val_t):
         else:
             f64_val = value_val
 
-        if dtype == 'f8':
+        if dtype == "f8":
             # f64 path: store 8 bytes as f64
             f64_ptr_t = context.get_value_type(types.float64).as_pointer()
             ptr64 = builder.inttoptr(addr, f64_ptr_t)
             store_inst = builder.store(f64_val, ptr64)
             store_inst.volatile = True
-        elif dtype == 'i4':
+        elif dtype == "i4":
             # i32 path: convert f64 to i32 and store 4 bytes
             i32_val = builder.fptosi(f64_val, context.get_value_type(types.int32))
             i32_ptr_t = context.get_value_type(types.int32).as_pointer()
             ptr32 = builder.inttoptr(addr, i32_ptr_t)
             store_inst = builder.store(i32_val, ptr32)
             store_inst.volatile = True
-        elif dtype == 'i8':
+        elif dtype == "i8":
             # i64 path: convert f64 to i64 and store 8 bytes
             i64_val = builder.fptosi(f64_val, context.get_value_type(types.int64))
             i64_ptr_t = context.get_value_type(types.int64).as_pointer()
@@ -333,8 +396,10 @@ def view_column_setitem_overload(view_col, idx, val):
     """High-level typing for view[i] = value - uses intrinsic implementation"""
     if isinstance(view_col, ViewColumnType) and isinstance(idx, types.Integer):
         if isinstance(val, (types.Float, types.Integer)):
+
             def setitem_impl(view_col, idx, val) -> None:
                 _view_column_setitem_impl(view_col, idx, val)
+
             return setitem_impl
 
 
@@ -343,8 +408,10 @@ def view_column_setitem_float(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float_value (f32 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     float_ptr_t = context.get_value_type(types.float32).as_pointer()
@@ -360,8 +427,10 @@ def view_column_setitem_int(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = int_value (f32 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     float_val = builder.sitofp(value_val, context.get_value_type(types.float32))
@@ -378,8 +447,10 @@ def view_column_setitem_float64(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float64_value (f32 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     float_val = builder.fptrunc(value_val, context.get_value_type(types.float32))
@@ -396,8 +467,10 @@ def view_column_i32_setitem_float(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float_value (i32 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     i32_val = builder.fptosi(value_val, context.get_value_type(types.int32))
@@ -414,8 +487,10 @@ def view_column_i32_setitem_int(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = int_value (i32 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     i32_val = builder.trunc(value_val, context.get_value_type(types.int32))
@@ -432,8 +507,10 @@ def view_column_i32_setitem_float64(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float64_value (i32 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     i32_val = builder.fptosi(value_val, context.get_value_type(types.int32))
@@ -450,8 +527,10 @@ def view_column_i64_setitem_float(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float_value (i64 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     i64_val = builder.fptosi(value_val, context.get_value_type(types.int64))
@@ -468,8 +547,10 @@ def view_column_i64_setitem_int(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = int_value (i64 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     i64_val = builder.sext(value_val, context.get_value_type(types.int64))
@@ -486,8 +567,10 @@ def view_column_i64_setitem_float64(context, builder, sig, args):
     """Direct LLVM implementation for view[i] = float64_value (i64 column)"""
     view_val, idx_val, value_val = args
     view = cgutils.create_struct_proxy(sig.args[0])(context, builder, value=view_val)
+    _guard_view_column_writable(context, builder, view)
+    idx = _guard_view_column_index(context, builder, view, idx_val)
 
-    offset = builder.mul(idx_val, view.stride)
+    offset = builder.mul(idx, view.stride)
     addr = builder.add(view.ptr, offset)
 
     i64_val = builder.fptosi(value_val, context.get_value_type(types.int64))
@@ -497,8 +580,6 @@ def view_column_i64_setitem_float64(context, builder, sig, args):
     store_inst.volatile = True
 
     return context.get_dummy_value()
-
-
 
 
 @overload(range)
@@ -516,6 +597,12 @@ def view_column_range(view):
         return impl
 
 
+def _all_non_null(c, *objs):
+    """Fold `obj != NULL` over every fetched attribute into one condition."""
+    condition = cgutils.is_not_null(c.builder, objs[0])
+    for obj in objs[1:]:
+        condition = c.builder.and_(condition, cgutils.is_not_null(c.builder, obj))
+    return condition
 
 
 class Vec3ViewColumnType(types.Type):
@@ -572,22 +659,30 @@ def unbox_vec3_view_column(typ, obj, c):
     y_obj = c.pyapi.object_getattr_string(obj, "y")
     z_obj = c.pyapi.object_getattr_string(obj, "z")
 
-    # Unbox each ViewColumn
-    x_native = c.unbox(view_column_type, x_obj)
-    y_native = c.unbox(view_column_type, y_obj)
-    z_native = c.unbox(view_column_type, z_obj)
+    # A raising getter (stale column, temporary from arithmetic) returns NULL,
+    # and unboxing NULL dereferences it.
+    with c.builder.if_then(_all_non_null(c, x_obj, y_obj, z_obj), likely=True):
+        # Unbox each ViewColumn
+        x_native = c.unbox(view_column_type, x_obj)
+        y_native = c.unbox(view_column_type, y_obj)
+        z_native = c.unbox(view_column_type, z_obj)
+
+        # Store in struct
+        vec3_val.x = x_native.value
+        vec3_val.y = y_native.value
+        vec3_val.z = z_native.value
 
     # Check for errors during unboxing
     err = cgutils.is_not_null(c.builder, c.pyapi.err_occurred())
 
-    # Store in struct
-    vec3_val.x = x_native.value
-    vec3_val.y = y_native.value
-    vec3_val.z = z_native.value
+    # Releasing before the call would drop the capability behind the raw pointer.
+    def cleanup():
+        for temporary in (x_obj, y_obj, z_obj):
+            c.pyapi.decref(temporary)
 
-    return numba.core.pythonapi.NativeValue(vec3_val._getvalue(), is_error=err)
-
-
+    return numba.core.pythonapi.NativeValue(
+        vec3_val._getvalue(), is_error=err, cleanup=cleanup
+    )
 
 
 class QuatViewColumnType(types.Type):
@@ -647,23 +742,34 @@ def unbox_quat_view_column(typ, obj, c):
     z_obj = c.pyapi.object_getattr_string(obj, "z")
     w_obj = c.pyapi.object_getattr_string(obj, "w")
 
-    # Unbox each ViewColumn
-    x_native = c.unbox(view_column_type, x_obj)
-    y_native = c.unbox(view_column_type, y_obj)
-    z_native = c.unbox(view_column_type, z_obj)
-    w_native = c.unbox(view_column_type, w_obj)
+    # A raising getter (stale column, temporary from arithmetic) returns NULL,
+    # and unboxing NULL dereferences it.
+    with c.builder.if_then(
+        _all_non_null(c, x_obj, y_obj, z_obj, w_obj), likely=True
+    ):
+        # Unbox each ViewColumn
+        x_native = c.unbox(view_column_type, x_obj)
+        y_native = c.unbox(view_column_type, y_obj)
+        z_native = c.unbox(view_column_type, z_obj)
+        w_native = c.unbox(view_column_type, w_obj)
+
+        # Store in struct
+        quat_val.x = x_native.value
+        quat_val.y = y_native.value
+        quat_val.z = z_native.value
+        quat_val.w = w_native.value
 
     # Check for errors during unboxing
     err = cgutils.is_not_null(c.builder, c.pyapi.err_occurred())
 
-    # Store in struct
-    quat_val.x = x_native.value
-    quat_val.y = y_native.value
-    quat_val.z = z_native.value
-    quat_val.w = w_native.value
+    # Releasing before the call would drop the capability behind the raw pointer.
+    def cleanup():
+        for temporary in (x_obj, y_obj, z_obj, w_obj):
+            c.pyapi.decref(temporary)
 
-    return numba.core.pythonapi.NativeValue(quat_val._getvalue(), is_error=err)
-
+    return numba.core.pythonapi.NativeValue(
+        quat_val._getvalue(), is_error=err, cleanup=cleanup
+    )
 
 
 __all__ = [

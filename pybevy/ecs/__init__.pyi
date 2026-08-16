@@ -18,6 +18,12 @@ from pybevy.expr import Expr
 from pybevy.light import PointLight
 from pybevy.transform import Transform
 
+# Bound so View[...] and bare component types are rejected. The whole Query is
+# one variable rather than (data, *filters): tying the return to reconstructed
+# parts lets an enclosing context back-infer through Query's invariant
+# parameter, which rejects valid calls like iter(world.query(Query[Mut[T]])).
+_WorldQueryT = TypeVar("_WorldQueryT", bound=Query[Any, *tuple[Any, ...]])
+
 @runtime_checkable
 class Batchable(Protocol):
     """Protocol for batch component data returned by from_numpy() methods.
@@ -31,45 +37,12 @@ class Batchable(Protocol):
 
 class Message: ...
 
-class F32List:
-    """Borrowed list wrapper for Vec<f32> fields in components.
-
-    Provides list-like access to Vec<f32> fields. Mutations persist back
-    to the underlying component in ECS.
-
-    Example:
-        ```python
-        def modify_bounds(query: Query[Mut[CascadeShadowConfig]]) -> None:
-            for config in query:
-                config.bounds[0] = 5.0  # Persists to ECS!
-                config.bounds.append(100.0)
-        ```
-    """
-
-    def __init__(self, values: list[float] = ...) -> None: ...
-    def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> float: ...
-    def __setitem__(self, index: int, value: float) -> None: ...
-    def __repr__(self) -> str: ...
-    def __str__(self) -> str: ...
-    def to_list(self) -> list[float]:
-        """Convert to Python list."""
-    def append(self, value: float) -> None:
-        """Append a value to the end."""
-    def pop(self, index: int = -1) -> float:
-        """Remove and return item at index (default: last item)."""
-    def insert(self, index: int, value: float) -> None:
-        """Insert value at index."""
-    def clear(self) -> None:
-        """Clear all items."""
-    def extend(self, values: list[float]) -> None:
-        """Extend with items from list."""
-
-class Resource:
+class Resource(Component):
     """Base class for ECS resources (global singleton data).
 
-    Resources are global data accessible to all systems. Unlike components,
-    which are attached to entities, resources exist once per type.
+    Each resource type is a component stored on one stable resource entity.
+    Prefer Res[T] or ResMut[T] for ordinary system access; native resources can
+    also be read through Query[T] on that entity.
 
     IMPORTANT: Custom resources MUST use BOTH the @resource decorator AND
     inherit from Resource. Using only one will cause a runtime error.
@@ -92,16 +65,17 @@ class Resource:
 class Event:
     """Base class for ECS events.
 
-    Events are used for communication between systems via observers or event readers.
-    Unlike components and resources, events do NOT need a decorator - just inherit
-    from Event.
+    Events are used for immediate communication through observers. The optional
+    ``@event`` decorator validates this inheritance and documents intent; inheriting
+    from Event remains sufficient for compatibility.
 
     Example:
         ```python
         from dataclasses import dataclass
 
+        @event
         @dataclass
-        class PlayerDied(Event):  # Just inherit, no decorator needed
+        class PlayerDied(Event):
             player_id: int
             cause: str
 
@@ -167,7 +141,7 @@ class MessageWriter(Generic[M]):
 
     Example:
         def my_system(writer: MessageWriter[AppExit]) -> None:
-            writer.write(AppExit.SUCCESS)
+            writer.write(AppExit.Success())
     """
     def write(self, message: M) -> MessageId:
         """Write a message to the message buffer."""
@@ -420,6 +394,8 @@ class SystemSet:
     def before(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
     def after(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
     def run_if(self, condition: Callable[..., object]) -> SystemSetConfig: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class SystemSetEnum(Enum):  # type: ignore[misc]
     """Typed base for an enum whose members are distinct Bevy system sets."""
@@ -439,6 +415,8 @@ class SystemConfig:
     def before(self, target: SystemSet | SystemSetEnum | SystemFn | SystemConfig) -> SystemConfig: ...
     def after(self, target: SystemSet | SystemSetEnum | SystemFn | SystemConfig) -> SystemConfig: ...
     def run_if(self, condition: Callable[..., object]) -> SystemConfig: ...
+    def pipe(self, target: SystemFn) -> SystemConfig:
+        """Pass this system's return value into a downstream ``In[T]`` system."""
 
 class SystemSetConfig:
     """Immutable fluent scheduling configuration for one system set."""
@@ -449,6 +427,9 @@ class SystemSetConfig:
 
 def system(system: SystemFn, /) -> SystemConfig:
     """Wrap a callable for ``in_set``, ``before``, ``after``, or ``run_if``."""
+
+def pipe(source: SystemFn, target: SystemFn, /) -> SystemConfig:
+    """Compose two systems, passing ``source``'s output to ``target``'s ``In[T]``."""
 
 _SystemSetEnumT = TypeVar("_SystemSetEnumT", bound=SystemSetEnum)
 
@@ -496,7 +477,7 @@ class Commands:
         """Spawn entities from batch/uniform components (numpy fast path)."""
     @overload
     def spawn_batch(self, iterable: Iterable[tuple[Component, ...]], /) -> None:
-        """Spawn entities from an iterable of component tuples (legacy path)."""
+        """Spawn entities from an iterable of component tuples."""
     def spawn_empty(self) -> EntityCommands: ...
     def entity(self, entity: Entity) -> EntityCommands: ...
     def get_entity(self, entity: Entity) -> EntityCommands | None: ...
@@ -562,9 +543,15 @@ class Component:
     def from_numpy(**kwargs: object) -> Batchable:
         """Create a batch of components from numpy arrays for spawn_batch().
 
-        Added by the @component decorator for wrapper-storage components
-        (not available for storage="python" components).
+        Added by the @component decorator. Calling it on a storage="python"
+        component raises TypeError because Python-object storage is not batchable.
         """
+
+class IsResource(Component):
+    """Engine-managed marker attached to each Bevy resource entity."""
+
+    @property
+    def resource_component_id(self) -> ComponentId: ...
 
 class CustomComponent(Component):
     """Internal wrapper for custom Python components.
@@ -1073,7 +1060,9 @@ class View(Generic[QueryParam_T, *Qs]):
     High-performance batch operations on components.
 
     View compiles Python expressions to bytecode and executes them in parallel
-    on all matching entities, achieving 30-50x speedup over Query iteration.
+    on all matching entities. Measured workloads commonly range from about
+    5-7x faster for conditional work to 20-25x for pure column math; measure
+    the actual system on target hardware.
 
     IMPORTANT:
     - Use Mut[T] for mutable access, plain T for read-only (just like Query)
@@ -1300,6 +1289,8 @@ class Entity:
     def to_bits(self) -> int: ...
     @staticmethod
     def from_bits(bits: int) -> Entity: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class EntityCommands:
     def add_child(self, child: Entity) -> EntityCommands: ...
@@ -1374,13 +1365,11 @@ class EntityCommands:
 
         Example - Nested hierarchy:
             ```python
-            root = commands.spawn(Transform()).id()
-            commands.entity(root).with_children(lambda parent: (
-                (mid := parent.spawn(Transform.from_xyz(1, 0, 0)).id()),
-                parent.entity(mid).with_children(lambda p2:
+            commands.spawn(Transform()).with_children(lambda parent:
+                parent.spawn(Transform.from_xyz(1, 0, 0)).with_children(lambda p2:
                     p2.spawn(Mesh3d(leaf_mesh))
-                ),
-            ))
+                )
+            )
             ```
 
         Args:
@@ -1452,9 +1441,17 @@ class ComponentId: ...
 
 class World:
     def __init__(self) -> None: ...
-    def spawn_empty(self) -> EntityCommands: ...
-    def spawn_batch(self, batch: Iterable[Component | tuple[Component, ...]]) -> None: ...
-    def spawn(self, *components: Component) -> EntityCommands: ...
+    def spawn_empty(self) -> EntityCommands:
+        """Spawn an entity without components and return fluent commands."""
+    def spawn_batch(
+        self, batch: Iterable[Component | tuple[Component, ...]]
+    ) -> list[Entity]:
+        """Spawn component bundles and return their entity handles in input order."""
+    @overload
+    def spawn(self, *components: Component) -> EntityCommands:
+        """Spawn components and return fluent commands; call `.id()` for the entity."""
+    @overload
+    def spawn(self, components: tuple[Component, ...]) -> EntityCommands: ...
     def commands(self) -> Commands: ...
     def resource(self, resource: type[ResourceType]) -> ResourceType: ...
     def register_resource(self, resource: type[ResourceType]) -> ComponentId: ...
@@ -1463,6 +1460,10 @@ class World:
     def remove_resource(self, resource_type: type[ResourceType]) -> None: ...
     def component_id(self, component: type[Component]) -> ComponentId | None: ...
     def contains_resource(self, resource: type[ResourceType]) -> bool: ...
+    def resource_entity(self, resource: type[ResourceType]) -> Entity | None:
+        """Return the stable entity allocated for a resource, if one exists."""
+    def resource_entities(self) -> Iterator[tuple[ComponentId, Entity]]:
+        """Iterate over resource component IDs with allocated Bevy entities."""
     def _get_last_error(self) -> tuple[str, str | None] | None:
         """Get the last system error, if any (PyBevy internal API).
 
@@ -1481,6 +1482,8 @@ class World:
         Example:
             world.trigger(PlayerDied(player_id=1, cause="explosion"))
         """
+    def write_message(self, message: MessageTypeVar) -> MessageId | None:
+        """Write a message, returning None if its channel is not registered."""
     def add_observer(self, observer: SystemFn) -> Entity:
         """Register an observer and return its entity ID for lifecycle management.
 
@@ -1507,14 +1510,27 @@ class World:
             # Later...
             world.despawn_observer(observer_id)
         """
+    def iter_entities(self) -> list[Entity]:
+        """Return a snapshot of every currently allocated entity."""
     def entity(self, entity: Entity) -> EntityCommands:
         """Get EntityCommands for an existing entity.
 
-        Raises ValueError if the entity does not exist in the world.
+        Raises RuntimeError if the entity does not exist in the world.
 
         Example:
             entity_cmd = world.entity(entity_id)
             entity_cmd.insert(Transform())
+        """
+    def query(self, param: type[_WorldQueryT]) -> _WorldQueryT:
+        """Create an ad-hoc query bound to this World.
+
+        Only accepts Query[...]; View[...] is a system parameter and is
+        rejected at runtime.
+
+        Example:
+            transforms = world.query(Query[tuple[Entity, Transform]])
+            for entity, transform in transforms:
+                print(entity, transform.translation)
         """
     def get(self, entity: Entity, component_type: type[ComponentTypeVar]) -> ComponentTypeVar | None:
         """Get a read-only reference to a component on an entity.
@@ -1602,7 +1618,7 @@ class Added(Generic[T]):
     """
 
 class Has(Generic[T]):
-    """Filter: Check if entities have a component without fetching it.
+    """Query data: Check if entities have a component without fetching it.
 
     Returns a boolean indicating component presence. Useful when you need to check
     for a component but don't need to access its data.
@@ -1617,18 +1633,28 @@ class Has(Generic[T]):
                     print(f"Entity {entity} has armor")
     """
 
-class AnyOf(Generic[Unpack[Q]]):
-    """Filter: Match entities that have ANY of the specified components.
+class AnyOf(Generic[QueryParam_T]):
+    """Query data fetching optional values for components present on an entity.
 
-    This is a disjunction filter - entities match if they have at least one
-    of the specified component types.
+    The query matches only entities with at least one requested component. Each
+    result is a tuple whose corresponding item is the component or ``None``.
 
-    Note: This filter is currently not fully implemented in the query runtime.
-    Use multiple queries with different With filters as a workaround.
+    Example:
+        def inspect(
+            query: Query[AnyOf[tuple[Transform, Visibility]]],
+        ) -> None:
+            for transform, visibility in query:
+                ...
+    """
+
+class Or(Generic[QueryParam_T]):
+    """Filter matching entities that satisfy any nested query filter.
 
     Example:
         # Match entities with Sprite OR Mesh
-        def render_visuals(query: Query[Entity, AnyOf[Sprite, Mesh]]) -> None:
+        def render_visuals(
+            query: Query[Entity, Or[tuple[With[Sprite], With[Mesh]]]],
+        ) -> None:
             for entity in query:
                 print(f"Entity {entity} has visual component")
     """
@@ -1758,6 +1784,44 @@ class Query(Generic[QueryParam_T, *Qs]):
     Matches Bevy Rust: Query<&mut T, (With<A>, Without<B>)>
     """
 
+    @overload
+    def __iter__(
+        self: Query[AnyOf[tuple[T1, T2]], *Qs],
+    ) -> Iterator[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def __iter__(
+        self: Query[AnyOf[tuple[Mut[T1], T2]], *Qs],
+    ) -> Iterator[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def __iter__(
+        self: Query[AnyOf[tuple[T1, Mut[T2]]], *Qs],
+    ) -> Iterator[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def __iter__(
+        self: Query[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs],
+    ) -> Iterator[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def __iter__(
+        self: Query[AnyOf[tuple[T1, T2, T3]], *Qs],
+    ) -> Iterator[tuple[T1 | None, T2 | None, T3 | None]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Entity, AnyOf[tuple[T1, T2]]], *Qs],
+    ) -> Iterator[tuple[Entity, tuple[T1 | None, T2 | None]]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[T1, T2, AnyOf[tuple[T3, T4]]], *Qs],
+    ) -> Iterator[tuple[T1, T2, tuple[T3 | None, T4 | None]]]: ...
+    @overload
+    def __iter__(self: Query[Has[T], *Qs]) -> Iterator[bool]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[Has[T], T1], *Qs],
+    ) -> Iterator[tuple[bool, T1]]: ...
+    @overload
+    def __iter__(
+        self: Query[tuple[T1, Has[T]], *Qs],
+    ) -> Iterator[tuple[T1, bool]]: ...
     @overload
     def __iter__(self: Query[Mut[T]]) -> Iterator[T]: ...
     @overload
@@ -1943,6 +2007,32 @@ class Query(Generic[QueryParam_T, *Qs]):
 
 
     @overload
+    def get(
+        self: Query[AnyOf[tuple[T1, T2]], *Qs], entity: Entity
+    ) -> tuple[T1 | None, T2 | None] | None: ...
+    @overload
+    def get(
+        self: Query[AnyOf[tuple[Mut[T1], T2]], *Qs], entity: Entity
+    ) -> tuple[T1 | None, T2 | None] | None: ...
+    @overload
+    def get(
+        self: Query[AnyOf[tuple[T1, Mut[T2]]], *Qs], entity: Entity
+    ) -> tuple[T1 | None, T2 | None] | None: ...
+    @overload
+    def get(
+        self: Query[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs], entity: Entity
+    ) -> tuple[T1 | None, T2 | None] | None: ...
+    @overload
+    def get(self: Query[Has[T], *Qs], entity: Entity) -> bool | None: ...
+    @overload
+    def get(
+        self: Query[tuple[Has[T], T1], *Qs], entity: Entity
+    ) -> tuple[bool, T1] | None: ...
+    @overload
+    def get(
+        self: Query[tuple[T1, Has[T]], *Qs], entity: Entity
+    ) -> tuple[T1, bool] | None: ...
+    @overload
     def get(self: Query[Mut[T], *Qs], entity: Entity) -> T | None: ...
     @overload
     def get(self: Query[T, *Qs], entity: Entity) -> T | None: ...
@@ -1957,19 +2047,36 @@ class Query(Generic[QueryParam_T, *Qs]):
         self: Query[tuple[Mut[T1], T2], *Qs], entity: Entity
     ) -> tuple[T1, T2] | None: ...
 
-
     @overload
-    def get_mut(self: Query[Mut[T], *Qs], entity: Entity) -> T | None: ...
+    def single(
+        self: Query[AnyOf[tuple[T1, T2]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
     @overload
-    def get_mut(self: Query[T, *Qs], entity: Entity) -> T | None: ...
-
-
+    def single(
+        self: Query[AnyOf[tuple[Mut[T1], T2]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
+    @overload
+    def single(
+        self: Query[AnyOf[tuple[T1, Mut[T2]]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
+    @overload
+    def single(
+        self: Query[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
+    @overload
+    def single(self: Query[Has[T], *Qs]) -> bool: ...
+    @overload
+    def single(self: Query[tuple[Has[T], T1], *Qs]) -> tuple[bool, T1]: ...
+    @overload
+    def single(self: Query[tuple[T1, Has[T]], *Qs]) -> tuple[T1, bool]: ...
     @overload
     def single(self: Query[Mut[T], *Qs]) -> T: ...
     @overload
     def single(self: Query[T, *Qs]) -> T: ...
     @overload
     def single(self: Query[T | None, *Qs]) -> T | None: ...
+    @overload
+    def single(self: Query[tuple[Mut[T1], Mut[T2]], *Qs]) -> tuple[T1, T2]: ...
     @overload
     def single(self: Query[tuple[T1, Mut[T2]], *Qs]) -> tuple[T1, T2]: ...
     @overload
@@ -1989,6 +2096,34 @@ class Query(Generic[QueryParam_T, *Qs]):
                 print("No players found")
         """
 
+    @overload
+    def iter_many(
+        self: Query[AnyOf[tuple[T1, T2]], *Qs], entities: Iterable[Entity]
+    ) -> list[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def iter_many(
+        self: Query[AnyOf[tuple[Mut[T1], T2]], *Qs], entities: Iterable[Entity]
+    ) -> list[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def iter_many(
+        self: Query[AnyOf[tuple[T1, Mut[T2]]], *Qs], entities: Iterable[Entity]
+    ) -> list[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def iter_many(
+        self: Query[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs], entities: Iterable[Entity]
+    ) -> list[tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def iter_many(
+        self: Query[Has[T], *Qs], entities: Iterable[Entity]
+    ) -> list[bool]: ...
+    @overload
+    def iter_many(
+        self: Query[tuple[Has[T], T1], *Qs], entities: Iterable[Entity]
+    ) -> list[tuple[bool, T1]]: ...
+    @overload
+    def iter_many(
+        self: Query[tuple[T1, Has[T]], *Qs], entities: Iterable[Entity]
+    ) -> list[tuple[T1, bool]]: ...
     @overload
     def iter_many(self: Query[Mut[T], *Qs], entities: Iterable[Entity]) -> list[T]:
         """Iterate over query results for a specific list of entities.
@@ -2048,7 +2183,7 @@ class Single(Generic[QueryParam_T, *Qs]):
     """
     Single entity query that enforces exactly one entity matches.
 
-    Panics if zero or multiple entities match the query filter.
+    Raises RuntimeError if zero or multiple entities match the query filter.
 
     Examples:
         Single[Player] - single Player entity (read-only)
@@ -2062,7 +2197,7 @@ class Single(Generic[QueryParam_T, *Qs]):
             transform.translation.x += 10.0
 
     Note: Unlike Query, Single does not return an iterator. It returns the
-    single result directly or panics.
+    single result directly or raises RuntimeError.
     """
 
     # Single component overloads
@@ -2096,20 +2231,46 @@ class Single(Generic[QueryParam_T, *Qs]):
     def __iter__(self) -> Iterator[Any]: ...
     def __next__(self) -> Any: ...
 
-V = TypeVar("V")  # , bound=Callable)
+V = TypeVar("V")
 
-type Local[T] = T
-"""Per-system local state, persisted across system invocations.
+type In[T] = T
+"""Value received from the previous stage of a compound ``pipe`` system."""
 
-Local[T] provides per-system state that is initialized to T() on first run
-and persisted between system calls. Each system gets its own independent copy.
+class Local(Generic[V]):
+    """Per-system local state, persisted across system invocations.
 
-Example:
-    ```python
-    def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
-        counter.frame_count += 1
-    ```
-"""
+    ``Local[T]`` default-constructs one ``T`` for each system and retains it
+    between calls. Attributes of mutable object locals are forwarded directly.
+    Use :attr:`current` when reading or replacing the complete value, especially
+    for immutable values.
+
+    Example:
+        ```python
+        def update_stats(stats: Local[Stats]) -> None:
+            stats.frame_count += 1
+
+        def count_frames(counter: Local[int]) -> None:
+            counter.current += 1
+        ```
+    """
+
+    def __init__(self, value: V) -> None: ...
+    @property
+    def value_type(self) -> type[V]: ...
+    @property
+    def current(self) -> V:
+        """The current per-system value."""
+    @current.setter
+    def current(self, value: V) -> None:
+        """Replace the current value with one of the same concrete type."""
+    def get(self) -> V:
+        """Explicit alias for reading :attr:`current`."""
+    def set(self, value: V) -> None:
+        """Explicit alias for replacing :attr:`current`."""
+    def __getattr__(self, name: str) -> Any:
+        """Forward unknown attribute reads to the current value."""
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward unknown attribute writes to the current value."""
 
 class RelatedSpawnerCommands:
     """Commands for spawning child entities within with_children().
@@ -2129,14 +2290,13 @@ class RelatedSpawnerCommands:
         ))
         ```
 
-    Example - Nested hierarchy with entity():
+    Example - Nested hierarchy:
         ```python
-        commands.spawn(Transform()).with_children(lambda parent: (
-            (child := parent.spawn(Transform()).id()),
-            parent.entity(child).with_children(lambda p2:
+        commands.spawn(Transform()).with_children(lambda parent:
+            parent.spawn(Transform()).with_children(lambda p2:
                 p2.spawn(Mesh3d(grandchild_mesh))
-            ),
-        ))
+            )
+        )
         ```
     """
 
@@ -2180,6 +2340,13 @@ class State(Generic[StateType], Resource):
     def get(self) -> StateType:
         """Get the current state value."""
 
+    def state_type(self) -> type[StateType]:
+        """The @state enum this machine is for.
+
+        Rust reads the machine's type parameter statically; Python carries it at
+        runtime, so generic callers need a way to ask.
+        """
+
 class NextState(Generic[StateType], Resource):
     """Pending state transition resource.
 
@@ -2192,6 +2359,13 @@ class NextState(Generic[StateType], Resource):
     """
     def set(self, state: StateType) -> None:
         """Queue a state transition."""
+
+    def state_type(self) -> type[StateType]:
+        """The @state enum this machine is for.
+
+        Rust reads the machine's type parameter statically; Python carries it at
+        runtime, so generic callers need a way to ask.
+        """
 
     def is_pending(self) -> bool:
         """Check if a transition is pending."""
@@ -2232,6 +2406,7 @@ class OnEnterSchedule:
     This is the internal type returned by OnEnter(). Users typically don't
     need to reference this type directly.
     """
+    def __eq__(self, other: object) -> bool: ...
 
 class OnExitSchedule:
     """Schedule label for systems that run when exiting a state.
@@ -2239,6 +2414,7 @@ class OnExitSchedule:
     This is the internal type returned by OnExit(). Users typically don't
     need to reference this type directly.
     """
+    def __eq__(self, other: object) -> bool: ...
 
 class OnTransitionSchedule:
     """Schedule label for systems that run during state transitions.
@@ -2246,6 +2422,7 @@ class OnTransitionSchedule:
     This is the internal type returned by OnTransition(). Users typically don't
     need to reference this type directly.
     """
+    def __eq__(self, other: object) -> bool: ...
 
 # Schedule labels for state transitions (functions that return schedule labels)
 def OnEnter(state: StateType) -> OnEnterSchedule:
@@ -2296,15 +2473,24 @@ class ChildOf(Component):
     Used to build entity hierarchies. Spawn with ChildOf(parent_entity)
     to make an entity a child of the parent.
     """
-    def __init__(self, parent: Entity) -> None: ...
+    def __init__(self, value: Entity) -> None: ...
+    @property
+    def value(self) -> Entity:
+        """The related parent entity.
+
+        Read-only, unlike Bevy's public tuple field: the relationship hooks
+        that keep `Children` in step run on insert only. Insert a new
+        `ChildOf` to reparent.
+        """
     def parent(self) -> Entity:
         """Get the parent entity."""
     def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
 
 class Children(Component):
     """Auto-managed list of child entities (read-only).
 
-    Cannot be created from Python — it is automatically managed by Bevy
+    Cannot be created from Python: it is automatically managed by Bevy
     when ChildOf components are added. Query it to iterate over children.
     """
     def entities(self) -> list[Entity]:

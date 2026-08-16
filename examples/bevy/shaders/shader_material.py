@@ -13,7 +13,7 @@ Bevy (Rust):
 
 PyBevy:
     @material(fragment_shader="shaders/examples/shader_material.wgsl")
-    class CustomMaterial:
+    class CustomMaterial(Material):
         color: LinearRgba = LinearRgba(0.0, 0.0, 1.0, 1.0)
         intensity: float = 1.0
 """
@@ -25,7 +25,7 @@ SHADER_ASSET_PATH = "shaders/examples/shader_material.wgsl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)
-class CustomMaterial:
+class CustomMaterial(Material):
     """Custom material with a color tint and emissive intensity."""
     color: LinearRgba = LinearRgba(0.0, 0.0, 1.0, 1.0)
     intensity: float = 1.0
@@ -34,7 +34,7 @@ class CustomMaterial:
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
-    materials: ResMut[Assets[CustomMaterial]],  # type: ignore[type-var]
+    materials: ResMut[Assets[CustomMaterial]],
 ) -> None:
     # Point light
     commands.spawn(

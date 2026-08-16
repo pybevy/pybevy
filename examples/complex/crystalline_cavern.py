@@ -37,6 +37,7 @@ except ImportError:
 from pybevy.camera import Exposure
 from pybevy.light import VolumetricFog, VolumetricLight
 from pybevy.prelude import *
+from pybevy.render import ColorGrading, ColorGradingGlobal, ColorGradingSection, Hdr
 
 # Constants
 PARTICLE_COUNT = 20000

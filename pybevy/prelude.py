@@ -26,7 +26,7 @@ from .app import (
     TaskPoolPlugin,
     chain,
 )
-from .assets import AssetEvent, AssetPlugin, Assets, AssetServer, Handle
+from .assets import Asset, AssetEvent, AssetId, AssetPlugin, Assets, AssetServer, Handle
 from .audio import (
     AudioPlayer,
     AudioSink,
@@ -56,6 +56,7 @@ from .color import (
     Color,
     Hsla,
     Hsva,
+    Hwba,
     Laba,
     Lcha,
     LinearRgba,
@@ -65,10 +66,19 @@ from .color import (
     Xyza,
 )
 from .core_pipeline import Tonemapping
-from .decorators import component, entrypoint, material, plugin, resource
+from .decorators import (
+    component,
+    entrypoint,
+    event,
+    material,
+    message,
+    plugin,
+    resource,
+)
 from .ecs import (
     Add,
     Added,
+    AnyOf,
     Changed,
     ChildOf,
     Children,
@@ -78,10 +88,14 @@ from .ecs import (
     DespawnOnExit,
     Discard,
     Entity,
+    EntityCommands,
+    Event,
     Has,
+    In,
     Insert,
     Local,
     Message,
+    MessageMutator,
     MessageReader,
     Messages,
     MessageWriter,
@@ -92,6 +106,7 @@ from .ecs import (
     OnEnter,
     OnExit,
     OnTransition,
+    Or,
     Query,
     Remove,
     Res,
@@ -106,12 +121,23 @@ from .ecs import (
     Without,
     World,
     in_state,
+    pipe,
     run_if,
     state,
     system,
     system_set,
 )
 from .expr import FieldExpr
+from .gizmos import (
+    GizmoConfig,
+    GizmoConfigGroup,
+    GizmoConfigStore,
+    GizmoLineConfig,
+    GizmoLineJoint,
+    GizmoLineStyle,
+    Gizmos,
+    ShowAabbGizmo,
+)
 from .gltf import Gltf, GltfAssetLabel, GltfExtras
 from .image import (
     Image,
@@ -137,10 +163,12 @@ from .light import (
     EnvironmentMapLight,
     GeneratedEnvironmentMapLight,
     GlobalAmbientLight,
+    LightGizmoColor,
+    LightGizmoConfigGroup,
     LightProbe,
     PointLight,
     RectLight,
-    Skybox,
+    ShowLightGizmo,
     SpotLight,
 )
 from .material import AlphaMode
@@ -176,6 +204,7 @@ from .math import (
     Rectangle,
     RegularPolygon,
     Rhombus,
+    Segment2d,
     Sphere,
     Tetrahedron,
     Torus,
@@ -198,15 +227,15 @@ from .mesh import (
     MorphWeights,
     PrimitiveTopology,
 )
-from .pbr import DistanceFog, FogFalloff, ParallaxMappingMethod, StandardMaterial
-from .post_process import Bloom, BloomCompositeMode, BloomPrefilter
-from .render import (
-    ColorGrading,
-    ColorGradingGlobal,
-    ColorGradingSection,
-    Hdr,
-    Msaa,
+from .pbr import (
+    DistanceFog,
+    FogFalloff,
+    Material,
+    ParallaxMappingMethod,
+    StandardMaterial,
 )
+from .post_process import Bloom, BloomCompositeMode, BloomPrefilter
+from .render import Msaa
 from .shader import Shader
 from .sprite import (
     ColorMaterial,
@@ -226,7 +255,7 @@ from .text import (
     TextLayout,
     TextSpan,
 )
-from .time import Time, Timer, TimerMode
+from .time import Fixed, Real, Time, Timer, TimerMode, Virtual
 from .transform import GlobalTransform, Transform, TransformPlugin
 from .ui import (
     AlignContent,
@@ -308,116 +337,6 @@ FixedPostUpdate = Stage.FixedPostUpdate
 FixedLast = Stage.FixedLast
 
 
-# Bevy prelude items NOT YET available in PyBevy
-#
-# Math:
-#   BVec2, BVec3, BVec4, BVec3A, BVec4A, Dir3A, IVec3, IVec4, UVec4, IRect
-#
-# Primitives:
-#   Arc2d, ConicalFrustum, ConvexPolygon,
-#   Extrusion, Line2d, Line3d, Polygon, Polyline2d, Polyline3d, Ring,
-#   Segment3d
-#
-# ECS:
-#   Allow, AnyOf, ApplyDeferred, Deferred, EntityCommands, EntityMut, EntityRef,
-#   EntityWorldMut, FilteredResources, FilteredResourcesMut, If, NonSend,
-#   NonSendMut, Observer, Or, ParallelCommands, ParamSet, Populated,
-#   QueryBuilder, QueryState, Ref, RemovedComponents, MessageMutator
-#
-# App / Scheduling:
-#   Schedules, SubApp, RunFixedMainLoop, RunFixedMainLoopSystems, SpawnScene,
-#   TaskPoolOptions
-#
-# State:
-#   ComputedStates, DespawnOnEnter, EnterSchedules,
-#   ExitSchedules, StateTransition, StateTransitionEvent, SubStates,
-#   TransitionSchedules
-#
-# Rendering / Camera:
-#   ExtractSchedule, ManualTextureViews, MsaaWriteback
-#
-# UI:
-#   BoxShadow, BoxShadowSamples, CalculatedClip, ComputedNode,
-#   ComputedUiRenderTargetInfo, ComputedUiTargetCamera, DefaultUiCamera,
-#   IgnoreScroll, LayoutConfig, OverrideClip, ResolvedBorderRadius,
-#   ScrollPosition, ShadowStyle, UiAntiAlias, UiDebugOptions,
-#   UiGlobalTransform, UiPosition, UiScale, ViewportNode, MaterialNode
-#
-# Text:
-#   FontWeight, Strikethrough, StrikethroughColor, TextShadow, Underline,
-#   UnderlineColor
-#
-# Animation:
-#   AnimationGraphAssetLoader, AnimationTransition, BlendInput,
-#   SerializedAnimationGraph, SerializedAnimationGraphNode,
-#   ThreadedAnimationGraph, ThreadedAnimationGraphs
-#
-# World serialization:
-#   DynamicWorldBuilder, WorldFilter
-#
-# Assets:
-#   AssetId, AssetMode, DynamicTextureAtlasBuilder, NonPathHandleError,
-#   TextureAtlasBuilder, UntypedHandle
-#
-# Audio:
-#   PlaybackMode — intentionally excluded (not in Bevy's audio prelude);
-#     use `from pybevy.audio import PlaybackMode`
-#
-# Spawn:
-#   Spawn, SpawnIter, SpawnWith, WithOneRelated, WithRelated
-#
-# Gizmos:
-#   AabbGizmoConfigGroup, DefaultGizmoConfigGroup, Gizmo, GizmoAsset,
-#   GizmoConfig, GizmoConfigStore, GizmoLineConfig, GizmoLineJoint,
-#   GizmoLineStyle, Gizmos, LightGizmoColor, LightGizmoConfigGroup,
-#   ShowAabbGizmo, ShowLightGizmo
-#
-# Picking:
-#   Cancel, Click, DefaultPickingPlugins, Drag, DragDrop, DragEnd,
-#   DragEnter, DragEntry, DragLeave, DragOver, DragStart, InteractionPlugin,
-#   MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings, MeshRayCast,
-#   MeshRayCastSettings, Move, Out, Over, Pickable, PickingMessageWriters,
-#   PickingPlugin, Pointer, PointerButton, PointerButtonState,
-#   PointerInputPlugin, PointerState, PointerTraversal, Press,
-#   RayCastBackfaces, RayCastVisibility, Release, Scroll, SpritePickingCamera,
-#   SpritePickingMode, SpritePickingPlugin, SpritePickingSettings,
-#   UiPickingCamera, UiPickingPlugin, UiPickingSettings
-#
-# Reflection:
-#   AppFunctionRegistry, AppTypeRegistry, FromReflect, Function, GetField,
-#   GetPath, GetTupleStructField, IntoFunction, IntoFunctionMut,
-#   PartialReflect, Reflect, ReflectComponent, ReflectDefault,
-#   ReflectDeserialize, ReflectEvent, ReflectFreelyMutableState,
-#   ReflectFromReflect, ReflectFromWorld, ReflectPath, ReflectResource,
-#   ReflectSerialize, ReflectState, Struct, TupleStruct, TypePath
-#
-# Curves:
-#   BackInCurve, BackInOutCurve, BackOutCurve, BounceInCurve,
-#   BounceInOutCurve, BounceOutCurve, ChainCurve, CircularInCurve,
-#   CircularInOutCurve, CircularOutCurve, ConstantCurve, ContinuationCurve,
-#   CubicBSpline, CubicBezier, CubicCardinalSpline, CubicCurve, CubicHermite,
-#   CubicInCurve, CubicInOutCurve, CubicNurbs, CubicOutCurve, CubicSegment,
-#   CurveReparamCurve, EasingCurve, ElasticCurve, ElasticInCurve,
-#   ElasticInOutCurve, ElasticOutCurve, EvenCore, ExponentialInCurve,
-#   ExponentialInOutCurve, ExponentialOutCurve, ForeverCurve, FunctionCurve,
-#   GraphCurve, Interval, LinearCurve, LinearReparamCurve, MapCurve,
-#   PingPongCurve, QuadraticInCurve, QuadraticInOutCurve, QuadraticOutCurve,
-#   QuarticInCurve, QuarticInOutCurve, QuarticOutCurve, QuinticInCurve,
-#   QuinticInOutCurve, QuinticOutCurve, RationalCurve, RationalSegment,
-#   RepeatCurve, ReparamCurve, ReverseCurve, SampleAutoCurve, SampleCurve,
-#   SineInCurve, SineInOutCurve, SineOutCurve, SmoothStepCurve,
-#   SmoothStepInCurve, SmoothStepOutCurve, SmootherStepCurve,
-#   SmootherStepInCurve, SmootherStepOutCurve, StepsCurve,
-#   UnevenSampleAutoCurve, UnevenSampleCurve, ZipCurve, UnevenCore
-#
-# Window:
-#   WindowMoved
-#
-# Other:
-#   BevyError, DebugName, NameOrEntity, ShortName,
-#   StaticTransformOptimizations, TransformHelper, TransformTreeChanged
-
-
 __all__ = [
     # Animation
     "AnimatableCurve",
@@ -444,7 +363,9 @@ __all__ = [
     "TaskPoolPlugin",
     "chain",
     # Assets
+    "Asset",
     "AssetEvent",
+    "AssetId",
     "AssetPlugin",
     "AssetServer",
     "Assets",
@@ -468,17 +389,12 @@ __all__ = [
     "Camera3d",
     "ClearColor",
     "ClearColorConfig",
-    "ColorGrading",
-    "ColorGradingGlobal",
-    "ColorGradingSection",
-    "Hdr",
     "InheritedVisibility",
     "Msaa",
     "OrthographicProjection",
     "PerspectiveProjection",
     "Projection",
     "ScalingMode",
-    "Skybox",
     "Tonemapping",
     "ViewVisibility",
     "Visibility",
@@ -486,6 +402,7 @@ __all__ = [
     "Color",
     "Hsla",
     "Hsva",
+    "Hwba",
     "Laba",
     "Lcha",
     "LinearRgba",
@@ -496,11 +413,15 @@ __all__ = [
     # Decorators (PyBevy-specific)
     "component",
     "entrypoint",
+    "event",
+    "Material",
     "material",
+    "message",
     "plugin",
     "resource",
     # ECS
     "Added",
+    "AnyOf",
     "Changed",
     "ChildOf",
     "Children",
@@ -508,10 +429,14 @@ __all__ = [
     "Component",
     "DespawnOnExit",
     "Entity",
+    "EntityCommands",
+    "Event",
     "Has",
+    "In",
     "in_state",
     "Local",
     "Message",
+    "MessageMutator",
     "MessageReader",
     "MessageWriter",
     "Messages",
@@ -526,6 +451,7 @@ __all__ = [
     "OnEnter",
     "OnExit",
     "OnTransition",
+    "Or",
     "Remove",
     "Query",
     "Res",
@@ -538,6 +464,7 @@ __all__ = [
     "With",
     "Without",
     "World",
+    "pipe",
     "run_if",
     "system",
     "system_set",
@@ -545,6 +472,15 @@ __all__ = [
     "SystemSetEnum",
     # Expr (PyBevy-specific)
     "FieldExpr",
+    # Gizmos
+    "GizmoConfig",
+    "GizmoConfigGroup",
+    "GizmoConfigStore",
+    "GizmoLineConfig",
+    "GizmoLineJoint",
+    "GizmoLineStyle",
+    "Gizmos",
+    "ShowAabbGizmo",
     # GLTF
     "Gltf",
     "GltfAssetLabel",
@@ -572,8 +508,11 @@ __all__ = [
     "GeneratedEnvironmentMapLight",
     "GlobalAmbientLight",
     "LightProbe",
+    "LightGizmoColor",
+    "LightGizmoConfigGroup",
     "PointLight",
     "RectLight",
+    "ShowLightGizmo",
     "SpotLight",
     # Math
     "Annulus",
@@ -607,6 +546,7 @@ __all__ = [
     "Rectangle",
     "RegularPolygon",
     "Rhombus",
+    "Segment2d",
     "Sphere",
     "Tetrahedron",
     "Torus",
@@ -658,9 +598,12 @@ __all__ = [
     "TextLayout",
     "TextSpan",
     # Time
+    "Fixed",
+    "Real",
     "Time",
     "Timer",
     "TimerMode",
+    "Virtual",
     # Transform
     "GlobalTransform",
     "Transform",

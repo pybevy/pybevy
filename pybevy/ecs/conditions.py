@@ -57,7 +57,7 @@ def never() -> Callable[[], bool]:
     return condition
 
 
-def and_(*conditions: Callable[[], bool]) -> Callable[[], bool]:
+def and_(*conditions: Callable[..., bool]) -> Callable[..., bool]:
     """Combines multiple conditions with AND logic.
 
     All conditions must return True for the combined condition to return True.
@@ -87,10 +87,11 @@ def and_(*conditions: Callable[[], bool]) -> Callable[[], bool]:
     def combined() -> bool:
         return all(c() for c in conditions)
 
+    combined.__pybevy_condition_expr__ = ("and", conditions)  # type: ignore[attr-defined]
     return combined
 
 
-def or_(*conditions: Callable[[], bool]) -> Callable[[], bool]:
+def or_(*conditions: Callable[..., bool]) -> Callable[..., bool]:
     """Combines multiple conditions with OR logic.
 
     At least one condition must return True for the combined condition to return True.
@@ -120,10 +121,11 @@ def or_(*conditions: Callable[[], bool]) -> Callable[[], bool]:
     def combined() -> bool:
         return any(c() for c in conditions)
 
+    combined.__pybevy_condition_expr__ = ("or", conditions)  # type: ignore[attr-defined]
     return combined
 
 
-def not_(condition: Callable[[], bool]) -> Callable[[], bool]:
+def not_(condition: Callable[..., bool]) -> Callable[..., bool]:
     """Negates a condition.
 
     Returns True when the inner condition returns False, and vice versa.
@@ -150,6 +152,10 @@ def not_(condition: Callable[[], bool]) -> Callable[[], bool]:
     def negated() -> bool:
         return not condition()
 
+    negated.__pybevy_condition_expr__ = (  # type: ignore[attr-defined]
+        "not",
+        (condition,),
+    )
     return negated
 
 

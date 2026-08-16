@@ -134,10 +134,9 @@ def draw(
 @entrypoint
 def main(app: App) -> App:
     """Configure and return the app."""
-    # Note: FixedUpdate runs at 64 Hz by default in PyBevy
-    # The Rust version uses 1024 Hz but PyBevy doesn't expose Time<Fixed>.from_hz() yet
     return (
         app.add_plugins(DefaultPlugins)
+        .insert_resource(Time[Fixed].from_hz(1024.0))
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, draw)
     )

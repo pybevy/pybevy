@@ -17,7 +17,6 @@ from ..input import (
     KeyboardInput,
     KeyCode,
     MouseButton,
-    MouseInput,
     MouseMotion,
 )
 from ..math import Quat, Vec3
@@ -58,7 +57,7 @@ class FlyCameraState(Resource):
 
 def fly_camera_control_system(
     query: Query[tuple[Mut[Transform], Mut[FlyCamera]]],
-    mouse_buttons: Res[MouseInput],
+    mouse_buttons: Res[ButtonInput[MouseButton]],
     keyboard_input: MessageReader[KeyboardInput],
     mouse_motion: MessageReader[MouseMotion],
     camera_state: ResMut[FlyCameraState],

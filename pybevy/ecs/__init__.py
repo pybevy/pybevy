@@ -1,8 +1,8 @@
-import importlib.util
 import os
 import sys
 
 from .. import _pybevy  # type: ignore
+from .._module_loader import load_sibling_module as _load_sibling_module
 from ._system_sets import install_system_set_api as _install_system_set_api
 
 _native = _pybevy.ecs
@@ -18,20 +18,19 @@ _install_system_set_api(_native)
 # the native module doesn't have Python submodule attributes. We fix this by
 # eagerly importing each .py sibling and attaching it to the native module.
 _package_name = "pybevy.ecs"
+_lazy_modules = frozenset(("jax_ext",))
+_optional_modules = frozenset(("numba_ext",))
 for _fname in os.listdir(_ecs_dir):
     if _fname.startswith("_") or not _fname.endswith(".py"):
         continue
     _mod_name = _fname[:-3]
+    if _mod_name in _lazy_modules:
+        continue
     _qual = f"{_package_name}.{_mod_name}"
     if _qual not in sys.modules:
-        try:
-            _spec = importlib.util.spec_from_file_location(
-                _qual, os.path.join(_ecs_dir, _fname)
-            )
-            if _spec and _spec.loader:
-                _mod = importlib.util.module_from_spec(_spec)
-                sys.modules[_qual] = _mod
-                _spec.loader.exec_module(_mod)
-                setattr(_native, _mod_name, _mod)
-        except Exception:
-            pass  # Skip modules with unsatisfied deps (e.g. numba_ext without numba)
+        _load_sibling_module(
+            _native,
+            _qual,
+            os.path.join(_ecs_dir, _fname),
+            optional=_mod_name in _optional_modules,
+        )

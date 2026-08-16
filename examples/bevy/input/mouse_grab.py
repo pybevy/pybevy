@@ -11,14 +11,14 @@ This system grabs the mouse when the left mouse button is pressed
 and releases it when the escape key is pressed.
 """
 
-from pybevy.input import MouseInput
+from pybevy.input import ButtonInput, MouseButton
 from pybevy.prelude import *
 from pybevy.window import CursorGrabMode, CursorOptions
 
 
 def grab_mouse(
     cursor_options: Single[Mut[CursorOptions]],
-    mouse: Res[MouseInput],
+    mouse: Res[ButtonInput[MouseButton]],
     key: Res[ButtonInput],
 ) -> None:
     """Grab mouse on left click, release on Escape."""
@@ -29,8 +29,7 @@ def grab_mouse(
 
         if key.just_pressed(KeyCode.Escape):
             opts.visible = True
-            # Note: Use getattr because 'None' is a Python keyword
-            opts.grab_mode = getattr(CursorGrabMode, 'None')
+            opts.grab_mode = CursorGrabMode.None_
 
 
 @entrypoint

@@ -190,7 +190,9 @@ def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
     counter.frame_count += 1
     t = time.elapsed_secs()
     if t > 0 and counter.frame_count % 120 == 0:
-        print(f"FPS: ~{counter.frame_count / max(t, 0.001):.1f}  ({N_BODIES} bodies, {N_BODIES * N_BODIES:,} interactions)")
+        fps = counter.frame_count / max(t, 0.001)
+        interactions = N_BODIES * N_BODIES
+        print(f"FPS: ~{fps:.1f}  ({N_BODIES} bodies, {interactions:,} interactions)")
 
 
 @entrypoint

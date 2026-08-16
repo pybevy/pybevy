@@ -13,7 +13,7 @@ Bevy (Rust):
 
 PyBevy:
     @material(fragment_shader="shaders/examples/extended_material.wgsl")
-    class QuantizeMaterial:
+    class QuantizeMaterial(Material):
         quantize_steps: float = 3.0
 """
 
@@ -24,7 +24,7 @@ SHADER_ASSET_PATH = "shaders/examples/extended_material.wgsl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)
-class QuantizeMaterial:
+class QuantizeMaterial(Material):
     """Extended PBR material with a posterization effect."""
     quantize_steps: float = 1.0
 
@@ -37,7 +37,7 @@ class Rotate(Component):
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
-    materials: ResMut[Assets[QuantizeMaterial]],  # type: ignore[type-var]
+    materials: ResMut[Assets[QuantizeMaterial]],
 ) -> None:
     # Sphere with quantized PBR
     commands.spawn(
