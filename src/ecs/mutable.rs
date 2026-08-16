@@ -1,4 +1,5 @@
 use pyo3::{
+    PyTraverseError, PyVisit,
     prelude::*,
     types::{PyTuple, PyType},
 };
@@ -25,6 +26,11 @@ impl PyMut {
 
 #[pymethods]
 impl PyMut {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.ty)?;
+        visit.call(&self.value)
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(

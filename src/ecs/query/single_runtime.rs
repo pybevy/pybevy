@@ -1,6 +1,5 @@
 use bevy::ecs::{change_detection::Tick, world::unsafe_world_cell::UnsafeWorldCell};
-use pybevy_ecs::shared::query_runtime::{QueryExecutionError, QueryRuntimeError};
-use pyo3::{exceptions::PyStopIteration, prelude::*};
+use pyo3::{PyTraverseError, PyVisit, exceptions::PyStopIteration, prelude::*};
 
 use crate::ecs::{
     helpers::validity_guard::ValidityFlag,
@@ -53,6 +52,11 @@ impl PySingleQuery {
 
 #[pymethods]
 impl PySingleQuery {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.query_iter)?;
+        visit.call(&self.cached_item)
+    }
+
     /// Makes this object iterable (but will only yield one item)
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
@@ -98,9 +102,6 @@ impl PySingleQuery {
             Ok(item) => {
                 self.returned = true;
                 Ok(item)
-            }
-            Err(QueryExecutionError::Runtime(QueryRuntimeError::NoEntities)) => {
-                Err(PyStopIteration::new_err(""))
             }
             Err(error) => Err(query_execution_error_to_py(error)),
         }
