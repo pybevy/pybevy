@@ -235,7 +235,7 @@ def setup(
     gem_mesh = meshes.add(Cuboid(0.3, 0.3, 0.3))
     gem_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(1.0, 0.8, 0.1),
-        emissive=LinearRgba.rgb(8.0, 6.0, 0.5), unlit=True,
+        emissive=LinearRgba.rgb(8.0, 6.0, 0.5),
     ))
     gem_positions = [-8.0, -4.0, 0.0, 4.0, 8.0]
     for i, gx in enumerate(gem_positions):

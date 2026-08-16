@@ -4,13 +4,13 @@ Handling keyboard, mouse, and gamepad input in PyBevy.
 
 ## Keyboard Input
 
-Use `Res[ButtonInput]` to read keyboard state. **Important:** the type is `ButtonInput` (not generic `ButtonInput[KeyCode]`) - PyBevy bridges this as a concrete resource.
+Use `Res[ButtonInput[KeyCode]]` to read keyboard state. Bare `Res[ButtonInput]` means the same thing and stays valid.
 
 ```python
 from pybevy.input import ButtonInput, KeyCode
 from pybevy.prelude import *
 
-def movement_system(keyboard: Res[ButtonInput], time: Res[Time]) -> None:
+def movement_system(keyboard: Res[ButtonInput[KeyCode]], time: Res[Time]) -> None:
     dt = time.delta_secs()
     speed = 5.0
 
@@ -40,6 +40,14 @@ def movement_system(keyboard: Res[ButtonInput], time: Res[Time]) -> None:
 | Modifiers | `KeyCode.ShiftLeft`, `ShiftRight`, `ControlLeft`, `ControlRight`, `AltLeft`, `AltRight` |
 | Function | `KeyCode.F1` … `KeyCode.F12` |
 
+Platform-specific physical keys retain their native code:
+
+```python
+from pybevy.input import KeyCode, NativeKeyCode
+
+key = KeyCode.Unidentified(NativeKeyCode.Xkb(42))
+```
+
 ### Batch Queries
 
 ```python
@@ -58,28 +66,30 @@ for key in keyboard.get_just_pressed():
 
 ### Keyboard Events (Message-Based)
 
-For event-driven input (e.g. text input, modifier tracking), use `MessageReader[KeyboardInput]`:
+For event-driven input, including text input, use `MessageReader[KeyboardInput]`:
 
 ```python
-from pybevy.input import KeyboardInput, ButtonState
+from pybevy.input import ButtonState, Key, KeyboardInput
 
 def key_events(reader: MessageReader[KeyboardInput]) -> None:
     for event in reader:
         if event.state == ButtonState.Pressed():
-            print(f"Key pressed: {event.key_code}, shift={event.shift}, ctrl={event.ctrl}")
+            print(f"Key pressed: {event.key_code}")
+        if event.logical_key == Key.Enter():
+            print("Enter pressed")
         if event.text:
             print(f"Text: {event.text}")
 ```
 
 ## Mouse Input
 
-Mouse buttons use `Res[MouseInput]` (not `Res[ButtonInput]`). **Note:** `MouseButton` variants are constructor calls with parentheses, unlike `KeyCode` enum values.
+Mouse buttons use `Res[ButtonInput[MouseButton]]`, the same generic as the keyboard with a different button type. It resolves to the `MouseInput` class, which remains a valid spelling. **Note:** `MouseButton` variants are constructor calls with parentheses, unlike `KeyCode` enum values.
 
 ```python
-from pybevy.input import MouseInput, MouseButton
+from pybevy.input import ButtonInput, MouseButton
 from pybevy.prelude import *
 
-def click_system(mouse: Res[MouseInput]) -> None:
+def click_system(mouse: Res[ButtonInput[MouseButton]]) -> None:
     # Note the parens: MouseButton.Left() not MouseButton.Left
     if mouse.just_pressed(MouseButton.Left()):
         print("left click")
@@ -116,13 +126,13 @@ def scroll_system(scroll: MessageReader[MouseWheel]) -> None:
 
 | Type | Import |
 |------|--------|
-| `ButtonInput`, `KeyCode` | `from pybevy.input import ButtonInput, KeyCode` |
-| `MouseInput`, `MouseButton` | `from pybevy.input import MouseInput, MouseButton` |
+| `ButtonInput`, `KeyCode`, `NativeKeyCode` | `from pybevy.input import ButtonInput, KeyCode, NativeKeyCode` |
+| `ButtonInput[MouseButton]` | `from pybevy.input import ButtonInput, MouseButton` |
 | `AccumulatedMouseMotion` | `from pybevy.input import AccumulatedMouseMotion` |
 | `MouseWheel` | `from pybevy.input import MouseWheel` |
-| `KeyboardInput`, `ButtonState` | `from pybevy.input import KeyboardInput, ButtonState` |
+| `KeyboardInput`, `ButtonState`, `Key` | `from pybevy.input import ButtonState, Key, KeyboardInput` |
 
-**Note:** `KeyCode` and `ButtonInput` are also re-exported from `pybevy.prelude`, so `from pybevy.prelude import *` covers keyboard input. Mouse types require explicit imports from `pybevy.input`.
+**Note:** `KeyCode` and `ButtonInput` are also re-exported from `pybevy.prelude`, so `from pybevy.prelude import *` covers keyboard input. `MouseButton` still needs an explicit import from `pybevy.input`.
 
 ## Gamepad Input
 

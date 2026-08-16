@@ -2,6 +2,10 @@
 
 Loading images, sprite sheets, frame animation, tiling, and procedural sprite generation.
 
+The image paths below refer to sample assets included in the source checkout.
+Wheels do not bundle sample assets, so installed projects must copy equivalent
+files under their own `assets/` directory or change the paths.
+
 ## Basic Sprite
 
 Load an image and display it:
@@ -29,7 +33,7 @@ sprite = Sprite(
     image=image_handle,
     flip_x=True,          # Mirror horizontally
     flip_y=False,         # Mirror vertically
-    custom_size=(64, 64), # Override image dimensions (width, height)
+    custom_size=Vec2(64.0, 64.0), # Override image dimensions (width, height)
     color=Color.srgb(1.0, 0.5, 0.5),  # Tint color
 )
 ```
@@ -42,6 +46,7 @@ The full pipeline: load image -> define grid layout -> create atlas -> spawn spr
 
 ```python
 from pybevy.image import TextureAtlas, TextureAtlasLayout
+from pybevy.math import URect, UVec2
 
 def setup(
     commands: Commands,
@@ -72,12 +77,25 @@ def setup(
         Transform.from_scale(Vec3.splat(6.0)),
         AnimationIndices(first=1, last=6),
         AnimationTimer(timer=Timer(0.1, TimerMode.Repeating)),
-    )
+)
+```
+
+For a layout already stored in `Assets[TextureAtlasLayout]`, obtain it with
+`get_mut()` before editing individual rectangles. Indexed rectangles are live
+views into the layout:
+
+```python
+layout = layouts.get_mut(layout_handle)
+if layout is not None:
+    layout.textures[0].min.x = 4
+    layout.textures.append(URect(96, 0, 120, 24))
 ```
 
 ### 2. Animation Components
 
 ```python
+from dataclasses import dataclass
+
 @component
 @dataclass
 class AnimationIndices(Component):
@@ -122,6 +140,8 @@ app.add_systems(Update, animate_sprite)
 If you don't need `Timer` features (pause, speed, just_finished), a simpler float-based approach avoids `storage="python"`:
 
 ```python
+from dataclasses import dataclass
+
 @component
 @dataclass
 class SpriteAnimation(Component):
@@ -159,7 +179,7 @@ sprite.image_mode = SpriteImageMode.Tiled(
 commands.spawn(sprite)
 
 # Resize dynamically in an Update system:
-sprite.custom_size = (new_width, new_height)
+sprite.custom_size = Vec2(new_width, new_height)
 ```
 
 ## Procedural Sprite Sheets
@@ -167,8 +187,8 @@ sprite.custom_size = (new_width, new_height)
 Generate sprite sheets from code using the `Image` API - no image files needed.
 
 ```python
-from pybevy.image import TextureAtlas, TextureAtlasLayout
-from pybevy.wgpu import Extent3d, ImageSampler
+from pybevy.image import ImageSampler, TextureAtlas, TextureAtlasLayout
+from pybevy.render import Extent3d
 
 def make_sprite_sheet(images: ResMut[Assets[Image]]) -> int:
     frames = 4
@@ -191,6 +211,20 @@ def make_sprite_sheet(images: ResMut[Assets[Image]]) -> int:
     # Nearest-neighbor filtering for crisp pixel art
     img.sampler = ImageSampler.nearest()
     return images.add(img)
+```
+
+For an image that already uses a descriptor sampler, descriptor fields can be
+edited through mutable asset access. Replace a default sampler as a whole
+before editing its descriptor:
+
+```python
+from pybevy.image import ImageFilterMode, ImageSampler
+
+image = images.get_mut(image_handle)
+if image is not None:
+    if not isinstance(image.sampler, ImageSampler.Descriptor):
+        image.sampler = ImageSampler.linear()
+    image.sampler.desc.mag_filter = ImageFilterMode.Nearest
 ```
 
 Then use it like any other sprite sheet:
@@ -218,9 +252,10 @@ def setup(
 Most sprite types are in the prelude. The key ones that aren't:
 
 ```python
-from pybevy.image import TextureAtlas, TextureAtlasLayout
-from pybevy.wgpu import Extent3d, ImageSampler  # for procedural images
-from pybevy.sprite import SpriteImageMode       # for tiling
+from pybevy.image import ImageFilterMode, ImageSampler, TextureAtlas, TextureAtlasLayout
+from pybevy.render import Extent3d           # for procedural images
+from pybevy.sprite import SpriteImageMode  # for tiling
 ```
 
-**Common gotcha:** `pybevy.image` has its own `ImageSampler` class, but `Image.sampler` setter expects the one from `pybevy.wgpu`. Always import `ImageSampler` from `pybevy.wgpu`.
+**Common gotcha:** `ImageSampler` lives in `pybevy.image`; only `Extent3d`
+comes from `pybevy.render`.

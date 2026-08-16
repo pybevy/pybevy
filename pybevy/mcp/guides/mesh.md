@@ -1,6 +1,6 @@
 # Mesh Guide
 
-Creating 3D and 2D meshes from primitives, custom vertices, and zero-copy NumPy access.
+Creating 3D and 2D meshes from primitives, custom vertices, and zero-copy bounded-array access.
 
 ## Primitive Meshes
 
@@ -32,14 +32,14 @@ meshes.add(Plane3d(Vec3.Y, Vec2(5.0, 5.0)).mesh().subdivisions(4).build())
 | `Cuboid` | `Cuboid(x, y, z)` | Box with full sizes (x_length, y_length, z_length) |
 | `Sphere` | `Sphere(radius)` | Ico or UV sphere |
 | `Cylinder` | `Cylinder(radius, height)` | Y-axis aligned |
-| `Cone` | `Cone(radius, height)` | Base at origin, points +Y |
-| `Torus` | `Torus(inner, outer)` | Lies flat in XZ plane (hole faces +Y). To align hole along Z (tunnels/portals): `transform.rotation = Quat.from_euler(EulerRot.XYZ, math.pi / 2.0, 0.0, 0.0)` |
+| `Cone` | `Cone(radius, height)` | Centered on the origin along Y; tip points +Y |
+| `Torus` | `Torus(inner_radius, outer_radius)` | For ring radius `R` and tube radius `t`, use `Torus(R - t, R + t)`. Lies flat in XZ plane (hole faces +Y). To align hole along Z (tunnels/portals): `transform.rotation = Quat.from_euler(EulerRot.XYZ, math.pi / 2.0, 0.0, 0.0)` |
 | `Capsule3d` | `Capsule3d(radius, length)` | Y-axis aligned, rounded ends |
 | `Plane3d` | `Plane3d(normal)` | Infinite plane (mesh is finite) |
 | `Circle` | `Circle(radius)` | 2D disc |
 | `Rectangle` | `Rectangle(width, height)` | 2D quad |
 | `Annulus` | `Annulus(inner, outer)` | 2D ring |
-| `Ellipse` | `Ellipse(half_x, half_y)` | 2D ellipse |
+| `Ellipse` | `Ellipse(Vec2(half_x, half_y))` | 2D ellipse |
 | `RegularPolygon` | `RegularPolygon(circumradius, sides)` | |
 | `Triangle2d` | `Triangle2d(a, b, c)` | From Vec2 points |
 | `Triangle3d` | `Triangle3d(a, b, c)` | From Vec3 points |
@@ -191,6 +191,17 @@ def analyze_mesh(
 `mesh.positions_mut()` yields an in-place mutable bounded array via a `with`
 block. Writes land directly in the mesh; the array is closed on exit.
 
+Write through the bounded array itself. `np.asarray(positions)` returns a
+detached copy, so writes to that NumPy array do not write back to the mesh;
+requesting `np.asarray(positions, copy=False)` raises.
+
+Basic integer and slice indexing returns live views when at least one axis
+remains. Writes through `positions[row]`, `positions[:, lane]`, and nested
+slices reach the mesh and expire with the surrounding `with` block.
+
+`reshape()` and `ravel()` share C-contiguous mesh storage and expire with the
+surrounding `with` block. Use `.copy()` for independent data.
+
 ```python
 def deform_mesh(
     time: Res[Time],
@@ -226,12 +237,15 @@ and `2`. The lens becomes invalid when the `with` block closes.
 ### Detached Copies (Safe Alternative)
 
 When you need an independent snapshot (e.g. to keep past the system), call
-`.copy()` on the read array. `.to_numpy()` additionally forces a concrete NumPy
-array on CPython (e.g. to hand to SciPy):
+`.copy()` on the read array. On CPython, `.to_numpy()` and `np.asarray(array)`
+instead return detached concrete NumPy arrays (e.g. to hand to SciPy). These
+copies never write back to the mesh:
 
 ```python
 positions = mesh.positions().copy()   # detached, independent snapshot
-mesh.set_positions(new_positions)      # copies data into mesh
+positions_np = mesh.positions().to_numpy()  # detached NumPy snapshot
+# ...modify positions...
+mesh.set_positions(positions)         # copies data into mesh
 
 normals = mesh.normals().copy()
 mesh.set_normals(new_normals)
@@ -294,8 +308,8 @@ my_project/
 ```
 
 ```python
-asset_server.load("models/character.glb")     # assets/models/character.glb
-asset_server.load("bevy/textures/ground.png")       # assets/textures/ground.png
+asset_server.load("models/character.glb#Scene0", WorldAsset)  # assets/models/character.glb
+asset_server.load_image("textures/ground.png")      # assets/textures/ground.png
 ```
 
 Paths are always relative to `assets/` - do not include `assets/` in the path string.

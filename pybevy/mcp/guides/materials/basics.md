@@ -169,4 +169,14 @@ app.insert_resource(ClearColor(Color.srgb(0.5, 0.7, 1.0)))  # sky blue
 
 Default is dark gray. For space scenes, night scenes, or custom skyboxes, set `ClearColor(Color.BLACK)`.
 
+`ClearColor` is a resource and applies to every camera. Override one camera with `Camera.clear_color`:
+
+```python
+from pybevy.camera import Camera, ClearColorConfig
+
+cam = Camera()
+cam.clear_color = ClearColorConfig.Custom(Color.srgb(0.1, 0.2, 0.3))
+commands.spawn(Camera3d(), cam)
+```
+
 **For all parameters:** `get_type_definition('StandardMaterial')`

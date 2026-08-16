@@ -25,7 +25,7 @@ def setup(
         Bloom(intensity=0.15, low_frequency_boost=0.5),
         DistanceFog(
             color=Color.srgba(0.8, 0.85, 0.9, 1.0),
-            falloff=FogFalloff.Linear(start=20.0, end=80.0),
+            falloff=FogFalloff.Linear(start=8.0, end=30.0),
         ),
         Name("camera"),
     )
@@ -78,6 +78,6 @@ if __name__ == "__main__":
 
 - **Sun direction** comes from `Transform` rotation, not translation
 - **GlobalAmbientLight** brightness 200–400 prevents pitch-black shadows
-- **Bloom** requires HDR (on by default) and works best with emissive materials
+- **Bloom** adds the required HDR marker to its camera and works best with emissive materials
 - **DistanceFog** with `FogFalloff.Linear(start, end)` - required for atmospheric depth
 - Ground uses `Plane3d(Vec3.Y, half_size=...)` - the normal vector comes first

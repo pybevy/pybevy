@@ -118,5 +118,6 @@ if __name__ == "__main__":
 - **Custom components** need `@component` decorator and extend `Component`
 - **`add_systems(Update, (sys1, sys2))`** - tuple registers multiple systems in one call
 - **`Query[tuple[Mut[Transform], Velocity]]`** - `Mut` for writable, bare type for read-only
-- Assign a whole new `Vec3` to `transform.translation` for reliable updates
-- **Verify numerically**: Use `run_code` + `get_logs()` to print transform values at a paused moment - see the "Animation Verification" section in the scene-editing guide
+- Assign a whole `Vec3`, or mutate an axis in place; both forms write through
+  and participate in change detection
+- **Verify numerically**: use `run_code` and read its returned `stdout` field to inspect transform values at a paused moment; direct system `print()` output remains available through `get_logs()` - see the "Animation Verification" section in the scene-editing guide

@@ -15,7 +15,7 @@ def spawn_effect(
 ) -> None:
     mesh = meshes.add(Sphere(0.5))          # New GPU asset every time
     mat = materials.add(StandardMaterial(    # Another leak
-        emissive=LinearRgba.rgb(10.0, 5.0, 20.0), unlit=True,
+        emissive=LinearRgba.rgb(10.0, 5.0, 20.0),
     ))
     commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), ...)
 ```
@@ -23,29 +23,32 @@ def spawn_effect(
 Pre-create handles in Startup and store them in a resource:
 
 ```python
+from dataclasses import dataclass
+
 @resource
 @dataclass
 class VfxAssets(Resource):
-    bolt_mesh: int = 0
-    bolt_mat: int = 0
-    burst_mesh: int = 0
-    burst_mat: int = 0
+    bolt_mesh: Handle[Mesh]
+    bolt_mat: Handle[StandardMaterial]
+    burst_mesh: Handle[Mesh]
+    burst_mat: Handle[StandardMaterial]
 
 def setup(
+    commands: Commands,
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
-    assets: ResMut[VfxAssets],
 ) -> None:
-    assets.bolt_mesh = meshes.add(Cuboid(0.18, 35.0, 0.18))
-    assets.bolt_mat = materials.add(StandardMaterial(
-        emissive=LinearRgba.rgb(60.0, 30.0, 120.0),
+    bolt_mesh = meshes.add(Cuboid(0.18, 35.0, 0.18))
+    bolt_mat = materials.add(StandardMaterial(
+        base_color=Color.linear_rgb(60.0, 30.0, 120.0),
         unlit=True, alpha_mode=AlphaMode.Add(),
     ))
-    assets.burst_mesh = meshes.add(Sphere(0.8))
-    assets.burst_mat = materials.add(StandardMaterial(
-        emissive=LinearRgba.rgb(30.0, 15.0, 60.0),
+    burst_mesh = meshes.add(Sphere(0.8))
+    burst_mat = materials.add(StandardMaterial(
+        base_color=Color.linear_rgb(30.0, 15.0, 60.0),
         unlit=True, alpha_mode=AlphaMode.Add(),
     ))
+    commands.insert_resource(VfxAssets(bolt_mesh, bolt_mat, burst_mesh, burst_mat))
 
 # ✅ GOOD - reuses cached handles, zero asset growth
 def spawn_effect(commands: Commands, assets: Res[VfxAssets]) -> None:
@@ -55,16 +58,15 @@ def spawn_effect(commands: Commands, assets: Res[VfxAssets]) -> None:
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
-        .insert_resource(VfxAssets())  # ← REQUIRED: resource must exist before Startup
         .add_systems(Startup, setup)
         .add_systems(Update, spawn_effect)
     )
 ```
 
 **Key points:**
-- `app.insert_resource(VfxAssets())` is **required** - without it, `ResMut[VfxAssets]` in Startup will error with "resource not found in world"
-- Asset handles are stored as `int` (the handle ID returned by `meshes.add()`)
-- Alternative: use `commands.insert_resource(VfxAssets(...))` in Startup instead of `ResMut[VfxAssets]`, but then the resource is only available in Update (not Startup)
+- `Assets.add()` returns a typed `Handle[T]`, not an integer ID.
+- Startup inserts `VfxAssets` after constructing valid handles; it is then available to Update systems.
+- `handle.id()` returns a non-owning `AssetId[T]`; use it for lookup or comparison, not to keep the asset alive.
 
 **Applies to:** projectiles, VFX, particles, pooled enemies - anything spawned more than once.
 
@@ -72,19 +74,30 @@ def main(app: App) -> App:
 
 ## Material Mutation Caching
 
-**NEVER** call `materials.get_mut(handle)` every frame on a shared material. This re-prepares bind groups and re-batches ALL entities using that material.
+`materials.get_mut(handle)` is lazy: inspection alone does not mark the asset
+changed. Assigning a field every frame does, however, re-prepare shared
+material state even when the assigned value is unchanged. Check first and only
+request mutable access when a write is needed.
 
 ```python
-# ❌ BAD - 50ms/frame for 150k entities
+from dataclasses import dataclass
+
+@resource
+@dataclass
+class MatHandle(Resource):
+    value: Handle[StandardMaterial]
+
+# ❌ BAD - unconditionally marks the material changed every frame
 def animate(materials: ResMut[Assets[StandardMaterial]], handle: Res[MatHandle]):
-    mat = materials.get_mut(handle.0)
+    mat = materials.get_mut(handle.value)
     mat.base_color = Color.linear_rgb(...)  # Every frame!
 
 # ✅ GOOD - only update on change
 def animate(materials: ResMut[Assets[StandardMaterial]], handle: Res[MatHandle]):
     new_color = compute_color(time)
-    if new_color != last_color:
-        mat = materials.get_mut(handle.0)
+    current = materials.get(handle.value)
+    if current is not None and current.base_color != new_color:
+        mat = materials.get_mut(handle.value)
         mat.base_color = new_color
 ```
 
@@ -94,6 +107,27 @@ Typical frame rates (RTX 5090, 4K):
 - Up to 10k entities: No special considerations needed
 - 10k–80k entities: ~80 FPS, use View API for bulk operations
 - 80k–150k entities: ~43 FPS, CPU render extraction becomes bottleneck
+
+## Occlusion Culling
+
+GPU occlusion culling can help scenes with substantial opaque depth complexity.
+Measure before enabling it because the culling pass has its own overhead.
+
+```python
+from pybevy.camera import DepthPrepass
+from pybevy.render import OcclusionCulling
+
+commands.spawn(
+    Camera3d(),
+    DepthPrepass(),
+    OcclusionCulling(),
+    Transform.from_xyz(8.0, 6.0, 8.0).looking_at(Vec3.ZERO, Vec3.Y),
+)
+```
+
+`DepthPrepass()` is required on the same camera. Do not add
+`OcclusionCulling()` by itself; the incomplete configuration can prevent the
+camera from rendering.
 
 ## Batch Spawning
 
@@ -125,15 +159,25 @@ def setup(
 - `from_numpy()` returns a `Batchable` - an opaque batch object consumed by `spawn_batch`
 - Uniform components (plain instances like `PointLight(...)`) are cloned to every entity
 - Works with regular system `Commands` (deferred) or `World.commands()` (immediate)
-- Via `World.commands()`, returns `list[Entity]`; via system `Commands`, returns `None` (entities created at flush)
-- Arrays are auto-cast to float32 and validated for shape at `from_numpy()` time
+- The NumPy/component form returns `list[Entity]` via `World.commands()` and `None` via system `Commands`
+- Immediate `spawn_batch` performs one asset-safety check for the complete
+  prepared batch. Release wrappers returned by `Assets.get()` or
+  `Assets.get_mut()`, and close zero-copy views, before immediate world
+  structural operations.
+- Arrays are auto-cast to float32 and validated for shape at `from_numpy()` time.
+  Transform translation, rotation, and scale arrays also reject NaN and infinity.
 - `Transform.from_numpy()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
 - Any Rust component with `view_fields` supports `from_numpy()` (e.g., `PointLight.from_numpy(intensity=arr)`)
 - Custom `@component` classes with wrapper storage also support `from_numpy()`
 - Use View API afterwards for bulk per-entity updates (see below)
+- To keep one shared material while varying a small shader-side integer, batch
+  `MeshTag.from_numpy(value=...)`; see `guide://shaders`.
 
 **Limitations:**
 - `from_numpy()` requires wrapper storage - custom `@component` classes with `storage="python"` do not support it
+- Python-storage query rows are O(1) shallow proxies rather than copies of the
+  nested object graph. They declare exclusive scheduler access, so prefer
+  wrapper storage when read parallelism or View execution matters.
 - All non-Batchable components are cloned uniformly to every entity. To vary materials across batched entities, call `spawn_batch` once per material with the appropriate subset of positions.
 
 **Legacy iterable path** still works for small batches:
@@ -141,12 +185,16 @@ def setup(
 commands.spawn_batch([(Transform.from_xyz(i, 0, 0), Name(f"e{i}")) for i in range(100)])
 ```
 
+The iterable is fully consumed and its component values are prepared before
+any entity is created. An iteration, conversion, or validation error therefore
+creates no partial prefix of the batch.
+
 ## Choosing a Batch Strategy
 
 | Approach | Entity Count | Use Case | Typical Speed |
 |----------|-------------|----------|---------------|
 | Query iteration | < 1k | Method calls, simple logic | 1x baseline |
-| View expressions | 1k–100k | Column-wide math, conditional logic | 30–50x |
+| View expressions | 1k–100k | Column-wide math, conditional logic | 5–25x |
 | **Numba batch** | 100k+ | Complex per-entity logic, CPU parallelism | 50–100x |
 | **JAX batch** | 10k+ | O(n²) interactions, ML inference, GPU | GPU-dependent |
 
@@ -154,7 +202,9 @@ For the Numba path, see `guide://numba`. For the JAX path, see `guide://jax`.
 
 ## View API (Batch Operations)
 
-For 1000+ entities, the View API is 30–50x faster than Query:
+For 1000+ entities, View avoids Python's per-entity loop overhead. The
+conditional benchmark below is 6.7x faster than Query; pure column-wide math
+can reach roughly 20–25x. Measure your own workload.
 
 ```python
 from pybevy.prelude import View, Mut, With
@@ -184,7 +234,7 @@ Key View rules:
 
 ### View API - Conditional Logic
 
-The View API supports **per-entity conditionals** via `.where()`, making it suitable for collision response and any logic that branches per entity. **Always prefer View over Query for 1000+ entities**, even when conditionals are needed.
+The View API supports **per-entity conditionals** via `.where()`, making it suitable for collision response and other logic that branches per entity. For large homogeneous workloads, benchmark View against Query and prefer it when the work can stay in column expressions.
 
 Available conditional operators on `FieldExpr`:
 - `.where(true_val, false_val)` - vectorized ternary (like `np.where`)
@@ -195,6 +245,8 @@ Available conditional operators on `FieldExpr`:
 **Example: 5,000 bouncing balls (6.7x faster than Query)**
 
 ```python
+from dataclasses import dataclass, field
+
 @component
 @dataclass
 class Velocity(Component):
@@ -235,7 +287,7 @@ Benchmark (5,000 balls): Query loop = **13.65ms/frame**, View API = **2.03ms/fra
 
 Use `Visibility.Hidden` to cull entities without despawning:
 ```
-set_component {"entity_id": 42, "component": "Visibility", "fields": {"value": "Hidden"}}
+set_component {"entity": 42, "component": "Visibility", "fields": {"variant": "Hidden"}}
 ```
 
 ## Shadow Casters
@@ -250,7 +302,8 @@ faces for point lights). Two rules:
   commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), NotShadowCaster(), ...)
   ```
 - Budget shadows: one shadowed key light per scene, `shadow_maps_enabled=False` on
-  the rest. For emissive dust/particles also set `unlit=True` (skips PBR shading).
+  the rest. `unlit=True` skips PBR shading, but it also discards `emissive`, so use it
+  only for particles whose colour comes from `base_color` (see `guide://lighting`).
 
 ## Monitoring
 
@@ -260,3 +313,7 @@ get_performance
 ```
 
 Use before and after changes to catch regressions.
+
+`uptime_secs` is the operating-system process uptime and remains monotonic
+across full reloads. `generation_uptime_secs` is Bevy real time for the current
+app generation and resets on a full reload.

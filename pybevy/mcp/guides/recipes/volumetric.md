@@ -5,6 +5,7 @@ Complete scene with god rays, atmosphere, and a localized fog volume.
 ```python
 import math
 from pybevy.prelude import *
+from pybevy.render import Hdr
 from pybevy.light import (
     ScatteringMedium, Atmosphere,
     VolumetricFog, VolumetricLight, FogVolume,
@@ -33,6 +34,7 @@ def setup(
     # Camera with volumetric fog; AtmosphereSettings opts it into the sky
     commands.spawn(
         Camera3d(),
+        Hdr(),
         Transform.from_xyz(8, 4, 8).looking_at(Vec3(0, 1, 0), Vec3.Y),
         Bloom(intensity=0.2, low_frequency_boost=0.5),
         AtmosphereSettings(),  # sky won't render for this camera without it
@@ -48,15 +50,15 @@ def setup(
 
     # Sun with god rays
     commands.spawn(
-        DirectionalLight(illuminance=12000.0, shadow_maps_enabled=True),
+        DirectionalLight(illuminance=32000.0, shadow_maps_enabled=True),
         VolumetricLight(),
         SunDisk.EARTH,
-        Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.6, 0.3, 0.0)),
+        Transform.from_xyz(-8, 8, -8).looking_at(Vec3(0, 1, 0), Vec3.Y),
         Name("sun"),
     )
 
     # Ambient fill
-    commands.insert_resource(GlobalAmbientLight(brightness=100.0))
+    commands.insert_resource(GlobalAmbientLight(brightness=25.0))
 
     # Ground
     ground_mesh = meshes.add(Plane3d(Vec3.Y, half_size=Vec2(15.0, 15.0)))
@@ -70,10 +72,10 @@ def setup(
     # See guide://lighting (FogVolume parameter reference) for details.
     commands.spawn(
         FogVolume(
-            density_factor=0.2,
+            density_factor=1.0,
             fog_color=Color.srgb(0.5, 0.55, 0.5),
             absorption=0.05,
-            scattering=0.5,
+            scattering=1.0,
             scattering_asymmetry=0.3,
         ),
         Transform.from_xyz(0, 0.5, 0).with_scale(Vec3(10.0, 1.0, 10.0)),
@@ -101,8 +103,10 @@ if __name__ == "__main__":
 
 - **VolumetricFog** on camera enables the volumetric pass
 - **VolumetricLight** on the directional light makes it create god rays
+- Put the light beyond the fog and occluders from the camera's viewpoint so
+  forward-scattered light travels toward the camera
 - **FogVolume** creates localized fog - `Transform` scale controls its size
-- **jitter=1.0** reduces banding artifacts (best with TAA)
+- **jitter=1.0** reduces banding artifacts, but can shimmer because PyBevy does not yet expose TAA
 - Columns/geometry break up the light for visible shafts
 - **absorption** should be low (0.02–0.05) for bright white mist. Higher values (0.2+) create dark/smoky fog - see `guide://lighting` for the full parameter reference
 - **Performance:** cost scales with `step_count`, resolution, and the number of shadowed `VolumetricLight`s. Large fog volumes with several shadowed lights run below 30 FPS on mid-range GPUs; prefer `step_count=16-32` and one volumetric light, and check `get_performance` after enabling

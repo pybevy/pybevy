@@ -14,8 +14,9 @@ GPU rendering without a window or display server - for CI, remote servers, conta
 ```python
 from pybevy.prelude import *
 from pybevy.app import ScheduleRunnerPlugin
-from pybevy.camera import ImageRenderTarget, RenderTarget
+from pybevy.camera import ImageRenderTarget, RenderTarget, ShadowLodOrigin
 from pybevy.image import Image
+from pybevy.ui import IsDefaultUiCamera
 from pybevy.window import ExitCondition, WindowPlugin
 from pybevy.winit import WinitPlugin
 
@@ -40,6 +41,8 @@ def setup(
     commands.spawn(
         Camera3d(),
         Camera(),
+        ShadowLodOrigin(),
+        IsDefaultUiCamera(),
         RenderTarget.Image(ImageRenderTarget(handle)),
         Transform.from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
@@ -69,15 +72,18 @@ if __name__ == "__main__":
 | Window | `WindowPlugin` default | `WindowPlugin(primary_window=None, exit_condition=ExitCondition.DontExit)` |
 | Event loop | WinitPlugin (display-driven) | `ScheduleRunnerPlugin.run_loop(16)` (timer-driven, ~60fps) |
 | Camera target | Screen (automatic) | `RenderTarget.Image(ImageRenderTarget(handle))` (explicit offscreen) |
+| UI camera | Primary camera (automatic) | Add `IsDefaultUiCamera()` to the offscreen camera |
 | WinitPlugin | Enabled | `.disable(WinitPlugin)` |
 
 ## Three Required Changes
 
 1. **Disable WinitPlugin** - it requires a display server:
    ```python
-   DefaultPlugins()
+   (
+       DefaultPlugins()
        .set(WindowPlugin(primary_window=None, exit_condition=ExitCondition.DontExit))
        .disable(WinitPlugin)
+   )
    ```
 
 2. **Add ScheduleRunnerPlugin** - provides the frame loop without a window:
@@ -92,6 +98,10 @@ if __name__ == "__main__":
    commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle)), transform)
    ```
 
+   If the scene has UI `Node` or `Text` entities, also add
+   `IsDefaultUiCamera()` to this camera. With no primary window, Bevy cannot
+   choose a UI camera automatically. World-space `Text2d` does not require it.
+
 ## MCP Usage
 
 Launch headless scenes with the `headless=True` parameter:
@@ -101,7 +111,7 @@ run_scene(path="scenes/my_scene.py", headless=True)
 ```
 
 All MCP tools work in headless mode:
-- `capture_screenshot`, `capture_turnaround`, `capture_depth` use GPU readback
+- `capture_screenshot`, `capture_stats`, `capture_turnaround`, `capture_depth` use GPU readback
 - `set_component`, `spawn_entity`, `query_entities` work normally
 - `reload`, `reload_and_capture` work normally
 
@@ -110,8 +120,6 @@ All MCP tools work in headless mode:
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
 - **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle))` - without it, the camera targets a non-existent window
 - **No frames captured**: Increase `delay_frames` in `capture_screenshot` - headless rendering may need more warmup frames
+- **UI is missing**: Add `IsDefaultUiCamera()` to the offscreen camera
+- **Shadow LOD warning**: Add `ShadowLodOrigin()` to an offscreen camera when using point or spot light shadows
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
-
-## Reference Example
-
-See `examples/misc/headless_render.py` for a complete working example with a rotating cube.

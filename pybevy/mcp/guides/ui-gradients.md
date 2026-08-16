@@ -13,10 +13,12 @@ CSS-style gradients for UI backgrounds and borders: linear, radial, and conic.
 ## LinearGradient
 
 ```python
+from pybevy.color import Color
 from pybevy.ui import (
     LinearGradient, RadialGradient, ConicGradient,
     ColorStop, BackgroundGradient, BorderGradient, Gradient,
     UiPosition, RadialGradientShape, AngularColorStop,
+    Node, UiRect, Val,
 )
 
 # Top-to-bottom gradient
@@ -98,8 +100,10 @@ commands.spawn(
 )
 
 # Border gradient
+border_node = Node()
+border_node.border = UiRect.all(Val.px(2.0))
 commands.spawn(
-    Node(),
+    border_node,
     BorderGradient([Gradient.linear(
         LinearGradient.to_right([
             ColorStop.auto(Color.srgb(1.0, 0.0, 0.5)),
@@ -116,10 +120,10 @@ Control where colors are placed:
 ```python
 ColorStop.auto(color)              # Evenly distributed
 ColorStop.px(color, 20.0)          # At 20 pixels
-ColorStop.percent(color, 0.75)     # At 75%
+ColorStop.percent(color, 75.0)     # At 75%
 
 # With interpolation hint (midpoint between this and next stop)
-ColorStop.auto(Color.RED).with_hint(0.3)  # Color shifts earlier
+ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)).with_hint(0.3)  # Color shifts earlier
 ```
 
 ## Color Space
@@ -152,9 +156,11 @@ commands.spawn(
 
 ```python
 def spawn_button(commands: Commands) -> None:
+    button_node = Node()
+    button_node.border = UiRect.all(Val.px(2.0))
     commands.spawn(
         Button(),
-        Node(),
+        button_node,
         BackgroundGradient([Gradient.linear(
             LinearGradient.to_bottom([
                 ColorStop.auto(Color.srgb(0.3, 0.6, 1.0)),
@@ -167,12 +173,10 @@ def spawn_button(commands: Commands) -> None:
                 ColorStop.auto(Color.srgba(1.0, 1.0, 1.0, 0.05)),
             ])
         )]),
-    ).with_children(|cb| {
-        cb.spawn(
-            Text("Click Me"),
-            TextShadow(offset=Vec2(1.0, 1.0), color=Color.srgba(0, 0, 0, 0.4)),
-        )
-    })
+    ).with_children(lambda parent: parent.spawn(
+        Text("Click Me"),
+        TextShadow(offset=Vec2(1.0, 1.0), color=Color.srgba(0.0, 0.0, 0.0, 0.4)),
+    ))
 ```
 
 **For all parameters:** `get_type_definition('LinearGradient')`, `get_type_definition('BackgroundGradient')`

@@ -146,7 +146,6 @@ if __name__ == "__main__":
 - **Dark fog**: `color` near-black (not gray), density 0.07, `ClearColor` matching fog color
 - **Dual navigation cues**: cool blue ground strips (path edges) + warm amber beacons (waypoints)
 - **Volumetric fog volumes**: `FogVolume` entities with `Drifter` component drift laterally for living atmosphere
-- **Desaturated grading**: low midtone saturation + boosted shadow contrast enhances the noir feel
 
 ## Tuning visibility
 

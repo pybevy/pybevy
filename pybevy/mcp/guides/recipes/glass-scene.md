@@ -5,7 +5,7 @@ Scene with glass sphere, frosted panel, and backlit leaf demonstrating transmiss
 ```python
 import math
 from pybevy.prelude import *
-from pybevy.color import LinearRgba
+from pybevy.light import TransmittedShadowReceiver
 
 @entrypoint
 def main(app: App) -> App:
@@ -24,7 +24,6 @@ def setup(
         Camera3d(),
         Transform.from_xyz(6, 4, 6).looking_at(Vec3(0, 1, 0), Vec3.Y),
         Bloom(intensity=0.15, low_frequency_boost=0.5),
-        Exposure.INDOOR,
         Name("camera"),
     )
 
@@ -46,14 +45,14 @@ def setup(
 
     # --- Glass Sphere ---
     glass_mat = materials.add(StandardMaterial(
-        base_color=Color.srgba(0.9, 0.95, 1.0, 0.05),
+        base_color=Color.srgb(0.9, 0.95, 1.0),
         specular_transmission=1.0,
         ior=1.5,
         thickness=1.5,
         perceptual_roughness=0.0,
         metallic=0.0,
         reflectance=0.5,
-        alpha_mode=AlphaMode.Blend(),
+        alpha_mode=AlphaMode.Opaque(),
     ))
     sphere_mesh = meshes.add(Sphere(0.8).mesh().ico(5))
     commands.spawn(
@@ -64,12 +63,12 @@ def setup(
 
     # --- Frosted Panel ---
     frosted_mat = materials.add(StandardMaterial(
-        base_color=Color.srgba(0.85, 0.9, 0.95, 0.1),
+        base_color=Color.srgb(0.85, 0.9, 0.95),
         specular_transmission=0.8,
         ior=1.5,
         thickness=0.3,
         perceptual_roughness=0.4,
-        alpha_mode=AlphaMode.Blend(),
+        alpha_mode=AlphaMode.Opaque(),
     ))
     panel_mesh = meshes.add(Cuboid(2.0, 1.5, 0.05))
     commands.spawn(
@@ -115,7 +114,7 @@ if __name__ == "__main__":
 
 ## Key points
 
-- **Glass:** `specular_transmission=1.0` + `ior=1.5` + `alpha_mode=AlphaMode.Blend()`
+- **Glass:** `specular_transmission=1.0` + `ior=1.5` + `alpha_mode=AlphaMode.Opaque()`
 - **Frosted:** Same but with `perceptual_roughness=0.4` to scatter transmission
 - **Leaf:** `diffuse_transmission=0.5` + `double_sided=True` + `cull_mode=None`
 - **TransmittedShadowReceiver** shows shadows on the back side of leaves

@@ -34,13 +34,31 @@ transform.up()         # Camera's up direction
 transform.look_at(target, Vec3.Y)  # Re-orient to face target
 ```
 
+### Orthographic 3D
+
+Use `OrthographicProjection.default_3d()` so the near/far planes match a 3D
+camera, then choose how much world height should remain visible:
+
+```python
+from pybevy.camera import OrthographicProjection, Projection, ScalingMode
+
+orthographic = OrthographicProjection.default_3d()
+orthographic.scaling_mode = ScalingMode.FixedVertical(10.0)
+commands.spawn(
+    Camera3d(),
+    Projection.Orthographic(orthographic),
+    Transform.from_xyz(8, 6, 8).looking_at(Vec3(0, 1, 0), Vec3.Y),
+)
+```
+
 ## Post-Processing Effects
 
 Post-processing components are added directly to the camera entity.
 
 ### Bloom (Glow)
 
-Makes bright/emissive objects glow. Requires HDR (enabled by default).
+Makes bright/emissive objects glow. Adding `Bloom` also adds the required `Hdr`
+marker to that camera; a bare `Camera3d` is not HDR by default.
 
 ```python
 commands.spawn(
@@ -56,7 +74,12 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 **Bloom fields:**
 - `intensity` - Overall bloom strength (0.0–1.0, default ~0.15)
 - `low_frequency_boost` - Enhances large soft glow (0.0–1.0). `0.0–0.2` = sharp point-source glow (neon). `0.4–0.6` = soft atmospheric haze (fog, dreamy).
-- `prefilter` - `BloomPrefilter(threshold, threshold_softness)` - minimum brightness to bloom
+- `low_frequency_boost_curvature` - Controls how broadly the low-frequency boost affects neighboring frequencies (0.0–1.0, default 0.95)
+- `high_pass_frequency` - Controls the maximum scattering angle (0.0–1.0, default 1.0)
+- `prefilter` - `BloomPrefilter(threshold, threshold_softness)` limits bloom to bright regions
+- `composite_mode` - `BloomCompositeMode.EnergyConserving` by default; use `Additive` with a non-default prefilter
+- `max_mip_dimension` - Largest bloom mip dimension (default 512); raise only to reduce sampling artifacts at large scales
+- `scale` - `Vec2` stretch per axis; values greater than 1 widen bloom on that axis
 
 **Bloom presets by scene style:**
 
@@ -73,10 +96,10 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 - `Bloom.OLD_SCHOOL` - Hard threshold glow (retro/arcade look)
 - `Bloom.SCREEN_BLUR` - Blurs the whole screen (dream/flashback effect)
 
-**Anamorphic bloom (manual):** Use `scale=Vec2(0.2, 1.0)` to stretch bloom horizontally:
+**Anamorphic bloom (manual):** Use `scale=Vec2(4.0, 1.0)` to stretch bloom horizontally:
 
 ```python
-Bloom(intensity=0.3, scale=Vec2(0.2, 1.0))  # Wide horizontal streaks
+Bloom(intensity=0.3, scale=Vec2(4.0, 1.0), max_mip_dimension=1024)  # Wide horizontal streaks
 ```
 
 **Bloom threshold** - only bloom bright pixels:
@@ -117,9 +140,48 @@ from pybevy.camera import Exposure
 commands.spawn(Camera3d(), Exposure.INDOOR)  # SUNLIGHT, INDOOR, OVERCAST, BLENDER
 ```
 
+### Color Grading
+
+Most grading controls require HDR. Add `Hdr()` explicitly, or use a component
+such as `Bloom` that requires it:
+
+```python
+from pybevy.render import ColorGrading, ColorGradingSection, Hdr
+
+commands.spawn(
+    Camera3d(),
+    Hdr(),
+    ColorGrading(midtones=ColorGradingSection(saturation=0.7)),
+)
+```
+
+Without `Hdr`, only global exposure and post-saturation are applied; hue,
+temperature, tint, and the shadow/midtone/highlight controls are ignored.
+
+### Vignette and Lens Distortion
+
+Use these camera components for lens-style framing and warping. Explicit subtle
+values are usually a better starting point than the strong defaults:
+
+```python
+from pybevy.post_process import LensDistortion, Vignette
+
+commands.spawn(
+    Camera3d(),
+    Vignette(intensity=0.35, radius=0.8, smoothness=4.0),
+    LensDistortion(intensity=0.08, scale=1.02),
+)
+```
+
+Positive `LensDistortion.intensity` produces barrel distortion; negative values
+produce pincushion distortion. Increase `scale` to crop stretched edges. Set
+either component's `intensity` to `0.0` to disable its effect.
+
 ### Screen-Space Effects
 
-**SSAO** darkens crevices between nearby geometry. **Requires `Msaa.Off`** on the camera - without it, SSAO silently doesn't activate.
+**SSAO** darkens crevices between nearby geometry. **Requires `Msaa.Off`** on
+the camera. With MSAA enabled, SSAO does not activate and Bevy logs an error
+naming the incompatible `Msaa` value.
 
 ```python
 from pybevy.pbr import ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel, ScreenSpaceReflections
@@ -132,9 +194,32 @@ commands.spawn(
 )
 ```
 
-**SSR** (Screen-Space Reflections) adds real-time reflections on metallic surfaces. Best on `metallic >= 0.9, perceptual_roughness <= 0.1`. Tuning: `min_perceptual_roughness`/`max_perceptual_roughness` take `(start, end)` fade tuples, `edge_fadeout=(x, y)` fades reflections near screen edges:
+**SSR** (Screen-Space Reflections) adds real-time reflections on metallic surfaces. Best on `metallic >= 0.9` with `perceptual_roughness` in `0.12–0.55`. Tuning: `min_perceptual_roughness`/`max_perceptual_roughness` take `(start, end)` fade tuples, `edge_fadeout=(x, y)` fades reflections near screen edges:
+
+**SSR needs deferred rendering, enabled before any material is created.** Insert
+`DefaultOpaqueRendererMethod.deferred()` in `@entrypoint` (a Startup system also
+works, anything before the first frame): inserting it after materials have been
+prepared leaves their pipelines untouched and SSR renders nothing.
+`ScreenSpaceReflections()` adds `DepthPrepass` and `DeferredPrepass` to its
+camera automatically.
+
+Other cameras in an app using deferred rendering must add
+`DepthPrepass()` and `DeferredPrepass()` themselves. Without
+`DeferredPrepass()`, an otherwise valid deferred camera can render only its
+clear colour without reporting a configuration error.
 
 ```python
+from pybevy.pbr import DefaultOpaqueRendererMethod
+
+@entrypoint
+def main(app: App) -> App:
+    return (
+        app.add_plugins(DefaultPlugins)
+        .insert_resource(DefaultOpaqueRendererMethod.deferred())
+        .add_systems(Startup, setup)
+    )
+
+# then in setup():
 commands.spawn(
     Camera3d(),
     Msaa.Off,
@@ -143,27 +228,62 @@ commands.spawn(
 )
 ```
 
+**Do not go below `perceptual_roughness=0.12`.** The default
+`min_perceptual_roughness=(0.08, 0.12)` is a fade-*in*, so a mirror-smooth
+surface at 0.05 receives exactly zero SSR: the flat-mirror instinct produces a
+blank floor. Lower `min_perceptual_roughness` if you truly want a mirror.
+
+Deferred does not support transparency or MSAA, and
+`DefaultOpaqueRendererMethod` is app-global (every camera, every `Auto`
+material), so this is a whole-app decision, not a per-effect one. It also
+silently hides `@material` custom shaders (see `guide://shaders`): keep custom
+shader scenes on forward rendering.
+
+Specular-transmission materials can remain in the same scene, but Bevy renders
+those meshes in a separate transmissive phase rather than into the deferred
+G-buffer. SSR therefore applies to surrounding opaque surfaces, not to the
+transmissive mesh itself, and may show screen-space artifacts along glass edges.
+
 ChromaticAberration, DepthOfField, and MotionBlur are not yet available in PyBevy.
 
 ### Skybox
 
-A cube-map texture rendered as the background. Pair with `EnvironmentMapLight` for reflections that match:
+A cube-map texture rendered as the background. Pair with `EnvironmentMapLight`
+for reflections that match. The source checkout includes Bevy's prefiltered
+Pisa maps at the paths below; wheels omit sample assets, so installed projects
+must supply equivalent files under `assets/` or change the paths.
 
 ```python
 from pybevy.light import EnvironmentMapLight, Skybox
 
+pisa_diffuse = asset_server.load_image(
+    "bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"
+)
+pisa_specular = asset_server.load_image(
+    "bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2"
+)
+
 commands.spawn(
     Camera3d(),
-    Skybox(
-        image=asset_server.load("environment/sky.ktx2"),
-        brightness=1000.0,
-    ),
+    Skybox(image=pisa_specular, brightness=1000.0),
     EnvironmentMapLight(
-        diffuse_map=asset_server.load("environment/diffuse.ktx2"),
-        specular_map=asset_server.load("environment/specular.ktx2"),
+        diffuse_map=pisa_diffuse,
+        specular_map=pisa_specular,
         intensity=1000.0,
     ),
 )
+```
+
+For a procedural image containing six vertically stacked square faces, mark the
+array texture's view as a cubemap before adding it to `Assets[Image]`:
+
+```python
+from pybevy.render import TextureViewDimension
+
+cubemap.reinterpret_stacked_2d_as_array(6)
+cubemap.texture_view_dimension = TextureViewDimension.Cube
+cubemap_handle = images.add(cubemap)
+commands.spawn(Camera3d(), Skybox(image=cubemap_handle, brightness=1000.0))
 ```
 
 Or with atmosphere (no texture needed): use `AtmosphereEnvironmentMapLight` - see `guide://lighting` (Environment Lighting section).
@@ -183,7 +303,9 @@ commands.spawn(Camera3d(), Msaa.Sample4)  # Default - good balance
 | `Msaa.Sample4` | Default - smooth edges |
 | `Msaa.Sample8` | Maximum quality, higher GPU cost |
 
-**Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`. If using those effects, rely on TAA or FXAA instead.
+**Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`.
+PyBevy does not yet expose Bevy's TAA, FXAA, or SMAA components, so there is no
+supported edge-anti-aliasing replacement for these effects yet.
 
 ### RenderLayers
 
@@ -259,6 +381,10 @@ commands.spawn(
 ```
 
 The overlap range (40–50) allows crossfade if dithering is enabled.
+
+`ViewVisibility` is aggregated across every active view, including shadow-map
+views. A visible value therefore does not mean the entity is on screen in a
+particular camera.
 
 ### Full Camera Setup
 
@@ -378,8 +504,8 @@ def camera_follow_path(
 
 ```python
 def transition_camera(
-    query: Query[Mut[Transform], With[Camera3d>],
-    state: Res[CameraState>,
+    query: Query[Mut[Transform], With[Camera3d]],
+    state: Res[CameraState],
     time: Res[Time],
 ) -> None:
     sm = smoothstep((time.elapsed_secs() - state.transition_start) / 2.0)
@@ -407,11 +533,11 @@ See `guide://recipes/demoscene` for a complete example with camera transitioning
 ### Mouse Orbit (Interactive)
 
 ```python
-from pybevy.input import AccumulatedMouseMotion, MouseInput, MouseButton
+from pybevy.input import AccumulatedMouseMotion, ButtonInput, MouseButton
 
 def orbit(
     camera: Single[Mut[Transform], With[Camera3d]],
-    mouse_buttons: Res[MouseInput],
+    mouse_buttons: Res[ButtonInput[MouseButton]],
     mouse_motion: Res[AccumulatedMouseMotion],
 ) -> None:
     delta = Vec2(mouse_motion.delta.x, mouse_motion.delta.y)

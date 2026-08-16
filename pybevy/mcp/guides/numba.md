@@ -103,11 +103,11 @@ def kernel(col):
 **Do NOT:**
 - `np.asarray(col)` - raises RuntimeError
 - `col.to_numpy()` - does not exist on ViewColumn
-- `col[0]` in Python - only works inside Numba JIT
 - Cache ViewColumns in globals - they become stale after the system returns
 
 **Debugging (Python-side):**
-- `col.peek(0)` - read single value (safe, with validity check)
+- `col[0]` or `col.peek(0)` - read one value; both validate the column lifetime
+- `mutable_col[0] = value` - write one value
 - `col.to_list()` - convert to Python list (copies data, for debugging only)
 - `col.is_valid` - check if handle is still alive
 
@@ -137,6 +137,8 @@ def kernel(x, y, z, t, dt):
 ```python
 import math
 import numba
+from dataclasses import dataclass
+
 from pybevy.prelude import *
 from pybevy.ecs import View
 

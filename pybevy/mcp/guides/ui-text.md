@@ -36,15 +36,18 @@ commands.spawn(
 
 ### Font Sizes and Sources
 
-`font_size` accepts a float (pixels) or a `FontSize` unit; `font` accepts a `Handle`, a family-name string, or a `FontSource`:
+`font_size` accepts a float (pixels) or a `FontSize` unit. For portable scenes,
+load a font asset and pass its handle. The official PyBevy build follows Bevy's
+default feature set and does not enable system-font discovery, so family names,
+generic `FontSource` values, `weight`, and `style` do not select installed system
+fonts there. Those selectors are useful only in a custom build with Bevy's
+`system_font_discovery` feature enabled.
 
 ```python
-from pybevy.text import FontSize, FontSource
+from pybevy.text import FontSize
 
 TextFont(font_size=FontSize.Rem(1.5))          # relative to root font size (Px/Vw/Vh/VMin/VMax/Rem)
-TextFont(font="Fira Mono")                      # family by name
-TextFont(font=FontSource.Monospace())           # generic family (Serif, SansSerif, Monospace, ...)
-TextFont(weight=FontWeight.BOLD, style=FontStyle.Italic())  # variable font properties
+TextFont(font=asset_server.load_font("fonts/FiraMono-Medium.ttf"), font_size=24.0)
 ```
 
 ### Letter Spacing
@@ -146,15 +149,21 @@ def update_score_display(
 
 ## Text Input (EditableText)
 
-`EditableText` turns a UI node into a text input field. Typing, cursor movement, selection, and clipboard are handled by the engine; click the field to focus it. There is no built-in submit event: read `.value` from a system (poll it, or check it when the user presses Enter via `ButtonInput[KeyCode]`).
+`EditableText` turns a UI node into a text input field. Typing, cursor movement,
+selection, and clipboard are handled by the engine; click the field to focus it.
+There is no built-in submit event: read `.value` from a system, then call
+`.clear()` through a mutable query to reset the field.
 
 ```python
 from pybevy.text import EditableText
 
 # In setup:
+node = Node()          # Node() takes no keyword arguments; set fields after
+node.width = 320.0     # bare floats are pixels
+node.height = 40.0
 commands.spawn(
     EditableText("type here", max_characters=64),
-    Node(width=320.0, height=40.0),
+    node,
     TextFont.from_font_size(24.0),
     BackgroundColor(Color.srgb(0.15, 0.15, 0.2)),
 )
@@ -197,7 +206,7 @@ def fade_text(
 **Only use `Text2d` in scenes with `Camera2d`.** It will not render with `Camera3d`. For 3D scenes, use UI `Text` + `Node` (see above).
 
 ```python
-from pybevy.text import Text2d, TextFont, TextColor
+from pybevy.text import Text2d, TextBounds, TextFont, TextColor
 
 # ONLY works with Camera2d - do NOT use in 3D scenes
 commands.spawn(
@@ -207,6 +216,12 @@ commands.spawn(
     Transform.from_xyz(0.0, 200.0, 0.0),
 )
 ```
+
+For long world-space strings, provide an explicit `TextBounds(width=...)` to
+control wrapping. In Bevy 0.19, the camera target still clips rendered text and
+`TextBounds.height` does not truncate laid-out lines. Use width, explicit line
+breaks, or UI `Text` when content must remain fully visible within a screen
+region.
 
 ## Node Layout Quick Reference
 

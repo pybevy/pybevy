@@ -19,6 +19,8 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
+    commands.insert_resource(ClearColor(Color.srgb(0.5, 0.55, 0.6)))
+
     # Camera with fog
     commands.spawn(
         Camera3d(),
@@ -76,6 +78,7 @@ if __name__ == "__main__":
 ## Key points
 
 - **DistanceFog** is a camera component - spawn it on the same entity as `Camera3d`
+- Match `ClearColor` to the fog color so distant geometry blends into the background
 - **FogFalloff.Exponential(density)** - 0.002 subtle haze, 0.005 moderate, 0.04 thick
 - **directional_light_color/exponent** creates god-ray effect through fog
 - Lower sun **illuminance** (3000–5000) works better with fog than full 10000

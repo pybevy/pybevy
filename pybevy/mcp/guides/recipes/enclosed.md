@@ -25,7 +25,7 @@ def setup(
     # Low bloom for enclosed spaces - high bloom blows out emissive objects
     commands.spawn(
         Camera3d(),
-        Transform.from_xyz(8, 6, 8).looking_at(Vec3(0, 1.5, 0), Vec3.Y),
+        Transform.from_xyz(0.0, 2.5, 4.5).looking_at(Vec3(0.0, 2.0, -6.0), Vec3.Y),
         Bloom(intensity=0.08, low_frequency_boost=0.2),
         # Light fog - keep density LOW indoors (0.003–0.005)
         DistanceFog(
@@ -94,12 +94,11 @@ def setup(
                    Transform.from_xyz(-HALF_W, WALL_H / 2, 0), Name("wall_w"))
 
     # Accent emissive object
-    # With unlit=True, base_color IS the visible surface - set it BRIGHT
+    # Leave the material lit: unlit=True would discard emissive and kill the bloom
     glow_mesh = meshes.add(Sphere(0.5).mesh().ico(4))
     glow_mat = materials.add(StandardMaterial(
-        base_color=Color.srgb(0.6, 0.2, 0.9),      # Visible bright purple
+        base_color=Color.srgb(0.14, 0.05, 0.22),    # Dark surface under the glow
         emissive=LinearRgba.rgb(10.0, 2.0, 16.0),   # Bloom halo
-        unlit=True,
     ))
     commands.spawn(
         Mesh3d(glow_mesh), MeshMaterial3d(glow_mat),
@@ -151,6 +150,7 @@ if __name__ == "__main__":
 ## Common mistakes in enclosed scenes
 
 1. **Too dark** - The #1 issue. Enclosed spaces have no sky/sun contribution. Start with ambient 500, 4+ point lights at 200k+, and material base_colors above 0.15. Brighten first, dim later.
-2. **Emissive objects invisible** - With `unlit=True`, a dark `base_color` makes the mesh a silhouette. Set `base_color` to the bright version of your glow color (e.g., `0.6, 0.2, 0.9` for purple glow).
+2. **Emissive objects do not glow** - `unlit=True` makes Bevy output `base_color` alone and never read `emissive`, so the mesh cannot bloom at any emissive value. Drop `unlit` and keep `base_color` dark. See `guide://lighting` (Emissive Materials).
 3. **Bloom blowout** - Emissive objects are close to the camera indoors. Use bloom intensity 0.05–0.12 and emissive values 3–15. Thin meshes (torus, thin cylinders) bloom into blobs faster than solid shapes.
 4. **Fog too thick** - Walls are only 10–15 units away. Density above 0.005 makes everything hazy. Start at 0.003.
+5. **Camera outside the room** - Keep the camera inside the sealed volume. An exterior camera aimed through an opaque wall only sees the room's dark outer surface.

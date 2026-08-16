@@ -20,8 +20,9 @@ For paste-ready lighting recipes by scene type (outdoor, interior, cave, industr
 **Never set base_color below 0.08** - it's indistinguishable from black.
 
 **Fog density is scale-dependent:** the DistanceFog maxima above assume long outdoor
-sightlines (100m+). For enclosed spaces ~50m across, `FogFalloff.Exponential(0.01-0.03)`
-is fine; judge by whether the far wall still reads, not by the number.
+sightlines (100m+). For enclosed spaces ~50m across, choose a density in the
+0.01-0.03 range (for example, `FogFalloff.Exponential(0.02)`); judge by
+whether the far wall still reads, not by the number.
 
 **Dark/moody exceptions:** For intentionally dark scenes (galleries, space, underwater), ambient can go as low as 100 if emissive sources provide sufficient readability. The key test: can you distinguish midground subjects from background?
 
@@ -208,31 +209,42 @@ mesh.insert_indices(indices)
 See `examples/unsorted/procedural_terrain_visual.py` for a complete example.
 
 ### Procedural Textures (No More Flat Colors)
-Generate pixel data with `Image.new_fill()`:
+Build the pixel buffer, then hand it to `Image(...)`:
 ```python
 import numpy as np
+from pybevy.render import Extent3d
 
 pixels = np.zeros((256, 256, 4), dtype=np.uint8)
 # Fill with noise/pattern...
-texture = Image.new_fill(width=256, height=256, pixel=list(pixels.flatten()),
-    format=TextureFormat.Rgba8UnormSrgb, asset_usage=RenderAssetUsages.all())
+texture = Image(Extent3d(256, 256, 1), data=pixels)
 mat = StandardMaterial(base_color_texture=images.add(texture))
 ```
+`data` takes the natural `(height, width, bytes_per_pixel)` uint8 shape;
+`format` defaults to `Rgba8UnormSrgb`.
+
+`Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])` repeats a *single* pixel
+across the whole texture: solid colours only.
+
+Single-channel formats are 1 byte per pixel: shape `(h, w, 1)` for `R8Unorm`.
 
 ### Vertex Colors (Gradient a Single Mesh)
 ```python
 wall = Cuboid(4.0, 3.0, 0.3).mesh().build()
-positions = wall.attribute(Mesh.ATTRIBUTE_POSITION)  # bounded array, shape (N, 3)
-n = positions.shape[0]
-colors = np.zeros((n, 4), dtype=np.float32)
-for i in range(n):
-    y_norm = (positions[i, 1] + 1.5) / 3.0
-    colors[i] = [0.4 + 0.4 * y_norm, 0.35 + 0.35 * y_norm, 0.3 + 0.2 * y_norm, 1.0]
+positions = wall.positions().to_numpy()
+y_norm = (positions[:, 1] + 1.5) / 3.0
+colors = np.column_stack((
+    0.4 + 0.4 * y_norm,
+    0.35 + 0.35 * y_norm,
+    0.3 + 0.2 * y_norm,
+    np.ones_like(y_norm),
+)).astype(np.float32)
 wall.insert_attribute(Mesh.ATTRIBUTE_COLOR, colors)
 ```
 
 ### Texture Tiling / UV Control
 ```python
+from pybevy.math import Affine2
+
 StandardMaterial(
     base_color_texture=texture,
     uv_transform=Affine2.from_scale(Vec2(4.0, 4.0)),  # Tile 4x
@@ -243,13 +255,18 @@ Manual UV manipulation: `mesh.uvs_mut()` returns a numpy-compatible context mana
 ### Irregular Rocks (Not Just Spheres)
 ```python
 rock = Sphere(1.0).mesh().ico(3)
-with rock.positions_mut() as positions:
-    for i in range(len(positions)):
-        length = np.sqrt(np.sum(positions[i] ** 2))
-        if length > 0:
-            normal = positions[i] / length
-            displacement = math.sin(positions[i][0] * 3.0) * 0.15 + math.cos(positions[i][1] * 5.0) * 0.1
-            positions[i] += normal * displacement
+positions = rock.positions().to_numpy()
+lengths = np.linalg.norm(positions, axis=1)
+nonzero = lengths > 0
+displacement = (
+    np.sin(positions[:, 0] * 3.0) * 0.15
+    + np.cos(positions[:, 1] * 5.0) * 0.1
+)
+positions[nonzero] += (
+    positions[nonzero]
+    * (displacement[nonzero] / lengths[nonzero])[:, None]
+)
+rock.set_positions(positions)
 ```
 
 ### Soft Shadows
@@ -260,9 +277,9 @@ commands.spawn(Camera3d(), ShadowFilteringMethod.TEMPORAL)  # or .GAUSSIAN
 ### Water / Glass Materials
 ```python
 water = StandardMaterial(
-    base_color=Color.linear_rgba(0.1, 0.3, 0.5, 0.8),
+    base_color=Color.linear_rgb(0.1, 0.3, 0.5),
     specular_transmission=0.6, ior=1.33,
-    perceptual_roughness=0.1, alpha_mode=AlphaMode.Blend(),
+    perceptual_roughness=0.1, alpha_mode=AlphaMode.Opaque(),
 )
 ```
 
@@ -278,7 +295,7 @@ StandardMaterial(
 ### Decals
 ```python
 commands.spawn(
-    ClusteredDecal(base_color_texture=asset_server.load("textures/moss.png")),
+    ClusteredDecal(base_color_texture=asset_server.load_image("textures/moss.png")),
     Transform.from_xyz(0.0, 0.01, 0.0),
 )
 ```
@@ -305,5 +322,4 @@ These genuinely don't exist in PyBevy:
 |---------|----------------|
 | Trail / ribbon renderer | Chain of small meshes updated per frame |
 | 3D billboard component | Orient quads toward camera in Update system |
-| Gizmos / debug lines | Use MCP `capture_screenshot {"gizmos": true}` for labels |
 | GPU instancing | Individual entities with Python loop variation |

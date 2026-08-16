@@ -24,7 +24,7 @@ set_time_scale {"scale": 2.0}  - Fast-forward (2x speed)
 get_time_status      - Check paused state, speed, elapsed time
 ```
 
-**Key:** Pausing freezes `Time<Virtual>` which controls game logic. Rendering continues so you can still take screenshots of the frozen scene.
+**Key:** Pausing freezes `Time[Virtual]` which controls game logic. Rendering continues so you can still take screenshots of the frozen scene.
 
 **Tip:** You can combine pause and scale - e.g., `pause_time`, then `set_time_scale {"scale": 1.0}` to reset speed while paused, then `resume_time` to continue at the new speed.
 
@@ -69,27 +69,83 @@ get_component_schema {"name": "PointLight"}
 Partial updates - only specify fields to change:
 ```
 set_component {
-    "name": "warm_light",
+    "entity": "warm_light",
     "component": "PointLight",
     "fields": {"intensity": 2000, "shadow_maps_enabled": true}
 }
 ```
+
+If the component is absent and supports insertion, `set_component` inserts it.
+
+Non-finite float fields use the JSON strings `"NaN"`, `"Infinity"`, and
+`"-Infinity"`. Values returned by `get_component` can be passed back to
+`set_component` unchanged.
+
+A request that applies nothing fails with 400 rather than reporting success:
+a rejected field value, or a spawn whose components could not be built, is an
+error status, not a 200 with an `errors` array to notice. Field values are
+converted before any are written, so a bad value leaves the component
+untouched. A 200 carrying `errors` therefore means a later write failed after
+earlier ones landed; `new_values` reports exactly what was applied.
+
+Enum-backed components expose a synthetic `variant` field. Read the current
+value with `get_component`, then replace it by name:
+
+```
+set_component {
+    "entity": "player",
+    "component": "Visibility",
+    "fields": {"variant": "Hidden"}
+}
+```
+
+## Parent-Child Hierarchies
+
+The hierarchy is two ordinary components. `ChildOf` carries the parent id in
+`value`, and `Children` lists the members in `items`.
+
+```
+get_component {"entity": "turret", "component": "ChildOf"}
+    -> {"fields": {"value": 4294967245}}
+get_component {"entity": "tank", "component": "Children"}
+    -> {"fields": {"items": [4294967245, 4294967246]}}
+```
+
+Attach or reparent by setting `ChildOf`, and detach with `remove_component`:
+
+```
+set_component {
+    "entity": "turret",
+    "component": "ChildOf",
+    "fields": {"value": 4294967244}
+}
+```
+
+Bevy's relationship hooks maintain `Children` on both the old and the new
+parent, so one call moves both ends. `Children` itself is read-only: it reports
+`editable: false` and is maintained from the `ChildOf` side.
+
+An empty `Children` is removed rather than left empty, so `get_component` on a
+parent with no children returns 404 instead of an empty list.
+
+Resource entities cannot take part in a hierarchy. Bevy despawns children with
+their parent, so allowing it would let an unrelated despawn discard a resource.
 
 ## Spatial Verification
 
 Check positions, distances, and overlaps between entities without needing screenshots:
 
 ```
-query_spatial {"name_a": "table", "name_b": "chair"}
+query_spatial {"entity_a": "table", "entity_b": "chair"}
 → Distance, direction, AABB overlap/gap between two entities
 
-query_spatial {"name": "player", "radius": 5.0}
+query_spatial_neighborhood {"entity": "player", "radius": 5.0}
 → Find all entities within 5 units of the player
 
-check_overlaps {"name": "lamp"}
+check_overlaps {"entity": "lamp"}
 → Check what overlaps with the lamp, detect if it's floating
 
-check_overlaps {}
+check_all_overlaps {}
 → Scene-wide overlap scan: find all clipping pairs + floating entities
 ```
 
@@ -97,7 +153,7 @@ check_overlaps {}
 
 **Bounding boxes** for individual entity measurements:
 ```
-get_bounding_box {"name": "table"}
+get_bounding_box {"entity": "table"}
 → Local + world-space AABB (center, min, max, size)
 ```
 
@@ -106,7 +162,7 @@ get_bounding_box {"name": "table"}
 Use `get_type_definition(type_name="StandardMaterial")` to see all available fields and defaults.
 
 ```
-set_asset {"name": "table", "component": "MeshMaterial3d",
+set_asset {"entity": "table", "component": "MeshMaterial3d",
     "asset_type": "StandardMaterial", "fields": {"base_color": [1,0,0,1]}}
 ```
 
@@ -118,7 +174,7 @@ query_entities {"with": ["Camera3d", "Transform"]}
 → Get camera entity ID
 
 set_component {
-    "entity_id": <camera_id>,
+    "entity": <camera_id>,
     "component": "Transform",
     "fields": {"translation": [10, 8, 10]}
 }
@@ -130,8 +186,54 @@ set_component {
 capture_screenshot                              - Standard capture (768px wide)
 capture_screenshot {"max_width": 1280}          - Higher resolution
 capture_screenshot {"delay_frames": 5}          - Wait 5 frames first
-capture_screenshot {"gizmos": true}             - With entity ID/Name overlays
+capture_screenshot {"gizmos": true}             - Include gizmos
+capture_screenshot {"entity": "Robot"}          - Isolate one entity subtree
+capture_timeline {"hide_ui": false, "gizmos": true} - Keep authored UI and gizmos
 ```
+
+Draw debug lines from regular systems with the `Gizmos` system parameter:
+
+```python
+from pybevy.prelude import Color, Gizmos, Vec3
+
+def draw_axes(gizmos: Gizmos) -> None:
+    gizmos.ray(Vec3.ZERO, Vec3.X, Color.srgb(1.0, 0.0, 0.0))
+    gizmos.ray(Vec3.ZERO, Vec3.Y, Color.srgb(0.0, 1.0, 0.0))
+```
+
+Add `ShowAabbGizmo()` to one entity to visualize its bounding box. Add
+`ShowLightGizmo()` to a light entity; pass `LightGizmoColor.Manual(color)` or
+another `LightGizmoColor` strategy when the default light color is unsuitable.
+See `guide://gizmos` for the complete drawing API and setup requirements.
+
+Successful screenshots include a `frame_id` in their metadata. Use numeric
+analysis when an image is unnecessary:
+
+```
+capture_stats {"grid": 4, "sample_points": [[384, 384]]}
+capture_stats {"entity": "Robot", "grid": 4}
+compare_frames {"a": "<first frame_id>", "b": "<second frame_id>"}
+```
+
+Passing `entity` isolates that entity and its descendants while retaining the
+active camera, lights, probes, and the camera clear color. Statistics therefore
+describe the isolated render, including its background; they are not a
+segmentation mask over only the entity's covered pixels.
+
+`capture_stats` downsamples in linear light, then reports display-sRGB channel
+means and linear-light luma statistics, a 16-bucket luma histogram, row-major
+grid cells, and requested pixel samples. `region` and `sample_points` use pixels
+in the resized capture; `max_width` therefore affects their coordinate space.
+`health_hints` are heuristics, not render errors.
+
+`compare_frames` reports normalized channel differences, changed pixels as a
+percentage from 0 to 100, and the changed bounding box and centroid. Its
+`identical` field is true when no pixel exceeds `epsilon`. It requires frames
+with equal dimensions. Captures are retained in memory for comparison with a
+default limit of eight frames and 32 MiB; old IDs may be evicted.
+Pause deterministic scenes for A/B captures. Animation, temporal antialiasing,
+auto exposure, particles, and dithering may produce legitimate differences;
+use a nonzero `epsilon` when those effects cannot be disabled.
 
 ### One-Shot Edit-and-Verify
 
@@ -140,7 +242,7 @@ Use `reload_and_capture` to reload + check errors + screenshot in a single round
 reload_and_capture {"mode": "full", "pause": true}
 → Returns: {reload: {status, errors}, screenshot: <base64>, entity_count}
 ```
-This replaces the 3-step `reload` → `get_logs` → `capture_screenshot` workflow.
+This replaces the 3-step `reload` → `get_last_error` → `capture_screenshot` workflow.
 
 ### Multi-Angle Inspection
 
@@ -162,6 +264,10 @@ Use `capture_depth` to get distance measurements from camera to entities:
 capture_depth {"position": [5, 5, 5], "look_at": [0, 0, 0], "grid_density": 8}
 → RGB screenshot + 64 ray-AABB depth samples with hit entity IDs and world positions
 ```
+
+Auto-grid samples report `grid: [column, row]` with
+`coordinate_space: "grid_indices"`. When `sample_points` is provided, samples
+instead report `pixel: [x, y]` with `coordinate_space: "pixels_800x800"`.
 
 ## Batched Schedules
 
@@ -188,7 +294,7 @@ schedule_actions {"actions": [
 Mutate an entity and capture in the same batch - no intermediate frames:
 ```
 schedule_actions {"actions": [
-    {"tool": "set_component", "args": {"name": "sun", "component": "PointLight", "fields": {"intensity": 5000}}},
+    {"tool": "set_component", "args": {"entity": "sun", "component": "PointLight", "fields": {"intensity": 5000}}},
     {"tool": "capture_screenshot", "label": "after_edit"}
 ]}
 ```
@@ -211,7 +317,7 @@ schedule_actions {"actions": [
 
 ```
 schedule_actions {"stop_on_error": true, "actions": [
-    {"tool": "set_component", "args": {"name": "player", "component": "Transform", "fields": {"translation": [0, 5, 0]}}, "label": "move"},
+    {"tool": "set_component", "args": {"entity": "player", "component": "Transform", "fields": {"translation": [0, 5, 0]}}, "label": "move"},
     {"tool": "capture_screenshot", "label": "verify", "skip_if_error": "move"}
 ]}
 ```
@@ -227,9 +333,19 @@ get_schedule_result {"schedule_id": "schedule-0"}
 → {"status": "completed", "results": [...]}
 ```
 
+`completed_actions` counts all terminal results, including actions that were
+skipped, aborted by `stop_on_error`, or cancelled. Use `executed_actions`,
+`skipped_actions`, `aborted_actions`, and `cancelled_actions` for the explicit
+breakdown; an executed action may itself have an `error` or `partial` result.
+
 ### What Can Be Scheduled
 
-All engine-side tools work: `pause_time`, `resume_time`, `seek_time`, `set_time_scale`, `capture_screenshot`, `capture_turnaround`, `capture_depth`, `capture_timeline`, `set_component`, `remove_component`, `spawn_entity`, `despawn_entity`, `query_entities`, `get_scene_summary`, `query_spatial`, `check_overlaps`, `get_bounding_box`, `get_component`, `set_resource`, `remove_resource`, `run_code`, `batch`, `set_asset`, `get_performance`, `get_time_status`.
+Engine-side tools can be scheduled, including:
+
+- Capture and comparison: `capture_screenshot`, `capture_stats`, `compare_frames`, `capture_turnaround`, `capture_depth`, `capture_timeline`
+- Time control: `pause_time`, `resume_time`, `seek_time`, `set_time_scale`, `get_time_status`
+- Scene inspection: `query_entities`, `get_scene_summary`, `query_spatial`, `query_spatial_neighborhood`, `check_overlaps`, `check_all_overlaps`, `get_bounding_box`, `get_component`, `get_component_schema`, `get_registry`, `get_last_error`, `get_performance`, `get_reload_status`
+- Mutation and code: `set_component`, `remove_component`, `spawn_entity`, `despawn_entity`, `set_resource`, `remove_resource`, `set_asset`, `batch`, `run_code`
 
 **Not schedulable**: `get_logs`, `search_api`, `get_type_definition`, `run_scene`, `get_started` (bridge-local), and `reload`, `reload_and_capture` (the schedule blocks the same frame loop the reload needs to drop and re-enter).
 
@@ -255,7 +371,7 @@ Why this matters:
 1. pause_time                                    - Freeze scene
 2. resources/read scene://entities               - See all entities
 3. query_entities {"with": ["PointLight"]}        - Find lights
-4. set_component {"name": "sun", ...}             - Adjust light
+4. set_component {"entity": "sun", ...}           - Adjust light
 5. spawn_entity {"components": {...}}             - Add new object
 6. capture_screenshot                             - Check result
 7. resume_time                                    - Unpause
@@ -270,13 +386,16 @@ Use `schedule_actions` to seek to an exact time and inspect deterministically:
 schedule_actions {"actions": [
     {"tool": "pause_time"},
     {"tool": "seek_time", "args": {"seconds": 2.5}},
-    {"tool": "run_code", "args": {"code": "def inspect(query: Query[tuple[Transform, Name]], time: Res[Time]):\n  t = time.elapsed_secs()\n  for tr, name in query:\n    print(f'{name}: y={tr.translation.y:.3f} at t={t:.2f}')\nworld.run_system_once(inspect)"}},
+    {"tool": "run_code", "args": {"code": "from pybevy.prelude import Name, Query, Time, Transform\nt = world.resource(Time).elapsed_secs()\nfor tr, name in world.query(Query[tuple[Transform, Name]]):\n  print(f'{name}: y={tr.translation.y:.3f} at t={t:.2f}')"}},
     {"tool": "capture_screenshot", "label": "at_2.5s"},
     {"tool": "resume_time"}
 ]}
 ```
 
-Then call `get_logs()` to read the printed values.
+Read the `stdout` field in the `run_code` action result returned by
+`schedule_actions`. Direct scene and system `print()` output is available from
+the MCP `get_logs` tool, but `run_code` captures its own stdout and returns it
+inline.
 
 **Multi-time comparison** - seek to different times and capture each:
 
@@ -294,6 +413,9 @@ schedule_actions {"actions": [
 ```
 
 This lets you confirm animations produce correct values at specific moments without timing drift between tool calls.
+`seek_time` changes absolute virtual elapsed time; it does not simulate the
+intervening frames. Systems that build state by accumulating `delta_secs()` do
+not jump to the requested moment.
 
 ## Field Value Formats (MCP JSON)
 
@@ -323,14 +445,14 @@ spawn_entity {"components": {
 }}
 
 # Update light intensity
-set_component {"name": "my_light", "component": "PointLight", "fields": {"intensity": 8000.0}}
+set_component {"entity": "my_light", "component": "PointLight", "fields": {"intensity": 8000.0}}
 
 # Set camera viewport (Option<Viewport> - omit depth for defaults)
-set_component {"name": "my_camera", "component": "Camera",
+set_component {"entity": "my_camera", "component": "Camera",
     "fields": {"viewport": {"physical_position": [700, 0], "physical_size": [580, 720]}}}
 
 # Clear an optional field
-set_component {"name": "my_camera", "component": "Camera", "fields": {"viewport": null}}
+set_component {"entity": "my_camera", "component": "Camera", "fields": {"viewport": null}}
 ```
 
 **Note:** `Name` is passed as a bare string, not `{"name": "..."}`. Color is `[r, g, b, a]`.
@@ -342,11 +464,19 @@ When running with `McpPlugin`, AI agents can inspect and manipulate the scene at
 ```
 query_entities {"with": ["Transform", "PointLight"]}
 resources/read scene://entity/MainCamera
-set_component {"name": "sun", "component": "PointLight", "fields": {"intensity": 2000}}
-spawn_entity {"components": {"Transform": {"translation": [0, 1, 0]}, "Player": {"player_id": 1, "health": 100.0}}}
+set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity": 2000}}
+spawn_entity {"components": {"Transform": {"translation": [0, 1, 0]}, "Name": "player"}}
 ```
 
 ## run_code Tips
+
+`run_code` injects `world`, plus unambiguous custom component and resource types
+registered by the scene. It does **not** automatically import PyBevy's built-in
+types. Import every built-in used by the snippet from its public module (the
+prelude is usually the shortest option):
+```
+run_code {"code": "from pybevy.prelude import Name, Query, Transform\nfor transform, name in world.query(Query[tuple[Transform, Name]]):\n  print(name, transform.translation)"}
+```
 
 To access custom scene types inside `run_code`, import the scene module by filename:
 ```
@@ -356,18 +486,24 @@ The scene's module is importable by its filename stem, not via `__main__`.
 
 `entity_id` from `query_entities` (and other MCP responses) is a raw `u64`. To use it inside `run_code`, convert with `Entity.from_bits` first:
 ```
-run_code {"code": "e = Entity.from_bits(123456); print(world.entity(e))"}
+run_code {"code": "from pybevy.prelude import Entity\ne = Entity.from_bits(123456)\nprint(world.entity(e))"}
 ```
 `world.entity(int)` is intentionally rejected to mirror Bevy's typed API: raw bits encode generation+index, and silent acceptance risks aliasing recycled entities.
 
-**Note:** `run_code` with `world.run_system_once()` queries against the live world state. Prior MCP mutations (spawn, set_component) are automatically flushed before the system runs, so queries should see all entities.
+Use `world.query(Query[...])` for ad-hoc access to live component data. It
+supports the same tuple, `Mut`, and filter syntax as a system query. Prior MCP
+mutations are flushed before `run_code`, so the query sees the current world.
 
-**Messages cannot be registered from `run_code`.** `World` exposes `register_resource` and `register_component`, but there is no `world.register_message()`; `app.add_message(MyMessage)` creates the App-local channel identity and scheduler metadata. To add a new message type, edit the scene's `@entrypoint` and reload. See `guide://patterns` (Messages section) for details.
+**Messages cannot be registered from `run_code`.** `World` exposes `register_resource` and `register_component`, but there is no `world.register_message()`; `app.add_message(MyMessage)` creates the App-local channel identity and scheduler metadata. To add a new message type, edit the scene's `@entrypoint` and reload. Once registered, write a message from `run_code` with `world.write_message(MyMessage(...))`. See `guide://patterns` (Messages section) for details.
 
 ## Troubleshooting
 
 - **Entity not found**: IDs change after full reload. Use `Name` or re-query.
 - **Component not on entity**: Use `scene://entity/{id}` to see what components exist.
-- **Field update fails**: Check field name/type with `get_component_schema`. Use `get_component_schema` to check the `editable` flag - some components (like `Text`) require code-side updates rather than MCP field mutation.
+- **Field update fails**: Check the field name, type, and `editable` flag with
+  `get_component_schema`. Components marked `editable: false` require a
+  code-side update; `Text` and `Text2d` expose editable content fields.
 - **Screenshot blank**: Wait more frames with `delay_frames` parameter.
-- **Entity counts differ**: `get_scene_summary` counts user-visible entities only. `get_performance` reports the full ECS entity count including render internals, so the two numbers will differ.
+- **Entity counts differ between calls**: `get_scene_summary` and
+  `get_performance` use the same live scene-entity count and exclude resource
+  entities. A difference means the scene changed between the two calls.

@@ -123,7 +123,13 @@ commands.spawn(
 )
 ```
 
+**Hard limit of 8 per view.** Bevy uploads at most 8 rect lights and silently drops the rest (it warns once at startup). They are not clustered, so this is a whole-scene budget: with 40 rect lights only 8 render, and raising `intensity` does nothing because the others were never uploaded.
+
+**Budget them as hero sources** and use `PointLight` for everything else. Good spends: a window or doorway, a large screen, a wall wash, or a few big overhead soft-boxes that replace flat ambient light. Bad spend: one per lamp, monitor, or prop.
+
 **No shadow maps:** objects lit by a RectLight do not cast shadows from it (upstream limitation). Pair it with a dim shadow-casting light if you need grounding shadows.
+
+**Intensity scales with area.** `intensity` is total luminous power spread over `width * height`, so widening a panel dims it. A 20x26 ceiling soft-box needs roughly 400k lumens to match a 200k point light at the same height, so scale from the light you are replacing rather than from the panel's size.
 
 ### Ambient Light
 
@@ -136,8 +142,8 @@ commands.insert_resource(GlobalAmbientLight(
     color=Color.srgb(0.6, 0.65, 0.85),  # Cool blue-ish fill
 ))
 
-# AmbientLight (older alternative)
-commands.insert_resource(AmbientLight(color=Color.WHITE, brightness=200.0))
+# AmbientLight (component): overrides the global value for one camera
+commands.spawn(Camera3d(), AmbientLight(color=Color.WHITE, brightness=200.0))
 ```
 
 **Brightness 100–300** is typical for outdoor scenes. **Indoor/cave scenes need 500+** since there's no sky bounce. Higher values wash out shadows - but invisible scenes are worse than washed-out ones. Start bright, dim later.
@@ -209,9 +215,10 @@ commands.spawn(
 `Atmosphere` renders a physically-based sky dome with scattering. It describes a planet: spawn it on its **own entity** (its `GlobalTransform` is the planet center; left at default it lands `inner_radius` below the origin, putting your scene on the surface). Cameras opt in with **`AtmosphereSettings()`**; the nearest Atmosphere is used. Without `AtmosphereSettings` on the camera the sky silently does not render (gray clear color, no errors, no warnings).
 
 ```python
-from pybevy.light import ScatteringMedium, Atmosphere
+from pybevy.light import Atmosphere, PhaseFunction, ScatteringMedium, ScatteringTerm
 from pybevy.pbr import AtmosphereSettings
 
+# In a system taking mediums: ResMut[Assets[ScatteringMedium]]
 medium_handle = mediums.add(ScatteringMedium.earth())
 commands.spawn(Atmosphere.earth(medium_handle))  # the planet: its own entity
 
@@ -221,6 +228,24 @@ commands.spawn(
     AtmosphereSettings(),
 )
 ```
+
+Inside a system with `mediums: ResMut[Assets[ScatteringMedium]]`, terms can be
+edited in place. The typed sequence and its elements stay connected to the
+stored asset:
+
+```python
+medium = mediums.get_mut(medium_handle)
+if medium is not None:
+    medium.terms[0].absorption.x = 1e-6
+    medium.terms.append(ScatteringTerm(phase=PhaseFunction.Isotropic()))
+```
+
+Atmospheric falloff mirrors Bevy's enum variants: use `Falloff.Linear()`,
+`Falloff.Exponential(scale)`, or `Falloff.Tent(center, width)`. Bevy's custom
+`Curve` variant stores a Rust callback and cannot be constructed from Python.
+
+An element kept across an insertion continues to address its numeric index.
+Do not keep asset wrappers after the system call ends.
 
 Putting `Atmosphere` on the camera entity also renders, but then the planet center follows the camera (altitude never changes); prefer the separate entity, as in Bevy's own examples.
 
@@ -243,9 +268,8 @@ from pybevy.color import LinearRgba
 
 # Glowing flame
 flame_mat = materials.add(StandardMaterial(
-    base_color=Color.srgb(1.0, 0.6, 0.1),
+    base_color=Color.srgb(0.30, 0.16, 0.04),
     emissive=LinearRgba.rgb(8.0, 4.0, 0.8),  # HDR values > 1.0 for bloom
-    unlit=True,  # Not affected by scene lighting
 ))
 
 # Glowing window
@@ -257,15 +281,20 @@ window_mat = materials.add(StandardMaterial(
 
 **Emissive values:** 1.0–5.0 for subtle glow, 5.0–50.0 for bright glow, 100+ for intense bloom. Requires `Bloom` on the camera to be visible.
 
-**`unlit=True` gotcha:** With `unlit=True`, `base_color` is the **visible surface color** - it's what you actually see on the mesh. `emissive` only adds the bloom halo around it. If `base_color` is dark (e.g., `0.02, 0.0, 0.04`), the object will appear as a dark silhouette with a glow halo. **Set `base_color` bright** to make the object itself visible:
+**`unlit=True` ignores `emissive`.** An unlit material outputs `base_color` alone, so put the glow colour there instead. `base_color` accepts HDR values and blooms just like `emissive`:
 
 ```python
-# ❌ Dark pillar with bloom halo - looks like a silhouette
-StandardMaterial(base_color=Color.srgb(0.02, 0.0, 0.04), emissive=LinearRgba.rgb(18.0, 3.0, 40.0), unlit=True)
+# ❌ Renders plain white: emissive is ignored under unlit
+StandardMaterial(emissive=LinearRgba.rgb(12.0, 3.0, 20.0), unlit=True)
 
-# ✅ Bright visible pillar with bloom halo
-StandardMaterial(base_color=Color.srgb(0.6, 0.2, 0.9), emissive=LinearRgba.rgb(12.0, 3.0, 20.0), unlit=True)
+# ✅ Lit surface with glow: dark base_color, HDR emissive
+StandardMaterial(base_color=Color.srgb(0.14, 0.05, 0.22), emissive=LinearRgba.rgb(12.0, 3.0, 20.0))
+
+# ✅ Unlit glow, cheapest since it skips all lighting: HDR base_color
+StandardMaterial(base_color=Color.linear_rgb(12.0, 3.0, 20.0), unlit=True)
 ```
+
+Use the lit form for glowing surfaces that still need shading (lava crust, a lit-room screen); keep its `base_color` dark, a bright one washes the glow out. Use the unlit form for pure light effects: particles, beams, additive VFX with `AlphaMode.Add()`.
 
 **Bloom + emissive pairing:** High emissive values with high bloom intensity will blow out small meshes into shapeless blobs. Use this as a starting guide:
 
@@ -318,7 +347,7 @@ glass = materials.add(StandardMaterial(
 
 # Cutout (foliage)
 leaf = materials.add(StandardMaterial(
-    base_color_texture=asset_server.load("leaf.png"),
+    base_color_texture=asset_server.load_image("leaf.png"),
     alpha_mode=AlphaMode.Mask(0.5),
 ))
 
@@ -470,7 +499,7 @@ commands.spawn(
         ambient_color=Color.srgb(0.05, 0.05, 0.08),
         ambient_intensity=0.1,
         step_count=64,
-        jitter=1.0,        # Reduces banding, best with TAA
+        jitter=1.0,        # Reduces banding; can shimmer without temporal AA
     ),
 )
 
@@ -498,6 +527,10 @@ commands.spawn(
 ```
 
 The `Transform` scale controls the volume size. See `guide://recipes/volumetric` for a complete scene.
+
+The volume is a hard-edged box with no falloff, so its boundary draws a visible seam
+wherever it crosses the frame: size ground mist wider than the visible floor. A volume
+that contains the camera applies to the entire frame at once.
 
 **FogVolume parameter reference:**
 
@@ -556,15 +589,18 @@ commands.spawn(
 ## Light Cookies
 
 Project a texture pattern through a light - for window shadows, stained glass, gobos.
+The filenames below are placeholders for project-owned textures; they are not
+bundled with PyBevy.
 
 ```python
+from pybevy.camera import CubemapLayout
 from pybevy.light import DirectionalLightTexture, SpotLightTexture, PointLightTexture
 
 # Directional light with a projected pattern (e.g., window frame shadow)
 commands.spawn(
     DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
     DirectionalLightTexture(
-        image=asset_server.load("textures/window_cookie.png"),
+        image=asset_server.load_image("textures/window_cookie.png"),
         tiled=False,
     ),
     Transform.from_rotation(Quat.from_euler(EulerRot.XYZ, -0.8, 0.4, 0.0)),
@@ -573,8 +609,18 @@ commands.spawn(
 # Spot light with gobo texture
 commands.spawn(
     SpotLight(intensity=100000.0, shadow_maps_enabled=True, outer_angle=0.6),
-    SpotLightTexture(image=asset_server.load("textures/gobo.png")),
+    SpotLightTexture(image=asset_server.load_image("textures/gobo.png")),
     Transform.from_xyz(0, 5, 0).looking_at(Vec3.ZERO, Vec3.Z),
+)
+
+# Point light with a packed cubemap cookie
+commands.spawn(
+    PointLight(intensity=100000.0),
+    PointLightTexture(
+        image=asset_server.load_image("textures/point_cookie_cross.png"),
+        cubemap_layout=CubemapLayout.CrossVertical,
+    ),
+    Transform.from_xyz(0, 3, 0),
 )
 ```
 
@@ -600,17 +646,21 @@ Custom size: `SunDisk(angular_size=0.02, intensity=1.0)` - larger `angular_size`
 
 **Essential for metallic/reflective materials.** Without environment lighting, metals appear flat black because they rely on reflections. Add one of these to any scene with `metallic > 0.5`.
 
-Three approaches, from easiest to most control:
+Four approaches, from easiest to most control:
 
 ### 1. AtmosphereEnvironmentMapLight (Easiest)
 
-Derives environment lighting from the atmosphere sky. Just add to camera - no texture loading needed.
+Derives environment lighting from the atmosphere sky, so no texture loading is needed. The
+scene needs an `Atmosphere` entity: without one the camera component is a silent no-op and
+metallic surfaces stay as dark as they were with no environment light at all.
 
 ```python
-from pybevy.light import AtmosphereEnvironmentMapLight
+from pybevy.light import Atmosphere, AtmosphereEnvironmentMapLight, ScatteringMedium
 from pybevy.pbr import AtmosphereSettings
 
-commands.spawn(Atmosphere.earth(medium_handle))  # planet entity (once per scene)
+# Required. Spawn once per scene, alongside the camera below.
+# In a system taking mediums: ResMut[Assets[ScatteringMedium]]
+commands.spawn(Atmosphere.earth(mediums.add(ScatteringMedium.earth())))
 commands.spawn(
     Camera3d(),
     AtmosphereSettings(),
@@ -624,7 +674,12 @@ commands.spawn(
 
 **This is the single biggest visual quality upgrade for metallic scenes.** Without env maps, chrome/metal surfaces reflect only ambient color (flat gray). With env maps, they show realistic environment reflections. Recommended whenever a scene has `metallic >= 0.8` materials.
 
-Load a pre-baked HDR environment map for indoor or studio lighting:
+Load a pre-baked HDR environment map for indoor or studio lighting. The source
+checkout includes Bevy's prefiltered Pisa pair at the paths below. Wheels omit
+sample assets, so installed projects must supply equivalent files under
+`assets/` or change the paths. `EnvironmentMapLight` needs a diffuse cubemap and
+a mipmapped specular cubemap; `rgb9e5` and `zstd` only describe this sample's
+encoding and compression.
 
 ```python
 from pybevy.light import EnvironmentMapLight
@@ -632,8 +687,8 @@ from pybevy.light import EnvironmentMapLight
 commands.spawn(
     Camera3d(),
     EnvironmentMapLight(
-        diffuse_map=asset_server.load("environment/diffuse.ktx2"),
-        specular_map=asset_server.load("environment/specular.ktx2"),
+        diffuse_map=asset_server.load_image("bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
+        specular_map=asset_server.load_image("bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
         intensity=1000.0,
     ),
 )
@@ -641,7 +696,13 @@ commands.spawn(
 
 Pair with `Skybox` for a visible background: see `guide://camera` (Skybox section).
 
-**Reflection probes and parallax correction:** an `EnvironmentMapLight` can also ride on a `LightProbe` entity to light just one region (a room, a courtyard). Probe reflections default to `ParallaxCorrection.AUTO`: they are box-projected against the probe's bounds (its `Transform` scale), which anchors reflections to nearby walls instead of smearing them at infinity. Use `ParallaxCorrection.NONE` when the cubemap depicts distant scenery (sky, horizon), or `ParallaxCorrection.custom(half_extents)` when the projection box should differ from the probe volume:
+A procedural cubemap created from a single `Image` has only one mip level, so
+using it directly as `specular_map` cannot blur reflections as material
+roughness increases. Use a prefiltered, mipmapped asset here, or pass the source
+cubemap to `GeneratedEnvironmentMapLight` below so Bevy generates the diffuse
+and specular maps at runtime.
+
+**Reflection probes and parallax correction:** an `EnvironmentMapLight` can also ride on a `LightProbe` entity to light just one region (a room, a courtyard). Probe reflections default to `ParallaxCorrection.Auto()`: they are box-projected against the probe's bounds (its `Transform` scale), which anchors reflections to nearby walls instead of smearing them at infinity. Use `ParallaxCorrection.None_()` when the cubemap depicts distant scenery (sky, horizon), or `ParallaxCorrection.Custom(half_extents)` when the projection box should differ from the probe volume:
 
 ```python
 from pybevy.light import LightProbe, EnvironmentMapLight, ParallaxCorrection
@@ -649,18 +710,46 @@ from pybevy.light import LightProbe, EnvironmentMapLight, ParallaxCorrection
 commands.spawn(
     LightProbe(),
     EnvironmentMapLight(
-        diffuse_map=asset_server.load("environment/diffuse.ktx2"),
-        specular_map=asset_server.load("environment/specular.ktx2"),
+        diffuse_map=asset_server.load_image("bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
+        specular_map=asset_server.load_image("bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
         intensity=1000.0,
     ),
-    ParallaxCorrection.custom(Vec3(4.0, 2.5, 4.0)),  # half-extents of the room
+    ParallaxCorrection.Custom(Vec3(4.0, 2.5, 4.0)),  # half-extents of the room
     Transform.from_xyz(0.0, 2.5, 0.0).with_scale(Vec3(8.0, 5.0, 8.0)),
 )
 ```
 
-### 3. IrradianceVolume + LightProbe (Baked GI)
+### 3. GeneratedEnvironmentMapLight (Runtime Filtering)
+
+Use `GeneratedEnvironmentMapLight` when you have one source cubemap and want
+Bevy to generate the diffuse and mipmapped specular maps on the GPU. The source
+must be a square, power-of-two cubemap no wider than 8192 pixels.
+
+```python
+from pybevy.light import GeneratedEnvironmentMapLight
+
+source_cubemap = asset_server.load_image(
+    "bevy/environment_maps/sky_skybox.ktx2"
+)
+commands.spawn(
+    Camera3d(),
+    GeneratedEnvironmentMapLight(
+        environment_map=source_cubemap,
+        intensity=1000.0,
+    ),
+)
+```
+
+The source checkout includes this sample cubemap; wheels omit sample assets.
+Runtime filtering completes asynchronously and Bevy inserts the resulting
+`EnvironmentMapLight` when it is ready.
+
+### 4. IrradianceVolume + LightProbe (Baked GI)
 
 For pre-baked global illumination in static scenes:
+
+The path below is a placeholder for a project-owned baked volume; PyBevy does
+not bundle `irradiance/volume.ktx2`.
 
 ```python
 from pybevy.light import LightProbe, IrradianceVolume
@@ -668,7 +757,7 @@ from pybevy.light import LightProbe, IrradianceVolume
 commands.spawn(
     LightProbe(),
     IrradianceVolume(
-        voxels=asset_server.load("irradiance/volume.ktx2"),
+        voxels=asset_server.load_image("irradiance/volume.ktx2"),
         intensity=500.0,
     ),
     Transform.from_xyz(0, 2, 0).with_scale(Vec3(10.0, 5.0, 10.0)),
@@ -677,16 +766,12 @@ commands.spawn(
 
 The `Transform` scale defines the volume the probes cover.
 
-## Light Performance Budget
+## Shadow Cost Guidance
 
-<!-- TODO: benchmark and fill in concrete limits for shadow-casting lights.
-     Key questions to answer:
-     - How many shadow-casting PointLights before FPS drops below 60?
-     - How many non-shadow PointLights are safe?
-     - Does range affect shadow cost?
-     - SpotLight vs PointLight shadow cost comparison?
-     Current rough guidance: shadow-casting point lights are the most expensive.
-     Disable shadow_maps_enabled on decorative/fill lights. -->
+There is no universal light-count budget: shadow resolution, light type, scene
+geometry, target hardware, and camera coverage all affect the cost. Measure the
+target scene with `get_performance` and disable shadows on lights that do not
+need them.
 
 **General rule:** Shadow-casting lights are expensive. For scenes with many lights (10+), set `shadow_maps_enabled=False` on decorative and fill lights, and reserve `shadow_maps_enabled=True` for key lights (sun, main spot, 1–2 hero point lights).
 
