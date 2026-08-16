@@ -1,10 +1,34 @@
+use bevy::ecs::resource::IsResource;
 pub use pybevy_core::PyResource;
+/// Resource-entity guards are shared with the control plane, which cannot
+/// depend on this crate.
+pub(crate) use pybevy_core::custom_resource::{
+    hierarchy_contains_resource_entity, is_resource_entity,
+};
+use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::pycomponent;
 use pyo3::{
-    PyTypeInfo,
+    PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::PyTypeError,
     prelude::*,
     types::{PyList, PyTuple, PyType},
 };
+
+use crate::ecs::component::PyComponentId;
+
+#[pycomponent(IsResource, no_clone, no_insert, bridge)]
+#[pyclass(name = "IsResource", extends = PyComponent, frozen)]
+pub struct PyIsResource {
+    storage: ComponentStorage<IsResource>,
+}
+
+#[pymethods]
+impl PyIsResource {
+    #[getter]
+    pub fn resource_component_id(&self) -> PyResult<PyComponentId> {
+        Ok(PyComponentId(self.as_ref()?.resource_component_id()))
+    }
+}
 
 /// Descriptor returned by `Res[T]` or `ResMut[T]`.
 ///
@@ -19,6 +43,16 @@ pub struct PyResParam {
 
 #[pymethods]
 impl PyResParam {
+    /// Report held Python objects to the cyclic GC.
+    ///
+    /// A Rust-held `Py` reference is invisible to the collector, and user
+    /// scene objects reach back here through their defining module's dict, so
+    /// without this the cycle is uncollectable and every hot reload leaks a
+    /// whole generation. Traverse stays read-only and takes no locks.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.type_obj)
+    }
+
     #[getter]
     pub fn __origin__(&self, py: Python) -> Py<PyAny> {
         if self.mutable {
@@ -62,6 +96,12 @@ impl PyRes {
 
 #[pymethods]
 impl PyRes {
+    /// Report held Python objects to the cyclic GC; see docs/safety.md.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.ty)?;
+        visit.call(&self.value)
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
@@ -108,6 +148,10 @@ impl PyRes {
         names.push("resource_type".into());
         PyList::new(py, names)
     }
+
+    pub fn __repr__(&self, py: Python) -> PyResult<String> {
+        Ok(format!("Res({})", self.value.bind(py).repr()?))
+    }
 }
 
 /// Mutable access to a Bevy resource
@@ -130,6 +174,12 @@ impl PyResMut {
 
 #[pymethods]
 impl PyResMut {
+    /// Report held Python objects to the cyclic GC; see docs/safety.md.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.ty)?;
+        visit.call(&self.value)
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
@@ -172,5 +222,9 @@ impl PyResMut {
             .extract::<Vec<String>>()?;
         names.push("resource_type".into());
         PyList::new(py, names)
+    }
+
+    pub fn __repr__(&self, py: Python) -> PyResult<String> {
+        Ok(format!("ResMut({})", self.value.bind(py).repr()?))
     }
 }

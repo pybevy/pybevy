@@ -4,13 +4,19 @@ use bevy::{
     ecs::{component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell},
     prelude::*,
 };
-/// Re-export from pybevy_core for cross-crate access
-pub use pybevy_core::PyResourceStorage;
 /// Main/PyO3 name for the backend-neutral custom-resource identity registry.
 pub use pybevy_core::custom_resource::CustomResourceRegistry as ResourceRegistry;
 use pybevy_core::{
-    custom_resource::{ResourceRegisterOutcome, register_custom_resource_guarded},
+    custom_resource::{
+        ResourceRegisterOutcome, insert_dynamic_resource_value, register_custom_resource_guarded,
+    },
+    public_error::{
+        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, RESOURCE_BRIDGE_NOT_FOUND,
+        expected_resource_subclass, resource_decorator_required, resource_not_present,
+        resource_type_not_found, state_resource_descriptor_required,
+    },
     registry::global_registry,
+    resource_initializer,
 };
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
@@ -18,13 +24,12 @@ use crate::{
     app::hot_reload::bindings::PyHotReloadControl,
     assets::{asset_server::PyAssetServer, assets::PyAssets},
     ecs::{
-        component_type::Pyo3ObjectDescriptor,
+        component_type::Pyo3ResourceObjectDescriptor,
         helpers::{
             type_utils::get_python_type_name,
             validity_guard::{AccessMode, ValidityFlag},
         },
         messages::PyMessages,
-        resource::PyResource,
         state::{PyNextState, PyState},
     },
 };
@@ -41,6 +46,15 @@ pub enum PyResourceType {
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
 unsafe impl Send for PyResourceType {}
 unsafe impl Sync for PyResourceType {}
+
+pub(crate) fn reject_state_type_as_resource(ty: &Bound<'_, PyType>) -> PyResult<()> {
+    if ty.hasattr("__pybevy_state__")? {
+        return Err(PyTypeError::new_err(state_resource_descriptor_required(
+            ty.name()?,
+        )));
+    }
+    Ok(())
+}
 
 impl PyResourceType {
     /// Get AssetServer resource from world (read-only)
@@ -67,57 +81,58 @@ impl PyResourceType {
         // valid while `validity` is active; PyAssetServer reads only the declared
         // AssetServer resource through it.
         let py_asset_server = unsafe { PyAssetServer::new(cell, validity) };
-        let asset_server_obj = Py::new(py, (py_asset_server, PyResource))?;
+        let asset_server_obj = Py::new(py, resource_initializer(py_asset_server))?;
         Ok(asset_server_obj.into_any())
     }
 
-    /// Read a custom Python resource through a world cell, touching only the
-    /// `ResourceRegistry` and `PyResourceStorage` resources (both declared by
-    /// `DynamicSystem::initialize` for Custom resource params).
+    /// Read a custom Python resource through its dynamic resource component.
     ///
     /// # Safety
-    /// The caller must guarantee those two reads are declared and that the executor
-    /// prevents a concurrent structural writer, so the unchecked reads are unique.
+    /// The caller must guarantee reads of `ResourceRegistry` and the resolved resource
+    /// component are declared, and that the executor prevents a concurrent writer.
     unsafe fn get_custom_from_cell(
         cell: UnsafeWorldCell,
         type_ptr: *const PyTypeObject,
         py: Python,
+        mutable: bool,
     ) -> PyResult<Py<PyAny>> {
         // SAFETY: read access to ResourceRegistry is declared for Custom params.
         let registry = unsafe { cell.get_resource::<ResourceRegistry>() }.ok_or_else(|| {
             let type_name = get_python_type_name(py, type_ptr);
-            PyTypeError::new_err(format!(
-                "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
-                type_name
-            ))
+            PyTypeError::new_err(resource_type_not_found(type_name))
         })?;
 
         let component_id = registry.get(type_ptr as usize).ok_or_else(|| {
             let type_name = get_python_type_name(py, type_ptr);
-            PyTypeError::new_err(format!(
-                "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
-                type_name
-            ))
+            PyTypeError::new_err(resource_type_not_found(type_name))
         })?;
 
-        // SAFETY: read access to PyResourceStorage is declared for Custom params.
-        let storage = unsafe { cell.get_resource::<PyResourceStorage>() }.ok_or_else(|| {
+        let resource = if mutable {
+            // SAFETY: the caller declared write access to this dynamic resource ID.
+            let mut value = unsafe { cell.get_resource_mut_by_id(component_id) };
+            value.as_mut().map(|value| {
+                // `as_mut` marks the resource changed before exposing its value.
+                // The value escapes as an owned Python object, so there is no
+                // DerefMut to hook: `ResMut[T]` marks on materialization, not on
+                // first write. Conservative (spurious Changed, never a missed
+                // one) and matches what `Query[Mut[T]]` already does.
+                let value = value.as_mut();
+                // SAFETY: registration uses Pyo3ResourceObjectDescriptor for this ID.
+                unsafe { value.deref_mut::<Py<PyAny>>().clone_ref(py) }
+            })
+        } else {
+            // SAFETY: custom Res declares conservative write access to exclude
+            // other systems while this opaque Python value is reachable.
+            unsafe { cell.get_resource_by_id(component_id) }.map(|value| {
+                // SAFETY: registration uses Pyo3ResourceObjectDescriptor for this ID.
+                unsafe { value.deref::<Py<PyAny>>().clone_ref(py) }
+            })
+        };
+
+        resource.ok_or_else(|| {
             let type_name = get_python_type_name(py, type_ptr);
-            PyTypeError::new_err(format!(
-                "Resource type `{}` not present in the world",
-                type_name
-            ))
-        })?;
-
-        let resource = storage.resources.get(&component_id).ok_or_else(|| {
-            let type_name = get_python_type_name(py, type_ptr);
-            PyTypeError::new_err(format!(
-                "Resource type `{}` not present in the world",
-                type_name
-            ))
-        })?;
-
-        Ok(resource.clone_ref(py))
+            PyTypeError::new_err(resource_not_present(type_name))
+        })
     }
 
     /// Read a resource through an `UnsafeWorldCell`, touching only this resource's
@@ -125,8 +140,8 @@ impl PyResourceType {
     ///
     /// # Safety
     /// The caller must guarantee `DynamicSystem::initialize` declared read access to
-    /// this resource (and, for Custom resources, to `ResourceRegistry` /
-    /// `PyResourceStorage`) and that the executor prevents a concurrent writer, so
+    /// this resource (and, for Custom resources, to `ResourceRegistry`) and that
+    /// the executor prevents a concurrent writer, so
     /// the cell's unchecked reads are unique.
     pub unsafe fn get_from_cell(
         &self,
@@ -138,9 +153,7 @@ impl PyResourceType {
             PyResourceType::AssetServer => Self::get_asset_server_cell(cell, py, validity),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| {
-                        PyTypeError::new_err("Resource bridge not found for dynamic type")
-                    })?;
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
                 // SAFETY: read access to this resource is declared; the executor
                 // prevents a concurrent writer, so the cell read is unique.
                 unsafe {
@@ -149,7 +162,7 @@ impl PyResourceType {
             }
             PyResourceType::Custom(type_ptr) => {
                 // SAFETY: forwarded obligation, see get_custom_from_cell.
-                unsafe { Self::get_custom_from_cell(cell, *type_ptr, py) }
+                unsafe { Self::get_custom_from_cell(cell, *type_ptr, py, false) }
             }
         }
     }
@@ -173,9 +186,7 @@ impl PyResourceType {
             PyResourceType::AssetServer => Self::get_asset_server_cell(cell, py, validity),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| {
-                        PyTypeError::new_err("Resource bridge not found for dynamic type")
-                    })?;
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
                 // SAFETY: write access to this resource is declared; the executor
                 // prevents any concurrent access, so the cell borrow is unique.
                 unsafe {
@@ -186,7 +197,7 @@ impl PyResourceType {
                 // Custom mutable access returns the same Python object as the read
                 // path (Python objects are inherently mutable).
                 // SAFETY: forwarded obligation, see get_custom_from_cell.
-                unsafe { Self::get_custom_from_cell(cell, *type_ptr, py) }
+                unsafe { Self::get_custom_from_cell(cell, *type_ptr, py, true) }
             }
         }
     }
@@ -202,53 +213,31 @@ impl PyResourceType {
             PyResourceType::AssetServer => Self::get_asset_server(world, py, validity),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| {
-                        PyTypeError::new_err("Resource bridge not found for dynamic type")
-                    })?;
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
                 bridge.get(world, validity.with_access_mode(AccessMode::Read), py)
             }
             PyResourceType::Custom(type_ptr) => {
                 // For custom resources, we need to look up the ComponentId from the registry
-                let registry = world
-                    .get_resource::<ResourceRegistry>()
-                    .ok_or_else(|| {
-                        // Get the type name for a better error message
-                        let type_name = get_python_type_name(py, *type_ptr);
-                        PyTypeError::new_err(format!(
-                            "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
-                            type_name
-                        ))
-                    })?;
+                let registry = world.get_resource::<ResourceRegistry>().ok_or_else(|| {
+                    // Get the type name for a better error message
+                    let type_name = get_python_type_name(py, *type_ptr);
+                    PyTypeError::new_err(resource_type_not_found(type_name))
+                })?;
 
                 let component_id = registry.get(*type_ptr as usize).ok_or_else(|| {
                     // Get the type name for a better error message
                     let type_name = get_python_type_name(py, *type_ptr);
-                    PyTypeError::new_err(format!(
-                        "Resource type `{}` is not found. Did you call `init_resource` or `insert_resource`?",
-                        type_name
-                    ))
+                    PyTypeError::new_err(resource_type_not_found(type_name))
                 })?;
 
-                // Get the resource from the storage
-                let storage = world.get_resource::<PyResourceStorage>().ok_or_else(|| {
+                let resource = world.get_resource_by_id(component_id).ok_or_else(|| {
                     // Get the type name for a better error message
                     let type_name = get_python_type_name(py, *type_ptr);
-                    PyTypeError::new_err(format!(
-                        "Resource type `{}` not present in the world",
-                        type_name
-                    ))
+                    PyTypeError::new_err(resource_not_present(type_name))
                 })?;
 
-                let resource = storage.resources.get(&component_id).ok_or_else(|| {
-                    // Get the type name for a better error message
-                    let type_name = get_python_type_name(py, *type_ptr);
-                    PyTypeError::new_err(format!(
-                        "Resource type `{}` not present in the world",
-                        type_name
-                    ))
-                })?;
-
-                Ok(resource.clone_ref(py))
+                // SAFETY: registration uses Pyo3ResourceObjectDescriptor for this ID.
+                Ok(unsafe { resource.deref::<Py<PyAny>>().clone_ref(py) })
             }
         }
     }
@@ -264,18 +253,23 @@ impl PyResourceType {
             PyResourceType::AssetServer => Self::get_asset_server_mut(world, py, validity),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| {
-                        PyTypeError::new_err("Resource bridge not found for dynamic type")
-                    })?;
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
                 bridge.get_mut(world, validity.with_access_mode(AccessMode::Write), py)
             }
-            PyResourceType::Custom(_type_ptr) => {
-                // For custom resources, mutable access returns the same Python object
-                // (Python objects are inherently mutable)
-                // SAFETY: We cast to &World temporarily - this is safe because we're not modifying
-                // the world structure itself, only getting a reference to the Python object
-                let world_ref = world as &World;
-                self.get_from_world(world_ref, py, validity)
+            PyResourceType::Custom(type_ptr) => {
+                let component_id = world
+                    .get_resource::<ResourceRegistry>()
+                    .and_then(|registry| registry.get(*type_ptr as usize))
+                    .ok_or_else(|| {
+                        let type_name = get_python_type_name(py, *type_ptr);
+                        PyTypeError::new_err(resource_type_not_found(type_name))
+                    })?;
+                let mut resource = world.get_resource_mut_by_id(component_id).ok_or_else(|| {
+                    let type_name = get_python_type_name(py, *type_ptr);
+                    PyTypeError::new_err(resource_not_present(type_name))
+                })?;
+                // SAFETY: registration uses Pyo3ResourceObjectDescriptor for this ID.
+                Ok(unsafe { resource.as_mut().deref_mut::<Py<PyAny>>().clone_ref(py) })
             }
         }
     }
@@ -288,14 +282,10 @@ impl PyResourceType {
         resource_instance: Py<PyAny>,
     ) -> PyResult<()> {
         match self {
-            PyResourceType::AssetServer => Err(PyTypeError::new_err(
-                "AssetServer cannot be manually inserted. It is provided by AssetPlugin.",
-            )),
+            PyResourceType::AssetServer => Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_INSERT)),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| {
-                        PyTypeError::new_err("Resource bridge not found for dynamic type")
-                    })?;
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
                 bridge.insert(world, resource_instance.bind(py))
             }
             PyResourceType::Custom(type_ptr) => {
@@ -304,20 +294,14 @@ impl PyResourceType {
                 // SAFETY: registered type pointers live for the interpreter lifetime.
                 let type_obj =
                     unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject) };
-                let type_bound = type_obj.cast::<PyType>()?;
-                let component_id =
-                    register_custom_resource(world, *type_ptr, type_bound.name()?.to_string());
+                type_obj.cast::<PyType>()?;
+                let component_id = register_custom_resource(world, *type_ptr, py);
 
-                // Ensure PyResourceStorage exists
-                if !world.contains_resource::<PyResourceStorage>() {
-                    world.insert_resource(PyResourceStorage::default());
+                // SAFETY: register_custom_resource created this ID with a descriptor for
+                // Py<PyAny>, and all ordinary component insertion paths reject resources.
+                unsafe {
+                    insert_dynamic_resource_value(world, component_id, resource_instance);
                 }
-
-                // Insert the Python object into the storage
-                world
-                    .resource_mut::<PyResourceStorage>()
-                    .resources
-                    .insert(component_id, resource_instance);
 
                 Ok(())
             }
@@ -325,63 +309,24 @@ impl PyResourceType {
     }
 
     /// Remove a Python resource from the world
-    pub fn remove_from_world(&self, world: &mut World, py: Python) -> PyResult<()> {
+    pub fn remove_from_world(&self, world: &mut World, _py: Python) -> PyResult<()> {
         match self {
-            PyResourceType::AssetServer => Err(PyTypeError::new_err(
-                "AssetServer cannot be manually removed. It is managed by AssetPlugin.",
-            )),
+            PyResourceType::AssetServer => Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_REMOVE)),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| {
-                        PyTypeError::new_err("Resource bridge not found for dynamic type")
-                    })?;
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
                 bridge.remove(world);
                 Ok(())
             }
             PyResourceType::Custom(type_ptr) => {
-                // Look up the ComponentId from the registry
-                let component_id = {
-                    let registry = world.get_resource::<ResourceRegistry>().ok_or_else(|| {
-                        // SAFETY: registered type pointers live for the interpreter lifetime
-                        let type_name = unsafe {
-                            let type_obj =
-                                Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject);
-                            type_obj
-                                .cast::<PyType>()
-                                .ok()
-                                .and_then(|t| t.name().ok())
-                                .map(|n| n.to_string())
-                                .unwrap_or_else(|| "Unknown".to_string())
-                        };
-                        PyTypeError::new_err(format!(
-                            "Resource type `{}` is not registered",
-                            type_name
-                        ))
-                    })?;
-
-                    registry.get(*type_ptr as usize).ok_or_else(|| {
-                        // SAFETY: registered type pointers live for the interpreter lifetime
-                        let type_name = unsafe {
-                            let type_obj =
-                                Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject);
-                            type_obj
-                                .cast::<PyType>()
-                                .ok()
-                                .and_then(|t| t.name().ok())
-                                .map(|n| n.to_string())
-                                .unwrap_or_else(|| "Unknown".to_string())
-                        };
-                        PyTypeError::new_err(format!(
-                            "Resource type `{}` is not registered",
-                            type_name
-                        ))
-                    })?
+                let Some(registry) = world.get_resource::<ResourceRegistry>() else {
+                    return Ok(());
+                };
+                let Some(component_id) = registry.get(*type_ptr as usize) else {
+                    return Ok(());
                 };
 
-                // Remove the Python object from storage
-                if let Some(mut storage) = world.get_resource_mut::<PyResourceStorage>() {
-                    storage.resources.remove(&component_id);
-                }
+                world.remove_resource_by_id(component_id);
 
                 Ok(())
             }
@@ -416,7 +361,7 @@ impl PyResourceType {
     ///
     /// Returns None only when a Dynamic resource has no registered bridge, matching
     /// `get_component_id`'s behavior for that unreachable-at-runtime case.
-    pub fn register_component_id(&self, world: &mut World) -> Option<ComponentId> {
+    pub fn register_component_id(&self, world: &mut World, py: Python) -> Option<ComponentId> {
         match self {
             PyResourceType::AssetServer => {
                 Some(world.register_component::<bevy::asset::AssetServer>())
@@ -430,8 +375,7 @@ impl PyResourceType {
                 // from the Python type name alone (no value needed), so it can be
                 // created here. register_custom_resource is get-or-reuse and stores
                 // the id in ResourceRegistry, so a later insert_resource reuses it.
-                let name = Python::attach(|py| get_python_type_name(py, *type_ptr));
-                Some(register_custom_resource(world, *type_ptr, name))
+                Some(register_custom_resource(world, *type_ptr, py))
             }
         }
     }
@@ -454,9 +398,8 @@ fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Optio
 /// Helper function to register a custom Python resource with Bevy's ECS.
 ///
 /// This creates a ComponentDescriptor with the layout of a `Py<PyAny>` and registers
-/// its identity with the world. Concrete custom resource values remain in
-/// `PyResourceStorage`; this descriptor supplies the stable `ComponentId` used by
-/// scheduler access and backend side tables.
+/// its identity with the world. Concrete custom resource values use this descriptor
+/// as their dynamic component on Bevy's stable resource entity.
 ///
 /// The neutral resource registry is App-local and uses integer type keys, keeping
 /// interpreter objects out of shared bookkeeping.
@@ -468,20 +411,21 @@ fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Optio
 /// # Arguments
 /// * `world` - The Bevy world to register the resource in
 /// * `type_ptr` - The PyTypeObject pointer identifying the Python resource class
-/// * `name` - The name of the resource (from the Python class) for the descriptor
+/// * `py` - The active interpreter token used to read class metadata
 ///
 /// # Returns
 /// The ComponentId of the registered resource
 pub(crate) fn register_custom_resource(
     world: &mut World,
     type_ptr: *const PyTypeObject,
-    name: String,
+    py: Python,
 ) -> ComponentId {
-    let qualified_name = Python::attach(|py| get_python_qualified_name(py, type_ptr));
+    let name = get_python_type_name(py, type_ptr);
+    let qualified_name = get_python_qualified_name(py, type_ptr);
     let generation = world
         .get_resource::<pybevy_reload::HotReloadGeneration>()
         .map_or(0, |generation| generation.current);
-    let outcome = register_custom_resource_guarded::<Pyo3ObjectDescriptor>(
+    let outcome = register_custom_resource_guarded::<Pyo3ResourceObjectDescriptor>(
         world,
         type_ptr as usize,
         &name,
@@ -497,7 +441,7 @@ pub(crate) fn register_custom_resource(
             if let Some(mut custom_info) =
                 world.get_resource_mut::<pybevy_core::CustomResourceInfo>()
             {
-                custom_info.update_type_ptr(id, type_ptr);
+                custom_info.update_type_ptr(id, type_ptr, retained_type_object(py, type_ptr));
             }
 
             if let Some(qualified_name) = qualified_name {
@@ -515,11 +459,31 @@ pub(crate) fn register_custom_resource(
             }
             world
                 .resource_mut::<pybevy_core::CustomResourceInfo>()
-                .insert(id, pybevy_core::CustomResourceEntry { type_ptr, name });
+                .insert(
+                    id,
+                    pybevy_core::CustomResourceEntry {
+                        type_ptr,
+                        type_object: retained_type_object(py, type_ptr),
+                        name,
+                    },
+                );
         }
     }
 
     outcome.id()
+}
+
+/// Take an owned reference to the class behind `type_ptr` so control handlers
+/// never call through a pointer whose object was freed by a reload.
+fn retained_type_object(py: Python, type_ptr: *const PyTypeObject) -> Option<Py<PyAny>> {
+    if type_ptr.is_null() {
+        return None;
+    }
+    // SAFETY: callers pass a live class pointer obtained from a bound type
+    // object earlier in the same attached scope.
+    let bound =
+        unsafe { Bound::from_borrowed_ptr_or_opt(py, type_ptr as *mut pyo3::ffi::PyObject) };
+    bound.map(Bound::unbind)
 }
 
 impl fmt::Display for PyResourceType {
@@ -535,6 +499,8 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
     type Error = PyErr;
 
     fn try_from((ty, py): (&Bound<'_, PyType>, Python)) -> Result<Self, Self::Error> {
+        reject_state_type_as_resource(ty)?;
+
         // Check if type extends Resource by checking the MRO for a class named "Resource"
         // This handles the case where PyResource is registered from different crates
         // (pybevy_core vs main crate) which creates separate Python type objects
@@ -557,9 +523,8 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
                 .name()
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "Unknown".to_string());
-            return Err(PyErr::new::<PyTypeError, _>(format!(
-                "Expected a subclass of `Resource`, but got `{}` which is not a subclass of `Resource`",
-                class_name
+            return Err(PyErr::new::<PyTypeError, _>(expected_resource_subclass(
+                class_name,
             )));
         }
 
@@ -589,9 +554,8 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
                     .unwrap_or(false);
 
                 if !has_decorator {
-                    return Err(PyErr::new::<PyTypeError, _>(format!(
-                        "Resource class '{}' must be decorated with @resource decorator",
-                        ty.name()?
+                    return Err(PyErr::new::<PyTypeError, _>(resource_decorator_required(
+                        ty.name()?,
                     )));
                 }
             }
