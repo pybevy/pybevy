@@ -23,6 +23,10 @@ impl<H: Send + Sync + 'static> Default for SystemGenerationRegistry<H> {
 }
 
 impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
+    pub fn track_generation(&mut self, generation: u32) {
+        self.generations.entry(generation).or_default();
+    }
+
     /// Record a system handle under its reload generation.
     pub fn register(&mut self, generation: u32, handle: H) {
         self.generations.entry(generation).or_default().push(handle);
@@ -65,6 +69,10 @@ impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
             .collect();
         self.known_systems = new_systems;
         removed
+    }
+
+    pub fn set_system_baseline(&mut self, systems: HashSet<String>) {
+        self.known_systems = systems;
     }
 }
 
@@ -145,6 +153,14 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_returns_tracked_generation_without_handles() {
+        let mut registry = SystemGenerationRegistry::<TestHandle>::default();
+        registry.track_generation(0);
+
+        assert_eq!(registry.cleanup_old_generations(1, |_| {}), vec![0]);
+    }
+
+    #[test]
     fn system_delta_records_baseline_then_reports_removals() {
         let mut registry = SystemGenerationRegistry::<TestHandle>::default();
         let first = HashSet::from(["setup".to_string(), "update_score".to_string()]);
@@ -156,5 +172,16 @@ mod tests {
         assert_eq!(removed, vec!["update_score"]);
         assert!(registry.known_systems.contains("update_timer"));
         assert!(!registry.known_systems.contains("update_score"));
+    }
+
+    #[test]
+    fn explicit_system_baseline_reports_first_reload_removals() {
+        let mut registry = SystemGenerationRegistry::<TestHandle>::default();
+        registry.set_system_baseline(HashSet::from(["old_name".to_string()]));
+
+        assert_eq!(
+            registry.detect_system_delta(HashSet::from(["new_name".to_string()])),
+            vec!["old_name"]
+        );
     }
 }

@@ -1,15 +1,15 @@
 use std::collections::HashSet;
 
 use bevy::{
-    app::Startup,
-    ecs::{entity::Entity, resource::IsResource, schedule::Schedules, world::World},
+    app::{MainScheduleOrder, Startup},
+    ecs::{entity::Entity, resource::IsResource, schedule::ScheduleLabel, world::World},
     platform::time::Instant,
     prelude::Without,
     time::{Real, Time},
 };
 
 use crate::{
-    BaseEntitySet,
+    BaseEntitySet, ReloadStartupScheduleOrder,
     cleanup::{NativeResourceSnapshot, clear_world_state},
     profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
     progress::{ReloadProgress, ReloadProgressPhase, emit_reload_progress},
@@ -79,6 +79,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
             result.failed = true;
             result.failure_reason = Some(e.message.clone());
+            result.failure_traceback = e.traceback.clone();
             result.running_previous_generation = true;
 
             return Err(e);
@@ -157,6 +158,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         result.escalation_reason = None;
         result.failed = false;
         result.failure_reason = None;
+        result.failure_traceback = None;
         result.running_previous_generation = false;
         result.plugins_added = None;
         result.plugins_removed = None;
@@ -179,7 +181,9 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             .and_then(|t| t.last.clone());
         let reason = match &previous {
             Some(previous) => {
-                if previous.startup_code != fingerprint.startup_code {
+                if fingerprint.component_layout_changed {
+                    Some("custom component layout changed")
+                } else if previous.startup_code != fingerprint.startup_code {
                     Some("Startup systems changed")
                 } else if previous.resource_types != fingerprint.resource_types {
                     Some("resource definitions changed")
@@ -191,16 +195,19 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             }
             // No baseline yet: conservatively escalate if the scene defines
             // anything only a Full reload applies.
-            None => match (
-                fingerprint.has_startup,
-                fingerprint.has_resources,
-                fingerprint.has_observers,
-            ) {
-                (true, _, _) => Some("no fingerprint baseline, Startup systems present"),
-                (false, true, _) => Some("no fingerprint baseline, resources present"),
-                (false, false, true) => Some("no fingerprint baseline, observers present"),
-                _ => None,
-            },
+            None if fingerprint.component_layout_changed => Some("custom component layout changed"),
+            None => {
+                match (
+                    fingerprint.has_startup,
+                    fingerprint.has_resources,
+                    fingerprint.has_observers,
+                ) {
+                    (true, _, _) => Some("no fingerprint baseline, Startup systems present"),
+                    (false, true, _) => Some("no fingerprint baseline, resources present"),
+                    (false, false, true) => Some("no fingerprint baseline, observers present"),
+                    _ => None,
+                }
+            }
         };
         if let Some(reason) = reason {
             eprintln!("⬆️ [Hot Reload] Escalating Partial → Full: {reason}");
@@ -225,12 +232,6 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             }
         }
     }
-    // Record on every reload (Full included) so the next Partial compares
-    // against the definitions that are actually live.
-    world
-        .get_resource_or_insert_with(EscalationTracker::default)
-        .last = Some(fingerprint);
-
     // Plugin delta detection
     {
         let plugin_names = runtime.plugin_names(&defs);
@@ -253,7 +254,6 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                             .difference(&new_plugin_set)
                             .cloned()
                             .collect();
-                        tracker.known_plugins = new_plugin_set;
                         (added, removed)
                     }
                 } else {
@@ -292,25 +292,28 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     );
 
     if let Err(e) = runtime.register_states(world, &defs, mode) {
-        flag_reload_failure(world, e.message.clone());
+        fail_registration(world, hot_reload_state, old_generation, &e);
         return Err(e);
     }
 
     if mode == ReloadMode::Full {
         if let Err(e) = runtime.register_resources(world, &defs) {
-            flag_reload_failure(world, e.message.clone());
+            fail_registration(world, hot_reload_state, old_generation, &e);
             return Err(e);
         }
+    } else if let Err(e) = runtime.rebind_resources(world, &defs) {
+        fail_registration(world, hot_reload_state, old_generation, &e);
+        return Err(e);
     }
 
     if let Err(e) = runtime.register_messages(world, &defs, new_generation) {
-        flag_reload_failure(world, e.message.clone());
+        fail_registration(world, hot_reload_state, old_generation, &e);
         return Err(e);
     }
 
     if mode == ReloadMode::Full {
         if let Err(e) = runtime.register_observers(world, &defs) {
-            flag_reload_failure(world, e.message.clone());
+            fail_registration(world, hot_reload_state, old_generation, &e);
             return Err(e);
         }
     }
@@ -335,22 +338,23 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     let system_handles = match runtime.register_systems(world, defs, new_generation) {
         Ok(handles) => handles,
         Err(e) => {
-            flag_reload_failure(world, e.message.clone());
+            fail_registration(world, hot_reload_state, old_generation, &e);
             return Err(e);
         }
     };
 
-    // An Update system from the scene being replaced may have failed earlier
-    // in this Main schedule. Do not misattribute that buffered error to the
-    // candidate scene's Startup systems.
-    if mode == ReloadMode::Full
-        && let Some(error) = runtime.take_pending_system_error(world)
+    // A system or observer from the scene being replaced may have failed
+    // earlier in this Main schedule, or fire during the reload's own world
+    // mutations. Drain the buffer for both modes so the old generation's
+    // error is not drained after the reload's clear and misattributed to the
+    // candidate scene.
+    if let Some(error) = runtime.take_pending_system_error(world)
         && is_verbose()
     {
         eprintln!("   → Replacing scene after system error: {error}");
     }
 
-    // Run Startup with rollback on panic
+    // Run the startup schedule sequence with rollback on panic
     // Snapshot pre-Startup error state: both the timestamp and whether an
     // error was already present.  We need both because on the first reload
     // Time hasn't ticked yet, so timestamp is 0.0 for both pre and post,
@@ -373,96 +377,101 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     };
 
     if mode == ReloadMode::Full {
-        if world.resource::<Schedules>().contains(Startup) {
-            if is_verbose() {
-                eprintln!("   → Running Startup schedule");
-            }
-
-            emit_reload_progress(
-                world,
-                ReloadProgress::new(ReloadProgressPhase::StartupStarted, new_generation, mode),
-            );
-            let startup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                world.run_schedule(Startup);
-            }));
-
-            world.resource::<HotReloadGeneration>().mark_startup_run();
-
-            if let Err(panic_payload) = startup_result {
-                let panic_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
-                    s.clone()
-                } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                    s.to_string()
-                } else {
-                    "unknown panic".to_string()
-                };
-
-                eprintln!(
-                    "⚠️ [Hot Reload] Startup panicked: {} — rolling back to generation {}",
-                    panic_msg, old_generation
-                );
-
-                {
-                    let post_entities: Vec<Entity> = world
-                        .query_filtered::<Entity, Without<IsResource>>()
-                        .iter(world)
-                        .collect();
-                    let mut cleaned = 0;
-                    for entity in post_entities {
-                        if !pre_startup_entities.contains(&entity)
-                            && world.get_entity(entity).is_ok()
-                        {
-                            world.despawn(entity);
-                            cleaned += 1;
-                        }
-                    }
-                    if is_verbose() && cleaned > 0 {
-                        eprintln!(
-                            "   → Cleaned up {} entities created during failed Startup",
-                            cleaned
-                        );
-                    }
-                }
-
-                hot_reload_state.set_generation(old_generation);
-                {
-                    let mut gen_res = world.resource_mut::<HotReloadGeneration>();
-                    gen_res.current = old_generation;
-                }
-                {
-                    // Remove new_generation (not old_generation) since
-                    // mark_startup_run() inserted new_generation into the set.
-                    // If we leave it, the next reload that reuses this
-                    // generation number will skip Startup entirely.
-                    let gen_res = world.resource::<HotReloadGeneration>();
-                    gen_res.forget_startup_run(new_generation);
-                }
-
-                let error_msg = format!("Startup panicked: {}", panic_msg);
-                let mut result =
-                    world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
-                result.failed = true;
-                result.failure_reason = Some(error_msg.clone());
-                result.running_previous_generation = true;
-
-                runtime.clear_param_cache();
-                runtime.retire_handles(&system_handles);
-
-                return Err(ReloadError {
-                    message: error_msg,
-                    is_load_failure: false,
-                });
-            }
-
-            emit_reload_progress(
-                world,
-                ReloadProgress::new(ReloadProgressPhase::StartupFinished, new_generation, mode),
-            );
-        } else if is_verbose() {
-            eprintln!("   → Skipping Startup schedule (not present in app)");
+        let startup_labels = world
+            .get_resource::<ReloadStartupScheduleOrder>()
+            .map(|order| order.0.clone())
+            .or_else(|| {
+                world
+                    .get_resource::<MainScheduleOrder>()
+                    .map(|order| order.startup_labels.clone())
+            })
+            .unwrap_or_else(|| vec![Startup.intern()]);
+        if is_verbose() {
+            eprintln!("   → Running startup schedules");
         }
+
+        emit_reload_progress(
+            world,
+            ReloadProgress::new(ReloadProgressPhase::StartupStarted, new_generation, mode),
+        );
+        let startup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            for label in startup_labels {
+                let _ = world.try_run_schedule(label);
+            }
+        }));
+
+        world.resource::<HotReloadGeneration>().mark_startup_run();
+
+        if let Err(panic_payload) = startup_result {
+            let panic_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                "unknown panic".to_string()
+            };
+
+            eprintln!(
+                "⚠️ [Hot Reload] Startup panicked: {} — rolling back to generation {}",
+                panic_msg, old_generation
+            );
+
+            {
+                let post_entities: Vec<Entity> = world
+                    .query_filtered::<Entity, Without<IsResource>>()
+                    .iter(world)
+                    .collect();
+                let mut cleaned = 0;
+                for entity in post_entities {
+                    if !pre_startup_entities.contains(&entity) && world.get_entity(entity).is_ok() {
+                        world.despawn(entity);
+                        cleaned += 1;
+                    }
+                }
+                if is_verbose() && cleaned > 0 {
+                    eprintln!(
+                        "   → Cleaned up {} entities created during failed Startup",
+                        cleaned
+                    );
+                }
+            }
+
+            hot_reload_state.set_generation(old_generation);
+            {
+                let mut gen_res = world.resource_mut::<HotReloadGeneration>();
+                gen_res.current = old_generation;
+            }
+            {
+                // Remove new_generation (not old_generation) since
+                // mark_startup_run() inserted new_generation into the set.
+                // If we leave it, the next reload that reuses this
+                // generation number will skip Startup entirely.
+                let gen_res = world.resource::<HotReloadGeneration>();
+                gen_res.forget_startup_run(new_generation);
+            }
+
+            let error_msg = format!("Startup panicked: {}", panic_msg);
+            let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
+            result.failed = true;
+            result.failure_reason = Some(error_msg.clone());
+            result.running_previous_generation = true;
+
+            runtime.clear_param_cache();
+            runtime.retire_handles(&system_handles);
+
+            return Err(ReloadError {
+                message: error_msg,
+                traceback: None,
+                is_load_failure: false,
+            });
+        }
+
+        emit_reload_progress(
+            world,
+            ReloadProgress::new(ReloadProgressPhase::StartupFinished, new_generation, mode),
+        );
     } else if is_verbose() {
-        eprintln!("   → Skipping Startup schedule (Partial mode)");
+        eprintln!("   → Skipping startup schedules (Partial mode)");
     }
 
     let pending_system_error = if mode == ReloadMode::Full {
@@ -531,9 +540,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             gen_res.forget_startup_run(new_generation);
         }
 
+        let failure_traceback = world
+            .get_resource::<pybevy_core::LastSystemError>()
+            .and_then(|error| error.traceback.clone());
         let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
         result.failed = true;
         result.failure_reason = Some(error_msg.clone());
+        result.failure_traceback = failure_traceback.clone();
         result.running_previous_generation = true;
 
         runtime.clear_param_cache();
@@ -541,6 +554,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
         return Err(ReloadError {
             message: error_msg,
+            traceback: failure_traceback,
             is_load_failure: false,
         });
     }
@@ -551,6 +565,8 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         last_error.error = None;
         last_error.traceback = None;
     }
+
+    runtime.commit_schedule_configs(world);
 
     {
         let gen_res = world.resource::<HotReloadGeneration>();
@@ -574,6 +590,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         let rss_mb = get_current_rss_mb(world);
         let gc_objects = runtime.gc_object_count();
         let schedule_systems = count_schedule_systems(world);
+
+        if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
+            stats.memory_mb = rss_mb;
+        }
 
         if let Some(mut profile) = world.get_resource_mut::<MemoryProfile>() {
             profile.capture_snapshot(
@@ -623,14 +643,35 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         ReloadProgress::new(ReloadProgressPhase::Complete, new_generation, mode),
     );
 
+    // Record the fingerprint only now that this generation is live. Doing it
+    // earlier let a failed reload (register error, or a Startup that panicked
+    // or errored and rolled back to the previous generation) leave the tracker
+    // pointing at definitions that never took effect, so the next Partial
+    // reload with matching Startup/resource/observer fingerprints skipped
+    // escalation and silently kept the old generation's state.
+    world
+        .get_resource_or_insert_with(EscalationTracker::default)
+        .last = Some(fingerprint);
+
     Ok(())
 }
 
-/// Mark `ReloadResult` as failed before propagating a registration error.
-fn flag_reload_failure(world: &mut World, message: String) {
+/// Roll the generation back and mark `ReloadResult` as failed before
+/// propagating a registration error, so the previous generation's gated
+/// systems keep running as the failure response claims.
+fn fail_registration<S: HotReloadStateAccess>(
+    world: &mut World,
+    hot_reload_state: &S,
+    old_generation: u32,
+    error: &ReloadError,
+) {
+    hot_reload_state.set_generation(old_generation);
+    world.resource_mut::<HotReloadGeneration>().update();
+
     let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
     result.failed = true;
-    result.failure_reason = Some(message);
+    result.failure_reason = Some(error.message.clone());
+    result.failure_traceback = error.traceback.clone();
     result.running_previous_generation = true;
 }
 
@@ -667,6 +708,24 @@ mod tests {
     #[derive(Default, Resource)]
     struct RequestPruneCalls(Vec<Option<u32>>);
 
+    #[derive(Default, Resource)]
+    struct ResourceRebindCalls(usize);
+
+    #[derive(Default, Resource)]
+    struct StartupScheduleRuns(Vec<&'static str>);
+
+    fn record_pre_startup(mut runs: ResMut<StartupScheduleRuns>) {
+        runs.0.push("pre");
+    }
+
+    fn record_startup(mut runs: ResMut<StartupScheduleRuns>) {
+        runs.0.push("startup");
+    }
+
+    fn record_post_startup(mut runs: ResMut<StartupScheduleRuns>) {
+        runs.0.push("post");
+    }
+
     impl ReloadRuntime for MockRuntime {
         type Defs = ();
         type SystemHandle = ();
@@ -695,6 +754,12 @@ mod tests {
             _world: &mut World,
             _defs: &(),
         ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn rebind_resources(&mut self, world: &mut World, _defs: &()) -> Result<(), ReloadError> {
+            world
+                .get_resource_or_insert_with(ResourceRebindCalls::default)
+                .0 += 1;
             Ok(())
         }
         fn register_messages(
@@ -751,6 +816,7 @@ mod tests {
         inject_startup_error: bool,
         pending_errors: VecDeque<Option<String>>,
         take_pending_calls: usize,
+        fingerprint: DefsFingerprint,
     }
 
     impl Default for StartupErrorRuntime {
@@ -760,6 +826,7 @@ mod tests {
                 inject_startup_error: true,
                 pending_errors: VecDeque::new(),
                 take_pending_calls: 0,
+                fingerprint: DefsFingerprint::default(),
             }
         }
     }
@@ -788,7 +855,7 @@ mod tests {
             Ok(())
         }
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
-            DefsFingerprint::default()
+            self.fingerprint.clone()
         }
         fn plugin_names(&self, _defs: &()) -> Vec<String> {
             vec![]
@@ -927,6 +994,35 @@ mod tests {
     }
 
     #[test]
+    fn full_reload_runs_the_ordered_startup_schedule_sequence() {
+        let (mut world, gen_counter) = setup_world();
+        world.insert_resource(MainScheduleOrder::default());
+        world.insert_resource(StartupScheduleRuns::default());
+        {
+            let mut schedules = world.resource_mut::<Schedules>();
+            schedules.insert(Schedule::new(PreStartup));
+            schedules.insert(Schedule::new(PostStartup));
+        }
+        world.schedule_scope(PreStartup, |_world, schedule| {
+            schedule.add_systems(record_pre_startup);
+        });
+        world.schedule_scope(Startup, |_world, schedule| {
+            schedule.add_systems(record_startup);
+        });
+        world.schedule_scope(PostStartup, |_world, schedule| {
+            schedule.add_systems(record_post_startup);
+        });
+        let state = MockState::new(gen_counter);
+
+        assert!(perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state).is_ok());
+
+        assert_eq!(
+            world.resource::<StartupScheduleRuns>().0,
+            ["pre", "startup", "post"]
+        );
+    }
+
+    #[test]
     fn full_reload_reports_backend_neutral_progress() {
         let (mut world, gen_counter) = setup_world();
         let events = record_progress(&mut world);
@@ -953,6 +1049,7 @@ mod tests {
                 ReloadProgressPhase::Complete,
             ]
         );
+        assert!(!world.contains_resource::<ResourceRebindCalls>());
     }
 
     #[test]
@@ -978,6 +1075,7 @@ mod tests {
                 ReloadProgressPhase::Complete,
             ]
         );
+        assert_eq!(world.resource::<ResourceRebindCalls>().0, 1);
     }
 
     #[test]
@@ -1114,6 +1212,47 @@ mod tests {
         );
     }
 
+    /// A failed reload must not poison the escalation tracker. Its fingerprint
+    /// never became live, so a later Partial reload with matching definitions
+    /// must still escalate to Full rather than believing the failed generation
+    /// is already running.
+    #[test]
+    fn failed_reload_does_not_record_its_fingerprint() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let fingerprint = DefsFingerprint {
+            startup_code: 99,
+            has_startup: true,
+            ..Default::default()
+        };
+
+        // A reload whose Startup errors and rolls back to the old generation.
+        let mut failing = StartupErrorRuntime {
+            fingerprint: fingerprint.clone(),
+            ..Default::default()
+        };
+        let failed = perform_reload(&mut world, &mut failing, ReloadMode::Full, &state);
+        assert!(failed.is_err(), "the Startup error should fail the reload");
+
+        // The tracker must not carry the failed generation's fingerprint.
+        assert!(
+            world
+                .get_resource::<EscalationTracker>()
+                .and_then(|t| t.last.clone())
+                .is_none(),
+            "a failed reload must not record its fingerprint"
+        );
+
+        // A subsequent Partial reload with the SAME fingerprint must escalate,
+        // because that generation has never actually run.
+        let mut runtime = FingerprintRuntime(fingerprint);
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert!(
+            world.resource::<pybevy_core::ReloadResult>().escalated,
+            "a Partial reload matching a previously-failed generation must escalate"
+        );
+    }
+
     #[test]
     fn partial_reload_changed_startup_escalates() {
         let (mut world, gen_counter) = setup_world();
@@ -1134,6 +1273,28 @@ mod tests {
         assert_eq!(
             result.escalation_reason.as_deref(),
             Some("Startup systems changed")
+        );
+    }
+
+    #[test]
+    fn partial_reload_changed_component_layout_escalates() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint::default());
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+
+        runtime.0.component_layout_changed = true;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(result.escalated);
+        assert_eq!(
+            result.escalation_reason.as_deref(),
+            Some("custom component layout changed")
+        );
+        assert_eq!(
+            result.actual_mode,
+            Some(pybevy_core::ReloadRequestMode::Full)
         );
     }
 
@@ -1201,6 +1362,7 @@ mod tests {
                 None,
             ]),
             take_pending_calls: 0,
+            ..Default::default()
         };
 
         let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
@@ -1415,6 +1577,7 @@ mod tests {
         ) -> Result<Vec<()>, ReloadError> {
             Err(ReloadError {
                 message: "synthetic register_systems failure".into(),
+                traceback: Some("File \"scene.py\", line 12, in broken".into()),
                 is_load_failure: false,
             })
         }
@@ -1498,6 +1661,7 @@ mod tests {
         ) -> Result<(), ReloadError> {
             Err(ReloadError {
                 message: "synthetic register_resources failure".into(),
+                traceback: None,
                 is_load_failure: false,
             })
         }
@@ -1567,10 +1731,20 @@ mod tests {
             reload_result.failure_reason.as_deref(),
             Some("synthetic register_systems failure"),
         );
+        assert_eq!(
+            reload_result.failure_traceback.as_deref(),
+            Some("File \"scene.py\", line 12, in broken"),
+        );
         assert!(
             reload_result.running_previous_generation,
             "running_previous_generation should be true",
         );
+        assert_eq!(
+            state.current_generation(),
+            0,
+            "generation must roll back so the previous generation's gated systems keep running",
+        );
+        assert_eq!(world.resource::<HotReloadGeneration>().current, 0);
     }
 
     /// register_resources Err must flag ReloadResult.failed and failure_reason.
@@ -1599,6 +1773,12 @@ mod tests {
             reload_result.failure_reason.as_deref(),
             Some("synthetic register_resources failure"),
         );
+        assert_eq!(
+            state.current_generation(),
+            0,
+            "generation must roll back on register_resources failure",
+        );
+        assert_eq!(world.resource::<HotReloadGeneration>().current, 0);
     }
 
     /// Candidate repro for empty-world-after-many-reloads: each Full reload

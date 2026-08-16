@@ -8,10 +8,13 @@ pub mod state;
 pub mod system_registry;
 pub mod tracker;
 pub mod util;
+pub mod watcher;
 
 use std::collections::HashSet;
 
-use bevy::ecs::{component::Component, entity::Entity, resource::Resource};
+use bevy::ecs::{
+    component::Component, entity::Entity, resource::Resource, schedule::InternedScheduleLabel,
+};
 
 /// Marker for entities that must survive hot-reload cleanup.
 ///
@@ -35,6 +38,11 @@ pub struct BaseEntitySet {
     pub entities: HashSet<Entity>,
 }
 
+/// Startup schedule order retained while Bevy temporarily removes
+/// `MainScheduleOrder` to run the main schedule.
+#[derive(Resource, Clone)]
+pub struct ReloadStartupScheduleOrder(pub Vec<InternedScheduleLabel>);
+
 pub use orchestrator::{HotReloadStateAccess, perform_reload};
 pub use overlay::{
     MemoryOverlayVisible, StartPaused, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
@@ -57,3 +65,4 @@ pub use tracker::{KEEP_ALIVE_GENERATIONS, PluginTracker};
 pub use util::{
     count_schedule_systems, get_current_rss_mb, is_verbose, lock_or_recover, parse_resolution,
 };
+pub use watcher::{DEFAULT_IGNORE_PATTERNS, FileWatcher, WatchBatch, WatchError};
