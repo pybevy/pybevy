@@ -45,6 +45,7 @@ impl CachedPyView {
         world: &mut World,
         param: &PyViewParam,
         custom_component_ids: &HashMap<*const PyTypeObject, ComponentId>,
+        py: Python,
     ) -> Result<Arc<Self>, ViewRuntimeError> {
         let mut component_types = Vec::with_capacity(param.parameters.len());
         let mut mutable_components = HashSet::new();
@@ -76,8 +77,10 @@ impl CachedPyView {
                 PyComponentType::Custom(type_ptr) => custom_component_ids
                     .get(type_ptr)
                     .copied()
-                    .unwrap_or_else(|| component_type.register_simple(world)),
-                PyComponentType::Dynamic(_) => component_type.register_simple(world),
+                    .unwrap_or_else(|| component_type.register_simple(world, py)),
+                PyComponentType::Dynamic(_) | PyComponentType::Resource(_) => {
+                    component_type.register_simple(world, py)
+                }
             };
             component_ids.insert(component_type.clone(), component_id);
         }
@@ -95,7 +98,7 @@ impl CachedPyView {
             .map(|component_type| {
                 (
                     component_ids[component_type],
-                    expanded_field_offsets(component_type),
+                    expanded_field_offsets(component_type, py),
                 )
             })
             .collect();
@@ -181,10 +184,13 @@ fn insert_expanded_field(
 ///
 /// Components without View-compatible storage deliberately produce an empty
 /// set, causing any attempted field program to fail closed during validation.
-fn expanded_field_offsets(component_type: &PyComponentType) -> HashSet<(usize, FieldType)> {
+fn expanded_field_offsets(
+    component_type: &PyComponentType,
+    py: Python,
+) -> HashSet<(usize, FieldType)> {
     let mut fields = HashSet::new();
     match component_type {
-        PyComponentType::Custom(type_ptr) => Python::attach(|py| {
+        PyComponentType::Custom(type_ptr) => {
             // SAFETY: registered type pointers live for the interpreter lifetime.
             let py_type =
                 unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject) };
@@ -204,7 +210,7 @@ fn expanded_field_offsets(component_type: &PyComponentType) -> HashSet<(usize, F
                     );
                 }
             }
-        }),
+        }
         PyComponentType::Dynamic(type_ptr) => {
             if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr)
                 && let Some(view_bridge) = bridge.view_bridge()
@@ -223,6 +229,7 @@ fn expanded_field_offsets(component_type: &PyComponentType) -> HashSet<(usize, F
                 }
             }
         }
+        PyComponentType::Resource(_) => {}
     }
     fields
 }

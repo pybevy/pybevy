@@ -36,7 +36,10 @@ use pybevy_bytecodevm::{
         BatchSlice, ViewReduction, ViewReductionOutput, ViewRuntimeCore, ViewRuntimeError,
     },
 };
-use pybevy_core::{FieldType as StorageFieldType, PyEntity, registry::global_registry};
+use pybevy_core::{
+    FieldType as StorageFieldType, PyEntity, public_error::RESOURCE_VIEW_DATA,
+    registry::global_registry,
+};
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -112,10 +115,15 @@ impl PyView {
     }
 
     /// Get the initialization-time component ID for this View parameter.
-    fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
+    fn get_component_id(
+        &self,
+        comp_type: &PyComponentType,
+        py: Python<'_>,
+    ) -> PyResult<ComponentId> {
         self.cached.component_id(comp_type).ok_or_else(|| {
             PyRuntimeError::new_err(format!(
-                "Component type {comp_type} was not resolved for this View parameter"
+                "Component type {} was not resolved for this View parameter",
+                comp_type.display_name(py)
             ))
         })
     }
@@ -177,7 +185,7 @@ impl PyView {
             )));
         }
 
-        let component_id = self.get_component_id(&comp_type)?;
+        let component_id = self.get_component_id(&comp_type, py)?;
 
         let proxy = PyViewCol {
             view_ptr: self as *const PyView,
@@ -252,7 +260,7 @@ impl PyView {
             )));
         }
 
-        let component_id = self.get_component_id(&comp_type)?;
+        let component_id = self.get_component_id(&comp_type, py)?;
 
         let proxy = PyViewColMut {
             view_ptr: self as *const PyView,
@@ -547,6 +555,7 @@ pub(crate) fn get_component_field_info(
 
             Ok((offset_info.offset, offset_info.field_type))
         }
+        PyComponentType::Resource(_) => Err(PyTypeError::new_err(RESOURCE_VIEW_DATA)),
     }
 }
 
@@ -775,13 +784,18 @@ impl PyBatch {
     }
 
     /// Get component ID for a component type
-    fn get_component_id(&self, comp_type: &PyComponentType) -> PyResult<ComponentId> {
+    fn get_component_id(
+        &self,
+        comp_type: &PyComponentType,
+        py: Python<'_>,
+    ) -> PyResult<ComponentId> {
         self.slice
             .check_valid()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         self.cached.component_id(comp_type).ok_or_else(|| {
             PyRuntimeError::new_err(format!(
-                "Component type {comp_type} was not resolved for this View parameter"
+                "Component type {} was not resolved for this View parameter",
+                comp_type.display_name(py)
             ))
         })
     }
@@ -809,7 +823,7 @@ impl PyBatch {
             )));
         }
 
-        let component_id = self.get_component_id(&comp_type)?;
+        let component_id = self.get_component_id(&comp_type, py)?;
         let column = self
             .slice
             .column(component_id, false)
@@ -820,6 +834,9 @@ impl PyBatch {
             }
             PyComponentType::Dynamic(_) => {
                 PyViewColumn::from_batch_column_with_builtin_type(column, comp_type)
+            }
+            PyComponentType::Resource(_) => {
+                unreachable!("resource components are rejected when View parameters are parsed")
             }
         };
 
@@ -861,7 +878,7 @@ impl PyBatch {
             )));
         }
 
-        let component_id = self.get_component_id(&comp_type)?;
+        let component_id = self.get_component_id(&comp_type, py)?;
         let column = self
             .slice
             .column(component_id, true)
@@ -872,6 +889,9 @@ impl PyBatch {
             }
             PyComponentType::Dynamic(_) => {
                 PyViewColumn::from_batch_column_with_builtin_type(column, comp_type)
+            }
+            PyComponentType::Resource(_) => {
+                unreachable!("resource components are rejected when View parameters are parsed")
             }
         };
 

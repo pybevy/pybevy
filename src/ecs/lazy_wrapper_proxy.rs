@@ -25,10 +25,11 @@ use bevy::{
     },
     math::{Vec2, Vec3},
 };
-use pybevy_core::{ValueStorage, storage_traits::FromBorrowedStorage};
-use pybevy_ecs::shared::run_scaffold::RunTicks;
+use pybevy_core::{ComponentWriteContext, ValueStorage, storage_traits::FromBorrowedStorage};
+use pybevy_ecs::shared::run_ticks::RunTicks;
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError},
     prelude::*,
     types::PyType,
@@ -78,8 +79,9 @@ pub struct PyLazyWrapperProxy {
     /// Component layout (field names, types, and byte offsets)
     layout: Arc<ComponentLayout>,
 
-    /// Python type object for this component (for __class__ attribute)
-    py_type: *const pyo3::ffi::PyTypeObject,
+    /// Python type object for this component (for __class__ and method lookup).
+    /// Owning the reference keeps the class valid after its query param drops.
+    py_type: Option<Py<PyType>>,
 
     /// Validity flag to ensure safe access (includes mode for read-only vs mutable)
     validity: ValidityFlagWithMode,
@@ -113,18 +115,18 @@ pub struct PyLazyWrapperProxy {
 // - data_ptr points to ECS data which is Send (Bevy ensures this)
 // - layout is Arc (Send + Sync)
 // - validity is ValidityFlagWithMode (Send)
-// - py_type is a static type object pointer (safe to send)
+// - Py<PyType> follows PyO3's cross-thread ownership rules
 // - component_id is Copy (Send)
-// - No Python objects (Py<PyAny>) are stored, eliminating TLS issues
+// - the retained Py<PyType> is an owned, GIL-independent handle
 unsafe impl Send for PyLazyWrapperProxy {}
 
 // SAFETY: PyLazyWrapperProxy is Sync because:
 // - Access to data_ptr is protected by validity checks
 // - layout is Arc (Sync)
 // - validity is ValidityFlagWithMode (Sync)
-// - py_type is a static type object pointer (safe to share)
+// - Py<PyType> follows PyO3's cross-thread ownership rules
 // - component_id is Copy (Sync)
-// - No Python objects (Py<PyAny>) are stored, eliminating refcount issues
+// - the retained Py<PyType> is an owned, GIL-independent handle
 unsafe impl Sync for PyLazyWrapperProxy {}
 
 impl PyLazyWrapperProxy {
@@ -147,6 +149,19 @@ impl PyLazyWrapperProxy {
         run_ticks: Option<RunTicks>,
         kind: ProxyKind,
     ) -> Self {
+        let py_type = if py_type.is_null() {
+            None
+        } else {
+            Some(Python::attach(|py| {
+                // SAFETY: the caller supplied a live component class pointer.
+                unsafe {
+                    Bound::from_borrowed_ptr(py, py_type.cast_mut().cast::<pyo3::ffi::PyObject>())
+                }
+                .cast_into::<PyType>()
+                .expect("component type pointer must name a Python type")
+                .unbind()
+            }))
+        };
         // SAFETY: the caller fences this lifetime-erased cell with `validity`.
         let world_cell = unsafe {
             std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell)
@@ -205,6 +220,31 @@ impl PyLazyWrapperProxy {
             }
             ProxyKind::QueryItem => Ok(self.data_ptr),
         }
+    }
+
+    /// Attach lazy Bevy change tracking to a borrowed query field.
+    fn query_field_validity(&self, offset: usize) -> ValidityFlagWithMode {
+        let validity = self.validity.clone();
+        if !self.mutable || self.kind != ProxyKind::QueryItem {
+            return validity;
+        }
+        let Some(ticks) = self.run_ticks else {
+            return validity;
+        };
+        // SAFETY: mutable wrapper queries declare write access to this exact
+        // component, `offset` comes from its registered field layout, and the
+        // proxy validity flag fences the captured world cell.
+        let context = unsafe {
+            ComponentWriteContext::new_with_offset(
+                self.world_cell,
+                self.entity,
+                self.component_id,
+                offset,
+                ticks.last_run,
+                ticks.this_run,
+            )
+        };
+        validity.with_component_write_context(context)
     }
 
     /// Deserialize a single field from the wrapper bytes
@@ -283,8 +323,9 @@ impl PyLazyWrapperProxy {
                     // Query iteration: the ValidityFlag covers the access window, so a
                     // borrowed (write-through) sub-proxy is safe and preserves mutation.
                     let vec3_ptr = bytes_ptr as *mut Vec3;
-                    let storage =
-                        unsafe { ValueStorage::borrowed(vec3_ptr, self.validity.clone()) };
+                    let storage = unsafe {
+                        ValueStorage::borrowed(vec3_ptr, self.query_field_validity(field.offset))
+                    };
                     Py::new(py, PyVec3::from_borrowed(storage))?.into_any()
                 }
             },
@@ -303,8 +344,9 @@ impl PyLazyWrapperProxy {
                 }
                 ProxyKind::QueryItem => {
                     let vec2_ptr = bytes_ptr as *mut Vec2;
-                    let storage =
-                        unsafe { ValueStorage::borrowed(vec2_ptr, self.validity.clone()) };
+                    let storage = unsafe {
+                        ValueStorage::borrowed(vec2_ptr, self.query_field_validity(field.offset))
+                    };
                     Py::new(py, PyVec2::from_borrowed(storage))?.into_any()
                 }
             },
@@ -361,6 +403,10 @@ impl PyLazyWrapperProxy {
 
 #[pymethods]
 impl PyLazyWrapperProxy {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.py_type)
+    }
+
     /// Get a field value (lazy deserialization), falling back to Python type methods.
     ///
     /// Priority: ECS field → Python class attribute (methods, properties, etc.)
@@ -368,10 +414,10 @@ impl PyLazyWrapperProxy {
     fn __getattr__(self_: &Bound<'_, Self>, py: Python, name: &str) -> PyResult<Py<PyAny>> {
         let this = self_.borrow();
 
-        // Check validity first — stale proxies must always error
+        // Check validity first: stale proxies must always error
         this.check_valid()?;
 
-        // Try ECS field first — deserialize_field does its own field lookup
+        // Try ECS field first: deserialize_field does its own field lookup
         match this.deserialize_field(py, name) {
             Ok(value) => return Ok(value),
             Err(e) => {
@@ -384,9 +430,11 @@ impl PyLazyWrapperProxy {
         }
 
         // Fall back to Python type attributes (methods, class variables, etc.)
-        // SAFETY: registered type pointers live for the interpreter lifetime
-        let py_type =
-            unsafe { pyo3::Bound::from_borrowed_ptr(py, this.py_type as *mut pyo3::ffi::PyObject) };
+        let py_type = this
+            .py_type
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Invalid component type"))?
+            .bind(py);
 
         // Look up the attribute on the Python type
         let attr = py_type.getattr(name).map_err(|_| {
@@ -440,15 +488,10 @@ impl PyLazyWrapperProxy {
     /// Return the component's Python type for isinstance() checks
     #[getter(__class__)]
     fn get_class(&self, py: Python) -> PyResult<Py<PyType>> {
-        // SAFETY: registered type pointers live for the interpreter lifetime
-        let py_type =
-            unsafe { pyo3::Bound::from_borrowed_ptr(py, self.py_type as *mut pyo3::ffi::PyObject) };
-
-        if let Ok(type_obj) = py_type.cast::<PyType>() {
-            Ok(type_obj.clone().unbind())
-        } else {
-            Err(PyRuntimeError::new_err("Invalid component type"))
-        }
+        self.py_type
+            .as_ref()
+            .map(|type_obj| type_obj.clone_ref(py))
+            .ok_or_else(|| PyRuntimeError::new_err("Invalid component type"))
     }
 
     /// String representation for debugging
