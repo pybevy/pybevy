@@ -1,4 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    alloc::Layout,
+    any::TypeId,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use bevy::{
     ecs::{
@@ -6,24 +11,31 @@ use bevy::{
         entity::Entity,
         name::Name,
         reflect::{AppTypeRegistry, ReflectComponent},
-        schedule::Schedules,
+        schedule::{IntoSystemSet, Schedules, SystemSet},
         world::{EntityRef as BevyEntityRef, World},
     },
-    reflect::TypeInfo,
+    reflect::{ReflectRef, TypeInfo},
 };
 use pybevy_core::{
+    ResourceBridge,
     registry::global_registry::{all_component_bridges, all_resource_bridges},
     source_location::SourceLocation,
 };
+use pybevy_ecs::shared::system_runtime::{HotReloadGeneration, ReloadGenerationSet};
+#[cfg(test)]
+use pyo3::ffi;
 use pyo3::{
-    ffi,
     prelude::*,
     types::{PyDict, PyType},
 };
 
 use crate::{
     bridge::{ControlError, EntityRef},
-    handlers::entity::resolve_entity,
+    handlers::{
+        entity::resolve_entity,
+        json_float::float_to_json,
+        pyo3::{custom_wrapper, state_resource},
+    },
 };
 
 /// Extract custom component names for an entity using the CustomComponentInfo registry.
@@ -58,30 +70,27 @@ fn entity_component_breakdown(
     (archetype, bevy_internal)
 }
 
-/// Extract field values from a custom component stored as PyObject.
-/// Returns a JSON map of field_name → JSON-converted value.
+/// Extract field values from a custom component.
+/// Returns a JSON map of field names to JSON-converted values.
 fn extract_custom_component_fields(
     py: Python<'_>,
     entity_ref: &BevyEntityRef,
     component_id: ComponentId,
-    is_pyobject_storage: bool,
+    entry: &pybevy_core::CustomComponentEntry,
+    descriptor_layout: Layout,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    if !is_pyobject_storage {
-        // Non-PyObject storage: raw data is a Rust wrapper, not a Py<PyAny>.
-        // Cannot safely read fields via Python introspection.
-        let mut map = serde_json::Map::new();
-        map.insert(
-            "_note".into(),
-            serde_json::Value::String(
-                "wrapper storage — fields not readable via MCP. Use storage=\"python\" for introspectable components.".into(),
-            ),
-        );
-        return Some(map);
-    }
-
     let ptr = entity_ref.get_by_id(component_id).ok()?;
 
-    // For PyObject storage, the raw data is a Py<PyAny>
+    if !entry.is_pyobject_storage {
+        let layout = entry.wrapper_layout.as_deref()?;
+        if !custom_wrapper::descriptor_matches(layout, descriptor_layout) {
+            return None;
+        }
+        return custom_wrapper::fields_to_json(ptr, layout).ok();
+    }
+
+    // SAFETY: CustomComponentInfo records this ComponentId as PyObject storage,
+    // whose registered descriptor stores a live Py<PyAny> at this pointer.
     let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
     let bound = py_obj.bind(py);
 
@@ -133,7 +142,7 @@ fn extract_custom_component_fields(
 /// - For objects with getset_descriptor attributes (nested PyO3 structs) → recurse
 /// - For list/tuple → recurse on elements
 /// - Fallback → repr() string
-fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
+pub(crate) fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
     // None
     if value.is_none() {
         return serde_json::Value::Null;
@@ -148,11 +157,26 @@ fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
     }
     // float
     if let Ok(f) = value.extract::<f64>() {
-        return serde_json::json!(f);
+        return float_to_json(f);
     }
     // str
     if let Ok(s) = value.extract::<String>() {
         return serde_json::Value::String(s);
+    }
+    if let Some(color) = color_to_json(value) {
+        return color;
+    }
+    if let Some(vector) = vector_to_json(value) {
+        return vector;
+    }
+    if let Some(entity) = entity_to_json(value) {
+        return entity;
+    }
+    if let Some(val) = val_to_json(value) {
+        return val;
+    }
+    if pyo3_complex_enum_variant_name(&value.get_type()).is_some() {
+        return serde_json::Value::Object(extract_bridge_fields_inner(value));
     }
     // list/tuple → recurse on elements
     if let Ok(iter) = value.try_iter() {
@@ -165,6 +189,11 @@ fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
     // Check if this is a nested PyO3 struct (has getset_descriptor attributes)
     let nested_fields = extract_bridge_fields_inner(value);
     if !nested_fields.is_empty() {
+        if nested_fields.len() == 1
+            && let Some(inner) = nested_fields.get("value")
+        {
+            return inner.clone();
+        }
         return serde_json::Value::Object(nested_fields);
     }
     // Fallback: repr()
@@ -172,6 +201,90 @@ fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
         .repr()
         .map(|r| serde_json::Value::String(r.to_string()))
         .unwrap_or_else(|_| serde_json::Value::String("<opaque>".to_string()))
+}
+
+fn val_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    if value.get_type().name().ok()?.to_str().ok()? != "Val" {
+        return None;
+    }
+    let repr = value.repr().ok()?.to_string_lossy().into_owned();
+    if repr == "Val.auto()" {
+        return Some(serde_json::json!({"Auto": null}));
+    }
+    for (method, variant) in [
+        ("px", "Px"),
+        ("percent", "Percent"),
+        ("vw", "Vw"),
+        ("vh", "Vh"),
+        ("vmin", "VMin"),
+        ("vmax", "VMax"),
+    ] {
+        let prefix = format!("Val.{method}(");
+        if let Some(value) = repr
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix(')'))
+            .and_then(|value| value.parse::<f64>().ok())
+        {
+            return Some(serde_json::Value::Object(serde_json::Map::from_iter([(
+                variant.to_string(),
+                serde_json::json!(value),
+            )])));
+        }
+    }
+    None
+}
+
+/// Render an `Entity` as the id the rest of the control API accepts, rather
+/// than letting it fall through to an unusable repr.
+fn entity_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    if value.get_type().name().ok()?.to_str().ok()? != "Entity" {
+        return None;
+    }
+    let bits = value.call_method0("to_bits").ok()?.extract::<u64>().ok()?;
+    Some(serde_json::json!(bits))
+}
+
+fn color_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    let py_type = value.get_type();
+    let direct = py_type.name().ok()?.to_str().ok()? == "Color";
+    let variant = py_type
+        .getattr("__bases__")
+        .ok()
+        .and_then(|bases| bases.get_item(0).ok())
+        .and_then(|base| base.cast_into::<PyType>().ok())
+        .and_then(|base| base.name().ok().map(|name| name == "Color"))
+        .unwrap_or(false);
+    if !direct && !variant {
+        return None;
+    }
+
+    let srgba = value.call_method0("to_srgba").ok()?;
+    let mut channels = serde_json::Map::new();
+    for channel in ["red", "green", "blue", "alpha"] {
+        let value = srgba.getattr(channel).ok()?.extract::<f64>().ok()?;
+        channels.insert(channel.to_string(), float_to_json(value));
+    }
+
+    let mut color = serde_json::Map::new();
+    color.insert("Srgba".to_string(), serde_json::Value::Object(channels));
+    Some(serde_json::Value::Object(color))
+}
+
+fn vector_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    let type_name = value.get_type().name().ok()?;
+    let fields: &[&str] = match type_name.to_str().ok()? {
+        "Vec2" => &["x", "y"],
+        "Vec3" => &["x", "y", "z"],
+        "Vec4" | "Quat" => &["x", "y", "z", "w"],
+        _ => return None,
+    };
+    let values = fields
+        .iter()
+        .map(|field| value.getattr(*field).ok()?.extract::<f64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    Some(serde_json::Value::Array(
+        values.into_iter().map(float_to_json).collect(),
+    ))
 }
 
 /// Inner helper: extract getset_descriptor fields from a PyO3 object.
@@ -209,6 +322,29 @@ fn extract_bridge_fields_inner(
         }
     }
 
+    // Preserve the identity of PyO3 complex-enum variants whose field layouts
+    // collide by finding the variant class on its parent enum.
+    if let Some(variant) = pyo3_complex_enum_variant_name(&py_type)
+        && !map.contains_key("variant")
+    {
+        map.insert("variant".to_string(), serde_json::Value::String(variant));
+    }
+
+    // Collection components expose their contents by iteration, not by
+    // properties: Bevy's `Children` keeps its `Vec<Entity>` private and Derefs
+    // to a slice, so there is no field to read. Serialize the elements instead
+    // of falling through to a repr that omits them.
+    if map.is_empty()
+        && let Ok(items) = bound.try_iter()
+    {
+        let elements: Vec<serde_json::Value> = items
+            .filter_map(|item| item.ok())
+            .map(|item| py_value_to_json(&item))
+            .collect();
+        map.insert("items".to_string(), serde_json::Value::Array(elements));
+        return map;
+    }
+
     // Fallback for tuple-struct enum wrappers with no exposed properties.
     if map.is_empty()
         && let Ok(repr) = bound.call_method0("__repr__")
@@ -222,6 +358,29 @@ fn extract_bridge_fields_inner(
     }
 
     map
+}
+
+fn pyo3_complex_enum_variant_name(py_type: &Bound<'_, PyType>) -> Option<String> {
+    let bases = py_type.getattr("__bases__").ok()?;
+    let parent = bases.get_item(0).ok()?;
+    let parent_type = parent.cast::<PyType>().ok()?;
+    if parent_type.name().ok()?.to_string_lossy() == "object" {
+        return None;
+    }
+    for attr in parent_type.dir().ok()?.iter() {
+        let name = attr.extract::<String>().ok()?;
+        if name.starts_with('_') {
+            continue;
+        }
+        let candidate = parent_type.as_any().getattr(name.as_str()).ok()?;
+        if candidate
+            .cast::<PyType>()
+            .is_ok_and(|candidate| candidate.is(py_type))
+        {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// Parse the variant name from a Python __repr__ for enum-shaped wrappers.
@@ -295,7 +454,10 @@ fn parse_variant_from_repr(repr: &str) -> Option<String> {
 /// Check if a Python type has any writable getset_descriptor properties (non-underscore).
 /// This detects types like Text2d that have settable PyO3 properties even when
 /// Bevy's reflection says they are not editable (e.g. TupleStruct types).
-fn has_writable_properties(py: Python<'_>, py_type: &Bound<'_, PyType>) -> bool {
+fn has_writable_properties(_py: Python<'_>, py_type: &Bound<'_, PyType>) -> bool {
+    let Ok(instance) = py_type.call0() else {
+        return false;
+    };
     let Ok(dir_list) = py_type.dir() else {
         return false;
     };
@@ -315,17 +477,18 @@ fn has_writable_properties(py: Python<'_>, py_type: &Bound<'_, PyType>) -> bool 
             .map(|n| n.to_string())
             .unwrap_or_default();
         if type_name == "getset_descriptor" {
-            // Check if the descriptor has fset (is writable)
-            // PyO3 getset_descriptors with setters are writable
-            if class_attr.getattr("fset").is_ok_and(|v| !v.is_none()) {
+            // PyO3 getset descriptors do not expose Python property's `fset`.
+            // Assigning the current value to a fresh owned instance reliably
+            // distinguishes generated getters from generated getter/setters.
+            if instance
+                .getattr(name.as_str())
+                .and_then(|value| instance.setattr(name.as_str(), value))
+                .is_ok()
+            {
                 return true;
             }
-            // If fset check fails (some PyO3 versions), just having a getset_descriptor
-            // with a non-underscore name is a good enough signal
-            return true;
         }
     }
-    let _ = py; // suppress unused warning
     false
 }
 
@@ -335,7 +498,37 @@ fn extract_bridge_fields(
     _py: Python<'_>,
     bound: &Bound<'_, PyAny>,
 ) -> serde_json::Map<String, serde_json::Value> {
-    extract_bridge_fields_inner(bound)
+    let mut fields = extract_bridge_fields_inner(bound);
+    let Ok(owned) = bound.call_method0("__copy__") else {
+        if fields.contains_key("variant") {
+            fields.retain(|name, _| name == "variant");
+        }
+        return fields;
+    };
+    fields.retain(|name, _| {
+        name == "variant"
+            || owned
+                .getattr(name.as_str())
+                .and_then(|value| owned.setattr(name.as_str(), value))
+                .is_ok()
+    });
+    fields
+}
+
+fn reflected_enum_variant_name(world: &World, entity: Entity, type_id: TypeId) -> Option<String> {
+    let registry = world.get_resource::<AppTypeRegistry>()?.clone();
+    let registry = registry.read();
+    let registration = registry.get(type_id)?;
+    if !matches!(registration.type_info(), TypeInfo::Enum(_)) {
+        return None;
+    }
+    let reflect_component = registration.data::<ReflectComponent>()?;
+    let entity_ref = world.get_entity(entity).ok()?;
+    let value = reflect_component.reflect(entity_ref)?;
+    let ReflectRef::Enum(value) = value.reflect_ref() else {
+        return None;
+    };
+    Some(value.variant_name().to_string())
 }
 
 /// List all entities with their component types and Names
@@ -344,6 +537,7 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
     let bridges = all_component_bridges();
 
     let entity_list = crate::handlers::entity_count::scene_entities(world);
+    let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
 
     for entity in &entity_list {
         let entity_id = entity.to_bits();
@@ -368,7 +562,7 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
         let custom_names = get_custom_component_names(world, *entity);
         component_names.extend(custom_names.iter().cloned());
 
-        let label = crate::handlers::spatial::entity_label(world, *entity);
+        let label = crate::handlers::spatial::entity_label_with(world, *entity, &occurrences);
 
         // Include source location if tracked
         let source_location = world
@@ -440,6 +634,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         .take(10)
         .map(|(e, n)| (e, n.as_str().to_string()))
         .collect();
+    let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
     for (entity, name) in &named_entities {
         if let Ok(entity_ref) = world.get_entity(*entity) {
             let detected: Vec<String> = bridges
@@ -450,7 +645,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
             let archetype_components = entity_ref.archetype().components().len();
 
             let detected_custom = get_custom_component_names(world, *entity);
-            let label = crate::handlers::spatial::entity_label(world, *entity);
+            let label = crate::handlers::spatial::entity_label_with(world, *entity, &occurrences);
             samples.push(serde_json::json!({
                 "id": entity.to_bits(),
                 "name": name,
@@ -502,6 +697,8 @@ pub fn get_entity(
                 .unwrap_or(false);
             if contains {
                 let name = bridge.name().to_string();
+                let reflected_variant =
+                    reflected_enum_variant_name(world, entity, bridge.bevy_type_id());
                 // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
                 let value = unsafe {
                     bridge.extract_from_entity_ref(
@@ -513,13 +710,20 @@ pub fn get_entity(
                 }
                 .ok()
                 .flatten()
-                .and_then(|py_obj| {
+                .map(|py_obj| {
                     let bound = py_obj.bind(py);
-                    bound.repr().ok().map(|r| r.to_string())
+                    let mut fields = extract_bridge_fields(py, bound);
+                    if let Some(variant) = reflected_variant {
+                        if bound.call_method0("__copy__").is_err() {
+                            fields.clear();
+                        }
+                        fields.insert("variant".to_string(), serde_json::Value::String(variant));
+                    }
+                    serde_json::Value::Object(fields)
                 })
-                .unwrap_or_else(|| "<opaque>".to_string());
+                .unwrap_or_else(|| serde_json::Value::String("<opaque>".to_string()));
 
-                components.insert(name, serde_json::Value::String(value));
+                components.insert(name, value);
             }
         }
 
@@ -533,30 +737,34 @@ pub fn get_entity(
     {
         for component_id in eref.archetype().components() {
             if let Some(entry) = info.get(*component_id) {
-                if entry.is_pyobject_storage {
-                    // Extract field values for PyObject storage components
-                    Python::attach(|py| {
-                        if let Ok(eref2) = world.get_entity(entity) {
-                            if let Some(fields) =
-                                extract_custom_component_fields(py, &eref2, *component_id, true)
-                            {
-                                custom_components
-                                    .insert(entry.name.clone(), serde_json::Value::Object(fields));
-                            } else {
-                                custom_components.insert(
-                                    entry.name.clone(),
-                                    serde_json::Value::String("<pyobject>".to_string()),
-                                );
-                            }
-                        }
-                    });
-                } else {
-                    // Wrapper storage - can report name but not fields
+                let descriptor_layout = world
+                    .components()
+                    .get_info(*component_id)
+                    .map(|component| component.layout());
+                Python::attach(|py| {
+                    if let (Ok(eref2), Some(descriptor_layout)) =
+                        (world.get_entity(entity), descriptor_layout)
+                        && let Some(fields) = extract_custom_component_fields(
+                            py,
+                            &eref2,
+                            *component_id,
+                            entry,
+                            descriptor_layout,
+                        )
+                    {
+                        custom_components
+                            .insert(entry.name.clone(), serde_json::Value::Object(fields));
+                        return;
+                    }
                     custom_components.insert(
                         entry.name.clone(),
-                        serde_json::Value::String("<wrapper>".to_string()),
+                        serde_json::Value::String(if entry.is_pyobject_storage {
+                            "<pyobject>".to_string()
+                        } else {
+                            "<wrapper>".to_string()
+                        }),
                     );
-                }
+                });
             }
         }
     }
@@ -632,6 +840,8 @@ pub fn get_component(
                 validity_flag.set_invalid();
                 return None;
             }
+            let reflected_variant =
+                reflected_enum_variant_name(world, entity, bridge.bevy_type_id());
             // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
             let fields = unsafe {
                 bridge.extract_from_entity_ref(entity, world as *mut World, validity.clone(), py)
@@ -640,7 +850,14 @@ pub fn get_component(
             .flatten()
             .map(|py_obj| {
                 let bound = py_obj.bind(py);
-                extract_bridge_fields(py, bound)
+                let mut fields = extract_bridge_fields(py, bound);
+                if let Some(variant) = reflected_variant {
+                    if bound.call_method0("__copy__").is_err() {
+                        fields.clear();
+                    }
+                    fields.insert("variant".to_string(), serde_json::Value::String(variant));
+                }
+                fields
             });
 
             validity_flag.set_invalid();
@@ -669,10 +886,21 @@ pub fn get_component(
                 if entry.name != component {
                     continue;
                 }
-                let is_pyobj = entry.is_pyobject_storage;
+                let descriptor_layout = world
+                    .components()
+                    .get_info(*component_id)
+                    .map(|component| component.layout());
                 let fields = Python::attach(|py| {
-                    if let Ok(eref2) = world.get_entity(entity) {
-                        extract_custom_component_fields(py, &eref2, *component_id, is_pyobj)
+                    if let (Ok(eref2), Some(descriptor_layout)) =
+                        (world.get_entity(entity), descriptor_layout)
+                    {
+                        extract_custom_component_fields(
+                            py,
+                            &eref2,
+                            *component_id,
+                            entry,
+                            descriptor_layout,
+                        )
                     } else {
                         None
                     }
@@ -697,19 +925,48 @@ pub fn query_entities(
     world: &mut World,
     with_filters: Vec<String>,
     without_filters: Vec<String>,
+    limit: usize,
 ) -> Result<serde_json::Value, ControlError> {
+    if limit > crate::bridge::MAX_QUERY_ENTITY_LIMIT {
+        return Err(ControlError::invalid_params(format!(
+            "limit must be at most {}",
+            crate::bridge::MAX_QUERY_ENTITY_LIMIT
+        )));
+    }
+
     let bridges = all_component_bridges();
+
+    let mut registered_names: HashSet<&str> = bridges.iter().map(|bridge| bridge.name()).collect();
+    if let Some(info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
+        registered_names.extend(info.iter().map(|(_, entry)| entry.name.as_str()));
+    }
+    let mut unknown_filters: Vec<&str> = with_filters
+        .iter()
+        .chain(&without_filters)
+        .map(String::as_str)
+        .filter(|name| !registered_names.contains(name))
+        .collect();
+    unknown_filters.sort_unstable();
+    unknown_filters.dedup();
+    if !unknown_filters.is_empty() {
+        return Err(ControlError::invalid_params(format!(
+            "Unknown component filters: {}",
+            unknown_filters.join(", ")
+        )));
+    }
 
     let all_entities = crate::handlers::entity_count::scene_entities(world);
 
+    let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
     let mut matching = Vec::new();
+    let mut total_count = 0usize;
 
     // Debug: log counts on first call or when empty results seem wrong
     let entity_count = all_entities.len();
     let bridge_count = bridges.len();
 
     if entity_count > 0 && bridge_count == 0 {
-        eprintln!(
+        bevy::log::warn!(
             "[MCP] query_entities: {entity_count} entities but 0 bridges registered! Bridge registry may not be populated."
         );
     }
@@ -742,8 +999,12 @@ pub fn query_entities(
             .all(|f| !has_components.iter().any(|c| c == f));
 
         if has_all_with && has_none_without {
+            total_count += 1;
+            if matching.len() >= limit {
+                continue;
+            }
             let entity_name = entity_ref.get::<Name>().map(|n| n.as_str().to_string());
-            let label = crate::handlers::spatial::entity_label(world, *entity);
+            let label = crate::handlers::spatial::entity_label_with(world, *entity, &occurrences);
 
             // Component breakdown: bridges + custom + Bevy-internal = archetype slots
             let custom_count = custom_names.len();
@@ -783,7 +1044,7 @@ pub fn query_entities(
             // Also check with Bevy's native Name
             let has_name = entity_ref.get::<Name>().is_some();
 
-            eprintln!(
+            bevy::log::debug!(
                 "[MCP] query_entities: 0 matches from {entity_count} entities (filters: with={with_filters:?}, without={without_filters:?}). \
                      Bridges: {bridge_count}. First entity ({}) has {} bridge components: {sample_components:?}. Has Bevy Name: {has_name}",
                 first_entity.to_bits(),
@@ -794,6 +1055,8 @@ pub fn query_entities(
 
     Ok(serde_json::json!({
         "count": matching.len(),
+        "total_count": total_count,
+        "truncated": total_count > matching.len(),
         "entities": matching,
     }))
 }
@@ -804,6 +1067,19 @@ fn extract_custom_resource_fields(
     py: Python<'_>,
     bound: &Bound<'_, PyAny>,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
+    // State machines hold their value behind accessors rather than fields, so
+    // the control plane synthesizes the same `variant` key it uses for enum
+    // components. Checked first: neither has dataclass fields nor a __dict__.
+    if let Some(kind) = state_resource::classify(bound) {
+        let variant = state_resource::read_variant(bound, kind).ok()?;
+        let mut map = serde_json::Map::new();
+        map.insert(
+            state_resource::VARIANT.to_string(),
+            variant.map_or(serde_json::Value::Null, serde_json::Value::String),
+        );
+        return Some(map);
+    }
+
     let mut map = serde_json::Map::new();
 
     // Try dataclass fields first
@@ -852,35 +1128,7 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
 
     // Built-in resources (from bridge registry)
     for bridge in all_resource_bridges() {
-        let name = bridge.name().to_string();
-        let present = bridge.contains_in_world(world);
-
-        let mut entry = serde_json::json!({
-            "name": name,
-            "present": present,
-        });
-
-        // Extract field values for present resources
-        if present {
-            let fields = Python::attach(|py| {
-                let validity_flag = pybevy_core::ValidityFlag::new_read();
-                let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
-                let result = bridge.get(world, validity, py).ok().map(|py_obj| {
-                    let bound = py_obj.bind(py);
-                    extract_bridge_fields(py, bound)
-                });
-                validity_flag.set_invalid();
-                result
-            });
-            if let Some(fields) = fields {
-                entry
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("fields".into(), serde_json::json!(fields));
-            }
-        }
-
-        resources.push(entry);
+        resources.push(bridge_resource_entry(world, &bridge));
     }
 
     // Custom Python resources (from CustomResourceInfo)
@@ -889,7 +1137,7 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
         .filter_map(|r| r["name"].as_str().map(String::from))
         .collect();
 
-    // Collect custom resource entries before accessing PyResourceStorage
+    // Collect custom resource entries before reading dynamic resource values.
     let custom_entries: Vec<(ComponentId, String)> = world
         .get_resource::<pybevy_core::CustomResourceInfo>()
         .map(|custom_info| {
@@ -902,29 +1150,7 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
         .unwrap_or_default();
 
     for (comp_id, name) in custom_entries {
-        let mut res_entry = serde_json::json!({
-            "name": name,
-            "present": true,
-            "custom": true,
-        });
-
-        // Extract values from PyResourceStorage
-        if let Some(storage) = world.get_resource::<pybevy_core::PyResourceStorage>()
-            && let Some(py_obj) = storage.resources.get(&comp_id)
-        {
-            let fields = Python::attach(|py| {
-                let bound = py_obj.bind(py);
-                extract_custom_resource_fields(py, bound)
-            });
-            if let Some(fields) = fields {
-                res_entry
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("fields".into(), serde_json::json!(fields));
-            }
-        }
-
-        resources.push(res_entry);
+        resources.push(custom_resource_entry(world, comp_id, name));
     }
 
     Ok(serde_json::json!({
@@ -933,31 +1159,222 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
     }))
 }
 
-/// List registered systems by stage
-pub fn list_systems(world: &mut World) -> Result<serde_json::Value, ControlError> {
+/// Get one registered resource by its control-plane type name.
+pub fn get_resource(
+    world: &mut World,
+    resource_type: String,
+) -> Result<serde_json::Value, ControlError> {
+    if let Some(bridge) = all_resource_bridges()
+        .into_iter()
+        .find(|bridge| bridge.name() == resource_type)
+    {
+        return Ok(bridge_resource_entry(world, &bridge));
+    }
+
+    let custom = world
+        .get_resource::<pybevy_core::CustomResourceInfo>()
+        .and_then(|info| {
+            info.iter()
+                .find(|(_, entry)| entry.name == resource_type)
+                .map(|(component_id, entry)| (component_id, entry.name.clone()))
+        });
+    if let Some((component_id, name)) = custom {
+        return Ok(custom_resource_entry(world, component_id, name));
+    }
+
+    Err(ControlError::not_found(format!(
+        "Resource '{resource_type}' not found in registry"
+    )))
+}
+
+fn bridge_resource_entry(world: &World, bridge: &Arc<dyn ResourceBridge>) -> serde_json::Value {
+    let present = bridge.contains_in_world(world);
+    let mut entry = serde_json::json!({
+        "name": bridge.name(),
+        "present": present,
+    });
+
+    if present {
+        let fields = Python::attach(|py| {
+            let validity_flag = pybevy_core::ValidityFlag::new_read();
+            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+            let result = bridge
+                .get(world, validity, py)
+                .ok()
+                .map(|py_obj| extract_bridge_fields(py, py_obj.bind(py)));
+            validity_flag.set_invalid();
+            result
+        });
+        if let Some(fields) = fields {
+            entry["fields"] = serde_json::Value::Object(fields);
+        }
+    }
+
+    entry
+}
+
+fn custom_resource_entry(
+    world: &World,
+    component_id: ComponentId,
+    name: String,
+) -> serde_json::Value {
+    let value = world.get_resource_by_id(component_id);
+    let mut entry = serde_json::json!({
+        "name": name,
+        "present": value.is_some(),
+        "custom": true,
+    });
+
+    if let Some(py_obj) = value {
+        let fields = Python::attach(|py| {
+            // SAFETY: custom resource metadata refers to a Py<PyAny> descriptor.
+            let py_obj = unsafe { py_obj.deref::<Py<PyAny>>() };
+            extract_custom_resource_fields(py, py_obj.bind(py))
+        });
+        if let Some(fields) = fields {
+            entry["fields"] = serde_json::Value::Object(fields);
+        }
+    }
+
+    entry
+}
+
+/// List scene-owned systems by stage, with optional engine internals.
+pub fn list_systems(
+    world: &mut World,
+    include_internal: bool,
+) -> Result<serde_json::Value, ControlError> {
     let mut stages = serde_json::Map::new();
+    let mut visible_system_count = 0;
+    let mut total_system_count = 0;
+    let mut scene_system_count = 0;
+    let mut internal_system_count = 0;
+    let current_generation = world
+        .get_resource::<HotReloadGeneration>()
+        .map(|generation| generation.current);
+    let effective_current_generation = current_generation.unwrap_or(0);
 
     if let Some(schedules) = world.get_resource::<Schedules>() {
         for (label, schedule) in schedules.iter() {
-            let system_count = schedule.systems_len();
+            let stage_total_system_count = schedule.systems_len();
+            total_system_count += stage_total_system_count;
+            let current_generation_systems = schedule
+                .graph()
+                .systems_in_set(
+                    ReloadGenerationSet(effective_current_generation)
+                        .into_system_set()
+                        .intern(),
+                )
+                .ok();
+            let retained_generation = current_generation.and_then(|generation| {
+                generation
+                    .checked_sub(1)
+                    .map(|previous| (generation, previous))
+            });
+            let retained_generation_systems = retained_generation.and_then(|(_, previous)| {
+                schedule
+                    .graph()
+                    .systems_in_set(ReloadGenerationSet(previous).into_system_set().intern())
+                    .ok()
+            });
+            let retired_initial_systems = current_generation
+                .filter(|generation| *generation > 1)
+                .and_then(|_| {
+                    schedule
+                        .graph()
+                        .systems_in_set(ReloadGenerationSet(0).into_system_set().intern())
+                        .ok()
+                });
+            let mut active_system_count = 0;
+            let mut retained_system_count = 0;
+            let mut retired_system_count = 0;
+            let mut stage_scene_system_count = 0;
+            let mut stage_internal_system_count = 0;
             // Graph may be uninitialized; degrade to empty list rather than failing.
             let systems: Vec<serde_json::Value> = match schedule.systems() {
                 Ok(iter) => iter
-                    .map(|(_key, system)| serde_json::json!({ "name": system.name().to_string() }))
+                    .filter_map(|(key, system)| {
+                        let in_current_generation = current_generation_systems
+                            .is_some_and(|systems| systems.contains(&key));
+                        let in_retained_generation = retained_generation_systems
+                            .is_some_and(|systems| systems.contains(&key));
+                        let in_retired_initial_generation =
+                            retired_initial_systems.is_some_and(|systems| systems.contains(&key));
+                        let scene_owned = in_current_generation
+                            || in_retained_generation
+                            || in_retired_initial_generation;
+                        if scene_owned {
+                            stage_scene_system_count += 1;
+                        } else {
+                            stage_internal_system_count += 1;
+                        }
+
+                        if !include_internal && !scene_owned {
+                            return None;
+                        }
+
+                        let (active, reload_generation, reload_state) = if in_current_generation {
+                            active_system_count += 1;
+                            (true, Some(effective_current_generation), "active")
+                        } else if in_retained_generation {
+                            retained_system_count += 1;
+                            (
+                                false,
+                                retained_generation.map(|(_, previous)| previous),
+                                "rollback_retained",
+                            )
+                        } else if in_retired_initial_generation {
+                            retired_system_count += 1;
+                            (false, Some(0), "retired")
+                        } else {
+                            active_system_count += 1;
+                            (true, None, "active")
+                        };
+                        Some(serde_json::json!({
+                            "name": system.name().to_string(),
+                            "origin": if scene_owned { "scene" } else { "internal" },
+                            "active": active,
+                            "reload_generation": reload_generation,
+                            "reload_state": reload_state,
+                        }))
+                    })
                     .collect(),
                 Err(_) => Vec::new(),
             };
+
+            let stage_visible_system_count = systems.len();
+            visible_system_count += stage_visible_system_count;
+            scene_system_count += stage_scene_system_count;
+            internal_system_count += stage_internal_system_count;
+
+            if !include_internal && systems.is_empty() {
+                continue;
+            }
+
             stages.insert(
                 format!("{label:?}"),
                 serde_json::json!({
-                    "system_count": system_count,
+                    "system_count": stage_visible_system_count,
+                    "total_system_count": stage_total_system_count,
+                    "scene_system_count": stage_scene_system_count,
+                    "internal_system_count": stage_internal_system_count,
+                    "active_system_count": active_system_count,
+                    "rollback_retained_system_count": retained_system_count,
+                    "retired_system_count": retired_system_count,
                     "systems": systems,
                 }),
             );
         }
     }
 
-    Ok(serde_json::json!({ "stages": stages }))
+    Ok(serde_json::json!({
+        "include_internal": include_internal,
+        "system_count": visible_system_count,
+        "total_system_count": total_system_count,
+        "scene_system_count": scene_system_count,
+        "internal_system_count": internal_system_count,
+        "stages": stages,
+    }))
 }
 
 /// Get component schema (field names, types, defaults, spawn example)
@@ -989,11 +1406,12 @@ pub fn get_component_schema(
                 type_registry.get(type_id).map(|registration| {
                     let type_info = registration.type_info();
                     let has_reflect_component = registration.data::<ReflectComponent>().is_some();
-                    let is_struct = matches!(type_info, TypeInfo::Struct(_));
+                    let is_editable_kind =
+                        matches!(type_info, TypeInfo::Struct(_) | TypeInfo::Enum(_));
                     // NOTE: This misses components that have settable Python properties
                     // (e.g. Text2d). A more complete check would inspect for @property
                     // setters on the Python type, but that requires further investigation.
-                    let editable = has_reflect_component && is_struct;
+                    let editable = has_reflect_component && is_editable_kind;
 
                     let mut field_types = serde_json::Map::new();
                     if let TypeInfo::Struct(info) = type_info {
@@ -1005,6 +1423,14 @@ pub fn get_component_schema(
                                 );
                             }
                         }
+                    } else if let TypeInfo::Enum(info) = type_info {
+                        let variants = (0..info.variant_len())
+                            .filter_map(|index| {
+                                info.variant_at(index).map(|variant| variant.name())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                        field_types.insert("variant".to_string(), serde_json::json!(variants));
                     }
 
                     (editable, field_types, type_info_kind_name(type_info))
@@ -1020,27 +1446,51 @@ pub fn get_component_schema(
                 let fields = get_class_fields(py, &py_type);
 
                 let mut result = serde_json::json!({
-                    "name": type_name,
+                    "name": &type_name,
                     "fields": fields,
                     "registered": true,
                 });
 
-                if let Some((editable, field_types, type_kind)) = &reflection_info {
-                    // If reflection says not editable, check for writable Python properties
-                    let effective_editable = if !editable {
-                        has_writable_properties(py, &py_type)
-                    } else {
-                        *editable
-                    };
+                let reflected_editable = reflection_info
+                    .as_ref()
+                    .is_some_and(|(editable, _, _)| *editable);
+                let effective_editable = bridge.can_insert()
+                    && (bridge.relationship_field().is_some()
+                        || reflected_editable
+                        || has_writable_properties(py, &py_type));
+                result
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("editable".into(), serde_json::json!(effective_editable));
+
+                if let Some((_, field_types, type_kind)) = &reflection_info {
                     let obj = result.as_object_mut().unwrap();
-                    obj.insert("editable".into(), serde_json::json!(effective_editable));
                     obj.insert("type_kind".into(), serde_json::json!(type_kind));
                     if !field_types.is_empty() {
+                        if let Some(fields) = obj
+                            .get_mut("fields")
+                            .and_then(serde_json::Value::as_object_mut)
+                        {
+                            fields.extend(field_types.clone());
+                        }
                         obj.insert(
                             "field_types".into(),
                             serde_json::Value::Object(field_types.clone()),
                         );
                     }
+                }
+
+                if effective_editable
+                    && let Some(defaults) = default_component_fields(&py_type, &result["fields"])
+                {
+                    let spawn_example = serde_json::json!({
+                        "components": {
+                            &type_name: &defaults,
+                        },
+                    });
+                    let obj = result.as_object_mut().unwrap();
+                    obj.insert("defaults".into(), serde_json::Value::Object(defaults));
+                    obj.insert("spawn_example".into(), spawn_example);
                 }
 
                 result
@@ -1051,33 +1501,32 @@ pub fn get_component_schema(
     }
 
     // Fallback: check custom Python components via CustomComponentInfo
-    if let Some(custom_info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
-        for (_, entry) in custom_info.iter() {
-            if entry.name == name {
-                let schema = Python::attach(|py| {
-                    let py_type = unsafe {
-                        Bound::from_borrowed_ptr(py, entry.type_ptr as *mut ffi::PyObject)
-                    };
-                    let fields = if let Ok(cls) = py_type.cast::<PyType>() {
-                        get_class_fields(py, cls)
-                    } else {
-                        serde_json::json!({})
-                    };
+    let custom_entry = world
+        .get_resource::<pybevy_core::CustomComponentInfo>()
+        .and_then(|info| {
+            info.iter()
+                .find(|(_, entry)| entry.name == name)
+                .map(|(_, entry)| entry.clone())
+        });
+    if let Some(entry) = custom_entry {
+        let schema = Python::attach(|py| {
+            let fields = entry.retained_type.as_ref().map_or_else(
+                || serde_json::json!({}),
+                |retained_type| get_class_fields(py, retained_type.bind(py)),
+            );
 
-                    serde_json::json!({
-                        "name": entry.name,
-                        "fields": fields,
-                        "registered": true,
-                        "custom": true,
-                        "editable": entry.is_pyobject_storage,
-                        "type_kind": "CustomPython",
-                        "storage": if entry.is_pyobject_storage { "python" } else { "wrapper" },
-                    })
-                });
+            serde_json::json!({
+                "name": entry.name,
+                "fields": fields,
+                "registered": true,
+                "custom": true,
+                "editable": entry.is_pyobject_storage || entry.wrapper_layout.is_some(),
+                "type_kind": "CustomPython",
+                "storage": if entry.is_pyobject_storage { "python" } else { "wrapper" },
+            })
+        });
 
-                return Ok(schema);
-            }
-        }
+        return Ok(schema);
     }
 
     Err(ControlError::not_found(format!(
@@ -1178,6 +1627,23 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::
     }
 
     serde_json::Value::Object(fields)
+}
+
+fn default_component_fields(
+    py_type: &Bound<'_, PyType>,
+    fields: &serde_json::Value,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let instance = py_type.call0().ok()?;
+    let fields = fields.as_object()?;
+    let mut defaults = serde_json::Map::new();
+
+    for name in fields.keys() {
+        if let Ok(value) = instance.getattr(name.as_str()) {
+            defaults.insert(name.clone(), py_value_to_json(&value));
+        }
+    }
+
+    (!defaults.is_empty()).then_some(defaults)
 }
 
 /// Resolve an EntityRef to a Bevy Entity
@@ -1439,20 +1905,25 @@ fn strip_numeric_suffix(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{ptr, sync::Once};
+    use std::{
+        ptr,
+        sync::{Arc, Once, atomic::AtomicU32},
+    };
 
     use bevy::{
         camera::primitives::Aabb,
+        color::Color,
         ecs::{
             component::ComponentId,
             hierarchy::ChildOf,
             name::Name,
-            schedule::{Schedule, ScheduleLabel},
+            schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel},
         },
         math::Vec3,
         prelude::{GlobalTransform, Transform},
     };
-    use pyo3::types::PyList;
+    use pybevy_color::color::PyColor;
+    use pyo3::types::{PyDict, PyList};
 
     // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
     extern crate pybevy_transform;
@@ -1666,8 +2137,10 @@ mod tests {
     #[test]
     fn list_systems_empty_world() {
         let mut world = World::new();
-        let result = list_systems(&mut world).unwrap();
+        let result = list_systems(&mut world, false).unwrap();
         assert!(result["stages"].as_object().unwrap().is_empty());
+        assert_eq!(result["system_count"], 0);
+        assert_eq!(result["internal_system_count"], 0);
     }
 
     #[test]
@@ -1691,6 +2164,7 @@ mod tests {
             ComponentId::new(99999),
             pybevy_core::CustomResourceEntry {
                 type_ptr: ptr::null(),
+                type_object: None,
                 name: "GameScore".to_string(),
             },
         );
@@ -1746,8 +2220,10 @@ mod tests {
             ComponentId::new(88888),
             pybevy_core::CustomComponentEntry {
                 type_ptr: ptr::null(),
+                retained_type: None,
                 name: "PlayerStats".to_string(),
                 is_pyobject_storage: true,
+                wrapper_layout: None,
             },
         );
         world.insert_resource(info);
@@ -1877,16 +2353,20 @@ mod tests {
             ComponentId::new(10001),
             pybevy_core::CustomComponentEntry {
                 type_ptr: ptr::null(),
+                retained_type: None,
                 name: "Bouncy".to_string(),
                 is_pyobject_storage: true,
+                wrapper_layout: None,
             },
         );
         info.insert(
             ComponentId::new(10002),
             pybevy_core::CustomComponentEntry {
                 type_ptr: ptr::null(),
+                retained_type: None,
                 name: "BounceCounter".to_string(),
                 is_pyobject_storage: true,
+                wrapper_layout: None,
             },
         );
         world.insert_resource(info);
@@ -1925,16 +2405,20 @@ mod tests {
             ComponentId::new(20001),
             pybevy_core::CustomComponentEntry {
                 type_ptr: ptr::null(),
+                retained_type: None,
                 name: "Bouncy".to_string(),
                 is_pyobject_storage: true,
+                wrapper_layout: None,
             },
         );
         info.insert(
             ComponentId::new(20002),
             pybevy_core::CustomComponentEntry {
                 type_ptr: ptr::null(),
+                retained_type: None,
                 name: "Bouncy".to_string(),
                 is_pyobject_storage: true,
+                wrapper_layout: None,
             },
         );
         world.insert_resource(info);
@@ -2053,7 +2537,7 @@ mod tests {
     #[test]
     fn query_entities_empty_world() {
         let mut world = World::new();
-        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        let result = query_entities(&mut world, vec![], vec![], 100).unwrap();
         assert_eq!(result["count"], 0);
     }
 
@@ -2062,8 +2546,59 @@ mod tests {
         let mut world = World::new();
         world.spawn(Name::new("A"));
         world.spawn(Name::new("B"));
-        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        let result = query_entities(&mut world, vec![], vec![], 100).unwrap();
         assert_eq!(result["count"], 2);
+        assert_eq!(result["total_count"], 2);
+        assert_eq!(result["truncated"], false);
+    }
+
+    #[test]
+    fn query_entities_limits_records_and_reports_total() {
+        let mut world = World::new();
+        world.spawn(Name::new("A"));
+        world.spawn(Name::new("B"));
+        world.spawn(Name::new("C"));
+
+        let result = query_entities(&mut world, vec![], vec![], 2).unwrap();
+
+        assert_eq!(result["count"], 2);
+        assert_eq!(result["total_count"], 3);
+        assert_eq!(result["truncated"], true);
+        assert_eq!(result["entities"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn query_entities_rejects_excessive_limit() {
+        let mut world = World::new();
+        let error = query_entities(
+            &mut world,
+            vec![],
+            vec![],
+            crate::bridge::MAX_QUERY_ENTITY_LIMIT + 1,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(error.message.contains("at most 1000"));
+    }
+
+    #[test]
+    fn query_entities_rejects_unknown_component_filters() {
+        setup();
+        let mut world = World::new();
+        let error = query_entities(
+            &mut world,
+            vec!["MissingWith".to_string(), "Transform".to_string()],
+            vec!["MissingWithout".to_string(), "MissingWith".to_string()],
+            100,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "Unknown component filters: MissingWith, MissingWithout"
+        );
     }
     #[test]
     fn get_entity_by_id() {
@@ -2086,6 +2621,26 @@ mod tests {
     }
 
     #[test]
+    fn get_entity_returns_structured_native_component_values() {
+        setup();
+        let mut world = World::new();
+        let entity = world
+            .spawn((Name::new("Structured"), Transform::from_xyz(1.0, 2.0, 3.0)))
+            .id();
+
+        let result = get_entity(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        let transform = &result["components"]["Transform"];
+
+        assert!(
+            transform.is_object(),
+            "expected JSON fields, got {transform}"
+        );
+        assert_eq!(transform["translation"], serde_json::json!([1.0, 2.0, 3.0]));
+        assert_eq!(transform["scale"], serde_json::json!([1.0, 1.0, 1.0]));
+        assert!(transform["rotation"].is_array());
+    }
+
+    #[test]
     fn get_entity_not_found() {
         let mut world = World::new();
         let result = get_entity(&mut world, EntityRef::Id(999999));
@@ -2097,7 +2652,7 @@ mod tests {
         let mut world = World::new();
         world.spawn(Name::new("A"));
         world.spawn(Name::new("B"));
-        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        let result = query_entities(&mut world, vec![], vec![], 100).unwrap();
         // With no filters, should return entities that have at least some components
         assert!(result["count"].as_u64().unwrap() >= 2);
     }
@@ -2150,7 +2705,7 @@ mod tests {
         setup();
         let mut world = World::new();
         world.spawn((Name::new("Q"), Transform::default()));
-        let result = query_entities(&mut world, vec![], vec![]).unwrap();
+        let result = query_entities(&mut world, vec![], vec![], 100).unwrap();
         let entry = result["entities"]
             .as_array()
             .unwrap()
@@ -2266,6 +2821,15 @@ mod tests {
             assert!(result.is_number());
             assert!((result.as_f64().unwrap() - std::f64::consts::PI).abs() < 0.001);
 
+            for (value, spelling) in [
+                (f64::NAN, "NaN"),
+                (f64::INFINITY, "Infinity"),
+                (f64::NEG_INFINITY, "-Infinity"),
+            ] {
+                let value = value.into_pyobject(py).unwrap().into_any();
+                assert_eq!(py_value_to_json(&value), serde_json::json!(spelling));
+            }
+
             // str
             let s = "hello".into_pyobject(py).unwrap().into_any();
             assert_eq!(
@@ -2287,6 +2851,23 @@ mod tests {
             assert_eq!(arr[0], serde_json::json!(1));
             assert_eq!(arr[1], serde_json::json!(2));
             assert_eq!(arr[2], serde_json::json!(3));
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_color_uses_mutation_shape() {
+        setup();
+        Python::attach(|py| {
+            let color = PyColor::from_color(Color::srgba(0.2, 1.0, 0.45, 1.0), py).unwrap();
+
+            let result = py_value_to_json(color.bind(py));
+
+            let srgba = result["Srgba"].as_object().unwrap();
+            assert!((srgba["red"].as_f64().unwrap() - 0.2).abs() < 1.0e-6);
+            assert!((srgba["green"].as_f64().unwrap() - 1.0).abs() < 1.0e-6);
+            assert!((srgba["blue"].as_f64().unwrap() - 0.45).abs() < 1.0e-6);
+            assert!((srgba["alpha"].as_f64().unwrap() - 1.0).abs() < 1.0e-6);
+            assert!(result.get("repr").is_none());
         });
     }
 
@@ -2325,22 +2906,15 @@ mod tests {
                         "Expected 'translation' field, got: {fields:?}"
                     );
                     let translation = &fields["translation"];
-                    // Should be an object (nested struct), not a repr string like
+                    // Should be a numeric array, not a repr string like
                     // "<builtins.Vec3 object at 0x...>"
+                    let components = translation.as_array().unwrap_or_else(|| {
+                        panic!("Expected translation to be an array, got: {translation}")
+                    });
+                    assert_eq!(components.len(), 3, "Expected x, y, z: {translation}");
                     assert!(
-                        translation.is_object(),
-                        "Expected translation to be a nested object, got: {translation}"
-                    );
-                    let obj = translation.as_object().unwrap();
-                    assert!(obj.contains_key("x"), "Missing 'x' in translation: {obj:?}");
-                    assert!(obj.contains_key("y"), "Missing 'y' in translation: {obj:?}");
-                    assert!(obj.contains_key("z"), "Missing 'z' in translation: {obj:?}");
-
-                    // x, y, z should be numbers, not strings
-                    assert!(
-                        obj["x"].is_number(),
-                        "Expected x to be a number, got: {}",
-                        obj["x"]
+                        components.iter().all(serde_json::Value::is_number),
+                        "Expected numeric components, got: {translation}"
                     );
                 }
             }
@@ -2376,18 +2950,19 @@ mod tests {
                     let bound = py_obj.bind(py);
                     let fields = extract_bridge_fields(py, bound);
 
-                    // scale should be a nested Vec3 dict with numeric values
+                    // scale should be a numeric Vec3 array
                     let scale = &fields["scale"];
-                    assert!(
-                        scale.is_object(),
-                        "Expected scale to be a nested object, got: {scale}"
-                    );
-                    let scale_obj = scale.as_object().unwrap();
+                    let components = scale
+                        .as_array()
+                        .unwrap_or_else(|| panic!("Expected scale to be an array, got: {scale}"));
                     // Default scale is (1, 1, 1)
                     assert_eq!(
-                        scale_obj["x"].as_f64().unwrap(),
-                        1.0,
-                        "Scale x should be 1.0"
+                        components
+                            .iter()
+                            .map(|value| value.as_f64().unwrap())
+                            .collect::<Vec<_>>(),
+                        vec![1.0, 1.0, 1.0],
+                        "Default scale should be (1, 1, 1)"
                     );
                 }
             }
@@ -2450,6 +3025,48 @@ mod tests {
         assert!(
             fields.contains_key("translation"),
             "Should detect translation field via Python, got: {fields:?}"
+        );
+    }
+
+    #[test]
+    fn reflected_field_types_replace_generic_property_labels() {
+        setup();
+        let mut world = World::new();
+        world.insert_resource(AppTypeRegistry::default());
+        pybevy_core::register_wrapped_reflect_types(&world);
+
+        let schema = get_component_schema(&mut world, "Transform".into()).unwrap();
+        let fields = schema["fields"].as_object().unwrap();
+
+        assert_eq!(fields["translation"], "Vec3");
+        assert_eq!(fields["rotation"], "Quat");
+        assert_eq!(fields["scale"], "Vec3");
+    }
+
+    #[test]
+    fn component_schema_includes_constructor_defaults_and_spawn_example() {
+        setup();
+        let mut world = World::new();
+        world.insert_resource(AppTypeRegistry::default());
+        pybevy_core::register_wrapped_reflect_types(&world);
+
+        let schema = get_component_schema(&mut world, "Transform".into()).unwrap();
+
+        assert_eq!(
+            schema["defaults"]["translation"],
+            serde_json::json!([0.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            schema["defaults"]["rotation"],
+            serde_json::json!([0.0, 0.0, 0.0, 1.0])
+        );
+        assert_eq!(
+            schema["defaults"]["scale"],
+            serde_json::json!([1.0, 1.0, 1.0])
+        );
+        assert_eq!(
+            schema["spawn_example"]["components"]["Transform"],
+            schema["defaults"]
         );
     }
 
@@ -2691,6 +3308,7 @@ mod tests {
     fn sys_alpha() {}
     fn sys_beta() {}
     fn sys_gamma() {}
+    fn sys_delta() {}
 
     #[test]
     fn list_systems_returns_names_per_stage() {
@@ -2702,9 +3320,11 @@ mod tests {
         schedules.insert(schedule);
         world.insert_resource(schedules);
 
-        let val = list_systems(&mut world).unwrap();
+        let val = list_systems(&mut world, true).unwrap();
         let stage = &val["stages"]["TestStage"];
         assert_eq!(stage["system_count"], 3);
+        assert_eq!(stage["scene_system_count"], 0);
+        assert_eq!(stage["internal_system_count"], 3);
         let systems = stage["systems"].as_array().expect("systems array");
         assert_eq!(systems.len(), 3);
         let names: Vec<String> = systems
@@ -2723,6 +3343,12 @@ mod tests {
             names.iter().any(|n| n.contains("sys_gamma")),
             "expected sys_gamma in {names:?}"
         );
+
+        let filtered = list_systems(&mut world, false).unwrap();
+        assert!(filtered["stages"]["TestStage"].is_null());
+        assert_eq!(filtered["system_count"], 0);
+        assert_eq!(filtered["total_system_count"], 3);
+        assert_eq!(filtered["internal_system_count"], 3);
     }
 
     #[test]
@@ -2734,7 +3360,7 @@ mod tests {
         schedules.insert(schedule);
         world.insert_resource(schedules);
 
-        let val = list_systems(&mut world).unwrap();
+        let val = list_systems(&mut world, true).unwrap();
         let stage = &val["stages"]["EmptyStage"];
         assert_eq!(stage["system_count"], 0);
         let systems = stage["systems"].as_array().expect("systems array");
@@ -2754,10 +3380,128 @@ mod tests {
         schedules.insert(schedule);
         world.insert_resource(schedules);
 
-        let val = list_systems(&mut world).unwrap();
+        let val = list_systems(&mut world, true).unwrap();
         let stage = &val["stages"]["TestStage"];
         let count = stage["system_count"].as_u64().unwrap() as usize;
         let systems_len = stage["systems"].as_array().unwrap().len();
         assert_eq!(count, systems_len);
+    }
+
+    #[test]
+    fn list_systems_recognizes_generation_zero_without_reload_resource() {
+        let mut world = World::new();
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestStage);
+        schedule.add_systems(sys_alpha.in_set(ReloadGenerationSet(0)));
+        schedule.add_systems(sys_beta);
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world, false).unwrap();
+        let stage = &val["stages"]["TestStage"];
+        assert_eq!(stage["system_count"], 1);
+        assert_eq!(stage["scene_system_count"], 1);
+        assert_eq!(stage["internal_system_count"], 1);
+        let system = &stage["systems"][0];
+        assert!(system["name"].as_str().unwrap().contains("sys_alpha"));
+        assert_eq!(system["origin"], "scene");
+        assert_eq!(system["reload_generation"], 0);
+    }
+
+    #[test]
+    fn list_systems_distinguishes_active_retained_and_retired_systems() {
+        let mut world = World::new();
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(2))));
+
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestStage);
+        schedule.add_systems(sys_alpha);
+        schedule.add_systems(sys_delta.in_set(ReloadGenerationSet(0)));
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(1)));
+        schedule.add_systems(sys_gamma.in_set(ReloadGenerationSet(2)));
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world, false).unwrap();
+        let stage = &val["stages"]["TestStage"];
+        assert_eq!(stage["system_count"], 3);
+        assert_eq!(stage["total_system_count"], 4);
+        assert_eq!(stage["scene_system_count"], 3);
+        assert_eq!(stage["internal_system_count"], 1);
+        assert_eq!(stage["active_system_count"], 1);
+        assert_eq!(stage["rollback_retained_system_count"], 1);
+        assert_eq!(stage["retired_system_count"], 1);
+        assert_eq!(val["system_count"], 3);
+        assert_eq!(val["total_system_count"], 4);
+        assert_eq!(val["scene_system_count"], 3);
+        assert_eq!(val["internal_system_count"], 1);
+
+        let systems = stage["systems"].as_array().unwrap();
+        assert!(systems.iter().all(|system| system["origin"] == "scene"));
+        assert!(
+            systems
+                .iter()
+                .all(|system| !system["name"].as_str().unwrap().contains("sys_alpha"))
+        );
+        let retained = systems
+            .iter()
+            .find(|system| system["name"].as_str().unwrap().contains("sys_beta"))
+            .unwrap();
+        assert_eq!(retained["active"], false);
+        assert_eq!(retained["reload_generation"], 1);
+        assert_eq!(retained["reload_state"], "rollback_retained");
+
+        let current = systems
+            .iter()
+            .find(|system| system["name"].as_str().unwrap().contains("sys_gamma"))
+            .unwrap();
+        assert_eq!(current["active"], true);
+        assert_eq!(current["reload_generation"], 2);
+        assert_eq!(current["reload_state"], "active");
+
+        let retired = systems
+            .iter()
+            .find(|system| system["name"].as_str().unwrap().contains("sys_delta"))
+            .unwrap();
+        assert_eq!(retired["active"], false);
+        assert_eq!(retired["reload_generation"], 0);
+        assert_eq!(retired["reload_state"], "retired");
+
+        let with_internal = list_systems(&mut world, true).unwrap();
+        let all_systems = with_internal["stages"]["TestStage"]["systems"]
+            .as_array()
+            .unwrap();
+        let internal = all_systems
+            .iter()
+            .find(|system| system["name"].as_str().unwrap().contains("sys_alpha"))
+            .unwrap();
+        assert_eq!(internal["origin"], "internal");
+        assert_eq!(with_internal["system_count"], 4);
+    }
+
+    #[test]
+    fn complex_enum_variant_name_uses_parent_identity() {
+        setup();
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                c"class Parent: pass\nclass Variant(Parent): pass\nParent.Exponential = Variant",
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let variant = globals
+                .get_item("Variant")
+                .unwrap()
+                .unwrap()
+                .cast_into::<PyType>()
+                .unwrap();
+            assert_eq!(
+                pyo3_complex_enum_variant_name(&variant).as_deref(),
+                Some("Exponential")
+            );
+        });
     }
 }
