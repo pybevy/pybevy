@@ -1,59 +1,55 @@
-use bevy::pbr::{MeshMaterial3d, StandardMaterial};
-use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
-use pybevy_macros::pyhandle;
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
+use bevy::{
+    asset::Handle,
+    pbr::{MeshMaterial3d, StandardMaterial},
+};
+use pybevy_core::{
+    ComponentStorage, PyComponent, PyHandle, PyLogicalComponentParam, ensure_asset_type,
+    extract_handle_from_any,
+};
+use pybevy_macros::pycomponent;
+use pyo3::{prelude::*, types::PyType};
 
-#[pyhandle(MeshMaterial3d::<StandardMaterial>, "MeshMaterial3d")]
-#[pyclass(name = "MeshMaterial3d", extends = PyComponent, eq, frozen, skip_from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
-pub struct PyMeshMaterial3d(pub(crate) PyHandle);
-
-impl TryFrom<&PyMeshMaterial3d> for MeshMaterial3d<StandardMaterial> {
-    type Error = PyErr;
-
-    fn try_from(value: &PyMeshMaterial3d) -> Result<Self, Self::Error> {
-        Ok(MeshMaterial3d((&value.0).try_into()?))
-    }
+#[pycomponent(MeshMaterial3d<StandardMaterial>, bridge)]
+#[pyclass(name = "MeshMaterial3d", extends = PyComponent, eq, skip_from_py_object)]
+#[derive(Debug, PartialEq)]
+pub struct PyMeshMaterial3d {
+    pub(crate) storage: ComponentStorage<MeshMaterial3d<StandardMaterial>>,
 }
 
-impl From<&MeshMaterial3d<StandardMaterial>> for PyMeshMaterial3d {
-    fn from(value: &MeshMaterial3d<StandardMaterial>) -> Self {
-        PyMeshMaterial3d((&value.0).into())
-    }
+fn extract_material_handle(material: &Bound<'_, PyAny>) -> PyResult<Handle<StandardMaterial>> {
+    let handle = extract_handle_from_any(material)?;
+
+    ensure_asset_type::<StandardMaterial>(&handle)?;
+
+    (&handle).try_into()
 }
 
 #[pymethods]
 impl PyMeshMaterial3d {
     #[new]
     pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(material)?;
-
-        // Validate asset type
-        if let Some(name) = handle.asset_type_name()
-            && name != "StandardMaterial"
-        {
-            return Err(PyTypeError::new_err(format!(
-                "AssetType `{}` does not match expected type `StandardMaterial`",
-                name
-            )));
-        }
-
-        Ok((Self(handle), PyComponent).into())
+        Ok(Self::from_owned(MeshMaterial3d(extract_material_handle(material)?)).into())
     }
 
     /// Support `MeshMaterial3d[HologramMaterial]` subscript notation.
     ///
-    /// If the key has `__pybevy_material_component__`, returns that component type
-    /// (e.g. MeshMaterial3dShader). Otherwise returns MeshMaterial3d itself.
+    /// Custom materials retain their Python class identity while sharing the native
+    /// `MeshMaterial3d<ShaderMaterial>` storage type.
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
         cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        // Check for @material redirect
-        if let Ok(component) = key.getattr("__pybevy_material_component__") {
-            return Ok(component.unbind());
+        if key.hasattr("__pybevy_component_type__")? && key.hasattr("__pybevy_logical_type_id__")? {
+            return Ok(Py::new(cls.py(), PyLogicalComponentParam::from_redirect(key)?)?.into_any());
+        }
+        if key.hasattr("__pybevy_component_type__")? {
+            return Ok(key
+                .getattr("__pybevy_component_type__")?
+                .cast_into::<PyType>()?
+                .into_any()
+                .unbind());
         }
         // Default: return MeshMaterial3d itself
         Ok(cls.clone().into_any().unbind())
@@ -61,6 +57,12 @@ impl PyMeshMaterial3d {
 
     #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {
-        Ok(self.0.clone())
+        Ok((&self.as_ref()?.0).into())
+    }
+
+    #[setter]
+    pub fn set_handle(&mut self, handle: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.as_mut()?.0 = extract_material_handle(handle)?;
+        Ok(())
     }
 }

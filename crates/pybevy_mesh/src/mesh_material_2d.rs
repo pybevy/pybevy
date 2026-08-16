@@ -1,7 +1,7 @@
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
-use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
 use pybevy_macros::pyhandle;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::prelude::*;
 
 #[pyhandle(MeshMaterial2d::<ColorMaterial>, "MeshMaterial2d")]
 #[pyclass(name = "MeshMaterial2d", extends = PyComponent, eq, frozen, skip_from_py_object)]
@@ -28,15 +28,7 @@ impl PyMeshMaterial2d {
     pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(material)?;
 
-        // Validate asset type
-        if let Some(name) = handle.asset_type_name()
-            && name != "ColorMaterial"
-        {
-            return Err(PyTypeError::new_err(format!(
-                "AssetType `{}` does not match expected type `ColorMaterial`",
-                name
-            )));
-        }
+        ensure_asset_type::<ColorMaterial>(&handle)?;
 
         Ok((Self(handle), PyComponent).into())
     }

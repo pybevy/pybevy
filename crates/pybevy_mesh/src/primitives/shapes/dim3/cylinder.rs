@@ -17,8 +17,18 @@ pub struct PyCylinder(pub(crate) Cylinder);
 #[pymethods]
 impl PyCylinder {
     #[new]
-    #[pyo3(signature = (radius=0.5, height=1.0))]
-    pub fn new(radius: f32, height: f32) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (radius=0.5, height=1.0, *, half_height = None))]
+    pub fn new(radius: f32, height: f32, half_height: Option<f32>) -> PyClassInitializer<Self> {
+        if let Some(half_height) = half_height {
+            return (
+                Self(Cylinder {
+                    radius,
+                    half_height,
+                }),
+                PyMeshable,
+            )
+                .into();
+        }
         (Self(Cylinder::new(radius, height)), PyMeshable).into()
     }
 

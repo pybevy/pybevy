@@ -16,9 +16,10 @@ impl From<CircularSectorMeshBuilder> for PyCircularSectorMeshBuilder {
 
 #[pymethods]
 impl PyCircularSectorMeshBuilder {
-    pub fn resolution(mut self_: PyRefMut<'_, Self>, resolution: u32) -> PyRefMut<'_, Self> {
-        self_.0.resolution = resolution;
-        self_
+    pub fn resolution(&self, py: Python<'_>, resolution: u32) -> PyResult<Py<Self>> {
+        let mut builder = self.0.clone();
+        builder.resolution = resolution;
+        Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

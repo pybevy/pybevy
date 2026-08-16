@@ -46,46 +46,47 @@ impl PyTetrahedron {
         c: PyVec3,
         d: PyVec3,
         vertices: Option<[PyVec3; 4]>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(v) = vertices {
             let verts = [
-                (&v[0]).into(),
-                (&v[1]).into(),
-                (&v[2]).into(),
-                (&v[3]).into(),
+                (&v[0]).try_into()?,
+                (&v[1]).try_into()?,
+                (&v[2]).try_into()?,
+                (&v[3]).try_into()?,
             ];
-            return (Self(Tetrahedron { vertices: verts }), PyMeshable).into();
+            return Ok((Self(Tetrahedron { vertices: verts }), PyMeshable).into());
         }
-        let a_vec: Vec3 = a.into();
-        let b_vec: Vec3 = b.into();
-        let c_vec: Vec3 = c.into();
-        let d_vec: Vec3 = d.into();
+        let a_vec: Vec3 = a.try_into()?;
+        let b_vec: Vec3 = b.try_into()?;
+        let c_vec: Vec3 = c.try_into()?;
+        let d_vec: Vec3 = d.try_into()?;
 
-        (
+        Ok((
             Self(Tetrahedron::new(a_vec, b_vec, c_vec, d_vec)),
             PyMeshable,
         )
-            .into()
+            .into())
     }
 
     #[getter]
-    pub fn vertices(&self) -> [PyVec3; 4] {
-        [
+    pub fn vertices(&self) -> PyResult<[PyVec3; 4]> {
+        Ok([
             PyVec3::from_vec3(self.0.vertices[0]),
             PyVec3::from_vec3(self.0.vertices[1]),
             PyVec3::from_vec3(self.0.vertices[2]),
             PyVec3::from_vec3(self.0.vertices[3]),
-        ]
+        ])
     }
 
     #[setter]
-    pub fn set_vertices(&mut self, vertices: [PyVec3; 4]) {
+    pub fn set_vertices(&mut self, vertices: [PyVec3; 4]) -> PyResult<()> {
         self.0.vertices = [
-            (&vertices[0]).into(),
-            (&vertices[1]).into(),
-            (&vertices[2]).into(),
-            (&vertices[3]).into(),
+            (&vertices[0]).try_into()?,
+            (&vertices[1]).try_into()?,
+            (&vertices[2]).try_into()?,
+            (&vertices[3]).try_into()?,
         ];
+        Ok(())
     }
 
     pub fn signed_volume(&self) -> f32 {

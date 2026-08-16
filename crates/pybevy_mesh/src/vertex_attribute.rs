@@ -5,8 +5,71 @@ use std::{
 
 use bevy::mesh::{MeshVertexAttribute, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
+use pybevy_array::{ArrayDType, ArrayError, DenseArrayCore, PyArray, Scalar};
 use pybevy_render::vertex_format::PyVertexFormat;
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyTypeError},
+    prelude::*,
+    types::PyAny,
+};
+
+const UNSUPPORTED_ATTRIBUTE_ARRAY: &str = "Unsupported array dtype/shape. Supported: float32 (n|n,2|n,3|n,4), float64 (n|n,2|n,3|n,4), uint32 (n), int32 (n)";
+
+fn bounded_vertex_attribute_values(
+    core: &DenseArrayCore,
+) -> Result<Option<VertexAttributeValues>, ArrayError> {
+    let dtype = core.dtype();
+    let shape = core.shape();
+    if !matches!(
+        (dtype, shape),
+        (ArrayDType::Float32 | ArrayDType::Float64, [_])
+            | (ArrayDType::Float32 | ArrayDType::Float64, [_, 2..=4])
+            | (ArrayDType::Uint32 | ArrayDType::Int32, [_])
+    ) {
+        return Ok(None);
+    }
+
+    let values = core.to_scalars()?;
+    let result = match (dtype, shape) {
+        (ArrayDType::Float32 | ArrayDType::Float64, [_]) => {
+            VertexAttributeValues::Float32(float_values(&values))
+        }
+        (ArrayDType::Float32 | ArrayDType::Float64, [_, 2]) => {
+            VertexAttributeValues::Float32x2(float_rows(&values))
+        }
+        (ArrayDType::Float32 | ArrayDType::Float64, [_, 3]) => {
+            VertexAttributeValues::Float32x3(float_rows(&values))
+        }
+        (ArrayDType::Float32 | ArrayDType::Float64, [_, 4]) => {
+            VertexAttributeValues::Float32x4(float_rows(&values))
+        }
+        (ArrayDType::Uint32, [_]) => VertexAttributeValues::Uint32(
+            values
+                .into_iter()
+                .map(|value| value.to_i64_trunc() as u32)
+                .collect(),
+        ),
+        (ArrayDType::Int32, [_]) => VertexAttributeValues::Sint32(
+            values
+                .into_iter()
+                .map(|value| value.to_i64_trunc() as i32)
+                .collect(),
+        ),
+        _ => unreachable!("supported dtype and shape checked above"),
+    };
+    Ok(Some(result))
+}
+
+fn float_values(values: &[Scalar]) -> Vec<f32> {
+    values.iter().map(|value| value.to_f64() as f32).collect()
+}
+
+fn float_rows<const N: usize>(values: &[Scalar]) -> Vec<[f32; N]> {
+    values
+        .chunks_exact(N)
+        .map(|row| std::array::from_fn(|index| row[index].to_f64() as f32))
+        .collect()
+}
 
 #[derive(Default)]
 struct AttributeIdHasher(u64);
@@ -82,6 +145,13 @@ impl PyVertexAttributeValues {
     pub fn new<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
         if let Ok(vref) = obj.extract::<PyRef<PyVertexAttributeValues>>() {
             return Ok(vref.clone());
+        }
+
+        if let Ok(array) = obj.extract::<PyRef<PyArray>>() {
+            let values = bounded_vertex_attribute_values(&array.core)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+                .ok_or_else(|| PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY))?;
+            return Ok(PyVertexAttributeValues(values));
         }
 
         if let Ok(arr) = obj.extract::<PyReadonlyArray1<f32>>() {
@@ -218,9 +288,7 @@ impl PyVertexAttributeValues {
             }
         }
 
-        Err(PyTypeError::new_err(
-            "Unsupported array dtype/shape. Supported: float32 (n|n,2|n,3|n,4), float64 (n|n,2|n,3|n,4), uint32 (n), int32 (n)",
-        ))
+        Err(PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY))
     }
 }
 

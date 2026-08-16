@@ -16,20 +16,16 @@ impl From<TorusMeshBuilder> for PyTorusMeshBuilder {
 
 #[pymethods]
 impl PyTorusMeshBuilder {
-    pub fn minor_resolution(
-        mut self_: PyRefMut<'_, Self>,
-        resolution: usize,
-    ) -> PyRefMut<'_, Self> {
-        self_.0.minor_resolution = resolution;
-        self_
+    pub fn minor_resolution(&self, py: Python<'_>, resolution: usize) -> PyResult<Py<Self>> {
+        let mut builder = self.0.clone();
+        builder.minor_resolution = resolution;
+        Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
-    pub fn major_resolution(
-        mut self_: PyRefMut<'_, Self>,
-        resolution: usize,
-    ) -> PyRefMut<'_, Self> {
-        self_.0.major_resolution = resolution;
-        self_
+    pub fn major_resolution(&self, py: Python<'_>, resolution: usize) -> PyResult<Py<Self>> {
+        let mut builder = self.0.clone();
+        builder.major_resolution = resolution;
+        Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

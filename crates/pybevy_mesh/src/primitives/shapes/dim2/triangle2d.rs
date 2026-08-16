@@ -41,31 +41,36 @@ impl PyTriangle2d {
         b: PyVec2,
         c: PyVec2,
         vertices: Option<[PyVec2; 3]>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(v) = vertices {
-            let verts = [(&v[0]).into(), (&v[1]).into(), (&v[2]).into()];
-            return (Self(Triangle2d { vertices: verts }), PyMeshable).into();
+            let verts = [
+                (&v[0]).try_into()?,
+                (&v[1]).try_into()?,
+                (&v[2]).try_into()?,
+            ];
+            return Ok((Self(Triangle2d { vertices: verts }), PyMeshable).into());
         }
-        let verts = [a.into(), b.into(), c.into()];
-        (Self(Triangle2d { vertices: verts }), PyMeshable).into()
+        let verts = [a.try_into()?, b.try_into()?, c.try_into()?];
+        Ok((Self(Triangle2d { vertices: verts }), PyMeshable).into())
     }
 
     #[getter]
-    pub fn vertices(&self) -> [PyVec2; 3] {
-        [
+    pub fn vertices(&self) -> PyResult<[PyVec2; 3]> {
+        Ok([
             PyVec2::from_vec2(self.0.vertices[0]),
             PyVec2::from_vec2(self.0.vertices[1]),
             PyVec2::from_vec2(self.0.vertices[2]),
-        ]
+        ])
     }
 
     #[setter]
-    pub fn set_vertices(&mut self, vertices: [PyVec2; 3]) {
+    pub fn set_vertices(&mut self, vertices: [PyVec2; 3]) -> PyResult<()> {
         self.0.vertices = [
-            (&vertices[0]).into(),
-            (&vertices[1]).into(),
-            (&vertices[2]).into(),
+            (&vertices[0]).try_into()?,
+            (&vertices[1]).try_into()?,
+            (&vertices[2]).try_into()?,
         ];
+        Ok(())
     }
 
     pub fn is_acute(&self) -> bool {

@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, RegularPolygon},
     mesh::Meshable,
 };
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::circle::PyCircle;
 use crate::{
@@ -29,8 +29,10 @@ impl From<RegularPolygon> for PyRegularPolygon {
 impl PyRegularPolygon {
     #[new]
     #[pyo3(signature = (circumradius = 0.5, sides = 6))]
-    pub fn new(circumradius: f32, sides: u32) -> PyClassInitializer<Self> {
-        (Self(RegularPolygon::new(circumradius, sides)), PyMeshable).into()
+    pub fn new(circumradius: f32, sides: u32) -> PyResult<PyClassInitializer<Self>> {
+        validate_circumradius(circumradius)?;
+        validate_sides(sides)?;
+        Ok((Self(RegularPolygon::new(circumradius, sides)), PyMeshable).into())
     }
 
     #[getter]
@@ -44,8 +46,10 @@ impl PyRegularPolygon {
     }
 
     #[setter]
-    pub fn set_sides(&mut self, value: u32) {
+    pub fn set_sides(&mut self, value: u32) -> PyResult<()> {
+        validate_sides(value)?;
         self.0.sides = value;
+        Ok(())
     }
 
     pub fn circumradius(&self) -> f32 {
@@ -95,4 +99,22 @@ impl PyRegularPolygon {
             self.0.sides
         )
     }
+}
+
+fn validate_circumradius(circumradius: f32) -> PyResult<()> {
+    if !circumradius.is_finite() || circumradius.is_sign_negative() {
+        return Err(PyValueError::new_err(format!(
+            "circumradius must be finite and non-negative (got {circumradius})"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_sides(sides: u32) -> PyResult<()> {
+    if sides < 3 {
+        return Err(PyValueError::new_err(format!(
+            "sides must be at least 3 (got {sides})"
+        )));
+    }
+    Ok(())
 }

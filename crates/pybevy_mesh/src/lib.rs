@@ -5,6 +5,7 @@ pub mod mesh3d;
 pub mod mesh_builder;
 pub mod mesh_material_2d;
 pub mod mesh_material_3d;
+pub mod mesh_morph_weights;
 pub mod mesh_tag;
 pub mod meshable;
 pub mod morph_weights;
@@ -73,6 +74,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<mesh3d::PyMesh3d>()?;
     m.add_class::<mesh_material_2d::PyMeshMaterial2d>()?;
     m.add_class::<mesh_material_3d::PyMeshMaterial3d>()?;
+    m.add_class::<mesh_morph_weights::PyMeshMorphWeights>()?;
+    mesh_morph_weights::register_mesh_morph_weights_variants(&m)?;
     m.add_class::<mesh_tag::PyMeshTag>()?;
     m.add_class::<morph_weights::PyMorphWeights>()?;
     m.add_class::<skinned_mesh::PySkinnedMesh>()?;

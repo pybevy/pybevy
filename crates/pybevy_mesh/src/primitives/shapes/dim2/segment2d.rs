@@ -33,17 +33,21 @@ impl PySegment2d {
         point1: PyVec2,
         point2: PyVec2,
         vertices: Option<[PyVec2; 2]>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(v) = vertices {
-            return (
+            return Ok((
                 Self(Segment2d {
-                    vertices: [v[0].get(), v[1].get()],
+                    vertices: [v[0].try_get()?, v[1].try_get()?],
                 }),
                 PyMeshable,
             )
-                .into();
+                .into());
         }
-        (Self(Segment2d::new(point1.get(), point2.get())), PyMeshable).into()
+        Ok((
+            Self(Segment2d::new(point1.try_get()?, point2.try_get()?)),
+            PyMeshable,
+        )
+            .into())
     }
 
     #[staticmethod]
@@ -56,7 +60,7 @@ impl PySegment2d {
             py,
             (
                 Self(Segment2d::from_direction_and_length(
-                    direction.into_dir2(),
+                    direction.into_dir2()?,
                     length,
                 )),
                 PyMeshable,
@@ -69,7 +73,9 @@ impl PySegment2d {
         Py::new(
             py,
             (
-                Self(Segment2d::from_scaled_direction(scaled_direction.get())),
+                Self(Segment2d::from_scaled_direction(
+                    scaled_direction.try_get()?,
+                )),
                 PyMeshable,
             ),
         )
@@ -80,7 +86,10 @@ impl PySegment2d {
         Py::new(
             py,
             (
-                Self(Segment2d::from_ray_and_length(Ray2d::from(ray), length)),
+                Self(Segment2d::from_ray_and_length(
+                    Ray2d::try_from(ray)?,
+                    length,
+                )),
                 PyMeshable,
             ),
         )
@@ -95,8 +104,9 @@ impl PySegment2d {
     }
 
     #[setter]
-    pub fn set_vertices(&mut self, vertices: [PyVec2; 2]) {
-        self.0.vertices = [vertices[0].get(), vertices[1].get()];
+    pub fn set_vertices(&mut self, vertices: [PyVec2; 2]) -> PyResult<()> {
+        self.0.vertices = [vertices[0].try_get()?, vertices[1].try_get()?];
+        Ok(())
     }
 
     pub fn point1(&self) -> PyVec2 {
@@ -176,11 +186,14 @@ impl PySegment2d {
     }
 
     pub fn translated(&self, py: Python<'_>, translation: PyVec2) -> PyResult<Py<Self>> {
-        Py::new(py, (Self(self.0.translated(translation.get())), PyMeshable))
+        Py::new(
+            py,
+            (Self(self.0.translated(translation.try_get()?)), PyMeshable),
+        )
     }
 
     pub fn rotated(&self, py: Python<'_>, rotation: PyRot2) -> PyResult<Py<Self>> {
-        let rot: Rot2 = rotation.into();
+        let rot: Rot2 = rotation.try_into()?;
         Py::new(py, (Self(self.0.rotated(rot)), PyMeshable))
     }
 
@@ -190,15 +203,18 @@ impl PySegment2d {
         rotation: PyRot2,
         point: PyVec2,
     ) -> PyResult<Py<Self>> {
-        let rot: Rot2 = rotation.into();
+        let rot: Rot2 = rotation.try_into()?;
         Py::new(
             py,
-            (Self(self.0.rotated_around(rot, point.get())), PyMeshable),
+            (
+                Self(self.0.rotated_around(rot, point.try_get()?)),
+                PyMeshable,
+            ),
         )
     }
 
     pub fn rotated_around_center(&self, py: Python<'_>, rotation: PyRot2) -> PyResult<Py<Self>> {
-        let rot: Rot2 = rotation.into();
+        let rot: Rot2 = rotation.try_into()?;
         Py::new(py, (Self(self.0.rotated_around_center(rot)), PyMeshable))
     }
 
@@ -218,8 +234,8 @@ impl PySegment2d {
         Py::new(py, (Self(self.0.reversed()), PyMeshable))
     }
 
-    pub fn closest_point(&self, point: PyVec2) -> PyVec2 {
-        PyVec2::from_vec2(self.0.closest_point(point.get()))
+    pub fn closest_point(&self, point: PyVec2) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_vec2(self.0.closest_point(point.try_get()?)))
     }
 
     pub fn mesh(&self, py: Python) -> PyResult<Py<PySegment2dMeshBuilder>> {

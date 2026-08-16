@@ -28,8 +28,18 @@ impl From<Capsule2d> for PyCapsule2d {
 #[pymethods]
 impl PyCapsule2d {
     #[new]
-    #[pyo3(signature = (radius = 0.5, length = 1.0))]
-    pub fn new(radius: f32, length: f32) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (radius = 0.5, length = 1.0, *, half_length = None))]
+    pub fn new(radius: f32, length: f32, half_length: Option<f32>) -> PyClassInitializer<Self> {
+        if let Some(half_length) = half_length {
+            return (
+                Self(Capsule2d {
+                    radius,
+                    half_length,
+                }),
+                PyMeshable,
+            )
+                .into();
+        }
         (Self(Capsule2d::new(radius, length)), PyMeshable).into()
     }
 
