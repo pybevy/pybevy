@@ -15,8 +15,21 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use bevy::ecs::{entity::Entity, resource::Resource, world::World};
-use pybevy_core::CustomComponentInfo;
+use bevy::{
+    app::PreUpdate,
+    ecs::{
+        component::ComponentId, entity::Entity, query::QueryBuilder, resource::Resource,
+        schedule::Schedules, world::World,
+    },
+};
+use pybevy_core::{
+    CustomComponentInfo,
+    custom_resource::insert_dynamic_resource_value,
+    public_error::{
+        NEXT_STATE_CONSTRUCTION, expected_state_member, expected_state_member_got_state_type,
+    },
+    resource_initializer,
+};
 use pybevy_ecs::shared::{
     schedule::{StateMachineId, StateScheduleKind, StateScheduleLabel, TransitionScheduleLabel},
     state_machine_registry::{
@@ -27,19 +40,43 @@ use pybevy_ecs::shared::{
     },
 };
 use pyo3::{
-    PyTypeInfo,
+    PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyTuple, PyType},
 };
 
 use crate::ecs::{
-    component::PyComponent,
-    resource::PyResource,
-    resource_type::{PyResourceStorage, register_custom_resource},
+    component::PyComponent, component_type::ComponentRegistry, dynamic_system::lock_or_recover,
+    resource::PyResource, resource_type::register_custom_resource,
 };
 
 pub(crate) const STATE_RESOURCE_TYPE_CACHE_ATTR: &str = "__pybevy_state_resource_cache__";
+
+#[derive(Resource)]
+struct StateTransitionSystemInstalled;
+
+pub(crate) fn ensure_state_transition_system_registered(world: &mut World) {
+    if world.contains_resource::<StateTransitionSystemInstalled>() {
+        return;
+    }
+
+    if !world.contains_resource::<Schedules>() {
+        world.insert_resource(Schedules::default());
+    }
+    world
+        .resource_mut::<Schedules>()
+        .entry(PreUpdate)
+        .add_systems(|world: &mut World| {
+            // PERF: In the future, a Rust-side pending flag could skip this attach when idle.
+            Python::attach(|py| {
+                if let Err(error) = apply_state_transitions(py, world) {
+                    eprintln!("State transition error: {error}");
+                }
+            });
+        });
+    world.insert_resource(StateTransitionSystemInstalled);
+}
 
 /// Python decorator for marking an Enum as a state machine
 ///
@@ -103,46 +140,46 @@ impl PyState {
     /// Create a new State resource
     #[new]
     fn py_new(py: Python, initial_state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let state_type = initial_state.bind(py).get_type().unbind();
+        state_member_type(py, initial_state.bind(py))?;
 
-        // Validate it's a registered state type
-        Self::validate_state_type(py, &state_type)?;
-
-        Ok((
-            PyState {
-                current: Arc::new(Mutex::new(initial_state)),
-            },
-            PyResource,
-        )
-            .into())
+        Ok(resource_initializer(PyState {
+            current: Arc::new(Mutex::new(initial_state)),
+        }))
     }
 
     /// Get the current state value
     fn get(&self, py: Python) -> Py<PyAny> {
-        self.current.lock().unwrap().clone_ref(py)
+        lock_or_recover(&self.current).clone_ref(py)
     }
 
-    /// Check if current state equals given state
-    fn __eq__(&self, _py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
-        // CRITICAL: Cannot use PyO3 methods that require GIL (extract, bind, etc.)
-        // because this is called from py.detach() context (app.rs:1192).
+    /// The `@state` enum this machine is for.
+    ///
+    /// Rust reads the machine's type parameter statically; Python carries it at
+    /// runtime, so generic callers need a way to ask.
+    fn state_type(&self, py: Python) -> Py<PyAny> {
+        self.current_value(py)
+            .bind(py)
+            .get_type()
+            .into_any()
+            .unbind()
+    }
 
-        // Check if comparing with the same State instance using raw pointer comparison
-        let self_ptr = self as *const Self as *const ();
-        let other_ptr = other.as_ptr() as *const ();
-
-        // If comparing the exact same State object (self == other)
-        if self_ptr == other_ptr {
-            return Ok(true);
+    /// Compare against another `State` or directly against a state member,
+    /// matching Bevy's `PartialEq` and `impl PartialEq<S> for State<S>`.
+    fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
+        // Read our own value out before touching `other`: comparing a State to
+        // itself would otherwise re-enter the same non-reentrant mutex.
+        let current = self.current_value(py);
+        if let Ok(other_state) = other.cast::<PyState>() {
+            let other_current = other_state.get().current_value(py);
+            return current.bind(py).eq(other_current.bind(py));
         }
-
-        //Otherwise, we cannot safely extract or compare without GIL
-        // Return false as a safe default (State comparisons should use 'is' not '==')
-        Ok(false)
+        current.bind(py).eq(other)
     }
 
     fn __repr__(&self, py: Python) -> PyResult<String> {
-        let state_str = self.current.lock().unwrap().bind(py).repr()?.to_string();
+        let current = lock_or_recover(&self.current).clone_ref(py);
+        let state_str = current.bind(py).repr()?.to_string();
         Ok(format!("State({})", state_str))
     }
 }
@@ -150,30 +187,28 @@ impl PyState {
 impl PyState {
     /// Create a new State resource with given value
     pub fn new(py: Python, state_value: Py<PyAny>) -> PyResult<Py<Self>> {
-        let state_type = state_value.bind(py).get_type().unbind();
-
-        // Validate it's a registered state type
-        Self::validate_state_type(py, &state_type)?;
+        state_member_type(py, state_value.bind(py))?;
 
         Py::new(
             py,
-            (
-                PyState {
-                    current: Arc::new(Mutex::new(state_value)),
-                },
-                PyResource,
-            ),
+            resource_initializer(PyState {
+                current: Arc::new(Mutex::new(state_value)),
+            }),
         )
     }
 
     /// Internal helper to get current state value
     pub fn current_value(&self, py: Python) -> Py<PyAny> {
-        self.current.lock().unwrap().clone_ref(py)
+        lock_or_recover(&self.current).clone_ref(py)
     }
 
     /// Update the state value (used internally during transitions)
     pub fn set_value(&self, new_value: Py<PyAny>) {
-        *self.current.lock().unwrap() = new_value;
+        let old_value = {
+            let mut current = lock_or_recover(&self.current);
+            std::mem::replace(&mut *current, new_value)
+        };
+        drop(old_value);
     }
 
     fn validate_state_type(py: Python, state_type: &Py<PyType>) -> PyResult<()> {
@@ -212,6 +247,11 @@ enum NextStateInner {
 
 #[pymethods]
 impl PyNextState {
+    #[new]
+    fn py_new(_state_type: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        Err(PyTypeError::new_err(NEXT_STATE_CONSTRUCTION))
+    }
+
     #[classmethod]
     pub fn __class_getitem__(
         cls: &Bound<'_, PyType>,
@@ -226,51 +266,85 @@ impl PyNextState {
     fn set(&self, py: Python, state: Py<PyAny>) -> PyResult<()> {
         // Validate state type matches
         let state_bound = state.bind(py);
-        let provided_type = state_bound.get_type();
+        let provided_type = state_member_type(py, state_bound)?;
 
-        let state_type = self.state_type.lock().unwrap();
-        if !provided_type.is(state_type.bind(py)) {
+        let state_type = lock_or_recover(&self.state_type).clone_ref(py);
+        if !provided_type.bind(py).is(state_type.bind(py)) {
             return Err(PyTypeError::new_err(format!(
                 "State type mismatch: expected {}, got {}",
                 state_type.bind(py).name()?,
-                provided_type.name()?
+                provided_type.bind(py).name()?
             )));
         }
-        drop(state_type);
 
-        *self.inner.lock().unwrap() = NextStateInner::Pending(state);
+        let old_state = {
+            let mut inner = lock_or_recover(&self.inner);
+            std::mem::replace(&mut *inner, NextStateInner::Pending(state))
+        };
+        drop(old_state);
         Ok(())
+    }
+
+    /// The `@state` enum this machine is for.
+    ///
+    /// Rust reads the machine's type parameter statically; Python carries it at
+    /// runtime, so generic callers need a way to ask.
+    fn state_type(&self, py: Python) -> Py<PyAny> {
+        lock_or_recover(&self.state_type).clone_ref(py).into_any()
     }
 
     /// Cancel any pending transition
     fn reset(&self) -> PyResult<()> {
-        *self.inner.lock().unwrap() = NextStateInner::Unchanged;
+        let old_state = {
+            let mut inner = lock_or_recover(&self.inner);
+            std::mem::replace(&mut *inner, NextStateInner::Unchanged)
+        };
+        drop(old_state);
         Ok(())
     }
 
     /// Check if a transition is pending
     fn is_pending(&self) -> bool {
-        matches!(*self.inner.lock().unwrap(), NextStateInner::Pending(_))
+        matches!(*lock_or_recover(&self.inner), NextStateInner::Pending(_))
     }
 
     /// Get the pending state without consuming it (for inspection)
     fn peek_pending(&self, py: Python) -> Option<Py<PyAny>> {
-        match &*self.inner.lock().unwrap() {
+        match &*lock_or_recover(&self.inner) {
             NextStateInner::Pending(state) => Some(state.clone_ref(py)),
             NextStateInner::Unchanged => None,
         }
     }
 
     fn __repr__(&self, py: Python) -> PyResult<String> {
-        let inner = self.inner.lock().unwrap();
-        match &*inner {
-            NextStateInner::Unchanged => Ok("NextState(Unchanged)".to_string()),
-            NextStateInner::Pending(state) => {
+        let pending = match &*lock_or_recover(&self.inner) {
+            NextStateInner::Pending(state) => Some(state.clone_ref(py)),
+            NextStateInner::Unchanged => None,
+        };
+        match pending {
+            Some(state) => {
                 let state_str = state.bind(py).repr()?.to_string();
                 Ok(format!("NextState(Pending({}))", state_str))
             }
+            None => Ok("NextState(Unchanged)".to_string()),
         }
     }
+}
+
+pub(crate) fn state_member_type(py: Python<'_>, state: &Bound<'_, PyAny>) -> PyResult<Py<PyType>> {
+    if let Ok(input_type) = state.cast::<PyType>() {
+        let type_name = input_type.name()?;
+        let message = if input_type.hasattr("__pybevy_state__")? {
+            expected_state_member_got_state_type(type_name)
+        } else {
+            expected_state_member(type_name)
+        };
+        return Err(PyTypeError::new_err(message));
+    }
+
+    let state_type = state.get_type().unbind();
+    PyState::validate_state_type(py, &state_type)?;
+    Ok(state_type)
 }
 
 impl PyNextState {
@@ -280,20 +354,17 @@ impl PyNextState {
 
         Py::new(
             py,
-            (
-                PyNextState {
-                    inner: Arc::new(Mutex::new(NextStateInner::Unchanged)),
-                    state_type: Mutex::new(state_type),
-                    initial_enter_pending: Arc::new(Mutex::new(true)),
-                },
-                PyResource,
-            ),
+            resource_initializer(PyNextState {
+                inner: Arc::new(Mutex::new(NextStateInner::Unchanged)),
+                state_type: Mutex::new(state_type),
+                initial_enter_pending: Arc::new(Mutex::new(true)),
+            }),
         )
     }
 
     /// Take the pending state if any (used internally during transitions)
     pub fn take_pending(&self) -> Option<Py<PyAny>> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock_or_recover(&self.inner);
         match std::mem::replace(&mut *inner, NextStateInner::Unchanged) {
             NextStateInner::Pending(state) => Some(state),
             NextStateInner::Unchanged => None,
@@ -303,7 +374,7 @@ impl PyNextState {
     /// Check and clear the initial enter pending flag.
     /// Returns true if the initial OnEnter still needs to fire.
     pub fn take_initial_enter_pending(&self) -> bool {
-        let mut pending = self.initial_enter_pending.lock().unwrap();
+        let mut pending = lock_or_recover(&self.initial_enter_pending);
         if *pending {
             *pending = false;
             true
@@ -313,7 +384,7 @@ impl PyNextState {
     }
 
     fn migrate_state_type(&self, py: Python<'_>, state_type: Py<PyType>) -> PyResult<()> {
-        let pending = match &*self.inner.lock().unwrap() {
+        let pending = match &*lock_or_recover(&self.inner) {
             NextStateInner::Pending(value) => Some(value.clone_ref(py)),
             NextStateInner::Unchanged => None,
         };
@@ -321,9 +392,17 @@ impl PyNextState {
             .map(|value| remap_state_value(py, &value, state_type.bind(py)))
             .transpose()?;
 
-        *self.state_type.lock().unwrap() = state_type;
+        let old_state_type = {
+            let mut current_type = lock_or_recover(&self.state_type);
+            std::mem::replace(&mut *current_type, state_type)
+        };
+        drop(old_state_type);
         if let Some(value) = migrated {
-            *self.inner.lock().unwrap() = NextStateInner::Pending(value);
+            let old_state = {
+                let mut inner = lock_or_recover(&self.inner);
+                std::mem::replace(&mut *inner, NextStateInner::Pending(value))
+            };
+            drop(old_state);
         }
         Ok(())
     }
@@ -358,6 +437,27 @@ fn state_type_qualified_name(state_type: &Bound<'_, PyType>) -> PyResult<String>
     } else {
         format!("{module}.{qualname}")
     })
+}
+
+/// Drop the generated `State[T]` / `NextState[T]` descriptors on full reload.
+///
+/// The cache is a dict on the module-level `State`/`NextState` types, keyed by
+/// the user's `@state` enum, so every entry keeps that class alive for the rest
+/// of the process. A `WeakKeyDictionary` would not help: the cached descriptor
+/// holds the same class through `__pybevy_state_type__`, so the value keeps the
+/// key alive. Since one enum is minted per reload, the cache pinned a scene
+/// generation each time.
+///
+/// Descriptors are cheap to rebuild, and an annotation still holding one keeps
+/// working because it owns the state class itself.
+pub(crate) fn clear_state_resource_type_caches(py: Python<'_>) -> PyResult<()> {
+    for wrapper in [PyState::type_object(py), PyNextState::type_object(py)] {
+        wrapper
+            .getattr(STATE_RESOURCE_TYPE_CACHE_ATTR)?
+            .cast_into::<PyDict>()?
+            .clear();
+    }
+    Ok(())
 }
 
 fn typed_state_resource_type(
@@ -482,6 +582,12 @@ pub(crate) fn untyped_state_resource_name(
     }
 }
 
+pub(crate) fn is_typed_state_resource(resource_type: &Bound<'_, PyType>) -> bool {
+    resource_type
+        .hasattr("__pybevy_state_type__")
+        .unwrap_or(false)
+}
+
 pub(crate) fn insert_state_machine_resources(
     py: Python<'_>,
     world: &mut World,
@@ -548,47 +654,28 @@ fn bind_state_machine_resource_channels(
 
     let typed_state_bound = typed_state.bind(py);
     let typed_next_bound = typed_next.bind(py);
-    let typed_state_id = register_custom_resource(
-        world,
-        typed_state_bound.as_type_ptr(),
-        typed_state_bound.name()?.to_string(),
-    );
-    let typed_next_id = register_custom_resource(
-        world,
-        typed_next_bound.as_type_ptr(),
-        typed_next_bound.name()?.to_string(),
-    );
+    let typed_state_id = register_custom_resource(world, typed_state_bound.as_type_ptr(), py);
+    let typed_next_id = register_custom_resource(world, typed_next_bound.as_type_ptr(), py);
     let legacy_state_type = PyState::type_object(py);
     let legacy_next_type = PyNextState::type_object(py);
-    let legacy_state_id = register_custom_resource(
-        world,
-        legacy_state_type.as_type_ptr(),
-        legacy_state_type.name()?.to_string(),
-    );
-    let legacy_next_id = register_custom_resource(
-        world,
-        legacy_next_type.as_type_ptr(),
-        legacy_next_type.name()?.to_string(),
-    );
+    let legacy_state_id = register_custom_resource(world, legacy_state_type.as_type_ptr(), py);
+    let legacy_next_id = register_custom_resource(world, legacy_next_type.as_type_ptr(), py);
 
-    if !world.contains_resource::<PyResourceStorage>() {
-        world.insert_resource(PyResourceStorage::default());
+    // SAFETY: every ID above uses Pyo3ResourceObjectDescriptor, and state
+    // resources are reachable only through resource-shaped APIs.
+    unsafe {
+        insert_dynamic_resource_value(world, typed_state_id, state.clone_ref(py).into_any());
+        insert_dynamic_resource_value(world, typed_next_id, next_state.clone_ref(py).into_any());
     }
-    let mut storage = world.resource_mut::<PyResourceStorage>();
-    storage
-        .resources
-        .insert(typed_state_id, state.clone_ref(py).into_any());
-    storage
-        .resources
-        .insert(typed_next_id, next_state.clone_ref(py).into_any());
     if machine_count == 1 {
-        storage.resources.insert(legacy_state_id, state.into_any());
-        storage
-            .resources
-            .insert(legacy_next_id, next_state.into_any());
+        // SAFETY: same descriptor and resource-only invariant as above.
+        unsafe {
+            insert_dynamic_resource_value(world, legacy_state_id, state.into_any());
+            insert_dynamic_resource_value(world, legacy_next_id, next_state.into_any());
+        }
     } else {
-        storage.resources.remove(&legacy_state_id);
-        storage.resources.remove(&legacy_next_id);
+        world.remove_resource_by_id(legacy_state_id);
+        world.remove_resource_by_id(legacy_next_id);
     }
 
     Ok(())
@@ -667,13 +754,13 @@ pub struct PyOnEnterSchedule {
 
 #[pymethods]
 impl PyOnEnterSchedule {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.state_value)
+    }
+
     fn __repr__(&self, py: Python) -> PyResult<String> {
         let state_str = self.state_value.bind(py).repr()?.to_string();
         Ok(format!("OnEnter({})", state_str))
-    }
-
-    fn __hash__(&self, py: Python) -> PyResult<u64> {
-        Ok(self.state_value.bind(py).hash()? as u64)
     }
 
     fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
@@ -698,13 +785,13 @@ pub struct PyOnExitSchedule {
 
 #[pymethods]
 impl PyOnExitSchedule {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.state_value)
+    }
+
     fn __repr__(&self, py: Python) -> PyResult<String> {
         let state_str = self.state_value.bind(py).repr()?.to_string();
         Ok(format!("OnExit({})", state_str))
-    }
-
-    fn __hash__(&self, py: Python) -> PyResult<u64> {
-        Ok(self.state_value.bind(py).hash()? as u64)
     }
 
     fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
@@ -730,17 +817,15 @@ pub struct PyOnTransitionSchedule {
 
 #[pymethods]
 impl PyOnTransitionSchedule {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.exited)?;
+        visit.call(&self.entered)
+    }
+
     fn __repr__(&self, py: Python) -> PyResult<String> {
         let exited_str = self.exited.bind(py).repr()?.to_string();
         let entered_str = self.entered.bind(py).repr()?.to_string();
         Ok(format!("OnTransition({} -> {})", exited_str, entered_str))
-    }
-
-    fn __hash__(&self, py: Python) -> PyResult<u64> {
-        // Combine hashes of both states
-        let hash1 = self.exited.bind(py).hash()? as u64;
-        let hash2 = self.entered.bind(py).hash()? as u64;
-        Ok(hash1.wrapping_mul(31).wrapping_add(hash2))
     }
 
     fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
@@ -829,9 +914,7 @@ impl PyOnTransitionSchedule {
 #[pyfunction]
 #[pyo3(name = "OnEnter")]
 pub fn on_enter(py: Python, state: Py<PyAny>) -> PyResult<Py<PyOnEnterSchedule>> {
-    // Validate state type
-    let state_type = state.bind(py).get_type().unbind();
-    PyState::validate_state_type(py, &state_type)?;
+    state_member_type(py, state.bind(py))?;
 
     Py::new(py, PyOnEnterSchedule { state_value: state })
 }
@@ -845,9 +928,7 @@ pub fn on_enter(py: Python, state: Py<PyAny>) -> PyResult<Py<PyOnEnterSchedule>>
 #[pyfunction]
 #[pyo3(name = "OnExit")]
 pub fn on_exit(py: Python, state: Py<PyAny>) -> PyResult<Py<PyOnExitSchedule>> {
-    // Validate state type
-    let state_type = state.bind(py).get_type().unbind();
-    PyState::validate_state_type(py, &state_type)?;
+    state_member_type(py, state.bind(py))?;
 
     Py::new(py, PyOnExitSchedule { state_value: state })
 }
@@ -865,19 +946,31 @@ pub fn on_transition(
     exited: Py<PyAny>,
     entered: Py<PyAny>,
 ) -> PyResult<Py<PyOnTransitionSchedule>> {
-    // Validate both states are same type
-    let exited_type = exited.bind(py).get_type();
-    let entered_type = entered.bind(py).get_type();
+    let exited_type = state_member_type(py, exited.bind(py))?;
+    let entered_type = state_member_type(py, entered.bind(py))?;
 
-    if !exited_type.is(&entered_type) {
+    if !exited_type.bind(py).is(entered_type.bind(py)) {
         return Err(PyTypeError::new_err(
             "OnTransition requires both states to be the same type",
         ));
     }
 
-    PyState::validate_state_type(py, &exited_type.unbind())?;
-
     Py::new(py, PyOnTransitionSchedule { exited, entered })
+}
+
+fn state_scoped_component_alias(
+    py: Python<'_>,
+    component_type: &Bound<'_, PyType>,
+    state_type: &Bound<'_, PyAny>,
+) -> PyResult<Py<PyType>> {
+    let component_name = component_type.name()?;
+    let state_type = state_type.cast::<PyType>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "{component_name}[...] requires an @state Enum type"
+        ))
+    })?;
+    PyState::validate_state_type(py, &state_type.clone().unbind())?;
+    Ok(component_type.clone().unbind())
 }
 
 /// Component for entities that should despawn when exiting a state
@@ -896,11 +989,21 @@ pub struct PyDespawnOnExit {
 
 #[pymethods]
 impl PyDespawnOnExit {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.state_value)
+    }
+
+    #[classmethod]
+    fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
+        state_type: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyType>> {
+        state_scoped_component_alias(cls.py(), cls, state_type)
+    }
+
     #[new]
     fn new(py: Python, state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        // Validate state type
-        let state_type = state.bind(py).get_type().unbind();
-        PyState::validate_state_type(py, &state_type)?;
+        state_member_type(py, state.bind(py))?;
 
         Ok((PyDespawnOnExit { state_value: state }, PyComponent).into())
     }
@@ -932,11 +1035,21 @@ pub struct PyDespawnOnEnter {
 
 #[pymethods]
 impl PyDespawnOnEnter {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.state_value)
+    }
+
+    #[classmethod]
+    fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
+        state_type: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyType>> {
+        state_scoped_component_alias(cls.py(), cls, state_type)
+    }
+
     #[new]
     fn new(py: Python, state: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        // Validate state type
-        let state_type = state.bind(py).get_type().unbind();
-        PyState::validate_state_type(py, &state_type)?;
+        state_member_type(py, state.bind(py))?;
 
         Ok((PyDespawnOnEnter { state_value: state }, PyComponent).into())
     }
@@ -960,12 +1073,11 @@ impl PyDespawnOnEnter {
 /// ```
 #[pyfunction]
 pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
-    // Validate that the state is from a @state decorated enum
-    let state_type = state.bind(py).get_type().unbind();
-    PyState::validate_state_type(py, &state_type)?;
+    let state_type = state_member_type(py, state.bind(py))?;
 
     // Create a Python function that checks if current State == state
-    // The function will have signature: (current: Res[State]) -> bool
+    // The function has an exact State[T] resource annotation so multiple
+    // independent state machines remain unambiguous.
     use std::ffi::CString;
 
     use pyo3::types::PyDict;
@@ -975,6 +1087,7 @@ pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
     let ecs_module = py.import("pybevy.ecs")?;
     globals.set_item("Res", ecs_module.getattr("Res")?)?;
     globals.set_item("State", ecs_module.getattr("State")?)?;
+    globals.set_item("StateType", state_type)?;
 
     let locals = PyDict::new(py);
     locals.set_item("target_state", state)?;
@@ -983,7 +1096,7 @@ pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
         r#"
 def _make_in_state_condition(target):
     """Factory that creates a condition checking for a specific state."""
-    def in_state_condition(current: Res[State]) -> bool:
+    def in_state_condition(current: Res[State[StateType]]) -> bool:
         """Check if current State matches the target state."""
         return current.get() == target
     # Set a meaningful name for debugging
@@ -1043,7 +1156,7 @@ fn apply_transition_for_state(
                     }
                 }
                 StateTransitionStep::CleanupEntered => {
-                    despawn_matching_entities(py, world, "DespawnOnEnter", &current_state);
+                    despawn_matching_entities(py, world, StateScopedMarker::Enter, &current_state)?;
                 }
                 _ => unreachable!("invalid step in initial-enter plan"),
             }
@@ -1079,7 +1192,7 @@ fn apply_transition_for_state(
                 }
             }
             StateTransitionStep::CleanupExited => {
-                despawn_matching_entities(py, world, "DespawnOnExit", &current_state);
+                despawn_matching_entities(py, world, StateScopedMarker::Exit, &current_state)?;
             }
             StateTransitionStep::RunTransition => {
                 let transition_label = TransitionScheduleLabel::new(machine_id, old_hash, new_hash);
@@ -1097,7 +1210,12 @@ fn apply_transition_for_state(
                 }
             }
             StateTransitionStep::CleanupEntered => {
-                despawn_matching_entities(py, world, "DespawnOnEnter", &pending_transition);
+                despawn_matching_entities(
+                    py,
+                    world,
+                    StateScopedMarker::Enter,
+                    &pending_transition,
+                )?;
             }
         }
         Ok::<(), PyErr>(())
@@ -1106,28 +1224,57 @@ fn apply_transition_for_state(
     Ok(true)
 }
 
-/// Despawn entities whose `component_name` component has a `state_value()`
-/// matching `target_state`. Used during state transitions for DespawnOnExit
-/// and DespawnOnEnter.
+/// The two state-scoped despawn markers, resolved by type identity.
+#[derive(Clone, Copy)]
+enum StateScopedMarker {
+    Exit,
+    Enter,
+}
+
+impl StateScopedMarker {
+    fn type_ptr(self, py: Python<'_>) -> *mut pyo3::ffi::PyTypeObject {
+        match self {
+            Self::Exit => PyDespawnOnExit::type_object(py).as_type_ptr(),
+            Self::Enter => PyDespawnOnEnter::type_object(py).as_type_ptr(),
+        }
+    }
+}
+
+/// Resolve a marker's registered ComponentId by exact class identity.
+///
+/// Matching on the class *name* would also select a user component that
+/// happens to be called `DespawnOnExit`, whose values have no `state_value()`.
+fn state_scoped_component_id(
+    py: Python<'_>,
+    world: &World,
+    marker: StateScopedMarker,
+) -> Option<ComponentId> {
+    let component_id = world
+        .get_resource::<ComponentRegistry>()?
+        .get(marker.type_ptr(py) as usize)?;
+    // The read below reinterprets the component bytes as `Py<PyAny>`.
+    world
+        .get_resource::<CustomComponentInfo>()?
+        .get(component_id)
+        .filter(|entry| entry.is_pyobject_storage)?;
+    Some(component_id)
+}
+
+/// Despawn entities whose state-scoped marker carries `target_state`. Used
+/// during state transitions for DespawnOnExit and DespawnOnEnter.
 fn despawn_matching_entities(
     py: Python,
     world: &mut World,
-    component_name: &str,
+    marker: StateScopedMarker,
     target_state: &Py<PyAny>,
-) {
-    let comp_id = match world.get_resource::<CustomComponentInfo>() {
-        Some(ci) => ci
-            .iter()
-            .find(|(_, entry)| entry.name == component_name && entry.is_pyobject_storage)
-            .map(|(id, _)| id),
-        None => return,
+) -> PyResult<()> {
+    let Some(comp_id) = state_scoped_component_id(py, world, marker) else {
+        return Ok(());
     };
 
-    let Some(comp_id) = comp_id else {
-        return;
-    };
-
-    let entities: Vec<Entity> = world.query::<Entity>().iter(world).collect();
+    // Only entities carrying the marker, rather than every entity in the world.
+    let mut marked = QueryBuilder::<Entity>::new(world).with_id(comp_id).build();
+    let entities: Vec<Entity> = marked.iter(world).collect();
 
     for entity in entities {
         let Ok(entity_ref) = world.get_entity(entity) else {
@@ -1136,18 +1283,15 @@ fn despawn_matching_entities(
         let Ok(ptr) = entity_ref.get_by_id(comp_id) else {
             continue;
         };
-        // SAFETY: is_pyobject_storage verified in lookup above, so raw data is Py<PyAny>
+        // SAFETY: `state_scoped_component_id` confirmed PyObject storage for
+        // this exact component ID, so the raw data is a `Py<PyAny>`.
         let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
-        let sv = py_obj
-            .bind(py)
-            .call_method0("state_value")
-            .expect("DespawnOnExit/DespawnOnEnter component missing state_value() method");
-        let matches = state_values_match(&sv, target_state.bind(py))
-            .expect("state_value() comparison failed");
-        if matches {
+        let state_value = py_obj.bind(py).call_method0("state_value")?;
+        if state_values_match(&state_value, target_state.bind(py))? {
             world.despawn(entity);
         }
     }
+    Ok(())
 }
 
 /// System that checks all registered state types and applies pending transitions.
