@@ -1,51 +1,62 @@
-use bevy::text::{FontFeatureTag, FontFeatures};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use bevy::{
+    reflect::{PartialReflect, ReflectRef},
+    text::{FontFeatureTag, FontFeatures},
+};
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-#[pyclass(name = "FontFeatures", from_py_object)]
+use crate::font_feature_tag::{PyFontFeatureTag, tag_characters};
+
+#[pyclass(name = "FontFeatures", frozen, from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyFontFeatures {
-    features: Vec<([u8; 4], u32)>,
+    features: Vec<(FontFeatureTag, u32)>,
+}
+
+#[pyclass(name = "FontFeaturesBuilder", from_py_object)]
+#[derive(Debug, Clone, Default)]
+pub struct PyFontFeaturesBuilder {
+    features: Vec<(FontFeatureTag, u32)>,
 }
 
 impl From<PyFontFeatures> for FontFeatures {
     fn from(py_features: PyFontFeatures) -> Self {
         let mut builder = FontFeatures::builder();
         for (tag, value) in py_features.features {
-            builder = builder.set(FontFeatureTag::new(&tag), value);
+            builder = builder.set(tag, value);
         }
         builder.build()
     }
 }
 
-impl From<FontFeatures> for PyFontFeatures {
-    fn from(_features: FontFeatures) -> Self {
-        // FontFeatures has private fields with no public accessor,
-        // so we cannot reconstruct the feature list from an existing FontFeatures.
-        // Return an empty PyFontFeatures as a fallback.
-        // Users should construct FontFeatures from Python, not read them back.
-        PyFontFeatures {
-            features: Vec::new(),
-        }
+/// `FontFeatures` keeps its entries private with no accessor, but derives
+/// `Reflect` and marks nothing ignored, so the field is reachable that way.
+impl TryFrom<&FontFeatures> for PyFontFeatures {
+    type Error = PyErr;
+
+    fn try_from(features: &FontFeatures) -> PyResult<Self> {
+        let ReflectRef::Struct(reflected) = features.reflect_ref() else {
+            return Err(PyRuntimeError::new_err(
+                "FontFeatures no longer reflects as a struct",
+            ));
+        };
+        let entries = reflected
+            .field("features")
+            .and_then(|field| field.try_downcast_ref::<Vec<(FontFeatureTag, u32)>>())
+            .ok_or_else(|| {
+                PyRuntimeError::new_err("FontFeatures no longer stores a list of tagged entries")
+            })?;
+        Ok(PyFontFeatures {
+            features: entries.clone(),
+        })
     }
 }
 
-/// Parse a 4-byte OpenType tag from a Python string.
-fn parse_tag(tag: &str) -> PyResult<[u8; 4]> {
-    let bytes = tag.as_bytes();
-    if bytes.len() != 4 {
-        return Err(PyValueError::new_err(format!(
-            "OpenType feature tag must be exactly 4 ASCII characters, got '{}' (length {})",
-            tag,
-            bytes.len()
-        )));
+impl PyFontFeaturesBuilder {
+    fn extended(&self, tag: FontFeatureTag, value: u32) -> Self {
+        let mut features = self.features.clone();
+        features.push((tag, value));
+        Self { features }
     }
-    if !bytes.iter().all(|b| b.is_ascii()) {
-        return Err(PyValueError::new_err(format!(
-            "OpenType feature tag must be ASCII characters, got '{}'",
-            tag
-        )));
-    }
-    Ok([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 #[pymethods]
@@ -55,65 +66,9 @@ impl PyFontFeatures {
         Self::default()
     }
 
-    pub fn enable(slf: Py<Self>, py: Python<'_>, tag: &str) -> PyResult<Py<Self>> {
-        let tag_bytes = parse_tag(tag)?;
-        slf.borrow_mut(py).features.push((tag_bytes, 1));
-        Ok(slf)
-    }
-
-    pub fn disable(slf: Py<Self>, py: Python<'_>, tag: &str) -> PyResult<Py<Self>> {
-        let tag_bytes = parse_tag(tag)?;
-        slf.borrow_mut(py).features.push((tag_bytes, 0));
-        Ok(slf)
-    }
-
-    #[pyo3(signature = (tag, value))]
-    pub fn set(slf: Py<Self>, py: Python<'_>, tag: &str, value: u32) -> PyResult<Py<Self>> {
-        let tag_bytes = parse_tag(tag)?;
-        slf.borrow_mut(py).features.push((tag_bytes, value));
-        Ok(slf)
-    }
-
     #[staticmethod]
-    pub fn standard_ligatures() -> Self {
-        Self {
-            features: vec![(*b"liga", 1)],
-        }
-    }
-
-    #[staticmethod]
-    pub fn small_caps() -> Self {
-        Self {
-            features: vec![(*b"smcp", 1)],
-        }
-    }
-
-    #[staticmethod]
-    pub fn oldstyle_figures() -> Self {
-        Self {
-            features: vec![(*b"onum", 1)],
-        }
-    }
-
-    #[staticmethod]
-    pub fn tabular_figures() -> Self {
-        Self {
-            features: vec![(*b"tnum", 1)],
-        }
-    }
-
-    #[staticmethod]
-    pub fn slashed_zero() -> Self {
-        Self {
-            features: vec![(*b"zero", 1)],
-        }
-    }
-
-    #[staticmethod]
-    pub fn fractions() -> Self {
-        Self {
-            features: vec![(*b"frac", 1)],
-        }
+    pub fn builder() -> PyFontFeaturesBuilder {
+        PyFontFeaturesBuilder::default()
     }
 
     fn __repr__(&self) -> String {
@@ -124,7 +79,7 @@ impl PyFontFeatures {
             .features
             .iter()
             .map(|(tag, value)| {
-                let tag_str = std::str::from_utf8(tag).unwrap_or("????");
+                let tag_str = tag_characters(tag);
                 if *value == 1 {
                     format!("\"{}\"", tag_str)
                 } else {
@@ -137,5 +92,28 @@ impl PyFontFeatures {
 
     fn __eq__(&self, other: &Self) -> bool {
         self.features == other.features
+    }
+}
+
+#[pymethods]
+impl PyFontFeaturesBuilder {
+    #[new]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn enable(&self, feature_tag: PyRef<'_, PyFontFeatureTag>) -> Self {
+        self.extended(feature_tag.0, 1)
+    }
+
+    #[pyo3(signature = (feature_tag, value))]
+    pub fn set(&self, feature_tag: PyRef<'_, PyFontFeatureTag>, value: u32) -> Self {
+        self.extended(feature_tag.0, value)
+    }
+
+    pub fn build(&self) -> PyFontFeatures {
+        PyFontFeatures {
+            features: self.features.clone(),
+        }
     }
 }

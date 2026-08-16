@@ -87,18 +87,19 @@ pub struct PyStrikethroughColor {
 impl PyStrikethroughColor {
     #[new]
     #[pyo3(signature = (color = PyColor::default()))]
-    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
-        Self::from_owned(StrikethroughColor(color.into())).into()
+    pub fn new(color: PyColor) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(StrikethroughColor(color.try_into()?)).into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.0, py)
+        PyColor::from_component_field(&self.storage, |color| &color.0, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.0 = color.into();
+        let color = color.try_into()?;
+        self.as_mut()?.0 = color;
         Ok(())
     }
 
@@ -118,18 +119,19 @@ pub struct PyUnderlineColor {
 impl PyUnderlineColor {
     #[new]
     #[pyo3(signature = (color = PyColor::default()))]
-    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
-        Self::from_owned(UnderlineColor(color.into())).into()
+    pub fn new(color: PyColor) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(UnderlineColor(color.try_into()?)).into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.0, py)
+        PyColor::from_component_field(&self.storage, |color| &color.0, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.0 = color.into();
+        let color = color.try_into()?;
+        self.as_mut()?.0 = color;
         Ok(())
     }
 

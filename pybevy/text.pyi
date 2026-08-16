@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import ClassVar, Literal
+from typing import ClassVar, Final, Literal
 
 import numpy as np
 
@@ -8,9 +8,12 @@ from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.assets import Handle as AssetHandle
 from pybevy.color import Color
-from pybevy.ecs import Batchable, Component, Resource
+from pybevy.ecs import Batchable, Component, Resource, SystemSet
 from pybevy.image import TextureAtlasLayout
 from pybevy.math import Vec2
+
+Text2dUpdateSystems: Final[SystemSet]
+EditableTextSystems: Final[SystemSet]
 
 class Font(Asset):
     """Font asset containing font file data.
@@ -150,20 +153,19 @@ class LineHeight(Component):
         >>> commands.spawn((Text2d("Hello!"), LineHeight.RelativeToFont(1.5)))
     """
 
-    def __init__(self) -> None:
-        """Create a LineHeight with the default value."""
+    class Px(LineHeight):
+        """Line height in pixels."""
 
-    @staticmethod
-    def Px(pixels: float) -> LineHeight:
-        """Set line height to a specific number of pixels."""
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float) -> None: ...
 
-    @staticmethod
-    def RelativeToFont(scale: float) -> LineHeight:
-        """Set line height as a multiple of the font size.
+    class RelativeToFont(LineHeight):
+        """Line height as a multiple of the font size."""
 
-        Args:
-            scale: Multiplier relative to font size (default: 1.2)
-        """
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -234,7 +236,6 @@ class FontWeight:
         """
 
     def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
 
 class FontWidth:
     """The width (stretch) of a font face as a float ratio (0.5-2.0).
@@ -306,6 +307,8 @@ class FontHinting:
     Enabled: FontHinting
     """Glyphs are rasterized with hinting."""
 
+    def __hash__(self) -> int: ...
+
 class FontFeatureTag:
     """A single OpenType feature tag (4 ASCII characters).
 
@@ -319,20 +322,65 @@ class FontFeatureTag:
     STANDARD_LIGATURES: ClassVar[FontFeatureTag]
     """Standard ligatures ("liga")."""
 
+    CONTEXTUAL_LIGATURES: ClassVar[FontFeatureTag]
+    """Contextual ligatures ("clig")."""
+
+    DISCRETIONARY_LIGATURES: ClassVar[FontFeatureTag]
+    """Discretionary ligatures ("dlig")."""
+
+    CONTEXTUAL_ALTERNATES: ClassVar[FontFeatureTag]
+    """Contextual alternates ("calt")."""
+
+    STYLISTIC_ALTERNATES: ClassVar[FontFeatureTag]
+    """Stylistic alternates ("salt")."""
+
     SMALL_CAPS: ClassVar[FontFeatureTag]
     """Small capitals ("smcp")."""
 
-    OLDSTYLE_FIGURES: ClassVar[FontFeatureTag]
-    """Old-style figures ("onum")."""
+    CAPS_TO_SMALL_CAPS: ClassVar[FontFeatureTag]
+    """Uppercase-to-small-capitals substitution ("c2sc")."""
 
-    TABULAR_FIGURES: ClassVar[FontFeatureTag]
-    """Tabular figures ("tnum")."""
+    SWASH: ClassVar[FontFeatureTag]
+    """Swash variants ("swsh")."""
+
+    TITLING_ALTERNATES: ClassVar[FontFeatureTag]
+    """Titling alternates ("titl")."""
 
     FRACTIONS: ClassVar[FontFeatureTag]
     """Fractions ("frac")."""
 
+    ORDINALS: ClassVar[FontFeatureTag]
+    """Ordinal forms ("ordn")."""
+
     SLASHED_ZERO: ClassVar[FontFeatureTag]
     """Slashed zero ("zero")."""
+
+    SUPERSCRIPT: ClassVar[FontFeatureTag]
+    """Superscript figures ("sups")."""
+
+    SUBSCRIPT: ClassVar[FontFeatureTag]
+    """Subscript figures ("subs")."""
+
+    OLDSTYLE_FIGURES: ClassVar[FontFeatureTag]
+    """Old-style figures ("onum")."""
+
+    LINING_FIGURES: ClassVar[FontFeatureTag]
+    """Lining figures ("lnum")."""
+
+    PROPORTIONAL_FIGURES: ClassVar[FontFeatureTag]
+    """Proportional figures ("pnum")."""
+
+    TABULAR_FIGURES: ClassVar[FontFeatureTag]
+    """Tabular figures ("tnum")."""
+
+    WEIGHT: ClassVar[FontFeatureTag]
+    """Variable font weight ("wght")."""
+
+    WIDTH: ClassVar[FontFeatureTag]
+    """Variable font width ("wdth")."""
+
+    SLANT: ClassVar[FontFeatureTag]
+    """Variable font slant ("slnt")."""
 
     def __init__(self, tag: str) -> None:
         """Create a FontFeatureTag from a 4-character ASCII string.
@@ -342,92 +390,44 @@ class FontFeatureTag:
         """
 
     def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
     def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+
+    @property
+    def value(self) -> str:
+        """The four-character OpenType tag."""
 
 class FontFeatures:
     """OpenType font features for .otf fonts that support them.
 
-    Provides a builder-style API for specifying OpenType features like
-    ligatures, small caps, and figure styles.
-
     Example:
-        >>> from pybevy.text import TextFont, FontFeatures
+        >>> from pybevy.text import FontFeatureTag, FontFeatures
         >>>
-        >>> # Enable ligatures and small caps
-        >>> features = FontFeatures().enable("liga").enable("smcp")
-        >>> TextFont(font_size=24.0, font_features=features)
-        >>>
-        >>> # Set weight variation
-        >>> features = FontFeatures().set("wght", 300)
-        >>>
-        >>> # Use convenience constructors
-        >>> features = FontFeatures.small_caps()
-        >>> features = FontFeatures.tabular_figures()
+        >>> features = (FontFeatures.builder()
+        ...     .enable(FontFeatureTag.STANDARD_LIGATURES)
+        ...     .set(FontFeatureTag.WEIGHT, 300)
+        ...     .build())
     """
 
     def __init__(self) -> None:
         """Create empty FontFeatures (no features enabled)."""
 
-    def enable(self, tag: str) -> FontFeatures:
-        """Enable an OpenType feature (sets its value to 1).
-
-        Args:
-            tag: 4-character OpenType feature tag (e.g., "liga", "smcp")
-
-        Returns:
-            self for method chaining
-        """
-
-    def disable(self, tag: str) -> FontFeatures:
-        """Disable an OpenType feature (sets its value to 0).
-
-        Args:
-            tag: 4-character OpenType feature tag
-
-        Returns:
-            self for method chaining
-        """
-
-    def set(self, tag: str, value: int) -> FontFeatures:
-        """Set an OpenType feature to a specific value.
-
-        For most features, ``enable()`` or ``disable()`` should be used instead.
-        Some features like "wght" take numeric values.
-
-        Args:
-            tag: 4-character OpenType feature tag
-            value: Feature value
-
-        Returns:
-            self for method chaining
-        """
-
     @staticmethod
-    def standard_ligatures() -> FontFeatures:
-        """Create FontFeatures with standard ligatures ("liga") enabled."""
-
-    @staticmethod
-    def small_caps() -> FontFeatures:
-        """Create FontFeatures with small caps ("smcp") enabled."""
-
-    @staticmethod
-    def oldstyle_figures() -> FontFeatures:
-        """Create FontFeatures with oldstyle figures ("onum") enabled."""
-
-    @staticmethod
-    def tabular_figures() -> FontFeatures:
-        """Create FontFeatures with tabular figures ("tnum") enabled."""
-
-    @staticmethod
-    def slashed_zero() -> FontFeatures:
-        """Create FontFeatures with slashed zero ("zero") enabled."""
-
-    @staticmethod
-    def fractions() -> FontFeatures:
-        """Create FontFeatures with fractions ("frac") enabled."""
+    def builder() -> FontFeaturesBuilder:
+        """Create a FontFeaturesBuilder."""
 
     def __eq__(self, other: object) -> bool: ...
+
+class FontFeaturesBuilder:
+    """Builder for OpenType font features."""
+
+    def __init__(self) -> None: ...
+    def enable(self, feature_tag: FontFeatureTag) -> FontFeaturesBuilder:
+        """Return a builder with the feature enabled."""
+    def set(self, feature_tag: FontFeatureTag, value: int) -> FontFeaturesBuilder:
+        """Return a builder with the feature set to a specific value."""
+    def build(self) -> FontFeatures:
+        """Build the FontFeatures value."""
 
 class FontSmoothing:
     """Antialiasing method for text rendering."""
@@ -439,6 +439,7 @@ class FontSmoothing:
     """Grayscale antialiasing (default)"""
 
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class Justify:
     """Text alignment options."""
@@ -481,10 +482,12 @@ class LineBreak:
     def __eq__(self, other: object) -> bool: ...
 
 class TextBounds(Component):
-    """Maximum width and height constraints for text.
+    """Width and height constraints supplied to world-space text layout.
 
-    Text will wrap according to bounds. Characters completely outside
-    bounds after wrapping are truncated.
+    Width controls line wrapping. Bevy 0.19 does not use height to clip or
+    truncate laid-out lines. Rendering is still clipped by the camera target,
+    so explicitly set a sufficiently wide bound when a long unwrapped Text2d
+    string must extend beyond the viewport-sized default layout area.
     """
 
     UNBOUNDED: ClassVar[TextBounds]
@@ -527,6 +530,7 @@ class FontSize:
 
     Wherever a FontSize is accepted, a plain float is also accepted and
     treated as `FontSize.Px` (mirrors bevy's `From<f32> for FontSize`).
+    TextFont requires the value to be finite and non-negative.
     """
 
     @property
@@ -653,7 +657,7 @@ class TextFont(Component):
     def font(self, value: FontSource | Handle | str) -> None: ...
     @property
     def font_size(self) -> FontSize:
-        """Vertical height of glyphs (default: FontSize.Px(20.0))."""
+        """Finite, non-negative vertical height of glyphs (default: FontSize.Px(20.0))."""
 
     @font_size.setter
     def font_size(self, value: FontSize | float) -> None: ...
@@ -683,11 +687,15 @@ class TextFont(Component):
         style: FontStyle = FontStyle.Normal(),
         font_features: FontFeatures = ...,
     ) -> None:
-        """Create a text font component. Defaults: the default font, FontSize.Px(20.0)."""
+        """Create a text font component. Defaults to FontSize.Px(20.0); supplied sizes must be finite and non-negative."""
 
     @staticmethod
     def from_font_size(font_size: FontSize | float) -> TextFont:
-        """Create TextFont with specified font size and defaults."""
+        """Create TextFont with a finite, non-negative font size and defaults."""
+
+    @staticmethod
+    def from_font_weight(weight: FontWeight) -> TextFont:
+        """Create TextFont with the specified font weight and defaults."""
 
     def with_font(self, font: Handle) -> TextFont:
         """Return a new TextFont with the specified font handle."""
@@ -696,16 +704,13 @@ class TextFont(Component):
         """Return a new TextFont with the font resolved by family name."""
 
     def with_font_size(self, font_size: FontSize | float) -> TextFont:
-        """Return a new TextFont with the specified font size."""
+        """Return a new TextFont with the specified finite, non-negative font size."""
 
     def with_font_smoothing(self, font_smoothing: FontSmoothing) -> TextFont:
         """Return a new TextFont with the specified font smoothing."""
 
-    def with_weight(self, weight: FontWeight) -> TextFont:
+    def with_font_weight(self, weight: FontWeight) -> TextFont:
         """Return a new TextFont with the specified font weight."""
-
-    def with_font_features(self, font_features: FontFeatures) -> TextFont:
-        """Return a new TextFont with the specified font features."""
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -795,7 +800,7 @@ class Text2dShadow(Component):
         >>> # Add shadow to text
         >>> app.spawn((
         >>>     Text2d("Hello!"),
-        >>>     Text2dShadow(Vec2(4.0, -4.0), Color.BLACK()),
+        >>>     Text2dShadow(Vec2(4.0, -4.0), Color.BLACK),
         >>> ))
         >>>
         >>> # Colored shadow with custom offset
@@ -822,7 +827,7 @@ class Text2dShadow(Component):
 
         Args:
             offset: Shadow displacement (default: Vec2(4.0, -4.0))
-            color: Shadow color (default: Color.BLACK())
+            color: Shadow color (default: Color.BLACK)
         """
 
 class TextSpan(Component):
@@ -849,7 +854,7 @@ class TextSpan(Component):
         >>>     root = commands.spawn((
         >>>         Text2d("Hello "),
         >>>         TextFont.from_font_size(32.0),
-        >>>         TextColor(Color.WHITE()),
+        >>>         TextColor(Color.WHITE),
         >>>     ))
         >>>
         >>>     # Add bold red child span
@@ -941,13 +946,20 @@ class LetterSpacing(Component):
     The default constructor yields ``Px(0.0)``.
     """
 
-    def __init__(self) -> None: ...
-    @staticmethod
-    def Px(value: float) -> LetterSpacing: ...
-    @staticmethod
-    def Rem(value: float) -> LetterSpacing: ...
-    @property
-    def value(self) -> float: ...
+    class Px(LetterSpacing):
+        """Spacing in pixels."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float) -> None: ...
+
+    class Rem(LetterSpacing):
+        """Spacing as a multiple of the font size."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: float
+        def __init__(self, value: float) -> None: ...
+
     def __eq__(self, other: object) -> bool: ...
 
 class EditableText(Component):
@@ -971,6 +983,9 @@ class EditableText(Component):
     @property
     def value(self) -> str:
         """The current text content."""
+
+    def clear(self) -> None:
+        """Clear the text buffer and any pending edits."""
 
     @property
     def max_characters(self) -> int | None: ...

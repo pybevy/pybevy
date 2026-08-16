@@ -1,36 +1,33 @@
 use bevy::text::LineHeight;
-use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_core::ComponentStorage;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pywrap(LineHeight, bridge, copy)]
-#[pyclass(name = "LineHeight", extends = PyComponent, frozen, eq, skip_from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PyLineHeight(pub(crate) LineHeight);
+#[pyenum(LineHeight, component)]
+#[pyclass(name = "LineHeight", module = "pybevy.text")]
+pub enum PyLineHeight {
+    #[py_bevy(tuple)]
+    Px {
+        #[py_set]
+        value: f32,
+    },
+    #[py_bevy(tuple)]
+    RelativeToFont {
+        #[py_set]
+        value: f32,
+    },
+}
 
 #[pymethods]
 impl PyLineHeight {
-    #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        Self::from_owned(LineHeight::default()).into()
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
     }
 
-    #[staticmethod]
-    #[pyo3(name = "Px")]
-    pub fn px(py: Python<'_>, pixels: f32) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(LineHeight::Px(pixels)))
-    }
-
-    #[staticmethod]
-    #[pyo3(name = "RelativeToFont")]
-    pub fn relative_to_font(py: Python<'_>, scale: f32) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(LineHeight::RelativeToFont(scale)))
-    }
-
-    pub fn __repr__(&self) -> String {
-        match self.0 {
-            LineHeight::Px(px) => format!("LineHeight.Px({px})"),
-            LineHeight::RelativeToFont(scale) => format!("LineHeight.RelativeToFont({scale})"),
+    pub fn __repr__(&self) -> PyResult<String> {
+        match self.as_ref()?.reborrow() {
+            LineHeight::Px(value) => Ok(format!("LineHeight.Px({value})")),
+            LineHeight::RelativeToFont(value) => Ok(format!("LineHeight.RelativeToFont({value})")),
         }
     }
 }

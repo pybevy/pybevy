@@ -28,6 +28,19 @@ pub mod text_span;
 
 use pyo3::prelude::*;
 
+pybevy_core::register_native_system_set!(
+    intern_text_2d_update_systems,
+    bevy::text::Text2dUpdateSystems,
+    module = "text",
+    name = "Text2dUpdateSystems"
+);
+pybevy_core::register_native_system_set!(
+    intern_editable_text_systems,
+    bevy::text::EditableTextSystems,
+    module = "text",
+    name = "EditableTextSystems"
+);
+
 pub mod prelude {
     pub use crate::{
         editable_text::PyEditableText, font::PyFont, font_hinting::PyFontHinting,
@@ -54,6 +67,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<text_bounds::PyTextBounds>()?;
     m.add_class::<editable_text::PyEditableText>()?;
     m.add_class::<letter_spacing::PyLetterSpacing>()?;
+    letter_spacing::register_letter_spacing_variants(&m)?;
 
     m.add_class::<font::PyFont>()?;
 
@@ -62,6 +76,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<font_atlas_sets::PyFontAtlasSet>()?;
 
     m.add_class::<font_features::PyFontFeatures>()?;
+    m.add_class::<font_features::PyFontFeaturesBuilder>()?;
     m.add_class::<font_size::PyFontSize>()?;
     m.add_class::<font_source::PyFontSource>()?;
     m.add_class::<font_smoothing::PyFontSmoothing>()?;
@@ -72,6 +87,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<justify::PyJustify>()?;
     m.add_class::<line_break::PyLineBreak>()?;
     m.add_class::<line_height::PyLineHeight>()?;
+    line_height::register_line_height_variants(&m)?;
     m.add_class::<font_feature_tag::PyFontFeatureTag>()?;
 
     m.add_class::<text_decoration::PyStrikethrough>()?;

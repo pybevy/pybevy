@@ -92,25 +92,21 @@ impl PyTextLayout {
         Ok(())
     }
 
-    #[pyo3(name = "with_justify")]
-    pub fn with_justify(slf: Py<Self>, py: Python<'_>, justify: PyJustify) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.justify = justify.into();
-        Ok(slf)
+    pub fn with_justify(&self, py: Python<'_>, justify: PyJustify) -> PyResult<Py<Self>> {
+        let mut layout = *self.as_ref()?;
+        layout.justify = justify.into();
+        Py::new(py, Self::from_owned(layout))
     }
 
-    #[pyo3(name = "with_linebreak")]
-    pub fn with_linebreak(
-        slf: Py<Self>,
-        py: Python<'_>,
-        linebreak: PyLineBreak,
-    ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.linebreak = linebreak.into();
-        Ok(slf)
+    pub fn with_linebreak(&self, py: Python<'_>, linebreak: PyLineBreak) -> PyResult<Py<Self>> {
+        let mut layout = *self.as_ref()?;
+        layout.linebreak = linebreak.into();
+        Py::new(py, Self::from_owned(layout))
     }
 
-    #[pyo3(name = "with_no_wrap")]
-    pub fn with_no_wrap(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.linebreak = LineBreak::NoWrap;
-        Ok(slf)
+    pub fn with_no_wrap(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        let mut layout = *self.as_ref()?;
+        layout.linebreak = LineBreak::NoWrap;
+        Py::new(py, Self::from_owned(layout))
     }
 }
