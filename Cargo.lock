@@ -4593,7 +4593,6 @@ dependencies = [
  "pybevy_time",
  "pybevy_transform",
  "pybevy_ui",
- "pybevy_wgpu",
  "pybevy_window",
  "pybevy_winit",
  "pybevy_world_serialization",
@@ -4804,7 +4803,7 @@ dependencies = [
  "pybevy_core",
  "pybevy_macros",
  "pybevy_math",
- "pybevy_wgpu",
+ "pybevy_render",
  "pyo3",
 ]
 
@@ -4876,7 +4875,6 @@ dependencies = [
  "pybevy_math",
  "pybevy_render",
  "pybevy_transform",
- "pybevy_wgpu",
  "pyo3",
 ]
 
@@ -4930,11 +4928,9 @@ dependencies = [
  "crossbeam-channel",
  "pybevy_color",
  "pybevy_core",
- "pybevy_image",
  "pybevy_macros",
  "pybevy_math",
  "pybevy_shader",
- "pybevy_wgpu",
  "pyo3",
  "tracing",
  "wgpu",
@@ -5028,15 +5024,6 @@ dependencies = [
  "pybevy_macros",
  "pybevy_math",
  "pybevy_sprite",
- "pyo3",
-]
-
-[[package]]
-name = "pybevy_wgpu"
-version = "0.2.1"
-dependencies = [
- "bevy",
- "pybevy_macros",
  "pyo3",
 ]
 

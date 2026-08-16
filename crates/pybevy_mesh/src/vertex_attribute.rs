@@ -5,7 +5,7 @@ use std::{
 
 use bevy::mesh::{MeshVertexAttribute, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
-use pybevy_wgpu::vertex_format::PyVertexFormat;
+use pybevy_render::vertex_format::PyVertexFormat;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
 
 #[derive(Default)]

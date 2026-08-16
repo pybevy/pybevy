@@ -2,7 +2,7 @@
 name = "pybevy_render"
 version = "0.2.1"
 edition = "2024"
-description = "Render and wgpu types for PyBevy"
+description = "Render types for PyBevy"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
@@ -17,8 +17,6 @@ bevy = { workspace = true, features = [
 pybevy_core = { workspace = true }
 pybevy_macros = { workspace = true }
 pybevy_shader = { workspace = true }
-pybevy_wgpu = { workspace = true }
-pybevy_image = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_math = { workspace = true }
 wgpu-types = "29"

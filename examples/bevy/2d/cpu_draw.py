@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from pybevy.prelude import *
-from pybevy.wgpu import Extent3d, TextureFormat
+from pybevy.render import Extent3d, TextureFormat
 
 IMAGE_WIDTH = 256
 IMAGE_HEIGHT = 256

@@ -67,7 +67,6 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_post_process::add_module(m)?;
     pybevy_render::add_module(m)?;
     pybevy_shader::add_module(m)?;
-    pybevy_wgpu::add_module(m)?;
     pybevy_sprite::add_module(m)?;
     pybevy_text::add_module(m)?;
     pybevy_time::add_module(m)?;
