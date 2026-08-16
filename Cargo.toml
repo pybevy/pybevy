@@ -215,6 +215,7 @@ bevy = { workspace = true, features = [
     "pbr_anisotropy_texture",
     "pbr_multi_layer_material_textures",
 ] }
+pybevy_pbr = { workspace = true, features = ["pbr_anisotropy_texture", "pbr_transmission_textures", "pbr_specular_textures", "pbr_multi_layer_material_textures"] }
 
 [profile.package-release]
 inherits = "release"
