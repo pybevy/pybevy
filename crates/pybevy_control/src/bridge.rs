@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use bevy::{ecs::world::World, prelude::Resource};
 use schemars::JsonSchema;
@@ -7,16 +10,20 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::handlers::{
     self,
-    reload::{PendingReloadAndCapture, PendingReloadAndCaptures, ReloadAndCaptureState},
+    frame_analysis::{DEFAULT_COMPARE_EPSILON, FrameStatsOptions, validate_frame_stats_options},
+    reload::{PendingReloadAndCapture, PendingReloadAndCaptures},
     schedule::{
         ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
         SharedScheduleRegistryResource, SharedScheduleState,
     },
     screenshot::{
         ActiveTimeline, MAX_TIMELINE_CAPTURES, PendingTimelines, compute_schedule,
-        setup_debug_camera,
+        headless_frame_sequence, prepare_capture_visibility, setup_debug_camera,
     },
-    turnaround::{ActiveTurnaround, PendingTurnarounds, compute_scene_bounds, compute_viewpoints},
+    turnaround::{
+        ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
+        compute_viewpoints,
+    },
 };
 
 /// Maximum requests processed per frame to prevent frame spikes
@@ -55,6 +62,7 @@ pub enum ReloadMode {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QueryEntitiesParams {
     /// Component names entities must have
     #[serde(default)]
@@ -62,9 +70,20 @@ pub struct QueryEntitiesParams {
     /// Component names entities must not have
     #[serde(default)]
     pub without: Vec<String>,
+    /// Maximum number of entity records to return; the response still reports the total number of matches.
+    #[serde(default = "default_query_entity_limit")]
+    #[schemars(range(max = 1000))]
+    pub limit: usize,
+}
+
+pub const MAX_QUERY_ENTITY_LIMIT: usize = 1000;
+
+const fn default_query_entity_limit() -> usize {
+    100
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetComponentParams {
     /// Entity ID or Name
     pub entity: EntityRef,
@@ -72,16 +91,35 @@ pub struct GetComponentParams {
     pub component: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetResourceParams {
+    /// Resource type name (e.g. 'AmbientLight', 'State[game.Phase]')
+    pub resource_type: String,
+}
+
 /// schemars `schema_with` helper emitting `{"type": "object"}` for a
 /// `serde_json::Value` field that must be a JSON object. Without an explicit
 /// type, schemars renders `serde_json::Value` as an untyped (any) schema, and
 /// MCP clients then serialize the argument as a JSON string, which the handlers
 /// reject ("must be a JSON object").
-fn json_object_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+pub(crate) fn json_object_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "type": "object" })
 }
 
+/// schemars `schema_with` helper for arrays whose elements must be JSON
+/// objects. `Vec<serde_json::Value>` otherwise emits the valid JSON Schema
+/// boolean form `{"items": true}`, which some function-calling providers do
+/// not accept.
+fn json_object_array_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "array",
+        "items": { "type": "object" }
+    })
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetComponentParams {
     /// Entity ID or Name
     pub entity: EntityRef,
@@ -93,6 +131,7 @@ pub struct SetComponentParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveComponentParams {
     /// Entity ID or Name
     pub entity: EntityRef,
@@ -101,15 +140,17 @@ pub struct RemoveComponentParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetResourceParams {
     /// Resource type name
     pub resource_type: String,
-    /// Resource value as JSON
+    /// Fields to update as JSON. Custom resources must declare annotated fields, typically with `@resource` above `@dataclass`; attributes created only in `__init__` are not editable here.
     #[schemars(schema_with = "json_object_schema")]
     pub value: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SeekTimeParams {
     /// Target elapsed time in seconds
     pub seconds: f64,
@@ -119,7 +160,10 @@ pub struct SeekTimeParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureScreenshotParams {
+    /// Optional entity name or numeric ID to isolate, including its descendants.
+    pub entity: Option<EntityRef>,
     /// Frames to wait before capture (default 2)
     #[serde(default = "default_2")]
     pub delay_frames: u32,
@@ -132,12 +176,58 @@ pub struct CaptureScreenshotParams {
     /// Hide authored UI Node entities during capture (default true). Internal overlays (hot reload status) are always hidden regardless.
     #[serde(default = "default_true")]
     pub hide_ui: bool,
-    /// Overlay entity ID/Name gizmo labels on the captured image (default false). Useful for identifying entities visually.
+    /// Include gizmos drawn by Python systems, native hosts, or extensions (default false). Does not generate entity labels.
     #[serde(default)]
     pub gizmos: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureStatsParams {
+    /// Optional entity name or numeric ID to isolate, including its descendants.
+    pub entity: Option<EntityRef>,
+    /// Divide the selected region into an NxN grid (default 1, max 16).
+    #[serde(default = "default_1")]
+    #[schemars(range(min = 1, max = 16))]
+    pub grid: u32,
+    /// Optional [x, y, width, height] sub-rectangle in resized output pixels.
+    pub region: Option<[i64; 4]>,
+    /// Optional output-pixel coordinates to sample (max 256).
+    #[schemars(extend("maxItems" = 256))]
+    pub sample_points: Option<Vec<[i64; 2]>>,
+    /// Frames to wait before capture (default 2).
+    #[serde(default = "default_2")]
+    pub delay_frames: u32,
+    /// Maximum analyzed width in pixels (default 768).
+    #[schemars(range(min = 1))]
+    pub max_width: Option<u32>,
+    /// Camera position [x, y, z]. If set, temporarily reuses a Camera3d.
+    pub position: Option<[f32; 3]>,
+    /// Point the camera looks at [x, y, z]. Defaults to [0, 0, 0] with position.
+    pub look_at: Option<[f32; 3]>,
+    /// Hide authored UI during capture (default true).
+    #[serde(default = "default_true")]
+    pub hide_ui: bool,
+    /// Include gizmos drawn by Python systems, native hosts, or extensions (default false).
+    #[serde(default)]
+    pub gizmos: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompareFramesParams {
+    /// First retained frame ID.
+    pub a: String,
+    /// Second retained frame ID.
+    pub b: String,
+    /// A pixel is changed when its largest normalized channel difference exceeds this value.
+    #[serde(default = "default_compare_epsilon")]
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub epsilon: f64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureTimelineParams {
     /// Frame span to capture over (~1s at 60fps)
     #[serde(default = "default_60")]
@@ -145,7 +235,8 @@ pub struct CaptureTimelineParams {
     /// Number of captures (max 20)
     #[serde(default = "default_6")]
     pub capture_count: u32,
-    /// Max composite width in pixels
+    /// Max composite width in pixels (default 1200)
+    #[schemars(extend("default" = 1200))]
     pub max_width: Option<u32>,
     /// Grid columns
     #[serde(default = "default_3")]
@@ -154,24 +245,32 @@ pub struct CaptureTimelineParams {
     pub position: Option<[f32; 3]>,
     /// Point the camera looks at [x, y, z]. Defaults to [0, 0, 0] if position is set.
     pub look_at: Option<[f32; 3]>,
+    /// Hide authored UI Node entities during capture (default true). Internal overlays are always hidden.
+    #[serde(default = "default_true")]
+    pub hide_ui: bool,
+    /// Include gizmos drawn by Python systems, native hosts, or extensions (default false).
+    #[serde(default)]
+    pub gizmos: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureTurnaroundParams {
     /// Center point to orbit around. Auto-detected from scene bounds if omitted.
     pub look_at: Option<[f32; 3]>,
     /// Camera distance from center. Auto-fitted to scene bounds if omitted.
+    #[schemars(extend("exclusiveMinimum" = 0.0))]
     pub distance: Option<f32>,
     /// Camera elevation in degrees (default 25)
     #[schemars(extend("default" = 25))]
     pub elevation: Option<f32>,
     /// Number of orbit positions (default 6)
-    #[schemars(extend("default" = 6))]
+    #[schemars(extend("default" = 6, "minimum" = 1, "maximum" = 20))]
     pub view_count: Option<u32>,
     /// Include top-down view (default true)
     #[schemars(extend("default" = true))]
     pub include_top: Option<bool>,
-    /// Grid columns in contact sheet (default 3)
+    /// Maximum grid columns in the contact sheet (default 3). The compositor may use fewer to avoid empty cells.
     #[schemars(extend("default" = 3))]
     pub columns: Option<u32>,
     /// Max composite width (default 1200)
@@ -183,15 +282,18 @@ pub struct CaptureTurnaroundParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureDepthParams {
     /// Camera position [x, y, z]
     pub position: Option<[f32; 3]>,
     /// Camera look-at [x, y, z]
     pub look_at: Option<[f32; 3]>,
-    /// Screen-space sample points [[x, y], ...]. Auto-generates grid if omitted.
-    pub sample_points: Option<Vec<[u32; 2]>>,
+    /// Screen-space sample points [[x, y], ...], with coordinates in [0, 800).
+    /// Auto-generates a grid if omitted.
+    pub sample_points: Option<Vec<[i64; 2]>>,
     /// Auto-generate NxN sample grid (default 8 if no sample_points)
     #[schemars(extend("default" = 8))]
+    #[schemars(range(min = 1))]
     pub grid_density: Option<u32>,
     /// Include RGB screenshot (default true)
     #[schemars(extend("default" = true))]
@@ -208,6 +310,7 @@ pub struct CaptureDepthParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReloadParams {
     /// Reload mode
     #[serde(default)]
@@ -220,6 +323,7 @@ pub struct ReloadParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReloadAndCaptureParams {
     /// Reload mode (default full)
     #[serde(default)]
@@ -244,6 +348,7 @@ pub struct ReloadAndCaptureParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QuerySpatialParams {
     /// First entity (ID or Name)
     pub entity_a: EntityRef,
@@ -252,17 +357,24 @@ pub struct QuerySpatialParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QuerySpatialNeighborhoodParams {
     /// Center entity
     pub entity: EntityRef,
     /// Search radius
+    #[schemars(range(min = 0.0))]
     pub radius: f32,
     /// Max neighbors to return (default 50)
     #[schemars(extend("default" = 50))]
     pub max_results: Option<usize>,
 }
 
+pub(crate) fn default_max_float_gap() -> f32 {
+    0.1
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CheckOverlapsParams {
     /// Entity to check
     pub entity: EntityRef,
@@ -271,13 +383,14 @@ pub struct CheckOverlapsParams {
     pub include_siblings: bool,
     /// Max gap (units) between entity bottom and surface below to still count as grounded (default 0.1). Increase for scenes with small placement gaps.
     #[schemars(extend("default" = 0.1))]
-    #[serde(default)]
+    #[serde(default = "default_max_float_gap")]
     pub max_float_gap: f32,
     /// Ground plane Y coordinate for sunk-detection. When provided, entities whose world AABB min_y is below this value are flagged as sunken. Useful for detecting GLB models placed at origin that are half-buried below the ground plane.
     pub ground_y: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CheckAllOverlapsParams {
     /// Minimum overlap depth to report (default 0.001)
     #[schemars(extend("default" = 0.001))]
@@ -285,9 +398,9 @@ pub struct CheckAllOverlapsParams {
     /// Max overlapping pairs to return (default 100)
     #[schemars(extend("default" = 100))]
     pub max_results: Option<usize>,
-    /// Max gap to still count as grounded (default 0.1)
+    /// Max gap between an entity bottom and a physical surface or ground_y to still count as grounded (default 0.1)
     #[schemars(extend("default" = 0.1))]
-    #[serde(default)]
+    #[serde(default = "default_max_float_gap")]
     pub max_float_gap: f32,
     /// Ground plane Y for sunk-detection
     pub ground_y: Option<f32>,
@@ -297,6 +410,7 @@ pub struct CheckAllOverlapsParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetAssetParams {
     /// Entity ID or Name
     pub entity: EntityRef,
@@ -314,7 +428,7 @@ pub struct SetAssetParams {
 /// To deserialize from an MCP tool call: inject the tool name as `"tool"` into
 /// the args object, then call `serde_json::from_value::<ControlOperation>(args)`.
 #[derive(Debug, Deserialize, JsonSchema)]
-#[serde(tag = "tool", rename_all = "snake_case")]
+#[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlOperation {
     /// List all entities in the scene.
     #[schemars(extend("x-hidden" = true))]
@@ -328,9 +442,13 @@ pub enum ControlOperation {
     /// List all resources in the world.
     #[schemars(extend("x-hidden" = true))]
     ListResources,
-    /// List all registered systems.
-    #[schemars(extend("x-hidden" = true))]
-    ListSystems,
+    /// Get scene-owned systems by stage, optionally including engine internals.
+    #[serde(rename = "get_system_list")]
+    ListSystems {
+        /// Include Bevy, PyBevy, and host-internal systems.
+        #[serde(default)]
+        include_internal: bool,
+    },
     /// Get component field names, types, defaults, and a JSON spawn example.
     GetComponentSchema {
         /// Component name (e.g. 'Transform')
@@ -338,7 +456,9 @@ pub enum ControlOperation {
     },
     /// Get live field values for a specific component on an entity.
     GetComponent(GetComponentParams),
-    /// Query entities by With/Without component filters. Also supports Name lookup.
+    /// Get the presence and live field values of a resource.
+    GetResource(GetResourceParams),
+    /// Query entities by With/Without component filters. Returns at most 100 records by default; use limit up to 1000 and inspect total_count/truncated.
     QueryEntities(QueryEntitiesParams),
     /// Get a grouped entity inventory: counts by type (e.g. '30 Bubble, 6 Fish, 1 Camera3d'). Faster than query_entities for understanding scene composition.
     GetSceneSummary,
@@ -353,10 +473,16 @@ pub enum ControlOperation {
     /// Capture a screenshot. Default 768px wide. UI elements are hidden by default. Use position/look_at to capture from an arbitrary viewpoint without affecting the scene camera.
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     CaptureScreenshot(CaptureScreenshotParams),
-    /// Capture a screenshot with entity ID/Name gizmo labels overlaid.
+    /// Capture numeric RGB/luma statistics, grid cells, and optional sampled pixels without returning a PNG.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    CaptureStats(CaptureStatsParams),
+    /// Compare two retained capture frames and report numeric pixel differences and their bounding box.
+    #[schemars(extend("x-feature-gate" = "screenshot"))]
+    CompareFrames(CompareFramesParams),
+    /// Capture a screenshot including existing gizmos.
     #[schemars(extend("x-hidden" = true))]
     CaptureWithGizmos(CaptureScreenshotParams),
-    /// Capture multiple frames over time into a contact sheet. Shows animation/motion in one image.
+    /// Capture multiple frames over time into a contact sheet. UI is hidden by default; gizmos are optional.
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     CaptureTimeline(CaptureTimelineParams),
     /// Capture multiple viewpoints orbiting around a target, composited into one contact sheet. Auto-fits distance to scene bounds if not specified.
@@ -395,7 +521,7 @@ pub enum ControlOperation {
     /// Remove a component from an entity.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     RemoveComponent(RemoveComponentParams),
-    /// Insert or update a resource on a running scene (in scene code, use commands.insert_resource() instead).
+    /// Insert or update a resource on a running scene. Custom resources must declare annotated fields, typically with `@resource` above `@dataclass`; attributes created only in `__init__` are not editable here. In scene code, use commands.insert_resource() instead.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SetResource(SetResourceParams),
     /// Remove a resource from the world.
@@ -408,6 +534,7 @@ pub enum ControlOperation {
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     Batch {
         /// Array of operations to execute. Each item: {"action": "set_component|spawn|despawn|remove_component", "entity": id_or_name, ...}
+        #[schemars(schema_with = "json_object_array_schema")]
         operations: Vec<serde_json::Value>,
     },
     /// Update asset properties (material color, mesh settings) live without code reload.
@@ -425,7 +552,7 @@ pub enum ControlOperation {
     },
     /// Get current time state: paused, speed, elapsed seconds.
     GetTimeStatus,
-    /// Jump virtual time to a specific moment. Seeking backwards resets virtual time (preserves speed). Pauses by default so you can capture at that exact time.
+    /// Jump virtual time to a specific moment. Absolute-time systems observe the new elapsed time; delta-accumulated state is not replayed. Seeking backwards resets virtual time (preserves speed). Pauses by default.
     SeekTime(SeekTimeParams),
 
     /// Spatial query between two entities: distance, direction, AABB overlap. For finding all entities within a radius, use query_spatial_neighborhood instead.
@@ -458,6 +585,9 @@ pub enum ControlOperation {
     ListConfigs,
 }
 
+fn default_1() -> u32 {
+    1
+}
 fn default_2() -> u32 {
     2
 }
@@ -472,6 +602,9 @@ fn default_60() -> u32 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_compare_epsilon() -> f64 {
+    DEFAULT_COMPARE_EPSILON
 }
 
 /// Error codes for control operations (JSON-RPC style)
@@ -541,15 +674,61 @@ pub struct ControlReceiver {
     pub rx: mpsc::UnboundedReceiver<ControlRequest>,
 }
 
+/// App-local gate shared by the HTTP server and the exclusive control system.
+///
+/// While `run_code` owns the gate, another control request cannot be serviced:
+/// the engine thread is executing Python with exclusive World access. HTTP
+/// admission checks this state before queueing so a callback into the same
+/// server fails immediately instead of waiting on the World it already owns.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct SharedExclusiveExecution {
+    active: Arc<AtomicBool>,
+}
+
+impl SharedExclusiveExecution {
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn try_enter(&self) -> Option<ExclusiveExecutionGuard> {
+        self.active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ExclusiveExecutionGuard {
+                state: self.clone(),
+            })
+    }
+}
+
+pub(crate) struct ExclusiveExecutionGuard {
+    state: SharedExclusiveExecution,
+}
+
+impl Drop for ExclusiveExecutionGuard {
+    fn drop(&mut self) {
+        self.state.active.store(false, Ordering::Release);
+    }
+}
+
 /// Clonable sender for the control channel (stored in HTTP server state)
 #[derive(Clone)]
 pub struct ControlSender {
     pub tx: mpsc::UnboundedSender<ControlRequest>,
+    exclusive_execution: SharedExclusiveExecution,
+}
+
+impl ControlSender {
+    pub(crate) fn exclusive_execution(&self) -> SharedExclusiveExecution {
+        self.exclusive_execution.clone()
+    }
 }
 
 /// Default screenshot width when the caller doesn't pass `max_width`.
 /// Keep in sync with the "(default 768)" schema docs on the capture params.
 pub const DEFAULT_SCREENSHOT_MAX_WIDTH: u32 = 768;
+/// Default contact-sheet width for `capture_timeline`, matching the value
+/// `capture_turnaround` uses for the same composition.
+pub const DEFAULT_TIMELINE_MAX_WIDTH: u32 = 1200;
 
 /// Bevy resource for pending screenshot responses (deferred until after render)
 #[derive(Resource, Default)]
@@ -560,14 +739,28 @@ pub struct PendingScreenshots {
 pub struct PendingScreenshot {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     pub frames_remaining: u32,
+    /// A scheduled scene mutation may require a render-world pipeline update
+    /// before its capture delay begins.
+    pub required_render_epoch: Option<u64>,
     pub with_gizmos: bool,
+    /// Original gizmo state captured before Update draws for this request.
+    pub gizmo_restore: Option<bool>,
     pub max_width: Option<u32>,
     pub debug_camera: Option<DebugCameraRequest>,
     pub hide_ui: bool,
+    pub entity: Option<EntityRef>,
+    pub response_kind: CaptureResponseKind,
     /// Extra JSON fields to merge into the screenshot response.
     /// Used by `capture_depth` and `reload_and_capture` to avoid spawning
     /// a thread for the merge.
     pub extra_response: Option<serde_json::Value>,
+}
+
+#[derive(Debug)]
+pub enum CaptureResponseKind {
+    Screenshot,
+    UnretainedScreenshot,
+    Stats(FrameStatsOptions),
 }
 
 /// Bevy resource for pending reload responses (deferred until reload completes)
@@ -580,7 +773,11 @@ pub struct PendingReloadResponse {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     pub frames_remaining: u32,
     pub mode: ReloadMode,
-    pub error_timestamp_before: f64,
+    /// The countdown expired while a definition fetch was still running; a
+    /// fresh grace countdown starts when the fetch finishes.
+    pub awaiting_fetch: bool,
+    /// Backstop for a fetch flag that never clears.
+    pub fetch_deadline: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -615,55 +812,25 @@ impl SseEventBroadcaster {
     }
 }
 
-/// Tracks the last error timestamp we've already broadcast via SSE,
-/// so we only push new errors to clients.
+/// Tracks the timestamp of the error we last broadcast via SSE, so each
+/// drained error is pushed to clients exactly once. Compared by equality,
+/// not ordering: a full reload resets the clock, so a genuinely new
+/// post-reload error can carry a smaller timestamp than the previous one.
 #[derive(Resource, Default)]
 pub struct LastBroadcastedErrorTimestamp {
-    pub timestamp_secs: f64,
+    pub timestamp_secs: Option<f64>,
 }
-
-/// Shared latest error state, readable from both Bevy system and Axum handler.
-/// Updated by control_poll_system, read by HTTP handlers to piggyback on responses.
-#[derive(Clone, Default)]
-pub struct SharedLatestError {
-    inner: Arc<Mutex<Option<ErrorSnapshot>>>,
-}
-
-#[derive(Clone)]
-pub struct ErrorSnapshot {
-    pub message: String,
-    pub timestamp_secs: f64,
-}
-
-impl SharedLatestError {
-    pub fn update(&self, message: String, timestamp_secs: f64) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = Some(ErrorSnapshot {
-                message,
-                timestamp_secs,
-            });
-        }
-    }
-
-    /// Get the latest error if it hasn't been reported yet.
-    /// Marks it as reported so it's only included once.
-    pub fn take_if_new(&self) -> Option<ErrorSnapshot> {
-        if let Ok(mut guard) = self.inner.lock() {
-            guard.take()
-        } else {
-            None
-        }
-    }
-}
-
-/// Bevy resource wrapper for SharedLatestError
-#[derive(Resource, Clone)]
-pub struct SharedLatestErrorResource(pub SharedLatestError);
 
 /// Create the mpsc channel pair
 pub fn create_channel() -> (ControlSender, ControlReceiver) {
     let (tx, rx) = mpsc::unbounded_channel();
-    (ControlSender { tx }, ControlReceiver { rx })
+    (
+        ControlSender {
+            tx,
+            exclusive_execution: SharedExclusiveExecution::default(),
+        },
+        ControlReceiver { rx },
+    )
 }
 
 pub fn push_pending_screenshot(
@@ -679,10 +846,53 @@ pub fn push_pending_screenshot(
     deferred.push(PendingScreenshot {
         response_tx,
         frames_remaining: params.delay_frames,
+        required_render_epoch: None,
         with_gizmos,
+        gizmo_restore: None,
         max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
         debug_camera,
         hide_ui: params.hide_ui,
+        entity: params.entity,
+        response_kind: CaptureResponseKind::Screenshot,
+        extra_response: None,
+    });
+}
+
+pub fn push_pending_stats(
+    params: CaptureStatsParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    deferred: &mut Vec<PendingScreenshot>,
+) {
+    if params.max_width == Some(0) {
+        let _ = response_tx.send(Err(ControlError::invalid_params(
+            "max_width must be a positive integer",
+        )));
+        return;
+    }
+    let options = FrameStatsOptions {
+        grid: params.grid,
+        region: params.region,
+        sample_points: params.sample_points,
+    };
+    if let Err(error) = validate_frame_stats_options(&options) {
+        let _ = response_tx.send(Err(error));
+        return;
+    }
+    let debug_camera = params.position.map(|position| DebugCameraRequest {
+        position,
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    deferred.push(PendingScreenshot {
+        response_tx,
+        frames_remaining: params.delay_frames,
+        required_render_epoch: None,
+        with_gizmos: params.gizmos,
+        gizmo_restore: None,
+        max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
+        debug_camera,
+        hide_ui: params.hide_ui,
+        entity: params.entity,
+        response_kind: CaptureResponseKind::Stats(options),
         extra_response: None,
     });
 }
@@ -703,8 +913,12 @@ pub fn push_pending_timeline(
     }
 
     let mut schedule = compute_schedule(params.total_frames, params.capture_count);
+    // Let one post-suppression frame reach both window and headless targets.
+    if let Some(first) = schedule.front_mut() {
+        *first += 1;
+    }
 
-    let debug_cleanup = params.position.map(|pos| {
+    let debug_cleanup = if let Some(pos) = params.position {
         let debug_req = DebugCameraRequest {
             position: pos,
             look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
@@ -712,8 +926,21 @@ pub fn push_pending_timeline(
         if let Some(first) = schedule.front_mut() {
             *first += 2;
         }
-        setup_debug_camera(world, &debug_req)
-    });
+        match setup_debug_camera(world, &debug_req) {
+            Ok(cleanup) => Some(cleanup),
+            Err(error) => {
+                let _ = response_tx.send(Err(error));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
+    // Prepare visibility before any zero-delay capture can be scheduled.
+    let (ui_restore, gizmo_restore) =
+        prepare_capture_visibility(world, params.hide_ui, params.gizmos);
+    let headless_sequence = headless_frame_sequence(world);
 
     let mut pending = world.get_resource_or_insert_with(PendingTimelines::default);
     let id = pending.next_id;
@@ -722,14 +949,24 @@ pub fn push_pending_timeline(
         id,
         ActiveTimeline {
             response_tx: Some(response_tx),
-            max_width: params.max_width,
+            // A contact sheet composes capture_count frames at this width, so
+            // an unclamped default produces a payload many times the size of a
+            // single screenshot. capture_turnaround already defaults the same
+            // way; capture_screenshot clamps to DEFAULT_SCREENSHOT_MAX_WIDTH.
+            max_width: Some(params.max_width.unwrap_or(DEFAULT_TIMELINE_MAX_WIDTH)),
             columns: params.columns,
             debug_cleanup,
             schedule,
             total_captures: params.capture_count,
             next_capture_index: 0,
             collected: Vec::new(),
-            overlay_suppressed: false,
+            overlay_suppressed: true,
+            hide_ui: params.hide_ui,
+            with_gizmos: params.gizmos,
+            ui_restore,
+            gizmo_restore,
+            headless_sequence,
+            stall_frames: 0,
         },
     );
 }
@@ -752,17 +989,13 @@ pub fn push_pending_reload(
         return;
     }
 
-    let error_ts = world
-        .get_resource::<pybevy_core::LastSystemError>()
-        .map(|e| e.timestamp_secs)
-        .unwrap_or(0.0);
-
     let mut pending = world.get_resource_or_insert_with(PendingReloadResponses::default);
     pending.pending.push(PendingReloadResponse {
         response_tx,
         frames_remaining: 5,
         mode: params.mode,
-        error_timestamp_before: error_ts,
+        awaiting_fetch: false,
+        fetch_deadline: None,
     });
 }
 
@@ -783,24 +1016,17 @@ pub fn push_pending_reload_and_capture(
         return;
     }
 
-    let error_ts = world
-        .get_resource::<pybevy_core::LastSystemError>()
-        .map(|e| e.timestamp_secs)
-        .unwrap_or(0.0);
-
     let mut pending = world.get_resource_or_insert_with(PendingReloadAndCaptures::default);
     pending.pending.push(PendingReloadAndCapture {
         response_tx,
         mode: params.mode,
-        error_timestamp_before: error_ts,
         reload_frames_remaining: 5,
+        awaiting_fetch: false,
         screenshot_delay_frames: params.delay_frames.unwrap_or(30),
         max_width: params.max_width,
         position: params.position,
         look_at: params.look_at,
         hide_ui: params.hide_ui.unwrap_or(true),
-        state: ReloadAndCaptureState::WaitingForReload,
-        reload_response: None,
     });
 }
 
@@ -809,7 +1035,24 @@ pub fn push_pending_turnaround(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     world: &mut World,
 ) {
+    if params
+        .distance
+        .is_some_and(|distance| !distance.is_finite() || distance <= 0.0)
+    {
+        let _ = response_tx.send(Err(ControlError::invalid_params(
+            "distance must be > 0 and finite",
+        )));
+        return;
+    }
+
     let vc = params.view_count.unwrap_or(6);
+    if !(1..=MAX_TURNAROUND_VIEWS).contains(&vc) {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "view_count must be between 1 and {MAX_TURNAROUND_VIEWS}"
+        ))));
+        return;
+    }
+
     let elev = params.elevation.unwrap_or(25.0);
     let top = params.include_top.unwrap_or(true);
 
@@ -840,12 +1083,15 @@ pub fn push_pending_turnaround(
         columns: params.columns.unwrap_or(3),
         max_width: Some(params.max_width.unwrap_or(1200)),
         frames_remaining: 0,
+        view_staged: false,
         hide_ui: params.hide_ui.unwrap_or(true),
         ui_restore: None,
         overlay_suppressed: false,
         debug_cleanup: None,
         look_at: final_look_at,
         pending_screenshot_entity: None,
+        headless_sequence: None,
+        stall_frames: 0,
     });
 }
 
@@ -884,10 +1130,14 @@ pub fn push_pending_depth(
         deferred.push(PendingScreenshot {
             response_tx,
             frames_remaining: df,
+            required_render_epoch: None,
             with_gizmos: false,
+            gizmo_restore: None,
             max_width: mw,
             debug_camera: dc,
             hide_ui: hu,
+            entity: None,
+            response_kind: CaptureResponseKind::UnretainedScreenshot,
             extra_response: Some(serde_json::json!({ "depth_samples": depth })),
         });
     } else {
@@ -985,12 +1235,16 @@ pub fn control_poll_system(world: &mut World) {
                 // sync ops are collected for batched GIL processing
                 match request.operation {
                     ControlOperation::CaptureScreenshot(p) => {
+                        let with_gizmos = p.gizmos;
                         push_pending_screenshot(
                             p,
-                            false,
+                            with_gizmos,
                             request.response_tx,
                             &mut deferred_screenshots,
                         );
+                    }
+                    ControlOperation::CaptureStats(p) => {
+                        push_pending_stats(p, request.response_tx, &mut deferred_screenshots);
                     }
                     ControlOperation::CaptureWithGizmos(p) => {
                         push_pending_screenshot(
@@ -1048,6 +1302,9 @@ pub fn control_poll_system(world: &mut World) {
 
     // Store deferred screenshots
     if !deferred_screenshots.is_empty() {
+        for screenshot in &mut deferred_screenshots {
+            crate::handlers::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
+        }
         let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
         pending.pending.extend(deferred_screenshots);
     }
@@ -1055,7 +1312,7 @@ pub fn control_poll_system(world: &mut World) {
     // Put the receiver back
     world.insert_resource(receiver);
 
-    // Broadcast new system errors via SSE + update shared state for HTTP piggyback
+    // Broadcast new system errors via SSE
     if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>()
         && let Some(ref msg) = last_error.error
     {
@@ -1065,20 +1322,15 @@ pub fn control_poll_system(world: &mut World) {
 
         let mut tracker = world.get_resource_or_insert_with(LastBroadcastedErrorTimestamp::default);
 
-        if error_ts > tracker.timestamp_secs {
-            tracker.timestamp_secs = error_ts;
+        if tracker.timestamp_secs != Some(error_ts) {
+            tracker.timestamp_secs = Some(error_ts);
 
             // SSE broadcast (for clients that subscribe to /api/v1/sse)
             if let Some(broadcaster) = world.get_resource::<SseEventBroadcaster>() {
                 broadcaster.send(&crate::protocol::SseEvent::Error {
-                    message: msg.clone(),
+                    message: msg,
                     traceback,
                 });
-            }
-
-            // Shared state update (for HTTP piggyback on next tool response)
-            if let Some(shared) = world.get_resource::<SharedLatestErrorResource>() {
-                shared.0.update(msg, error_ts);
             }
         }
     }
@@ -1088,7 +1340,11 @@ pub fn control_poll_system(world: &mut World) {
 mod tests {
     use std::sync::Once;
 
-    use bevy::{ecs::entity::Entity, prelude::Transform};
+    use bevy::{
+        ecs::entity::Entity,
+        gizmos::config::{DefaultGizmoConfigGroup, GizmoConfig, GizmoConfigStore},
+        prelude::{Camera2d, Transform},
+    };
     use pybevy_core::bridge_inventory::collect_all;
     use pyo3::Python;
 
@@ -1129,6 +1385,115 @@ mod tests {
     }
 
     #[test]
+    fn control_poll_suppresses_gizmos_before_queuing_capture() {
+        let mut world = World::new();
+        let mut store = GizmoConfigStore::default();
+        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
+        world.insert_resource(store);
+
+        let (sender, receiver) = create_channel();
+        world.insert_resource(receiver);
+        let (response_tx, _response_rx) = oneshot::channel();
+        sender
+            .tx
+            .send(ControlRequest {
+                operation: ControlOperation::CaptureScreenshot(serde_json::from_str("{}").unwrap()),
+                response_tx,
+            })
+            .unwrap();
+
+        control_poll_system(&mut world);
+
+        let store = world.resource::<GizmoConfigStore>();
+        let (config, _) = store.config::<DefaultGizmoConfigGroup>();
+        assert!(!config.enabled);
+        let pending = world.resource::<PendingScreenshots>();
+        assert_eq!(pending.pending[0].gizmo_restore, Some(true));
+    }
+
+    #[test]
+    fn capture_screenshot_gizmos_flag_survives_direct_dispatch() {
+        let mut world = World::new();
+        let mut store = GizmoConfigStore::default();
+        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
+        world.insert_resource(store);
+
+        let (sender, receiver) = create_channel();
+        world.insert_resource(receiver);
+        let (response_tx, _response_rx) = oneshot::channel();
+        sender
+            .tx
+            .send(ControlRequest {
+                operation: ControlOperation::CaptureScreenshot(
+                    serde_json::from_str(r#"{"gizmos": true}"#).unwrap(),
+                ),
+                response_tx,
+            })
+            .unwrap();
+
+        control_poll_system(&mut world);
+
+        let pending = world.resource::<PendingScreenshots>();
+        assert!(pending.pending[0].with_gizmos);
+        let store = world.resource::<GizmoConfigStore>();
+        let (config, _) = store.config::<DefaultGizmoConfigGroup>();
+        assert!(config.enabled, "gizmos must stay enabled for the capture");
+    }
+
+    #[test]
+    fn push_pending_stats_preserves_analysis_options() {
+        let (tx, _rx) = oneshot::channel();
+        let params: CaptureStatsParams = serde_json::from_str(
+            r#"{"grid": 3, "region": [1, 2, 9, 6], "sample_points": [[2, 3]]}"#,
+        )
+        .unwrap();
+        let mut deferred = Vec::new();
+        push_pending_stats(params, tx, &mut deferred);
+
+        assert_eq!(deferred[0].max_width, Some(DEFAULT_SCREENSHOT_MAX_WIDTH));
+        let CaptureResponseKind::Stats(options) = &deferred[0].response_kind else {
+            panic!("capture_stats must queue a stats response");
+        };
+        assert_eq!(options.grid, 3);
+        assert_eq!(options.region, Some([1, 2, 9, 6]));
+        assert_eq!(options.sample_points, Some(vec![[2, 3]]));
+    }
+
+    #[test]
+    fn push_pending_stats_rejects_invalid_options_before_capture() {
+        let (tx, rx) = oneshot::channel();
+        let params: CaptureStatsParams = serde_json::from_str(r#"{"grid": 0}"#).unwrap();
+        let mut deferred = Vec::new();
+        push_pending_stats(params, tx, &mut deferred);
+
+        assert!(deferred.is_empty());
+        let error = rx.blocking_recv().unwrap().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(error.message.contains("grid"));
+    }
+
+    #[test]
+    fn push_pending_depth_returns_structured_coordinate_error() {
+        let (tx, rx) = oneshot::channel();
+        let params: CaptureDepthParams = serde_json::from_str(
+            r#"{"sample_points": [[99999, -50], [10, 10]], "include_rgb": false}"#,
+        )
+        .unwrap();
+        let mut deferred = Vec::new();
+        let mut world = World::new();
+
+        push_pending_depth(params, tx, &mut deferred, &mut world);
+
+        assert!(deferred.is_empty());
+        let error = rx.blocking_recv().unwrap().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "sample_points[0] must be within [0, 800) on both axes (got [99999, -50])"
+        );
+    }
+
+    #[test]
     fn control_error_not_found() {
         let err = ControlError::not_found("missing");
         assert_eq!(err.code, ErrorCode::NotFound);
@@ -1150,36 +1515,6 @@ mod tests {
     }
 
     #[test]
-    fn shared_latest_error_update_and_take() {
-        let shared = SharedLatestError::default();
-
-        // Initially empty
-        assert!(shared.take_if_new().is_none());
-
-        // Update with an error
-        shared.update("test error".into(), 1.0);
-
-        // First take returns the error
-        let snapshot = shared.take_if_new().unwrap();
-        assert_eq!(snapshot.message, "test error");
-        assert_eq!(snapshot.timestamp_secs, 1.0);
-
-        // Second take returns None (already consumed)
-        assert!(shared.take_if_new().is_none());
-    }
-
-    #[test]
-    fn shared_latest_error_update_overwrites() {
-        let shared = SharedLatestError::default();
-        shared.update("first".into(), 1.0);
-        shared.update("second".into(), 2.0);
-
-        let snapshot = shared.take_if_new().unwrap();
-        assert_eq!(snapshot.message, "second");
-        assert_eq!(snapshot.timestamp_secs, 2.0);
-    }
-
-    #[test]
     fn create_channel_works() {
         let (sender, mut receiver) = create_channel();
         let (tx, _rx) = tokio::sync::oneshot::channel();
@@ -1194,6 +1529,63 @@ mod tests {
 
         let req = receiver.rx.try_recv().unwrap();
         assert!(matches!(req.operation, ControlOperation::ListEntities));
+    }
+
+    #[test]
+    fn list_systems_defaults_to_scene_only() {
+        let operation: ControlOperation =
+            serde_json::from_str(r#"{"tool":"get_system_list"}"#).unwrap();
+        assert!(matches!(
+            operation,
+            ControlOperation::ListSystems {
+                include_internal: false
+            }
+        ));
+    }
+
+    #[test]
+    fn list_systems_accepts_include_internal() {
+        let operation: ControlOperation =
+            serde_json::from_str(r#"{"tool":"get_system_list","include_internal":true}"#).unwrap();
+        assert!(matches!(
+            operation,
+            ControlOperation::ListSystems {
+                include_internal: true
+            }
+        ));
+    }
+
+    #[test]
+    fn exclusive_execution_guard_is_app_local_and_raii_scoped() {
+        let (sender_a, _receiver_a) = create_channel();
+        let (sender_b, _receiver_b) = create_channel();
+        let state_a = sender_a.exclusive_execution();
+        let state_b = sender_b.exclusive_execution();
+
+        assert!(!state_a.is_active());
+        let guard = state_a.try_enter().expect("first entry should succeed");
+        assert!(state_a.is_active());
+        assert!(state_a.try_enter().is_none());
+        assert!(!state_b.is_active());
+
+        drop(guard);
+        assert!(!state_a.is_active());
+        assert!(state_a.try_enter().is_some());
+    }
+
+    #[test]
+    fn exclusive_execution_guard_clears_on_unwind() {
+        let (sender, _receiver) = create_channel();
+        let state = sender.exclusive_execution();
+        let unwind_state = state.clone();
+
+        let result = std::panic::catch_unwind(move || {
+            let _guard = unwind_state.try_enter().expect("entry should succeed");
+            panic!("test unwind");
+        });
+
+        assert!(result.is_err());
+        assert!(!state.is_active());
     }
 
     #[test]
@@ -1268,6 +1660,8 @@ mod tests {
             columns: 3,
             position: None,
             look_at: None,
+            hide_ui: true,
+            gizmos: false,
         }
     }
 
@@ -1294,19 +1688,144 @@ mod tests {
 
     #[test]
     fn push_pending_timeline_accepts_valid_capture_count() {
-        // A valid count queues the timeline and defers the response.
         let mut world = World::new();
         let (tx, mut rx) = oneshot::channel();
-        push_pending_timeline(timeline_params(6), tx, &mut world);
+        let mut params = timeline_params(6);
+        params.hide_ui = false;
+        params.gizmos = true;
+        push_pending_timeline(params, tx, &mut world);
         assert!(
             rx.try_recv().is_err(),
             "response is deferred, not immediate"
         );
-        let queued = world
+        let pending = world.resource::<PendingTimelines>();
+        assert_eq!(pending.active.len(), 1);
+        let timeline = pending.active.values().next().unwrap();
+        assert!(!timeline.hide_ui);
+        assert!(timeline.with_gizmos);
+        assert!(timeline.overlay_suppressed);
+        assert_eq!(timeline.schedule.front(), Some(&1));
+        assert_eq!(world.resource::<OverlaySuppression>().0, 1);
+    }
+
+    #[test]
+    fn push_pending_timeline_rejects_camera2d_position_override() {
+        let mut world = World::new();
+        world.spawn(Camera2d::default());
+        let (tx, mut rx) = oneshot::channel();
+        let mut params = timeline_params(6);
+        params.position = Some([0.0, 0.0, 500.0]);
+
+        push_pending_timeline(params, tx, &mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("require a Camera3d"));
+        assert!(!world.contains_resource::<PendingTimelines>());
+    }
+
+    #[test]
+    fn push_pending_timeline_clamps_the_default_sheet_width() {
+        // A contact sheet composes capture_count frames, so an unclamped
+        // default produces a payload many times a single screenshot and can
+        // exceed the transport's inline image bound. capture_turnaround
+        // already defaults the same way.
+        let mut world = World::new();
+        let (tx, _rx) = oneshot::channel();
+        push_pending_timeline(timeline_params(6), tx, &mut world);
+        let width = world
             .get_resource::<PendingTimelines>()
-            .map(|p| p.active.len())
-            .unwrap_or(0);
-        assert_eq!(queued, 1);
+            .and_then(|pending| pending.active.values().next().map(|t| t.max_width))
+            .expect("timeline was queued");
+        assert_eq!(width, Some(DEFAULT_TIMELINE_MAX_WIDTH));
+    }
+
+    #[test]
+    fn push_pending_timeline_keeps_an_explicit_sheet_width() {
+        let mut world = World::new();
+        let (tx, _rx) = oneshot::channel();
+        let mut params = timeline_params(6);
+        params.max_width = Some(2400);
+        push_pending_timeline(params, tx, &mut world);
+        let width = world
+            .get_resource::<PendingTimelines>()
+            .and_then(|pending| pending.active.values().next().map(|t| t.max_width))
+            .expect("timeline was queued");
+        assert_eq!(width, Some(2400));
+    }
+
+    fn turnaround_params(distance: Option<f32>) -> CaptureTurnaroundParams {
+        CaptureTurnaroundParams {
+            look_at: None,
+            distance,
+            elevation: None,
+            view_count: None,
+            include_top: None,
+            columns: None,
+            max_width: None,
+            hide_ui: None,
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_rejects_invalid_distance() {
+        for distance in [0.0, -1.0, f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            push_pending_turnaround(turnaround_params(Some(distance)), tx, &mut world);
+
+            let error = rx
+                .try_recv()
+                .expect("caller should receive a response")
+                .expect_err("invalid distance must be an error");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(error.message, "distance must be > 0 and finite");
+            assert!(!world.contains_resource::<PendingTurnarounds>());
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_accepts_automatic_and_positive_distance() {
+        for distance in [None, Some(1.0)] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            push_pending_turnaround(turnaround_params(distance), tx, &mut world);
+
+            assert!(rx.try_recv().is_err(), "response should remain deferred");
+            assert_eq!(world.resource::<PendingTurnarounds>().active.len(), 1);
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_rejects_out_of_range_view_count() {
+        for view_count in [0, MAX_TURNAROUND_VIEWS + 1] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = turnaround_params(None);
+            params.view_count = Some(view_count);
+            push_pending_turnaround(params, tx, &mut world);
+
+            let error = rx
+                .try_recv()
+                .expect("caller should receive a response")
+                .expect_err("out-of-range view count must be an error");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(error.message, "view_count must be between 1 and 20");
+            assert!(!world.contains_resource::<PendingTurnarounds>());
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_accepts_boundary_view_counts() {
+        for view_count in [1, MAX_TURNAROUND_VIEWS] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = turnaround_params(None);
+            params.view_count = Some(view_count);
+            push_pending_turnaround(params, tx, &mut world);
+
+            assert!(rx.try_recv().is_err(), "response should remain deferred");
+            assert_eq!(world.resource::<PendingTurnarounds>().active.len(), 1);
+        }
     }
 
     #[test]
@@ -1352,22 +1871,6 @@ mod tests {
         let name_ref = EntityRef::Name("Test".into());
         assert!(format!("{:?}", id_ref).contains("42"));
         assert!(format!("{:?}", name_ref).contains("Test"));
-    }
-
-    #[test]
-    fn shared_latest_error_default_is_empty() {
-        let shared = SharedLatestError::default();
-        assert!(shared.take_if_new().is_none());
-    }
-
-    #[test]
-    fn shared_latest_error_clone_shares_state() {
-        let shared = SharedLatestError::default();
-        let cloned = shared.clone();
-        shared.update("error".into(), 1.0);
-        // The clone should see the same update
-        let snapshot = cloned.take_if_new().unwrap();
-        assert_eq!(snapshot.message, "error");
     }
 
     #[test]
