@@ -1,4 +1,4 @@
-use bevy::ui::Node;
+use bevy::ui::{Node, Val};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -6,7 +6,8 @@ use pyo3::prelude::*;
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
     PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyPositionType,
+    PyOverflowAxis, PyPositionType,
+    border_radius::PyBorderRadius,
     grid_placement::PyGridPlacement,
     grid_track::PyGridTrack,
     overflow::PyOverflow,
@@ -26,8 +27,143 @@ pub struct PyNode {
 #[pymethods]
 impl PyNode {
     #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        Self::from_owned(Node::default()).into()
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        display = PyDisplay::Flex,
+        box_sizing = PyBoxSizing::BorderBox,
+        position_type = PyPositionType::Relative,
+        overflow = PyOverflow::py_new(PyOverflowAxis::Visible, PyOverflowAxis::Visible),
+        scrollbar_width = 0.0,
+        overflow_clip_margin = PyOverflowClipMargin::new(None, 0.0),
+        left = None,
+        right = None,
+        top = None,
+        bottom = None,
+        width = None,
+        height = None,
+        min_width = None,
+        min_height = None,
+        max_width = None,
+        max_height = None,
+        aspect_ratio = None,
+        align_items = PyAlignItems::Default,
+        justify_items = PyJustifyItems::Default,
+        align_self = PyAlignSelf::Auto,
+        justify_self = PyJustifySelf::Auto,
+        align_content = PyAlignContent::Default,
+        justify_content = PyJustifyContent::Default,
+        direction = PyInlineDirection::Ltr,
+        margin = PyUiRect::default_(),
+        padding = PyUiRect::default_(),
+        border = PyUiRect::default_(),
+        border_radius = PyBorderRadius::zero(),
+        flex_direction = PyFlexDirection::Row,
+        flex_wrap = PyFlexWrap::NoWrap,
+        flex_grow = 0.0,
+        flex_shrink = 1.0,
+        flex_basis = None,
+        row_gap = None,
+        column_gap = None,
+        grid_auto_flow = PyGridAutoFlow::Row,
+        grid_template_rows = Vec::new(),
+        grid_template_columns = Vec::new(),
+        grid_auto_rows = Vec::new(),
+        grid_auto_columns = Vec::new(),
+        grid_row = PyGridPlacement::default(),
+        grid_column = PyGridPlacement::default(),
+    ))]
+    pub fn new(
+        display: PyDisplay,
+        box_sizing: PyBoxSizing,
+        position_type: PyPositionType,
+        overflow: PyOverflow,
+        scrollbar_width: f32,
+        overflow_clip_margin: PyOverflowClipMargin,
+        left: Option<&Bound<'_, PyAny>>,
+        right: Option<&Bound<'_, PyAny>>,
+        top: Option<&Bound<'_, PyAny>>,
+        bottom: Option<&Bound<'_, PyAny>>,
+        width: Option<&Bound<'_, PyAny>>,
+        height: Option<&Bound<'_, PyAny>>,
+        min_width: Option<&Bound<'_, PyAny>>,
+        min_height: Option<&Bound<'_, PyAny>>,
+        max_width: Option<&Bound<'_, PyAny>>,
+        max_height: Option<&Bound<'_, PyAny>>,
+        aspect_ratio: Option<f32>,
+        align_items: PyAlignItems,
+        justify_items: PyJustifyItems,
+        align_self: PyAlignSelf,
+        justify_self: PyJustifySelf,
+        align_content: PyAlignContent,
+        justify_content: PyJustifyContent,
+        direction: PyInlineDirection,
+        margin: PyUiRect,
+        padding: PyUiRect,
+        border: PyUiRect,
+        border_radius: PyBorderRadius,
+        flex_direction: PyFlexDirection,
+        flex_wrap: PyFlexWrap,
+        flex_grow: f32,
+        flex_shrink: f32,
+        flex_basis: Option<&Bound<'_, PyAny>>,
+        row_gap: Option<&Bound<'_, PyAny>>,
+        column_gap: Option<&Bound<'_, PyAny>>,
+        grid_auto_flow: PyGridAutoFlow,
+        grid_template_rows: Vec<PyRepeatedGridTrack>,
+        grid_template_columns: Vec<PyRepeatedGridTrack>,
+        grid_auto_rows: Vec<PyGridTrack>,
+        grid_auto_columns: Vec<PyGridTrack>,
+        grid_row: PyGridPlacement,
+        grid_column: PyGridPlacement,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let val = |value: Option<&Bound<'_, PyAny>>, default: Val| {
+            value.map_or(Ok(default), extract_val_from_any)
+        };
+        Ok(Self::from_owned(Node {
+            display: display.into(),
+            box_sizing: box_sizing.into(),
+            position_type: position_type.into(),
+            overflow: overflow.try_into()?,
+            scrollbar_width,
+            overflow_clip_margin: overflow_clip_margin.into(),
+            left: val(left, Val::Auto)?,
+            right: val(right, Val::Auto)?,
+            top: val(top, Val::Auto)?,
+            bottom: val(bottom, Val::Auto)?,
+            width: val(width, Val::Auto)?,
+            height: val(height, Val::Auto)?,
+            min_width: val(min_width, Val::Auto)?,
+            min_height: val(min_height, Val::Auto)?,
+            max_width: val(max_width, Val::Auto)?,
+            max_height: val(max_height, Val::Auto)?,
+            aspect_ratio,
+            align_items: align_items.into(),
+            justify_items: justify_items.into(),
+            align_self: align_self.into(),
+            justify_self: justify_self.into(),
+            align_content: align_content.into(),
+            justify_content: justify_content.into(),
+            direction: direction.into(),
+            margin: margin.try_into()?,
+            padding: padding.try_into()?,
+            border: border.try_into()?,
+            border_radius: border_radius.into(),
+            flex_direction: flex_direction.into(),
+            flex_wrap: flex_wrap.into(),
+            flex_grow,
+            flex_shrink,
+            flex_basis: val(flex_basis, Val::Auto)?,
+            row_gap: val(row_gap, Val::ZERO)?,
+            column_gap: val(column_gap, Val::ZERO)?,
+            grid_auto_flow: grid_auto_flow.into(),
+            grid_template_rows: grid_template_rows.into_iter().map(Into::into).collect(),
+            grid_template_columns: grid_template_columns.into_iter().map(Into::into).collect(),
+            grid_auto_rows: grid_auto_rows.into_iter().map(Into::into).collect(),
+            grid_auto_columns: grid_auto_columns.into_iter().map(Into::into).collect(),
+            grid_row: grid_row.into(),
+            grid_column: grid_column.into(),
+        })
+        .into())
     }
 
     #[setter]
@@ -268,7 +404,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_overflow(&mut self, value: PyOverflow) -> PyResult<()> {
-        self.as_mut()?.overflow = value.into();
+        self.as_mut()?.overflow = value.try_into()?;
         Ok(())
     }
 
@@ -285,34 +421,37 @@ impl PyNode {
 
     #[getter]
     pub fn margin(&self) -> PyResult<PyUiRect> {
-        Ok(self.as_ref()?.margin.into())
+        Ok(self.storage.borrow_field_as(|node| &node.margin)?)
     }
 
     #[setter]
     pub fn set_margin(&mut self, value: PyUiRect) -> PyResult<()> {
-        self.as_mut()?.margin = value.into();
+        let value = value.try_into()?;
+        self.as_mut()?.margin = value;
         Ok(())
     }
 
     #[getter]
     pub fn padding(&self) -> PyResult<PyUiRect> {
-        Ok(self.as_ref()?.padding.into())
+        Ok(self.storage.borrow_field_as(|node| &node.padding)?)
     }
 
     #[setter]
     pub fn set_padding(&mut self, value: PyUiRect) -> PyResult<()> {
-        self.as_mut()?.padding = value.into();
+        let value = value.try_into()?;
+        self.as_mut()?.padding = value;
         Ok(())
     }
 
     #[getter]
     pub fn border(&self) -> PyResult<PyUiRect> {
-        Ok(self.as_ref()?.border.into())
+        Ok(self.storage.borrow_field_as(|node| &node.border)?)
     }
 
     #[setter]
     pub fn set_border(&mut self, value: PyUiRect) -> PyResult<()> {
-        self.as_mut()?.border = value.into();
+        let value = value.try_into()?;
+        self.as_mut()?.border = value;
         Ok(())
     }
 
@@ -392,8 +531,6 @@ impl PyNode {
         self.as_mut()?.scrollbar_width = value;
         Ok(())
     }
-
-    // Grid layout fields
 
     #[getter]
     pub fn grid_column(&self) -> PyResult<PyGridPlacement> {

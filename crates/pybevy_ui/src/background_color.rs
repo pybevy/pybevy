@@ -15,19 +15,23 @@ pub struct PyBackgroundColor {
 impl PyBackgroundColor {
     #[new]
     #[pyo3(signature = (color = None))]
-    pub fn new(color: Option<PyColor>) -> PyClassInitializer<Self> {
-        let c = color.map(|c| c.into()).unwrap_or(Color::NONE);
-        Self::from_owned(BackgroundColor(c)).into()
+    pub fn new(color: Option<PyColor>) -> PyResult<PyClassInitializer<Self>> {
+        let color = color
+            .map(Color::try_from)
+            .transpose()?
+            .unwrap_or(Color::NONE);
+        Ok(Self::from_owned(BackgroundColor(color)).into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.0, py)
+        PyColor::from_component_field(&self.storage, |color| &color.0, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.0 = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.0 = color;
         Ok(())
     }
 

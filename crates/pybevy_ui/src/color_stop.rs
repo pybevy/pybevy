@@ -26,39 +26,42 @@ impl From<PyColorStop> for ColorStop {
 impl PyColorStop {
     #[new]
     #[pyo3(signature = (color = None, point = PyVal::new(), *, hint = 0.5))]
-    pub fn new(color: Option<PyColor>, point: PyVal, hint: f32) -> Self {
-        let bevy_color: Color = color.map(|c| c.into()).unwrap_or(Color::WHITE);
-        PyColorStop {
+    pub fn new(color: Option<PyColor>, point: PyVal, hint: f32) -> PyResult<Self> {
+        let bevy_color = color
+            .map(Color::try_from)
+            .transpose()?
+            .unwrap_or(Color::WHITE);
+        Ok(PyColorStop {
             inner: ColorStop {
                 color: bevy_color,
                 point: point.into(),
                 hint,
             },
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn auto(color: PyColor) -> Self {
-        let bevy_color: Color = color.into();
-        PyColorStop {
+    pub fn auto(color: PyColor) -> PyResult<Self> {
+        let bevy_color = Color::try_from(color)?;
+        Ok(PyColorStop {
             inner: ColorStop::auto(bevy_color),
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn px(color: PyColor, px: f32) -> Self {
-        let bevy_color: Color = color.into();
-        PyColorStop {
+    pub fn px(color: PyColor, px: f32) -> PyResult<Self> {
+        let bevy_color = Color::try_from(color)?;
+        Ok(PyColorStop {
             inner: ColorStop::px(bevy_color, px),
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn percent(color: PyColor, percent: f32) -> Self {
-        let bevy_color: Color = color.into();
-        PyColorStop {
+    pub fn percent(color: PyColor, percent: f32) -> PyResult<Self> {
+        let bevy_color = Color::try_from(color)?;
+        Ok(PyColorStop {
             inner: ColorStop::percent(bevy_color, percent),
-        }
+        })
     }
 
     pub fn with_hint(&self, hint: f32) -> Self {

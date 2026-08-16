@@ -21,18 +21,18 @@ impl PyUiTransform {
         translation: Option<PyVal2>,
         scale: Option<PyVec2>,
         rotation: Option<PyRot2>,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let mut transform = UiTransform::IDENTITY;
         if let Some(t) = translation {
             transform.translation = t.into();
         }
         if let Some(s) = scale {
-            transform.scale = s.into();
+            transform.scale = s.try_into()?;
         }
         if let Some(r) = rotation {
-            transform.rotation = r.into();
+            transform.rotation = r.try_into()?;
         }
-        Self::from_owned(transform).into()
+        Ok(Self::from_owned(transform).into())
     }
 
     #[staticmethod]
@@ -52,13 +52,16 @@ impl PyUiTransform {
     pub fn from_rotation(py: Python, rotation: PyRot2) -> PyResult<Py<Self>> {
         Py::new(
             py,
-            Self::from_owned(UiTransform::from_rotation(rotation.into())),
+            Self::from_owned(UiTransform::from_rotation(rotation.try_into()?)),
         )
     }
 
     #[staticmethod]
     pub fn from_scale(py: Python, scale: PyVec2) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(UiTransform::from_scale(scale.into())))
+        Py::new(
+            py,
+            Self::from_owned(UiTransform::from_scale(scale.try_into()?)),
+        )
     }
 
     #[getter]
@@ -79,18 +82,20 @@ impl PyUiTransform {
 
     #[setter]
     pub fn set_scale(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.scale = value.into();
+        self.as_mut()?.scale = value.try_into()?;
         Ok(())
     }
 
     #[getter]
     pub fn rotation(&self) -> PyResult<PyRot2> {
-        Ok(self.as_ref()?.rotation.into())
+        Ok(self
+            .storage
+            .borrow_field_as(|transform| &transform.rotation)?)
     }
 
     #[setter]
     pub fn set_rotation(&mut self, value: PyRot2) -> PyResult<()> {
-        self.as_mut()?.rotation = value.into();
+        self.as_mut()?.rotation = value.try_into()?;
         Ok(())
     }
 

@@ -26,17 +26,17 @@ impl From<PyUiPosition> for UiPosition {
 impl PyUiPosition {
     #[new]
     #[pyo3(signature = (anchor, x, y))]
-    pub fn new(anchor: PyVec2, x: PyVal, y: PyVal) -> Self {
-        PyUiPosition {
-            inner: UiPosition::new(anchor.into(), x.into(), y.into()),
-        }
+    pub fn new(anchor: PyVec2, x: PyVal, y: PyVal) -> PyResult<Self> {
+        Ok(PyUiPosition {
+            inner: UiPosition::new(anchor.try_into()?, x.try_into()?, y.try_into()?),
+        })
     }
 
     #[staticmethod]
-    pub fn anchor(anchor: PyVec2) -> Self {
-        PyUiPosition {
-            inner: UiPosition::anchor(anchor.into()),
-        }
+    pub fn anchor(anchor: PyVec2) -> PyResult<Self> {
+        Ok(PyUiPosition {
+            inner: UiPosition::anchor(anchor.try_into()?),
+        })
     }
 
     #[staticmethod]

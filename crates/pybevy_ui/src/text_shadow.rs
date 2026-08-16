@@ -16,16 +16,23 @@ pub struct PyTextShadow {
 impl PyTextShadow {
     #[new]
     #[pyo3(signature = (offset = None, color = None))]
-    pub fn new(offset: Option<PyVec2>, color: Option<PyColor>) -> PyClassInitializer<Self> {
-        let bevy_offset: Vec2 = offset.map(|o| o.into()).unwrap_or(Vec2::splat(4.0));
-        let bevy_color: Color = color
-            .map(|c| c.into())
+    pub fn new(
+        offset: Option<PyVec2>,
+        color: Option<PyColor>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let bevy_offset: Vec2 = offset
+            .map(TryInto::try_into)
+            .transpose()?
+            .unwrap_or(Vec2::splat(4.0));
+        let bevy_color = color
+            .map(Color::try_from)
+            .transpose()?
             .unwrap_or(Color::linear_rgba(0.0, 0.0, 0.0, 0.75));
-        Self::from_owned(TextShadow {
+        Ok(Self::from_owned(TextShadow {
             offset: bevy_offset,
             color: bevy_color,
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -35,18 +42,18 @@ impl PyTextShadow {
 
     #[setter]
     pub fn set_offset(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.offset = value.into();
+        self.as_mut()?.offset = value.try_into()?;
         Ok(())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |shadow| &shadow.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        let bevy_color: Color = color.into();
+        let bevy_color = Color::try_from(color)?;
         self.as_mut()?.color = bevy_color;
         Ok(())
     }

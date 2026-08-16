@@ -1,9 +1,12 @@
 use bevy::ui::Val;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::ui_rect::PyUiRect;
 
-#[pyclass(name = "Val", from_py_object)]
+#[pyclass(name = "Val", frozen, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyVal {
     pub(crate) inner: Val,
@@ -12,6 +15,18 @@ pub struct PyVal {
 impl PyVal {
     pub fn into_inner(self) -> Val {
         self.inner
+    }
+
+    pub(crate) const fn px_unchecked(value: f32) -> Self {
+        Self {
+            inner: Val::Px(value),
+        }
+    }
+
+    pub(crate) const fn percent_unchecked(value: f32) -> Self {
+        Self {
+            inner: Val::Percent(value),
+        }
     }
 }
 
@@ -35,7 +50,7 @@ pub fn extract_val_from_any(value: &Bound<'_, PyAny>) -> PyResult<Val> {
         return Ok(value.into());
     }
     if let Ok(value) = value.extract::<f32>() {
-        return Ok(Val::Px(value));
+        return Ok(Val::Px(validate_finite_val("pixel", value)?));
     }
     Err(PyTypeError::new_err("expected Val or float"))
 }
@@ -56,17 +71,15 @@ impl PyVal {
     }
 
     #[staticmethod]
-    pub fn px(value: f32) -> Self {
-        PyVal {
-            inner: Val::Px(value),
-        }
+    pub fn px(value: f32) -> PyResult<Self> {
+        Ok(Self::px_unchecked(validate_finite_val("px", value)?))
     }
 
     #[staticmethod]
-    pub fn percent(value: f32) -> Self {
-        PyVal {
-            inner: Val::Percent(value),
-        }
+    pub fn percent(value: f32) -> PyResult<Self> {
+        Ok(Self::percent_unchecked(validate_finite_val(
+            "percent", value,
+        )?))
     }
 
     #[staticmethod]
@@ -75,31 +88,31 @@ impl PyVal {
     }
 
     #[staticmethod]
-    pub fn vw(value: f32) -> Self {
-        PyVal {
-            inner: Val::Vw(value),
-        }
+    pub fn vw(value: f32) -> PyResult<Self> {
+        Ok(PyVal {
+            inner: Val::Vw(validate_finite_val("vw", value)?),
+        })
     }
 
     #[staticmethod]
-    pub fn vh(value: f32) -> Self {
-        PyVal {
-            inner: Val::Vh(value),
-        }
+    pub fn vh(value: f32) -> PyResult<Self> {
+        Ok(PyVal {
+            inner: Val::Vh(validate_finite_val("vh", value)?),
+        })
     }
 
     #[staticmethod]
-    pub fn vmin(value: f32) -> Self {
-        PyVal {
-            inner: Val::VMin(value),
-        }
+    pub fn vmin(value: f32) -> PyResult<Self> {
+        Ok(PyVal {
+            inner: Val::VMin(validate_finite_val("vmin", value)?),
+        })
     }
 
     #[staticmethod]
-    pub fn vmax(value: f32) -> Self {
-        PyVal {
-            inner: Val::VMax(value),
-        }
+    pub fn vmax(value: f32) -> PyResult<Self> {
+        Ok(PyVal {
+            inner: Val::VMax(validate_finite_val("vmax", value)?),
+        })
     }
 
     pub fn left(&self) -> PyUiRect {
@@ -165,6 +178,16 @@ impl PyVal {
     #[getter]
     pub fn is_auto(&self) -> bool {
         matches!(self.inner, Val::Auto)
+    }
+}
+
+pub(crate) fn validate_finite_val(unit: &str, value: f32) -> PyResult<f32> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(PyValueError::new_err(format!(
+            "Val.{unit} value must be finite (got {value})"
+        )))
     }
 }
 

@@ -16,14 +16,22 @@ pub struct PyOutline {
 #[pymethods]
 impl PyOutline {
     #[new]
-    #[pyo3(signature = (width = PyVal::px(1.0), offset = PyVal::zero(), color = None))]
-    pub fn new(width: PyVal, offset: PyVal, color: Option<PyColor>) -> PyClassInitializer<Self> {
-        Self::from_owned(Outline {
+    #[pyo3(signature = (width = PyVal::px_unchecked(1.0), offset = PyVal::zero(), color = None))]
+    pub fn new(
+        width: PyVal,
+        offset: PyVal,
+        color: Option<PyColor>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let color = color
+            .map(Color::try_from)
+            .transpose()?
+            .unwrap_or(Color::WHITE);
+        Ok(Self::from_owned(Outline {
             width: width.into(),
             offset: offset.into(),
-            color: color.map(|c| c.into()).unwrap_or(Color::WHITE),
+            color,
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -50,12 +58,13 @@ impl PyOutline {
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |outline| &outline.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, value: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = value.into();
+        let value = Color::try_from(value)?;
+        self.as_mut()?.color = value;
         Ok(())
     }
 

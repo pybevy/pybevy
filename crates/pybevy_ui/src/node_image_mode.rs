@@ -1,7 +1,9 @@
-use bevy::ui::widget::NodeImageMode;
+use bevy::{sprite::TextureSlicer, ui::widget::NodeImageMode};
+use pybevy_macros::pyenum;
 use pybevy_sprite::texture_slicer::PyTextureSlicer;
 use pyo3::prelude::*;
 
+#[pyenum(NodeImageMode, empty_tuple, no_repr)]
 #[pyclass(name = "NodeImageMode", frozen, eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PyNodeImageMode {
@@ -10,7 +12,11 @@ pub enum PyNodeImageMode {
     #[pyo3(name = "Stretch")]
     Stretch(),
     #[pyo3(name = "Sliced")]
-    Sliced { slicer: PyTextureSlicer },
+    #[py_bevy(tuple)]
+    Sliced {
+        #[py_type(PyTextureSlicer)]
+        slicer: TextureSlicer,
+    },
     #[pyo3(
         name = "Tiled",
         constructor = (tile_x = true, tile_y = true, stretch_value = 1.0)
@@ -20,46 +26,6 @@ pub enum PyNodeImageMode {
         tile_y: bool,
         stretch_value: f32,
     },
-}
-
-impl From<NodeImageMode> for PyNodeImageMode {
-    fn from(mode: NodeImageMode) -> Self {
-        match mode {
-            NodeImageMode::Auto => PyNodeImageMode::Auto(),
-            NodeImageMode::Stretch => PyNodeImageMode::Stretch(),
-            NodeImageMode::Sliced(slicer) => PyNodeImageMode::Sliced {
-                slicer: slicer.into(),
-            },
-            NodeImageMode::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            } => PyNodeImageMode::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            },
-        }
-    }
-}
-
-impl From<PyNodeImageMode> for NodeImageMode {
-    fn from(mode: PyNodeImageMode) -> Self {
-        match mode {
-            PyNodeImageMode::Auto() => NodeImageMode::Auto,
-            PyNodeImageMode::Stretch() => NodeImageMode::Stretch,
-            PyNodeImageMode::Sliced { slicer } => NodeImageMode::Sliced(slicer.into()),
-            PyNodeImageMode::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            } => NodeImageMode::Tiled {
-                tile_x,
-                tile_y,
-                stretch_value,
-            },
-        }
-    }
 }
 
 #[pymethods]

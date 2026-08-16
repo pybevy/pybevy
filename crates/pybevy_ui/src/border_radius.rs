@@ -46,7 +46,7 @@ impl PyBorderRadius {
     }
 
     #[new]
-    #[pyo3(signature = (radius = PyVal::px(0.0), *, top_left = None, top_right = None, bottom_left = None, bottom_right = None))]
+    #[pyo3(signature = (radius = PyVal::px_unchecked(0.0), *, top_left = None, top_right = None, bottom_left = None, bottom_right = None))]
     pub fn py_new(
         radius: PyVal,
         top_left: Option<PyVal>,

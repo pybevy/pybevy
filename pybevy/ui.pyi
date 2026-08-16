@@ -21,6 +21,8 @@ class Val:
 
     Represents different ways to specify sizes in the UI system.
     Supports pixels, percentages, auto-sizing, and viewport-relative units.
+    Numeric values must be finite. Negative values remain available for offsets
+    and other layout contexts where Bevy permits them.
 
     Example:
         ```python
@@ -33,10 +35,12 @@ class Val:
         # Or use Val explicitly for more control
         width_px = Val.px(100.0)  # 100 pixels
         width_percent = Val.percent(50.0)  # 50% of parent
-        width_auto = Val.AUTO()  # Auto-size based on content
+        width_auto = Val.auto()  # Auto-size based on content
         width_vw = Val.vw(50.0)  # 50% of viewport width
         ```
     """
+
+    def __init__(self) -> None: ...
 
     @staticmethod
     def px(value: float) -> Val:
@@ -573,7 +577,7 @@ class Overflow:
 
     Example:
         ```python
-        from pybevy.ui import Node, Overflow
+        from pybevy.ui import Node, Overflow, OverflowAxis
 
         node = Node()
         node.overflow = Overflow.clip()  # Clip both axes
@@ -700,7 +704,7 @@ class BoxSizing:
     ContentBox: BoxSizing
     """Width/height refer to the content box (excluding padding and border)."""
 
-
+    def __hash__(self) -> int: ...
 
 class VisualBox:
     """Defines which box is used as the clipping boundary for overflow.
@@ -726,7 +730,7 @@ class VisualBox:
     BorderBox: VisualBox
     """Clip content outside the border box."""
 
-
+    def __hash__(self) -> int: ...
 
 class OverflowClipMargin:
     """Margin around the clipping boundary for overflow.
@@ -801,14 +805,14 @@ class Val2:
         offset = Val2.percent(50.0, 50.0)
 
         # Mixed values
-        pos = Val2(Val.Px(10.0), Val.Percent(50.0))
+        pos = Val2(Val.px(10.0), Val.percent(50.0))
         ```
     """
 
     ZERO: Val2
     """A zero-valued Val2."""
 
-    def __init__(self, x: Val, y: Val) -> None:
+    def __init__(self, x: Val = ..., y: Val = ...) -> None:
         """Create a Val2 with the given x and y values."""
 
     @staticmethod
@@ -848,13 +852,13 @@ class UiTransform(Component):
         transform = UiTransform.from_translation(Val2.px(100.0, 50.0))
 
         # With rotation
-        transform = UiTransform.from_rotation(Rot2.from_radians(0.5))
+        transform = UiTransform.from_rotation(Rot2.radians(0.5))
 
         # Full transform
         transform = UiTransform(
             translation=Val2.px(10.0, 20.0),
             scale=Vec2(2.0, 2.0),
-            rotation=Rot2.from_radians(0.1),
+            rotation=Rot2.radians(0.1),
         )
         ```
     """
@@ -913,6 +917,8 @@ class UiTransform(Component):
 class BorderGradient(Component):
     """A gradient displayed on a UI node's border.
 
+    The node must have a non-zero Node.border width for the gradient to render.
+
     Example:
         ```python
         from pybevy.ui import BorderGradient, LinearGradient, Gradient
@@ -923,7 +929,7 @@ class BorderGradient(Component):
         ```
     """
 
-    def __init__(self, gradients: list[Gradient]) -> None:
+    def __init__(self, gradients: list[Gradient] = ...) -> None:
         """Create a BorderGradient with the given gradients."""
 
     def add_gradient(self, gradient: Gradient) -> None:
@@ -951,28 +957,29 @@ class Text(Component):
 
     Example:
         ```python
-        from pybevy.ui import Node, PositionType, Text
+        from pybevy.ui import Node, PositionType, Text, Val
         from pybevy.text import TextFont, TextColor, TextLayout, Justify
         from pybevy.color import Color
 
         # Spawn UI text with styling
-        node = Node()
-        node.position_type = PositionType.Absolute
-        node.top = Val.Px(10.0)
-        node.left = Val.Px(10.0)
+        node = Node(
+            position_type=PositionType.Absolute,
+            top=Val.px(10.0),
+            left=Val.px(10.0),
+        )
         commands.spawn((
             Text("Hello, UI!"),
             node,
             TextFont.from_font_size(24.0),
-            TextColor(Color.WHITE()),
-            TextLayout.with_justify(Justify.Center),
+            TextColor(Color.WHITE),
+            TextLayout().with_justify(Justify.Center),
         ))
         ```
 
     Args:
         content: The text string to display
     """
-    def __init__(self, content: str) -> None: ...
+    def __init__(self, content: str = "") -> None: ...
 
     @property
     def content(self) -> str:
@@ -990,7 +997,7 @@ class Node(Component):
 
     Example:
         ```python
-        from pybevy.ui import Node, Text, FlexDirection, Display, PositionType
+        from pybevy.ui import Node, Text, FlexDirection, Display, PositionType, Val
 
         # Default node (relative positioning)
         commands.spawn((Node(), Text("Centered")))
@@ -998,23 +1005,25 @@ class Node(Component):
         # Absolutely positioned node
         node = Node()
         node.position_type = PositionType.Absolute
-        node.top = Val.Px(10.0)
-        node.left = Val.Px(10.0)
+        node.top = Val.px(10.0)
+        node.left = Val.px(10.0)
         commands.spawn((node, Text("Top Left")))
 
         # Flexbox layout
-        node = Node()
-        node.flex_direction = FlexDirection.Column  # Stack vertically
-        node.display = Display.Flex
-        node.width = Val.Px(300.0)
-        node.height = Val.Px(200.0)
+        node = Node(
+            flex_direction=FlexDirection.Column,
+            display=Display.Flex,
+            width=Val.px(300.0),
+            height=Val.px(200.0),
+        )
         commands.spawn(node)
 
         # Custom positioning
-        node = Node()
-        node.position_type = PositionType.Absolute
-        node.top = Val.Px(50.0)
-        node.left = Val.Px(100.0)
+        node = Node(
+            position_type=PositionType.Absolute,
+            top=Val.px(50.0),
+            left=Val.px(100.0),
+        )
         commands.spawn((node, Text("Custom Position")))
         ```
 
@@ -1031,7 +1040,51 @@ class Node(Component):
         width: Width as Val
         height: Height as Val
     """
-    def __init__(self) -> None: ...
+    def __init__(
+        self,
+        display: Display = ...,
+        box_sizing: BoxSizing = ...,
+        position_type: PositionType = ...,
+        overflow: Overflow = ...,
+        scrollbar_width: float = 0.0,
+        overflow_clip_margin: OverflowClipMargin = ...,
+        left: Val | float | None = None,
+        right: Val | float | None = None,
+        top: Val | float | None = None,
+        bottom: Val | float | None = None,
+        width: Val | float | None = None,
+        height: Val | float | None = None,
+        min_width: Val | float | None = None,
+        min_height: Val | float | None = None,
+        max_width: Val | float | None = None,
+        max_height: Val | float | None = None,
+        aspect_ratio: float | None = None,
+        align_items: AlignItems = ...,
+        justify_items: JustifyItems = ...,
+        align_self: AlignSelf = ...,
+        justify_self: JustifySelf = ...,
+        align_content: AlignContent = ...,
+        justify_content: JustifyContent = ...,
+        direction: InlineDirection = ...,
+        margin: UiRect = ...,
+        padding: UiRect = ...,
+        border: UiRect = ...,
+        border_radius: BorderRadius = ...,
+        flex_direction: FlexDirection = ...,
+        flex_wrap: FlexWrap = ...,
+        flex_grow: float = 0.0,
+        flex_shrink: float = 1.0,
+        flex_basis: Val | float | None = None,
+        row_gap: Val | float | None = None,
+        column_gap: Val | float | None = None,
+        grid_auto_flow: GridAutoFlow = ...,
+        grid_template_rows: list[RepeatedGridTrack] = ...,
+        grid_template_columns: list[RepeatedGridTrack] = ...,
+        grid_auto_rows: list[GridTrack] = ...,
+        grid_auto_columns: list[GridTrack] = ...,
+        grid_row: GridPlacement = ...,
+        grid_column: GridPlacement = ...,
+    ) -> None: ...
 
     @property
     def position_type(self) -> PositionType:
@@ -1602,8 +1655,8 @@ class Outline(Component):
         ```
 
     Args:
-        width: Width of the outline (Val, defaults to Val.ZERO())
-        offset: Offset between border and outline (Val, defaults to Val.ZERO())
+        width: Width of the outline (Val, defaults to Val.ZERO)
+        offset: Offset between border and outline (Val, defaults to Val.ZERO)
         color: Outline color (optional, defaults to transparent)
     """
     def __init__(
@@ -1729,8 +1782,9 @@ class NodeImageMode:
 class ImageNode(Component):
     """UI image component for displaying images in UI nodes.
 
-    Displays an image texture on a UI node. The image is stretched to fill
-    the node's size (use BorderRadius for rounded corners).
+    Displays an image texture on a UI node. An unsized Node takes its intrinsic
+    size from the image. When the Node has an explicit size, the image is
+    stretched to fill it (use BorderRadius for rounded corners).
 
     Example:
         ```python
@@ -1761,7 +1815,11 @@ class ImageNode(Component):
 
     @staticmethod
     def solid_color(color: Color) -> ImageNode:
-        """Create a solid color ImageNode (useful for debugging layout)."""
+        """Create a solid-color image backed by a 1-by-1 texture.
+
+        Give the accompanying Node an explicit width and height to fill an
+        area; an unsized Node adopts the texture's intrinsic 1-by-1 size.
+        """
 
     @property
     def image(self) -> Handle[Image]:
@@ -2192,6 +2250,8 @@ class GridTrack:
         ```
     """
 
+    def __init__(self) -> None: ...
+
     @staticmethod
     def px(value: float) -> GridTrack:
         """Create a track with fixed pixel size."""
@@ -2268,6 +2328,8 @@ class GridPlacement:
         ```
     """
 
+    def __init__(self) -> None: ...
+
     @staticmethod
     def auto() -> GridPlacement:
         """Automatic placement (span defaults to 1)."""
@@ -2333,6 +2395,8 @@ class RepeatedGridTrack:
         node.grid_template_rows = [RepeatedGridTrack.fr(4, 1.0)]
         ```
     """
+
+    def __init__(self) -> None: ...
 
     @staticmethod
     def px(repetition: int, value: float) -> RepeatedGridTrack:
@@ -2654,8 +2718,8 @@ class UiScale(Resource):
 
     Example:
         ```python
+        from pybevy.ecs import Commands, ResMut
         from pybevy.ui import UiScale
-        from pybevy.ecs import ResMut
 
         def setup(commands: Commands) -> None:
             # Make UI 1.5x larger
@@ -2692,9 +2756,9 @@ class ColorStop:
         from pybevy.color import Color
 
         # Create color stops
-        stop1 = ColorStop.auto(Color.RED)
-        stop2 = ColorStop.percent(Color.BLUE, 50.0)
-        stop3 = ColorStop.px(Color.GREEN, 100.0)
+        stop1 = ColorStop.auto(Color.srgb(1.0, 0.0, 0.0))
+        stop2 = ColorStop.percent(Color.srgb(0.0, 0.0, 1.0), 50.0)
+        stop3 = ColorStop.px(Color.srgb(0.0, 1.0, 0.0), 100.0)
         ```
     """
 
@@ -2885,6 +2949,8 @@ class RadialGradientShape:
         ```
     """
 
+    def __init__(self) -> None: ...
+
     @staticmethod
     def closest_side() -> RadialGradientShape:
         """Circle with radius to closest side."""
@@ -2915,13 +2981,13 @@ class LinearGradient:
 
     Example:
         ```python
-        from pybevy.ui import LinearGradient, ColorStop, BackgroundGradient, Gradient
+        from pybevy.ui import LinearGradient, ColorStop, BackgroundGradient, Gradient, Node
         from pybevy.color import Color
 
         # Create a vertical gradient from red to blue
         gradient = LinearGradient.to_bottom([
-            ColorStop.auto(Color.RED),
-            ColorStop.auto(Color.BLUE),
+            ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
+            ColorStop.auto(Color.srgb(0.0, 0.0, 1.0)),
         ])
 
         # Use with BackgroundGradient component
@@ -3007,13 +3073,16 @@ class RadialGradient:
         gradient = RadialGradient(
             UiPosition.center(),
             RadialGradientShape.farthest_corner(),
-            [ColorStop.auto(Color.WHITE()), ColorStop.auto(Color.BLACK())],
+            [ColorStop.auto(Color.WHITE), ColorStop.auto(Color.BLACK)],
         )
         ```
     """
 
     def __init__(
-        self, position: UiPosition, shape: RadialGradientShape, stops: list[ColorStop]
+        self,
+        position: UiPosition = ...,
+        shape: RadialGradientShape = ...,
+        stops: list[ColorStop] = ...,
     ) -> None:
         """Create a radial gradient."""
 
@@ -3058,12 +3127,16 @@ class ConicGradient:
 
         gradient = ConicGradient(
             UiPosition.center(),
-            [AngularColorStop.auto(Color.RED), AngularColorStop.auto(Color.BLUE)],
+            [AngularColorStop.auto(Color.srgb(1.0, 0.0, 0.0)), AngularColorStop.auto(Color.srgb(0.0, 0.0, 1.0))],
         )
         ```
     """
 
-    def __init__(self, position: UiPosition, stops: list[AngularColorStop]) -> None:
+    def __init__(
+        self,
+        position: UiPosition = ...,
+        stops: list[AngularColorStop] = ...,
+    ) -> None:
         """Create a conic gradient."""
 
     def with_start(self, start: float) -> ConicGradient:
@@ -3114,8 +3187,8 @@ class Gradient:
         from pybevy.color import Color
 
         linear = LinearGradient.to_right([
-            ColorStop.auto(Color.RED),
-            ColorStop.auto(Color.BLUE),
+            ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
+            ColorStop.auto(Color.srgb(0.0, 0.0, 1.0)),
         ])
         gradient = Gradient.linear(linear)
         ```
@@ -3337,7 +3410,7 @@ class BackgroundGradient(Component):
         ```
     """
 
-    def __init__(self, gradients: list[Gradient]) -> None:
+    def __init__(self, gradients: list[Gradient] = ...) -> None:
         """Create with a list of gradients."""
 
     def add_gradient(self, gradient: Gradient) -> None:

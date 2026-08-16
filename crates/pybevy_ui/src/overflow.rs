@@ -1,5 +1,5 @@
 use bevy::ui::Overflow;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::prelude::*;
 
 use crate::PyOverflowAxis;
@@ -24,20 +24,23 @@ impl From<Overflow> for PyOverflow {
     }
 }
 
-impl From<PyOverflow> for Overflow {
-    fn from(py_overflow: PyOverflow) -> Self {
-        py_overflow.storage.get().unwrap()
+impl TryFrom<PyOverflow> for Overflow {
+    type Error = PyErr;
+
+    #[inline(always)]
+    fn try_from(py_overflow: PyOverflow) -> PyResult<Self> {
+        Ok(py_overflow.storage.get()?)
     }
 }
 
 impl PyOverflow {
     #[inline(always)]
-    fn as_ref(&self) -> PyResult<&Overflow> {
+    fn as_ref(&self) -> PyResult<StorageRef<'_, Overflow>> {
         Ok(self.storage.as_ref()?)
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<&mut Overflow> {
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Overflow>> {
         Ok(self.storage.as_mut()?)
     }
 }

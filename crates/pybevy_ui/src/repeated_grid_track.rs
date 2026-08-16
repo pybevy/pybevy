@@ -1,7 +1,7 @@
 use bevy::ui::RepeatedGridTrack;
 use pyo3::prelude::*;
 
-#[pyclass(name = "RepeatedGridTrack", eq, from_py_object)]
+#[pyclass(name = "RepeatedGridTrack", eq, frozen, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyRepeatedGridTrack {
     pub(crate) inner: RepeatedGridTrack,

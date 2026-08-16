@@ -39,7 +39,7 @@ impl PyRelativeCursorPosition {
 
     #[setter]
     pub fn set_normalized(&mut self, value: Option<PyVec2>) -> PyResult<()> {
-        self.as_mut()?.normalized = value.map(|v| v.into());
+        self.as_mut()?.normalized = value.map(TryInto::try_into).transpose()?;
         Ok(())
     }
 
