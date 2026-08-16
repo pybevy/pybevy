@@ -2,8 +2,9 @@ use bevy::ecs::world::World;
 use serde_json::Value;
 
 use crate::bridge::{
-    ControlError, ControlRequest, EntityRef, GetComponentParams, QueryEntitiesParams,
-    RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
+    ControlError, ControlRequest, EntityRef, GetComponentParams, GetResourceParams,
+    QueryEntitiesParams, RemoveComponentParams, SetAssetParams, SetComponentParams,
+    SetResourceParams,
 };
 
 /// Trait for runtime-specific operations in the control server.
@@ -22,7 +23,11 @@ pub trait ControlRuntime: 'static {
 
     fn list_resources(&mut self, world: &mut World) -> Result<Value, ControlError>;
 
-    fn list_systems(&mut self, world: &mut World) -> Result<Value, ControlError>;
+    fn list_systems(
+        &mut self,
+        world: &mut World,
+        include_internal: bool,
+    ) -> Result<Value, ControlError>;
 
     fn query_entities(
         &mut self,
@@ -40,6 +45,12 @@ pub trait ControlRuntime: 'static {
         &mut self,
         world: &mut World,
         params: GetComponentParams,
+    ) -> Result<Value, ControlError>;
+
+    fn get_resource(
+        &mut self,
+        world: &mut World,
+        params: GetResourceParams,
     ) -> Result<Value, ControlError>;
 
     fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError>;

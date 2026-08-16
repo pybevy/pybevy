@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Path, Query as AxumQuery, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
@@ -13,21 +13,23 @@ use axum::{
 use serde::Deserialize;
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
-use tower_http::cors::CorsLayer;
 
 use crate::{
     api_index::ApiIndex,
     bridge::{
-        CaptureDepthParams, CaptureScreenshotParams, CaptureTimelineParams,
-        CaptureTurnaroundParams, CheckAllOverlapsParams, CheckOverlapsParams, ControlOperation,
-        ControlRequest, ControlSender, EntityRef, ErrorCode, GetComponentParams,
-        QueryEntitiesParams, QuerySpatialNeighborhoodParams, QuerySpatialParams,
+        CaptureDepthParams, CaptureScreenshotParams, CaptureStatsParams, CaptureTimelineParams,
+        CaptureTurnaroundParams, CheckAllOverlapsParams, CheckOverlapsParams, CompareFramesParams,
+        ControlOperation, ControlRequest, ControlSender, EntityRef, ErrorCode, GetComponentParams,
+        GetResourceParams, QueryEntitiesParams, QuerySpatialNeighborhoodParams, QuerySpatialParams,
         ReloadAndCaptureParams, ReloadMode, ReloadParams, RemoveComponentParams, SeekTimeParams,
-        SetAssetParams, SetComponentParams, SetResourceParams, SharedLatestError,
-        SseEventBroadcaster,
+        SetAssetParams, SetComponentParams, SetResourceParams, SseEventBroadcaster,
+        default_max_float_gap,
     },
     handlers::schedule::{
         ScheduleMode, ScheduleRequest, SharedScheduleRegistry, validate_schedule,
+    },
+    image_preview::{
+        MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
     },
 };
 
@@ -38,7 +40,6 @@ pub struct AppState {
     pub sse_broadcaster: SseEventBroadcaster,
     pub api_index: Arc<ApiIndex>,
     pub config: ServerConfig,
-    pub latest_error: SharedLatestError,
     pub schedule_registry: SharedScheduleRegistry,
 }
 
@@ -48,7 +49,6 @@ impl AppState {
         sse_broadcaster: SseEventBroadcaster,
         api_index: Arc<ApiIndex>,
         config: ServerConfig,
-        latest_error: SharedLatestError,
         schedule_registry: SharedScheduleRegistry,
     ) -> Self {
         Self {
@@ -56,7 +56,6 @@ impl AppState {
             sse_broadcaster,
             api_index,
             config,
-            latest_error,
             schedule_registry,
         }
     }
@@ -73,6 +72,10 @@ async fn send_operation(
     sender: &ControlSender,
     operation: ControlOperation,
 ) -> Result<serde_json::Value, (StatusCode, Json<serde_json::Value>)> {
+    if sender.exclusive_execution().is_active() {
+        return Err(reentrant_control_response());
+    }
+
     let (response_tx, response_rx) = oneshot::channel();
     let request = ControlRequest {
         operation,
@@ -102,6 +105,31 @@ async fn send_operation(
 
 fn error_response(status: StatusCode, message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (status, Json(serde_json::json!({ "error": message })))
+}
+
+fn image_response(
+    status: StatusCode,
+    mut value: serde_json::Value,
+    headers: &HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let wants_mcp_delivery = headers
+        .get(MCP_IMAGE_DELIVERY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case(MCP_IMAGE_DELIVERY_VALUE));
+    if wants_mcp_delivery {
+        prepare_mcp_response_images(&mut value);
+    }
+    (status, Json(value))
+}
+
+fn reentrant_control_response() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "code": "reentrant-control-call",
+            "error": "Control API calls are unavailable while run_code holds exclusive World access; use the injected world object for in-engine inspection",
+        })),
+    )
 }
 
 fn parse_entity_ref(entity: &str) -> EntityRef {
@@ -142,6 +170,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/scene/summary", get(scene_summary))
         // Resources
         .route("/api/v1/resources", get(list_resources))
+        .route("/api/v1/resources/{resource_type}", get(get_resource))
         .route("/api/v1/resources/{resource_type}", put(insert_resource))
         .route("/api/v1/resources/{resource_type}", delete(remove_resource))
         // Systems
@@ -157,6 +186,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/screenshot/timeline", post(capture_timeline))
         .route("/api/v1/screenshot/turnaround", post(capture_turnaround))
         .route("/api/v1/screenshot/depth", post(capture_depth))
+        .route("/api/v1/screenshot/stats", post(capture_stats))
+        .route("/api/v1/screenshot/compare", post(compare_frames))
         // Reload
         .route("/api/v1/reload", post(trigger_reload))
         .route("/api/v1/reload/status", get(get_reload_status))
@@ -209,7 +240,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/guides/{name}", get(guides_get))
         .route("/api/v1/instructions", get(get_instructions))
         .route("/api/v1/tools", get(list_tools))
-        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 async fn health() -> &'static str {
@@ -384,6 +414,7 @@ struct QueryEntitiesBody {
     with: Vec<String>,
     #[serde(default)]
     without: Vec<String>,
+    limit: Option<usize>,
 }
 
 async fn query_entities(
@@ -395,6 +426,7 @@ async fn query_entities(
         ControlOperation::QueryEntities(QueryEntitiesParams {
             with: body.with,
             without: body.without,
+            limit: body.limit.unwrap_or(100),
         }),
     )
     .await
@@ -412,6 +444,21 @@ async fn scene_summary(State(state): State<AppState>) -> impl IntoResponse {
 }
 async fn list_resources(State(state): State<AppState>) -> impl IntoResponse {
     match send_operation(&state.sender, ControlOperation::ListResources).await {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => e,
+    }
+}
+
+async fn get_resource(
+    State(state): State<AppState>,
+    Path(resource_type): Path<String>,
+) -> impl IntoResponse {
+    match send_operation(
+        &state.sender,
+        ControlOperation::GetResource(GetResourceParams { resource_type }),
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -461,8 +508,24 @@ async fn remove_resource(
         Err(e) => e,
     }
 }
-async fn list_systems(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListSystems).await {
+#[derive(Default, Deserialize)]
+struct ListSystemsQuery {
+    #[serde(default)]
+    include_internal: bool,
+}
+
+async fn list_systems(
+    State(state): State<AppState>,
+    AxumQuery(query): AxumQuery<ListSystemsQuery>,
+) -> impl IntoResponse {
+    match send_operation(
+        &state.sender,
+        ControlOperation::ListSystems {
+            include_internal: query.include_internal,
+        },
+    )
+    .await
+    {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -479,69 +542,163 @@ async fn get_component_schema(
 }
 #[derive(Deserialize)]
 struct ScreenshotBody {
+    entity: Option<EntityRef>,
     #[serde(default = "default_delay_frames")]
-    delay_frames: u32,
-    max_width: Option<u32>,
+    delay_frames: i64,
+    max_width: Option<i64>,
     position: Option<[f32; 3]>,
     look_at: Option<[f32; 3]>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     hide_ui: bool,
     #[serde(default)]
     gizmos: bool,
 }
 
-fn default_delay_frames() -> u32 {
+fn default_delay_frames() -> i64 {
     2
+}
+
+fn screenshot_params(
+    body: ScreenshotBody,
+    force_gizmos: bool,
+) -> Result<CaptureScreenshotParams, (StatusCode, Json<serde_json::Value>)> {
+    if body.delay_frames < 0 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "delay_frames must be a non-negative integer",
+        ));
+    }
+    let delay_frames = u32::try_from(body.delay_frames).map_err(|_| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "delay_frames must not exceed 4294967295",
+        )
+    })?;
+    let max_width = match body.max_width {
+        Some(value) if value <= 0 => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "max_width must be a positive integer",
+            ));
+        }
+        Some(value) => Some(u32::try_from(value).map_err(|_| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "max_width must not exceed 4294967295",
+            )
+        })?),
+        None => None,
+    };
+
+    Ok(CaptureScreenshotParams {
+        entity: body.entity,
+        delay_frames,
+        max_width,
+        position: body.position,
+        look_at: body.look_at,
+        hide_ui: body.hide_ui,
+        gizmos: force_gizmos || body.gizmos,
+    })
 }
 
 async fn capture_screenshot(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ScreenshotBody>,
 ) -> impl IntoResponse {
     if !state.config.screenshot_enabled {
         return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
     }
-    let params = CaptureScreenshotParams {
-        delay_frames: body.delay_frames,
-        max_width: body.max_width,
-        position: body.position,
-        look_at: body.look_at,
-        hide_ui: body.hide_ui,
-        gizmos: body.gizmos,
+    let params = match screenshot_params(body, false) {
+        Ok(params) => params,
+        Err(response) => return response,
     };
-    let op = if body.gizmos {
+    let op = if params.gizmos {
         ControlOperation::CaptureWithGizmos(params)
     } else {
         ControlOperation::CaptureScreenshot(params)
     };
     match send_operation(&state.sender, op).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
+        Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
 
 async fn capture_with_gizmos(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ScreenshotBody>,
 ) -> impl IntoResponse {
     if !state.config.screenshot_enabled {
         return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
     }
+    let params = match screenshot_params(body, true) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
+    match send_operation(&state.sender, ControlOperation::CaptureWithGizmos(params)).await {
+        Ok(value) => image_response(StatusCode::OK, value, &headers),
+        Err(e) => e,
+    }
+}
+
+#[derive(Deserialize)]
+struct StatsBody {
+    #[serde(default = "default_stats_grid")]
+    grid: u32,
+    region: Option<[i64; 4]>,
+    sample_points: Option<Vec<[i64; 2]>>,
+    #[serde(flatten)]
+    screenshot: ScreenshotBody,
+}
+
+fn default_stats_grid() -> u32 {
+    1
+}
+
+async fn capture_stats(
+    State(state): State<AppState>,
+    Json(body): Json<StatsBody>,
+) -> impl IntoResponse {
+    if !state.config.screenshot_enabled {
+        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
+    }
+    let common = match screenshot_params(body.screenshot, false) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
     match send_operation(
         &state.sender,
-        ControlOperation::CaptureWithGizmos(CaptureScreenshotParams {
-            delay_frames: body.delay_frames,
-            max_width: body.max_width,
-            position: body.position,
-            look_at: body.look_at,
-            hide_ui: body.hide_ui,
-            gizmos: true,
+        ControlOperation::CaptureStats(CaptureStatsParams {
+            entity: common.entity,
+            grid: body.grid,
+            region: body.region,
+            sample_points: body.sample_points,
+            delay_frames: common.delay_frames,
+            max_width: common.max_width,
+            position: common.position,
+            look_at: common.look_at,
+            hide_ui: common.hide_ui,
+            gizmos: common.gizmos,
         }),
     )
     .await
     {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+        Ok(value) => (StatusCode::OK, Json(value)),
+        Err(response) => response,
+    }
+}
+
+async fn compare_frames(
+    State(state): State<AppState>,
+    Json(params): Json<CompareFramesParams>,
+) -> impl IntoResponse {
+    if !state.config.screenshot_enabled {
+        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
+    }
+    match send_operation(&state.sender, ControlOperation::CompareFrames(params)).await {
+        Ok(value) => (StatusCode::OK, Json(value)),
+        Err(response) => response,
     }
 }
 
@@ -556,6 +713,10 @@ struct TimelineBody {
     columns: u32,
     position: Option<[f32; 3]>,
     look_at: Option<[f32; 3]>,
+    #[serde(default = "default_true")]
+    hide_ui: bool,
+    #[serde(default)]
+    gizmos: bool,
 }
 
 fn default_total_frames() -> u32 {
@@ -570,6 +731,7 @@ fn default_columns() -> u32 {
 
 async fn capture_timeline(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<TimelineBody>,
 ) -> impl IntoResponse {
     if !state.config.screenshot_enabled {
@@ -584,11 +746,13 @@ async fn capture_timeline(
             columns: body.columns,
             position: body.position,
             look_at: body.look_at,
+            hide_ui: body.hide_ui,
+            gizmos: body.gizmos,
         }),
     )
     .await
     {
-        Ok(v) => (StatusCode::OK, Json(v)),
+        Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
@@ -607,6 +771,7 @@ struct TurnaroundBody {
 
 async fn capture_turnaround(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<TurnaroundBody>,
 ) -> impl IntoResponse {
     if !state.config.screenshot_enabled {
@@ -627,7 +792,7 @@ async fn capture_turnaround(
     )
     .await
     {
-        Ok(v) => (StatusCode::OK, Json(v)),
+        Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
@@ -636,7 +801,7 @@ async fn capture_turnaround(
 struct DepthBody {
     position: Option<[f32; 3]>,
     look_at: Option<[f32; 3]>,
-    sample_points: Option<Vec<[u32; 2]>>,
+    sample_points: Option<Vec<[i64; 2]>>,
     grid_density: Option<u32>,
     include_rgb: Option<bool>,
     delay_frames: Option<u32>,
@@ -646,6 +811,7 @@ struct DepthBody {
 
 async fn capture_depth(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<DepthBody>,
 ) -> impl IntoResponse {
     if !state.config.screenshot_enabled {
@@ -666,7 +832,7 @@ async fn capture_depth(
     )
     .await
     {
-        Ok(v) => (StatusCode::OK, Json(v)),
+        Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
@@ -721,6 +887,7 @@ struct ReloadAndCaptureBody {
 
 async fn reload_and_capture(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ReloadAndCaptureBody>,
 ) -> impl IntoResponse {
     match send_operation(
@@ -738,7 +905,7 @@ async fn reload_and_capture(
     )
     .await
     {
-        Ok(v) => (StatusCode::OK, Json(v)),
+        Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
@@ -926,7 +1093,7 @@ struct CheckOverlapsBody {
     entity: serde_json::Value,
     #[serde(default)]
     include_siblings: bool,
-    #[serde(default)]
+    #[serde(default = "default_max_float_gap")]
     max_float_gap: f32,
     ground_y: Option<f32>,
 }
@@ -959,7 +1126,7 @@ async fn check_overlaps(
 struct CheckAllOverlapsBody {
     min_penetration: Option<f32>,
     max_results: Option<usize>,
-    #[serde(default)]
+    #[serde(default = "default_max_float_gap")]
     max_float_gap: f32,
     ground_y: Option<f32>,
     #[serde(default)]
@@ -1033,6 +1200,7 @@ async fn batch_mutate(
 
 async fn submit_schedule(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ScheduleRequest>,
 ) -> impl IntoResponse {
     // Validate before sending to engine
@@ -1045,11 +1213,12 @@ async fn submit_schedule(
 
     match send_operation(&state.sender, ControlOperation::ScheduleActions(body)).await {
         Ok(v) => {
-            if is_async {
-                (StatusCode::ACCEPTED, Json(v))
+            let status = if is_async {
+                StatusCode::ACCEPTED
             } else {
-                (StatusCode::OK, Json(v))
-            }
+                StatusCode::OK
+            };
+            image_response(status, v, &headers)
         }
         Err(e) => e,
     }
@@ -1057,12 +1226,13 @@ async fn submit_schedule(
 
 async fn get_schedule_status(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.schedule_registry.get(&id) {
         Some(status) => {
             let json = serde_json::to_value(&status).unwrap_or_default();
-            (StatusCode::OK, Json(json))
+            image_response(StatusCode::OK, json, &headers)
         }
         None => error_response(
             StatusCode::NOT_FOUND,
@@ -1107,6 +1277,9 @@ struct SearchQuery {
     limit: Option<usize>,
 }
 
+/// Result cap when a stub search request does not pass an explicit limit.
+const DEFAULT_STUB_SEARCH_LIMIT: usize = 200;
+
 async fn stubs_index(State(state): State<AppState>) -> impl IntoResponse {
     if !state.config.api_discovery_enabled {
         return (
@@ -1130,7 +1303,8 @@ async fn stubs_search(
             Json(serde_json::json!({ "error": "API discovery disabled" })),
         );
     }
-    let (results, total) = state.api_index.search(&params.q, params.limit);
+    let limit = params.limit.unwrap_or(DEFAULT_STUB_SEARCH_LIMIT);
+    let (results, total) = state.api_index.search(&params.q, Some(limit));
     let truncated = results.len() < total;
     (
         StatusCode::OK,
@@ -1272,6 +1446,7 @@ pub fn start_server(host: String, port: u16, state: AppState) {
 
 #[cfg(test)]
 mod tests {
+    use axum::body::to_bytes;
     use tower::ServiceExt;
 
     use super::*;
@@ -1359,7 +1534,7 @@ mod tests {
         assert!(body.max_width.is_none());
         assert_eq!(body.position, Some([1.0, 2.0, 3.0]));
         assert!(body.look_at.is_none());
-        assert!(!body.hide_ui);
+        assert!(body.hide_ui);
     }
 
     #[test]
@@ -1372,6 +1547,21 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_body_preserves_explicit_hide_ui_false() {
+        let body: ScreenshotBody = serde_json::from_str(r#"{"hide_ui": false}"#).unwrap();
+        assert!(!body.hide_ui);
+    }
+
+    #[test]
+    fn stats_body_deserializes_analysis_and_capture_defaults() {
+        let body: StatsBody = serde_json::from_str(r#"{"sample_points": [[1, 2]]}"#).unwrap();
+        assert_eq!(body.grid, 1);
+        assert_eq!(body.sample_points, Some(vec![[1, 2]]));
+        assert_eq!(body.screenshot.delay_frames, 2);
+        assert!(body.screenshot.hide_ui);
+    }
+
+    #[test]
     fn timeline_body_deserialize_defaults() {
         let json = "{}";
         let body: TimelineBody = serde_json::from_str(json).unwrap();
@@ -1379,6 +1569,16 @@ mod tests {
         assert_eq!(body.capture_count, 6);
         assert_eq!(body.columns, 3);
         assert!(body.max_width.is_none());
+        assert!(body.hide_ui);
+        assert!(!body.gizmos);
+    }
+
+    #[test]
+    fn timeline_body_preserves_capture_visibility_options() {
+        let body: TimelineBody =
+            serde_json::from_str(r#"{"hide_ui": false, "gizmos": true}"#).unwrap();
+        assert!(!body.hide_ui);
+        assert!(body.gizmos);
     }
 
     #[test]
@@ -1393,6 +1593,14 @@ mod tests {
         assert!(body.delay_frames.is_none());
         assert!(body.hide_ui.is_none());
         assert!(body.max_width.is_none());
+    }
+
+    #[test]
+    fn depth_body_deserializes_signed_sample_points_for_handler_validation() {
+        let json = r#"{"sample_points": [[99999, -50], [10, 10]]}"#;
+        let body: DepthBody = serde_json::from_str(json).unwrap();
+
+        assert_eq!(body.sample_points, Some(vec![[99999, -50], [10, 10]]));
     }
 
     #[test]
@@ -1411,6 +1619,7 @@ mod tests {
         let body: QueryEntitiesBody = serde_json::from_str(json).unwrap();
         assert!(body.with.is_empty());
         assert!(body.without.is_empty());
+        assert!(body.limit.is_none());
     }
 
     #[test]
@@ -1443,7 +1652,7 @@ mod tests {
         let json = r#"{"entity": 42}"#;
         let body: CheckOverlapsBody = serde_json::from_str(json).unwrap();
         assert!(!body.include_siblings);
-        assert_eq!(body.max_float_gap, 0.0);
+        assert_eq!(body.max_float_gap, 0.1);
     }
 
     #[test]
@@ -1452,7 +1661,7 @@ mod tests {
         let body: CheckAllOverlapsBody = serde_json::from_str(json).unwrap();
         assert!(body.min_penetration.is_none());
         assert!(body.max_results.is_none());
-        assert_eq!(body.max_float_gap, 0.0);
+        assert_eq!(body.max_float_gap, 0.1);
     }
 
     #[test]
@@ -1579,7 +1788,6 @@ mod tests {
                 execute_python_enabled: true,
                 api_discovery_enabled: true,
             },
-            SharedLatestError::default(),
             SharedScheduleRegistry::default(),
         );
         (state, receiver)
@@ -1597,7 +1805,6 @@ mod tests {
                 execute_python_enabled: false,
                 api_discovery_enabled: false,
             },
-            SharedLatestError::default(),
             SharedScheduleRegistry::default(),
         );
         (state, receiver)
@@ -1610,6 +1817,15 @@ mod tests {
             .header("content-type", "application/json")
             .body(axum::body::Body::from(body.to_string()))
             .unwrap()
+    }
+
+    fn mcp_json_post(uri: &str, body: &str) -> axum::http::Request<axum::body::Body> {
+        let mut request = json_post(uri, body);
+        request.headers_mut().insert(
+            MCP_IMAGE_DELIVERY_HEADER,
+            MCP_IMAGE_DELIVERY_VALUE.parse().unwrap(),
+        );
+        request
     }
 
     fn get_req(uri: &str) -> axum::http::Request<axum::body::Body> {
@@ -1625,6 +1841,50 @@ mod tests {
             .uri(uri)
             .body(axum::body::Body::empty())
             .unwrap()
+    }
+
+    /// Cross-origin browser requests must not be granted CORS approval: the
+    /// control API is unauthenticated, so answering preflights or emitting
+    /// allow-origin headers would let any web page drive a local engine.
+    #[tokio::test]
+    async fn no_cors_headers_for_cross_origin_requests() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+
+        let preflight = axum::http::Request::builder()
+            .method("OPTIONS")
+            .uri("/api/v1/execute")
+            .header("origin", "https://evil.example")
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(preflight).await.unwrap();
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "preflight must not be approved"
+        );
+
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"fps": 60})));
+            }
+        });
+        let mut request = get_req("/api/v1/performance");
+        request
+            .headers_mut()
+            .insert("origin", "https://evil.example".parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "responses must not be readable cross-origin"
+        );
     }
 
     #[tokio::test]
@@ -1691,6 +1951,91 @@ mod tests {
         });
         let response = app.oneshot(get_req("/api/v1/performance")).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn frame_analysis_routes_forward_typed_operations() {
+        let (state, mut receiver) = test_state_enabled();
+        let app = build_router(state);
+        let responder = tokio::spawn(async move {
+            let stats = receiver.rx.recv().await.unwrap();
+            assert!(matches!(
+                stats.operation,
+                ControlOperation::CaptureStats(CaptureStatsParams {
+                    grid: 2,
+                    delay_frames: 3,
+                    entity: Some(EntityRef::Name(ref name)),
+                    ..
+                }) if name == "Target"
+            ));
+            let _ = stats
+                .response_tx
+                .send(Ok(serde_json::json!({"retained": true})));
+
+            let compare = receiver.rx.recv().await.unwrap();
+            assert!(matches!(
+                compare.operation,
+                ControlOperation::CompareFrames(CompareFramesParams { a, b, .. })
+                    if a == "f_1" && b == "f_2"
+            ));
+            let _ = compare
+                .response_tx
+                .send(Ok(serde_json::json!({"identical": false})));
+        });
+
+        let stats_response = app
+            .clone()
+            .oneshot(json_post(
+                "/api/v1/screenshot/stats",
+                r#"{"grid": 2, "delay_frames": 3, "entity": "Target"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stats_response.status(), StatusCode::OK);
+
+        let compare_response = app
+            .oneshot(json_post(
+                "/api/v1/screenshot/compare",
+                r#"{"a": "f_1", "b": "f_2"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(compare_response.status(), StatusCode::OK);
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn control_request_rejected_during_exclusive_execution_then_recovers() {
+        let (state, mut rx) = test_state_enabled();
+        let execution = state.sender.exclusive_execution();
+        let guard = execution.try_enter().expect("entry should succeed");
+        let app = build_router(state);
+
+        let conflict = app
+            .clone()
+            .oneshot(get_req("/api/v1/performance"))
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(conflict.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "reentrant-control-call");
+        assert!(body["error"].as_str().unwrap().contains("injected world"));
+        assert!(matches!(
+            rx.rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+
+        drop(guard);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                let _ = req.response_tx.send(Ok(serde_json::json!({"fps": 60})));
+            }
+        });
+        let recovered = app.oneshot(get_req("/api/v1/performance")).await.unwrap();
+        assert_eq!(recovered.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -1841,15 +2186,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_resource_ok() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                assert!(matches!(
+                    req.operation,
+                    ControlOperation::GetResource(GetResourceParams { resource_type })
+                        if resource_type == "State[game.Phase]"
+                ));
+                let _ = req.response_tx.send(Ok(serde_json::json!({
+                    "name": "State[game.Phase]",
+                    "present": true,
+                    "fields": {"variant": "MENU"},
+                })));
+            }
+        });
+        let response = app
+            .oneshot(get_req("/api/v1/resources/State%5Bgame.Phase%5D"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn list_systems_ok() {
         let (state, mut rx) = test_state_enabled();
         let app = build_router(state);
         tokio::spawn(async move {
             if let Some(req) = rx.rx.recv().await {
+                assert!(matches!(
+                    req.operation,
+                    ControlOperation::ListSystems {
+                        include_internal: false
+                    }
+                ));
                 let _ = req.response_tx.send(Ok(serde_json::json!({"systems": []})));
             }
         });
         let response = app.oneshot(get_req("/api/v1/systems")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn list_systems_can_include_internal_systems() {
+        let (state, mut rx) = test_state_enabled();
+        let app = build_router(state);
+        tokio::spawn(async move {
+            if let Some(req) = rx.rx.recv().await {
+                assert!(matches!(
+                    req.operation,
+                    ControlOperation::ListSystems {
+                        include_internal: true
+                    }
+                ));
+                let _ = req.response_tx.send(Ok(serde_json::json!({"systems": []})));
+            }
+        });
+        let response = app
+            .oneshot(get_req("/api/v1/systems?include_internal=true"))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -2086,6 +2484,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn screenshot_mcp_delivery_is_opt_in_at_the_http_boundary() {
+        const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+        let (state, mut receiver) = test_state_enabled();
+        let app = build_router(state);
+        let responder = tokio::spawn(async move {
+            for _ in 0..2 {
+                let request = receiver.rx.recv().await.unwrap();
+                request
+                    .response_tx
+                    .send(Ok(serde_json::json!({
+                        "image": PNG,
+                        "width": 1,
+                        "height": 1,
+                        "format": "png",
+                        "encoding": "base64",
+                    })))
+                    .unwrap();
+            }
+        });
+
+        let rest_response = app
+            .clone()
+            .oneshot(json_post("/api/v1/screenshot", "{}"))
+            .await
+            .unwrap();
+        let rest_body = to_bytes(rest_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let rest_body: serde_json::Value = serde_json::from_slice(&rest_body).unwrap();
+        assert_eq!(rest_body["image"], PNG);
+        assert!(rest_body.get("image_delivery").is_none());
+
+        let mcp_response = app
+            .oneshot(mcp_json_post("/api/v1/screenshot", "{}"))
+            .await
+            .unwrap();
+        let mcp_body = to_bytes(mcp_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let mcp_body: serde_json::Value = serde_json::from_slice(&mcp_body).unwrap();
+        assert_eq!(mcp_body["image"], PNG);
+        assert_eq!(mcp_body["image_delivery"]["inline_mime_type"], "image/png");
+        assert_eq!(mcp_body["image_delivery"]["full_resolution_width"], 1);
+
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn capture_gizmos_forbidden() {
         let (state, _rx) = test_state_disabled();
         let app = build_router(state);
@@ -2124,6 +2571,27 @@ mod tests {
         let app = build_router(state);
         let response = app
             .oneshot(json_post("/api/v1/screenshot/depth", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn frame_analysis_forbidden_when_screenshots_are_disabled() {
+        let (state, _rx) = test_state_disabled();
+        let app = build_router(state);
+        let response = app
+            .clone()
+            .oneshot(json_post("/api/v1/screenshot/stats", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let response = app
+            .oneshot(json_post(
+                "/api/v1/screenshot/compare",
+                r#"{"a": "f_1", "b": "f_2"}"#,
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -2291,6 +2759,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn schedule_validate_negative_at_frame_returns_structured_error() {
+        let (state, _rx) = test_state_enabled();
+        let app = build_router(state);
+        let response = app
+            .oneshot(json_post(
+                "/api/v1/schedule",
+                r#"{"actions":[{"tool":"pause_time","at_frame":-5}]}"#,
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["error"],
+            "action[0]: 'at_frame' must be a non-negative integer"
+        );
     }
 
     #[tokio::test]

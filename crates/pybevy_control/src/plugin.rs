@@ -5,14 +5,16 @@ use bevy::winit::UpdateMode;
 use bevy::{
     app::{App, First, Last, Plugin},
     prelude::{IntoScheduleConfigs, Resource},
+    render::{Render, RenderApp, RenderSystems},
 };
-use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_core::{PluginBuild, PyPlugin, ensure_asset_access_registry};
 use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::{
     api_index::ApiIndex,
-    bridge::{self, SharedLatestError, SharedLatestErrorResource, SseEventBroadcaster},
+    bridge::{self, SseEventBroadcaster},
+    handlers::frame_analysis::CapturedFrames,
     server::{AppState, ServerConfig},
 };
 
@@ -115,6 +117,7 @@ pub struct ControlBevyPlugin {
 
 impl Plugin for ControlBevyPlugin {
     fn build(&self, app: &mut App) {
+        ensure_asset_access_registry(app.world_mut());
         // Guard against double-registration
         if app.world().contains_resource::<ControlConfig>() {
             return;
@@ -146,12 +149,10 @@ impl Plugin for ControlBevyPlugin {
 
         // Create the channel
         let (sender, receiver) = bridge::create_channel();
+        let exclusive_execution = sender.exclusive_execution();
 
         // Create SSE broadcaster
         let sse_broadcaster = SseEventBroadcaster::new();
-
-        // Create shared error state
-        let shared_error = SharedLatestError::default();
 
         let server_config = ServerConfig {
             screenshot_enabled: config.screenshot,
@@ -169,14 +170,13 @@ impl Plugin for ControlBevyPlugin {
             sse_broadcaster.clone(),
             Arc::new(api_index),
             server_config,
-            shared_error.clone(),
             schedule_registry.clone(),
         );
 
         // Insert Bevy resources
         app.insert_resource(receiver);
+        app.insert_resource(exclusive_execution);
         app.insert_resource(sse_broadcaster);
-        app.insert_resource(SharedLatestErrorResource(shared_error));
         app.init_resource::<crate::handlers::schedule::ActiveSchedules>();
         app.insert_resource(crate::handlers::schedule::SharedScheduleRegistryResource(
             schedule_registry,
@@ -219,6 +219,7 @@ impl Plugin for ControlBevyPlugin {
 
         // Register global observer for screenshot capture completion
         app.add_observer(crate::handlers::screenshot::screenshot_captured_observer);
+        app.init_resource::<CapturedFrames>();
         app.init_resource::<crate::handlers::screenshot::PendingScreenshotResponders>();
         app.init_resource::<crate::handlers::screenshot::PendingTimelines>();
         app.init_resource::<crate::handlers::screenshot::TimelineCaptures>();
@@ -227,6 +228,18 @@ impl Plugin for ControlBevyPlugin {
 
         // Start the HTTP server
         crate::server::start_server(config.host.clone(), config.port, server_state);
+    }
+
+    fn finish(&self, app: &mut App) {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        let readiness = crate::handlers::screenshot::RenderFrameReadiness::default();
+        render_app.insert_resource(readiness.clone()).add_systems(
+            Render,
+            crate::handlers::screenshot::update_render_frame_readiness.after(RenderSystems::Render),
+        );
+        app.insert_resource(readiness);
     }
 }
 
