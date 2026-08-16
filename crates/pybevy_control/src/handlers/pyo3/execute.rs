@@ -236,7 +236,9 @@ pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Val
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::sync::{Mutex, Once, PoisonError};
+
+    use serde_json::Value;
 
     use super::*;
 
@@ -247,11 +249,19 @@ mod tests {
         });
     }
 
+    // sys.stdout is process-global, so parallel runs steal each other's capture.
+    static STREAMS: Mutex<()> = Mutex::new(());
+
+    fn run(code: &str) -> Value {
+        init_python();
+        let _streams = STREAMS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut world = World::new();
+        execute_python(&mut world, code.to_string()).unwrap()
+    }
+
     #[test]
     fn execute_simple_code() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(&mut world, "x = 1 + 1".to_string()).unwrap();
+        let result = run("x = 1 + 1");
         assert_eq!(result["success"], true);
         assert_eq!(result["stdout"], "");
         assert!(result["error"].is_null());
@@ -259,19 +269,14 @@ mod tests {
 
     #[test]
     fn execute_with_print_captures_stdout() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(&mut world, "print('hello world')".to_string()).unwrap();
+        let result = run("print('hello world')");
         assert_eq!(result["success"], true);
         assert_eq!(result["stdout"], "hello world\n");
     }
 
     #[test]
     fn execute_with_error_captures_traceback() {
-        init_python();
-        let mut world = World::new();
-        let result =
-            execute_python(&mut world, "raise ValueError('test error')".to_string()).unwrap();
+        let result = run("raise ValueError('test error')");
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
         assert!(error.contains("ValueError"));
@@ -280,15 +285,11 @@ mod tests {
 
     #[test]
     fn execute_preserves_source_escapes_triple_quotes_and_unicode() {
-        init_python();
-        let mut world = World::new();
-        let code = r#"print(repr("\n"))
+        let result = run(r#"print(repr("\n"))
 print(repr("\t"))
 print(b"\x00".hex())
 print("""triple ' quotes""")
-print("héllø 🦀")"#;
-
-        let result = execute_python(&mut world, code.to_string()).unwrap();
+print("héllø 🦀")"#);
 
         assert_eq!(result["success"], true);
         assert_eq!(
@@ -300,11 +301,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_runtime_traceback_uses_caller_filename_and_line() {
-        init_python();
-        let mut world = World::new();
-        let code = "first = 1\nsecond = 2\nraise RuntimeError('boom')";
-
-        let result = execute_python(&mut world, code.to_string()).unwrap();
+        let result = run("first = 1\nsecond = 2\nraise RuntimeError('boom')");
 
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
@@ -314,13 +311,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_with_syntax_error() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(
-            &mut world,
-            "first = 1\nif True print('invalid')".to_string(),
-        )
-        .unwrap();
+        let result = run("first = 1\nif True print('invalid')");
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
         assert!(error.contains("File \"<pybevy run_code>\", line 2"));
@@ -329,11 +320,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_reports_an_embedded_null_as_a_python_syntax_error() {
-        init_python();
-        let mut world = World::new();
-        let code = format!("print(1){}print(2)", '\0');
-
-        let result = execute_python(&mut world, code).unwrap();
+        let result = run(&format!("print(1){}print(2)", '\0'));
 
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
@@ -343,9 +330,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_empty_code() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(&mut world, String::new()).unwrap();
+        let result = run("");
         assert_eq!(result["success"], true);
     }
 }
