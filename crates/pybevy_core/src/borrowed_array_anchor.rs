@@ -27,9 +27,9 @@ use std::{
 };
 
 use pybevy_array::BorrowProbe;
-use pybevy_storage::ValidityFlag;
+use pybevy_storage::{PendingViewClaim, ValidityFlag};
 
-use crate::numpy_view_guard::PyNumpyViewGuard;
+use crate::numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard};
 
 fn on_owner_thread(owner: ThreadId) -> bool {
     std::thread::current().id() == owner
@@ -40,7 +40,8 @@ const CROSS_THREAD: &str = "borrowed array accessed from a different thread than
 pub struct AssetBorrowAnchor {
     validity: Option<ValidityFlag>,
     owner: ThreadId,
-    _guard: PyNumpyViewGuard,
+    guard: PyNumpyViewGuard,
+    closed: AtomicBool,
 }
 
 impl AssetBorrowAnchor {
@@ -48,7 +49,17 @@ impl AssetBorrowAnchor {
         Self {
             validity,
             owner: std::thread::current().id(),
-            _guard: guard,
+            guard,
+            closed: AtomicBool::new(false),
+        }
+    }
+
+    pub fn close(&self) {
+        if !on_owner_thread(self.owner) {
+            return;
+        }
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            self.guard.release();
         }
     }
 }
@@ -57,6 +68,7 @@ impl fmt::Debug for AssetBorrowAnchor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AssetBorrowAnchor")
             .field("borrowed_asset", &self.validity.is_some())
+            .field("closed", &self.closed.load(Ordering::Acquire))
             .finish()
     }
 }
@@ -65,6 +77,9 @@ impl BorrowProbe for AssetBorrowAnchor {
     fn check_read(&self) -> Result<(), String> {
         if !on_owner_thread(self.owner) {
             return Err(CROSS_THREAD.to_string());
+        }
+        if self.closed.load(Ordering::Acquire) {
+            return Err("array is closed after its context exited".to_string());
         }
         match &self.validity {
             None => Ok(()),
@@ -83,18 +98,27 @@ impl BorrowProbe for AssetBorrowAnchor {
 pub struct AssetBorrowAnchorMut {
     validity: Option<ValidityFlag>,
     owner: ThreadId,
-    guard: PyNumpyViewGuard,
+    guard: PendingNumpyViewGuard,
     closed: AtomicBool,
 }
 
 impl AssetBorrowAnchorMut {
-    pub fn new(validity: Option<ValidityFlag>, guard: PyNumpyViewGuard) -> Self {
+    pub fn new(validity: Option<ValidityFlag>, guard: PendingNumpyViewGuard) -> Self {
         Self {
             validity,
             owner: std::thread::current().id(),
             guard,
             closed: AtomicBool::new(false),
         }
+    }
+
+    /// Publish a view whose Python owner and array storage are fully bound.
+    pub fn commit(&self) {
+        self.guard.commit();
+    }
+
+    pub fn pending_claim(&self) -> &PendingViewClaim {
+        self.guard.claim()
     }
 
     /// Close the borrow (idempotent): after this, all reads and writes on the

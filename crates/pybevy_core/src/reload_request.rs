@@ -7,10 +7,10 @@
 //! 1. `pybevy_mcp` writes a `ReloadRequestMode` into `PendingReloadRequest`
 //! 2. The hot reload system in the main crate checks and drains it each frame
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bevy::{ecs::component::ComponentId, prelude::Resource};
-use pyo3::{Py, PyAny, ffi::PyTypeObject};
+use pyo3::{Py, PyAny, Python, ffi::PyTypeObject, types::PyType};
 
 /// The mode of reload to perform
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,16 +38,29 @@ pub struct LastSystemError {
 /// Metadata for a registered custom Python component.
 #[derive(Debug, Clone)]
 pub struct CustomComponentEntry {
-    /// Python type pointer (stable for interpreter lifetime)
+    /// Python type pointer backed by `retained_type` for live registrations.
     pub type_ptr: *const PyTypeObject,
+    /// Strong reference backing `type_ptr` for production registrations.
+    ///
+    /// Some metadata-only tests use a null pointer and leave this empty. Code
+    /// that dereferences `type_ptr` must require this handle first.
+    pub retained_type: Option<Arc<Py<PyType>>>,
     /// Python class name (e.g., "Player", "Health")
     pub name: String,
     /// Whether this component uses PyObject storage (true) or Wrapper storage (false)
     pub is_pyobject_storage: bool,
+    /// Current field layout for wrapper storage.
+    ///
+    /// The wrapper size is guarded against the actual ECS descriptor. Hot reload
+    /// may replace this field layout only when the shared registration guard has
+    /// confirmed that the new class uses the exact same ordered field schema.
+    pub wrapper_layout: Option<Arc<crate::component_layout::ComponentLayout>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: live non-null pointers are backed by the Send + Sync `Py<PyType>` in
+// `retained_type`; metadata-only test entries use null pointers.
 unsafe impl Send for CustomComponentEntry {}
+// SAFETY: same as the `Send` implementation above.
 unsafe impl Sync for CustomComponentEntry {}
 
 /// Registry of custom Python components, accessible from MCP handlers.
@@ -63,6 +76,16 @@ impl CustomComponentInfo {
     /// Register a custom component entry
     pub fn insert(&mut self, id: ComponentId, entry: CustomComponentEntry) {
         self.entries.insert(id, entry);
+    }
+
+    /// Register an entry and return the prior value so callers retaining
+    /// Python objects can release it after ending any Bevy resource borrow.
+    pub fn replace(
+        &mut self,
+        id: ComponentId,
+        entry: CustomComponentEntry,
+    ) -> Option<CustomComponentEntry> {
+        self.entries.insert(id, entry)
     }
 
     /// Look up a custom component by ComponentId
@@ -92,27 +115,44 @@ impl CustomComponentInfo {
             .map(|(id, _)| *id)
     }
 
-    /// Update the type_ptr for an existing entry (used during hot reload aliasing).
-    /// After reload, Python classes get new PyTypeObject pointers; this keeps the
-    /// entry pointing at the current (live) type object.
-    pub fn update_type_ptr(
+    /// Update the current adapter field layout after a compatible class reload.
+    ///
+    /// `type_ptr` is deliberately not updatable in place: it is backed by
+    /// `retained_type`, so aliasing must go through `replace` to swap both.
+    pub fn update_wrapper_layout(
         &mut self,
         component_id: ComponentId,
-        new_type_ptr: *const PyTypeObject,
+        wrapper_layout: Option<Arc<crate::component_layout::ComponentLayout>>,
     ) {
         if let Some(entry) = self.entries.get_mut(&component_id) {
-            entry.type_ptr = new_type_ptr;
+            entry.wrapper_layout = wrapper_layout;
         }
     }
 }
 
 /// Metadata for a registered custom Python resource.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CustomResourceEntry {
     /// Python type pointer (stable for interpreter lifetime)
     pub type_ptr: *const PyTypeObject,
+    /// Owned reference to the same class. User `@resource` classes are heap
+    /// types, so a full reload can free them while `type_ptr` still points at
+    /// the old object; retaining the class keeps that pointer dereferenceable.
+    pub type_object: Option<Py<PyAny>>,
     /// Python class name (e.g., "GameState", "Score")
     pub name: String,
+}
+
+impl Clone for CustomResourceEntry {
+    fn clone(&self) -> Self {
+        Self {
+            type_ptr: self.type_ptr,
+            type_object: Python::attach(|py| {
+                self.type_object.as_ref().map(|obj| obj.clone_ref(py))
+            }),
+            name: self.name.clone(),
+        }
+    }
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -150,13 +190,18 @@ impl CustomResourceInfo {
     }
 
     /// Update the type_ptr for an existing entry (used during hot reload aliasing).
+    ///
+    /// Replaces the retained class alongside the pointer so the two never
+    /// describe different objects.
     pub fn update_type_ptr(
         &mut self,
         component_id: ComponentId,
         new_type_ptr: *const PyTypeObject,
+        new_type_object: Option<Py<PyAny>>,
     ) {
         if let Some(entry) = self.entries.get_mut(&component_id) {
             entry.type_ptr = new_type_ptr;
+            entry.type_object = new_type_object;
         }
     }
 }
@@ -176,6 +221,8 @@ pub struct ReloadResult {
     pub failed: bool,
     /// Reason for failure, if any
     pub failure_reason: Option<String>,
+    /// Python traceback or callable source location for the failure.
+    pub failure_traceback: Option<String>,
     /// Whether the app is running code from a previous generation after a failure
     pub running_previous_generation: bool,
     /// Plugin names added since last reload (restart may be required)
@@ -184,19 +231,16 @@ pub struct ReloadResult {
     pub plugins_removed: Option<Vec<String>>,
     /// System names removed or renamed since last reload (load_scene required to clear stale schedule entries)
     pub systems_removed: Option<Vec<String>>,
+    /// Whether the current reload attempt is still fetching definition files
+    /// asynchronously; a reload response must not be built while this is set.
+    pub definition_fetch_in_progress: bool,
 }
 
-/// Storage for custom Python resources.
-/// Maps ComponentIds to Python objects. Lives in pybevy_core so that
-/// both the main crate and pybevy_control can access it.
+/// Storage for custom Python resource values.
 #[derive(Default, Resource)]
 pub struct PyResourceStorage {
     pub resources: HashMap<ComponentId, Py<PyAny>>,
 }
-
-// SAFETY: We ensure all Python access happens within Python::attach
-unsafe impl Send for PyResourceStorage {}
-unsafe impl Sync for PyResourceStorage {}
 
 #[cfg(test)]
 mod tests {
@@ -211,14 +255,17 @@ mod tests {
     fn make_entry(name: &str) -> CustomComponentEntry {
         CustomComponentEntry {
             type_ptr: ptr::null(),
+            retained_type: None,
             name: name.to_string(),
             is_pyobject_storage: false,
+            wrapper_layout: None,
         }
     }
 
     fn make_resource_entry(name: &str) -> CustomResourceEntry {
         CustomResourceEntry {
             type_ptr: ptr::null(),
+            type_object: None,
             name: name.to_string(),
         }
     }
@@ -257,6 +304,18 @@ mod tests {
         let id = make_component_id(0);
         info.insert(id, make_entry("Old"));
         info.insert(id, make_entry("New"));
+        assert_eq!(info.get(id).unwrap().name, "New");
+    }
+
+    #[test]
+    fn component_info_replace_returns_prior_entry() {
+        let mut info = CustomComponentInfo::default();
+        let id = make_component_id(0);
+        info.insert(id, make_entry("Old"));
+
+        let retired = info.replace(id, make_entry("New")).unwrap();
+
+        assert_eq!(retired.name, "Old");
         assert_eq!(info.get(id).unwrap().name, "New");
     }
 
@@ -324,26 +383,6 @@ mod tests {
     }
 
     #[test]
-    fn component_info_update_type_ptr() {
-        let mut info = CustomComponentInfo::default();
-        let id = make_component_id(0);
-        info.insert(id, make_entry("Health"));
-        assert!(info.get(id).unwrap().type_ptr.is_null());
-
-        let fake_ptr = 0xDEAD as *const PyTypeObject;
-        info.update_type_ptr(id, fake_ptr);
-        assert_eq!(info.get(id).unwrap().type_ptr, fake_ptr);
-    }
-
-    #[test]
-    fn component_info_update_type_ptr_missing_is_noop() {
-        let mut info = CustomComponentInfo::default();
-        let fake_ptr = 0xDEAD as *const PyTypeObject;
-        // Should not panic
-        info.update_type_ptr(make_component_id(99), fake_ptr);
-    }
-
-    #[test]
     fn resource_info_insert_and_get() {
         let mut info = CustomResourceInfo::default();
         let id = make_component_id(0);
@@ -366,8 +405,9 @@ mod tests {
         info.insert(id, make_resource_entry("Score"));
 
         let fake_ptr = 0xBEEF as *const PyTypeObject;
-        info.update_type_ptr(id, fake_ptr);
+        info.update_type_ptr(id, fake_ptr, None);
         assert_eq!(info.get(id).unwrap().type_ptr, fake_ptr);
+        assert!(info.get(id).unwrap().type_object.is_none());
     }
 
     #[test]

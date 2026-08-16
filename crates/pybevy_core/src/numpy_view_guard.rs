@@ -13,6 +13,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
+use pybevy_storage::{PendingViewClaim, ReadViewClaim};
 use pyo3::prelude::*;
 
 /// Base object for NumPy views over asset data. Holds the view counter it
@@ -24,9 +25,16 @@ use pyo3::prelude::*;
 /// whichever comes first.
 #[pyclass(name = "_NumpyViewGuard", frozen)]
 pub struct PyNumpyViewGuard {
-    counter: Arc<AtomicUsize>,
-    released: AtomicBool,
+    claim: PyViewClaim,
     _owner: Py<PyAny>,
+}
+
+enum PyViewClaim {
+    Counter {
+        counter: Arc<AtomicUsize>,
+        released: AtomicBool,
+    },
+    Read(ReadViewClaim),
 }
 
 impl PyNumpyViewGuard {
@@ -34,28 +42,33 @@ impl PyNumpyViewGuard {
     pub fn acquire(counter: Arc<AtomicUsize>, owner: Py<PyAny>) -> Self {
         counter.fetch_add(1, Ordering::AcqRel);
         Self {
-            counter,
-            released: AtomicBool::new(false),
+            claim: PyViewClaim::Counter {
+                counter,
+                released: AtomicBool::new(false),
+            },
             _owner: owner,
         }
     }
 
-    /// Wrap a `counter` the caller has ALREADY incremented (e.g. via
-    /// `ViewCounters::try_acquire_read`/`try_acquire_write`, which atomically
-    /// claim the slot and verify the invariant). Decrements on release/drop; does
+    /// Wrap a `counter` the caller has already incremented through the owning
+    /// asset storage's view-acquisition API. Decrements on release/drop; does
     /// not increment again.
-    pub fn from_acquired(counter: Arc<AtomicUsize>, owner: Py<PyAny>) -> Self {
+    pub fn from_acquired(claim: ReadViewClaim, owner: Py<PyAny>) -> Self {
         Self {
-            counter,
-            released: AtomicBool::new(false),
+            claim: PyViewClaim::Read(claim),
             _owner: owner,
         }
     }
 
     /// Release the counted view early (idempotent).
     pub fn release(&self) {
-        if !self.released.swap(true, Ordering::AcqRel) {
-            self.counter.fetch_sub(1, Ordering::AcqRel);
+        match &self.claim {
+            PyViewClaim::Counter { counter, released } => {
+                if !released.swap(true, Ordering::AcqRel) {
+                    counter.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+            PyViewClaim::Read(claim) => claim.release(),
         }
     }
 }
@@ -63,6 +76,33 @@ impl PyNumpyViewGuard {
 impl Drop for PyNumpyViewGuard {
     fn drop(&mut self) {
         self.release();
+    }
+}
+
+/// Construction-time guard for a mutable view that is not published yet.
+pub struct PendingNumpyViewGuard {
+    claim: PendingViewClaim,
+    _owner: Py<PyAny>,
+}
+
+impl PendingNumpyViewGuard {
+    pub fn from_acquired(claim: PendingViewClaim, owner: Py<PyAny>) -> Self {
+        Self {
+            claim,
+            _owner: owner,
+        }
+    }
+
+    pub fn claim(&self) -> &PendingViewClaim {
+        &self.claim
+    }
+
+    pub fn commit(&self) {
+        self.claim.commit();
+    }
+
+    pub fn release(&self) {
+        self.claim.release();
     }
 }
 
@@ -80,11 +120,13 @@ pub fn release_array_guard(array: &Bound<'_, PyAny>) {
 
 #[cfg(test)]
 mod tests {
+    use pybevy_storage::ViewCounters;
+
     use super::*;
 
     #[test]
     fn guard_decrements_on_drop() {
-        pyo3::Python::initialize();
+        Python::initialize();
         let counter = Arc::new(AtomicUsize::new(0));
         Python::attach(|py| {
             let owner = py.None();
@@ -97,7 +139,7 @@ mod tests {
 
     #[test]
     fn release_is_idempotent_and_prevents_double_decrement() {
-        pyo3::Python::initialize();
+        Python::initialize();
         let counter = Arc::new(AtomicUsize::new(0));
         Python::attach(|py| {
             let owner = py.None();
@@ -114,7 +156,7 @@ mod tests {
 
     #[test]
     fn guard_drop_runs_when_py_object_freed() {
-        pyo3::Python::initialize();
+        Python::initialize();
         let counter = Arc::new(AtomicUsize::new(0));
         Python::attach(|py| {
             let owner = py.None();
@@ -124,5 +166,42 @@ mod tests {
             drop(obj);
         });
         assert_eq!(counter.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn pending_guard_rolls_back_or_commits_exactly_once() {
+        Python::initialize();
+        Python::attach(|py| {
+            let counters = ViewCounters::default();
+            let pending = PendingNumpyViewGuard::from_acquired(
+                counters.try_prepare_write().expect("pending claim"),
+                py.None().into_any(),
+            );
+            drop(pending);
+            assert_eq!(counters.write_count(), 0);
+
+            let ready = PendingNumpyViewGuard::from_acquired(
+                counters.try_prepare_write().expect("pending claim"),
+                py.None().into_any(),
+            );
+            ready.commit();
+            ready.release();
+            ready.release();
+            assert_eq!(counters.write_count(), 0);
+        });
+    }
+
+    #[test]
+    fn acquired_read_claim_releases_exactly_once() {
+        Python::initialize();
+        Python::attach(|py| {
+            let counters = ViewCounters::default();
+            let claim = counters.try_prepare_read().expect("read claim");
+            let guard = PyNumpyViewGuard::from_acquired(claim, py.None().into_any());
+            assert_eq!(counters.read_count(), 1);
+            guard.release();
+            guard.release();
+            assert_eq!(counters.read_count(), 0);
+        });
     }
 }
