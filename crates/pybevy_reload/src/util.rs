@@ -4,6 +4,7 @@ use std::{
 };
 
 use bevy::ecs::{schedule::Schedules, world::World};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
 use crate::profiling::SystemMonitor;
 
@@ -30,14 +31,19 @@ pub fn parse_resolution(s: &str) -> Option<(f32, f32)> {
     Some((w.parse().ok()?, h.parse().ok()?))
 }
 
-/// Get current RSS of this process in MB using the SystemMonitor resource.
-pub fn get_current_rss_mb(world: &World) -> f64 {
-    let Some(monitor) = world.get_resource::<SystemMonitor>() else {
+/// Refresh and return the current RSS of this process in MB.
+pub fn get_current_rss_mb(world: &mut World) -> f64 {
+    let Some(mut monitor) = world.get_resource_mut::<SystemMonitor>() else {
         return 0.0;
     };
     let Some(pid) = monitor.process_pid else {
         return 0.0;
     };
+    monitor.system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        false,
+        ProcessRefreshKind::nothing().with_memory(),
+    );
     monitor
         .system
         .process(pid)
@@ -55,7 +61,9 @@ pub fn count_schedule_systems(world: &World) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::VecDeque, sync::Arc};
+
+    use sysinfo::{System, get_current_pid};
 
     use super::*;
 
@@ -77,5 +85,19 @@ mod tests {
         .join();
         let guard = lock_or_recover(&mutex);
         assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn current_rss_refreshes_an_uninitialized_process_table() {
+        let mut world = World::new();
+        world.insert_resource(SystemMonitor {
+            system: System::new(),
+            process_pid: Some(get_current_pid().expect("current PID should be available")),
+            last_update: 0.0,
+            fps_history: VecDeque::new(),
+            last_render_update: 0.0,
+        });
+
+        assert!(get_current_rss_mb(&mut world) > 0.0);
     }
 }

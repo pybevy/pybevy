@@ -4929,10 +4929,12 @@ version = "0.2.1"
 dependencies = [
  "bevy",
  "image",
+ "notify",
  "pybevy_control",
  "pybevy_core",
  "pybevy_ecs",
  "sysinfo",
+ "walkdir",
 ]
 
 [[package]]

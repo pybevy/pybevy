@@ -23,6 +23,8 @@ pub struct DefsFingerprint {
     pub resource_types: u64,
     /// Hash over observer names and code objects.
     pub observer_code: u64,
+    /// A cached custom component was redefined with a different field layout.
+    pub component_layout_changed: bool,
     pub has_startup: bool,
     pub has_resources: bool,
     pub has_observers: bool,
@@ -39,6 +41,7 @@ pub struct EscalationTracker {
 #[allow(dead_code)]
 pub struct ReloadError {
     pub message: String,
+    pub traceback: Option<String>,
     pub is_load_failure: bool,
 }
 
@@ -104,12 +107,28 @@ pub trait ReloadRuntime {
         generation: u32,
     ) -> Result<Vec<Self::SystemHandle>, ReloadError>;
 
+    /// Commit schedule-graph configuration prepared while registering the
+    /// candidate generation. Called only after its Startup systems succeed.
+    fn commit_schedule_configs(&mut self, _world: &mut World) {}
+
     /// Insert resources into the world (Full reload only).
     fn register_resources(
         &mut self,
         world: &mut World,
         defs: &Self::Defs,
     ) -> Result<(), ReloadError>;
+
+    /// Refresh interpreter type identities for resources retained by a partial reload.
+    ///
+    /// This must not insert or replace resource values. Backends without
+    /// interpreter-defined resource classes use the default no-op.
+    fn rebind_resources(
+        &mut self,
+        _world: &mut World,
+        _defs: &Self::Defs,
+    ) -> Result<(), ReloadError> {
+        Ok(())
+    }
 
     /// Rebind interpreter-defined state classes to App-local machines.
     ///
@@ -210,6 +229,7 @@ mod tests {
     fn default_error_message_preserves_shared_format() {
         let error = ReloadError {
             message: "loader failed".to_string(),
+            traceback: None,
             is_load_failure: true,
         };
 

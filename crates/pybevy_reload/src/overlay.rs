@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use bevy::{
     animation::{AnimationClip, graph::AnimationGraph},
-    asset::Assets,
+    asset::{Assets, RenderAssetUsages},
     color::Color,
     ecs::{
         component::Component,
         entity::Entity,
         query::{Or, With, Without},
         resource::IsResource,
+        system::{Query, Res, ResMut},
         world::World,
     },
     image::{Image, TextureAtlasLayout},
@@ -16,10 +17,16 @@ use bevy::{
     pbr::{StandardMaterial, wireframe::WireframeMaterial},
     prelude::{ImageNode, Resource, TextColor, TextFont, Visibility, default},
     text::FontSize,
+    time::{Real, Time},
     ui::{Node, PositionType, Val, widget::Text},
     world_serialization::WorldAsset,
 };
-use sysinfo::ProcessRefreshKind;
+#[cfg(feature = "mcp")]
+use pybevy_control::bridge::{InternalOverlayUi, OverlaySuppression};
+use pybevy_core::{
+    DebugSnapshot, LastSystemError, ReloadMemorySnapshotInfo, ReloadResult, SystemProfile,
+};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
 use crate::{
     profiling::{HotReloadStats, MemoryProfile, SystemMonitor, SystemProfiler},
@@ -60,8 +67,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
     static ICON_PNG: &[u8] = include_bytes!("../../../assets/icon.png");
     let icon_handle = match image::load_from_memory(ICON_PNG) {
         Ok(dyn_img) => {
-            let image =
-                Image::from_dynamic(dyn_img, true, bevy::asset::RenderAssetUsages::default());
+            let image = Image::from_dynamic(dyn_img, true, RenderAssetUsages::default());
             match world.get_resource_mut::<Assets<Image>>() {
                 Some(mut assets) => Some(assets.add(image)),
                 None => {
@@ -91,7 +97,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
             },
             HotReloadOverlayIcon,
             #[cfg(feature = "mcp")]
-            pybevy_control::bridge::InternalOverlayUi,
+            InternalOverlayUi,
         ));
 
         if verbose {
@@ -117,7 +123,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
         },
         HotReloadOverlayText,
         #[cfg(feature = "mcp")]
-        pybevy_control::bridge::InternalOverlayUi,
+        InternalOverlayUi,
     ));
 
     if verbose {
@@ -139,10 +145,10 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
             right: Val::Px(12.0),
             ..default()
         },
-        bevy::prelude::Visibility::Hidden,
+        Visibility::Hidden,
         HotReloadErrorText,
         #[cfg(feature = "mcp")]
-        pybevy_control::bridge::InternalOverlayUi,
+        InternalOverlayUi,
     ));
 
     if verbose {
@@ -154,7 +160,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
 }
 
 /// System that updates system stats (memory, CPU, GPU, entities, assets) periodically
-pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
+pub fn update_system_stats(world: &mut World) {
     // Extract resources - we need mutable access to monitor and stats
     let Some(mut monitor) = world.remove_resource::<SystemMonitor>() else {
         return;
@@ -163,7 +169,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
         world.insert_resource(monitor);
         return;
     };
-    let Some(time) = world.get_resource::<bevy::time::Time>() else {
+    let Some(time) = world.get_resource::<Time>() else {
         world.insert_resource(monitor);
         world.insert_resource(stats);
         return;
@@ -171,8 +177,13 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
 
     let current_time = time.elapsed_secs_f64();
 
-    // Update FPS every frame (lightweight calculation)
-    let delta = time.delta_secs();
+    // Match Bevy's FrameTimeDiagnosticsPlugin: FPS measures real frame time.
+    // Virtual time clamps long deltas to 250 ms by default, which makes a
+    // stalled frame appear as exactly 4 FPS and can hide the actual frame rate.
+    let delta = world
+        .get_resource::<bevy::time::Time<bevy::time::Real>>()
+        .map(|real| real.delta_secs())
+        .unwrap_or_else(|| time.delta_secs());
     if delta > 0.0 {
         let fps = 1.0 / delta;
         stats.fps_current = fps;
@@ -190,14 +201,13 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
         }
     }
 
-    // Update uptime
-    stats.uptime_secs = current_time;
-
     // Real time for the refresh gate: the virtual clock resets on reload and freezes on pause
     let real_now = world
-        .get_resource::<bevy::time::Time<bevy::time::Real>>()
+        .get_resource::<Time<Real>>()
         .map(|t| t.elapsed_secs_f64())
         .unwrap_or(current_time);
+
+    stats.generation_uptime_secs = real_now;
 
     // Update stats every 1 second (respects sysinfo's minimum interval while reducing overhead)
     const UPDATE_INTERVAL: f64 = 1.0;
@@ -209,7 +219,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
 
             // Refresh process info with explicit CPU tracking enabled
             monitor.system.refresh_processes_specifics(
-                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                ProcessesToUpdate::Some(&[pid]),
                 false,
                 ProcessRefreshKind::nothing().with_cpu().with_memory(),
             );
@@ -226,6 +236,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
 
                 stats.memory_mb = new_memory;
                 stats.cpu_percent = total_cpu;
+                stats.uptime_secs = process.run_time() as f64;
             } else {
                 eprintln!("[WARNING] Could not find process {} during update!", pid);
             }
@@ -299,6 +310,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
             && let Some(mut profile) = world.get_resource_mut::<MemoryProfile>()
         {
             profile.capture_baseline(stats.memory_mb);
+            profile.observe_rss(stats.memory_mb);
         }
     }
 
@@ -307,12 +319,11 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
     let (update_profiles, startup_profiles) = world
         .get_resource::<SystemProfiler>()
         .map(|p| {
-            let to_profile =
-                |(name, avg, max): (String, Duration, Duration)| pybevy_core::SystemProfile {
-                    name,
-                    avg_ms: avg.as_secs_f64() * 1000.0,
-                    max_ms: max.as_secs_f64() * 1000.0,
-                };
+            let to_profile = |(name, avg, max): (String, Duration, Duration)| SystemProfile {
+                name,
+                avg_ms: avg.as_secs_f64() * 1000.0,
+                max_ms: max.as_secs_f64() * 1000.0,
+            };
             let up: Vec<_> = p.get_top_n_update(10).into_iter().map(to_profile).collect();
             let sp: Vec<_> = p
                 .get_top_n_startup(10)
@@ -346,7 +357,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
             let snapshots = profile
                 .snapshots
                 .iter()
-                .map(|s| pybevy_core::ReloadMemorySnapshotInfo {
+                .map(|s| ReloadMemorySnapshotInfo {
                     generation: s.generation,
                     rss_mb: s.rss_mb,
                     delta_mb: s.delta_mb,
@@ -375,7 +386,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
         })
         .unwrap_or_default();
 
-    let snapshot = pybevy_core::DebugSnapshot {
+    let snapshot = DebugSnapshot {
         populated: true,
         reload_count: stats.reload_count,
         last_reload_mode: stats.last_mode.map(|m| match m {
@@ -383,10 +394,10 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
             ReloadMode::Partial => "partial".to_string(),
         }),
         reload_failed: world
-            .get_resource::<pybevy_core::ReloadResult>()
+            .get_resource::<ReloadResult>()
             .is_some_and(|r| r.failed),
         reload_failure_reason: world
-            .get_resource::<pybevy_core::ReloadResult>()
+            .get_resource::<ReloadResult>()
             .and_then(|r| r.failure_reason.clone()),
         memory_mb: stats.memory_mb,
         total_memory_mb: stats.total_memory_mb,
@@ -395,6 +406,7 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
         fps_average: stats.fps_average,
         fps_current: stats.fps_current,
         uptime_secs: stats.uptime_secs,
+        generation_uptime_secs: stats.generation_uptime_secs,
         entity_count: stats.entity_count,
         gil_enabled: stats.gil_enabled,
         asset_counts,
@@ -419,33 +431,29 @@ pub fn update_system_stats(world: &mut bevy::ecs::world::World) {
 /// System that updates the hot reload overlay text
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn render_hot_reload_overlay(
-    mut query: bevy::ecs::system::Query<&mut Text, bevy::ecs::query::With<HotReloadOverlayText>>,
-    mut error_query: bevy::ecs::system::Query<
-        (&mut Text, &mut bevy::prelude::Visibility),
-        (
-            bevy::ecs::query::With<HotReloadErrorText>,
-            bevy::ecs::query::Without<HotReloadOverlayText>,
-        ),
+    mut query: Query<&mut Text, With<HotReloadOverlayText>>,
+    mut error_query: Query<
+        (&mut Text, &mut Visibility),
+        (With<HotReloadErrorText>, Without<HotReloadOverlayText>),
     >,
-    monitor: Option<bevy::ecs::system::ResMut<SystemMonitor>>,
-    stats: Option<bevy::ecs::system::ResMut<HotReloadStats>>,
-    profiler: Option<bevy::ecs::system::Res<SystemProfiler>>,
-    time: Option<bevy::ecs::system::Res<bevy::time::Time>>,
-    last_error: Option<bevy::ecs::system::Res<pybevy_core::LastSystemError>>,
-    memory_profile: Option<bevy::ecs::system::Res<MemoryProfile>>,
-    reload_result: Option<bevy::ecs::system::Res<pybevy_core::ReloadResult>>,
-    memory_visible: Option<bevy::ecs::system::Res<MemoryOverlayVisible>>,
-    start_paused: Option<bevy::ecs::system::Res<StartPaused>>,
-    mut overlay_vis_query: bevy::ecs::system::Query<
+    monitor: Option<ResMut<SystemMonitor>>,
+    stats: Option<ResMut<HotReloadStats>>,
+    profiler: Option<Res<SystemProfiler>>,
+    time: Option<Res<Time>>,
+    real_time: Option<Res<Time<Real>>>,
+    last_error: Option<Res<LastSystemError>>,
+    memory_profile: Option<Res<MemoryProfile>>,
+    reload_result: Option<Res<ReloadResult>>,
+    memory_visible: Option<Res<MemoryOverlayVisible>>,
+    start_paused: Option<Res<StartPaused>>,
+    mut overlay_vis_query: Query<
         &mut Visibility,
         (
             Or<(With<HotReloadOverlayText>, With<HotReloadOverlayIcon>)>,
             Without<HotReloadErrorText>,
         ),
     >,
-    #[cfg(feature = "mcp")] suppression: Option<
-        bevy::ecs::system::Res<pybevy_control::bridge::OverlaySuppression>,
-    >,
+    #[cfg(feature = "mcp")] suppression: Option<Res<OverlaySuppression>>,
 ) {
     // Drive overlay visibility from the capture-suppression refcount every
     // frame, before the render throttle below, so suppress/release from
@@ -472,13 +480,16 @@ pub fn render_hot_reload_overlay(
     };
 
     let current_time = time.elapsed_secs_f64();
+    let render_time = real_time
+        .as_ref()
+        .map_or(current_time, |time| time.elapsed_secs_f64());
 
     // Throttle updates to 4 times per second (every 250ms) for readability
     const RENDER_INTERVAL: f64 = 0.25;
-    if current_time - monitor.last_render_update < RENDER_INTERVAL {
+    if render_time - monitor.last_render_update < RENDER_INTERVAL {
         return;
     }
-    monitor.last_render_update = current_time;
+    monitor.last_render_update = render_time;
 
     let is_paused = start_paused.as_ref().is_some_and(|p| p.0);
     let reload_failed = reload_result.as_ref().is_some_and(|r| r.failed);
@@ -663,13 +674,7 @@ pub fn render_hot_reload_overlay(
                 .or(last_err.error.as_deref())
                 .unwrap_or("Unknown error");
 
-            let display_msg = if error_msg.len() > 120 {
-                format!("Error: {}...", &error_msg[..117])
-            } else {
-                format!("Error: {}", error_msg)
-            };
-
-            error_text.0 = display_msg;
+            error_text.0 = truncated_error_line(error_msg);
             stats.last_error_timestamp = last_err.timestamp_secs;
         }
 
@@ -678,6 +683,18 @@ pub fn render_hot_reload_overlay(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+/// Truncate an error message to a single overlay line, counting characters
+/// rather than bytes so multi-byte UTF-8 never splits mid-character.
+fn truncated_error_line(error_msg: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    match error_msg.char_indices().nth(MAX_CHARS - 3) {
+        Some((cut, _)) if error_msg.chars().count() > MAX_CHARS => {
+            format!("Error: {}...", &error_msg[..cut])
+        }
+        _ => format!("Error: {error_msg}"),
     }
 }
 
@@ -694,27 +711,65 @@ pub fn format_uptime(secs: f64) -> String {
 }
 
 #[cfg(test)]
+mod error_line_tests {
+    use super::truncated_error_line;
+
+    #[test]
+    fn short_message_passes_through() {
+        assert_eq!(truncated_error_line("boom"), "Error: boom");
+    }
+
+    #[test]
+    fn long_ascii_message_is_truncated() {
+        let msg = "x".repeat(200);
+        let line = truncated_error_line(&msg);
+        assert_eq!(line, format!("Error: {}...", "x".repeat(117)));
+    }
+
+    #[test]
+    fn exactly_max_chars_is_not_truncated() {
+        let msg = "y".repeat(120);
+        assert_eq!(truncated_error_line(&msg), format!("Error: {msg}"));
+    }
+
+    #[test]
+    fn multibyte_message_does_not_panic_and_keeps_whole_chars() {
+        let msg = "é".repeat(200);
+        let line = truncated_error_line(&msg);
+        assert_eq!(line, format!("Error: {}...", "é".repeat(117)));
+
+        let mixed = format!("ValueError: {}", "🦀".repeat(120));
+        let line = truncated_error_line(&mixed);
+        assert!(line.starts_with("Error: ValueError: 🦀"));
+        assert!(line.ends_with("..."));
+    }
+}
+
+#[cfg(test)]
 mod stats_gate_tests {
     use std::{
         collections::{HashMap, VecDeque},
         time::Duration,
     };
 
+    use bevy::ecs::system::RunSystemOnce;
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+
     use super::*;
 
     fn stats_world(virtual_elapsed: f64, real_elapsed: f64, last_update: f64) -> World {
         let mut world = World::new();
 
-        let mut time: bevy::time::Time = bevy::time::Time::default();
+        let mut time: Time = Time::default();
         time.advance_by(Duration::from_secs_f64(virtual_elapsed));
         world.insert_resource(time);
 
-        let mut real = bevy::time::Time::<bevy::time::Real>::default();
+        let mut real = Time::<Real>::default();
         real.advance_by(Duration::from_secs_f64(real_elapsed));
         world.insert_resource(real);
 
         world.insert_resource(SystemMonitor {
-            system: sysinfo::System::new(),
+            system: System::new(),
             process_pid: None,
             last_update,
             fps_history: VecDeque::new(),
@@ -733,6 +788,7 @@ mod stats_gate_tests {
             cpu_core_count: 0,
             gil_enabled: false,
             uptime_secs: 0.0,
+            generation_uptime_secs: 0.0,
             entity_count: 0,
             asset_counts: HashMap::new(),
             last_error_timestamp: 0.0,
@@ -758,10 +814,108 @@ mod stats_gate_tests {
     }
 
     #[test]
+    fn current_fps_uses_unclamped_real_frame_delta() {
+        let mut world = stats_world(0.25, 0.02, 0.0);
+        update_system_stats(&mut world);
+
+        let stats = world.resource::<HotReloadStats>();
+        assert!((stats.fps_current - 50.0).abs() < 1e-5);
+        assert!((stats.fps_average - 50.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn generation_uptime_uses_real_time_instead_of_virtual_time() {
+        let mut world = stats_world(3.0, 17.0, 0.0);
+        update_system_stats(&mut world);
+
+        assert_eq!(
+            world.resource::<HotReloadStats>().generation_uptime_secs,
+            17.0
+        );
+        assert_eq!(
+            world.resource::<DebugSnapshot>().generation_uptime_secs,
+            17.0
+        );
+    }
+
+    #[test]
+    fn process_uptime_does_not_follow_a_reset_generation_clock() {
+        let mut world = stats_world(0.5, 5.0, 0.0);
+        world.resource_mut::<HotReloadStats>().uptime_secs = 63.0;
+
+        update_system_stats(&mut world);
+
+        assert_eq!(world.resource::<HotReloadStats>().uptime_secs, 63.0);
+        assert_eq!(world.resource::<DebugSnapshot>().uptime_secs, 63.0);
+        assert_eq!(
+            world.resource::<DebugSnapshot>().generation_uptime_secs,
+            5.0
+        );
+    }
+
+    #[test]
+    fn process_uptime_comes_from_the_os_process_record() {
+        let mut world = stats_world(2.0, 2.0, 0.0);
+        let pid = sysinfo::get_current_pid().expect("test process has a PID");
+        {
+            let mut monitor = world.resource_mut::<SystemMonitor>();
+            monitor.process_pid = Some(pid);
+            monitor.system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                false,
+                ProcessRefreshKind::nothing().with_cpu().with_memory(),
+            );
+        }
+
+        update_system_stats(&mut world);
+
+        let os_uptime = world
+            .resource::<SystemMonitor>()
+            .system
+            .process(pid)
+            .expect("test process remains available")
+            .run_time() as f64;
+        assert_eq!(world.resource::<HotReloadStats>().uptime_secs, os_uptime);
+        assert_eq!(world.resource::<DebugSnapshot>().uptime_secs, os_uptime);
+    }
+
+    #[test]
+    fn peak_rss_advances_on_stats_ticks_without_a_reload() {
+        let mut world = stats_world(0.5, 120.0, 60.0);
+        world.insert_resource(MemoryProfile::default());
+        world.resource_mut::<HotReloadStats>().memory_mb = 100.0;
+        update_system_stats(&mut world);
+        assert_eq!(world.resource::<MemoryProfile>().peak_rss_mb, 100.0);
+
+        // A later tick with higher RSS, still zero reloads.
+        world.resource_mut::<SystemMonitor>().last_update = 0.0;
+        world.resource_mut::<HotReloadStats>().memory_mb = 180.0;
+        update_system_stats(&mut world);
+
+        let profile = world.resource::<MemoryProfile>();
+        assert_eq!(profile.peak_rss_mb, 180.0);
+        assert!(
+            profile.peak_rss_mb >= world.resource::<HotReloadStats>().memory_mb,
+            "peak {} fell below current RSS {}",
+            profile.peak_rss_mb,
+            world.resource::<HotReloadStats>().memory_mb,
+        );
+    }
+
+    #[test]
     fn stats_refresh_still_throttled_within_interval() {
         let mut world = stats_world(0.5, 60.5, 60.0);
         update_system_stats(&mut world);
         assert_eq!(world.resource::<SystemMonitor>().last_update, 60.0);
+    }
+
+    #[test]
+    fn overlay_refresh_survives_virtual_clock_reset() {
+        let mut world = stats_world(0.5, 120.0, 60.0);
+
+        world.run_system_once(render_hot_reload_overlay).unwrap();
+
+        assert_eq!(world.resource::<SystemMonitor>().last_render_update, 120.0);
     }
 }
 

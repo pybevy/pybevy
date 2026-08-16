@@ -1,11 +1,11 @@
 use bevy::prelude::Resource;
 
-/// Resource tracking which plugins have been registered across reloads.
-/// Used for delta detection: new plugins are reported, removed plugins
-/// trigger a "restart required" warning.
+/// Resource tracking which plugins were installed when the live App started.
+/// Reloads compare against this baseline because native plugin additions and
+/// removals do not take effect until the App restarts.
 #[derive(Resource, Default)]
 pub struct PluginTracker {
-    /// Set of plugin names that were present in the last successful reload
+    /// Set of plugin names installed in the live App.
     pub known_plugins: std::collections::HashSet<String>,
 }
 

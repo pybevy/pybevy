@@ -242,7 +242,7 @@ mod tests {
     use crate::runtime::ReloadError;
 
     #[derive(Component)]
-    struct Marker(&'static str);
+    struct Marker;
 
     fn live_entity_count(world: &mut World) -> usize {
         // Resources are stored as entities; exclude them via the
@@ -365,12 +365,12 @@ mod tests {
     fn despawns_entities_not_in_base_set() {
         let mut world = World::new();
         // Bevy internal entity (in base set) - should survive
-        let internal = world.spawn(Marker("internal")).id();
+        let internal = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![internal]);
 
         // User entities (not in base set) - should be despawned
-        let user1 = world.spawn(Marker("user1")).id();
-        let user2 = world.spawn(Marker("user2")).id();
+        let user1 = world.spawn(Marker).id();
+        let user2 = world.spawn(Marker).id();
 
         assert_eq!(live_entity_count(&mut world), 3);
 
@@ -394,13 +394,13 @@ mod tests {
     #[test]
     fn retained_entities_survive_reload() {
         let mut world = World::new();
-        let internal = world.spawn(Marker("internal")).id();
+        let internal = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![internal]);
 
         // User entity (should be despawned)
-        let user = world.spawn(Marker("user")).id();
+        let user = world.spawn(Marker).id();
         // Retained entity (should survive even though not in base set)
-        let editor_cam = world.spawn((crate::Retained, Marker("editor_camera"))).id();
+        let editor_cam = world.spawn((crate::Retained, Marker)).id();
 
         assert_eq!(live_entity_count(&mut world), 3);
 
@@ -444,7 +444,7 @@ mod tests {
             })
             .id();
         let window = world.spawn((Window::default(), OnMonitor(monitor))).id();
-        let user = world.spawn(Marker("user")).id();
+        let user = world.spawn(Marker).id();
 
         clear_world_state(&mut world, &mut NoopRuntime, false);
 
@@ -466,9 +466,9 @@ mod tests {
 
         // Engine entity created after the initial snapshot (e.g., at
         // event-loop start) but before user Startup.
-        let engine = world.spawn(Marker("engine_late")).id();
+        let engine = world.spawn(Marker).id();
         extend_base_entity_set(&mut world);
-        let user = world.spawn(Marker("user")).id();
+        let user = world.spawn(Marker).id();
 
         clear_world_state(&mut world, &mut NoopRuntime, false);
 
@@ -486,12 +486,12 @@ mod tests {
     fn despawns_all_non_base_entities() {
         let mut world = World::new();
         // Base entity (plugin-init)
-        let internal = world.spawn(Marker("internal")).id();
+        let internal = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![internal]);
 
-        let user = world.spawn(Marker("user_camera")).id();
+        let user = world.spawn(Marker).id();
         // Bevy side-effect entity (e.g., PointerId)
-        let side_effect = world.spawn(Marker("pointer_id")).id();
+        let side_effect = world.spawn(Marker).id();
 
         assert_eq!(live_entity_count(&mut world), 3);
 
@@ -510,15 +510,15 @@ mod tests {
     fn recursive_despawn_removes_children() {
         let mut world = World::new();
         // Internal entity - should survive
-        let internal = world.spawn(Marker("internal")).id();
+        let internal = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![internal]);
 
         let parent = world
-            .spawn(Marker("parent"))
+            .spawn(Marker)
             .with_children(|cb| {
-                cb.spawn(Marker("child1"));
-                cb.spawn(Marker("child2")).with_children(|cb2| {
-                    cb2.spawn(Marker("grandchild"));
+                cb.spawn(Marker);
+                cb.spawn(Marker).with_children(|cb2| {
+                    cb2.spawn(Marker);
                 });
             })
             .id();
@@ -539,14 +539,14 @@ mod tests {
     #[test]
     fn multiple_parents_with_children() {
         let mut world = World::new();
-        let internal = world.spawn(Marker("internal")).id();
+        let internal = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![internal]);
 
         // Simulate a scene like chair-race: multiple parents each with children
         for _i in 0..4 {
-            world.spawn(Marker("chair")).with_children(|cb| {
+            world.spawn(Marker).with_children(|cb| {
                 for _ in 0..10 {
-                    cb.spawn(Marker("part"));
+                    cb.spawn(Marker);
                 }
             });
         }
@@ -982,14 +982,12 @@ mod tests {
         // Simulate Bevy plugin init: create a programmatic asset and a base entity
         // that holds a handle to it (like bevy_ui_render's internal TextureAtlasLayout).
         let handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
-        let base_entity = world
-            .spawn((Marker("bevy_internal"), Mesh3d(handle.clone())))
-            .id();
+        let base_entity = world.spawn((Marker, Mesh3d(handle.clone()))).id();
         insert_base_set(&mut world, vec![base_entity]);
 
         // Simulate user code: create a user asset + entity (not in base set)
         let user_handle = world.resource_mut::<Assets<Mesh>>().add(test_mesh());
-        world.spawn((Marker("user"), Mesh3d(user_handle)));
+        world.spawn((Marker, Mesh3d(user_handle)));
 
         assert_eq!(live_count::<Mesh>(&world), 2);
 

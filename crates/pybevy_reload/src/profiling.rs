@@ -35,8 +35,10 @@ pub struct HotReloadStats {
     pub cpu_core_count: usize,
     /// Python GIL enabled status
     pub gil_enabled: bool,
-    /// Total app uptime in seconds
+    /// Process-wide uptime in seconds, sourced from the operating system.
     pub uptime_secs: f64,
+    /// Elapsed real time in the current Bevy app generation.
+    pub generation_uptime_secs: f64,
     /// Total number of entities
     pub entity_count: usize,
     /// Asset counts by type
@@ -62,6 +64,7 @@ impl Default for HotReloadStats {
             cpu_core_count: 1,
             gil_enabled: false,
             uptime_secs: 0.0,
+            generation_uptime_secs: 0.0,
             entity_count: 0,
             asset_counts: HashMap::new(),
             last_error_timestamp: 0.0,
@@ -320,9 +323,7 @@ impl MemoryProfile {
             .map(|prev| rss_mb - prev.rss_mb)
             .unwrap_or(0.0);
 
-        if rss_mb > self.peak_rss_mb {
-            self.peak_rss_mb = rss_mb;
-        }
+        self.observe_rss(rss_mb);
 
         let snapshot = ReloadMemorySnapshot {
             generation,
@@ -339,11 +340,18 @@ impl MemoryProfile {
         self.snapshots.push(snapshot);
     }
 
+    /// Record an RSS sample for peak tracking.
+    pub fn observe_rss(&mut self, rss_mb: f64) {
+        if rss_mb > self.peak_rss_mb {
+            self.peak_rss_mb = rss_mb;
+        }
+    }
+
     /// Capture baseline RSS after first Startup
     pub fn capture_baseline(&mut self, rss_mb: f64) {
         if !self.baseline_captured {
             self.baseline_rss_mb = rss_mb;
-            self.peak_rss_mb = rss_mb;
+            self.observe_rss(rss_mb);
             self.baseline_captured = true;
         }
     }
@@ -560,6 +568,33 @@ mod tests {
         // Second call is a no-op
         profile.capture_baseline(200.0);
         assert_eq!(profile.baseline_rss_mb, 100.0);
+    }
+
+    #[test]
+    fn test_baseline_does_not_lower_recorded_peak() {
+        let mut profile = MemoryProfile::default();
+        // A reload snapshot can land before the first stats tick captures
+        // the baseline; the baseline must not lower the peak it recorded.
+        profile.capture_snapshot(1, 250.0, 5000, 20, 6);
+        assert_eq!(profile.peak_rss_mb, 250.0);
+
+        profile.capture_baseline(120.0);
+        assert_eq!(profile.baseline_rss_mb, 120.0);
+        assert_eq!(profile.peak_rss_mb, 250.0);
+    }
+
+    #[test]
+    fn test_peak_tracks_rss_between_reloads() {
+        let mut profile = MemoryProfile::default();
+        profile.capture_baseline(100.0);
+        assert_eq!(profile.peak_rss_mb, 100.0);
+
+        profile.observe_rss(180.0);
+        assert_eq!(profile.peak_rss_mb, 180.0);
+
+        // A dip does not lower the peak.
+        profile.observe_rss(150.0);
+        assert_eq!(profile.peak_rss_mb, 180.0);
     }
 
     #[test]

@@ -1,16 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use bevy::ecs::schedule::SystemSet;
 pub use pybevy_ecs::shared::system_runtime::{
-    HotReloadGeneration, generation_matches, startup_or_reload,
+    HotReloadGeneration, ReloadGenerationSet, generation_matches, startup_or_reload,
 };
-
-/// Groups every Python system registered by one hot-reload generation.
-///
-/// Backends remove this set once its rollback window has elapsed. Releasing an
-/// interpreter callable alone leaves its Bevy schedule graph node behind.
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ReloadGenerationSet(pub u32);
 
 use crate::lock_or_recover;
 
