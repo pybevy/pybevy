@@ -7,6 +7,13 @@ pub mod timer;
 
 use pyo3::prelude::*;
 
+pybevy_core::register_native_system_set!(
+    intern_time_systems,
+    bevy::time::TimeSystems,
+    module = "time",
+    name = "TimeSystems"
+);
+
 pub mod prelude {
     pub use crate::{
         plugin::PyTimePlugin,

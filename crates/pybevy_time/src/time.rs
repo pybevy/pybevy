@@ -1,9 +1,22 @@
 use std::time::Duration;
 
 use bevy::time::{Fixed, Real, Time, Virtual};
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{
+    PyResource, ResourceStorage, duration_from_hz, positive_duration_from_secs_f64,
+    public_error::{DURATION_ZERO, TIME_CONTEXT_TYPE_REQUIRED},
+    resource_initializer,
+};
 use pybevy_macros::pyresource;
-use pyo3::prelude::*;
+use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
+
+use crate::time_context::{PyFixed, PyReal, PyVirtual};
+
+fn require_positive_duration(duration: Duration) -> PyResult<Duration> {
+    if duration.is_zero() {
+        return Err(PyTypeError::new_err(DURATION_ZERO));
+    }
+    Ok(duration)
+}
 
 #[pyresource(Time, bridge)]
 #[pyclass(name = "Time", extends = PyResource, from_py_object)]
@@ -16,7 +29,26 @@ pub struct PyTime {
 impl PyTime {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
-        (Time::default().into(), PyResource).into()
+        resource_initializer(Time::default().into())
+    }
+
+    #[classmethod]
+    #[pyo3(signature = (key, /))]
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
+        key: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let py = cls.py();
+        let specialized = if key.is(PyFixed::type_object(py).as_any()) {
+            PyTimeFixed::type_object(py)
+        } else if key.is(PyReal::type_object(py).as_any()) {
+            PyTimeReal::type_object(py)
+        } else if key.is(PyVirtual::type_object(py).as_any()) {
+            PyTimeVirtual::type_object(py)
+        } else {
+            return Err(PyTypeError::new_err(TIME_CONTEXT_TYPE_REQUIRED));
+        };
+        Ok(specialized.unbind().into_any())
     }
 
     pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
@@ -75,12 +107,19 @@ impl PyTime {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self)
+        match self.as_ref() {
+            Ok(t) => format!(
+                "Time(elapsed={:.3}s, delta={:.3}s)",
+                t.elapsed_secs_f64(),
+                t.delta_secs_f64()
+            ),
+            Err(_) => "Time(<invalid>)".to_string(),
+        }
     }
 }
 
-#[pyresource(Time<Fixed>, bridge, "TimeFixed")]
-#[pyclass(name = "TimeFixed", extends = PyResource, from_py_object)]
+#[pyresource(Time<Fixed>, bridge, "_TimeFixed")]
+#[pyclass(name = "_TimeFixed", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeFixed {
     pub storage: ResourceStorage<Time<Fixed>>,
@@ -90,27 +129,33 @@ pub struct PyTimeFixed {
 impl PyTimeFixed {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
-        (Time::<Fixed>::default().into(), PyResource).into()
+        resource_initializer(Time::<Fixed>::default().into())
     }
 
     #[staticmethod]
     pub fn from_duration(py: Python<'_>, timestep: Duration) -> PyResult<Py<PyTimeFixed>> {
+        let timestep = require_positive_duration(timestep)?;
         Py::new(
             py,
-            (Time::<Fixed>::from_duration(timestep).into(), PyResource),
+            resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
         )
     }
 
     #[staticmethod]
     pub fn from_hz(py: Python<'_>, hz: f64) -> PyResult<Py<PyTimeFixed>> {
-        Py::new(py, (Time::<Fixed>::from_hz(hz).into(), PyResource))
+        let timestep = duration_from_hz(hz)?;
+        Py::new(
+            py,
+            resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
+        )
     }
 
     #[staticmethod]
     pub fn from_seconds(py: Python<'_>, seconds: f64) -> PyResult<Py<PyTimeFixed>> {
+        let timestep = positive_duration_from_secs_f64(seconds)?;
         Py::new(
             py,
-            (Time::<Fixed>::from_seconds(seconds).into(), PyResource),
+            resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
         )
     }
 
@@ -119,17 +164,19 @@ impl PyTimeFixed {
     }
 
     pub fn set_timestep(&mut self, timestep: Duration) -> PyResult<()> {
-        self.as_mut()?.set_timestep(timestep);
+        self.as_mut()?
+            .set_timestep(require_positive_duration(timestep)?);
         Ok(())
     }
 
     pub fn set_timestep_seconds(&mut self, seconds: f64) -> PyResult<()> {
-        self.as_mut()?.set_timestep_seconds(seconds);
+        self.as_mut()?
+            .set_timestep(positive_duration_from_secs_f64(seconds)?);
         Ok(())
     }
 
     pub fn set_timestep_hz(&mut self, hz: f64) -> PyResult<()> {
-        self.as_mut()?.set_timestep_hz(hz);
+        self.as_mut()?.set_timestep(duration_from_hz(hz)?);
         Ok(())
     }
 
@@ -206,12 +253,19 @@ impl PyTimeFixed {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self)
+        match self.as_ref() {
+            Ok(t) => format!(
+                "Time[Fixed](elapsed={:.3}s, timestep={:.3}s)",
+                t.elapsed_secs_f64(),
+                t.timestep().as_secs_f64()
+            ),
+            Err(_) => "Time[Fixed](<invalid>)".to_string(),
+        }
     }
 }
 
-#[pyresource(Time<Virtual>, bridge, "TimeVirtual")]
-#[pyclass(name = "TimeVirtual", extends = PyResource, from_py_object)]
+#[pyresource(Time<Virtual>, bridge, "_TimeVirtual")]
+#[pyclass(name = "_TimeVirtual", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeVirtual {
     pub storage: ResourceStorage<Time<Virtual>>,
@@ -221,7 +275,7 @@ pub struct PyTimeVirtual {
 impl PyTimeVirtual {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
-        (Time::<Virtual>::default().into(), PyResource).into()
+        resource_initializer(Time::<Virtual>::default().into())
     }
 
     pub fn pause(&mut self) -> PyResult<()> {
@@ -333,12 +387,20 @@ impl PyTimeVirtual {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self)
+        match self.as_ref() {
+            Ok(t) => format!(
+                "Time[Virtual](elapsed={:.3}s, relative_speed={}, paused={})",
+                t.elapsed_secs_f64(),
+                t.relative_speed(),
+                if t.is_paused() { "True" } else { "False" }
+            ),
+            Err(_) => "Time[Virtual](<invalid>)".to_string(),
+        }
     }
 }
 
-#[pyresource(Time<Real>)]
-#[pyclass(name = "TimeReal", extends = PyResource, skip_from_py_object)]
+#[pyresource(Time<Real>, bridge, "_TimeReal")]
+#[pyclass(name = "_TimeReal", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeReal {
     pub storage: ResourceStorage<Time<Real>>,
@@ -348,7 +410,7 @@ pub struct PyTimeReal {
 impl PyTimeReal {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
-        (Time::<Real>::default().into(), PyResource).into()
+        resource_initializer(Time::<Real>::default().into())
     }
 
     pub fn delta(&self) -> PyResult<Duration> {
@@ -407,6 +469,13 @@ impl PyTimeReal {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self)
+        match self.as_ref() {
+            Ok(t) => format!(
+                "Time[Real](elapsed={:.3}s, delta={:.3}s)",
+                t.elapsed_secs_f64(),
+                t.delta_secs_f64()
+            ),
+            Err(_) => "Time[Real](<invalid>)".to_string(),
+        }
     }
 }

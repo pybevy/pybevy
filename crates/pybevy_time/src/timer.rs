@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
-use pybevy_core::duration_from_py;
+use pybevy_core::{duration_from_py, duration_from_secs_f64};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -44,10 +44,10 @@ impl PyTimer {
     }
 
     #[staticmethod]
-    pub fn from_seconds(duration: f32, mode: PyTimerMode) -> Self {
-        Self {
-            timer: Timer::from_seconds(duration, mode.into()),
-        }
+    pub fn from_seconds(duration: f32, mode: PyTimerMode) -> PyResult<Self> {
+        Ok(Self {
+            timer: Timer::new(duration_from_secs_f64(duration.into())?, mode.into()),
+        })
     }
 
     pub fn tick(&mut self, delta: &Bound<'_, PyAny>) -> PyResult<()> {

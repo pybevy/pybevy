@@ -1,24 +1,41 @@
+import sys
 from datetime import timedelta
-from typing import ClassVar, Literal
+from typing import ClassVar, Final, Generic, Literal
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
 
 from pybevy.app import App, Plugin
-from pybevy.ecs import Resource
+from pybevy.ecs import Resource, SystemSet
 
 # Type alias for duration parameters - can be timedelta, float seconds, or int seconds
 Duration = timedelta | float | int
+
+_TimeContext = TypeVar(
+    "_TimeContext",
+    None,
+    "Fixed",
+    "Real",
+    "Virtual",
+    default=None,
+)
+
+TimeSystems: Final[SystemSet]
 
 class TimePlugin(Plugin):
     """Adds time functionality to Bevy applications.
 
     This plugin initializes and manages all time-related resources in the ECS world.
-    It automatically inserts Time, Time<Real>, Time<Virtual>, and Time<Fixed> resources,
+    It automatically inserts Time, Time[Real], Time[Virtual], and Time[Fixed] resources,
     and configures the time update systems that run each frame.
 
     **Resources Inserted:**
     - `Time` - Default time context (Virtual in Update, Fixed in FixedUpdate)
-    - `Time<Real>` - Real wall-clock time (unaffected by pause/speed)
-    - `Time<Virtual>` - Virtual game time (can be paused or time-scaled)
-    - `Time<Fixed>` - Fixed timestep time for physics/deterministic logic
+    - `Time[Real]` - Real wall-clock time (unaffected by pause/speed)
+    - `Time[Virtual]` - Virtual game time (can be paused or time-scaled)
+    - `Time[Fixed]` - Fixed timestep time for physics/deterministic logic
 
     **Plugin Groups:**
     - Included in DefaultPlugins
@@ -41,8 +58,8 @@ class TimePlugin(Plugin):
 
     Notes:
         - The time system must run before any systems that use Time resources
-        - Time<Virtual> can be paused or speed-adjusted via ResMut[TimeVirtual]
-        - Time<Fixed> timestep is configurable via ResMut[TimeFixed]
+        - Time[Virtual] can be paused or speed-adjusted via ResMut[Time[Virtual]]
+        - Time[Fixed] timestep is configurable via ResMut[Time[Fixed]]
     """
 
     def __init__(self) -> None: ...
@@ -68,13 +85,13 @@ class TimeUpdateStrategy(Resource):
         steps: int
         def __init__(self, steps: int) -> None: ...
 
-class Time(Resource):
+class Time(Resource, Generic[_TimeContext]):
     """A generic clock resource that tracks elapsed time and delta time.
 
     This is the main time resource used by Bevy systems. The `Time` resource
     automatically switches contexts:
-    - In Update schedule: refers to Time<Virtual> (game time, pauseable)
-    - In FixedUpdate schedule: refers to Time<Fixed> (fixed timestep)
+    - In Update schedule: refers to Time[Virtual] (game time, pauseable)
+    - In FixedUpdate schedule: refers to Time[Fixed] (fixed timestep)
 
     **Key Concepts:**
     - **Delta time**: Time elapsed since the previous update (frame time)
@@ -83,9 +100,22 @@ class Time(Resource):
 
     **Time Contexts:**
     - Use `Res[Time]` for context-aware time (recommended for most systems)
-    - Use `Res[Time<Real>]` for real wall-clock time (UI, profiling)
-    - Use `Res[Time<Virtual>]` for explicit virtual game time access
-    - Use `Res[Time<Fixed>]` for explicit fixed timestep access
+    - Use `Res[Time[Real]]` for real wall-clock time (UI, profiling)
+    - Use `Res[Time[Virtual]]` for explicit virtual game time access
+    - Use `Res[Time[Fixed]]` for explicit fixed timestep access
+
+    `Time[Real]` tracks actual wall-clock time. It is unaffected by pause or
+    speed adjustments, making it useful for UI animation, profiling, and
+    networking timestamps. It starts counting from Bevy's first time update.
+
+    `Time[Virtual]` is game time that can be paused, sped up, or slowed down
+    independently of real time. It also clamps its maximum delta to prevent
+    large jumps after events such as tab switching or suspend.
+
+    `Time[Fixed]` advances in fixed-size increments for physics and other
+    deterministic logic. Use it with `FixedUpdate`. Its default timestep is
+    64 Hz (15.625 ms), avoiding pathological interactions with common 60 Hz
+    display refresh rates.
 
     The time values are available as exact Duration with nanosecond precision,
     or as f32/f64 seconds for convenience. The clock does not support moving
@@ -110,11 +140,8 @@ class Time(Resource):
     Notes:
         - Frame delta time varies with monitor refresh rate and system load
         - Use elapsed_wrapped() for shader time uniforms to avoid precision loss
-        - Time<Virtual> can be paused or sped up via ResMut[TimeVirtual]
-
-    See Also:
-        - TimeVirtual: Pauseable game time with speed control
-        - TimeFixed: Fixed timestep time for deterministic logic
+        - Time[Virtual] exposes pause and speed-control methods
+        - Time[Fixed] exposes fixed-timestep methods and constructors
     """
 
     def __init__(self) -> None: ...
@@ -272,202 +299,132 @@ class Time(Resource):
             Wrapped elapsed time in seconds with f64 precision
         """
 
-class TimeVirtual(Resource):
-    """Virtual game time resource with pause and speed control.
-
-    This is the specialized Time<Virtual> resource that allows pausing
-    and controlling the speed of game time. Use ResMut[TimeVirtual] to
-    access pause/unpause and speed control methods.
-
-    The virtual clock can be paused, sped up, or slowed down independently
-    of real time. It also clamps maximum delta to prevent large jumps.
-    """
-
-    def __init__(self) -> None: ...
-
-    # Pause control
-    def pause(self) -> None:
+    # Time[Virtual]-only API
+    def pause(self: Time[Virtual]) -> None:
         """Pause the virtual clock.
 
         When paused, delta() returns zero and elapsed() does not grow.
         """
 
-    def unpause(self) -> None:
+    def unpause(self: Time[Virtual]) -> None:
         """Resume the virtual clock if paused."""
 
-    def is_paused(self) -> bool:
-        """Returns true if the virtual clock is currently paused."""
+    def is_paused(self: Time[Virtual]) -> bool:
+        """Return whether the virtual clock is currently paused."""
 
-    def was_paused(self) -> bool:
-        """Returns true if the virtual clock was paused at the start of this update."""
+    def was_paused(self: Time[Virtual]) -> bool:
+        """Return whether the virtual clock was paused at this update's start."""
 
-    # Speed control
-    def set_relative_speed(self, ratio: float) -> None:
+    def set_relative_speed(self: Time[Virtual], ratio: float) -> None:
         """Set the speed multiplier relative to real time.
 
         Args:
-            ratio: Speed multiplier (2.0 = twice as fast, 0.5 = half speed)
+            ratio: Speed multiplier, such as 2.0 for twice as fast or 0.5 for
+                half speed.
 
         Example:
-            # Slow motion effect
-            time_virtual.set_relative_speed(0.5)
-
-            # Fast forward
-            time_virtual.set_relative_speed(2.0)
+            ```python
+            virtual_time.set_relative_speed(0.5)  # Slow motion
+            virtual_time.set_relative_speed(2.0)  # Fast forward
+            ```
         """
 
-    def set_relative_speed_f64(self, ratio: float) -> None:
-        """Set the speed multiplier (f64 precision)."""
+    def set_relative_speed_f64(self: Time[Virtual], ratio: float) -> None:
+        """Set the speed multiplier using f64 precision."""
 
-    def relative_speed(self) -> float:
+    def relative_speed(self: Time[Virtual]) -> float:
         """Get the current speed multiplier."""
 
-    def relative_speed_f64(self) -> float:
-        """Get the current speed multiplier (f64 precision)."""
+    def relative_speed_f64(self: Time[Virtual]) -> float:
+        """Get the current speed multiplier using f64 precision."""
 
-    def effective_speed(self) -> float:
-        """Get the effective speed for this update.
+    def effective_speed(self: Time[Virtual]) -> float:
+        """Get this update's effective speed.
 
-        Returns 0.0 if paused, otherwise returns relative_speed.
+        Returns 0.0 if paused; otherwise returns relative_speed().
         """
 
-    def effective_speed_f64(self) -> float:
-        """Get the effective speed for this update (f64 precision)."""
+    def effective_speed_f64(self: Time[Virtual]) -> float:
+        """Get this update's effective speed using f64 precision."""
 
-    # Delta clamping
-    def max_delta(self) -> timedelta:
+    def max_delta(self: Time[Virtual]) -> timedelta:
         """Get the maximum delta time allowed in a single update."""
 
-    def set_max_delta(self, max_delta: timedelta) -> None:
+    def set_max_delta(self: Time[Virtual], max_delta: timedelta) -> None:
         """Set the maximum delta time allowed in a single update.
 
-        This prevents large time jumps (e.g., after tab switching or suspend).
-        Default is 250ms.
+        This prevents large time jumps after events such as tab switching or
+        suspend. The default is 250 ms.
         """
 
-    # Base Time methods
-    def delta(self) -> timedelta: ...
-    def delta_secs(self) -> float: ...
-    def delta_secs_f64(self) -> float: ...
-    def elapsed(self) -> timedelta: ...
-    def elapsed_secs(self) -> float: ...
-    def elapsed_secs_f64(self) -> float: ...
-    def advance_by(self, delta: timedelta) -> None: ...
-    def advance_to(self, elapsed: timedelta) -> None: ...
-    def wrap_period(self) -> timedelta: ...
-    def set_wrap_period(self, wrap_period: timedelta) -> None: ...
-    def elapsed_wrapped(self) -> timedelta: ...
-    def elapsed_secs_wrapped(self) -> float: ...
-    def elapsed_secs_wrapped_f64(self) -> float: ...
-
-class TimeFixed(Resource):
-    """Fixed timestep time resource.
-
-    This clock advances in fixed-size increments, which is useful for
-    physics and other logic that should have consistent behavior regardless
-    of framerate. Use with the FixedUpdate stage.
-
-    The default timestep is 64 Hz (15.625ms). This was chosen to avoid
-    pathological interactions with typical 60Hz monitor refresh rates.
-    """
-
-    def __init__(self) -> None: ...
-
-    @staticmethod
-    def from_duration(timestep: timedelta) -> TimeFixed:
-        """Create a TimeFixed with a specific timestep as Duration.
+    # Time[Fixed]-only API
+    @classmethod
+    def from_duration(
+        cls: type[Time[Fixed]], timestep: timedelta
+    ) -> Time[Fixed]:
+        """Create fixed time with a specific timestep duration.
 
         Args:
-            timestep: Timestep duration as timedelta
+            timestep: Fixed timestep as a timedelta.
 
         Example:
-            app.insert_resource(TimeFixed.from_duration(timedelta(milliseconds=16)))
+            ```python
+            app.insert_resource(
+                Time[Fixed].from_duration(timedelta(milliseconds=16))
+            )
+            ```
         """
 
-    @staticmethod
-    def from_hz(hz: float) -> TimeFixed:
-        """Create a TimeFixed with a specific timestep frequency.
+    @classmethod
+    def from_hz(cls: type[Time[Fixed]], hz: float) -> Time[Fixed]:
+        """Create fixed time with a specific timestep frequency.
 
         Args:
-            hz: Frequency in Hertz (e.g., 60.0 for 60 updates per second)
+            hz: Frequency in Hertz, such as 60.0 for 60 updates per second.
 
         Example:
-            app.insert_resource(TimeFixed.from_hz(60.0))
+            ```python
+            app.insert_resource(Time[Fixed].from_hz(60.0))
+            ```
         """
 
-    @staticmethod
-    def from_seconds(seconds: float) -> TimeFixed:
-        """Create a TimeFixed with a specific timestep duration.
+    @classmethod
+    def from_seconds(cls: type[Time[Fixed]], seconds: float) -> Time[Fixed]:
+        """Create fixed time with a timestep measured in seconds.
 
         Args:
-            seconds: Timestep duration in seconds (e.g., 0.016666 for ~60Hz)
+            seconds: Timestep duration, such as 1.0 / 60.0 for approximately
+                60 updates per second.
 
         Example:
-            app.insert_resource(TimeFixed.from_seconds(1.0 / 60.0))
+            ```python
+            app.insert_resource(Time[Fixed].from_seconds(1.0 / 60.0))
+            ```
         """
 
-    def timestep(self) -> timedelta:
+    def timestep(self: Time[Fixed]) -> timedelta:
         """Get the fixed timestep duration."""
 
-    def set_timestep(self, timestep: timedelta) -> None:
+    def set_timestep(self: Time[Fixed], timestep: timedelta) -> None:
         """Set the fixed timestep duration."""
 
-    def set_timestep_seconds(self, seconds: float) -> None:
+    def set_timestep_seconds(self: Time[Fixed], seconds: float) -> None:
         """Set the fixed timestep in seconds."""
 
-    def set_timestep_hz(self, hz: float) -> None:
-        """Set the fixed timestep in Hz (frequency)."""
+    def set_timestep_hz(self: Time[Fixed], hz: float) -> None:
+        """Set the fixed timestep frequency in Hertz."""
 
-    def overstep(self) -> timedelta:
+    def overstep(self: Time[Fixed]) -> timedelta:
         """Get the accumulated time beyond complete timesteps."""
 
-    def discard_overstep(self, discard: timedelta) -> None:
-        """Discard a part of the overstep amount."""
+    def discard_overstep(self: Time[Fixed], discard: timedelta) -> None:
+        """Discard part of the accumulated overstep."""
 
-    def overstep_fraction(self) -> float:
+    def overstep_fraction(self: Time[Fixed]) -> float:
         """Get the overstep as an f32 fraction of the timestep."""
 
-    def overstep_fraction_f64(self) -> float:
+    def overstep_fraction_f64(self: Time[Fixed]) -> float:
         """Get the overstep as an f64 fraction of the timestep."""
-
-    def delta(self) -> timedelta:
-        """Get the delta time for this fixed step."""
-
-    def delta_secs(self) -> float:
-        """Get the delta time for this fixed step in seconds."""
-
-    def delta_secs_f64(self) -> float:
-        """Get the delta time for this fixed step in seconds (f64 precision)."""
-
-    def elapsed(self) -> timedelta:
-        """Get the total elapsed time."""
-
-    def elapsed_secs(self) -> float:
-        """Get the total elapsed time in seconds."""
-
-    def elapsed_secs_f64(self) -> float:
-        """Get the total elapsed time in seconds (f64 precision)."""
-
-    def advance_to(self, elapsed: timedelta) -> None:
-        """Advance the clock to a specific elapsed time."""
-
-    def advance_by(self, delta: timedelta) -> None:
-        """Advance the clock by a specific duration."""
-
-    def wrap_period(self) -> timedelta:
-        """Get the current wrap period."""
-
-    def set_wrap_period(self, wrap_period: timedelta) -> None:
-        """Set the wrap period for elapsed time."""
-
-    def elapsed_wrapped(self) -> timedelta:
-        """Get elapsed time wrapped to the wrap period."""
-
-    def elapsed_secs_wrapped(self) -> float:
-        """Get wrapped elapsed time in seconds as f32."""
-
-    def elapsed_secs_wrapped_f64(self) -> float:
-        """Get wrapped elapsed time in seconds as f64."""
 
 class TimerMode:
     """Specifies Timer behavior when the duration is reached.
@@ -567,7 +524,7 @@ class Timer:
         Args:
             duration: Timer duration - can be timedelta, float (seconds), or int (seconds).
                      Defaults to 0.0 if not provided.
-            mode: Timer mode - TimerMode.Once or TimerMode.Repeating. Defaults to ONCE.
+            mode: Timer mode - TimerMode.Once or TimerMode.Repeating. Defaults to Once.
         """
 
     @staticmethod
@@ -787,7 +744,7 @@ class Timer:
 
         Notes:
             - Only meaningful for repeating timers with large deltas
-            - Same as 1 if just_finished() is True for ONCE timers
+            - Same as 1 if just_finished() is True for Once timers
         """
 
     def elapsed_secs(self) -> float:
@@ -826,7 +783,7 @@ class Timer:
         """Get the timer mode.
 
         Returns:
-            The current timer mode (ONCE or REPEATING)
+            The current timer mode (Once or Repeating)
         """
 
     def set_mode(self, mode: TimerMode) -> None:
@@ -836,7 +793,7 @@ class Timer:
             mode: The new timer mode (TimerMode.Once or TimerMode.Repeating)
 
         Notes:
-            - If switching from ONCE to REPEATING while finished, the timer resets
+            - If switching from Once to Repeating while finished, the timer resets
         """
 
     def finish(self) -> None:
@@ -944,87 +901,6 @@ class Stopwatch:
     def __eq__(self, other: object) -> bool: ...
 
 
-class TimeReal(Resource):
-    """Real wall-clock time resource.
-
-    This is the specialized Time<Real> resource that tracks actual wall-clock time.
-    It is not affected by pause, speed adjustments, or other virtual time modifications.
-
-    Use this for:
-    - UI animations that shouldn't pause with the game
-    - Profiling and performance measurement
-    - Real-time networking timestamps
-
-    The clock does not count time from startup to first update into elapsed,
-    but instead starts counting from the first update call.
-    """
-
-    def __init__(self) -> None: ...
-
-    def delta(self) -> timedelta:
-        """Get the time elapsed since the previous update.
-
-        Returns:
-            Time elapsed since last frame
-        """
-
-    def delta_secs(self) -> float:
-        """Get the delta time in seconds as f32.
-
-        Returns:
-            Delta time in seconds
-        """
-
-    def delta_secs_f64(self) -> float:
-        """Get the delta time in seconds as f64 (higher precision).
-
-        Returns:
-            Delta time in seconds with f64 precision
-        """
-
-    def elapsed(self) -> timedelta:
-        """Get the total time the clock has advanced since first update.
-
-        Returns:
-            Total elapsed time as Duration
-        """
-
-    def elapsed_secs(self) -> float:
-        """Get the total elapsed time in seconds as f32.
-
-        Returns:
-            Total elapsed time in seconds
-        """
-
-    def elapsed_secs_f64(self) -> float:
-        """Get the total elapsed time in seconds as f64 (higher precision).
-
-        Returns:
-            Total elapsed time in seconds with f64 precision
-        """
-
-    def advance_to(self, elapsed: timedelta) -> None:
-        """Advance the clock to a specific elapsed time."""
-
-    def advance_by(self, delta: timedelta) -> None:
-        """Advance the clock by a specific duration."""
-
-    def wrap_period(self) -> timedelta:
-        """Get the current wrap period."""
-
-    def set_wrap_period(self, wrap_period: timedelta) -> None:
-        """Set the wrap period for elapsed time."""
-
-    def elapsed_wrapped(self) -> timedelta:
-        """Get elapsed time wrapped to the wrap period."""
-
-    def elapsed_secs_wrapped(self) -> float:
-        """Get wrapped elapsed time in seconds as f32."""
-
-    def elapsed_secs_wrapped_f64(self) -> float:
-        """Get wrapped elapsed time in seconds as f64."""
-
-
 class Fixed:
     """Marker type for fixed timestep time.
 
@@ -1038,7 +914,7 @@ class Fixed:
         from pybevy.time import Time, Fixed
 
         # In Bevy Rust: Res<Time<Fixed>>
-        def fixed_update(time: Res[Time]) -> None:
+        def fixed_update(time: Res[Time[Fixed]]) -> None:
             # This system runs in FixedUpdate schedule
             pass
         ```
@@ -1058,10 +934,10 @@ class Real:
     Example:
         ```python
         from pybevy.ecs import Res
-        from pybevy.time import TimeReal
+        from pybevy.time import Real, Time
 
         # Real time is unaffected by game pause
-        def ui_animation(time_real: Res[TimeReal]) -> None:
+        def ui_animation(time_real: Res[Time[Real]]) -> None:
             # UI keeps animating even when game is paused
             pass
         ```
@@ -1080,10 +956,10 @@ class Virtual:
     Example:
         ```python
         from pybevy.ecs import ResMut
-        from pybevy.time import TimeVirtual
+        from pybevy.time import Time, Virtual
 
         # Control game time speed
-        def toggle_slow_motion(time: ResMut[TimeVirtual]) -> None:
+        def toggle_slow_motion(time: ResMut[Time[Virtual]]) -> None:
             if time.relative_speed() == 1.0:
                 time.set_relative_speed(0.5)  # Slow motion
             else:
