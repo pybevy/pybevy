@@ -1,27 +1,14 @@
 use bevy::camera::Camera3dDepthLoadOp;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(Camera3dDepthLoadOp, empty_tuple, unit_parens)]
 #[pyclass(name = "Camera3dDepthLoadOp", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyCamera3dDepthLoadOp {
-    Clear { value: f32 },
+    #[py_bevy(tuple)]
+    Clear {
+        value: f32,
+    },
     Load(),
-}
-
-impl From<Camera3dDepthLoadOp> for PyCamera3dDepthLoadOp {
-    fn from(op: Camera3dDepthLoadOp) -> Self {
-        match op {
-            Camera3dDepthLoadOp::Clear(value) => PyCamera3dDepthLoadOp::Clear { value },
-            Camera3dDepthLoadOp::Load => PyCamera3dDepthLoadOp::Load(),
-        }
-    }
-}
-
-impl From<PyCamera3dDepthLoadOp> for Camera3dDepthLoadOp {
-    fn from(op: PyCamera3dDepthLoadOp) -> Self {
-        match op {
-            PyCamera3dDepthLoadOp::Clear { value } => Camera3dDepthLoadOp::Clear(value),
-            PyCamera3dDepthLoadOp::Load() => Camera3dDepthLoadOp::Load,
-        }
-    }
 }

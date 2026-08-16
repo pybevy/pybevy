@@ -12,22 +12,9 @@ const DEFAULT_DEPTH_TEXTURE_USAGE: u32 = TextureUsages::RENDER_ATTACHMENT.bits()
 const DEFAULT_DEPTH_CLEAR_VALUE: f32 = 0.0;
 
 #[pycomponent(Camera3d, bridge)]
-#[pyclass(name = "Camera3d", extends = PyComponent, eq)]
+#[pyclass(name = "Camera3d", extends = PyComponent)]
 pub struct PyCamera3d {
     pub(crate) storage: ComponentStorage<Camera3d>,
-}
-
-impl PartialEq for PyCamera3d {
-    fn eq(&self, other: &Self) -> bool {
-        match (self.as_ref(), other.as_ref()) {
-            (Ok(a), Ok(b)) => {
-                PyCamera3dDepthLoadOp::from(a.depth_load_op.clone())
-                    == PyCamera3dDepthLoadOp::from(b.depth_load_op.clone())
-                    && a.depth_texture_usages.0 == b.depth_texture_usages.0
-            }
-            _ => false,
-        }
-    }
 }
 
 #[pymethods]

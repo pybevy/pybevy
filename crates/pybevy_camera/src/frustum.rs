@@ -19,28 +19,28 @@ pub struct PyFrustum {
 impl PyFrustum {
     #[new]
     #[pyo3(signature = (view_frustum = None))]
-    pub fn new(view_frustum: Option<PyViewFrustum>) -> PyClassInitializer<Self> {
+    pub fn new(view_frustum: Option<PyViewFrustum>) -> PyResult<PyClassInitializer<Self>> {
         let frustum = match view_frustum {
-            Some(view_frustum) => Frustum(view_frustum.into()),
+            Some(view_frustum) => Frustum(view_frustum.try_into()?),
             None => Frustum::default(),
         };
-        (
+        Ok((
             PyFrustum {
                 storage: ComponentStorage::owned(frustum),
             },
             PyComponent,
         )
-            .into()
+            .into())
     }
 
     #[getter]
     pub fn value(&self) -> PyResult<PyViewFrustum> {
-        Ok(self.as_ref()?.0.into())
+        Ok(self.storage.borrow_field_as(|f| &f.0)?)
     }
 
     #[setter]
     pub fn set_value(&mut self, view_frustum: PyViewFrustum) -> PyResult<()> {
-        self.as_mut()?.0 = view_frustum.into();
+        self.as_mut()?.0 = view_frustum.try_into()?;
         Ok(())
     }
 
@@ -59,7 +59,7 @@ impl PyFrustum {
                 "Frustum requires exactly 6 half-spaces",
             ));
         }
-        let frustum = self.as_mut()?;
+        let mut frustum = self.as_mut()?;
         for (i, hs) in half_spaces.into_iter().enumerate() {
             frustum.half_spaces[i] = hs.into();
         }
@@ -73,7 +73,7 @@ impl PyFrustum {
     pub fn intersects_sphere(&self, sphere: &PySphere, intersect_far: bool) -> PyResult<bool> {
         Ok(self
             .as_ref()?
-            .intersects_sphere(&sphere.into(), intersect_far))
+            .intersects_sphere(&sphere.try_into()?, intersect_far))
     }
 
     pub fn intersects_obb(
@@ -84,8 +84,8 @@ impl PyFrustum {
         intersect_far: bool,
     ) -> PyResult<bool> {
         Ok(self.as_ref()?.intersects_obb(
-            aabb.as_ref()?,
-            &world_from_local.get(),
+            aabb.as_ref()?.reborrow(),
+            &world_from_local.try_get()?,
             intersect_near,
             intersect_far,
         ))
@@ -98,6 +98,6 @@ impl PyFrustum {
     ) -> PyResult<bool> {
         Ok(self
             .as_ref()?
-            .contains_aabb(aabb.as_ref()?, &world_from_local.get()))
+            .contains_aabb(aabb.as_ref()?.reborrow(), &world_from_local.try_get()?))
     }
 }

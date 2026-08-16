@@ -22,11 +22,11 @@ impl PyVisibilityRange {
         use_aabb: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let start: Range<f32> = match start_margin {
-            Some(r) => r.into(),
+            Some(r) => r.try_into()?,
             None => 0.0..0.0,
         };
         let end: Range<f32> = match end_margin {
-            Some(r) => r.into(),
+            Some(r) => r.try_into()?,
             None => f32::INFINITY..f32::INFINITY,
         };
         Ok(Self::from_owned(VisibilityRange {
@@ -49,7 +49,8 @@ impl PyVisibilityRange {
 
     #[setter]
     pub fn set_start_margin(&mut self, value: &PyRange) -> PyResult<()> {
-        self.as_mut()?.start_margin = value.into();
+        let range = value.try_into()?;
+        self.as_mut()?.start_margin = range;
         Ok(())
     }
 
@@ -60,7 +61,8 @@ impl PyVisibilityRange {
 
     #[setter]
     pub fn set_end_margin(&mut self, value: &PyRange) -> PyResult<()> {
-        self.as_mut()?.end_margin = value.into();
+        let range = value.try_into()?;
+        self.as_mut()?.end_margin = range;
         Ok(())
     }
 

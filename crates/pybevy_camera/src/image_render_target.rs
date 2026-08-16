@@ -1,5 +1,3 @@
-use std::hash::{Hash, Hasher};
-
 use bevy::camera::ImageRenderTarget;
 use pybevy_core::{PyHandle, extract_handle_from_any};
 use pyo3::prelude::*;
@@ -9,18 +7,11 @@ use pyo3::prelude::*;
     module = "pybevy.camera",
     frozen,
     eq,
-    hash,
     from_py_object
 )]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyImageRenderTarget {
     pub(crate) inner: ImageRenderTarget,
-}
-
-impl Hash for PyImageRenderTarget {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.inner.hash(state);
-    }
 }
 
 impl From<ImageRenderTarget> for PyImageRenderTarget {

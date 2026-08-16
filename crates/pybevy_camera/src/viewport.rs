@@ -15,12 +15,16 @@ pub struct PyViewport {
 impl PyViewport {
     #[new]
     #[pyo3(signature = (physical_position = PyUVec2::ZERO, physical_size = PyUVec2::ONE, depth=(0.0, 1.0)))]
-    pub fn new(physical_position: PyUVec2, physical_size: PyUVec2, depth: (f32, f32)) -> Self {
-        Self::from_owned(Viewport {
-            physical_position: physical_position.into(),
-            physical_size: physical_size.into(),
+    pub fn new(
+        physical_position: PyUVec2,
+        physical_size: PyUVec2,
+        depth: (f32, f32),
+    ) -> PyResult<Self> {
+        Ok(Self::from_owned(Viewport {
+            physical_position: physical_position.try_into()?,
+            physical_size: physical_size.try_into()?,
             depth: depth.0..depth.1,
-        })
+        }))
     }
 
     #[getter]
@@ -30,7 +34,7 @@ impl PyViewport {
 
     #[setter]
     pub fn set_physical_position(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.physical_position = value.into();
+        self.as_mut()?.physical_position = value.try_into()?;
         Ok(())
     }
 
@@ -41,7 +45,7 @@ impl PyViewport {
 
     #[setter]
     pub fn set_physical_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.physical_size = value.into();
+        self.as_mut()?.physical_size = value.try_into()?;
         Ok(())
     }
 
@@ -91,7 +95,7 @@ impl PyViewport {
     }
 
     pub fn clamp_to_size(&mut self, size: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.clamp_to_size(size.into());
+        self.as_mut()?.clamp_to_size(size.try_into()?);
         Ok(())
     }
 
@@ -107,7 +111,7 @@ impl PyViewport {
                 result_viewport = Some(Viewport::default());
             }
             if let Some(ref mut vp) = result_viewport {
-                vp.physical_size = override_size.into();
+                vp.physical_size = override_size.try_into()?;
             }
         }
 

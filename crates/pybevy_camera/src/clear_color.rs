@@ -1,47 +1,33 @@
-use bevy::camera::ClearColor;
+use bevy::{camera::ClearColor, color::Color};
 use pybevy_color::color::PyColor;
-use pybevy_core::{PyResource, ResourceStorage, ResourceStorageInner};
+use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 #[pyresource(ClearColor, bridge)]
-#[pyclass(name = "ClearColor", extends = PyResource, eq, from_py_object)]
+#[pyclass(name = "ClearColor", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyClearColor {
     pub storage: ResourceStorage<ClearColor>,
-}
-
-impl PartialEq for PyClearColor {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.storage.inner, &other.storage.inner) {
-            (
-                ResourceStorageInner::Owned { data: a, .. },
-                ResourceStorageInner::Owned { data: b, .. },
-            ) => a.0 == b.0,
-            _ => match (self.as_ref(), other.as_ref()) {
-                (Ok(a), Ok(b)) => a.0 == b.0,
-                _ => false,
-            },
-        }
-    }
 }
 
 #[pymethods]
 impl PyClearColor {
     #[new]
     #[pyo3(signature = (color = ClearColor::default().0.into()))]
-    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
-        Self::from_owned(ClearColor(color.into())).into()
+    pub fn new(color: PyColor) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(ClearColor(Color::try_from(color)?)))
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.0, py)
+        PyColor::from_resource_field(&self.storage, |clear_color| &clear_color.0, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.0 = color.into();
+        let color = Color::try_from(color)?;
+        self.as_mut()?.0 = color;
         Ok(())
     }
 

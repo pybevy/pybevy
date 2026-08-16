@@ -61,8 +61,4 @@ impl PyCameraMainTextureUsages {
     pub fn __repr__(&self) -> String {
         format!("CameraMainTextureUsages(flags=0x{:x})", self.0.0.bits())
     }
-
-    pub fn __eq__(&self, other: &Self) -> bool {
-        self.0.0.bits() == other.0.0.bits()
-    }
 }

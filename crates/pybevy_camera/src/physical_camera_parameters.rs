@@ -103,11 +103,4 @@ impl PyPhysicalCameraParameters {
             self.inner.sensor_height
         )
     }
-
-    pub fn __eq__(&self, other: &Self) -> bool {
-        self.inner.aperture_f_stops == other.inner.aperture_f_stops
-            && self.inner.shutter_speed_s == other.inner.shutter_speed_s
-            && self.inner.sensitivity_iso == other.inner.sensitivity_iso
-            && self.inner.sensor_height == other.inner.sensor_height
-    }
 }
