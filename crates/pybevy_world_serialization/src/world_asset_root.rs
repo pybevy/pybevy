@@ -1,7 +1,7 @@
-use bevy::world_serialization::WorldAssetRoot;
-use pybevy_core::{PyComponent, PyHandle, extract_handle_from_any};
+use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
+use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
 use pybevy_macros::pyhandle;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::prelude::*;
 
 #[pyhandle(WorldAssetRoot)]
 #[pyclass(name = "WorldAssetRoot", extends = PyComponent, eq, frozen, skip_from_py_object)]
@@ -25,22 +25,16 @@ impl From<&WorldAssetRoot> for PyWorldAssetRoot {
 #[pymethods]
 impl PyWorldAssetRoot {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(handle)?;
+    pub fn new(value: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let value = extract_handle_from_any(value)?;
 
-        if let Some(name) = handle.asset_type_name()
-            && name != "WorldAsset"
-        {
-            return Err(PyTypeError::new_err(format!(
-                "AssetType `{}` does not match expected type `WorldAsset`",
-                name
-            )));
-        }
+        ensure_asset_type::<WorldAsset>(&value)?;
 
-        Ok((Self(handle), PyComponent).into())
+        Ok((Self(value), PyComponent).into())
     }
 
-    pub fn handle(&self) -> PyResult<PyHandle> {
+    #[getter]
+    pub fn value(&self) -> PyResult<PyHandle> {
         Ok(self.0.clone())
     }
 }

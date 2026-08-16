@@ -1,6 +1,6 @@
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
-from pybevy.ecs import Component, Entity, Message, Resource
+from pybevy.ecs import Component, Entity, Message, Resource, World
 
 class WorldSerializationPlugin(Plugin):
     def __init__(self) -> None: ...
@@ -16,6 +16,23 @@ class DynamicWorld(Asset):
     to spawn serialized world data.
     """
 
+    @staticmethod
+    def from_world(world: World) -> DynamicWorld:
+        """Extract all reflectable resources, entities, and components.
+
+        Wrapper-stored ``@component`` values are included through PyBevy's
+        reflected schema envelope. Emits ``UserWarning`` for present custom
+        resources or components using Python-object storage, which cannot be
+        represented in Bevy's scene format.
+        """
+
+    def serialize(self, world: World) -> str:
+        """Serialize this snapshot using the World's ``AppTypeRegistry``.
+
+        Bevy accepts a ``TypeRegistry`` directly. PyBevy accepts its owning
+        ``World`` because that registry is not a public Python value.
+        """
+
 class InstanceId:
     """Unique id identifying a spawned world instance."""
 
@@ -24,8 +41,9 @@ class InstanceId:
     def __hash__(self) -> int: ...
 
 class WorldAssetRoot(Component):
-    def __init__(self, handle: Handle[WorldAsset]) -> None: ...
-    def handle(self) -> Handle[WorldAsset]: ...
+    def __init__(self, value: Handle[WorldAsset]) -> None: ...
+    @property
+    def value(self) -> Handle[WorldAsset]: ...
 
 class DynamicWorldRoot(Component):
     """Component that spawns a DynamicWorld as a child of the entity.
@@ -33,8 +51,9 @@ class DynamicWorldRoot(Component):
     Once spawned, the entity will have a WorldInstance component.
     """
 
-    def __init__(self, handle: Handle[DynamicWorld]) -> None: ...
-    def handle(self) -> Handle[DynamicWorld]: ...
+    def __init__(self, value: Handle[DynamicWorld]) -> None: ...
+    @property
+    def value(self) -> Handle[DynamicWorld]: ...
 
 class WorldInstanceReady(Message):
     """Message sent when a world instance is fully loaded.
@@ -57,8 +76,13 @@ class WorldInstanceReady(Message):
         ```
     """
 
-    entity: Entity
-    instance_id: InstanceId
+    @property
+    def entity(self) -> Entity:
+        """The entity whose world instance finished loading."""
+
+    @property
+    def instance_id(self) -> InstanceId:
+        """The identifier of the world instance that became ready."""
 
     def __eq__(self, other: object) -> bool: ...
 
