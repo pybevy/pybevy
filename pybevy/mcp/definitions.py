@@ -37,6 +37,7 @@ def bridge_local_tools() -> list[JsonDict]:
             "feature_gate": None,
             "inputSchema": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "confirmation_key": {
                         "type": "string",
@@ -46,16 +47,36 @@ def bridge_local_tools() -> list[JsonDict]:
             },
         },
         {
+            "name": "get_guide",
+            "description": (
+                "Read a PyBevy topic guide by name or guide:// URI. "
+                "Use get_guide(\"index\") to discover names."
+            ),
+            "feature_gate": "api_discovery",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Guide name or guide:// URI",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+        {
             "name": "search_api",
             "description": (
                 "Search across .pyi stub files for type/function names. Returns matching lines (not structured). "
                 "Use for discovery when you don't know the class name. "
-                "If you already know the type name, use get_type_definition instead. "
+                "If you already know the class or function name, use get_type_definition instead. "
                 "When more matches exist than `limit`, the response notes how many were omitted."
             ),
             "feature_gate": "api_discovery",
             "inputSchema": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "query": {"type": "string", "description": "Case-insensitive substring match"},
                     "limit": {
@@ -71,12 +92,23 @@ def bridge_local_tools() -> list[JsonDict]:
         },
         {
             "name": "get_type_definition",
-            "description": "Get the full class definition (constructor, methods, fields) from Python stubs.",
+            "description": (
+                "Get a structured class or function definition from Python stubs. Class results "
+                "include documentation, constructors, methods, fields, class-level constants, and nested variants; function results include "
+                "their signature, return type, and documentation. Ambiguous short names return qualified candidates."
+            ),
             "feature_gate": "api_discovery",
             "inputSchema": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
-                    "type_name": {"type": "string", "description": "Class name to look up"},
+                    "type_name": {
+                        "type": "string",
+                        "description": (
+                            "Short or qualified class/function name, for example Transform, image.Image, "
+                            "material.material, or pybevy.camera.RenderTarget.Image"
+                        ),
+                    },
                 },
                 "required": ["type_name"],
             },
@@ -87,6 +119,7 @@ def bridge_local_tools() -> list[JsonDict]:
             "feature_gate": None,
             "inputSchema": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "schedule_id": {"type": "string", "description": "Schedule ID returned by schedule tool in async mode"},
                 },

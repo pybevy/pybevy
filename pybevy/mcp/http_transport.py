@@ -73,7 +73,6 @@ class SessionStore:
             if session.bridge._recorder:
                 session.bridge._recorder.close()
             session.bridge._stop_subprocess()
-            session.bridge._cleanup_hub_session()
         return session
 
     def sweep_expired(self) -> None:

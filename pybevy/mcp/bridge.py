@@ -1,7 +1,8 @@
 """MCP stdio bridge for AI integration.
 
 Two-mode dispatch:
-  Mode A (no engine): local tools only (get_started, run_scene, search_api, get_type_definition)
+  Mode A (no engine): local tools only (get_started, get_guide, run_scene,
+  search_api, get_type_definition)
   Mode B (engine running): forward via HTTP REST to ControlPlugin, inject bridge-only tools
 """
 
@@ -14,22 +15,41 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any
-from urllib.parse import quote
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any, TypeVar
 
-import httpx
-
+from .._pybevy import mcp as _rust_mcp  # type: ignore[import-not-found]
 from . import ApiIndex
 from .definitions import (
     builtin_prompts,
     builtin_tools,
     filtered_resources,
 )
-from .engine import build_engine_env, find_free_port, has_display
+from .engine import (
+    build_engine_env,
+    find_free_port,
+)
 from .recorder import SessionRecorder
 
 type JsonId = int | str | None
 type JsonDict = dict[str, Any]
+
+_ControlConnectError = _rust_mcp._ControlConnectError
+_ControlHttpStatusError = _rust_mcp._ControlHttpStatusError
+_ControlTimeoutError = _rust_mcp._ControlTimeoutError
+_control_health = _rust_mcp._control_health
+_control_last_error = _rust_mcp._control_last_error
+_control_request_scene_resource = _rust_mcp._control_request_scene_resource
+_control_request_tool = _rust_mcp._control_request_tool
+_CapturedLine = TypeVar("_CapturedLine")
+
+
+def _server_version() -> str:
+    """Installed pybevy version, reported to MCP clients in `serverInfo`."""
+    try:
+        return version("pybevy")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def _log(msg: str) -> None:
@@ -43,11 +63,20 @@ def _log(msg: str) -> None:
 # alsa-lib device probing and similar C-library noise) are not errors themselves.
 _NATIVE_ERROR_LINE = re.compile(r"(\S+ ){0,3}error:", re.IGNORECASE)
 
+# Bevy colours its tracing output even when stderr is a pipe, so captured lines
+# arrive as "\x1b[2m<ts>\x1b[0m \x1b[31mERROR\x1b[0m \x1b[2m<target>...".
+# Classify on the stripped text; the raw line is what gets returned.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(line: str) -> str:
+    return _ANSI_ESCAPE.sub("", line)
+
 
 def _is_log_error_line(line: str) -> bool:
     """Check if line is a tracing/log ERROR line (e.g. 'ERROR bevy_render::...')."""
     # Strip optional timestamp prefix like "2024-01-01T12:00:00.000Z "
-    stripped = line.lstrip()
+    stripped = _strip_ansi(line).lstrip()
     # Match "ERROR " at start, or after timestamp-like prefix
     if stripped.startswith("ERROR "):
         return True
@@ -60,16 +89,18 @@ LOAD_SCENE_TOOL: JsonDict = {
     "name": "run_scene",
     "description": (
         "Start a PyBevy scene. Launches (or restarts) the Bevy app subprocess "
-        "with hot-reload. Only call this ONCE to start the scene. "
-        "After that, just edit the .py file and use reload or reload_and_capture. "
-        "Do NOT call run_scene again unless switching to a different scene file."
+        "with hot-reload. For ordinary code changes, call this once, then edit "
+        "the .py file and use reload or reload_and_capture. Call it again when "
+        "switching scenes, adding or removing bridge-backed plugins, changing "
+        "core plugin composition, or requiring a clean restart."
     ),
     "inputSchema": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Path to the Python scene file (e.g. 'examples/mcp/mcp_scene.py')",
+                "description": "Path to the Python scene file (e.g. 'scenes/my_scene.py')",
             },
             "headless": {
                 "type": "boolean",
@@ -81,20 +112,26 @@ LOAD_SCENE_TOOL: JsonDict = {
     },
 }
 
+_MAX_CAPTURED_OUTPUT_LINES = 100
+
+
 GET_LOGS_TOOL: JsonDict = {
     "name": "get_logs",
     "description": (
-        "Get recent Bevy subprocess logs (stderr output). Use errors_only=true "
-        "to see only Python tracebacks and errors. Call this after reload "
-        "to check for errors, or anytime to see print() output from systems."
+        "Get recent captured Bevy subprocess stdout and stderr. With errors_only=true, "
+        "combine the live Python system error with matching stderr errors. "
+        "Use get_last_error as the primary Python check after reload."
     ),
     "inputSchema": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "lines": {
                 "type": "integer",
-                "description": "Number of recent log lines to return (default 50, max 100)",
+                "description": "Number of recent combined output lines to return (default 50, max 100)",
                 "default": 50,
+                "minimum": 1,
+                "maximum": _MAX_CAPTURED_OUTPUT_LINES,
             },
             "errors_only": {
                 "type": "boolean",
@@ -106,73 +143,24 @@ GET_LOGS_TOOL: JsonDict = {
 }
 
 
-_LONG_TIMEOUT_TOOLS = {"capture_timeline", "capture_turnaround", "reload_and_capture", "capture_depth", "schedule_actions"}
+_LONG_TIMEOUT_TOOLS = {
+    "capture_screenshot",
+    "capture_timeline",
+    "capture_turnaround",
+    "reload_and_capture",
+    "capture_depth",
+    "capture_stats",
+    "schedule_actions",
+}
 
 _SCREENSHOT_TOOLS = {
-    "capture_screenshot", "capture_timeline",
-    "capture_turnaround", "capture_depth", "reload_and_capture",
+    "capture_screenshot",
+    "capture_timeline",
+    "capture_turnaround",
+    "capture_depth",
+    "reload_and_capture",
 }
 
-_SCREENSHOT_DIR: str | None = None
-
-
-def _get_screenshot_dir() -> str:
-    """Get or create the screenshot output directory."""
-    global _SCREENSHOT_DIR
-    if _SCREENSHOT_DIR is None:
-        import tempfile  # noqa: PLC0415
-
-        _SCREENSHOT_DIR = tempfile.mkdtemp(prefix="pybevy-screenshots-")
-        _log(f"[MCP Bridge] Screenshot dir: {_SCREENSHOT_DIR}")
-    return _SCREENSHOT_DIR
-
-
-def _save_screenshot_to_file(base64_data: str, tool_name: str) -> str | None:
-    """Decode base64 PNG and save to a temp file. Returns the file path."""
-    import base64  # noqa: PLC0415
-
-    try:
-        screenshot_dir = _get_screenshot_dir()
-        timestamp = int(time.time() * 1000)
-        filename = f"{tool_name}_{timestamp}.png"
-        file_path = os.path.join(screenshot_dir, filename)
-
-        png_bytes = base64.b64decode(base64_data)
-        with open(file_path, "wb") as f:
-            f.write(png_bytes)
-
-        _log(f"[MCP Bridge] Saved screenshot: {file_path} ({len(png_bytes)} bytes)")
-        return file_path
-    except Exception as e:
-        _log(f"[MCP Bridge] Failed to save screenshot: {e}")
-        return None
-
-
-# REST routing for tools that use simple method + path (no path interpolation needed).
-# Tools requiring entity/component path segments are handled by explicit branches
-# in _call_rest_api() instead.
-_TOOL_TO_REST: dict[str, tuple[str, str]] = {
-    "query_entities": ("POST", "/api/v1/query"),
-    "capture_timeline": ("POST", "/api/v1/screenshot/timeline"),
-    "capture_turnaround": ("POST", "/api/v1/screenshot/turnaround"),
-    "capture_depth": ("POST", "/api/v1/screenshot/depth"),
-    "reload": ("POST", "/api/v1/reload"),
-    "get_reload_status": ("GET", "/api/v1/reload/status"),
-    "get_last_error": ("GET", "/api/v1/error"),
-    "spawn_entity": ("POST", "/api/v1/entities"),
-    "batch": ("POST", "/api/v1/batch"),
-    "get_scene_summary": ("GET", "/api/v1/scene/summary"),
-    "reload_and_capture": ("POST", "/api/v1/reload/capture"),
-    "pause_time": ("POST", "/api/v1/time/pause"),
-    "resume_time": ("POST", "/api/v1/time/resume"),
-    "set_time_scale": ("POST", "/api/v1/time/scale"),
-    "get_time_status": ("GET", "/api/v1/time"),
-    "seek_time": ("POST", "/api/v1/time/seek"),
-    "run_code": ("POST", "/api/v1/execute"),
-    "get_performance": ("GET", "/api/v1/performance"),
-    "get_registry": ("GET", "/api/v1/debug/registry"),
-    "schedule_actions": ("POST", "/api/v1/schedule"),
-}
 
 class McpBridge:
     """Stdio MCP bridge that manages a Bevy engine and dispatches JSON-RPC."""
@@ -184,16 +172,20 @@ class McpBridge:
         *,
         record: bool = False,
     ) -> None:
-        self._scene_path = scene_path
+        self._scene_path = os.path.abspath(scene_path) if scene_path else None
+        self._scene_display_path = scene_path
         self._protocol_version = protocol_version
         self._recorder: SessionRecorder | None = SessionRecorder() if record else None
         self._subprocess: subprocess.Popen[bytes] | None = None
         self._subprocess_port: int | None = None
         self._stderr_lines: list[str] = []
-        self._stderr_lock = threading.Lock()
+        self._stderr_repeat_counts: list[int] = []
+        self._output_lines: list[tuple[str, str]] = []
+        self._output_repeat_counts: list[int] = []
+        self._output_lock = threading.Lock()
+        self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
-        self._hub_session_id: str | None = None
-        self._hub_port: int | None = None
+        self._reaper_thread: threading.Thread | None = None
         self._pending_notifications: list[JsonDict] = []
 
         self._tools = builtin_tools()
@@ -220,11 +212,9 @@ class McpBridge:
 
     @property
     def _engine_port(self) -> int:
-        if self._hub_port is not None:
-            return self._hub_port
         if self._subprocess_port is not None:
             return self._subprocess_port
-        return 8420
+        raise RuntimeError("No owned scene control port")
 
     @property
     def _base_url(self) -> str:
@@ -245,7 +235,11 @@ class McpBridge:
                     request: JsonDict = json.loads(line)
                 except json.JSONDecodeError as e:
                     self._write_response(
-                        {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"Parse error: {e}"}}
+                        {
+                            "jsonrpc": "2.0",
+                            "id": None,
+                            "error": {"code": -32700, "message": f"Parse error: {e}"},
+                        }
                     )
                     continue
 
@@ -260,11 +254,8 @@ class McpBridge:
             if self._recorder:
                 self._recorder.close()
             self._stop_subprocess()
-            self._cleanup_hub_session()
 
     def _has_engine(self) -> bool:
-        if self._hub_session_id is not None:
-            return True
         return self._subprocess is not None and self._subprocess.poll() is None
 
     def _no_engine_message(self) -> str:
@@ -305,7 +296,9 @@ class McpBridge:
             return self._dispatch_mode_b(method, req_id, params)
         return self._dispatch_mode_a(method, req_id, params)
 
-    def _dispatch_mode_a(self, method: str, req_id: JsonId, params: JsonDict) -> JsonDict | None:
+    def _dispatch_mode_a(
+        self, method: str, req_id: JsonId, params: JsonDict
+    ) -> JsonDict | None:
         """Mode A: no engine. Only bridge-local tools."""
         if method == "tools/list":
             return self._handle_tools_list_local(req_id)
@@ -313,6 +306,8 @@ class McpBridge:
             return self._handle_tools_call_local(req_id, params)
         if method == "resources/list":
             return self._handle_resources_list_local(req_id)
+        if method == "resources/templates/list":
+            return self._handle_resource_templates_list(req_id)
         if method == "resources/read":
             return self._handle_resources_read_local(req_id, params)
         if method == "prompts/list":
@@ -321,7 +316,9 @@ class McpBridge:
             return self._handle_prompts_get(req_id, params)
         return self._error(req_id, -32601, f"Method not found: {method}")
 
-    def _dispatch_mode_b(self, method: str, req_id: JsonId, params: JsonDict) -> JsonDict | None:
+    def _dispatch_mode_b(
+        self, method: str, req_id: JsonId, params: JsonDict
+    ) -> JsonDict | None:
         """Mode B: engine running. Forward tool calls via HTTP."""
         if method == "tools/list":
             return self._handle_tools_list_full(req_id)
@@ -329,6 +326,8 @@ class McpBridge:
             return self._handle_tools_call_forwarded(req_id, params)
         if method == "resources/list":
             return self._handle_resources_list_full(req_id)
+        if method == "resources/templates/list":
+            return self._handle_resource_templates_list(req_id)
         if method == "resources/read":
             return self._handle_resources_read_mode_b(req_id, params)
         if method == "prompts/list":
@@ -348,20 +347,26 @@ class McpBridge:
                     "prompts": {},
                     "logging": {},
                 },
-                "serverInfo": {"name": "pybevy-mcp", "version": "0.1.0"},
+                "serverInfo": {"name": "pybevy-mcp", "version": _server_version()},
                 "instructions": self._instructions,
             },
         )
 
     def _handle_tools_list_local(self, req_id: JsonId) -> JsonDict:
-        # Expose ALL tools even without engine — some MCP clients (Codex, Gemini)
+        # Expose ALL tools even without engine: some MCP clients (Codex, Gemini)
         # don't support notifications/tools/list_changed, so they'd never see
         # engine tools if we only added them after run_scene.
         return self._handle_tools_list_full(req_id)
 
-    def _handle_tools_call_local(self, req_id: JsonId, params: JsonDict) -> JsonDict | None:
+    def _handle_tools_call_local(
+        self, req_id: JsonId, params: JsonDict
+    ) -> JsonDict | None:
         tool_name = str(params.get("name", ""))
-        arguments: JsonDict = params.get("arguments") or {}  # type: ignore[assignment]
+        arguments = params.get("arguments") or {}
+        argument_error = self._tool_argument_error(tool_name, arguments)
+        if argument_error:
+            return self._error(req_id, -32602, argument_error)
+        assert isinstance(arguments, dict)
 
         if tool_name == "get_started":
             return self._handle_get_started(req_id, arguments)
@@ -369,6 +374,8 @@ class McpBridge:
             return self._handle_run_scene(req_id, arguments)
         if tool_name == "get_logs":
             return self._handle_get_logs(req_id, arguments)
+        if tool_name == "get_guide":
+            return self._handle_get_guide(req_id, arguments)
         if tool_name == "search_api":
             return self._handle_search_api(req_id, arguments)
         if tool_name == "get_type_definition":
@@ -376,46 +383,70 @@ class McpBridge:
         return self._error(req_id, -32603, self._no_engine_message())
 
     def _handle_resources_list_local(self, req_id: JsonId) -> JsonDict:
-        # Expose all resources including scene:// — clients that don't support
+        # Expose all resources including scene://. Clients that don't support
         # list_changed would never see them otherwise.
         return self._handle_resources_list_full(req_id)
 
-    def _handle_resources_read_local(self, req_id: JsonId, params: JsonDict) -> JsonDict:
+    def _handle_resources_read_local(
+        self, req_id: JsonId, params: JsonDict
+    ) -> JsonDict:
         uri = str(params.get("uri", ""))
 
         if uri == "guide://index" and self._api_index:
             text = self._api_index.get_guide_index()
             return self._success(
                 req_id,
-                {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]},
+                {
+                    "contents": [
+                        {"uri": uri, "mimeType": "application/json", "text": text}
+                    ]
+                },
             )
 
         if uri.startswith("guide://"):
-            name = uri[len("guide://"):]
+            name = uri[len("guide://") :]
             if self._api_index:
                 content = self._api_index.get_guide(name)
                 if content:
                     text = json.dumps({"name": name, "content": content}, indent=2)
                     return self._success(
                         req_id,
-                        {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]},
+                        {
+                            "contents": [
+                                {
+                                    "uri": uri,
+                                    "mimeType": "application/json",
+                                    "text": text,
+                                }
+                            ]
+                        },
                     )
 
         if uri == "api://index" and self._api_index:
             text = self._api_index.get_index()
             return self._success(
                 req_id,
-                {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]},
+                {
+                    "contents": [
+                        {"uri": uri, "mimeType": "application/json", "text": text}
+                    ]
+                },
             )
 
         if uri.startswith("api://module/") and self._api_index:
-            module_name = uri[len("api://module/"):]
+            module_name = uri[len("api://module/") :]
             module_content = self._api_index.get_module_content(module_name)
             if module_content:
-                text = json.dumps({"module": module_name, "content": module_content}, indent=2)
+                text = json.dumps(
+                    {"module": module_name, "content": module_content}, indent=2
+                )
                 return self._success(
                     req_id,
-                    {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]},
+                    {
+                        "contents": [
+                            {"uri": uri, "mimeType": "application/json", "text": text}
+                        ]
+                    },
                 )
 
         if uri.startswith("scene://"):
@@ -424,7 +455,10 @@ class McpBridge:
         return self._error(req_id, -32602, f"Unknown resource: {uri}")
 
     def _handle_prompts_list(self, req_id: JsonId) -> JsonDict:
-        prompts = [{"name": p["name"], "description": p["description"], "arguments": []} for p in self._prompts]
+        prompts = [
+            {"name": p["name"], "description": p["description"], "arguments": []}
+            for p in self._prompts
+        ]
         return self._success(req_id, {"prompts": prompts})
 
     def _handle_prompts_get(self, req_id: JsonId, params: JsonDict) -> JsonDict:
@@ -434,12 +468,22 @@ class McpBridge:
                 content = str(p.get("content", ""))
                 return self._success(
                     req_id,
-                    {"messages": [{"role": "user", "content": {"type": "text", "text": content}}]},
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": {"type": "text", "text": content},
+                            }
+                        ]
+                    },
                 )
         return self._error(req_id, -32602, f"Unknown prompt: {name}")
 
     def _handle_prompts_list_full(self, req_id: JsonId) -> JsonDict:
-        prompts = [{"name": p["name"], "description": p["description"], "arguments": []} for p in self._prompts]
+        prompts = [
+            {"name": p["name"], "description": p["description"], "arguments": []}
+            for p in self._prompts
+        ]
         return self._success(req_id, {"prompts": prompts})
 
     def _handle_prompts_get_full(self, req_id: JsonId, params: JsonDict) -> JsonDict:
@@ -454,25 +498,99 @@ class McpBridge:
         return self._success(req_id, {"tools": tools})
 
     def _handle_resources_list_full(self, req_id: JsonId) -> JsonDict:
-        resources = []
+        resources: list[JsonDict] = []
         for res in filtered_resources(api_discovery=True):
-            resources.append({
-                "uri": res.get("uri", ""),
-                "name": res.get("name", ""),
-                "description": res.get("description", ""),
-                "mimeType": res.get("mimeType", "text/plain"),
-            })
+            uri = res.get("uri")
+            if not isinstance(uri, str):
+                continue
+            resources.append(
+                {
+                    "uri": uri,
+                    "name": res.get("name", ""),
+                    "description": res.get("description", ""),
+                    "mimeType": res.get("mimeType", "text/plain"),
+                }
+            )
+
+        # guide://index is useful to clients that can follow resource URIs from
+        # its contents, but many MCP adapters expose only resources returned by
+        # resources/list. Advertise each guide so those adapters can make every
+        # guide directly callable as well.
+        if self._api_index:
+            try:
+                guide_index = json.loads(self._api_index.get_guide_index())
+            except (TypeError, json.JSONDecodeError):
+                guide_index = []
+
+            listed_uris = {resource["uri"] for resource in resources}
+            if isinstance(guide_index, list):
+                for guide in guide_index:
+                    if not isinstance(guide, dict):
+                        continue
+                    name = guide.get("name")
+                    if not isinstance(name, str) or not name:
+                        continue
+                    uri = f"guide://{name}"
+                    if uri in listed_uris:
+                        continue
+                    title = guide.get("title")
+                    description = guide.get("description")
+                    fallback_description = (
+                        title
+                        if isinstance(title, str)
+                        else f"Read the {name} PyBevy guide."
+                    )
+                    resources.append(
+                        {
+                            "uri": uri,
+                            # A stable name gives resource-to-tool adapters names
+                            # such as get_guide_mesh and
+                            # get_guide_recipes_outdoor.
+                            "name": f"Guide {name}",
+                            "description": (
+                                description
+                                if isinstance(description, str) and description
+                                else fallback_description
+                            ),
+                            "mimeType": "application/json",
+                        }
+                    )
+                    listed_uris.add(uri)
         return self._success(req_id, {"resources": resources})
 
-    def _handle_resources_read_mode_b(self, req_id: JsonId, params: JsonDict) -> JsonDict:
+    def _handle_resource_templates_list(self, req_id: JsonId) -> JsonDict:
+        templates: list[JsonDict] = []
+        for resource in filtered_resources(api_discovery=True):
+            uri_template = resource.get("uriTemplate")
+            if not isinstance(uri_template, str):
+                continue
+            templates.append(
+                {
+                    "uriTemplate": uri_template,
+                    "name": resource.get("name", ""),
+                    "description": resource.get("description", ""),
+                    "mimeType": resource.get("mimeType", "text/plain"),
+                }
+            )
+        return self._success(req_id, {"resourceTemplates": templates})
+
+    def _handle_resources_read_mode_b(
+        self, req_id: JsonId, params: JsonDict
+    ) -> JsonDict:
         uri = str(params.get("uri", ""))
         if uri.startswith("scene://"):
             return self._forward_scene_resource(req_id, uri)
         return self._handle_resources_read_local(req_id, params)
 
-    def _handle_tools_call_forwarded(self, req_id: JsonId, params: JsonDict) -> JsonDict | None:
+    def _handle_tools_call_forwarded(
+        self, req_id: JsonId, params: JsonDict
+    ) -> JsonDict | None:
         tool_name = str(params.get("name", ""))
-        arguments: JsonDict = params.get("arguments") or {}  # type: ignore[assignment]
+        arguments = params.get("arguments") or {}
+        argument_error = self._tool_argument_error(tool_name, arguments)
+        if argument_error:
+            return self._error(req_id, -32602, argument_error)
+        assert isinstance(arguments, dict)
 
         if tool_name == "get_started":
             return self._handle_get_started(req_id, arguments)
@@ -480,24 +598,44 @@ class McpBridge:
             return self._handle_run_scene(req_id, arguments)
         if tool_name == "get_logs":
             return self._handle_get_logs(req_id, arguments)
+        if tool_name == "get_guide":
+            return self._handle_get_guide(req_id, arguments)
         if tool_name == "search_api":
             return self._handle_search_api(req_id, arguments)
         if tool_name == "get_type_definition":
             return self._handle_get_type_definition(req_id, arguments)
 
         if tool_name in ("reload", "reload_and_capture"):
-            with self._stderr_lock:
+            with self._output_lock:
                 self._stderr_lines.clear()
+                self._stderr_repeat_counts.clear()
+                self._output_lines.clear()
+                self._output_repeat_counts.clear()
 
         if tool_name == "schedule_actions":
             # Validate that no action uses a bridge-local tool
-            _bridge_local = {"schedule_actions", "get_schedule_result", "run_scene", "get_started", "get_logs", "search_api", "get_type_definition"}
+            _bridge_local = {
+                "schedule_actions",
+                "get_schedule_result",
+                "run_scene",
+                "get_started",
+                "get_logs",
+                "get_guide",
+                "search_api",
+                "get_type_definition",
+            }
             for action in arguments.get("actions", []):
                 tool = action.get("tool", "")
                 if tool in _bridge_local:
-                    return self._error(req_id, -32602, f"Tool '{tool}' cannot be used inside a schedule (bridge-local tool)")
+                    return self._error(
+                        req_id,
+                        -32602,
+                        f"Tool '{tool}' cannot be used inside a schedule (bridge-local tool)",
+                    )
             # Dynamic timeout based on max 'at' value in actions
-            max_at = max((a.get("at", 0) for a in arguments.get("actions", [])), default=0)
+            max_at = max(
+                (a.get("at", 0) for a in arguments.get("actions", [])), default=0
+            )
             timeout = max(max_at + 60.0, 120.0)
         elif tool_name in _LONG_TIMEOUT_TOOLS:
             timeout = 120.0
@@ -547,22 +685,28 @@ class McpBridge:
                     )
 
             return self._success(req_id, {"content": content})
-        except httpx.TimeoutException:
+        except _ControlTimeoutError:
             hint = ""
-            _time_tools = {"pause_time", "resume_time", "set_time_scale", "get_time_status", "seek_time"}
+            _time_tools = {
+                "pause_time",
+                "resume_time",
+                "set_time_scale",
+                "get_time_status",
+                "seek_time",
+            }
             if tool_name not in _time_tools:
                 hint = " Hint: if scene time is paused or the window is minimized, the engine may stop processing requests. Try resume_time or focus the window."
-            return self._error(req_id, -32603, f"Engine timeout ({timeout:.0f}s) for {tool_name}.{hint}")
-        except httpx.ConnectError:
-            return self._error(req_id, -32603, "Engine not responding. Use 'run_scene' to restart.")
-        except httpx.HTTPStatusError as e:
-            # Extract structured error message from JSON response body
-            try:
-                error_json = e.response.json()
-                msg = error_json.get("error", str(e))
-            except Exception:
-                msg = str(e)
-            return self._error(req_id, -32603, msg)
+            return self._error(
+                req_id,
+                -32603,
+                f"Engine timeout ({timeout:.0f}s) for {tool_name}.{hint}",
+            )
+        except _ControlConnectError:
+            return self._error(
+                req_id, -32603, "Engine not responding. Use 'run_scene' to restart."
+            )
+        except _ControlHttpStatusError as e:
+            return self._error(req_id, -32603, str(e))
         except Exception as e:
             return self._error(req_id, -32603, f"HTTP error: {e}")
 
@@ -594,9 +738,9 @@ class McpBridge:
     def _format_tool_result(tool_name: str, result: JsonDict) -> list[JsonDict]:
         """Format engine response as MCP content blocks, extracting images.
 
-        Screenshots are saved to temp files and returned as MCP image content
-        blocks. This works with Claude Code natively and avoids token-limit
-        issues with large base64 payloads.
+        Screenshots are returned as MCP image content blocks. Large images use
+        bounded inline previews so provider download limits do not discard an
+        otherwise successful capture.
         """
         # Schedule results: extract images from action results
         if tool_name in ("schedule_actions", "get_schedule_result"):
@@ -609,29 +753,41 @@ class McpBridge:
 
         # reload_and_capture: image is in "screenshot" key
         # Other screenshot tools: image is in "image" key
-        image_key = "screenshot" if tool_name in ("reload_and_capture", "capture_depth") else "image"
+        image_key = (
+            "screenshot"
+            if tool_name in ("reload_and_capture", "capture_depth")
+            else "image"
+        )
         image_data = result.get(image_key)
+        delivery = result.get("image_delivery")
+        mime_type = (
+            delivery.get("inline_mime_type", "image/png")
+            if isinstance(delivery, dict)
+            else "image/png"
+        )
 
         if isinstance(image_data, str) and len(image_data) > 100:
-            # Save to temp file for universal client compatibility
-            file_path = _save_screenshot_to_file(image_data, tool_name)
+            content.append({"type": "image", "data": image_data, "mimeType": mime_type})
 
-            if file_path:
-                # Return as MCP image content block (spec-compliant)
-                content.append({"type": "image", "data": image_data, "mimeType": "image/png"})
-
-                # Include metadata + file path
-                metadata = {k: v for k, v in result.items() if k != image_key}
-                metadata["saved_to"] = file_path
+            metadata = {
+                k: v
+                for k, v in result.items()
+                if k not in (image_key, "image_delivery")
+            }
+            if isinstance(delivery, dict):
+                metadata.update(delivery)
+            if metadata:
                 content.append({"type": "text", "text": json.dumps(metadata, indent=2)})
-            else:
-                # Fallback: image content block without file
-                content.append({"type": "image", "data": image_data, "mimeType": "image/png"})
-                metadata = {k: v for k, v in result.items() if k != image_key}
-                if metadata:
-                    content.append({"type": "text", "text": json.dumps(metadata, indent=2)})
+        elif isinstance(delivery, dict):
+            metadata = {
+                k: v
+                for k, v in result.items()
+                if k not in (image_key, "image_delivery")
+            }
+            metadata.update(delivery)
+            content.append({"type": "text", "text": json.dumps(metadata, indent=2)})
         else:
-            # No image or small data — return as text
+            # No image or small data: return as text
             content.append({"type": "text", "text": json.dumps(result, indent=2)})
 
         return content
@@ -653,255 +809,124 @@ class McpBridge:
             for key in ("image", "screenshot"):
                 image_data = inner.get(key)
                 if isinstance(image_data, str) and len(image_data) > 100:
-                    label = action_result.get("label") or f"action_{action_result.get('index', '?')}"
-                    file_path = _save_screenshot_to_file(image_data, f"schedule_{label}")
-                    content.append({"type": "image", "data": image_data, "mimeType": "image/png"})
-                    if file_path:
-                        content.append({"type": "text", "text": f"[{label}] saved to {file_path}"})
+                    delivery = inner.get("image_delivery")
+                    mime_type = (
+                        delivery.get("inline_mime_type", "image/png")
+                        if isinstance(delivery, dict)
+                        else "image/png"
+                    )
+                    content.append(
+                        {"type": "image", "data": image_data, "mimeType": mime_type}
+                    )
                     image_indices.append(action_result.get("index", -1))
                     # Remove large base64 from the JSON to avoid token bloat
-                    inner[key] = "<extracted to MCP image block>"
+                    inner[key] = "<extracted to bounded MCP image block>"
                     break
 
         # Add the full result JSON (with images replaced by placeholders)
         content.append({"type": "text", "text": json.dumps(result, indent=2)})
         return content
 
-    def _call_rest_api(self, tool_name: str, arguments: JsonDict, timeout: float = 30.0) -> JsonDict:
-        """Map tool name + arguments to REST API call."""
+    def _call_rest_api(
+        self, tool_name: str, arguments: JsonDict, timeout: float = 30.0
+    ) -> JsonDict:
+        """Dispatch a typed loopback request through the Rust control client."""
 
-        base = self._base_url
-        entity_ref = str(arguments.get("entity", ""))
-
-        if tool_name == "get_component":
-            component = arguments.get("component", "")
-            url = f"{base}/api/v1/entities/{entity_ref}/components/{component}"
-            resp = httpx.get(url, timeout=timeout)
-        elif tool_name == "get_component_schema":
-            name = arguments.get("name", "")
-            url = f"{base}/api/v1/components/{name}/schema"
-            resp = httpx.get(url, timeout=timeout)
-        elif tool_name == "despawn_entity":
-            url = f"{base}/api/v1/entities/{entity_ref}"
-            resp = httpx.delete(url, timeout=timeout)
-        elif tool_name == "set_component":
-            component = arguments.get("component", "")
-            url = f"{base}/api/v1/entities/{entity_ref}/components/{component}"
-            resp = httpx.put(url, json={"fields": arguments.get("fields", {})}, timeout=timeout)
-        elif tool_name == "remove_component":
-            component = arguments.get("component", "")
-            url = f"{base}/api/v1/entities/{entity_ref}/components/{component}"
-            resp = httpx.delete(url, timeout=timeout)
-        elif tool_name == "get_bounding_box":
-            url = f"{base}/api/v1/entities/{entity_ref}/bounding_box"
-            resp = httpx.get(url, timeout=timeout)
-        elif tool_name == "set_resource":
-            rt = arguments.get("resource_type", "")
-            url = f"{base}/api/v1/resources/{rt}"
-            resp = httpx.put(url, json={"value": arguments.get("value", {})}, timeout=timeout)
-        elif tool_name == "remove_resource":
-            rt = arguments.get("resource_type", "")
-            url = f"{base}/api/v1/resources/{rt}"
-            resp = httpx.delete(url, timeout=timeout)
-        elif tool_name == "set_asset":
-            entity = arguments.get("entity")
-            body = {
-                "entity": entity,
-                "component": arguments.get("component", ""),
-                "asset_type": arguments.get("asset_type", ""),
-                "fields": arguments.get("fields", {}),
-            }
-            url = f"{base}/api/v1/assets/mutate"
-            resp = httpx.post(url, json=body, timeout=timeout)
-        elif tool_name == "get_schedule_result":
-            schedule_id = arguments.get("schedule_id", "")
-            url = f"{base}/api/v1/schedule/{schedule_id}"
-            resp = httpx.get(url, timeout=timeout)
-        elif tool_name == "query_spatial":
-            if "radius" in arguments:
-                # Neighborhood mode
-                entity = arguments.get("entity")
-                body = {"entity": entity, "radius": arguments["radius"]}
-                if "max_results" in arguments:
-                    body["max_results"] = arguments["max_results"]
-                url = f"{base}/api/v1/spatial/neighborhood"
-            else:
-                # Pairwise mode
-                entity_a = arguments.get("entity_a")
-                entity_b = arguments.get("entity_b")
-                body = {"entity_a": entity_a, "entity_b": entity_b}
-                url = f"{base}/api/v1/spatial/query"
-            resp = httpx.post(url, json=body, timeout=timeout)
-        elif tool_name == "check_overlaps":
-            entity = arguments.get("entity")
-            if entity is not None:
-                # Single-entity mode
-                body = {"entity": entity}
-                if "include_siblings" in arguments:
-                    body["include_siblings"] = arguments["include_siblings"]
-                if "max_float_gap" in arguments:
-                    body["max_float_gap"] = arguments["max_float_gap"]
-                if "ground_y" in arguments:
-                    body["ground_y"] = arguments["ground_y"]
-                url = f"{base}/api/v1/spatial/overlaps"
-            else:
-                # Scene-wide mode
-                body = {}
-                for key in ("min_penetration", "max_results", "max_float_gap", "ground_y", "include_siblings"):
-                    if key in arguments:
-                        body[key] = arguments[key]
-                url = f"{base}/api/v1/spatial/overlaps/all"
-            resp = httpx.post(url, json=body, timeout=timeout)
-        elif tool_name == "query_spatial_neighborhood":
-            body = {"entity": arguments.get("entity"), "radius": arguments.get("radius")}
-            if "max_results" in arguments:
-                body["max_results"] = arguments["max_results"]
-            url = f"{base}/api/v1/spatial/neighborhood"
-            resp = httpx.post(url, json=body, timeout=timeout)
-        elif tool_name == "check_all_overlaps":
-            body = {}
-            for key in ("min_penetration", "max_results", "max_float_gap", "ground_y", "include_siblings"):
-                if key in arguments:
-                    body[key] = arguments[key]
-            url = f"{base}/api/v1/spatial/overlaps/all"
-            resp = httpx.post(url, json=body, timeout=timeout)
-        elif tool_name == "capture_screenshot":
-            gizmos = arguments.pop("gizmos", False)
-            path = "/api/v1/screenshot/gizmos" if gizmos else "/api/v1/screenshot"
-            url = f"{base}{path}"
-            resp = httpx.post(url, json=arguments, timeout=timeout)
-        elif tool_name in _TOOL_TO_REST:
-            method, path_template = _TOOL_TO_REST[tool_name]
-            url = f"{base}{path_template}"
-            if method == "GET":
-                resp = httpx.get(url, timeout=timeout)
-            elif method == "POST":
-                resp = httpx.post(url, json=arguments, timeout=timeout)
-            else:
-                resp = httpx.request(method, url, json=arguments, timeout=timeout)
-        else:
-            msg = f"Unknown tool: {tool_name}"
-            raise ValueError(msg)
-
-        resp.raise_for_status()
-        return resp.json()
+        return _control_request_tool(
+            self._engine_port,
+            tool_name,
+            arguments,
+            timeout,
+        )
 
     def _forward_scene_resource(self, req_id: JsonId, uri: str) -> JsonDict:
         """Forward scene:// resource reads via HTTP."""
 
-        # Static URIs map directly to a REST path.
-        resource_map: dict[str, str] = {
-            "scene://entities": "/api/v1/entities",
-            "scene://resources": "/api/v1/resources",
-            "scene://systems": "/api/v1/systems",
-            "scene://debug": "/api/v1/performance",
-            "scene://components": "/api/v1/debug/registry",
-        }
-
-        path = resource_map.get(uri)
-        if path is None:
-            # Templated URI: scene://entity/{name_or_id}
-            entity_prefix = "scene://entity/"
-            if uri.startswith(entity_prefix):
-                ref = uri[len(entity_prefix):]
-                if not ref:
-                    return self._error(
-                        req_id, -32602, "scene://entity/ requires an entity name or numeric ID"
-                    )
-                # entity ref is passed verbatim to /api/v1/entities/{entity}, which
-                # accepts both numeric IDs and names.
-                path = f"/api/v1/entities/{quote(ref, safe='')}"
-            else:
-                return self._error(req_id, -32602, f"Unknown scene resource: {uri}")
-
         try:
-            resp = httpx.get(f"{self._base_url}{path}", timeout=10.0)
-            resp.raise_for_status()
-            text = json.dumps(resp.json(), indent=2)
+            payload = _control_request_scene_resource(
+                self._engine_port,
+                uri,
+                10.0,
+            )
+            text = json.dumps(payload, indent=2)
             return self._success(
                 req_id,
-                {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]},
+                {
+                    "contents": [
+                        {"uri": uri, "mimeType": "application/json", "text": text}
+                    ]
+                },
             )
+        except ValueError as e:
+            return self._error(req_id, -32602, str(e))
         except Exception as e:
             return self._error(req_id, -32603, f"Failed to read {uri}: {e}")
 
-    def _handle_get_started(self, req_id: JsonId, arguments: JsonDict | None = None) -> JsonDict:
+    def _handle_get_started(
+        self, req_id: JsonId, arguments: JsonDict | None = None
+    ) -> JsonDict:
+        headless_note = (
+            "\n\nGraphical scenes are launched directly. If this environment has no "
+            "graphical session, use run_scene(path=..., headless=True) with a scene "
+            "that disables WinitPlugin and renders to "
+            "RenderTarget.Image(ImageRenderTarget(...)). Read guide://headless for "
+            "a complete setup."
+        )
         key = str((arguments or {}).get("confirmation_key", ""))
         if key == "pybevy-ready":
-            text = "Instructions confirmed. Tools unlocked. Start with guide://patterns, then run_scene."
-            if not has_display():
-                text += (
-                    "\n\nNote: No display detected. For headless rendering, use "
-                    "run_scene(path=..., headless=True) with a scene that disables WinitPlugin "
-                    "and uses RenderTarget.image(). Screenshots will use GPU readback. "
-                    "See examples/misc/headless_render.py for reference."
-                )
+            text = (
+                'Instructions confirmed. Tools unlocked. Call get_guide("patterns") '
+                "or read the guide://patterns MCP resource, then run_scene. Never use "
+                "filesystem read for guide:// URIs."
+            )
+            text += headless_note
             return self._success(req_id, {"content": [{"type": "text", "text": text}]})
 
         instructions = self._instructions
         if not instructions:
-            instructions = "No instructions available. Read guide://patterns for scene conventions."
-        if not has_display():
-            instructions += (
-                "\n\n---\n**No display detected.** Headless rendering is supported: use "
-                "run_scene(path=..., headless=True) with a scene that disables WinitPlugin "
-                "and renders to RenderTarget.image(). Screenshots, timelines, and turnarounds "
-                "will use GPU readback. See examples/misc/headless_render.py."
+            instructions = (
+                'No instructions available. Call get_guide("patterns") or read the '
+                "guide://patterns MCP resource for scene conventions; never use "
+                "filesystem read for guide:// URIs."
             )
-        return self._success(req_id, {"content": [{"type": "text", "text": instructions}]})
+        instructions += headless_note
+        return self._success(
+            req_id, {"content": [{"type": "text", "text": instructions}]}
+        )
+
+    def _handle_get_guide(self, req_id: JsonId, arguments: JsonDict) -> JsonDict:
+        name = str(arguments.get("name", "")).strip()
+        name = name.removeprefix("guide://").strip()
+        if not name:
+            return self._error(req_id, -32602, "Missing 'name' parameter")
+        if not self._api_index:
+            return self._error(req_id, -32603, "ApiIndex not available")
+
+        content: str | None
+        if name == "index":
+            content = self._api_index.get_guide_index()
+        else:
+            content = self._api_index.get_guide(name)
+        if not content:
+            return self._error(req_id, -32602, f"Unknown guide: {name}")
+
+        return self._success(
+            req_id,
+            {"content": [{"type": "text", "text": content}]},
+        )
 
     def _handle_run_scene(self, req_id: JsonId, arguments: JsonDict) -> JsonDict | None:
-        path = str(arguments.get("path", ""))
+        display_path = str(arguments.get("path", ""))
         headless = bool(arguments.get("headless", False))
-        if not path:
+        if not display_path:
             return self._error(req_id, -32602, "Missing 'path' parameter")
+        path = os.path.abspath(display_path)
         if not os.path.exists(path):
-            return self._error(req_id, -32602, f"File not found: {path}")
-
-        if not headless and not has_display():
-            # Try the Hub for headless environments
-            hub_result = self._try_hub_create_session(path)
-            if hub_result is not None:
-                if "session_id" not in hub_result or "port" not in hub_result:
-                    return self._error(req_id, -32603, "Hub returned incomplete response (missing session_id or port)")
-                self._hub_session_id = str(hub_result["session_id"])
-                self._hub_port = int(hub_result["port"])
-                self._scene_path = path
-
-                for _ in range(10):
-                    time.sleep(1.0)
-                    if self._health_check():
-                        break
-
-                status_parts = [
-                    f"Scene loaded via Hub: {path}",
-                    f"Engine port: {hub_result['port']} (session: {self._hub_session_id})",
-                    "Hot-reload is active: just edit the .py file to update the scene.",
-                ]
-
-                if not self._health_check():
-                    status_parts.append("WARNING: Engine not yet responding. It may still be starting up.")
-
-                self._pending_notifications.append({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
-                self._pending_notifications.append({"jsonrpc": "2.0", "method": "notifications/resources/list_changed"})
-                return self._success(
-                    req_id, {"content": [{"type": "text", "text": "\n".join(status_parts)}]}
-                )
-
-            return self._success(
-                req_id,
-                {"content": [{"type": "text", "text": (
-                    "No display available (DISPLAY / WAYLAND_DISPLAY not set or invalid).\n\n"
-                    "Scene tools (run_scene, screenshot, spawn, etc.) require a display.\n"
-                    "You can still use guide://, api://, search_api, and get_type_definition.\n\n"
-                    "To enable scene tools:\n"
-                    "  1. Run `pybevy dev <scene.py>` in a terminal with display access.\n"
-                    "  2. Or run `pybevy hub` and retry run_scene.\n"
-                )}]},
-            )
+            return self._error(req_id, -32602, f"File not found: {display_path}")
 
         self._stop_subprocess()
         self._scene_path = path
+        self._scene_display_path = display_path
         self._start_subprocess(path)
 
         time.sleep(2.0)
@@ -909,25 +934,71 @@ class McpBridge:
         proc = self._subprocess
         if proc is not None and proc.poll() is not None:
             exit_code = proc.returncode
-            stderr_output = self._check_stderr_for_errors() or self._get_recent_stderr()
+            stderr_output = self._check_stderr_for_errors()
+            process_output = self._get_recent_process_output()
             error_msg = f"Bevy subprocess crashed on startup (exit code {exit_code})"
-            if stderr_output:
-                error_msg += f"\n\nSubprocess stderr:\n{stderr_output}"
+            if stderr_output or process_output:
+                error_msg += (
+                    f"\n\nSubprocess output:\n{process_output or stderr_output}"
+                )
+            if not headless and self._looks_like_graphical_startup_failure(
+                process_output or stderr_output
+            ):
+                error_msg += (
+                    "\n\nThis looks like a graphical-session startup failure. "
+                    "If no display is available, retry with headless=True and read "
+                    "guide://headless."
+                )
+            return self._error(req_id, -32603, error_msg)
+
+        bind_failure = self._control_bind_failure()
+        if bind_failure:
+            port = self._subprocess_port
+            process_output = self._get_recent_process_output()
+            self._stop_subprocess()
+            error_msg = (
+                f"PyBevy control server failed to bind on port {port}; "
+                "the scene subprocess was stopped. Retry run_scene to allocate a new port."
+            )
+            if process_output:
+                error_msg += f"\n\nSubprocess output:\n{process_output}"
+            else:
+                error_msg += f"\n\nSubprocess output:\n{bind_failure}"
             return self._error(req_id, -32603, error_msg)
 
         status_parts = [
-            f"Scene loaded: {path}",
+            f"Scene loaded: {display_path}",
             "PyBevy app starting with hot-reload enabled.",
-            "Hot-reload is active: just edit the .py file to update the scene. Do NOT call run_scene again.",
+            "Hot-reload is active for ordinary code changes. Restart with run_scene after bridge-backed plugin or core plugin-composition changes.",
             "Workflow: edit the .py file -> reload or reload_and_capture -> verify screenshot -> iterate.",
         ]
 
         stderr_errors = self._check_stderr_for_errors()
         if stderr_errors:
-            status_parts.append(f"\nWARNING — Python errors detected during startup:\n{stderr_errors}")
+            status_parts.append(
+                f"\nWARNING: Python errors detected during startup:\n{stderr_errors}"
+            )
 
-        self._pending_notifications.append({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
-        self._pending_notifications.append({"jsonrpc": "2.0", "method": "notifications/resources/list_changed"})
+        startup_error, _ = self._get_last_system_error()
+        if startup_error:
+            self._pending_notifications.append(
+                {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+            )
+            self._pending_notifications.append(
+                {"jsonrpc": "2.0", "method": "notifications/resources/list_changed"}
+            )
+            return self._error(
+                req_id,
+                -32603,
+                f"Scene system failed during initial load: {startup_error}",
+            )
+
+        self._pending_notifications.append(
+            {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+        )
+        self._pending_notifications.append(
+            {"jsonrpc": "2.0", "method": "notifications/resources/list_changed"}
+        )
         return self._success(
             req_id, {"content": [{"type": "text", "text": "\n".join(status_parts)}]}
         )
@@ -937,12 +1008,14 @@ class McpBridge:
             return self._error(req_id, -32602, "Missing 'query' parameter")
         query = str(arguments["query"])
         if not query:
-            return self._error(req_id, -32602, "Empty 'query': must be at least 1 character")
+            return self._error(
+                req_id, -32602, "Empty 'query': must be at least 1 character"
+            )
         if not self._api_index:
             return self._error(req_id, -32603, "ApiIndex not available")
 
         # Default 50, hard ceiling 200. Reject obviously bad values rather than
-        # silently coercing — the caller likely wants to know.
+        # silently coercing: the caller likely wants to know.
         default_limit = 50
         max_limit = 200
         raw_limit = arguments.get("limit", default_limit)
@@ -975,10 +1048,12 @@ class McpBridge:
                 f"refine query or pass limit up to {max_limit})."
             )
         if results_json and results_json.strip() not in ("[]", ""):
-            text += "\n\nTip: Check guide://index for curated topic guides (faster than API search). Most types available via `from pybevy.prelude import *`. Use get_type_definition('ClassName') for full definitions."
+            text += "\n\nTip: Check guide://index for curated topic guides (faster than API search). Most types available via `from pybevy.prelude import *`. Use get_type_definition('Name') for full class or function definitions."
         return self._success(req_id, {"content": [{"type": "text", "text": text}]})
 
-    def _handle_get_type_definition(self, req_id: JsonId, arguments: JsonDict) -> JsonDict:
+    def _handle_get_type_definition(
+        self, req_id: JsonId, arguments: JsonDict
+    ) -> JsonDict:
         type_name = str(arguments.get("type_name", ""))
         if not type_name:
             return self._error(req_id, -32602, "Missing 'type_name' parameter")
@@ -987,35 +1062,86 @@ class McpBridge:
 
         structured = self._api_index.get_type_definition_structured(type_name)
         if structured:
-            result = json.dumps({"type_name": type_name, "definition": json.loads(structured)}, indent=2)
+            definition = json.loads(structured)
+            if definition.get("error") == "ambiguous_type_name":
+                result = json.dumps(
+                    {
+                        "type_name": type_name,
+                        "error": "Ambiguous type name; retry with a qualified candidate",
+                        "candidates": definition.get("candidates", []),
+                    },
+                    indent=2,
+                )
+            else:
+                result = json.dumps(
+                    {"type_name": type_name, "definition": definition}, indent=2
+                )
         else:
-            result = json.dumps({"type_name": type_name, "error": "Type not found in stubs"}, indent=2)
+            result = json.dumps(
+                {"type_name": type_name, "error": "Symbol not found in stubs"}, indent=2
+            )
 
         tip = "Tip: For scene patterns and code templates, read guide://patterns. For topic-specific docs (lighting, materials, camera), check guide://index."
         return self._success(
             req_id,
-            {"content": [{"type": "text", "text": result}, {"type": "text", "text": tip}]},
+            {
+                "content": [
+                    {"type": "text", "text": result},
+                    {"type": "text", "text": tip},
+                ]
+            },
         )
 
     def _handle_get_logs(self, req_id: JsonId, arguments: JsonDict) -> JsonDict:
-        lines = int(arguments.get("lines", 50))  # type: ignore[call-overload]
+        try:
+            lines = int(arguments.get("lines", 50))  # type: ignore[call-overload]
+        except (TypeError, ValueError):
+            return self._error(req_id, -32602, "get_logs 'lines' must be an integer")
         errors_only = bool(arguments.get("errors_only", False))
 
         if self._subprocess is None:
-            return self._error(req_id, -32603, "No scene loaded. Use 'run_scene' first.")
+            return self._error(
+                req_id, -32603, "No scene loaded. Use 'run_scene' first."
+            )
 
         if errors_only:
-            output = self._check_stderr_for_errors()
-            if not output:
-                output = "No errors detected."
+            sections: list[str] = []
+            system_error, lookup_error = self._get_last_system_error()
+            if system_error:
+                sections.append(
+                    f"Python system error (get_last_error):\n{system_error}"
+                )
+
+            stderr_errors = self._check_stderr_for_errors()
+            # The block keeps raw lines; the live error arrives plain.
+            stderr_plain = _strip_ansi(stderr_errors)
+            if stderr_errors and (
+                not system_error
+                or (
+                    stderr_plain not in system_error
+                    and system_error not in stderr_plain
+                )
+            ):
+                sections.append(f"Matching subprocess stderr:\n{stderr_errors}")
+
+            if sections:
+                output = "\n\n".join(sections)
+            elif lookup_error:
+                output = (
+                    "No matching errors in captured stderr. The live Python system-error "
+                    f"channel could not be checked: {lookup_error}"
+                )
+            else:
+                output = "No Python system errors or matching stderr errors detected."
         else:
-            output = self._get_recent_stderr(max_lines=min(lines, 100))
+            line_limit = max(1, min(lines, _MAX_CAPTURED_OUTPUT_LINES))
+            output = self._get_recent_process_output(max_lines=line_limit)
             if not output:
                 output = "(no output captured yet)"
 
         # A dead subprocess still serves its buffered output; say so, otherwise
         # stale logs make the scene look alive.
-        if self._subprocess.poll() is not None:
+        if self._subprocess is not None and self._subprocess.poll() is not None:
             output += (
                 f"\n\n(note: scene subprocess has exited with code "
                 f"{self._subprocess.returncode}; logs above are its final output)"
@@ -1023,43 +1149,62 @@ class McpBridge:
 
         return self._success(req_id, {"content": [{"type": "text", "text": output}]})
 
-    def _try_hub_create_session(self, scene_path: str) -> JsonDict | None:
-
+    def _get_last_system_error(self) -> tuple[str, str | None]:
+        """Read the engine's live LastSystemError slot for error-only logs."""
         try:
-            resp = httpx.post(
-                "http://127.0.0.1:8419/sessions",
-                json={"project_dir": os.getcwd(), "scene_path": scene_path},
-                timeout=5.0,
-            )
-            if resp.status_code == 201:
-                return resp.json()
-        except (httpx.ConnectError, httpx.TimeoutException):
-            pass
-        except Exception as e:
-            _log(f"[MCP Bridge] Hub error: {e}")
-        return None
+            payload = _control_last_error(self._engine_port, 2.0)
+        except Exception as lookup_exception:
+            return "", str(lookup_exception)
 
-    def _cleanup_hub_session(self) -> None:
-        if self._hub_session_id is None:
-            return
-
-
-        try:
-            httpx.delete(
-                f"http://127.0.0.1:8419/sessions/{self._hub_session_id}",
-                timeout=3.0,
-            )
-            _log(f"[MCP Bridge] Cleaned up hub session {self._hub_session_id}")
-        except Exception:
-            pass
-        self._hub_session_id = None
+        system_error = payload.get("error") if isinstance(payload, dict) else None
+        if not system_error:
+            return "", None
+        traceback = payload.get("traceback")
+        if traceback:
+            traceback_text = str(traceback).rstrip()
+            error_text = str(system_error)
+            if error_text not in traceback_text:
+                return f"{traceback_text}\n{error_text}", None
+            return traceback_text, None
+        return str(system_error), None
 
     def _health_check(self) -> bool:
         try:
-            resp = httpx.get(f"{self._base_url}/health", timeout=2.0)
-            return resp.status_code == 200
+            return _control_health(self._engine_port, 2.0)
         except Exception:
             return False
+
+    @staticmethod
+    def _looks_like_graphical_startup_failure(output: str) -> bool:
+        lowered = output.casefold()
+        return any(
+            marker in lowered
+            for marker in (
+                "no display",
+                "display server",
+                "open display",
+                "xopendisplay",
+                "event loop",
+                "eventloop",
+                "wayland",
+                "window creation",
+                "create window",
+                "winit",
+                "x11",
+            )
+        )
+
+    def _control_bind_failure(self) -> str | None:
+        """Return the engine's control-listener bind error, if one was logged."""
+        marker = "[Control] Failed to bind to "
+        with self._output_lock:
+            for stream, line in reversed(self._output_lines):
+                if stream == "stderr" and marker in line:
+                    return line
+            for line in reversed(self._stderr_lines):
+                if marker in line:
+                    return line
+        return None
 
     def _start_subprocess(self, path: str) -> None:
         port = find_free_port()
@@ -1068,10 +1213,16 @@ class McpBridge:
 
         display = env.get("DISPLAY", "")
         wayland = env.get("WAYLAND_DISPLAY", "")
-        _log(f"[MCP Bridge] Display env: DISPLAY={display!r} WAYLAND_DISPLAY={wayland!r}")
+        _log(
+            f"[MCP Bridge] Display env: DISPLAY={display!r} WAYLAND_DISPLAY={wayland!r}"
+        )
         _log(f"[MCP Bridge] Control port: {port}")
 
-        self._stderr_lines = []
+        with self._output_lock:
+            self._stderr_lines.clear()
+            self._stderr_repeat_counts.clear()
+            self._output_lines.clear()
+            self._output_repeat_counts.clear()
 
         self._subprocess = subprocess.Popen(
             [sys.executable, "-m", "pybevy", "dev", path],
@@ -1081,21 +1232,36 @@ class McpBridge:
             env=env,
         )
 
-        self._stderr_thread = threading.Thread(target=self._read_subprocess_stderr, daemon=True)
+        self._stdout_thread = threading.Thread(
+            target=self._read_subprocess_stdout,
+            args=(self._subprocess,),
+            daemon=True,
+        )
+        self._stderr_thread = threading.Thread(
+            target=self._read_subprocess_stderr,
+            args=(self._subprocess,),
+            daemon=True,
+        )
+        self._reaper_thread = threading.Thread(
+            target=self._reap_subprocess,
+            args=(self._subprocess,),
+            daemon=True,
+        )
+        self._stdout_thread.start()
         self._stderr_thread.start()
+        self._reaper_thread.start()
 
         _log(f"[MCP Bridge] Started subprocess for {path} (pid={self._subprocess.pid})")
 
         time.sleep(1.0)
         if self._subprocess.poll() is not None:
             exit_code = self._subprocess.returncode
-            stderr_output = self._check_stderr_for_errors() or self._get_recent_stderr()
+            stderr_output = self._check_stderr_for_errors()
+            process_output = self._get_recent_process_output()
             msg = f"Subprocess exited immediately (code {exit_code})"
-            if stderr_output:
-                msg += f"\n\nStderr:\n{stderr_output}"
+            if stderr_output or process_output:
+                msg += f"\n\nOutput:\n{process_output or stderr_output}"
             _log(f"[MCP Bridge] {msg}")
-            self._subprocess = None
-            self._subprocess_port = None
 
     def _stop_subprocess(self) -> None:
         if self._subprocess is not None:
@@ -1111,30 +1277,122 @@ class McpBridge:
 
             self._subprocess = None
             self._subprocess_port = None
-            self._stderr_lines = []
+            with self._output_lock:
+                self._stderr_lines.clear()
+                self._stderr_repeat_counts.clear()
+                self._output_lines.clear()
+                self._output_repeat_counts.clear()
             _log(f"[MCP Bridge] Stopped subprocess (pid={pid})")
 
-    def _read_subprocess_stderr(self) -> None:
-        proc = self._subprocess
+    def _reap_subprocess(self, proc: subprocess.Popen[bytes]) -> None:
+        # Without this the child stays a zombie until some handler happens to poll().
+        try:
+            exit_code = proc.wait()
+        except Exception:
+            return
+        _log(f"[MCP Bridge] Subprocess exited (pid={proc.pid}, code={exit_code})")
+
+    def _read_subprocess_stdout(
+        self,
+        proc: subprocess.Popen[bytes] | None = None,
+    ) -> None:
+        proc = proc or self._subprocess
+        stdout = getattr(proc, "stdout", None)
+        if stdout is None:
+            return
+
+        for raw_line in stdout:
+            if self._subprocess is not proc:
+                break
+            line = raw_line.decode("utf-8", errors="replace").rstrip()
+            _log(f"[Bevy stdout] {line}")
+            self._append_process_output("stdout", line)
+
+    def _read_subprocess_stderr(
+        self,
+        proc: subprocess.Popen[bytes] | None = None,
+    ) -> None:
+        proc = proc or self._subprocess
         if proc is None or proc.stderr is None:
             return
 
         for raw_line in proc.stderr:
+            if self._subprocess is not proc:
+                break
             line = raw_line.decode("utf-8", errors="replace").rstrip()
-            _log(f"[Bevy] {line}")
-            with self._stderr_lock:
-                self._stderr_lines.append(line)
-                if len(self._stderr_lines) > 100:
-                    self._stderr_lines = self._stderr_lines[-100:]
+            _log(f"[Bevy stderr] {line}")
+            with self._output_lock:
+                self._append_captured_line_locked(
+                    self._stderr_lines,
+                    self._stderr_repeat_counts,
+                    line,
+                )
+                self._append_process_output_locked("stderr", line)
 
-    def _get_recent_stderr(self, max_lines: int = 20) -> str:
-        with self._stderr_lock:
-            lines = self._stderr_lines[-max_lines:]
-        return "\n".join(lines)
+    def _append_process_output(self, stream: str, line: str) -> None:
+        with self._output_lock:
+            self._append_process_output_locked(stream, line)
+
+    def _append_process_output_locked(self, stream: str, line: str) -> None:
+        self._append_captured_line_locked(
+            self._output_lines,
+            self._output_repeat_counts,
+            (stream, line),
+        )
+
+    @staticmethod
+    def _append_captured_line_locked(
+        lines: list[_CapturedLine],
+        repeat_counts: list[int],
+        line: _CapturedLine,
+    ) -> None:
+        if len(repeat_counts) != len(lines):
+            repeat_counts[:] = [1] * len(lines)
+        if lines and lines[-1] == line:
+            repeat_counts[-1] += 1
+            return
+        lines.append(line)
+        repeat_counts.append(1)
+        if len(lines) > _MAX_CAPTURED_OUTPUT_LINES:
+            del lines[:-_MAX_CAPTURED_OUTPUT_LINES]
+            del repeat_counts[:-_MAX_CAPTURED_OUTPUT_LINES]
+
+    @staticmethod
+    def _format_captured_line(line: str, repeat_count: int) -> str:
+        if repeat_count == 1:
+            return line
+        return f"{line} [repeated: {repeat_count} occurrences]"
+
+    def _get_recent_process_output(self, max_lines: int = 20) -> str:
+        with self._output_lock:
+            if len(self._output_repeat_counts) != len(self._output_lines):
+                self._output_repeat_counts = [1] * len(self._output_lines)
+            lines = self._output_lines[-max_lines:]
+            repeat_counts = self._output_repeat_counts[-max_lines:]
+            # Keep direct stderr injection useful to diagnostics and tests even
+            # when no reader populated the combined buffer.
+            if not lines and self._stderr_lines:
+                lines = [("stderr", line) for line in self._stderr_lines[-max_lines:]]
+                if len(self._stderr_repeat_counts) != len(self._stderr_lines):
+                    self._stderr_repeat_counts = [1] * len(self._stderr_lines)
+                repeat_counts = self._stderr_repeat_counts[-max_lines:]
+        return "\n".join(
+            f"[{stream}] {self._format_captured_line(line, repeat_count)}"
+            for (stream, line), repeat_count in zip(lines, repeat_counts, strict=True)
+        )
 
     def _check_stderr_for_errors(self) -> str:
-        with self._stderr_lock:
-            lines = list(self._stderr_lines)
+        with self._output_lock:
+            if len(self._stderr_repeat_counts) != len(self._stderr_lines):
+                self._stderr_repeat_counts = [1] * len(self._stderr_lines)
+            lines = [
+                self._format_captured_line(line, repeat_count)
+                for line, repeat_count in zip(
+                    self._stderr_lines,
+                    self._stderr_repeat_counts,
+                    strict=True,
+                )
+            ]
 
         blocks: list[list[str]] = []
         current_block: list[str] = []
@@ -1142,8 +1400,9 @@ class McpBridge:
         in_native_error = False
 
         for line in lines:
+            plain = _strip_ansi(line)
             # Python tracebacks
-            if "Traceback (most recent call last)" in line:
+            if "Traceback (most recent call last)" in plain:
                 if current_block:
                     blocks.append(current_block)
                 in_traceback = True
@@ -1151,31 +1410,35 @@ class McpBridge:
                 current_block = [line]
             elif in_traceback:
                 current_block.append(line)
-                if not line.startswith(" ") and "Error" in line:
+                if not plain.startswith(" ") and "Error" in plain:
                     in_traceback = False
                     blocks.append(current_block)
                     current_block = []
             # Rust panics: thread 'main' panicked at ...
-            elif "panicked at" in line and "thread" in line:
+            elif "panicked at" in plain and "thread" in plain:
                 if current_block and in_native_error:
                     blocks.append(current_block)
                 in_native_error = True
                 in_traceback = False
                 current_block = [line]
             # Native/library errors on non-indented lines
-            elif not in_traceback and not line.startswith(" ") and (
-                # Anchored "error:" (optionally after a short tool prefix)
-                _NATIVE_ERROR_LINE.match(line)
-                # tracing/log ERROR lines (e.g. "ERROR bevy_render::renderer:")
-                or _is_log_error_line(line)
+            elif (
+                not in_traceback
+                and not plain.startswith(" ")
+                and (
+                    # Anchored "error:" (optionally after a short tool prefix)
+                    _NATIVE_ERROR_LINE.match(plain)
+                    # tracing/log ERROR lines (e.g. "ERROR bevy_render::renderer:")
+                    or _is_log_error_line(plain)
+                )
             ):
                 if current_block and in_native_error:
                     blocks.append(current_block)
                 in_native_error = True
                 current_block = [line]
             # Continuation lines for native error blocks
-            elif in_native_error and line.startswith(
-                (" ", "\t", "Caused by:", "note:")
+            elif in_native_error and (
+                not plain or plain.startswith((" ", "\t", "Caused by:", "note:"))
             ):
                 current_block.append(line)
             elif in_native_error:
@@ -1192,8 +1455,40 @@ class McpBridge:
     def _success(self, req_id: JsonId, result: object) -> JsonDict:
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
+    def _tool_argument_error(self, tool_name: str, arguments: object) -> str | None:
+        if not isinstance(arguments, dict):
+            return f"Tool '{tool_name}' arguments must be an object"
+
+        definitions = [*self._tools, LOAD_SCENE_TOOL, GET_LOGS_TOOL]
+        tool = next(
+            (item for item in definitions if item.get("name") == tool_name), None
+        )
+        if tool is None:
+            return None
+
+        schema = tool.get("inputSchema")
+        if not isinstance(schema, dict):
+            return None
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+
+        unknown = sorted(set(arguments) - set(properties))
+        if not unknown:
+            return None
+
+        accepted = ", ".join(sorted(properties)) or "none"
+        return (
+            f"Unknown parameter(s) for tool '{tool_name}': {', '.join(unknown)}. "
+            f"Accepted parameters: {accepted}"
+        )
+
     def _error(self, req_id: JsonId, code: int, message: str) -> JsonDict:
-        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": code, "message": message},
+        }
 
     def _write_response(self, response: JsonDict) -> None:
         line = json.dumps(response, separators=(",", ":"))

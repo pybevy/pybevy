@@ -2,16 +2,18 @@
 
 ## Workflow
 
-1. **Read guides iteratively, not all upfront.** Start with `guide://index` to see all available guides, then read `guide://patterns` + ONE relevant recipe (e.g. `recipes/game-logic`, `recipes/outdoor`). That's enough to write the initial scene. Then read additional topic guides (lighting, materials, shadows, etc.) as you add those features in later iterations. Max 2-3 guides before first `run_scene`.
-2. **When suggesting scenes** - propose ideas that showcase PyBevy's documented features: emissive bloom, glass/transmission materials, volumetric fog, parent-child hierarchy, day/night cycles. Read `guide://index` to see what's available, then suggest scenes that use those features.
+**Guide URIs are MCP resources, not files.** Call `get_guide("patterns")` (or another name returned by `get_guide("index")`) in every client. You may instead read `guide://...` through the client's MCP resource capability. Some clients also generate resource aliases such as `get_guide_patterns`, but those aliases are optional. Never pass a `guide://` URI to a filesystem `read`, `open`, or shell command.
+
+1. **Read guides iteratively, not all upfront.** Start with `get_guide("index")` to see all available guides, then call `get_guide("patterns")` + ONE relevant recipe (e.g. `recipes/game-logic`, `recipes/outdoor`). That's enough to write the initial scene. Then read additional topic guides (lighting, materials, shadows, etc.) as you add those features in later iterations. Max 2-3 guides before first `run_scene`.
+2. **When suggesting scenes** - propose ideas that showcase PyBevy's documented features: emissive bloom, glass/transmission materials, volumetric fog, parent-child hierarchy, day/night cycles. Call `get_guide("index")` to see what's available, then suggest scenes that use those features.
 3. **Run scene before scene tools** - `run_scene` must be called before any scene tool (get_component_schema, capture_screenshot, query_entities, etc.). Scene tools require a running Bevy subprocess.
-4. **Read topic guides before API lookups** - Before using `search_api` or `get_type_definition`, check `guide://index` for a relevant curated guide. Guides are faster and more reliable than raw API exploration. Only fall back to API lookups for specifics not covered in guides.
-5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results.
-6. **Call `run_scene` ONCE** - after that, edit the .py file + `reload`. Do NOT call run_scene again unless switching to a different scene file.
-7. **After reload** - call `get_logs(errors_only=true)` to check for errors.
+4. **Read topic guides before API lookups** - Before using `search_api` or `get_type_definition`, call `get_guide("index")` and check for a relevant curated guide. Guides are faster and more reliable than raw API exploration. Only fall back to API lookups for specifics not covered in guides.
+5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. Ambiguous short names return qualified candidates; retry with one such as `get_type_definition('image.Image')`. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results.
+6. **Reuse the running scene for ordinary edits** - after the first `run_scene`, edit the .py file and call `reload`. Call `run_scene` again when switching scene files, adding or removing bridge-backed plugins, changing core plugin composition, or requiring a clean restart.
+7. **After reload** - call `get_last_error` to check the live Python system-error channel. `reload.error` is sampled once before the response and may miss errors reported on a later frame. Use `get_logs(errors_only=true)` as a secondary check for Bevy, asset, render, and subprocess errors.
 8. **Scene style defaults (3D)** - new 3D scenes MUST include: Bloom on the camera, DistanceFog for atmospheric depth, a warm key directional light (shadows) + cool fill directional light (no shadows, ~40% intensity), ClearColor matching fog color, and lighting above the minimum floors (see Scene Generation below). For 2D scenes, see `guide://2d`. Start bright, dim later.
 9. **Interior camera placement** - for enclosed scenes, use `get_bounding_box` on walls/objects to calculate safe debug camera positions instead of guessing coordinates.
-10. **Use `guide://scene-quality` as a reference** - consult its lighting floors and color palette rules when refining visuals, not necessarily before writing the first line of code.
+10. **Use `get_guide("scene-quality")` as a reference** - consult its lighting floors and color palette rules when refining visuals, not necessarily before writing the first line of code.
 11. **After first load with GLB models** - run `check_all_overlaps(ground_y=0)` to detect sunken models scene-wide in one pass, before any visual iteration.
 
 ## API Lookup Guide
@@ -21,7 +23,7 @@
 | Know the class name | `get_type_definition` | `get_type_definition("PointLight")` → full constructor + methods |
 | Don't know the name | `search_api` → then `get_type_definition` | `search_api("fog")` → find `DistanceFog` → `get_type_definition("DistanceFog")` |
 | Need JSON spawn format | `get_component_schema` | `get_component_schema("Transform")` → field names + defaults |
-| Curated topic knowledge | `guide://` resources | `guide://lighting`, `guide://camera`, `guide://patterns` |
+| Curated topic knowledge | `get_guide` or `guide://` resources | `get_guide("lighting")`, `guide://camera`, `get_guide("patterns")` |
 
 **IMPORTANT**: `search_api` returns brief matches. Always follow up with `get_type_definition` for the full class definition including constructor parameters.
 
@@ -43,6 +45,8 @@
 - `reload_and_capture` - One round-trip: reload → error check → screenshot. Replaces 3 separate calls.
 - `capture_turnaround` - Multi-viewpoint orbit capture composited into one contact sheet. Auto-fits to scene bounds.
 - `capture_depth` - RGB screenshot + ray-AABB depth samples. Returns **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
+- `capture_stats` - Numeric RGB/luma summaries, grid cells, and pixel samples without returning a PNG. Captures a retained `frame_id` for later `compare_frames` calls. Pass `entity` to either `capture_stats` or `capture_screenshot` to isolate one entity subtree while retaining camera and lighting support.
+- `compare_frames` - Compare two retained captures and report pixel-difference magnitude, changed percentage, bounding box, and centroid.
 
 ## Debugging Geometry Problems
 
@@ -52,9 +56,10 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 2. **`get_bounding_box`** on suspect entities - compare actual dimensions vs intended. A "table" with height 0.01 is a plane, not a table. A "wall" with equal X/Y/Z is a cube, not a wall. Mismatched dimensions are the #1 cause of "it doesn't look right."
 3. **`query_spatial`** between entity pairs - check distance and direction. "The chair should face the desk" becomes: is the direction vector from chair to desk aligned with the chair's forward? Answers relative positioning questions without visual ambiguity. Use `query_spatial_neighborhood(entity=..., radius=...)` when you need every nearby entity.
 4. **`capture_depth`** - when you suspect occlusion or visibility issues. Returns entity names at screen-space sample points. If you expect to see `lamp_1` at screen center but depth reports `wall_east`, the lamp is occluded. Diagnoses "wrong entity showing" without guessing from pixels.
-5. **`capture_screenshot`** - last, for visual polish only. Colors, lighting, bloom, material appearance. By this point, structural issues should already be resolved.
+5. **`capture_stats`** - quantify brightness, clipping, flat output, or a deterministic before/after change without transferring an image.
+6. **`capture_screenshot`** - last, for visual polish only. Colors, lighting, bloom, material appearance. By this point, structural issues should already be resolved.
 
-**Rule**: if you're about to take a second screenshot to debug the same geometry issue, stop. Use steps 1-4 instead.
+**Rule**: if you're about to take a second screenshot to debug the same geometry issue, stop. Use the structural and numeric tools first.
 
 ## Batched Schedules
 
@@ -108,7 +113,7 @@ When using `set_component`, `spawn_entity`, or `set_resource`, field values are 
 
 ## Available Guides
 
-Read `guide://index` for the full list of available guides with descriptions. Read individual guides via `guide://{name}` (e.g., `guide://patterns`, `guide://lighting`, `guide://recipes/outdoor`).
+Call `get_guide("index")` for the full list of available guides with descriptions, then call `get_guide(name)` for an individual guide (for example, `get_guide("patterns")`, `get_guide("lighting")`, or `get_guide("recipes/outdoor")`). Clients with MCP resource support may instead read the equivalent `guide://index` and `guide://{name}` resources. Generated resource aliases such as `get_guide_patterns` are optional and must not be assumed to exist. These URIs are never filesystem paths.
 
 ## Scene Generation (MANDATORY)
 
@@ -117,11 +122,13 @@ Read `guide://index` for the full list of available guides with descriptions. Re
 
 1. **Start small** - Write a ~150-250 line initial scene with: camera, lighting, fog, ground, and the 2-3 most important entities. Load it with `run_scene`.
 2. **Screenshot and verify** - Use `reload_and_capture` to confirm the foundation works and looks correct.
-3. **Add detail iteratively** - Edit the file to add more entities, materials, animations. Use `reload` after each batch of changes.
+3. **Add detail iteratively** - Edit the file to add more entities, materials,
+   and animations. The file watcher reloads saved Python changes; use an explicit
+   Full reload only when a clean reset is needed.
 4. **Build in layers** - Each iteration adds one category: first geometry, then materials/colors, then lighting refinement, then animation, then polish.
 
 ### Before Coding
-1. **Read `guide://patterns` + ONE matching recipe** if available. That's enough to start. Read topic guides (lighting, materials, etc.) later when iterating on those specific features. For scenes with GLB models, also read `guide://3d-models`.
+1. **Call `get_guide("patterns")` + ONE matching recipe** if available. That's enough to start. Read topic guides (lighting, materials, etc.) later when iterating on those specific features. For scenes with GLB models, also call `get_guide("3d-models")`.
 2. **Extract every noun** from the prompt → each becomes at least one entity
 3. **Plan camera** → default to eye-level (Y=2–4), NOT overhead
 4. **Plan 3 depth layers** → foreground framing, midground content, background/fog
@@ -149,24 +156,12 @@ For environments without a display server (CI, remote servers, containers), PyBe
    commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle)), transform)
    ```
 
-2. **Launch with MCP** - use `run_scene(path=..., headless=True)` to bypass the display check.
+2. **Launch with MCP** - use `run_scene(path=..., headless=True)` to start the scene without a window backend.
 
-3. **Screenshots work** - `capture_screenshot`, `capture_turnaround`, and `capture_timeline` all fall back to GPU readback when no window exists.
+3. **Capture tools work** - `capture_screenshot`, `capture_stats`, `capture_turnaround`, and `capture_timeline` all fall back to GPU readback when no window exists.
 
-4. **Reference example** - see `examples/misc/headless_render.py`.
+4. **Full setup** - read `guide://headless` for a complete working scene.
 
 ## Getting Started
 
 When you call the `get_started` tool, pass `confirmation_key: "pybevy-ready"` to confirm you've read these instructions. This avoids receiving duplicate content.
-
-## MCP Pack Customization
-
-This project has an editable MCP pack at `.pybevy/mcp/`.
-
-- `pack.toml` - uncomment `[overrides.tools]` lines to patch tool descriptions
-- `instructions.md` - edit these instructions (auto-injected into LLM context on connect)
-- `prompts.md` - on-demand prompts (loaded via prompts/get)
-- `guides/*.md` - add or override guides (`*.default.md` are read-only reference copies)
-
-When a tool description is misleading or missing context for this project,
-suggest editing `.pybevy/mcp/pack.toml` to the user.
