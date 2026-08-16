@@ -59,19 +59,15 @@ impl PyAssetPath {
 
 impl From<&PyAssetPath> for AssetPath<'static> {
     fn from(value: &PyAssetPath) -> Self {
-        // Build path string with source if provided
-        let path_with_source = if let Some(source) = &value.source {
-            format!("{}://{}", source, value.path)
-        } else {
-            value.path.clone()
+        let path = AssetPath::from_path(Path::new(&value.path)).into_owned();
+        let path = match &value.source {
+            Some(source) => path.with_source(source.clone()),
+            None => path,
         };
-
-        let path = AssetPath::from_path(Path::new(&path_with_source));
         match &value.label {
-            Some(label) => path.with_label(label),
+            Some(label) => path.with_label(label.clone()),
             None => path,
         }
-        .into_owned()
     }
 }
 
@@ -153,6 +149,47 @@ mod tests {
         let bevy_path: AssetPath<'static> = (&original).into();
         let restored: PyAssetPath = bevy_path.into();
         assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn to_bevy_asset_path_sets_the_source_field() {
+        // The source belongs in `AssetPath::source`, not as a `source://`
+        // prefix inside the path: an AssetServer resolves only the former.
+        let ap = PyAssetPath::py_new("shaders/x.wgsl".into(), None, Some("embedded".into()));
+        let bevy_path: AssetPath<'static> = (&ap).into();
+        assert_eq!(bevy_path.source().as_str(), Some("embedded"));
+        assert_eq!(bevy_path.path().to_string_lossy(), "shaders/x.wgsl");
+    }
+
+    #[test]
+    fn round_trip_with_source() {
+        let original = PyAssetPath::py_new("shaders/x.wgsl".into(), None, Some("embedded".into()));
+        let bevy_path: AssetPath<'static> = (&original).into();
+        let restored: PyAssetPath = bevy_path.into();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn round_trip_with_source_and_label() {
+        let original = PyAssetPath::py_new(
+            "scene.glb".into(),
+            Some("Mesh0".into()),
+            Some("embedded".into()),
+        );
+        let bevy_path: AssetPath<'static> = (&original).into();
+        let restored: PyAssetPath = bevy_path.into();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn parsed_source_survives_conversion_to_bevy() {
+        // `AssetPath.parse` splits the source out; converting back must not
+        // fold it into the path again.
+        let parsed = PyAssetPath::parse("embedded://shaders/x.wgsl").unwrap();
+        assert_eq!(parsed.source(), Some("embedded".into()));
+
+        let bevy_path: AssetPath<'static> = (&parsed).into();
+        assert_eq!(bevy_path, AssetPath::parse("embedded://shaders/x.wgsl"));
     }
 
     #[test]

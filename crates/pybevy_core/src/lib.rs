@@ -24,6 +24,7 @@
 
 pub mod added_plugins;
 pub mod asset;
+pub mod asset_access;
 pub mod asset_cleanup;
 pub mod asset_path;
 pub mod component;
@@ -397,6 +398,7 @@ impl ComponentBridge for ChildrenBridge {
 }
 
 pub use asset::{NativeAsset, PyAsset};
+pub use asset_access::{ActiveAssetAccessError, ensure_no_live_asset_access};
 pub use asset_cleanup::AssetCleanupRegistration;
 pub use asset_path::PyAssetPath;
 pub use bridge_inventory::{
