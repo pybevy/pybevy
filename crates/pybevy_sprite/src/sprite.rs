@@ -1,10 +1,15 @@
 use bevy::{
     asset::AssetId,
+    color::Color,
     image::Image,
+    math::Vec2,
     sprite::{Sprite, SpriteImageMode},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_core::{
+    ComponentStorage, FromBorrowedStorage, PyAssetId, PyComponent, PyHandle,
+    extract_handle_from_any, materialize_asset_id,
+};
 use pybevy_image::texture_atlas::PyTextureAtlas;
 use pybevy_macros::pycomponent;
 use pybevy_math::{rect::PyRect, vec2::PyVec2};
@@ -38,7 +43,7 @@ impl PySprite {
         color: PyColor,
         flip_x: bool,
         flip_y: bool,
-        custom_size: Option<(f32, f32)>,
+        custom_size: Option<PyVec2>,
         rect: Option<PyRect>,
         texture_atlas: Option<PyTextureAtlas>,
         image_mode: PySpriteImageMode,
@@ -46,12 +51,13 @@ impl PySprite {
         let py_handle = extract_handle_from_any(image)?;
         let image_handle = py_handle.try_into()?;
         let texture_atlas_handle = texture_atlas.map(|ta| ta.try_into()).transpose()?;
-        let custom_size_vec = custom_size.map(From::from);
-        let rect_bevy = rect.map(|r| r.into());
+        let custom_size_vec = custom_size.map(TryInto::try_into).transpose()?;
+        let rect_bevy = rect.map(TryInto::try_into).transpose()?;
 
+        let color = color.try_into()?;
         Ok(Self::from_owned(Sprite {
             image: image_handle,
-            color: color.into(),
+            color,
             flip_x,
             flip_y,
             custom_size: custom_size_vec,
@@ -71,7 +77,7 @@ impl PySprite {
                 py,
                 Self::from_owned(Sprite {
                     image: image_handle,
-                    color: PyColor::default().into(),
+                    color: Color::WHITE,
                     flip_x: false,
                     flip_y: false,
                     custom_size: None,
@@ -93,7 +99,7 @@ impl PySprite {
                 py,
                 Self::from_owned(Sprite {
                     image: image_handle,
-                    color: PyColor::default().into(),
+                    color: Color::WHITE,
                     flip_x: false,
                     flip_y: false,
                     custom_size: None,
@@ -107,13 +113,14 @@ impl PySprite {
 
     #[staticmethod]
     pub fn from_color(color: PyColor, size: PyVec2) -> PyResult<Py<Self>> {
-        let size_vec: bevy::math::Vec2 = size.into();
+        let size_vec: Vec2 = size.try_into()?;
+        let color = color.try_into()?;
         Python::attach(|py| {
             Py::new(
                 py,
                 Self::from_owned(Sprite {
                     image: Default::default(),
-                    color: color.into(),
+                    color,
                     flip_x: false,
                     flip_y: false,
                     custom_size: Some(size_vec),
@@ -127,13 +134,13 @@ impl PySprite {
 
     #[staticmethod]
     pub fn sized(custom_size: PyVec2) -> PyResult<Py<Self>> {
-        let size_vec: bevy::math::Vec2 = custom_size.into();
+        let size_vec: Vec2 = custom_size.try_into()?;
         Python::attach(|py| {
             Py::new(
                 py,
                 Self::from_owned(Sprite {
                     image: Default::default(),
-                    color: PyColor::default().into(),
+                    color: Color::WHITE,
                     flip_x: false,
                     flip_y: false,
                     custom_size: Some(size_vec),
@@ -147,12 +154,13 @@ impl PySprite {
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |sprite| &sprite.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.into();
+        let color = color.try_into()?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 
@@ -181,12 +189,15 @@ impl PySprite {
 
     #[getter]
     pub fn rect(&self) -> PyResult<Option<PyRect>> {
-        Ok(self.as_ref()?.rect.map(|r| r.into()))
+        Ok(self
+            .storage
+            .borrow_optional_field(|s| &s.rect)?
+            .map(<PyRect as FromBorrowedStorage<_>>::from_borrowed))
     }
 
     #[setter]
     pub fn set_rect(&mut self, rect: Option<PyRect>) -> PyResult<()> {
-        self.as_mut()?.rect = rect.map(|r| r.into());
+        self.as_mut()?.rect = rect.map(TryInto::try_into).transpose()?;
         Ok(())
     }
 
@@ -227,18 +238,21 @@ impl PySprite {
     }
 
     #[getter]
-    pub fn custom_size(&self) -> PyResult<Option<(f32, f32)>> {
-        Ok(self.as_ref()?.custom_size.map(|v| (v.x, v.y)))
+    pub fn custom_size(&self) -> PyResult<Option<PyVec2>> {
+        Ok(self
+            .storage
+            .borrow_optional_field(|s| &s.custom_size)?
+            .map(<PyVec2 as FromBorrowedStorage<_>>::from_borrowed))
     }
 
     #[setter]
-    pub fn set_custom_size(&mut self, value: Option<(f32, f32)>) -> PyResult<()> {
-        self.as_mut()?.custom_size = value.map(From::from);
+    pub fn set_custom_size(&mut self, value: Option<PyVec2>) -> PyResult<()> {
+        self.as_mut()?.custom_size = value.map(TryInto::try_into).transpose()?;
         Ok(())
     }
 
-    pub fn as_asset_id(&self) -> PyResult<PyHandle> {
+    pub fn as_asset_id(&self, py: Python<'_>) -> PyResult<Py<PyAssetId>> {
         let asset_id: AssetId<Image> = self.as_ref()?.image.id();
-        Ok(PyHandle::from(&asset_id))
+        materialize_asset_id(py, PyAssetId::from(&asset_id))
     }
 }

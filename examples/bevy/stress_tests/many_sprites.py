@@ -72,7 +72,7 @@ def setup(
             scale = Vec3.splat(random.random() * 2.0)
 
             sprite = Sprite(image=sprite_handle)
-            sprite.custom_size = (tile_size.x, tile_size.y)
+            sprite.custom_size = Vec2(tile_size.x, tile_size.y)
 
             if color_tint.enabled:
                 sprite.color = COLORS[random.randint(0, 2)]

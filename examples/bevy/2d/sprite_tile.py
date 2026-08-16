@@ -51,7 +51,7 @@ def animate(
 
     # Update all sprites
     for sprite in sprites:
-        sprite.custom_size = (state.current, state.current)
+        sprite.custom_size = Vec2(state.current, state.current)
 
 
 @entrypoint

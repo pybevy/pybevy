@@ -1,5 +1,9 @@
 from collections.abc import Callable
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, TypeVar
+
+from pybevy.pbr import Material
+
+MaterialT = TypeVar("MaterialT", bound=Material)
 
 class AlphaMode:
     """Alpha blending mode for materials."""
@@ -49,5 +53,5 @@ def material(
     cull_mode: object = ...,
     unlit: bool | None = None,
     depth_bias: float | None = None,
-) -> Callable[[type], type]:
+) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material."""
