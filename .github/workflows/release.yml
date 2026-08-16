@@ -214,28 +214,25 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
-  # publish:
-  #   name: Publish to PyPI
-  #   runs-on: ubuntu-latest
-  #   needs: [build-sdist, build-wheels]
-  #   if: github.event_name == 'release'
-  #   permissions:
-  #     id-token: write
-  #   environment:
-  #     name: pypi
-  #     url: https://pypi.org/p/pybevy
-  #   steps:
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         pattern: dist-*
-  #         path: dist
-  #         merge-multiple: true
-  #
-  #     - name: Publish to PyPI
-  #       uses: PyO3/maturin-action@v1
-  #       with:
-  #         command: upload
-  #         args: --non-interactive --skip-existing dist/*
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [build-sdist, build-wheels]
+    if: github.event_name == 'release'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pybevy
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
 
   upload-release-assets:
     name: Upload release assets
@@ -244,12 +241,19 @@ jobs:
     if: github.event_name == 'release'
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: dist-*
           path: dist
           merge-multiple: true
+
+      - name: Generate artifact attestations
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: "dist/*"
 
       - name: Upload to GitHub Release
         env:
