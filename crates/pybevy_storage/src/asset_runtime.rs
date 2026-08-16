@@ -15,16 +15,16 @@ pub enum AssetRuntimeError {
     Access(StorageError),
     /// A write was attempted through `Res[Assets[T]]`.
     MutableAccessRequired,
-    /// A handle belongs to another registered asset type.
-    HandleTypeMismatch { actual: String, expected: String },
+    /// An asset identity belongs to another registered asset type.
+    AssetTypeMismatch { actual: String, expected: String },
     /// Structural mutation would invalidate a live borrowed asset wrapper.
     BorrowedAssetsLive { asset_name: String },
 }
 
 impl AssetRuntimeError {
     /// Whether adapters should expose this failure as a Python `ValueError`.
-    pub fn is_handle_type_mismatch(&self) -> bool {
-        matches!(self, Self::HandleTypeMismatch { .. })
+    pub fn is_asset_type_mismatch(&self) -> bool {
+        matches!(self, Self::AssetTypeMismatch { .. })
     }
 }
 
@@ -35,9 +35,9 @@ impl fmt::Display for AssetRuntimeError {
             Self::MutableAccessRequired => f.write_str(
                 "Mutable access required. Use ResMut[Assets[T]] instead of Res[Assets[T]] for mutations.",
             ),
-            Self::HandleTypeMismatch { actual, expected } => write!(
+            Self::AssetTypeMismatch { actual, expected } => write!(
                 f,
-                "Handle of type `{actual}` does not match expected type `{expected}`"
+                "Asset identity of type `{actual}` does not match expected type `{expected}`"
             ),
             Self::BorrowedAssetsLive { asset_name } => write!(
                 f,
@@ -102,7 +102,7 @@ impl<K: Eq> AssetRuntimeCore<K> {
         })
     }
 
-    pub fn check_handle_type(
+    pub fn check_asset_type(
         &self,
         actual_key: &K,
         actual_name: impl Into<String>,
@@ -110,7 +110,7 @@ impl<K: Eq> AssetRuntimeCore<K> {
         if actual_key == &self.type_key {
             return Ok(());
         }
-        Err(AssetRuntimeError::HandleTypeMismatch {
+        Err(AssetRuntimeError::AssetTypeMismatch {
             actual: actual_name.into(),
             expected: self.asset_name.clone(),
         })
@@ -170,15 +170,15 @@ mod tests {
     }
 
     #[test]
-    fn handle_identity_uses_neutral_keys_and_names() {
+    fn asset_identity_uses_neutral_keys_and_names() {
         let core = core(AccessMode::Read);
-        assert!(core.check_handle_type(&7, "Image").is_ok());
+        assert!(core.check_asset_type(&7, "Image").is_ok());
 
-        let error = core.check_handle_type(&9, "Mesh").unwrap_err();
-        assert!(error.is_handle_type_mismatch());
+        let error = core.check_asset_type(&9, "Mesh").unwrap_err();
+        assert!(error.is_asset_type_mismatch());
         assert_eq!(
             error.to_string(),
-            "Handle of type `Mesh` does not match expected type `Image`"
+            "Asset identity of type `Mesh` does not match expected type `Image`"
         );
     }
 }

@@ -13,6 +13,8 @@
 //! - `AppStoreCore` - Backend-neutral App identity and ownership transitions
 
 pub mod app_store;
+pub mod asset_access_registry;
+pub mod asset_path;
 pub mod asset_runtime;
 pub mod batch_columns;
 pub mod borrowed;
@@ -34,6 +36,18 @@ pub mod view_bridge;
 pub use app_store::{
     AllocatedAppId, AppId, AppLifecycle, AppOperation, AppRestoreError, AppStoreCore,
     AppStoreError, BorrowedApps, DrainOutcome, DrainedApps, allocate_id, consume_unstored_id,
+};
+pub use asset_access_registry::{
+    ActiveAssetAccess, AssetAccessRegistry, AssetAccessScope, AssetResourceReadGuard,
+    AssetResourceState, AssetResourceWriteGuard, PendingViewClaim, ReadViewClaim, ViewCounters,
+    ensure_asset_access_registry,
+};
+pub(crate) use asset_path::{
+    AssetPath, ErasedResolvedMut, ErasedResolvedRef, ErasedRevalidatingSource,
+};
+pub use asset_path::{
+    ReadField, ReadIndex, ReadKey, ReadVariant, RevalidatingMut, RevalidatingRef,
+    RevalidatingSource, WriteField, WriteIndex, WriteKey, WriteVariant,
 };
 pub use asset_runtime::{AssetRuntimeCore, AssetRuntimeError};
 pub use borrowed::{BorrowedMut, BorrowedRef};
