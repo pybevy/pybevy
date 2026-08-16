@@ -108,8 +108,11 @@ impl HotReloadState {
 
     /// Set the loader function that will be called to recreate the app
     pub fn set_loader(&self, func: Py<PyAny>) {
-        let mut inner = lock_or_recover(&self.inner);
-        inner.loader_func = Some(func);
+        let old_loader = {
+            let mut inner = lock_or_recover(&self.inner);
+            inner.loader_func.replace(func)
+        };
+        drop(old_loader);
     }
 
     /// Request a reload (called from Python watcher thread)
@@ -125,7 +128,8 @@ impl HotReloadState {
         self.requests.is_pending()
     }
 
-    /// Check if reload is pending and get the loader function and mode if available
+    /// Check if reload is pending and get the loader function and mode if available.
+    /// A request taken before any loader is installed is intentionally consumed and dropped.
     pub fn take_pending_reload(&self, py: Python) -> Option<(Py<PyAny>, ReloadMode)> {
         let mode = self.requests.take()?;
         lock_or_recover(&self.inner)

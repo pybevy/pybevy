@@ -1,14 +1,14 @@
 pub(crate) use pybevy_reload::is_verbose;
 use pyo3::prelude::*;
 
-/// Get total Python GC tracked objects (sum of gc.get_count() across all generations).
+/// Get the number of Python objects currently tracked by the cyclic GC.
 pub(crate) fn get_python_gc_objects() -> usize {
     Python::attach(|py| {
         if let Ok(gc) = py.import("gc")
-            && let Ok(counts) = gc.call_method0("get_count")
-            && let Ok(tuple) = counts.extract::<(usize, usize, usize)>()
+            && let Ok(objects) = gc.call_method0("get_objects")
+            && let Ok(count) = objects.len()
         {
-            return tuple.0 + tuple.1 + tuple.2;
+            return count;
         }
         0
     })

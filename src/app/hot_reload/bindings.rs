@@ -4,15 +4,16 @@ use std::{
 };
 
 use bevy::{
-    app::{App, Last, MainScheduleOrder, PreStartup},
+    app::{App, Last, MainScheduleOrder, PreStartup, Update},
     ecs::schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
 };
-use pybevy_core::PyPlugin;
+use pybevy_core::{PyPlugin, ensure_asset_access_registry, resource_initializer};
 use pybevy_ecs::shared::system_runtime::RunProfileSinkResource;
 use pybevy_reload::{
     HotReloadGeneration, HotReloadStats, MemoryOverlayVisible, MemoryProfile, PluginTracker,
-    ReloadMode, StartPaused, SystemMonitor, SystemProfiler, is_verbose, parse_resolution,
-    render_hot_reload_overlay, spawn_hot_reload_overlay_system, update_system_stats,
+    ReloadMode, ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler, is_verbose,
+    parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
+    update_system_stats,
 };
 use pyo3::prelude::*;
 
@@ -26,11 +27,8 @@ use super::{
     util::detect_gil_status,
 };
 use crate::{
-    app::app::PyApp,
-    ecs::{
-        resource::PyResource,
-        resource_type::{PyResourceStorage, register_custom_resource},
-    },
+    app::app::{PyApp, drain_last_system_error},
+    ecs::{resource::PyResource, resource_type::PyResourceType},
 };
 
 /// Python-exposed reload state class (for CLI watcher thread)
@@ -60,7 +58,7 @@ impl PyAppReloadState {
     /// Called by CLI watcher thread when file changes are detected
     /// Only triggers reload if one isn't already pending (e.g., from F5)
     /// Uses the current default_reload_mode (which can be toggled with F6)
-    pub fn trigger_reload_if_needed(&self, _default_mode_is_partial: bool) {
+    pub fn trigger_reload_if_needed(&self) {
         let mode = self.state.get_default_mode();
         self.state.request_reload_if_idle(mode);
     }
@@ -116,8 +114,8 @@ impl PyHotReloadControl {
 }
 
 impl PyHotReloadControl {
-    pub fn new(state: HotReloadState) -> (Self, PyResource) {
-        (Self { state }, PyResource)
+    pub fn new(state: HotReloadState) -> PyClassInitializer<Self> {
+        resource_initializer(Self { state })
     }
 }
 
@@ -154,7 +152,9 @@ pub fn add_hot_reload_system(
     app.insert_resource(HotReloadGeneration::new(generation_counter));
 
     // Insert the DynamicSystem registry for tracking system handles by generation
-    app.insert_resource(DynamicSystemRegistry::default());
+    let mut system_registry = DynamicSystemRegistry::default();
+    system_registry.track_generation(state.current_generation());
+    app.insert_resource(system_registry);
     app.insert_resource(PendingScheduleCompaction::default());
 
     // Initialize system monitor
@@ -185,7 +185,7 @@ pub fn add_hot_reload_system(
     system.refresh_memory();
 
     // Initial process stats - only if we have a valid PID
-    let (initial_memory_mb, initial_cpu) = if let Some(pid) = process_pid {
+    let (initial_memory_mb, initial_cpu, initial_uptime_secs) = if let Some(pid) = process_pid {
         // Initial process refresh with explicit CPU tracking (establishes baseline for CPU calculation)
         system.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::Some(&[pid]),
@@ -206,13 +206,13 @@ pub fn add_hot_reload_system(
                     mem_mb, total_cpu, num_cores
                 );
             }
-            (mem_mb, total_cpu)
+            (mem_mb, total_cpu, process.run_time() as f64)
         } else {
             eprintln!("WARNING: Could not find process {}!", pid);
-            (0.0, 0.0)
+            (0.0, 0.0, 0.0)
         }
     } else {
-        (0.0, 0.0)
+        (0.0, 0.0, 0.0)
     };
 
     // Calculate additional system info for stats
@@ -252,7 +252,8 @@ pub fn add_hot_reload_system(
         total_memory_mb,
         cpu_core_count,
         gil_enabled,
-        uptime_secs: 0.0,
+        uptime_secs: initial_uptime_secs,
+        generation_uptime_secs: 0.0,
         entity_count: 0,
         asset_counts: std::collections::HashMap::new(),
         last_error_timestamp: 0.0,
@@ -336,28 +337,13 @@ pub fn add_hot_reload_system(
         let type_obj: Bound<'_, pyo3::types::PyType> = py_control.bind(py).get_type();
         let type_ptr = type_obj.as_type_ptr();
 
-        // Ensure PyResourceStorage exists
-        if !app.world().contains_resource::<PyResourceStorage>() {
-            app.insert_resource(PyResourceStorage::default());
-        }
-
-        // Use the same stable, qualified-name-aware identity path as all other
-        // custom resources. Ad-hoc numeric ComponentIds can collide with Bevy's
-        // own component registry.
-        let component_id = register_custom_resource(
+        if let Err(error) = PyResourceType::Custom(type_ptr).insert_into_world(
             app.world_mut(),
-            type_ptr,
-            type_obj
-                .name()
-                .map(|name| name.to_string())
-                .unwrap_or_else(|_| "HotReloadControl".to_string()),
-        );
-
-        // Store the Python object in PyResourceStorage
-        let mut storage = app.world_mut().resource_mut::<PyResourceStorage>();
-        storage
-            .resources
-            .insert(component_id, py_control.into_any());
+            py,
+            py_control.into_any(),
+        ) {
+            eprintln!("WARNING: Failed to insert HotReloadControl: {error}");
+        }
     });
 
     // Ensure Last schedule exists (might not exist with minimal plugins like ScheduleRunnerPlugin)
@@ -368,29 +354,32 @@ pub fn add_hot_reload_system(
         app.init_schedule(Last);
     }
 
+    // The request frame's buffered system error must land in LastSystemError
+    // before the reload runs, so it reads as pre-reload instead of surfacing
+    // after the reload's clear as a phantom post-reload error.
     app.add_systems(
         Last,
         (
             handle_f5_reload_system,
-            check_hot_reload_system,
             update_system_stats,
             render_hot_reload_overlay,
         )
-            .chain(),
+            .chain()
+            .after(drain_last_system_error),
     );
-    app.init_schedule(CompactRetiredReloadSystems);
+    app.init_schedule(HotReloadMaintenance);
     app.world_mut()
         .resource_mut::<MainScheduleOrder>()
-        .insert_after(Last, CompactRetiredReloadSystems);
+        .insert_after(Update, HotReloadMaintenance);
     app.add_systems(
-        CompactRetiredReloadSystems,
-        compact_retired_generation_systems,
+        HotReloadMaintenance,
+        (check_hot_reload_system, compact_retired_generation_systems).chain(),
     );
 
     // Spawn the overlay UI entity immediately (plugins are already initialized at this point)
     spawn_hot_reload_overlay_system(app.world_mut());
 
-    // Capture base entity set NOW — before any user Startup systems run.
+    // Capture base entity set NOW, before any user Startup systems run.
     // Every entity that exists at this point is Bevy-internal (plugin init).
     // On Full reload, everything NOT in this set gets despawned.
     if !app
@@ -424,6 +413,13 @@ pub fn add_hot_reload_system(
             pybevy_reload::cleanup::extend_base_entity_set,
         );
     }
+
+    let startup_labels = app
+        .world()
+        .resource::<MainScheduleOrder>()
+        .startup_labels
+        .clone();
+    app.insert_resource(ReloadStartupScheduleOrder(startup_labels));
 }
 
 /// Schedule that runs once before `PreStartup` to fold engine entities
@@ -432,7 +428,7 @@ pub fn add_hot_reload_system(
 struct ExtendBaseEntitySet;
 
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
-struct CompactRetiredReloadSystems;
+struct HotReloadMaintenance;
 
 /// PyO3 plugin for enabling hot reload functionality
 ///
@@ -461,6 +457,7 @@ impl PyHotReloadPlugin {
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
         app.borrow().with_bevy_app(|bevy_app| {
+            ensure_asset_access_registry(bevy_app.world_mut());
             // Create the hot reload state
             let state = HotReloadState::new();
             let error_state = Arc::new(Mutex::new(Vec::new()));
