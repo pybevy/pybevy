@@ -20,9 +20,9 @@ pub enum FieldColumn<'a> {
     U32(&'a [u32]),
     U64(&'a [u64]),
     Bool(&'a [u8]),
-    /// Flat slice of f32 from an (N, 3) array — stride 3 per entity.
+    /// Flat slice of f32 from an (N, 3) array: stride 3 per entity.
     Vec3(&'a [f32]),
-    /// Flat slice of f32 from an (N, 2) array — stride 2 per entity.
+    /// Flat slice of f32 from an (N, 2) array: stride 2 per entity.
     Vec2(&'a [f32]),
 }
 
@@ -126,9 +126,8 @@ pub fn build_wrapper_rows(
 
 #[cfg(test)]
 mod tests {
-    use crate::component_layout::{ComponentLayout, FieldInfo, PrimitiveType};
-
     use super::*;
+    use crate::component_layout::{ComponentLayout, FieldInfo, PrimitiveType};
 
     fn f32_le(bytes: &[u8]) -> f32 {
         f32::from_le_bytes(bytes.try_into().unwrap())

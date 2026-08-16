@@ -150,6 +150,38 @@ impl PrimitiveValue {
         }
     }
 
+    /// Read one primitive value from wrapper bytes.
+    ///
+    /// # Safety
+    /// `src` must point to a valid, readable region of at least
+    /// `field_type.size_bytes()` bytes containing the representation used by
+    /// wrapper storage.
+    #[inline]
+    pub unsafe fn read_from_ptr(field_type: PrimitiveType, src: *const u8) -> Self {
+        // SAFETY: the caller guarantees a readable region large enough for the
+        // requested primitive. Unaligned reads match wrapper serialization.
+        unsafe {
+            match field_type {
+                PrimitiveType::F32 => Self::F32((src as *const f32).read_unaligned()),
+                PrimitiveType::F64 => Self::F64((src as *const f64).read_unaligned()),
+                PrimitiveType::I32 => Self::I32((src as *const i32).read_unaligned()),
+                PrimitiveType::I64 => Self::I64((src as *const i64).read_unaligned()),
+                PrimitiveType::U32 => Self::U32((src as *const u32).read_unaligned()),
+                PrimitiveType::U64 => Self::U64((src as *const u64).read_unaligned()),
+                PrimitiveType::Bool => Self::Bool(src.read_unaligned() != 0),
+                PrimitiveType::Vec3 => Self::Vec3(Vec3::new(
+                    (src as *const f32).read_unaligned(),
+                    (src as *const f32).add(1).read_unaligned(),
+                    (src as *const f32).add(2).read_unaligned(),
+                )),
+                PrimitiveType::Vec2 => Self::Vec2(Vec2::new(
+                    (src as *const f32).read_unaligned(),
+                    (src as *const f32).add(1).read_unaligned(),
+                )),
+            }
+        }
+    }
+
     fn write_to_slice(self, dst: &mut [u8]) {
         assert_eq!(dst.len(), self.field_type().size_bytes());
         match self {
@@ -192,6 +224,15 @@ pub enum ComponentLayoutError {
         expected: PrimitiveType,
         actual: PrimitiveType,
     },
+    FieldCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    FieldNameMismatch {
+        index: usize,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl fmt::Display for ComponentLayoutError {
@@ -222,6 +263,18 @@ impl fmt::Display for ComponentLayoutError {
                 f,
                 "field '{field}' extractor returned {actual:?}, expected {expected:?}"
             ),
+            Self::FieldCountMismatch { expected, actual } => write!(
+                f,
+                "saved component has {actual} fields, registered schema expects {expected}"
+            ),
+            Self::FieldNameMismatch {
+                index,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "saved field {index} is named '{actual}', registered schema expects '{expected}'"
+            ),
         }
     }
 }
@@ -236,11 +289,127 @@ pub enum ComponentSerializationError<E> {
 }
 
 /// Information about a single field in a component
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldInfo {
     pub name: String,
     pub offset: usize,
     pub field_type: PrimitiveType,
+}
+
+/// Interpreter-neutral schema for a wrapper-stored custom component.
+///
+/// Unlike [`ComponentLayout`], this contains no interpreter object identity and
+/// can therefore be retained by shared registries, serialization, and control
+/// adapters across Python hot-reload generations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrapperComponentSchema {
+    pub fields: Vec<FieldInfo>,
+    pub data_size: usize,
+    pub wrapper_size: WrapperSize,
+}
+
+impl WrapperComponentSchema {
+    /// Get field information by name.
+    pub fn get_field(&self, name: &str) -> Option<&FieldInfo> {
+        self.fields.iter().find(|field| field.name == name)
+    }
+
+    /// Get field names in their declared layout order.
+    pub fn field_names(&self) -> Vec<&str> {
+        self.fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect()
+    }
+
+    /// Read all declared values from a wrapper component.
+    ///
+    /// # Safety
+    ///
+    /// `data` must point to the data array of the wrapper selected by
+    /// [`Self::wrapper_size`].
+    pub unsafe fn read_values(
+        &self,
+        data: *const u8,
+    ) -> Result<Vec<(String, PrimitiveValue)>, ComponentLayoutError> {
+        let buffer_size = self.wrapper_size.size_bytes();
+        let mut values = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            let size = field.field_type.size_bytes();
+            let Some(end) = field.offset.checked_add(size) else {
+                return Err(ComponentLayoutError::FieldOutOfBounds {
+                    field: field.name.clone(),
+                    offset: field.offset,
+                    size,
+                    buffer_size,
+                });
+            };
+            if end > buffer_size {
+                return Err(ComponentLayoutError::FieldOutOfBounds {
+                    field: field.name.clone(),
+                    offset: field.offset,
+                    size,
+                    buffer_size,
+                });
+            }
+            // SAFETY: the checked range lies within the wrapper allocation and
+            // the caller guarantees that `data` points at that allocation.
+            let value =
+                unsafe { PrimitiveValue::read_from_ptr(field.field_type, data.add(field.offset)) };
+            values.push((field.name.clone(), value));
+        }
+        Ok(values)
+    }
+
+    /// Serialize an exact, ordered schema/value snapshot into wrapper bytes.
+    pub fn serialize_values(
+        &self,
+        values: &[(String, PrimitiveValue)],
+    ) -> Result<Vec<u8>, ComponentLayoutError> {
+        if values.len() != self.fields.len() {
+            return Err(ComponentLayoutError::FieldCountMismatch {
+                expected: self.fields.len(),
+                actual: values.len(),
+            });
+        }
+
+        let mut buffer = vec![0u8; self.wrapper_size.size_bytes()];
+        for (index, (field, (name, value))) in self.fields.iter().zip(values).enumerate() {
+            if name != &field.name {
+                return Err(ComponentLayoutError::FieldNameMismatch {
+                    index,
+                    expected: field.name.clone(),
+                    actual: name.clone(),
+                });
+            }
+            if value.field_type() != field.field_type {
+                return Err(ComponentLayoutError::FieldTypeMismatch {
+                    field: name.clone(),
+                    expected: field.field_type,
+                    actual: value.field_type(),
+                });
+            }
+            let size = field.field_type.size_bytes();
+            let Some(end) = field.offset.checked_add(size) else {
+                return Err(ComponentLayoutError::FieldOutOfBounds {
+                    field: field.name.clone(),
+                    offset: field.offset,
+                    size,
+                    buffer_size: buffer.len(),
+                });
+            };
+            let Some(dst) = buffer.get_mut(field.offset..end) else {
+                return Err(ComponentLayoutError::FieldOutOfBounds {
+                    field: field.name.clone(),
+                    offset: field.offset,
+                    size,
+                    buffer_size: buffer.len(),
+                });
+            };
+            value.write_to_slice(dst);
+        }
+        Ok(buffer)
+    }
 }
 
 /// Layout metadata for a wrapper component.
@@ -330,6 +499,15 @@ impl ComponentLayout {
     /// Get list of field names (for error messages)
     pub fn field_names(&self) -> Vec<&str> {
         self.fields.iter().map(|f| f.name.as_str()).collect()
+    }
+
+    /// Drop interpreter identity and retain only the stable wrapper schema.
+    pub fn schema(&self) -> WrapperComponentSchema {
+        WrapperComponentSchema {
+            fields: self.fields.clone(),
+            data_size: self.data_size,
+            wrapper_size: self.wrapper_size,
+        }
     }
 
     /// Serialize backend-extracted field values into a wrapper-sized byte buffer.
@@ -582,40 +760,8 @@ mod tests {
             let dst = buf.as_mut_ptr();
             // SAFETY: buf is 16 bytes, larger than any primitive's size.
             unsafe { v.write_to_ptr(dst) };
-            let read_back = unsafe {
-                match v {
-                    PrimitiveValue::F32(_) => {
-                        PrimitiveValue::F32((dst as *const f32).read_unaligned())
-                    }
-                    PrimitiveValue::F64(_) => {
-                        PrimitiveValue::F64((dst as *const f64).read_unaligned())
-                    }
-                    PrimitiveValue::I32(_) => {
-                        PrimitiveValue::I32((dst as *const i32).read_unaligned())
-                    }
-                    PrimitiveValue::I64(_) => {
-                        PrimitiveValue::I64((dst as *const i64).read_unaligned())
-                    }
-                    PrimitiveValue::U32(_) => {
-                        PrimitiveValue::U32((dst as *const u32).read_unaligned())
-                    }
-                    PrimitiveValue::U64(_) => {
-                        PrimitiveValue::U64((dst as *const u64).read_unaligned())
-                    }
-                    PrimitiveValue::Bool(_) => PrimitiveValue::Bool(*dst != 0),
-                    PrimitiveValue::Vec3(_) => {
-                        let x = (dst as *const f32).read_unaligned();
-                        let y = (dst as *const f32).add(1).read_unaligned();
-                        let z = (dst as *const f32).add(2).read_unaligned();
-                        PrimitiveValue::Vec3(Vec3::new(x, y, z))
-                    }
-                    PrimitiveValue::Vec2(_) => {
-                        let x = (dst as *const f32).read_unaligned();
-                        let y = (dst as *const f32).add(1).read_unaligned();
-                        PrimitiveValue::Vec2(Vec2::new(x, y))
-                    }
-                }
-            };
+            // SAFETY: buf is 16 bytes, larger than any primitive's size.
+            let read_back = unsafe { PrimitiveValue::read_from_ptr(v.field_type(), dst) };
             assert_eq!(&read_back, v);
         }
     }
@@ -626,8 +772,9 @@ mod tests {
         let mut buf = [0u8; 16];
         // SAFETY: writing an f64 at offset 1 stays within the 16-byte buffer.
         unsafe { PrimitiveValue::F64(6.5).write_to_ptr(buf.as_mut_ptr().add(1)) };
-        let got = unsafe { (buf.as_ptr().add(1) as *const f64).read_unaligned() };
-        assert_eq!(got, 6.5);
+        // SAFETY: reading an f64 at offset 1 stays within the 16-byte buffer.
+        let got = unsafe { PrimitiveValue::read_from_ptr(PrimitiveType::F64, buf.as_ptr().add(1)) };
+        assert_eq!(got, PrimitiveValue::F64(6.5));
     }
 
     #[test]

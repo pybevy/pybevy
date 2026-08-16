@@ -56,6 +56,22 @@ pub trait ComponentBridge: Send + Sync + 'static {
     /// Human-readable name for error messages
     fn name(&self) -> &'static str;
 
+    /// Whether Python-facing APIs may insert this component.
+    fn can_insert(&self) -> bool;
+
+    /// For a Bevy `Relationship` component, the Python field holding the
+    /// related entity.
+    ///
+    /// Two consequences for callers that build components from JSON: an
+    /// integer on that field is an entity id and must become an `Entity`, and
+    /// a write must rebuild and re-insert the whole component rather than
+    /// setting the field in place. Bevy's relationship hooks only run on
+    /// insert/replace, so an in-place write desynchronizes the
+    /// `RelationshipTarget` (see `Relationship::set_risky`).
+    fn relationship_field(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Register component with Bevy world and return its ComponentId
     fn register(&self, world: &mut World) -> ComponentId;
 

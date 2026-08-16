@@ -149,6 +149,10 @@ impl ComponentBridge for ChildOfBridge {
         "ChildOf"
     }
 
+    fn can_insert(&self) -> bool {
+        true
+    }
+
     fn register(&self, world: &mut World) -> ComponentId {
         world.register_component::<ChildOf>()
     }
@@ -288,6 +292,10 @@ impl ComponentBridge for ChildrenBridge {
 
     fn name(&self) -> &'static str {
         "Children"
+    }
+
+    fn can_insert(&self) -> bool {
+        false
     }
 
     fn register(&self, world: &mut World) -> ComponentId {
