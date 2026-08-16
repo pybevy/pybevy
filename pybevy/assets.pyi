@@ -1,11 +1,11 @@
 from collections.abc import Iterator
-from enum import Enum
-from typing import ClassVar, Generic, TypeVar, overload
+from typing import ClassVar, Final, Generic, Literal, TypeVar, overload
 
 from pybevy.app import App, Plugin
 from pybevy.audio import AudioSource
 from pybevy.color import Color
-from pybevy.ecs import Message, Resource
+from pybevy.ecs import Message, Resource, SystemSet
+from pybevy.gltf import GltfLoaderSettings
 from pybevy.image import Image, ImageLoaderSettings
 from pybevy.mesh import Mesh, Meshable, MeshBuilder
 from pybevy.pbr import StandardMaterial
@@ -13,12 +13,54 @@ from pybevy.sprite import ColorMaterial
 from pybevy.world_serialization import WorldAsset
 
 A = TypeVar("A", bound=Asset)
+# Handle only ever produces its asset type, never consumes it, so a
+# Handle[Image] is usable wherever a Handle[Asset] is expected. Assets[A] must
+# stay invariant: `add(self, asset: A)` consumes one.
+A_co = TypeVar("A_co", bound=Asset, covariant=True)
+_VariantA_co = TypeVar("_VariantA_co", bound=Asset, covariant=True)
+
+AssetTrackingSystems: Final[SystemSet]
+AssetEventSystems: Final[SystemSet]
 
 class AssetPlugin(Plugin):
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...
+    @property
+    def watch_for_changes_override(self) -> bool | None:
+        """Whether edits to files under ``assets/`` are picked up while the app runs.
+
+        True when the app was launched with hot reload (``pybevy dev``/``watch``),
+        False otherwise so shipped apps do not carry a file watcher.
+        """
 
 class Asset: ...
+
+class AssetIndex:
+    """Bevy's opaque, generational runtime asset index."""
+    @staticmethod
+    def from_bits(bits: int) -> AssetIndex: ...
+    def to_bits(self) -> int: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+class AssetId(Generic[A_co]):
+    """A copyable, non-owning identifier with exact Bevy enum variants."""
+
+    class Index(AssetId[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["index"]]]
+        index: AssetIndex
+        def __init__(self, index: AssetIndex, asset_type: type[_VariantA_co]) -> None: ...
+
+    class Uuid(AssetId[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["uuid"]]]
+        uuid: int
+        def __init__(self, uuid: int, asset_type: type[_VariantA_co]) -> None: ...
+
+    @staticmethod
+    def uuid_from_u128(value: int, asset_type: type[A_co]) -> AssetId.Uuid[A_co]: ...
+    def asset_type_class(self) -> type[A_co]: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class LoadedFolder(Asset):
     """A loaded folder containing handles for all assets in a directory.
@@ -74,12 +116,19 @@ class LoadState:
     def is_failed(self) -> bool:
         """Returns `True` if this instance is `LoadState.Failed`"""
 
-class Handle(Generic[A]):
-    @staticmethod
-    def weak_from_u128(value: int, asset_type: type[A]) -> Handle[A]:
-        """Create a weak handle from a UUID.
+class Handle(Generic[A_co]):
+    """Reference to an asset stored in ``Assets[A]``.
 
-        This creates a handle that does NOT keep the asset alive. It's useful for:
+    Handles returned by ``Assets.add`` and ``AssetServer.load*`` are strong and
+    keep the asset alive. After the last strong handle is dropped, Bevy
+    reclaims the asset on a later asset-tracking pass.
+    """
+
+    @staticmethod
+    def uuid_from_u128(value: int, asset_type: type[A_co]) -> Handle[A_co]:
+        """Create a non-owning Bevy UUID handle.
+
+        This handle does not keep an asset alive. It is useful for:
         - Referencing assets that will be loaded later
         - Creating handles for comparison/lookup
         - Testing scenarios
@@ -88,23 +137,19 @@ class Handle(Generic[A]):
             value: A u128 value to use as the UUID
             asset_type: The Python type of the asset (e.g., Mesh, Image)
         """
-    def asset_type_class(self) -> type[A]:
+    def asset_type_class(self) -> type[A_co]:
         """Get the Python type class of the asset this handle refers to.
 
         Returns the asset type as a Python class (e.g., Mesh, Image, StandardMaterial).
         """
-    def id(self) -> int:
-        """Get a unique identifier for this handle.
-
-        For UUID-based handles, returns the UUID as u128.
-        For Index-based strong handles, returns the index bits.
-
-        Note: This is primarily useful for comparing handles or using them in sets/dicts.
-        """
+    def id(self) -> AssetId[A_co]:
+        """Get this handle's Bevy asset identifier."""
     def is_strong(self) -> bool:
         """Check if this is a strong handle (keeps the asset alive)."""
-    def is_weak(self) -> bool:
-        """Check if this is a weak handle (does not keep the asset alive)."""
+    def is_uuid(self) -> bool:
+        """Check whether this is a Bevy UUID handle."""
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class Assets(Resource, Generic[A]):
     @overload
@@ -117,17 +162,17 @@ class Assets(Resource, Generic[A]):
     def add(self: Assets[StandardMaterial], asset: Color) -> Handle[StandardMaterial]: ...
     @overload
     def add(self: Assets[ColorMaterial], asset: Color) -> Handle[ColorMaterial]: ...
-    def contains(self, id: Handle[A]) -> bool: ...
-    def get(self, id: Handle[A]) -> A | None: ...
-    def get_mut(self, id: Handle[A]) -> A | None: ...
+    def contains(self, id: Handle[A] | AssetId[A]) -> bool: ...
+    def get(self, id: Handle[A] | AssetId[A]) -> A | None: ...
+    def get_mut(self, id: Handle[A] | AssetId[A]) -> A | None: ...
     def is_empty(self) -> bool: ...
-    def __iter__(self) -> Iterator[tuple[Handle[A], A]]: ...
+    def __iter__(self) -> Iterator[tuple[AssetId[A], A]]: ...
     def len(self) -> int: ...
-    def remove(self, id: Handle[A]) -> None | A: ...
+    def remove(self, id: Handle[A] | AssetId[A]) -> None | A: ...
 
-class AssetIter(Iterator[tuple[Handle[A], A]]):
-    """Iterator over (handle, asset) pairs in an Assets collection."""
-    def __next__(self) -> tuple[Handle[A], A]: ...
+class AssetIter(Iterator[tuple[AssetId[A], A]]):
+    """Iterator over (asset ID, asset) pairs in an Assets collection."""
+    def __next__(self) -> tuple[AssetId[A], A]: ...
     def __iter__(self) -> AssetIter[A]: ...
 
 class AssetServer(Resource):
@@ -135,13 +180,14 @@ class AssetServer(Resource):
 
     def load_world_asset(self, path: str | AssetPath) -> Handle[WorldAsset]: ...
     def load_image(self, path: str | AssetPath) -> Handle[Image]: ...
-    def load_with_settings(self, path: str | AssetPath, asset_type: type[A], settings: ImageLoaderSettings) -> Handle[A]:
+    def load_with_settings(self, path: str | AssetPath, asset_type: type[A], settings: ImageLoaderSettings | GltfLoaderSettings) -> Handle[A]:
         """Load an asset with custom loader settings.
 
         Equivalent to Bevy's `asset_server.load_with_settings::<A, S>()`.
 
         Currently supported asset types and their settings:
         - Image + ImageLoaderSettings (sampler mode, sRGB, format)
+        - Gltf + GltfLoaderSettings (content, validation, coordinates, bounds, and samplers)
 
         Args:
             path: Path to the asset file (relative to assets directory)
@@ -150,10 +196,10 @@ class AssetServer(Resource):
 
         Example:
             ```python
-            from pybevy.image import ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor
+            from pybevy.image import Image, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor
             from pybevy.image import ImageAddressMode
 
-            settings = ImageLoaderSettings(sampler=ImageSampler.descriptor(
+            settings = ImageLoaderSettings(sampler=ImageSampler.Descriptor(
                 ImageSamplerDescriptor(
                     address_mode_u=ImageAddressMode.Repeat,
                     address_mode_v=ImageAddressMode.Repeat,
@@ -188,7 +234,7 @@ class AssetServer(Resource):
             - Use asset events to wait for loading completion
         """
 
-    def load_state(self, id: Handle[A]) -> LoadState:
+    def load_state(self, id: Handle[A] | AssetId[A]) -> LoadState:
         """Get the load state for the given asset handle.
 
         Returns `LoadState.NotLoaded` if the asset is not tracked.
@@ -200,7 +246,7 @@ class AssetServer(Resource):
             The current load state of the asset
         """
 
-    def is_loaded(self, id: Handle[A]) -> bool:
+    def is_loaded(self, id: Handle[A] | AssetId[A]) -> bool:
         """Check if the asset is loaded (but not necessarily its dependencies).
 
         Returns `True` if the asset's load state is `LoadState.Loaded`.
@@ -212,7 +258,7 @@ class AssetServer(Resource):
             True if the asset is loaded, False otherwise
         """
 
-    def is_loaded_with_dependencies(self, id: Handle[A]) -> bool:
+    def is_loaded_with_dependencies(self, id: Handle[A] | AssetId[A]) -> bool:
         """Check if the asset and all of its dependencies are loaded.
 
         Returns `True` if the asset and all recursive dependencies have finished loading.
@@ -270,7 +316,7 @@ class AssetPath:
         source: str | None = None,
     ) -> None: ...
     @staticmethod
-    def parse(path: str) -> AssetPath: ...
+    def parse(asset_path: str) -> AssetPath: ...
     @property
     def path(self) -> str: ...
     @property
@@ -332,61 +378,76 @@ class AssetServerMode:
     Unprocessed: ClassVar[AssetServerMode]
     Processed: ClassVar[AssetServerMode]
 
-class AssetEventType(Enum):
-    """The type of asset event that occurred."""
-
-    Added = ...
-    """Asset was added to the asset storage."""
-
-    Modified = ...
-    """Asset was modified in the asset storage."""
-
-    Removed = ...
-    """Asset was removed from the asset storage."""
-
-    Unused = ...
-    """Asset is no longer used (all handles dropped)."""
-
-    LoadedWithDependencies = ...
-    """Asset and all its dependencies finished loading."""
-
-class AssetEvent(Message):
+class AssetEvent(Message, Generic[A_co]):
     """Event fired when an asset's state changes.
 
     AssetEvents are fired during the asset lifecycle for operations like
-    loading, reloading, and unloading assets. Use MessageReader[AssetEvent]
-    in systems to respond to asset state changes.
+    loading, reloading, and unloading assets. Select the asset channel with
+    ``MessageReader[AssetEvent[Image]]``.
 
     Example:
         ```python
-        def track_image_loads(reader: MessageReader[AssetEvent]):
+        def track_image_loads(reader: MessageReader[AssetEvent[Image]]):
             for event in reader.read():
-                if event.is_loaded_with_dependencies():
-                    print(f"Image loaded: {event.handle}")
+                if isinstance(event, AssetEvent.LoadedWithDependencies):
+                    print(f"Image loaded: {event.id}")
         ```
 
-    Attributes:
-        handle: The asset handle for this event
-        event_type: The type of asset event
+    Each Bevy variant is represented by an exact nested class carrying its
+    ``AssetId[A]``.
     """
 
-    handle: Handle[Asset]
-    event_type: AssetEventType
+    class Added(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["id"]]]
+        id: AssetId[_VariantA_co]
+        def __init__(self, id: AssetId[_VariantA_co]) -> None: ...
 
-    def is_added(self) -> bool:
-        """Check if this is an Added event (asset was loaded)."""
+    class Modified(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["id"]]]
+        id: AssetId[_VariantA_co]
+        def __init__(self, id: AssetId[_VariantA_co]) -> None: ...
 
-    def is_modified(self) -> bool:
-        """Check if this is a Modified event (asset was reloaded/changed)."""
+    class Removed(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["id"]]]
+        id: AssetId[_VariantA_co]
+        def __init__(self, id: AssetId[_VariantA_co]) -> None: ...
 
-    def is_removed(self) -> bool:
-        """Check if this is a Removed event (asset was unloaded)."""
+    class Unused(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["id"]]]
+        id: AssetId[_VariantA_co]
+        def __init__(self, id: AssetId[_VariantA_co]) -> None: ...
 
-    def is_unused(self) -> bool:
-        """Check if this is an Unused event (last strong handle dropped)."""
+    class LoadedWithDependencies(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
+        __match_args__: ClassVar[tuple[Literal["id"]]]
+        id: AssetId[_VariantA_co]
+        def __init__(self, id: AssetId[_VariantA_co]) -> None: ...
 
-    def is_loaded_with_dependencies(self) -> bool:
-        """Check if this is a LoadedWithDependencies event (asset and all dependencies loaded)."""
+class AssetLoadFailedEvent(Message, Generic[A_co]):
+    """Event fired when an asset fails to load.
+
+    Select the asset channel with ``MessageReader[AssetLoadFailedEvent[Image]]``.
+
+    Example:
+        ```python
+        def report_failures(reader: MessageReader[AssetLoadFailedEvent[Image]]):
+            for event in reader:
+                print(f"{event.path.path} failed: {event.error}")
+        ```
+    """
+
+    @property
+    def id(self) -> AssetId[A_co]:
+        """The asset that failed to load."""
+
+    @property
+    def path(self) -> AssetPath:
+        """The path the load was attempted from."""
+
+    @property
+    def error(self) -> str:
+        """Bevy's rendered `AssetLoadError` message for this failure."""
+
+    def __eq__(self, other: object) -> bool: ...
 
 class UnapprovedPathMode:
     """Controls behavior when an asset path hasn't been explicitly approved.

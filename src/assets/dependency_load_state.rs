@@ -39,6 +39,15 @@ impl PyDependencyLoadState {
         matches!(self, Self::Failed())
     }
 
+    fn __str__(&self) -> &'static str {
+        match self {
+            Self::NotLoaded() => "NotLoaded",
+            Self::Loading() => "Loading",
+            Self::Loaded() => "Loaded",
+            Self::Failed() => "Failed",
+        }
+    }
+
     fn __repr__(&self) -> &'static str {
         match self {
             Self::NotLoaded() => "DependencyLoadState.NotLoaded",

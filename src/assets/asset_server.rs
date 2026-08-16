@@ -1,9 +1,16 @@
+use std::any::TypeId;
+
 use bevy::{
-    asset::{AssetPath, AssetServer, UntypedAssetId},
+    asset::{AssetPath, AssetServer},
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
+    gltf::{Gltf, GltfLoaderSettings},
     image::Image,
 };
-use pybevy_core::{handle::PyHandle, public_error::invalid_asset_type, registry::global_registry};
+use pybevy_core::{
+    extract_asset_id_from_any, handle::PyHandle, public_error::invalid_asset_type,
+    registry::global_registry,
+};
+use pybevy_gltf::loader_settings::PyGltfLoaderSettings;
 use pybevy_image::loader_settings::PyImageLoaderSettings;
 use pyo3::{
     IntoPyObjectExt,
@@ -121,24 +128,42 @@ impl PyAssetServer {
         let asset_server = self.asset_server()?;
         let asset_path = extract_asset_path(&path)?;
 
-        let untyped_handle = match bridge.name() {
-            "Image" => {
-                let image_settings: PyImageLoaderSettings = settings.extract()?;
-                let bevy_settings: bevy::image::ImageLoaderSettings = image_settings.into();
-                asset_server
-                    .load_builder()
-                    .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
-                        *s = bevy_settings.clone();
-                    })
-                    .load::<Image>(asset_path)
-                    .untyped()
-            }
-            name => {
+        let untyped_handle = if let Ok(image_settings) = settings.extract::<PyImageLoaderSettings>()
+        {
+            if bridge.bevy_type_id() != TypeId::of::<Image>() {
                 return Err(PyTypeError::new_err(format!(
-                    "`{}` does not support loader settings (supported: Image)",
-                    name
+                    "ImageLoaderSettings requires asset type Image, got `{}`",
+                    bridge.name()
                 )));
             }
+            let bevy_settings: bevy::image::ImageLoaderSettings = image_settings.into();
+            asset_server
+                .load_builder()
+                .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
+                    *s = bevy_settings.clone();
+                })
+                .load::<Image>(asset_path)
+                .untyped()
+        } else if let Ok(gltf_settings) = settings.extract::<PyRef<'_, PyGltfLoaderSettings>>() {
+            if bridge.bevy_type_id() != TypeId::of::<Gltf>() {
+                return Err(PyTypeError::new_err(format!(
+                    "GltfLoaderSettings requires asset type Gltf, got `{}`",
+                    bridge.name()
+                )));
+            }
+            let gltf_settings = PyGltfLoaderSettings::clone(&gltf_settings);
+            asset_server
+                .load_builder()
+                .with_settings(move |s: &mut GltfLoaderSettings| {
+                    gltf_settings.apply_to(s);
+                })
+                .load::<Gltf>(asset_path)
+                .untyped()
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "`{}` is not a supported loader settings type (supported: ImageLoaderSettings, GltfLoaderSettings)",
+                settings.get_type().name()?
+            )));
         };
 
         let py_handle = PyHandle::from_untyped(untyped_handle, type_ptr);
@@ -186,22 +211,21 @@ impl PyAssetServer {
         PyHandle::from_untyped(handle, bridge.py_type_ptr()).into_py_any(py)
     }
 
-    pub fn load_state(&self, id: &PyHandle) -> PyResult<PyLoadState> {
+    pub fn load_state(&self, id: &Bound<'_, PyAny>) -> PyResult<PyLoadState> {
         let asset_server = self.asset_server()?;
-        let untyped_id: UntypedAssetId = id.clone().into();
-        Ok(PyLoadState::from(asset_server.load_state(untyped_id)))
+        Ok(PyLoadState::from(
+            asset_server.load_state(extract_asset_id_from_any(id)?.untyped()),
+        ))
     }
 
-    pub fn is_loaded(&self, id: &PyHandle) -> PyResult<bool> {
+    pub fn is_loaded(&self, id: &Bound<'_, PyAny>) -> PyResult<bool> {
         let asset_server = self.asset_server()?;
-        let untyped_id: UntypedAssetId = id.clone().into();
-        Ok(asset_server.is_loaded(untyped_id))
+        Ok(asset_server.is_loaded(extract_asset_id_from_any(id)?.untyped()))
     }
 
-    pub fn is_loaded_with_dependencies(&self, id: &PyHandle) -> PyResult<bool> {
+    pub fn is_loaded_with_dependencies(&self, id: &Bound<'_, PyAny>) -> PyResult<bool> {
         let asset_server = self.asset_server()?;
-        let untyped_id: UntypedAssetId = id.clone().into();
-        Ok(asset_server.is_loaded_with_dependencies(untyped_id))
+        Ok(asset_server.is_loaded_with_dependencies(extract_asset_id_from_any(id)?.untyped()))
     }
 
     pub fn get_handle<'py>(
