@@ -51,12 +51,12 @@ impl PyAtmosphereSettings {
         aerial_view_lut_max_distance: f32,
         sky_max_samples: u32,
         rendering_method: PyAtmosphereMode,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(AtmosphereSettings {
-            transmittance_lut_size: transmittance_lut_size.into(),
-            multiscattering_lut_size: multiscattering_lut_size.into(),
-            sky_view_lut_size: sky_view_lut_size.into(),
-            aerial_view_lut_size: aerial_view_lut_size.into(),
+    ) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(AtmosphereSettings {
+            transmittance_lut_size: transmittance_lut_size.try_into()?,
+            multiscattering_lut_size: multiscattering_lut_size.try_into()?,
+            sky_view_lut_size: sky_view_lut_size.try_into()?,
+            aerial_view_lut_size: aerial_view_lut_size.try_into()?,
             transmittance_lut_samples,
             multiscattering_lut_dirs,
             multiscattering_lut_samples,
@@ -66,7 +66,7 @@ impl PyAtmosphereSettings {
             sky_max_samples,
             rendering_method: rendering_method.into(),
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -78,7 +78,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_transmittance_lut_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.transmittance_lut_size = value.into();
+        self.as_mut()?.transmittance_lut_size = value.try_into()?;
         Ok(())
     }
 
@@ -91,7 +91,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_multiscattering_lut_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.multiscattering_lut_size = value.into();
+        self.as_mut()?.multiscattering_lut_size = value.try_into()?;
         Ok(())
     }
 
@@ -102,7 +102,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_sky_view_lut_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.sky_view_lut_size = value.into();
+        self.as_mut()?.sky_view_lut_size = value.try_into()?;
         Ok(())
     }
 
@@ -113,7 +113,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_aerial_view_lut_size(&mut self, value: PyUVec3) -> PyResult<()> {
-        self.as_mut()?.aerial_view_lut_size = value.into();
+        self.as_mut()?.aerial_view_lut_size = value.try_into()?;
         Ok(())
     }
 
@@ -201,7 +201,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_rendering_method(&mut self, value: PyAtmosphereMode) -> PyResult<()> {
-        self.as_mut()?.rendering_method = value.into();
+        self.as_mut()?.rendering_method = value.try_into()?;
         Ok(())
     }
 }

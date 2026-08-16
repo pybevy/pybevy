@@ -1,4 +1,7 @@
-use bevy::{color::Color, pbr::wireframe::WireframeConfig};
+use bevy::{
+    color::Color,
+    pbr::wireframe::{WireframeConfig, WireframeTopology},
+};
 use pybevy_color::color::PyColor;
 use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::pyresource;
@@ -18,23 +21,25 @@ impl PyWireframeConfig {
     #[new]
     #[pyo3(signature = (
         global_ = false,
-        default_color = PyColor(Color::WHITE),
+        default_color = Color::WHITE.into(),
         default_line_width = 1.0,
-        default_topology = PyWireframeTopology::Triangles
+        default_topology = None
     ))]
     pub fn new(
         global_: bool,
         default_color: PyColor,
         default_line_width: f32,
-        default_topology: PyWireframeTopology,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(WireframeConfig {
+        default_topology: Option<PyRef<'_, PyWireframeTopology>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let default_color = default_color.try_into()?;
+        Ok(Self::from_owned(WireframeConfig {
             global: global_,
-            default_color: default_color.0,
+            default_color,
             default_line_width,
-            default_topology: default_topology.into(),
-        })
-        .into()
+            default_topology: default_topology
+                .map(|topology| topology.0)
+                .unwrap_or(WireframeTopology::Triangles),
+        }))
     }
 
     #[getter]
@@ -50,12 +55,13 @@ impl PyWireframeConfig {
 
     #[getter]
     pub fn default_color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.default_color, py)
+        PyColor::from_resource_field(&self.storage, |config| &config.default_color, py)
     }
 
     #[setter]
     pub fn set_default_color(&mut self, value: PyColor) -> PyResult<()> {
-        self.as_mut()?.default_color = value.0;
+        let value = value.try_into()?;
+        self.as_mut()?.default_color = value;
         Ok(())
     }
 
@@ -71,13 +77,16 @@ impl PyWireframeConfig {
     }
 
     #[getter]
-    pub fn default_topology(&self) -> PyResult<PyWireframeTopology> {
-        Ok(self.as_ref()?.default_topology.into())
+    pub fn default_topology(&self, py: Python<'_>) -> PyResult<Py<PyWireframeTopology>> {
+        Py::new(
+            py,
+            PyWireframeTopology::from_owned(self.as_ref()?.default_topology),
+        )
     }
 
     #[setter]
-    pub fn set_default_topology(&mut self, value: PyWireframeTopology) -> PyResult<()> {
-        self.as_mut()?.default_topology = value.into();
+    pub fn set_default_topology(&mut self, value: PyRef<'_, PyWireframeTopology>) -> PyResult<()> {
+        self.as_mut()?.default_topology = value.0;
         Ok(())
     }
 }

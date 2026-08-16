@@ -14,19 +14,23 @@ pub struct PyWireframeColor {
 #[pymethods]
 impl PyWireframeColor {
     #[new]
-    #[pyo3(signature = (color = PyColor(Color::WHITE)))]
-    pub fn new(color: PyColor) -> PyClassInitializer<Self> {
-        Self::from_owned(WireframeColor { color: color.0 }).into()
+    #[pyo3(signature = (color = Color::WHITE.into()))]
+    pub fn new(color: PyColor) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(WireframeColor {
+            color: color.try_into()?,
+        })
+        .into())
     }
 
     #[getter]
     pub fn color(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.color, py)
+        PyColor::from_component_field(&self.storage, |wireframe| &wireframe.color, py)
     }
 
     #[setter]
     pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        self.as_mut()?.color = color.0;
+        let color = color.try_into()?;
+        self.as_mut()?.color = color;
         Ok(())
     }
 }

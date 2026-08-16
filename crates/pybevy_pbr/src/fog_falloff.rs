@@ -1,8 +1,13 @@
-use bevy::{math::ops, pbr::FogFalloff};
+use bevy::{
+    math::{Vec3, ops},
+    pbr::FogFalloff,
+};
 use pybevy_color::color::PyColor;
+use pybevy_macros::pyenum;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
+#[pyenum(FogFalloff, no_repr)]
 #[pyclass(name = "FogFalloff", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyFogFalloff {
@@ -17,8 +22,12 @@ pub enum PyFogFalloff {
         density: f32,
     },
     Atmospheric {
-        extinction: PyVec3,
-        inscattering: PyVec3,
+        #[py_type(PyVec3)]
+        #[py_try_into]
+        extinction: Vec3,
+        #[py_type(PyVec3)]
+        #[py_try_into]
+        inscattering: Vec3,
     },
 }
 
@@ -39,8 +48,17 @@ impl PyFogFalloff {
     }
 
     #[staticmethod]
-    pub fn from_visibility_color(visibility: f32, extinction_inscattering_color: PyColor) -> Self {
-        FogFalloff::from_visibility_color(visibility, extinction_inscattering_color.0).into()
+    pub fn from_visibility_color(
+        visibility: f32,
+        extinction_inscattering_color: PyColor,
+    ) -> PyResult<Self> {
+        Ok(
+            FogFalloff::from_visibility_color(
+                visibility,
+                extinction_inscattering_color.try_into()?,
+            )
+            .into(),
+        )
     }
 
     #[staticmethod]
@@ -48,9 +66,13 @@ impl PyFogFalloff {
         visibility: f32,
         extinction_color: PyColor,
         inscattering_color: PyColor,
-    ) -> Self {
-        FogFalloff::from_visibility_colors(visibility, extinction_color.0, inscattering_color.0)
-            .into()
+    ) -> PyResult<Self> {
+        Ok(FogFalloff::from_visibility_colors(
+            visibility,
+            extinction_color.try_into()?,
+            inscattering_color.try_into()?,
+        )
+        .into())
     }
 
     #[staticmethod]
@@ -68,13 +90,13 @@ impl PyFogFalloff {
         visibility: f32,
         contrast_threshold: f32,
         extinction_inscattering_color: PyColor,
-    ) -> Self {
-        FogFalloff::from_visibility_contrast_color(
+    ) -> PyResult<Self> {
+        Ok(FogFalloff::from_visibility_contrast_color(
             visibility,
             contrast_threshold,
-            extinction_inscattering_color.0,
+            extinction_inscattering_color.try_into()?,
         )
-        .into()
+        .into())
     }
 
     #[staticmethod]
@@ -83,56 +105,18 @@ impl PyFogFalloff {
         contrast_threshold: f32,
         extinction_color: PyColor,
         inscattering_color: PyColor,
-    ) -> Self {
-        FogFalloff::from_visibility_contrast_colors(
+    ) -> PyResult<Self> {
+        Ok(FogFalloff::from_visibility_contrast_colors(
             visibility,
             contrast_threshold,
-            extinction_color.0,
-            inscattering_color.0,
+            extinction_color.try_into()?,
+            inscattering_color.try_into()?,
         )
-        .into()
+        .into())
     }
 
     #[staticmethod]
     pub fn koschmieder(v: f32, c_t: f32) -> f32 {
         -ops::ln(c_t) / v
-    }
-}
-
-impl From<FogFalloff> for PyFogFalloff {
-    fn from(falloff: FogFalloff) -> Self {
-        match falloff {
-            FogFalloff::Linear { start, end } => PyFogFalloff::Linear { start, end },
-            FogFalloff::Exponential { density } => PyFogFalloff::Exponential { density },
-            FogFalloff::ExponentialSquared { density } => {
-                PyFogFalloff::ExponentialSquared { density }
-            }
-            FogFalloff::Atmospheric {
-                extinction,
-                inscattering,
-            } => PyFogFalloff::Atmospheric {
-                extinction: extinction.into(),
-                inscattering: inscattering.into(),
-            },
-        }
-    }
-}
-
-impl From<PyFogFalloff> for FogFalloff {
-    fn from(falloff: PyFogFalloff) -> Self {
-        match falloff {
-            PyFogFalloff::Linear { start, end } => FogFalloff::Linear { start, end },
-            PyFogFalloff::Exponential { density } => FogFalloff::Exponential { density },
-            PyFogFalloff::ExponentialSquared { density } => {
-                FogFalloff::ExponentialSquared { density }
-            }
-            PyFogFalloff::Atmospheric {
-                extinction,
-                inscattering,
-            } => FogFalloff::Atmospheric {
-                extinction: extinction.into(),
-                inscattering: inscattering.into(),
-            },
-        }
     }
 }

@@ -26,7 +26,15 @@ class ParallaxMappingMethod:
         max_steps: int
         def __init__(self, max_steps: int) -> None: ...
 
-class StandardMaterial(Asset):
+class Material(Asset):
+    """Python surface of Bevy's 3D `Material` trait.
+
+    Native material assets that implement it inherit this, and a `@material`
+    class inherits it to declare the same thing. 2D materials implement Bevy's
+    separate `Material2d` trait and are not covered here.
+    """
+
+class StandardMaterial(Material):
     def __init__(
         self,
         base_color: Color = Color.WHITE,
@@ -43,8 +51,14 @@ class StandardMaterial(Asset):
         reflectance: float = 0.5,
         specular_tint: Color = Color.WHITE,
         diffuse_transmission: float = 0.0,
+        diffuse_transmission_channel: UvChannel = UvChannel.Uv0,
+        diffuse_transmission_texture: Handle[Image] | None = None,
         specular_transmission: float = 0.0,
+        specular_transmission_channel: UvChannel = UvChannel.Uv0,
+        specular_transmission_texture: Handle[Image] | None = None,
         thickness: float = 0.0,
+        thickness_channel: UvChannel = UvChannel.Uv0,
+        thickness_texture: Handle[Image] | None = None,
         ior: float = 1.5,
         attenuation_distance: float = float("inf"),
         attenuation_color: Color = Color.WHITE,
@@ -53,8 +67,14 @@ class StandardMaterial(Asset):
         flip_normal_map_y: bool = False,
         occlusion_channel: UvChannel = UvChannel.Uv0,
         occlusion_texture: Handle[Image] | None = None,
+        specular_channel: UvChannel = UvChannel.Uv0,
+        specular_texture: Handle[Image] | None = None,
+        specular_tint_channel: UvChannel = UvChannel.Uv0,
+        specular_tint_texture: Handle[Image] | None = None,
         anisotropy_strength: float = 0.0,
         anisotropy_rotation: float = 0.0,
+        anisotropy_channel: UvChannel = UvChannel.Uv0,
+        anisotropy_texture: Handle[Image] | None = None,
         double_sided: bool = False,
         cull_mode: Face | None = Face.Back,
         unlit: bool = False,
@@ -71,6 +91,12 @@ class StandardMaterial(Asset):
         uv_transform: Affine2 = Affine2.IDENTITY,
         clearcoat: float = 0.0,
         clearcoat_perceptual_roughness: float = 0.5,
+        clearcoat_channel: UvChannel = UvChannel.Uv0,
+        clearcoat_texture: Handle[Image] | None = None,
+        clearcoat_roughness_channel: UvChannel = UvChannel.Uv0,
+        clearcoat_roughness_texture: Handle[Image] | None = None,
+        clearcoat_normal_channel: UvChannel = UvChannel.Uv0,
+        clearcoat_normal_texture: Handle[Image] | None = None,
     ) -> None: ...
     @staticmethod
     def from_color(color: Color) -> StandardMaterial: ...
@@ -88,8 +114,20 @@ class StandardMaterial(Asset):
     reflectance: float
     specular_tint: Color
     diffuse_transmission: float
+    diffuse_transmission_channel: UvChannel
+    """UV channel for `diffuse_transmission_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    diffuse_transmission_texture: Handle[Image] | None
+    """Per-pixel diffuse transmission. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     specular_transmission: float
+    specular_transmission_channel: UvChannel
+    """UV channel for `specular_transmission_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    specular_transmission_texture: Handle[Image] | None
+    """Per-pixel specular transmission. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     thickness: float
+    thickness_channel: UvChannel
+    """UV channel for `thickness_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    thickness_texture: Handle[Image] | None
+    """Per-pixel thickness. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     ior: float
     attenuation_distance: float
     attenuation_color: Color
@@ -98,8 +136,20 @@ class StandardMaterial(Asset):
     flip_normal_map_y: bool
     occlusion_channel: UvChannel
     occlusion_texture: Handle[Image] | None
+    specular_channel: UvChannel
+    """UV channel for `specular_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    specular_texture: Handle[Image] | None
+    """Per-pixel specular. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
+    specular_tint_channel: UvChannel
+    """UV channel for `specular_tint_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    specular_tint_texture: Handle[Image] | None
+    """Per-pixel specular tint. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     anisotropy_strength: float
     anisotropy_rotation: float
+    anisotropy_channel: UvChannel
+    """UV channel for `anisotropy_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    anisotropy_texture: Handle[Image] | None
+    """Per-pixel anisotropy strength/rotation. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     double_sided: bool
     cull_mode: Face | None
     unlit: bool
@@ -116,6 +166,18 @@ class StandardMaterial(Asset):
     uv_transform: Affine2
     clearcoat: float
     clearcoat_perceptual_roughness: float
+    clearcoat_channel: UvChannel
+    """UV channel for `clearcoat_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    clearcoat_texture: Handle[Image] | None
+    """Per-pixel clearcoat. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
+    clearcoat_roughness_channel: UvChannel
+    """UV channel for `clearcoat_roughness_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    clearcoat_roughness_texture: Handle[Image] | None
+    """Per-pixel clearcoat roughness. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
+    clearcoat_normal_channel: UvChannel
+    """UV channel for `clearcoat_normal_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
+    clearcoat_normal_texture: Handle[Image] | None
+    """Per-pixel clearcoat normal. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
 
     def flip(self, horizontal: bool, vertical: bool) -> None:
         """Flip the texture coordinates of the material in place."""
@@ -251,6 +313,8 @@ class ScreenSpaceAmbientOcclusionQualityLevel:
     at the cost of performance.
     """
 
+    def __hash__(self) -> int: ...
+
     class Low(ScreenSpaceAmbientOcclusionQualityLevel):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -268,10 +332,10 @@ class ScreenSpaceAmbientOcclusionQualityLevel:
         def __init__(self) -> None: ...
 
     class Custom(ScreenSpaceAmbientOcclusionQualityLevel):
-        __match_args__: ClassVar[tuple[Literal["samples_per_slice_side"], Literal["slice_count"]]]
-        samples_per_slice_side: int
+        __match_args__: ClassVar[tuple[Literal["slice_count"], Literal["samples_per_slice_side"]]]
         slice_count: int
-        def __init__(self, samples_per_slice_side: int, slice_count: int) -> None: ...
+        samples_per_slice_side: int
+        def __init__(self, slice_count: int, samples_per_slice_side: int) -> None: ...
 
 class ScreenSpaceAmbientOcclusion(Component):
     """Screen Space Ambient Occlusion (SSAO) component.
@@ -380,14 +444,23 @@ class NoWireframe(Component):
     def __init__(self) -> None: ...
     def __eq__(self, other: object) -> bool: ...
 
-class WireframeTopology:
+class WireframeTopology(Component):
     """Controls whether wireframe edges follow triangle or quad topology."""
 
-    Triangles: WireframeTopology
-    Quads: WireframeTopology
+    Triangles: ClassVar[WireframeTopology]
+    Quads: ClassVar[WireframeTopology]
     """Best-effort quad detection from a triangle mesh (may have false positives/negatives)."""
 
     def __eq__(self, other: object) -> bool: ...
+
+class WireframeLineWidth(Component):
+    """Per-entity wireframe line width in screen-space pixels."""
+
+    def __init__(self, width: float = 1.0) -> None: ...
+    @property
+    def width(self) -> float: ...
+    @width.setter
+    def width(self, value: float) -> None: ...
 
 class WireframePlugin(Plugin):
     """Enables wireframe rendering for meshes with Wireframe or WireframeConfig.global_."""
@@ -467,9 +540,10 @@ class Mesh3dWireframe(Component):
     a specific entity in wireframe mode.
     """
 
-    def __init__(self, handle: Handle) -> None: ...
+    def __init__(self, material: Handle[WireframeMaterial]) -> None: ...
 
-    def handle(self) -> Handle:
+    @property
+    def handle(self) -> Handle[WireframeMaterial]:
         """Get the wireframe material handle."""
 
     def __eq__(self, other: object) -> bool: ...
@@ -479,6 +553,14 @@ class ScreenSpaceReflections(Component):
 
     Enables real-time reflections on surfaces using screen-space ray marching.
     Provides high-quality reflections for smooth, reflective surfaces.
+
+    Requires deferred rendering: insert `DefaultOpaqueRendererMethod.deferred()`
+    before any material is created (in `@entrypoint`, not in a system).
+    Inserting it later has no effect and SSR renders nothing. `DepthPrepass`
+    and `DeferredPrepass` are required components and are added automatically.
+
+    `min_perceptual_roughness` defaults to `(0.08, 0.12)` and fades SSR *in*, so
+    surfaces smoother than 0.08 receive none at all.
     """
 
     def __init__(
@@ -588,7 +670,10 @@ class Lightmap(Component):
     """Lightmap component for pre-baked lighting.
 
     Applies a pre-computed lightmap texture to an entity for static lighting.
-    Useful for baked global illumination and ambient occlusion.
+    The entity's mesh must contain ``Mesh.ATTRIBUTE_UV_1``; attaching a
+    lightmap to a mesh without that second UV set does not produce a valid
+    render pipeline. Brightness is controlled by the assigned
+    ``StandardMaterial.lightmap_exposure``.
     """
 
     def __init__(
@@ -777,7 +862,7 @@ class ShaderMaterialPlugin(Plugin):
 
     def __init__(self) -> None: ...
 
-class ShaderMaterial(Asset):
+class ShaderMaterial(Material):
     """A material that extends StandardMaterial with a per-instance custom shader.
 
     Each ShaderMaterial instance can specify its own fragment/vertex shader,
@@ -854,6 +939,29 @@ class ForwardDecal(Component):
     def __init__(self) -> None: ...
     def __eq__(self, other: object) -> bool: ...
 
+class ForwardDecalMaterialExt:
+    """Forward decal material extension."""
+
+    def __init__(self, depth_fade_factor: float = 8.0) -> None: ...
+    depth_fade_factor: float
+
+class ForwardDecalMaterial(Material):
+    """StandardMaterial extended for use by ForwardDecal."""
+
+    def __init__(
+        self,
+        base: StandardMaterial | None = None,
+        extension: ForwardDecalMaterialExt | None = None,
+    ) -> None: ...
+    base: StandardMaterial
+    extension: ForwardDecalMaterialExt
+
+class MeshMaterial3dForwardDecal(Component):
+    """Component assigning a ForwardDecalMaterial to a mesh entity."""
+
+    def __init__(self, material: Handle[ForwardDecalMaterial]) -> None: ...
+    handle: Handle[ForwardDecalMaterial]
+
 class MeshMaterial3dShader(Component):
     """Component that assigns a ShaderMaterial to a mesh entity.
 
@@ -875,5 +983,8 @@ class MeshMaterial3dShader(Component):
     @property
     def handle(self) -> Handle[ShaderMaterial]:
         """Get the shader material handle."""
+
+    @handle.setter
+    def handle(self, handle: Handle[ShaderMaterial]) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...

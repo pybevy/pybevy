@@ -1,72 +1,23 @@
 use bevy::pbr::ScreenSpaceAmbientOcclusionQualityLevel;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(ScreenSpaceAmbientOcclusionQualityLevel, empty_tuple, unit_parens)]
 #[pyclass(
     name = "ScreenSpaceAmbientOcclusionQualityLevel",
     frozen,
     eq,
+    hash,
     from_py_object
 )]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyScreenSpaceAmbientOcclusionQualityLevel {
     Low(),
     Medium(),
     High(),
     Ultra(),
     Custom {
-        samples_per_slice_side: u32,
         slice_count: u32,
+        samples_per_slice_side: u32,
     },
-}
-
-impl From<ScreenSpaceAmbientOcclusionQualityLevel> for PyScreenSpaceAmbientOcclusionQualityLevel {
-    fn from(level: ScreenSpaceAmbientOcclusionQualityLevel) -> Self {
-        match level {
-            ScreenSpaceAmbientOcclusionQualityLevel::Low => {
-                PyScreenSpaceAmbientOcclusionQualityLevel::Low()
-            }
-            ScreenSpaceAmbientOcclusionQualityLevel::Medium => {
-                PyScreenSpaceAmbientOcclusionQualityLevel::Medium()
-            }
-            ScreenSpaceAmbientOcclusionQualityLevel::High => {
-                PyScreenSpaceAmbientOcclusionQualityLevel::High()
-            }
-            ScreenSpaceAmbientOcclusionQualityLevel::Ultra => {
-                PyScreenSpaceAmbientOcclusionQualityLevel::Ultra()
-            }
-            ScreenSpaceAmbientOcclusionQualityLevel::Custom {
-                samples_per_slice_side,
-                slice_count,
-            } => PyScreenSpaceAmbientOcclusionQualityLevel::Custom {
-                samples_per_slice_side,
-                slice_count,
-            },
-        }
-    }
-}
-
-impl From<PyScreenSpaceAmbientOcclusionQualityLevel> for ScreenSpaceAmbientOcclusionQualityLevel {
-    fn from(level: PyScreenSpaceAmbientOcclusionQualityLevel) -> Self {
-        match level {
-            PyScreenSpaceAmbientOcclusionQualityLevel::Low() => {
-                ScreenSpaceAmbientOcclusionQualityLevel::Low
-            }
-            PyScreenSpaceAmbientOcclusionQualityLevel::Medium() => {
-                ScreenSpaceAmbientOcclusionQualityLevel::Medium
-            }
-            PyScreenSpaceAmbientOcclusionQualityLevel::High() => {
-                ScreenSpaceAmbientOcclusionQualityLevel::High
-            }
-            PyScreenSpaceAmbientOcclusionQualityLevel::Ultra() => {
-                ScreenSpaceAmbientOcclusionQualityLevel::Ultra
-            }
-            PyScreenSpaceAmbientOcclusionQualityLevel::Custom {
-                samples_per_slice_side,
-                slice_count,
-            } => ScreenSpaceAmbientOcclusionQualityLevel::Custom {
-                samples_per_slice_side,
-                slice_count,
-            },
-        }
-    }
 }
