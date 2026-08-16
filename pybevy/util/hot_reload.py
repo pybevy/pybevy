@@ -14,6 +14,7 @@ Key features:
 - File watching with automatic reload triggering
 """
 
+import importlib.machinery
 import inspect
 import os
 import runpy
@@ -21,6 +22,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from types import CodeType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,7 +40,7 @@ def flush_user_modules(
 
     When *graph* and *changed_files* are both provided, only modules whose
     source files are in the transitive dependent set (computed by the import
-    graph) are flushed — this is the selective fast-path.
+    graph) are flushed. This is the selective fast-path.
 
     Otherwise walks sys.modules and removes any module whose ``__file__`` is
     under *project_dir* (full flush).
@@ -76,10 +78,18 @@ def flush_user_modules(
     to_remove: list[str] = []
 
     for name, mod in list(sys.modules.items()):
-        if name.startswith(("pybevy.", "_pybevy", "pybevy")):
+        if name in ("pybevy", "_pybevy") or name.startswith(("pybevy.", "_pybevy.")):
             continue
         fpath = getattr(mod, "__file__", None)
         if fpath is None:
+            continue
+        # __file__ is str for regular imports but import hooks may set a
+        # PathLike; anything else would abort the whole flush mid-walk.
+        try:
+            fpath = os.fspath(fpath)
+        except TypeError:
+            continue
+        if not isinstance(fpath, str):
             continue
         fpath = os.path.realpath(fpath)
         if not fpath.startswith(project_prefix):
@@ -104,6 +114,23 @@ def flush_user_modules(
             print(f"   → Flushed: {name}")
 
     return to_remove
+
+
+class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
+    """Compile the scene from source, never trusting or writing __pycache__.
+
+    Bytecode caches validate on (size, whole-second mtime): an edit that keeps
+    the file size and lands within the same second as the previous import
+    revalidates the stale cache, and every reload keeps executing it.
+    """
+
+    def get_code(self, fullname: str) -> CodeType:
+        source = self.get_source(fullname)
+        if source is None:
+            raise ImportError(
+                f"no source for scene module {fullname!r}", name=fullname
+            )
+        return self.source_to_code(source, self.path)
 
 
 def exec_scene_module(
@@ -144,7 +171,9 @@ def exec_scene_module(
     import importlib.util
 
     if file_path is not None:
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        spec = importlib.util.spec_from_file_location(
+            module_name, file_path, loader=_SourceOnlyLoader(module_name, file_path)
+        )
     else:
         spec = importlib.util.find_spec(module_name)
     if spec is None or spec.loader is None:
@@ -426,6 +455,18 @@ def load_entrypoint_function(
     return find_entrypoint(module_globals)
 
 
+def resolve_changed_files(is_partial: bool, files: object) -> set[str] | None:
+    """Map reload mode plus watcher state onto the changed-files contract.
+
+    ``None`` asks for a full reload; a set asks for a partial one even when it
+    is empty, which is what a reload triggered by anything other than the file
+    watcher (F5, the MCP reload tool) carries.
+    """
+    if is_partial and isinstance(files, set):
+        return files
+    return None
+
+
 def create_hot_reload_loader(
     script_path: str,
     changed_files_cache: dict[str, object],
@@ -502,7 +543,7 @@ def create_hot_reload_loader(
             # In full mode, pass None to force full module reload
             entrypoint_func = load_entrypoint_function(
                 script_path,
-                files if (is_partial and isinstance(files, set)) else None,
+                resolve_changed_files(is_partial, files),
                 verbose=verbose,
             )
 
@@ -572,13 +613,6 @@ def watch_for_changes(
         )
         watcher_thread.start()
     """
-    # Check if watchfiles is available
-    try:
-        from watchfiles import watch
-    except ImportError:
-        print(f"{log_prefix} Warning: watchfiles not installed, hot reload unavailable")
-        return
-
     # Default ignore patterns
     if ignore_patterns is None:
         ignore_patterns = [".git", "__pycache__", ".pytest_cache", ".venv", "target"]
@@ -591,9 +625,9 @@ def watch_for_changes(
     trigger_reload: Callable[[], None]
     if hasattr(reload_state, "trigger_reload_if_needed"):
         # New method: honors any reload mode already set (e.g., by F5)
-        trigger_reload = lambda: reload_state.trigger_reload_if_needed(partial_mode)  # type: ignore
+        trigger_reload = reload_state.trigger_reload_if_needed  # type: ignore
         if verbose:
-            print(f"{log_prefix} Using trigger_reload_if_needed(partial={partial_mode})")
+            print(f"{log_prefix} Using trigger_reload_if_needed()")
     elif partial_mode and hasattr(reload_state, "set_pending_partial_reload"):
         # Fallback: partial reload
         trigger_reload = reload_state.set_pending_partial_reload  # type: ignore
@@ -608,45 +642,48 @@ def watch_for_changes(
         print(f"{log_prefix} ERROR: No reload method available on reload_state")
         return
 
-    # Watch loop
-    for changes in watch(watch_path, stop_event=stop_event):
-        if stop_event.is_set():
-            if verbose:
-                print(f"{log_prefix} File watcher received stop signal")
-            break
+    if stop_event.is_set():
+        return
 
-        try:
-            if verbose:
-                print(f"{log_prefix} Detected {len(changes)} file changes")
+    try:
+        from ..app import _FileWatcher  # type: ignore[attr-defined]
+    except ImportError as error:
+        print(f"{log_prefix} Warning: native file watcher unavailable: {error}")
+        return
 
-            # Filter for Python files, excluding ignored patterns
-            python_changes = []
-            for change in changes:
-                path_str = str(change[1])
+    try:
+        watcher = _FileWatcher(
+            [watch_path],
+            ignore_patterns=ignore_patterns,
+            debounce_ms=50,
+        )
+    except Exception as error:
+        print(f"{log_prefix} Warning: failed to start native file watcher: {error}")
+        return
 
-                # Skip ignored patterns
-                if any(skip in path_str for skip in ignore_patterns):
-                    if verbose:
-                        print(f"{log_prefix}   Skipping: {path_str} (ignored pattern)")
+    try:
+        while not stop_event.is_set():
+            try:
+                changed = watcher.poll(0.1)
+                if changed is None:
                     continue
-
-                # Accept Python files
-                if path_str.endswith(".py"):
-                    python_changes.append(change)
+                if stop_event.is_set():
                     if verbose:
-                        print(f"{log_prefix}   Accepted: {path_str}")
+                        print(f"{log_prefix} File watcher received stop signal")
+                    break
 
-            if python_changes:
-                # Small delay for file write completion
+                if verbose:
+                    print(f"{log_prefix} Detected {len(changed)} Python file changes")
+
+                # Give editors time to finish atomic replacement sequences.
                 time.sleep(0.01)
-
-                # Store changed files for selective reload
-                changed_paths = {os.path.abspath(str(c[1])) for c in python_changes}
+                changed_paths = {os.path.abspath(path) for path in changed}
                 changed_files_cache["files"] = changed_paths
 
-                # Log changes
                 if verbose:
-                    print(f"{log_prefix} Triggering reload for {len(changed_paths)} files:")
+                    print(
+                        f"{log_prefix} Triggering reload for {len(changed_paths)} files:"
+                    )
                     for path in changed_paths:
                         try:
                             rel_path = os.path.relpath(path, watch_path)
@@ -654,16 +691,21 @@ def watch_for_changes(
                             rel_path = path
                         print(f"{log_prefix}   - {rel_path}")
 
-                # Trigger reload
                 trigger_reload()
 
                 if verbose:
                     print(f"{log_prefix} Reload request sent")
+            except Exception as error:
+                print(f"{log_prefix} Error in file watcher: {error}")
+                import traceback
 
-        except Exception as e:
-            print(f"{log_prefix} Error in file watcher: {e}")
-            import traceback
-            traceback.print_exc()
+                traceback.print_exc()
+    finally:
+        try:
+            watcher.close()
+        except Exception as error:
+            if verbose:
+                print(f"{log_prefix} Warning: failed to stop file watcher: {error}")
 
     if verbose:
         print(f"{log_prefix} File watcher stopped")

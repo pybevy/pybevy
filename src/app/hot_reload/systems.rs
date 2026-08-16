@@ -5,10 +5,12 @@ use bevy::{
         world::World,
     },
     input::{ButtonInput, keyboard::KeyCode},
+    platform::time::Instant,
+    time::{Real, Time},
 };
 use pybevy_reload::{
-    HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode, StartPaused, is_verbose,
-    perform_reload,
+    HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode, ReloadProgress,
+    ReloadProgressPhase, StartPaused, emit_reload_progress, is_verbose, perform_reload,
 };
 use pyo3::prelude::*;
 
@@ -59,24 +61,31 @@ pub(crate) fn compact_retired_generation_systems(world: &mut World) {
                     ScheduleCleanupPolicy::RemoveSetAndSystems,
                 );
             }
+            let _ = schedule.initialize(world);
         });
     }
 }
 
 fn publish_reload_error(world: &mut World, message: String) {
+    publish_reload_diagnostic(world, message, None);
+}
+
+fn publish_reload_diagnostic(world: &mut World, message: String, traceback: Option<String>) {
     let timestamp = world
-        .get_resource::<bevy::time::Time>()
+        .get_resource::<Time<Real>>()
         .map(|time| time.elapsed_secs_f64())
         .unwrap_or(0.0);
     {
         let mut last_error =
             world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
         last_error.error = Some(message.clone());
+        last_error.traceback = traceback.clone();
         last_error.timestamp_secs = timestamp;
     }
     let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
     result.failed = true;
     result.failure_reason = Some(message);
+    result.failure_traceback = traceback;
     result.running_previous_generation = true;
 }
 
@@ -87,12 +96,10 @@ fn run_definition_reload_attempt(
     error_state: std::sync::Arc<std::sync::Mutex<Vec<PyErr>>>,
     hot_reload_state: HotReloadState,
 ) {
-    let mut runtime = Pyo3ReloadRuntime {
-        loader_func,
-        error_state,
-    };
+    let mut runtime = Pyo3ReloadRuntime::new(loader_func, error_state);
     if let Err(error) = perform_reload(world, &mut runtime, mode, &hot_reload_state) {
-        publish_reload_error(world, error.message);
+        let traceback = error.traceback.clone();
+        publish_reload_diagnostic(world, error.message, traceback);
     }
 }
 
@@ -116,7 +123,7 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
     if space_pressed {
         let is_paused = world.get_resource::<StartPaused>().is_some_and(|p| p.0);
         if is_paused {
-            eprintln!("▶ Space pressed — loading scene...");
+            eprintln!("▶ Space pressed: loading scene...");
             if let Some(mut paused) = world.get_resource_mut::<StartPaused>() {
                 paused.0 = false;
             }
@@ -144,7 +151,7 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
         let frames_since = current_frame.saturating_sub(last_reload_frame);
 
         if last_reload_frame > 0 && frames_since < RELOAD_COOLDOWN_FRAMES {
-            // Skip — render pipeline still syncing
+            // Skip: render pipeline still syncing
         } else {
             if is_verbose() {
                 eprintln!("🔄 F5 pressed! Triggering full reload...");

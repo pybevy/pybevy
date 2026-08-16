@@ -1,60 +1,54 @@
 use bevy::ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World};
+use pybevy_core::CustomResourceInfo;
 use pybevy_reload::is_verbose;
 use pyo3::prelude::*;
 
 use super::bindings::PyHotReloadControl;
-use crate::ecs::resource_type::{PyResourceStorage, PyResourceType};
+use crate::ecs::resource_type::register_custom_resource;
 
-/// Clear all custom Python resources from PyResourceStorage
-/// Preserves built-in resources (Time, AssetServer, etc.) and HotReloadControl
+/// Clear custom Python resource value components while preserving HotReloadControl.
 pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
-    // Save HotReloadControl before clearing (it needs to persist across reloads)
-    // We iterate through all resources and save the one that is HotReloadControl
-    let hot_reload_control = Python::attach(|py| {
-        if let Some(storage) = world.get_resource::<PyResourceStorage>() {
-            // Iterate through all resources to find HotReloadControl
-            for resource in storage.resources.values() {
-                let resource_bound = resource.bind(py);
-                // Check if this resource is a HotReloadControl by trying to extract it
-                if resource_bound
+    let custom_entries = world
+        .get_resource::<CustomResourceInfo>()
+        .map(|info| {
+            info.iter()
+                .map(|(id, entry)| (id, entry.type_ptr))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let (resource_ids, control) = Python::attach(|py| {
+        let mut resource_ids = Vec::new();
+        let mut control = None;
+        for (id, type_ptr) in custom_entries {
+            let is_control = world.get_resource_by_id(id).is_some_and(|value| {
+                // SAFETY: CustomResourceInfo entries use the Py<PyAny> resource descriptor.
+                let value = unsafe { value.deref::<Py<PyAny>>() };
+                value
+                    .bind(py)
                     .extract::<PyRef<PyHotReloadControl>>()
                     .is_ok()
-                {
-                    return Some(resource.clone_ref(py));
-                }
+            });
+            if is_control {
+                control = Some(type_ptr);
+            } else {
+                resource_ids.push(id);
             }
         }
-        None
+        (resource_ids, control)
     });
 
-    // Clear PyResourceStorage (custom Python resources)
-    if let Some(mut storage) = world.get_resource_mut::<PyResourceStorage>() {
-        let count = storage.resources.len();
+    let count = resource_ids
+        .into_iter()
+        .filter(|id| world.remove_resource_by_id(*id))
+        .count();
 
-        // Drop all Python resource instances within Python::attach to ensure GIL
-        Python::attach(|_py| {
-            storage.resources.clear();
-        });
-
-        if verbose {
-            eprintln!("   → Cleared {} custom Python resources", count);
-        }
+    if let Some(type_ptr) = control {
+        Python::attach(|py| register_custom_resource(world, type_ptr, py));
     }
 
-    // Restore HotReloadControl after clearing
-    if let Some(control) = hot_reload_control {
-        Python::attach(|py| {
-            // Get the type from the instance
-            let control_bound = control.bind(py);
-            let control_type = control_bound.get_type();
-            let type_ptr = control_type.as_type_ptr();
-            let py_resource_type = PyResourceType::Custom(type_ptr);
-
-            // Re-insert the saved control
-            if let Err(e) = py_resource_type.insert_into_world(world, py, control) {
-                eprintln!("Warning: Failed to restore HotReloadControl: {:?}", e);
-            }
-        });
+    if verbose {
+        eprintln!("   → Cleared {} custom Python resources", count);
     }
 }
 
@@ -65,7 +59,7 @@ pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
 ///
 /// Clears:
 /// - All entities (clears everything not in base set)
-/// - Custom Python resources from PyResourceStorage
+/// - Custom Python resource value components
 ///
 /// Preserves:
 /// - Built-in Bevy resources (Time, AssetServer, etc.)
