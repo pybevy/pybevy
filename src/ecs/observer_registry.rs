@@ -25,6 +25,7 @@ use pyo3::{
 use super::{
     component_type::{ComponentRegistry, PyComponentType},
     observer::EventType,
+    resource_type::ResourceRegistry,
     system::{SystemFunction, SystemParamType},
     system_interpreter::{MainPreparedObserver, ObserverRuntimeSinks, new_main_observer},
 };
@@ -82,11 +83,7 @@ impl ObserverRegistry {
         world: &mut World,
     ) -> PyResult<Entity> {
         let system_func = SystemFunction::new(py, func.clone())?;
-        let (event_type, bundle_filter) = Self::extract_event_type_from_params(&system_func)?;
-
-        // Observers bypass add_systems' validation gate, so reject aliasing
-        // parameter combinations before mutating the World or registry.
-        crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer")?;
+        let (event_type, bundle_filter) = Self::validate_system_function(py, &system_func)?;
 
         // Resolve every filter before spawning the observer entity. This keeps
         // registration fallibility ahead of the registry's infallible commit
@@ -136,6 +133,26 @@ impl ObserverRegistry {
         }
 
         Ok(observer_entity)
+    }
+
+    /// Validate the parts of an observer that do not require World access.
+    pub(crate) fn validate_observer_signature(py: Python, func: &Bound<'_, PyAny>) -> PyResult<()> {
+        let system_func = SystemFunction::new(py, func.clone())?;
+        Self::validate_system_function(py, &system_func)?;
+        Ok(())
+    }
+
+    fn validate_system_function(
+        py: Python,
+        system_func: &SystemFunction,
+    ) -> PyResult<(EventType, Option<Vec<PyComponentType>>)> {
+        let event = Self::extract_event_type_from_params(system_func)?;
+
+        // Observers bypass add_systems' validation gate, so reject aliasing
+        // parameter combinations before mutating the World or registry.
+        crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer", py)?;
+
+        Ok(event)
     }
 
     /// Invoke one owned registry snapshot through the neutral observer shell.
@@ -255,6 +272,15 @@ impl ObserverRegistry {
         match component_type {
             PyComponentType::Dynamic(type_ptr) => global_registry::get_bridge_by_py_type(*type_ptr)
                 .and_then(|bridge| world.components().get_id(bridge.bevy_type_id())),
+            PyComponentType::Resource(type_ptr) => {
+                if let Some(bridge) = global_registry::get_resource_bridge_by_py_type(*type_ptr) {
+                    bridge.resource_id(world)
+                } else {
+                    world
+                        .get_resource::<ResourceRegistry>()
+                        .and_then(|registry| registry.get(*type_ptr as usize))
+                }
+            }
             PyComponentType::Custom(type_ptr) => world
                 .get_resource::<ComponentRegistry>()
                 .and_then(|registry| registry.get(*type_ptr as usize)),
@@ -353,7 +379,7 @@ fn lower_registration(
 
     let mut resolved = Vec::with_capacity(components.len());
     for component in components {
-        let component_id = component.register_simple(world);
+        let component_id = component.register_simple(world, py);
         retained_types.push(retain_component_type(py, component)?);
         resolved.push(ResolvedObserverComponent {
             type_key: component_type_key(component),
@@ -366,14 +392,18 @@ fn lower_registration(
 
 fn component_type_key(component: &PyComponentType) -> ObserverTypeKey {
     let type_ptr = match component {
-        PyComponentType::Dynamic(type_ptr) | PyComponentType::Custom(type_ptr) => *type_ptr,
+        PyComponentType::Dynamic(type_ptr)
+        | PyComponentType::Resource(type_ptr)
+        | PyComponentType::Custom(type_ptr) => *type_ptr,
     };
     ObserverTypeKey::new(type_ptr as usize)
 }
 
 fn retain_component_type(py: Python, component: &PyComponentType) -> PyResult<Py<PyType>> {
     let type_ptr = match component {
-        PyComponentType::Dynamic(type_ptr) | PyComponentType::Custom(type_ptr) => *type_ptr,
+        PyComponentType::Dynamic(type_ptr)
+        | PyComponentType::Resource(type_ptr)
+        | PyComponentType::Custom(type_ptr) => *type_ptr,
     };
     // SAFETY: `PyComponentType` is created only from a live Python type object.
     // We immediately create a new strong reference and retain it in the
