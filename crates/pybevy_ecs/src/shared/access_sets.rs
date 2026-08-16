@@ -63,26 +63,35 @@ impl QueryParamAccess {
     }
 }
 
-/// Build the shared `FilteredAccess` for a system's resource-like access.
+/// Build one truthful `FilteredAccess` per resource-like access.
 ///
 /// Covers `Res`/`ResMut`, `Assets`, `MessageReader`/`MessageWriter`/`MessageMutator`, and the
-/// HotReloadGeneration read. These carry no archetype filters; conflict detection
-/// relies purely on the read/write sets. `FilteredAccess::add_read`/`add_write`
-/// also add a `With` on the resource's id, which is harmless: two accesses to the
-/// same resource share that filter and never rule each other out, and resource ids
-/// never intersect a query's component access, so no false disjointness arises.
-pub fn build_resource_access(
+/// infrastructure reads. Resource values live on separate entities, so combining
+/// several ids into one conjunctive filter would falsely claim that one entity has
+/// every resource and could fabricate scheduler disjointness.
+pub fn build_resource_accesses(
     resources_to_read: &[ComponentId],
     resources_to_write: &[ComponentId],
-) -> FilteredAccess {
-    let mut access = FilteredAccess::default();
+    resource_marker: Option<ComponentId>,
+) -> Vec<FilteredAccess> {
+    let mut accesses = Vec::with_capacity(resources_to_read.len() + resources_to_write.len());
     for &id in resources_to_write {
+        let mut access = FilteredAccess::default();
         access.add_write(id);
+        if let Some(marker) = resource_marker {
+            access.and_with(marker);
+        }
+        accesses.push(access);
     }
     for &id in resources_to_read {
+        let mut access = FilteredAccess::default();
         access.add_read(id);
+        if let Some(marker) = resource_marker {
+            access.and_with(marker);
+        }
+        accesses.push(access);
     }
-    access
+    accesses
 }
 
 #[cfg(test)]
@@ -137,9 +146,7 @@ mod tests {
 
     #[test]
     fn empty_resource_access_is_empty() {
-        let access = build_resource_access(&[], &[]);
-        assert!(!access.access().has_any_read());
-        assert!(!access.access().has_any_write());
+        assert!(build_resource_accesses(&[], &[], None).is_empty());
     }
 
     #[test]
@@ -148,10 +155,10 @@ mod tests {
         let a = world.register_component::<A>();
         let b = world.register_component::<B>();
 
-        let access = build_resource_access(&[a], &[b]);
-        assert!(access.access().has_read(a));
-        assert!(access.access().has_write(b));
-        assert!(!access.access().has_write(a));
+        let access = set_of_many(build_resource_accesses(&[a], &[b], None));
+        assert!(access.combined_access().has_read(a));
+        assert!(access.combined_access().has_write(b));
+        assert!(!access.combined_access().has_write(a));
     }
 
     #[test]
@@ -159,8 +166,8 @@ mod tests {
         let mut world = World::new();
         let a = world.register_component::<A>();
 
-        let set1 = set_of(build_resource_access(&[], &[a]));
-        let set2 = set_of(build_resource_access(&[], &[a]));
+        let set1 = set_of_many(build_resource_accesses(&[], &[a], None));
+        let set2 = set_of_many(build_resource_accesses(&[], &[a], None));
         assert!(!set1.is_compatible(&set2));
     }
 
@@ -169,8 +176,8 @@ mod tests {
         let mut world = World::new();
         let a = world.register_component::<A>();
 
-        let set1 = set_of(build_resource_access(&[a], &[]));
-        let set2 = set_of(build_resource_access(&[], &[a]));
+        let set1 = set_of_many(build_resource_accesses(&[a], &[], None));
+        let set2 = set_of_many(build_resource_accesses(&[], &[a], None));
         assert!(!set1.is_compatible(&set2));
     }
 
@@ -179,8 +186,8 @@ mod tests {
         let mut world = World::new();
         let a = world.register_component::<A>();
 
-        let set1 = set_of(build_resource_access(&[a], &[]));
-        let set2 = set_of(build_resource_access(&[a], &[]));
+        let set1 = set_of_many(build_resource_accesses(&[a], &[], None));
+        let set2 = set_of_many(build_resource_accesses(&[a], &[], None));
         assert!(set1.is_compatible(&set2));
     }
 
@@ -190,9 +197,59 @@ mod tests {
         let a = world.register_component::<A>();
         let b = world.register_component::<B>();
 
-        let set1 = set_of(build_resource_access(&[], &[a]));
-        let set2 = set_of(build_resource_access(&[], &[b]));
+        let set1 = set_of_many(build_resource_accesses(&[], &[a], None));
+        let set2 = set_of_many(build_resource_accesses(&[], &[b], None));
         assert!(set1.is_compatible(&set2));
+    }
+
+    #[test]
+    fn resource_read_conflicts_with_query_write_of_same_id() {
+        let mut world = World::new();
+        let a = world.register_component::<A>();
+
+        let resource = set_of_many(build_resource_accesses(&[a], &[], None));
+        let query = set_of(write_id(a).build());
+
+        assert!(!resource.is_compatible(&query));
+    }
+
+    #[test]
+    fn resource_access_is_disjoint_from_without_resource_marker_query() {
+        let mut world = World::new();
+        let a = world.register_component::<A>();
+        let marker = world.register_component::<B>();
+
+        let resource = set_of_many(build_resource_accesses(&[a], &[], Some(marker)));
+        let query = set_of(
+            QueryParamAccess {
+                writes: vec![a],
+                without: vec![marker],
+                ..Default::default()
+            }
+            .build(),
+        );
+
+        assert!(resource.is_compatible(&query));
+    }
+
+    #[test]
+    fn separate_resource_filters_do_not_fabricate_disjointness() {
+        let mut world = World::new();
+        let r1 = world.register_component::<A>();
+        let r2 = world.register_component::<B>();
+        let marker = world.register_component::<T>();
+
+        let resource_reads = set_of_many(build_resource_accesses(&[r1, r2], &[], Some(marker)));
+        let query = set_of(
+            QueryParamAccess {
+                writes: vec![r1],
+                without: vec![r2],
+                ..Default::default()
+            }
+            .build(),
+        );
+
+        assert!(!resource_reads.is_compatible(&query));
     }
 
     /// Defect 1: `Without` was declared as `With`, fabricating disjointness.
@@ -287,17 +344,24 @@ mod tests {
         assert!(!pybevy.is_compatible(&native));
     }
 
-    /// Defect 3: `AnyOf[A, B]` has OR semantics that conjunctive `With` cannot
-    /// express, so it adds no filter. pybevy `Query[Mut[T], AnyOf[A, B]]` must
-    /// conflict with native `Query<&mut T, (With<A>, Without<B>)>`.
+    /// `AnyOf[(A, B)]` query data declares optional access to A and B but does
+    /// not expose its OR-presence condition as scheduler narrowing.
     #[test]
     fn anyof_contributes_no_with_filter() {
         let mut world = World::new();
         let t = world.register_component::<T>();
 
-        // AnyOf[A, B] registers A and B ids at runtime but contributes no filter.
-        // The native query registers them through its `With<A>`/`Without<B>` filters.
-        let pybevy = set_of(write_id(t).build());
+        let pybevy = set_of(
+            QueryParamAccess {
+                writes: vec![t],
+                optional_reads: vec![
+                    world.register_component::<A>(),
+                    world.register_component::<B>(),
+                ],
+                ..Default::default()
+            }
+            .build(),
+        );
 
         let native = world.query_filtered::<&mut T, (With<A>, Without<B>)>();
         let native = set_of(native.component_access().clone());
