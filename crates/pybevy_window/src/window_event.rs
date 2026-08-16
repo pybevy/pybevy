@@ -1,13 +1,87 @@
-use bevy::window::WindowEvent;
-use pybevy_core::PyEntity;
+use bevy::window::{FileDragAndDrop, Ime, WindowEvent};
+use pybevy_core::{PyEntity, PyMessage};
 use pybevy_input::{
-    button_state::PyButtonState, mouse_button::PyMouseButton, mouse_scroll_unit::PyMouseScrollUnit,
-    touch_phase::PyTouchPhase,
+    button_state::PyButtonState, keyboard_input::PyKeyboardInput, mouse_button::PyMouseButton,
+    mouse_scroll_unit::PyMouseScrollUnit, touch_phase::PyTouchPhase,
 };
 use pybevy_math::{ivec2::PyIVec2, vec2::PyVec2};
-use pyo3::prelude::*;
+use pyo3::{Borrowed, prelude::*};
 
-use crate::{app_lifecycle::PyAppLifecycle, window_theme::PyWindowTheme};
+use crate::{
+    app_lifecycle::PyAppLifecycle,
+    file_drag_and_drop::{FileDragAndDropValue, PyFileDragAndDrop, materialize_file_drag_and_drop},
+    ime::{PyIme, materialize_ime},
+    window_theme::PyWindowTheme,
+};
+
+/// Carries bevy's own value so `WindowEvent` keeps the `Clone` and `PartialEq`
+/// its bevy counterpart has, while Python sees the real variant class.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImePayload(pub Ime);
+
+impl<'py> IntoPyObject<'py> for ImePayload {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(materialize_ime(py, &self.0)?.into_bound(py))
+    }
+}
+
+impl FromPyObject<'_, '_> for ImePayload {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let base = obj.extract::<PyRef<'_, PyIme>>()?;
+        Ok(ImePayload(Ime::from(base.clone())))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileDragAndDropPayload(pub FileDragAndDrop);
+
+impl<'py> IntoPyObject<'py> for FileDragAndDropPayload {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(materialize_file_drag_and_drop(py, &self.0)?.into_bound(py))
+    }
+}
+
+impl FromPyObject<'_, '_> for FileDragAndDropPayload {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let base = obj.extract::<PyRef<'_, PyFileDragAndDrop>>()?;
+        Ok(FileDragAndDropPayload(FileDragAndDrop::from(
+            FileDragAndDropValue::from(base.clone()),
+        )))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyboardInputPayload(pub PyKeyboardInput);
+
+impl<'py> IntoPyObject<'py> for KeyboardInputPayload {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        Ok(Py::new(py, (self.0, PyMessage))?.into_bound(py).into_any())
+    }
+}
+
+impl FromPyObject<'_, '_> for KeyboardInputPayload {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        Ok(Self(obj.extract::<PyRef<'_, PyKeyboardInput>>()?.clone()))
+    }
+}
 
 #[pyclass(
     name = "WindowEvent",
@@ -36,14 +110,13 @@ pub enum PyWindowEvent {
         window: PyEntity,
         delta: Option<PyVec2>,
     },
-    #[pyo3(constructor = (window, path = None))]
+    #[pyo3(constructor = (value,))]
     FileDragAndDrop {
-        window: PyEntity,
-        path: Option<String>,
+        value: FileDragAndDropPayload,
     },
-    #[pyo3(constructor = (window,))]
+    #[pyo3(constructor = (value,))]
     Ime {
-        window: PyEntity,
+        value: ImePayload,
     },
     RequestRedraw {},
     #[pyo3(constructor = (window,))]
@@ -134,8 +207,10 @@ pub enum PyWindowEvent {
         theme: PyWindowTheme,
         window: PyEntity,
     },
-    /// TODO REVIEW: KeyboardInput not supported - use MessageReader[KeyboardInput] directly
-    KeyboardInput {},
+    #[pyo3(constructor = (value,))]
+    KeyboardInput {
+        value: KeyboardInputPayload,
+    },
 }
 
 impl PyWindowEvent {
@@ -155,33 +230,12 @@ impl PyWindowEvent {
                 window: e.window.into(),
                 delta: e.delta.map(Into::into),
             },
-            WindowEvent::FileDragAndDrop(e) => {
-                use bevy::window::FileDragAndDrop;
-                let (window, path) = match e {
-                    FileDragAndDrop::DroppedFile { window, path_buf } => (
-                        (*window).into(),
-                        Some(path_buf.to_string_lossy().to_string()),
-                    ),
-                    FileDragAndDrop::HoveredFile { window, path_buf } => (
-                        (*window).into(),
-                        Some(path_buf.to_string_lossy().to_string()),
-                    ),
-                    FileDragAndDrop::HoveredFileCanceled { window } => ((*window).into(), None),
-                };
-                PyWindowEvent::FileDragAndDrop { window, path }
-            }
-            WindowEvent::Ime(e) => {
-                use bevy::window::Ime;
-                let window = match e {
-                    Ime::Preedit { window, .. } => *window,
-                    Ime::Commit { window, .. } => *window,
-                    Ime::Enabled { window } => *window,
-                    Ime::Disabled { window } => *window,
-                };
-                PyWindowEvent::Ime {
-                    window: window.into(),
-                }
-            }
+            WindowEvent::FileDragAndDrop(e) => PyWindowEvent::FileDragAndDrop {
+                value: FileDragAndDropPayload(e.clone()),
+            },
+            WindowEvent::Ime(e) => PyWindowEvent::Ime {
+                value: ImePayload(e.clone()),
+            },
             WindowEvent::RequestRedraw(_) => PyWindowEvent::RequestRedraw {},
             WindowEvent::WindowCloseRequested(e) => PyWindowEvent::WindowCloseRequested {
                 window: e.window.into(),
@@ -230,11 +284,9 @@ impl PyWindowEvent {
                     force,
                 }
             }
-            WindowEvent::KeyboardInput(_) => {
-                // KeyboardInput requires ButtonInput<KeyCode> for modifier detection
-                // Use MessageReader[KeyboardInput] directly for full keyboard support
-                PyWindowEvent::KeyboardInput {}
-            }
+            WindowEvent::KeyboardInput(event) => PyWindowEvent::KeyboardInput {
+                value: KeyboardInputPayload(PyKeyboardInput::from_bevy_event(event)?),
+            },
             WindowEvent::KeyboardFocusLost(_) => PyWindowEvent::KeyboardFocusLost {},
             WindowEvent::WindowCreated(e) => PyWindowEvent::WindowCreated {
                 window: e.window.into(),

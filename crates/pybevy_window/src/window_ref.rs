@@ -1,12 +1,12 @@
 use bevy::{
-    ecs::entity::ContainsEntity,
+    ecs::entity::{ContainsEntity, Entity},
     window::{NormalizedWindowRef, WindowRef},
 };
 use pybevy_core::PyEntity;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyenum(WindowRef, manual)]
+#[pyenum(WindowRef, empty_tuple, no_repr)]
 #[pyclass(
     name = "WindowRef",
     module = "pybevy.window",
@@ -17,27 +17,11 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyWindowRef {
     Primary(),
-    Entity { value: PyEntity },
-}
-
-impl From<WindowRef> for PyWindowRef {
-    fn from(value: WindowRef) -> Self {
-        match value {
-            WindowRef::Primary => Self::Primary(),
-            WindowRef::Entity(entity) => Self::Entity {
-                value: entity.into(),
-            },
-        }
-    }
-}
-
-impl From<PyWindowRef> for WindowRef {
-    fn from(value: PyWindowRef) -> Self {
-        match value {
-            PyWindowRef::Primary() => Self::Primary,
-            PyWindowRef::Entity { value } => Self::Entity(value.into()),
-        }
-    }
+    #[py_bevy(tuple)]
+    Entity {
+        #[py_type(PyEntity)]
+        value: Entity,
+    },
 }
 
 impl Default for PyWindowRef {
@@ -59,7 +43,10 @@ impl PyWindowRef {
     fn __repr__(&self) -> String {
         match self {
             Self::Primary() => "WindowRef.Primary()".to_string(),
-            Self::Entity { value } => format!("WindowRef.Entity({value:?})"),
+            Self::Entity { value } => {
+                let value: PyEntity = (*value).into();
+                format!("WindowRef.Entity({value:?})")
+            }
         }
     }
 }
@@ -69,10 +56,9 @@ impl PyWindowRef {
     module = "pybevy.window",
     frozen,
     eq,
-    hash,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNormalizedWindowRef {
     inner: NormalizedWindowRef,
 }

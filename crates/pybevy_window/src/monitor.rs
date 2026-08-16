@@ -31,7 +31,9 @@ impl PyMonitor {
 
     #[getter]
     pub fn physical_position(&self) -> PyResult<PyIVec2> {
-        Ok(self.as_ref()?.physical_position.into())
+        Ok(self
+            .storage
+            .snapshot_field_as(|monitor| &monitor.physical_position)?)
     }
 
     #[getter]

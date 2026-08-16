@@ -34,6 +34,13 @@ pub mod window_theme;
 
 use pyo3::prelude::*;
 
+pybevy_core::register_native_system_set!(
+    intern_exit_systems,
+    bevy::window::ExitSystems,
+    module = "window",
+    name = "ExitSystems"
+);
+
 pub mod prelude {
     pub use crate::{
         cursor_events::{PyCursorEntered, PyCursorLeft},
@@ -90,6 +97,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<cursor_moved::PyCursorMoved>()?;
     m.add_class::<file_drag_and_drop::PyFileDragAndDrop>()?;
     m.add_class::<ime::PyIme>()?;
+    file_drag_and_drop::register_file_drag_and_drop_variants(&m)?;
+    ime::register_ime_variants(&m)?;
     m.add_class::<request_redraw::PyRequestRedraw>()?;
     m.add_class::<window_close_requested::PyWindowCloseRequested>()?;
     m.add_class::<window_event::PyWindowEvent>()?;

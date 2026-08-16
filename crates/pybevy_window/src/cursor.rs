@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(CursorGrabMode)]
-#[pyclass(name = "CursorGrabMode", eq, from_py_object)]
+#[pyclass(name = "CursorGrabMode", eq, from_py_object, frozen, hash)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyCursorGrabMode {
     #[pyo3(name = "None_")]
@@ -13,7 +13,7 @@ pub enum PyCursorGrabMode {
 }
 
 #[pyenum(SystemCursorIcon)]
-#[pyclass(name = "SystemCursorIcon", eq, from_py_object)]
+#[pyclass(name = "SystemCursorIcon", eq, from_py_object, frozen, hash)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PySystemCursorIcon {
     Default,

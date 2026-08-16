@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::{exit_condition::PyExitCondition, window::PyWindow};
 
-#[pyplugin(bevy::window::WindowPlugin)]
+#[pyplugin(bevy::window::WindowPlugin, default_plugin = Window)]
 #[pyclass(name = "WindowPlugin", extends = PyPlugin)]
 pub struct PyWindowPlugin {
     primary_window: Option<PyWindow>,

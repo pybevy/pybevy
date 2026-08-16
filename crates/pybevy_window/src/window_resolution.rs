@@ -2,7 +2,7 @@ use bevy::window::WindowResolution;
 use pybevy_core::{FieldStorage, FromBorrowedStorage};
 use pybevy_macros::pyfield;
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
-use pyo3::{PyRefMut, prelude::*};
+use pyo3::prelude::*;
 
 #[pyfield]
 #[pyclass(name = "WindowResolution", from_py_object)]
@@ -22,9 +22,13 @@ impl Default for PyWindowResolution {
 #[pymethods]
 impl PyWindowResolution {
     #[new]
-    #[pyo3(signature = (width = 1280.0, height = 720.0, scale_factor_override = None))]
-    pub fn new(width: f32, height: f32, scale_factor_override: Option<f32>) -> Self {
-        let mut resolution = WindowResolution::new(width as u32, height as u32);
+    #[pyo3(signature = (physical_width = 1280, physical_height = 720, scale_factor_override = None))]
+    pub fn new(
+        physical_width: u32,
+        physical_height: u32,
+        scale_factor_override: Option<f32>,
+    ) -> Self {
+        let mut resolution = WindowResolution::new(physical_width, physical_height);
         if let Some(scale) = scale_factor_override {
             resolution.set_scale_factor_override(Some(scale));
         }
@@ -97,13 +101,10 @@ impl PyWindowResolution {
         Ok(())
     }
 
-    pub fn with_scale_factor_override(
-        mut slf: PyRefMut<'_, Self>,
-        scale_factor_override: f32,
-    ) -> PyResult<PyRefMut<'_, Self>> {
-        slf.as_mut()?
-            .set_scale_factor_override(Some(scale_factor_override));
-        Ok(slf)
+    pub fn with_scale_factor_override(&self, scale_factor_override: f32) -> PyResult<Self> {
+        let mut resolution = self.as_ref()?.clone();
+        resolution.set_scale_factor_override(Some(scale_factor_override));
+        Ok(Self::from_owned(resolution))
     }
 
     pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
