@@ -1,22 +1,23 @@
 //! Typed borrowed primitives shared by every storage type
 //!
 //! `BorrowedRef<T>` and `BorrowedMut<T>` encode read vs write access at the type
-//! level instead of via a runtime `AccessMode` flag. Each carries only a raw
-//! pointer and a plain `ValidityFlag` (the "system still executing" gate); the
-//! mode that used to live in `ValidityFlagWithMode` is now the choice of which
-//! wrapper holds the pointer.
+//! level instead of via a runtime `AccessMode` flag. Each carries a raw pointer
+//! and a plain `ValidityFlag` (the "system still executing" gate). Native
+//! component mutable borrows can additionally carry a write context so Bevy
+//! change detection is triggered on the first actual write, not on extraction.
 //!
-//! All six storage types (`ValueStorage`, `FieldStorage`, `ListStorage`,
-//! `ComponentStorage`, `ResourceStorage`, `AssetStorage`) wrap these two types in
+//! The storage types (`ValueStorage`, `FieldStorage`, `ComponentStorage`,
+//! `ResourceStorage`, `AssetStorage`) wrap these two types in
 //! their borrowed variants, so the `Send`/`Sync` and `borrow_field` logic lives
 //! here once rather than being duplicated per storage type.
 
 use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
 
 use crate::{
+    component_change::ComponentWriteContext,
     storage_error::StorageError,
     storage_traits::BorrowableStorage,
-    validity_guard::{ValidityFlag, ValidityFlagWithMode},
+    validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
 /// Read-only borrow into parent storage (component, resource, or another borrow).
@@ -38,6 +39,9 @@ pub struct BorrowedRef<T> {
 pub struct BorrowedMut<T> {
     ptr: *mut T,
     validity: ValidityFlag,
+    // Kept inline to avoid a heap allocation for every mutable query row and
+    // every nested tracked field wrapper.
+    component_write: Option<ComponentWriteContext>,
 }
 
 // SAFETY: the raw pointer is just an address and access is gated by the
@@ -132,21 +136,66 @@ impl<T> BorrowedMut<T> {
     /// - No other reference may alias the same memory while the flag is valid.
     #[inline(always)]
     pub unsafe fn new(ptr: *mut T, validity: ValidityFlag) -> Self {
-        Self { ptr, validity }
+        Self {
+            ptr,
+            validity,
+            component_write: None,
+        }
+    }
+
+    /// Create a mutable borrow that marks its owning component on actual writes.
+    ///
+    /// # Safety
+    /// The requirements of [`Self::new`] and [`ComponentWriteContext::new`] apply.
+    #[inline(always)]
+    pub unsafe fn new_tracked(
+        ptr: *mut T,
+        validity: ValidityFlag,
+        component_write: ComponentWriteContext,
+    ) -> Self {
+        Self {
+            ptr,
+            validity,
+            component_write: Some(component_write),
+        }
     }
 
     #[inline(always)]
     pub fn get(&self) -> Result<&T, StorageError> {
         self.validity.check_read()?;
-        // SAFETY: validity checked above; ptr stays valid while the flag is set
-        Ok(unsafe { &*self.ptr })
+        let ptr = match self.component_write {
+            Some(context) => context.resolve()? as *const T,
+            None => self.ptr as *const T,
+        };
+        // SAFETY: validity checked above; ptr is either the original borrow or was
+        // re-resolved from the same live component identity.
+        Ok(unsafe { &*ptr })
     }
 
     #[inline(always)]
     pub fn get_mut(&mut self) -> Result<&mut T, StorageError> {
         self.validity.check_write()?;
-        // SAFETY: validity checked above; ptr came from a &mut chain per new()'s contract
+        if let Some(context) = self.component_write {
+            self.ptr = context.resolve_mut()? as *mut T;
+        }
+        // SAFETY: validity checked above; ptr came from the latest mutable component
+        // access chain or from the original &mut chain per new()'s contract.
         Ok(unsafe { &mut *self.ptr })
+    }
+
+    /// Replace the stored pointer with one derived from a newer `&mut` chain.
+    ///
+    /// Deriving a fresh `&mut World` (as the asset change tracker does to queue
+    /// `AssetEvent::Modified`) supersedes any pointer taken from an earlier
+    /// chain. The caller must hand the resulting pointer back here so later
+    /// writes go through the live chain instead of the invalidated one.
+    ///
+    /// # Safety
+    /// - `ptr` must point to valid `T` for as long as `validity` is non-Invalid.
+    /// - `ptr` must have been obtained from the most recent `&mut T` chain.
+    #[inline(always)]
+    pub unsafe fn adopt_ptr(&mut self, ptr: *mut T) {
+        self.ptr = ptr;
     }
 
     /// Create a second mutable handle to the same data, sharing the validity flag.
@@ -156,8 +205,11 @@ impl<T> BorrowedMut<T> {
     /// aliasing out of derive-generated code.
     #[inline(always)]
     pub fn share(&self) -> Self {
-        // SAFETY: same ptr and flag; the original new() contract still holds
-        unsafe { Self::new(self.ptr, self.validity.clone()) }
+        Self {
+            ptr: self.ptr,
+            validity: self.validity.clone(),
+            component_write: self.component_write,
+        }
     }
 
     /// Downgrade to a read-only `BorrowedRef`, sharing the same validity flag.
@@ -186,10 +238,28 @@ impl<T> BorrowedMut<T> {
         S: BorrowableStorage<F>,
     {
         self.validity.check_read()?;
-        // SAFETY: validity checked above; ptr is stable during system execution.
-        let field_ptr = field_accessor(unsafe { &*self.ptr }) as *const F as *mut F;
-        // SAFETY: field_ptr derives from the checked parent ptr and shares its flag
-        Ok(unsafe { S::borrowed_mut(field_ptr, self.validity.clone()) })
+        let base = match self.component_write {
+            Some(context) => context.resolve()? as *mut T,
+            None => self.ptr,
+        };
+        // SAFETY: validity checked above; base points to the current parent value.
+        let offset =
+            unsafe { (field_accessor(&*base) as *const F).byte_offset_from(base as *const u8) };
+        // SAFETY: offset locates the selected field within the live parent value.
+        let field_ptr = unsafe { (base as *mut u8).offset(offset) as *mut F };
+        // SAFETY: the untracked arm inherits the parent's mutable provenance. In
+        // the tracked arm, every mutable access re-resolves through the context's
+        // mutable component access before dereferencing this cached pointer.
+        Ok(unsafe {
+            match self.component_write {
+                Some(context) => S::borrowed_mut_tracked(
+                    field_ptr,
+                    self.validity.clone(),
+                    context.child(offset as usize),
+                ),
+                None => S::borrowed_mut(field_ptr, self.validity.clone()),
+            }
+        })
     }
 
     /// Borrow an optional sub-field, inheriting mutable access.
@@ -201,17 +271,34 @@ impl<T> BorrowedMut<T> {
         S: BorrowableStorage<F>,
     {
         self.validity.check_read()?;
-        // SAFETY: validity checked above; ptr is stable during system execution.
-        match field_accessor(unsafe { &*self.ptr }) {
-            Some(field_ref) => {
-                let field_ptr = field_ref as *const F as *mut F;
-                // SAFETY: field_ptr derives from the checked parent ptr and shares its flag
-                Ok(Some(unsafe {
-                    S::borrowed_mut(field_ptr, self.validity.clone())
-                }))
+        let base = match self.component_write {
+            Some(context) => context.resolve()? as *mut T,
+            None => self.ptr,
+        };
+        // SAFETY: validity was checked and base points to the current parent value.
+        let parent = unsafe { &*base };
+        let offset = match field_accessor(parent) {
+            // SAFETY: field_ref points inside *base.
+            Some(field_ref) => unsafe {
+                (field_ref as *const F).byte_offset_from(base as *const u8)
+            },
+            None => return Ok(None),
+        };
+        // SAFETY: offset locates the selected field within the live parent value.
+        let field_ptr = unsafe { (base as *mut u8).offset(offset) as *mut F };
+        // SAFETY: the untracked arm inherits the parent's mutable provenance. In
+        // the tracked arm, every mutable access re-resolves through the context's
+        // mutable component access before dereferencing this cached pointer.
+        Ok(Some(unsafe {
+            match self.component_write {
+                Some(context) => S::borrowed_mut_tracked(
+                    field_ptr,
+                    self.validity.clone(),
+                    context.child(offset as usize),
+                ),
+                None => S::borrowed_mut(field_ptr, self.validity.clone()),
             }
-            None => Ok(None),
-        }
+        }))
     }
 }
 
@@ -233,6 +320,26 @@ pub(crate) unsafe fn revalidate_field_ptr(
     let entity_ref = world.get_entity(entity).ok()?;
     let base = entity_ref.get_by_id(component_id).ok()?.as_ptr();
     // SAFETY: `offset` is within the component's layout per the caller's contract
+    Some(unsafe { base.add(offset) })
+}
+
+/// Re-derive the address of a writable component field and mark the component changed.
+///
+/// # Safety
+/// `world_ptr` must be valid and have exclusive access for the call.
+#[inline]
+pub(crate) unsafe fn revalidate_field_ptr_mut(
+    world_ptr: *mut World,
+    entity: Entity,
+    component_id: ComponentId,
+    offset: usize,
+) -> Option<*mut u8> {
+    // SAFETY: caller guarantees exclusive access to the live World.
+    let world = unsafe { &mut *world_ptr };
+    let value = world.get_mut_by_id(entity, component_id)?;
+    // `into_inner` marks the component changed, matching Bevy's typed `Mut<T>`.
+    let base = value.into_inner().as_ptr();
+    // SAFETY: `offset` is within the component's layout per the caller's contract.
     Some(unsafe { base.add(offset) })
 }
 
@@ -285,11 +392,36 @@ impl RevalidatingField {
         }
     }
 
+    #[inline(always)]
+    pub(crate) fn validity(&self) -> &ValidityFlag {
+        &self.validity.flag
+    }
+
+    pub(crate) fn clone_as_ref(&self) -> Self {
+        Self {
+            world_ptr: self.world_ptr,
+            entity: self.entity,
+            component_id: self.component_id,
+            offset: self.offset,
+            validity: self.validity.flag.with_access_mode(AccessMode::Read),
+        }
+    }
+
     #[inline]
     fn resolve(&self) -> Result<*mut u8, StorageError> {
         // SAFETY: forwarded from this handle's construction contract
         unsafe { revalidate_field_ptr(self.world_ptr, self.entity, self.component_id, self.offset) }
             .ok_or(StorageError::EntityUnavailable)
+    }
+
+    #[inline]
+    fn resolve_mut(&mut self) -> Result<*mut u8, StorageError> {
+        // SAFETY: forwarded from this handle's construction contract; `&mut self`
+        // represents the handle's exclusive write access.
+        unsafe {
+            revalidate_field_ptr_mut(self.world_ptr, self.entity, self.component_id, self.offset)
+        }
+        .ok_or(StorageError::EntityUnavailable)
     }
 
     /// Read the field as `&T`, checking validity. `T` must be the field's type.
@@ -309,7 +441,7 @@ impl RevalidatingField {
     #[inline]
     pub(crate) fn get_mut<T>(&mut self) -> Result<&mut T, StorageError> {
         self.validity.check_write()?;
-        let ptr = self.resolve()?;
+        let ptr = self.resolve_mut()?;
         // SAFETY: validity + write permission checked; ptr re-resolved to the live field
         Ok(unsafe { &mut *(ptr as *mut T) })
     }
@@ -550,6 +682,28 @@ mod tests {
         let mut f = field.unwrap();
         *f.as_mut().unwrap() = 77;
         assert_eq!(opt, Some(77));
+    }
+
+    /// The field pointer is rebuilt from the base rather than cast from the
+    /// accessor's reference, so the offset has to be applied in bytes. Applying
+    /// it in units of `F` would scale it by `size_of::<F>()` and write outside
+    /// the addressed field.
+    #[test]
+    fn test_borrowed_mut_borrow_field_offset_is_measured_in_bytes() {
+        #[repr(C)]
+        struct Mixed {
+            head: u8,
+            tail: u64,
+        }
+
+        let mut mixed = Mixed { head: 1, tail: 2 };
+        let flag = ValidityFlag::new_write();
+        // SAFETY: mixed outlives the borrow within this test scope
+        let borrow = unsafe { BorrowedMut::new(&mut mixed, flag) };
+        let mut field: ValueStorage<u64> = borrow.borrow_field(|m| &m.tail).unwrap();
+        *field.as_mut().unwrap() = 99;
+        assert_eq!(mixed.tail, 99);
+        assert_eq!(mixed.head, 1, "write landed outside the addressed field");
     }
 
     #[test]

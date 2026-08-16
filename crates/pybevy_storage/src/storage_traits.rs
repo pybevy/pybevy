@@ -5,11 +5,21 @@
 
 use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
 
-use crate::validity_guard::{ValidityFlag, ValidityFlagWithMode};
+use crate::{
+    RevalidatingSource,
+    component_change::ComponentWriteContext,
+    validity_guard::{ValidityFlag, ValidityFlagWithMode},
+};
+
+/// Mark a getter result as an independently owned computed value.
+#[inline(always)]
+pub fn computed_owned<T>(value: T) -> T {
+    value
+}
 
 /// Trait for storage types that can borrow field pointers with validity tracking
 ///
-/// This is implemented by ValueStorage, FieldStorage and ListStorage to provide a
+/// This is implemented by ValueStorage and FieldStorage to provide a
 /// unified interface for creating borrowed field references. Read vs write access is
 /// encoded by which constructor is used rather than by a runtime access mode.
 pub trait BorrowableStorage<T>: Sized {
@@ -30,6 +40,17 @@ pub trait BorrowableStorage<T>: Sized {
     /// - The data at `ptr` lives at least as long as `validity` is non-Invalid
     /// - No other reference aliases the same memory while the flag is valid
     unsafe fn borrowed_mut(ptr: *mut T, validity: ValidityFlag) -> Self;
+
+    /// Create mutable storage that marks its owning ECS component only on write.
+    ///
+    /// # Safety
+    /// The pointer and validity requirements of [`Self::borrowed_mut`] apply, and
+    /// `context` must identify the component allocation containing `ptr`.
+    unsafe fn borrowed_mut_tracked(
+        ptr: *mut T,
+        validity: ValidityFlag,
+        context: ComponentWriteContext,
+    ) -> Self;
 
     /// Create a read-only owned snapshot (copy) of the given value.
     ///
@@ -59,6 +80,11 @@ pub trait BorrowableStorage<T>: Sized {
         offset: usize,
         validity: ValidityFlagWithMode,
     ) -> Self;
+
+    /// Create storage backed by a typed path into a live Bevy asset.
+    fn revalidating_source(source: RevalidatingSource<T>) -> Self
+    where
+        T: 'static;
 }
 
 /// Trait for Python wrapper types that can be created from borrowed storage

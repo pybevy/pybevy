@@ -18,12 +18,15 @@
 //! always same-thread: a system's parameters are created, used, and invalidated
 //! on the one thread that runs the system.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU8, AtomicU64, Ordering},
+use std::{
+    fmt,
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+    },
 };
 
-use crate::storage_error::StorageError;
+use crate::{component_change::ComponentWriteContext, storage_error::StorageError};
 
 /// Source of process-unique thread tokens. Starts at 1 so the value 0 is a
 /// reserved "unset" sentinel that can never collide with a live thread.
@@ -64,12 +67,28 @@ impl From<u8> for AccessMode {
 }
 
 /// Shared inner state of a [`ValidityFlag`].
-#[derive(Debug)]
 struct ValidityInner {
     /// Current [`AccessMode`] (Invalid / Read / Write).
     mode: AtomicU8,
     /// Token of the thread that last activated this flag (0 while Invalid/unset).
     owner: AtomicU64,
+    has_invalidation_observers: AtomicBool,
+    invalidation_observers: Mutex<Vec<Weak<dyn InvalidationObserver>>>,
+}
+
+impl fmt::Debug for ValidityInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValidityInner")
+            .field("mode", &self.mode.load(Ordering::Relaxed))
+            .field("owner", &self.owner.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
+/// A shared-core listener that releases run-scoped bookkeeping immediately
+/// when its validity window closes.
+pub(crate) trait InvalidationObserver: Send + Sync {
+    fn invalidated(&self);
 }
 
 impl ValidityInner {
@@ -82,6 +101,8 @@ impl ValidityInner {
         Self {
             mode: AtomicU8::new(mode as u8),
             owner: AtomicU64::new(owner),
+            has_invalidation_observers: AtomicBool::new(false),
+            invalidation_observers: Mutex::new(Vec::new()),
         }
     }
 }
@@ -105,6 +126,7 @@ pub struct ValidityFlag(Arc<ValidityInner>);
 pub struct ValidityFlagWithMode {
     pub flag: ValidityFlag,
     access_mode: AccessMode,
+    component_write: Option<ComponentWriteContext>,
 }
 
 impl ValidityFlagWithMode {
@@ -150,6 +172,17 @@ impl ValidityFlagWithMode {
     pub fn access_mode(&self) -> AccessMode {
         self.access_mode
     }
+
+    /// Attach the native component identity used for lazy write-time change tracking.
+    pub fn with_component_write_context(mut self, context: ComponentWriteContext) -> Self {
+        self.component_write = Some(context);
+        self
+    }
+
+    /// Return the native component write context, when this wrapper came from a query.
+    pub fn component_write_context(&self) -> Option<ComponentWriteContext> {
+        self.component_write
+    }
 }
 
 impl ValidityFlag {
@@ -176,12 +209,40 @@ impl ValidityFlag {
         ValidityFlagWithMode {
             flag: self.clone(),
             access_mode,
+            component_write: None,
         }
     }
 
     /// Get the current access mode
     pub fn get_mode(&self) -> AccessMode {
         self.0.mode.load(Ordering::Acquire).into()
+    }
+
+    /// Notify `observer` when this validity window becomes invalid.
+    ///
+    /// Registration after invalidation invokes the observer immediately. An
+    /// observer must therefore make its cleanup idempotent.
+    pub(crate) fn observe_invalidation(&self, observer: &Arc<dyn InvalidationObserver>) {
+        if matches!(self.get_mode(), AccessMode::Invalid) {
+            observer.invalidated();
+            return;
+        }
+
+        {
+            let mut observers = self
+                .0
+                .invalidation_observers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            observers.push(Arc::downgrade(observer));
+            self.0
+                .has_invalidation_observers
+                .store(true, Ordering::Release);
+        }
+
+        if matches!(self.get_mode(), AccessMode::Invalid) {
+            observer.invalidated();
+        }
     }
 
     /// Require that the caller is on the thread that activated this flag.
@@ -250,6 +311,28 @@ impl ValidityFlag {
     /// Set the validity flag to Invalid
     pub fn set_invalid(&self) {
         self.set_mode(AccessMode::Invalid);
+        if !self.0.has_invalidation_observers.load(Ordering::Acquire) {
+            return;
+        }
+        let observers = {
+            let mut registered = self
+                .0
+                .invalidation_observers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let observers = registered
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>();
+            registered.clear();
+            self.0
+                .has_invalidation_observers
+                .store(false, Ordering::Release);
+            observers
+        };
+        for observer in observers {
+            observer.invalidated();
+        }
     }
 }
 
@@ -399,7 +482,7 @@ mod tests {
             assert!(with_mode.check_write().is_ok());
         }
 
-        // Guard dropped — all clones and with_mode see Invalid
+        // Guard dropped: all clones and with_mode see Invalid
         assert!(clone1.check_read().is_err());
         assert!(clone2.check_write().is_err());
         assert!(with_mode.check_read().is_err());

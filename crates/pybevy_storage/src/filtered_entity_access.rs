@@ -5,7 +5,7 @@
 //! works unchanged for both query types.
 
 use bevy::ecs::{
-    change_detection::{ComponentTicks, MutUntyped},
+    change_detection::{ComponentTicks, DetectChangesMut, MutUntyped},
     component::ComponentId,
     entity::Entity,
     ptr::Ptr,
@@ -43,6 +43,15 @@ impl<'w, 's> FilteredEntityAccess<'w, 's> {
         }
     }
 
+    /// Returns whether the entity has a component without accessing its value.
+    #[inline(always)]
+    pub fn contains_id(&self, component_id: ComponentId) -> bool {
+        match self {
+            Self::Ref(r) => r.contains_id(component_id),
+            Self::Mut(m) => m.contains_id(component_id),
+        }
+    }
+
     /// Read-only access to component change ticks by ID. Available on both variants.
     #[inline(always)]
     pub fn get_change_ticks_by_id(&self, component_id: ComponentId) -> Option<ComponentTicks> {
@@ -67,6 +76,16 @@ impl<'w, 's> FilteredEntityAccess<'w, 's> {
             ),
             Self::Mut(m) => m.get_mut_by_id(component_id),
         }
+    }
+
+    /// Return the mutable component address without marking it changed.
+    ///
+    /// The caller can use the pointer to construct a lazy tracked wrapper. The
+    /// component is marked only when that wrapper requests writable access.
+    #[inline(always)]
+    pub fn get_mut_ptr_by_id_unchanged(&mut self, component_id: ComponentId) -> Option<*mut u8> {
+        self.get_mut_by_id(component_id)
+            .map(|mut component| component.bypass_change_detection().as_ptr())
     }
 }
 
@@ -108,6 +127,7 @@ mod tests {
 
         assert_eq!(access.id(), entity);
         assert!(access.get_by_id(comp_id).is_some());
+        assert!(access.contains_id(comp_id));
     }
 
     #[test]
@@ -124,6 +144,7 @@ mod tests {
 
         assert_eq!(access.id(), entity);
         assert!(access.get_by_id(comp_id).is_some());
+        assert!(access.contains_id(comp_id));
         assert!(access.get_mut_by_id(comp_id).is_some());
     }
 

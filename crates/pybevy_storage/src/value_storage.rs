@@ -11,7 +11,9 @@
 use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
 
 use crate::{
+    ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, WriteField, WriteVariant,
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    component_change::ComponentWriteContext,
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
@@ -59,6 +61,9 @@ pub enum ValueStorageInner<T: Copy> {
     /// Boxed so this rarely-used variant does not enlarge `ValueStorage` (hence every
     /// math/color type) with its extra identity fields.
     Revalidating(Box<RevalidatingField>),
+
+    /// A typed path into a live Bevy asset, re-resolved on every access.
+    Source(Box<RevalidatingSource<T>>),
 }
 
 impl<T: Copy> Clone for ValueStorage<T> {
@@ -70,6 +75,7 @@ impl<T: Copy> Clone for ValueStorage<T> {
             // A cloned mutable borrow downgrades to read-only to avoid aliasing.
             ValueStorageInner::BorrowedMut(b) => ValueStorageInner::BorrowedRef(b.clone_as_ref()),
             ValueStorageInner::Revalidating(f) => ValueStorageInner::Revalidating(f.clone()),
+            ValueStorageInner::Source(source) => ValueStorageInner::Source(source.clone()),
         };
         Self { inner }
     }
@@ -80,6 +86,10 @@ where
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
+        if let (Ok(left), Ok(right)) = (self.as_ref(), other.as_ref()) {
+            return *left == *right;
+        }
+
         match (&self.inner, &other.inner) {
             (ValueStorageInner::Owned(a), ValueStorageInner::Owned(b)) => a == b,
             (ValueStorageInner::OwnedReadOnly(a), ValueStorageInner::OwnedReadOnly(b)) => a == b,
@@ -92,6 +102,7 @@ where
             (ValueStorageInner::Revalidating(a), ValueStorageInner::Revalidating(b)) => {
                 a.same_identity(b)
             }
+            (ValueStorageInner::Source(a), ValueStorageInner::Source(b)) => a.same_identity(b),
             _ => false,
         }
     }
@@ -112,6 +123,19 @@ impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
         }
     }
 
+    unsafe fn borrowed_mut_tracked(
+        ptr: *mut T,
+        validity: ValidityFlag,
+        context: ComponentWriteContext,
+    ) -> Self {
+        Self {
+            // SAFETY: forwards this constructor's contract unchanged.
+            inner: ValueStorageInner::BorrowedMut(unsafe {
+                BorrowedMut::new_tracked(ptr, validity, context)
+            }),
+        }
+    }
+
     fn snapshot(value: &T) -> Self {
         Self {
             inner: ValueStorageInner::OwnedReadOnly(*value),
@@ -128,6 +152,15 @@ impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
         // SAFETY: forwards this constructor's contract unchanged
         unsafe { Self::revalidating(world_ptr, entity, component_id, offset, validity) }
     }
+
+    fn revalidating_source(source: RevalidatingSource<T>) -> Self
+    where
+        T: 'static,
+    {
+        Self {
+            inner: ValueStorageInner::Source(Box::new(source)),
+        }
+    }
 }
 
 impl<T: Copy> ValueStorage<T> {
@@ -135,6 +168,13 @@ impl<T: Copy> ValueStorage<T> {
     pub const fn owned(value: T) -> Self {
         Self {
             inner: ValueStorageInner::Owned(value),
+        }
+    }
+
+    /// Create an enforced read-only snapshot.
+    pub const fn read_only_snapshot(value: T) -> Self {
+        Self {
+            inner: ValueStorageInner::OwnedReadOnly(value),
         }
     }
 
@@ -148,10 +188,20 @@ impl<T: Copy> ValueStorage<T> {
     /// - `ptr` must point to valid `T` for as long as `validity` is non-Invalid
     /// - `ptr` must be safe to write through when `validity.access_mode()` is `Write`
     pub unsafe fn borrowed(ptr: *mut T, validity: ValidityFlagWithMode) -> Self {
+        let component_write = validity.component_write_context();
         match validity.access_mode() {
-            // SAFETY: mode Write means ptr was obtained from a mutable borrow
-            AccessMode::Write => unsafe {
-                <Self as BorrowableStorage<T>>::borrowed_mut(ptr, validity.flag)
+            // SAFETY: mode Write means ptr was obtained from a mutable borrow.
+            AccessMode::Write => match component_write {
+                // SAFETY: forwards this constructor's pointer and context contract.
+                Some(context) => unsafe {
+                    <Self as BorrowableStorage<T>>::borrowed_mut_tracked(
+                        ptr,
+                        validity.flag,
+                        context,
+                    )
+                },
+                // SAFETY: forwards this constructor's pointer contract.
+                None => unsafe { <Self as BorrowableStorage<T>>::borrowed_mut(ptr, validity.flag) },
             },
             // SAFETY: read-only view of the same pointer
             _ => unsafe {
@@ -193,12 +243,15 @@ impl<T: Copy> ValueStorage<T> {
     /// Returns `StorageError::InvalidAccess` if the borrowed reference is no longer valid
     /// (i.e., accessed outside of system execution context)
     #[inline(always)]
-    pub fn as_ref(&self) -> Result<&T, StorageError> {
+    pub fn as_ref(&self) -> Result<StorageRef<'_, T>, StorageError> {
         match &self.inner {
-            ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => Ok(value),
-            ValueStorageInner::BorrowedRef(b) => b.get(),
-            ValueStorageInner::BorrowedMut(b) => b.get(),
-            ValueStorageInner::Revalidating(f) => f.get::<T>(),
+            ValueStorageInner::Owned(value) | ValueStorageInner::OwnedReadOnly(value) => {
+                Ok(StorageRef::Direct(value))
+            }
+            ValueStorageInner::BorrowedRef(b) => b.get().map(StorageRef::Direct),
+            ValueStorageInner::BorrowedMut(b) => b.get().map(StorageRef::Direct),
+            ValueStorageInner::Revalidating(f) => f.get::<T>().map(StorageRef::Direct),
+            ValueStorageInner::Source(source) => source.resolve_ref().map(StorageRef::Source),
         }
     }
 
@@ -209,13 +262,14 @@ impl<T: Copy> ValueStorage<T> {
     /// - The borrowed reference is no longer valid
     /// - The value was borrowed immutably (`BorrowedRef`) but mutable access is attempted
     #[inline(always)]
-    pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
+    pub fn as_mut(&mut self) -> Result<StorageMut<'_, T>, StorageError> {
         match &mut self.inner {
-            ValueStorageInner::Owned(value) => Ok(value),
+            ValueStorageInner::Owned(value) => Ok(StorageMut::Direct(value)),
             ValueStorageInner::OwnedReadOnly(_) => Err(StorageError::OwnedFieldReadOnly),
             ValueStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
-            ValueStorageInner::BorrowedMut(b) => b.get_mut(),
-            ValueStorageInner::Revalidating(f) => f.get_mut::<T>(),
+            ValueStorageInner::BorrowedMut(b) => b.get_mut().map(StorageMut::Direct),
+            ValueStorageInner::Revalidating(f) => f.get_mut::<T>().map(StorageMut::Direct),
+            ValueStorageInner::Source(source) => source.resolve_mut().map(StorageMut::Source),
         }
     }
 
@@ -236,6 +290,7 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::BorrowedRef(_)
                 | ValueStorageInner::BorrowedMut(_)
                 | ValueStorageInner::Revalidating(_)
+                | ValueStorageInner::Source(_)
         )
     }
 
@@ -262,9 +317,9 @@ impl<T: Copy> ValueStorage<T> {
     /// This reduces boilerplate in field getters by unifying the owned/borrowed cases.
     /// Similar to ComponentStorage::borrow_field, but works with ValueStorage.
     ///
-    /// For owned storage (including read-only snapshots), returns a read-only snapshot
-    /// of the field. For borrowed storage, returns a borrowed pointer into the
-    /// underlying data, inheriting the parent's read/write access.
+    /// Owned storage (including read-only snapshots) returns a read-only
+    /// snapshot of the field. Borrowed storage returns a validity-bound field
+    /// inheriting the parent's read/write access.
     pub fn borrow_field<F: Clone, S>(
         &self,
         field_accessor: impl Fn(&T) -> &F,
@@ -281,6 +336,10 @@ impl<T: Copy> ValueStorage<T> {
             // A sub-field of a re-resolving handle re-resolves too (composing offsets),
             // so it stays valid across the same structural moves rather than dangling.
             ValueStorageInner::Revalidating(f) => f.child_of::<T, F, S>(field_accessor),
+            ValueStorageInner::Source(source) => {
+                let resolved = source.resolve_ref()?;
+                Ok(S::snapshot(field_accessor(&resolved)))
+            }
         }
     }
 
@@ -296,6 +355,69 @@ impl<T: Copy> ValueStorage<T> {
         W: FromBorrowedStorage<S>,
     {
         Ok(W::from_borrowed(self.borrow_field(field_accessor)?))
+    }
+
+    /// Materialize an explicit read-only snapshot of a value field.
+    pub fn snapshot_field_as<F: Clone, S, W>(
+        &self,
+        field_accessor: impl Fn(&T) -> &F,
+    ) -> Result<W, StorageError>
+    where
+        S: BorrowableStorage<F>,
+        W: FromBorrowedStorage<S>,
+    {
+        let value = self.as_ref()?;
+        Ok(W::from_borrowed(S::snapshot(field_accessor(&value))))
+    }
+
+    /// Borrow a field through a paired path when this value came from an asset.
+    pub fn borrow_resolved_field_as<F: Clone + 'static, S, W>(
+        &self,
+        read: ReadField<T, F>,
+        write: WriteField<T, F>,
+    ) -> Result<W, StorageError>
+    where
+        T: 'static,
+        S: BorrowableStorage<F>,
+        W: FromBorrowedStorage<S>,
+    {
+        let storage = match &self.inner {
+            ValueStorageInner::Source(source) => {
+                let current = source.resolve_ref()?;
+                read(&current);
+                drop(current);
+                S::revalidating_source(source.field(read, write))
+            }
+            _ => return self.borrow_field_as(read),
+        };
+        Ok(W::from_borrowed(storage))
+    }
+
+    /// Resolve an enum payload, validating the expected variant on every asset access.
+    pub fn borrow_resolved_variant_as<F: Copy + 'static, W>(
+        &self,
+        name: &'static str,
+        read: ReadVariant<T, F>,
+        write: WriteVariant<T, F>,
+    ) -> Result<W, StorageError>
+    where
+        T: 'static,
+        W: FromBorrowedStorage<ValueStorage<F>>,
+    {
+        let storage = match &self.inner {
+            ValueStorageInner::Source(source) => {
+                let current = source.resolve_ref()?;
+                read(&current).ok_or(StorageError::VariantChanged(name))?;
+                drop(current);
+                ValueStorage::revalidating_source(source.variant(name, read, write))
+            }
+            _ => {
+                let current = self.as_ref()?;
+                let value = read(&current).ok_or(StorageError::VariantChanged(name))?;
+                ValueStorage::snapshot(value)
+            }
+        };
+        Ok(W::from_borrowed(storage))
     }
 }
 
@@ -439,7 +561,7 @@ mod tests {
     fn test_owned_read_only_is_independent_copy() {
         let value = TestValue { x: 1.0, y: 2.0 };
         let storage = ValueStorage::snapshot(&value);
-        // Snapshot is a copy — doesn't alias the original
+        // Snapshot is a copy: doesn't alias the original
         assert_eq!(storage.as_ref().unwrap().x, 1.0);
         assert_eq!(storage.as_ref().unwrap().y, 2.0);
     }
@@ -451,6 +573,15 @@ mod tests {
         let cloned = storage.clone();
         assert!(cloned.is_owned_read_only());
         assert_eq!(cloned.as_ref().unwrap().x, 5.0);
+    }
+
+    #[test]
+    fn equality_compares_values_across_storage_modes() {
+        let value = TestValue { x: 5.0, y: 6.0 };
+        let owned = ValueStorage::owned(value);
+        let snapshot = ValueStorage::snapshot(&value);
+
+        assert_eq!(owned, snapshot);
     }
 
     #[test]
@@ -478,14 +609,27 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_borrow_field_returns_borrowed() {
-        // Borrowed storage still returns borrowed sub-fields (not snapshot)
+    fn test_mutably_borrowed_field_stays_live() {
         let mut value = TestValue { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
         let field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
         assert!(field.is_borrowed());
+    }
+
+    #[test]
+    fn test_read_only_borrowed_field_stays_validity_bound() {
+        let value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_read();
+        let storage =
+            unsafe { ValueStorage::borrowed_ref(&value as *const TestValue, validity.clone()) };
+
+        let mut field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
+        assert!(field.is_borrowed());
+        assert!(matches!(field.as_mut(), Err(StorageError::ReadOnly)));
+        validity.set_invalid();
+        assert!(matches!(field.get(), Err(StorageError::InvalidAccess)));
     }
 
     #[derive(bevy::ecs::component::Component)]
