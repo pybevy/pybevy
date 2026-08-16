@@ -9,7 +9,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     fmt,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, Weak},
 };
 
 use bevy::ecs::{component::ComponentId, resource::Resource};
@@ -115,6 +115,7 @@ impl<V> Default for MessageLog<V> {
 /// Deterministic store, cursor, and registry failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageStoreError {
+    StoreUnavailable,
     ChannelNotRegistered(MessageChannelId),
     ChannelCapacityExhausted,
     SequenceOverflow(MessageChannelId),
@@ -133,6 +134,7 @@ pub enum MessageStoreError {
 impl fmt::Display for MessageStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::StoreUnavailable => formatter.write_str("message store is no longer available"),
             Self::ChannelNotRegistered(channel) => {
                 write!(
                     formatter,
@@ -237,6 +239,94 @@ pub struct MessageStore<V: Send + Sync + 'static> {
     inner: Arc<Mutex<MessageLog<V>>>,
 }
 
+/// Non-owning store access for an independently escaped backend wrapper.
+///
+/// Keeping a strong store clone would also keep every backend message value
+/// alive behind an interpreter-invisible `Arc`, defeating the wrapper's GC
+/// traversal. The originating App owns the store; its validity flag fences use
+/// after that owner disappears.
+pub struct WeakMessageStore<V: Send + Sync + 'static> {
+    inner: Weak<Mutex<MessageLog<V>>>,
+}
+
+impl<V: Send + Sync + 'static> Clone for WeakMessageStore<V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Weak::clone(&self.inner),
+        }
+    }
+}
+
+impl<V: Send + Sync + 'static> WeakMessageStore<V> {
+    fn upgrade(&self) -> Result<MessageStore<V>, MessageStoreError> {
+        self.inner
+            .upgrade()
+            .map(|inner| MessageStore { inner })
+            .ok_or(MessageStoreError::StoreUnavailable)
+    }
+
+    pub fn append(
+        &self,
+        channel_id: MessageChannelId,
+        value: V,
+    ) -> Result<PythonMessageId, MessageStoreError> {
+        self.upgrade()?.append(channel_id, value)
+    }
+
+    pub fn append_batch(
+        &self,
+        channel_id: MessageChannelId,
+        values: Vec<V>,
+    ) -> Result<Vec<PythonMessageId>, MessageStoreError> {
+        self.upgrade()?.append_batch(channel_id, values)
+    }
+
+    pub fn clear_reader(
+        &self,
+        channel_id: MessageChannelId,
+        cursor: &SharedMessageCursor,
+    ) -> Result<(), MessageStoreError> {
+        self.upgrade()?.clear_reader(channel_id, cursor)
+    }
+
+    pub fn is_empty(
+        &self,
+        channel_id: MessageChannelId,
+        cursor: &SharedMessageCursor,
+    ) -> Result<bool, MessageStoreError> {
+        self.upgrade()?.is_empty(channel_id, cursor)
+    }
+
+    pub fn unread_len(
+        &self,
+        channel_id: MessageChannelId,
+        cursor: &SharedMessageCursor,
+    ) -> Result<u64, MessageStoreError> {
+        self.upgrade()?.unread_len(channel_id, cursor)
+    }
+
+    pub fn snapshot_unread(
+        &self,
+        channel_id: MessageChannelId,
+        cursor: &SharedMessageCursor,
+    ) -> Result<MessageSnapshot<V>, MessageStoreError>
+    where
+        V: Clone,
+    {
+        self.upgrade()?.snapshot_unread(channel_id, cursor)
+    }
+
+    pub fn consume_snapshot_record(
+        &self,
+        channel_id: MessageChannelId,
+        cursor: &SharedMessageCursor,
+        sequence: u64,
+    ) -> Result<MessageConsumeOutcome, MessageStoreError> {
+        self.upgrade()?
+            .consume_snapshot_record(channel_id, cursor, sequence)
+    }
+}
+
 impl<V: Send + Sync + 'static> Clone for MessageStore<V> {
     fn clone(&self) -> Self {
         Self {
@@ -254,6 +344,13 @@ impl<V: Send + Sync + 'static> Default for MessageStore<V> {
 }
 
 impl<V: Send + Sync + 'static> MessageStore<V> {
+    #[must_use]
+    pub fn downgrade(&self) -> WeakMessageStore<V> {
+        WeakMessageStore {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+
     fn lock_log(&self) -> MutexGuard<'_, MessageLog<V>> {
         self.inner
             .lock()
@@ -626,12 +723,30 @@ impl MessageRegistryCore {
         generation: u32,
         register_access: impl FnOnce(MessageChannelId) -> ComponentId,
     ) -> Result<MessageRegisterOutcome, MessageStoreError> {
-        if let Some(alias) = self.by_type.get_mut(&type_key) {
-            alias.generation = alias.generation.max(generation);
-            if let Some(metadata) = self.channels.get_mut(&alias.channel) {
-                metadata.newest_generation = metadata.newest_generation.max(generation);
+        if let Some(alias) = self.by_type.get(&type_key) {
+            // MessageTypeKey is the Python type object's address. CPython reuses
+            // a freed heap type's address for an unrelated class, so a matching
+            // key alone does not prove a matching class: confirm the channel's
+            // stored qualified name. A mismatch means this address was recycled
+            // for a different message type; the alias is stale and must not be
+            // reused, or a writer of one type would deliver into the other's
+            // readers.
+            let channel = alias.channel;
+            let same_class = self
+                .channels
+                .get(&channel)
+                .is_some_and(|metadata| metadata.qualified_name == qualified_name);
+            if same_class {
+                let alias = self.by_type.get_mut(&type_key).expect("checked above");
+                alias.generation = alias.generation.max(generation);
+                if let Some(metadata) = self.channels.get_mut(&channel) {
+                    metadata.newest_generation = metadata.newest_generation.max(generation);
+                }
+                return Ok(MessageRegisterOutcome::Reused(channel));
             }
-            return Ok(MessageRegisterOutcome::Reused(alias.channel));
+            // Recycled address: drop the stale key and fall through so this
+            // class binds to its own channel by qualified name.
+            self.by_type.remove(&type_key);
         }
 
         if let Some(channel) = self.channel_for_qualified_name(qualified_name) {
@@ -749,6 +864,28 @@ mod tests {
         world.insert_resource(MessageRegistryCore::default());
         assert!(world.contains_resource::<MessageStore<u64>>());
         assert!(world.contains_resource::<MessageRegistryCore>());
+    }
+
+    #[test]
+    fn weak_store_does_not_retain_backend_values() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let store = MessageStore::default();
+        let channel = channel(0);
+        assert!(store.register_channel(channel));
+        store
+            .append(channel, DropProbe(Arc::clone(&dropped)))
+            .unwrap();
+        let weak_store = store.downgrade();
+
+        drop(store);
+
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            weak_store
+                .consume_snapshot_record(channel, &new_message_cursor(), 0)
+                .unwrap_err(),
+            MessageStoreError::StoreUnavailable
+        );
     }
 
     #[test]
@@ -1070,8 +1207,10 @@ mod tests {
                 ComponentId::new(10)
             })
             .unwrap();
+        // Same address AND same qualified name: the genuine re-registration of
+        // one live class. It reuses the channel and allocates nothing new.
         let second = registry
-            .register(MessageTypeKey::new(1), "changed.Name", 2, |_| {
+            .register(MessageTypeKey::new(1), "game.Hit", 2, |_| {
                 allocations.fetch_add(1, Ordering::SeqCst);
                 ComponentId::new(11)
             })
@@ -1081,6 +1220,44 @@ mod tests {
         assert_eq!(second, MessageRegisterOutcome::Reused(channel(0)));
         assert_eq!(allocations.load(Ordering::SeqCst), 1);
         assert_eq!(registry.metadata(channel(0)).unwrap().newest_generation, 2);
+    }
+
+    /// CPython reuses a freed heap type's address for an unrelated class. The
+    /// registry keys channels on that address, so the same key can arrive
+    /// carrying a different qualified name. It must NOT reuse the stale
+    /// channel: a writer of the new class would otherwise deliver into the old
+    /// class's readers.
+    #[test]
+    fn recycled_type_address_does_not_reuse_the_stale_channel() {
+        let mut registry = MessageRegistryCore::default();
+        let first = registry
+            .register(MessageTypeKey::new(1), "game.Hit", 0, |_| {
+                ComponentId::new(10)
+            })
+            .unwrap();
+        // Same address (1), different class: the old type was freed and this
+        // address recycled for game.Spawn.
+        let recycled = registry
+            .register(MessageTypeKey::new(1), "game.Spawn", 2, |_| {
+                ComponentId::new(11)
+            })
+            .unwrap();
+
+        assert_eq!(first, MessageRegisterOutcome::Registered(channel(0)));
+        assert_ne!(
+            recycled.channel(),
+            first.channel(),
+            "a recycled address must not bind to the previous class's channel"
+        );
+        assert_eq!(
+            registry.channel_for_qualified_name("game.Spawn"),
+            Some(recycled.channel())
+        );
+        assert_eq!(
+            registry.channel_for_qualified_name("game.Hit"),
+            Some(first.channel()),
+            "the original class keeps its own channel"
+        );
     }
 
     #[test]

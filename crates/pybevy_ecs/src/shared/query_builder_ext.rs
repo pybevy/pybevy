@@ -12,6 +12,15 @@ pub struct QueryComponent {
     pub mutable: bool,
 }
 
+/// One conjunctive branch inside an `Or` query filter.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryFilterBranch {
+    pub with: Vec<ComponentId>,
+    pub without: Vec<ComponentId>,
+    pub changed: Vec<ComponentId>,
+    pub added: Vec<ComponentId>,
+}
+
 /// Specification for building a Bevy QueryState.
 ///
 /// Collects resolved ComponentIds so the QueryState can be constructed with
@@ -26,8 +35,11 @@ pub struct QueryBuildSpec {
     pub changed_filters: Vec<ComponentId>,
     /// Added filter component IDs (registers ref access for added tracking)
     pub added_filters: Vec<ComponentId>,
-    /// AnyOf filter component IDs (Or<(With<A>, With<B>, ...)>)
-    pub anyof_filters: Vec<ComponentId>,
+    /// Components fetched optionally by AnyOf query data. Their presence is
+    /// combined as `Or<(With<A>, With<B>, ...)>`.
+    pub anyof_groups: Vec<Vec<ComponentId>>,
+    /// Groups of conjunctive branches; every group is ANDed and its branches are ORed.
+    pub or_filters: Vec<Vec<QueryFilterBranch>>,
 }
 
 impl QueryBuildSpec {
@@ -55,10 +67,45 @@ fn apply_filters<D: QueryData>(builder: &mut QueryBuilder<D>, spec: &QueryBuildS
         builder.ref_id(id);
     }
 
-    if !spec.anyof_filters.is_empty() {
-        builder.or(|b| {
-            for &id in &spec.anyof_filters {
-                b.with_id(id);
+    for group in &spec.anyof_groups {
+        builder.or(|builder| {
+            for &id in group {
+                builder.with_id(id);
+            }
+        });
+    }
+
+    for branches in &spec.or_filters {
+        for &id in branches
+            .iter()
+            .flat_map(|branch| branch.changed.iter().chain(&branch.added))
+        {
+            builder.optional(|optional| {
+                optional.ref_id(id);
+            });
+        }
+        builder.or(|or_builder| {
+            for branch in branches {
+                let apply_branch = |branch_builder: &mut QueryBuilder| {
+                    for &id in &branch.with {
+                        branch_builder.with_id(id);
+                    }
+                    for &id in &branch.without {
+                        branch_builder.without_id(id);
+                    }
+                    for &id in branch.changed.iter().chain(&branch.added) {
+                        branch_builder.with_id(id);
+                    }
+                };
+                let term_count = branch.with.len()
+                    + branch.without.len()
+                    + branch.changed.len()
+                    + branch.added.len();
+                if term_count == 1 {
+                    apply_branch(or_builder);
+                } else {
+                    or_builder.and(apply_branch);
+                }
             }
         });
     }
@@ -164,7 +211,8 @@ mod tests {
             without_filters: vec![],
             changed_filters: vec![],
             added_filters: vec![],
-            anyof_filters: vec![],
+            anyof_groups: vec![],
+            or_filters: vec![],
         }
     }
 
@@ -250,7 +298,8 @@ mod tests {
             without_filters: vec![],
             changed_filters: vec![],
             added_filters: vec![],
-            anyof_filters: vec![],
+            anyof_groups: vec![],
+            or_filters: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -276,7 +325,8 @@ mod tests {
             without_filters: vec![b_id],
             changed_filters: vec![],
             added_filters: vec![],
-            anyof_filters: vec![],
+            anyof_groups: vec![],
+            or_filters: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -330,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn build_query_anyof_filter() {
+    fn build_query_anyof_data_requires_one_present_item() {
         let mut world = World::new();
         let (a_id, b_id, c_id) = ids(&mut world);
 
@@ -349,11 +399,91 @@ mod tests {
             without_filters: vec![],
             changed_filters: vec![],
             added_filters: vec![],
-            anyof_filters: vec![b_id, c_id],
+            anyof_groups: vec![vec![b_id, c_id]],
+            or_filters: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
         let mut state = builder.build();
         assert_eq!(state.iter(&world).count(), 2);
+    }
+
+    #[test]
+    fn multiple_anyof_data_groups_are_anded() {
+        let mut world = World::new();
+        let (a_id, b_id, c_id) = ids(&mut world);
+
+        world.spawn(A);
+        world.spawn((A, B));
+        world.spawn((A, C));
+        world.spawn((A, B, C));
+
+        let spec = QueryBuildSpec {
+            components: vec![
+                QueryComponent {
+                    id: a_id,
+                    optional: true,
+                    mutable: false,
+                },
+                QueryComponent {
+                    id: b_id,
+                    optional: true,
+                    mutable: false,
+                },
+                QueryComponent {
+                    id: c_id,
+                    optional: true,
+                    mutable: false,
+                },
+            ],
+            with_filters: vec![],
+            without_filters: vec![],
+            changed_filters: vec![],
+            added_filters: vec![],
+            anyof_groups: vec![vec![a_id, b_id], vec![c_id]],
+            or_filters: vec![],
+        };
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        configure_ref_query(&mut builder, &spec);
+        let mut state = builder.build();
+        assert_eq!(state.iter(&world).count(), 2);
+    }
+
+    #[test]
+    fn build_query_or_combines_filter_branches() {
+        let mut world = World::new();
+        let (a_id, b_id, c_id) = ids(&mut world);
+
+        world.spawn(A);
+        world.spawn((A, B));
+        world.spawn((A, C));
+        world.spawn((A, B, C));
+
+        let spec = QueryBuildSpec {
+            components: vec![QueryComponent {
+                id: a_id,
+                optional: false,
+                mutable: false,
+            }],
+            with_filters: vec![],
+            without_filters: vec![],
+            changed_filters: vec![],
+            added_filters: vec![],
+            anyof_groups: vec![],
+            or_filters: vec![vec![
+                QueryFilterBranch {
+                    with: vec![b_id],
+                    ..Default::default()
+                },
+                QueryFilterBranch {
+                    without: vec![c_id],
+                    ..Default::default()
+                },
+            ]],
+        };
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        configure_ref_query(&mut builder, &spec);
+        let mut state = builder.build();
+        assert_eq!(state.iter(&world).count(), 3);
     }
 }
