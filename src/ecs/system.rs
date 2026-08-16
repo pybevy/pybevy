@@ -3,6 +3,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use pybevy_core::{
+    LogicalTypeId,
+    public_error::{pipe_input_must_be_first, pipe_target_requires_input},
+};
+use pybevy_gizmos::gizmos::PyGizmos;
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
@@ -17,6 +22,7 @@ use super::{
     message::MessageTypeParam,
     mutable::PyMut,
     resource::{PyRes, PyResMut, PyResource},
+    system_input::PyInParam,
     world::PyWorld,
 };
 use crate::{
@@ -26,6 +32,7 @@ use crate::{
         messages::MessageType,
         observer::EventType,
         query::query_param::PyQueryParam,
+        resource_type::reject_state_type_as_resource,
         view::{view::PyView, view_param::PyViewParam},
     },
 };
@@ -41,7 +48,7 @@ const STACK_PARAMS: usize = 8;
 /// address reuse: if CPython recycles a function's memory for a new closure with
 /// different parameters, the `__code__` pointer will differ and we re-parse.
 static SYSTEM_PARAM_CACHE: Mutex<
-    Option<HashMap<usize, (usize, SmallVec<[SystemParam; STACK_PARAMS]>)>>,
+    Option<HashMap<usize, (usize, Arc<SmallVec<[SystemParam; STACK_PARAMS]>>)>>,
 > = Mutex::new(None);
 
 /// Represents a pythonic system function with its parameters cached for efficient calls
@@ -67,11 +74,14 @@ impl SystemFunction {
     /// Clear the global system parameter cache.
     /// This should be called when tearing down an app to prevent stale cache entries.
     pub fn clear_cache() {
-        if let Ok(mut cache_guard) = SYSTEM_PARAM_CACHE.lock()
-            && let Some(cache) = cache_guard.as_mut()
-        {
-            cache.clear();
-        }
+        // Cached params can own Python objects whose finalizers re-enter system
+        // registration. Move the cache out before dropping any entries so Python
+        // code never runs while SYSTEM_PARAM_CACHE is locked.
+        let old_cache = SYSTEM_PARAM_CACHE
+            .lock()
+            .ok()
+            .and_then(|mut cache_guard| cache_guard.take());
+        drop(old_cache);
     }
 
     pub fn new(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
@@ -97,43 +107,81 @@ impl SystemFunction {
             .map(|c| c.as_ptr() as usize)
             .unwrap_or(0);
 
-        // Try to get from cache first
-        let params = {
+        // Only clone the Arc while holding the cache lock. Cloning the actual
+        // parameters can incref Python objects and must happen after unlocking.
+        let (cached_params, stale_entry) = {
             let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
             let cache = cache_guard.get_or_insert_with(HashMap::new);
 
             if let Some((cached_code, cached_params)) = cache.get(&func_addr) {
                 if *cached_code == code_ptr {
-                    // Same function - return cached params
-                    cached_params.clone()
+                    (Some(Arc::clone(cached_params)), None)
                 } else {
-                    // Address was reused for a different function - discard stale entry
-                    cache.remove(&func_addr);
-                    drop(cache_guard);
-                    let parsed_params = Self::parse_system_parameters(&func, py)?;
-                    let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-                    let cache = cache_guard.get_or_insert_with(HashMap::new);
-                    cache.insert(func_addr, (code_ptr, parsed_params.clone()));
-                    parsed_params
+                    // Move the stale entry out so it is dropped after unlocking.
+                    (None, cache.remove(&func_addr))
                 }
             } else {
-                // Not in cache - parse and insert
-                drop(cache_guard); // Release lock before parsing
-                let parsed_params = Self::parse_system_parameters(&func, py)?;
+                (None, None)
+            }
+        };
+        drop(stale_entry);
 
-                // Insert into cache
+        let params = if let Some(cached_params) = cached_params {
+            cached_params.as_ref().clone()
+        } else {
+            let parsed_params = Self::parse_system_parameters(&func, py)?;
+            let params_for_cache = Arc::new(parsed_params.clone());
+
+            // Move any concurrently replaced entry out and drop it after unlocking.
+            let replaced_entry = {
                 let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
                 let cache = cache_guard.get_or_insert_with(HashMap::new);
-                cache.insert(func_addr, (code_ptr, parsed_params.clone()));
+                cache.insert(func_addr, (code_ptr, params_for_cache))
+            };
+            drop(replaced_entry);
 
-                parsed_params
-            }
+            parsed_params
         };
 
         Ok(Self {
             func: func.unbind(),
             params,
         })
+    }
+
+    /// Check the marker-only part of a downstream pipe signature before the
+    /// ordinary system-parameter parser rejects an arbitrary first annotation.
+    pub(crate) fn validate_pipe_target_signature(
+        func: &Bound<'_, PyAny>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        let name = func.getattr("__name__")?.extract::<String>()?;
+        let typing = py.import("typing")?;
+        let type_hints = typing
+            .call_method1("get_type_hints", (func,))
+            .unwrap_or_else(|_| PyDict::new(py).into_any());
+        let inspect = py.import("inspect")?;
+        let parameters = inspect
+            .call_method1("signature", (func,))?
+            .getattr("parameters")?
+            .getattr("values")?
+            .call0()?;
+        let mut input_indices = Vec::new();
+        for (index, parameter) in parameters.try_iter()?.enumerate() {
+            let parameter = parameter?;
+            let field_name = parameter.getattr("name")?.extract::<String>()?;
+            let annotation = type_hints
+                .get_item(&field_name)
+                .or_else(|_| parameter.getattr("annotation"))?;
+            if annotation.get_type().is(PyInParam::type_object(py)) {
+                input_indices.push(index);
+            }
+        }
+        match input_indices.as_slice() {
+            [0] => Ok(()),
+            [] => Err(PyTypeError::new_err(pipe_target_requires_input(name))),
+            _ => Err(PyTypeError::new_err(pipe_input_must_be_first(name))),
+        }
     }
 
     /// Analyzes the function signature and parses the system parameters
@@ -228,6 +276,10 @@ impl SystemFunction {
                 annotation
             };
 
+            if is_wrapped_resource && let Ok(type_obj) = annotation.cast::<PyType>() {
+                reject_state_type_as_resource(type_obj)?;
+            }
+
             let param_name = if annotation.is_instance_of::<PyType>() {
                 annotation.getattr("__name__")?.extract::<String>()?
             } else {
@@ -256,6 +308,11 @@ impl SystemFunction {
                     "System function `{}` uses View without type parameters. Use View[Mut[Component]] or View[Component]",
                     name,
                 )));
+            } else if annotation.get_type().is(PyInParam::type_object(py)) {
+                let input = annotation.extract::<PyRef<PyInParam>>()?;
+                SystemParamType::PipeInput {
+                    value_type: input.value_type(py),
+                }
             } else if annotation.hasattr("__origin__")? {
                 // Check if it's a View generic alias by checking __origin__.__name__
                 let origin = annotation.getattr("__origin__")?;
@@ -280,12 +337,16 @@ impl SystemFunction {
                 SystemParamType::Assets {
                     type_ptr: AssetTypePtr(asset_param.type_ptr()),
                     wrapper_class: asset_param.wrapper_class().map(AssetTypePtr),
+                    logical_type_id: asset_param.logical_type_id(),
+                    logical_type_name: asset_param.logical_type_name().map(str::to_owned),
                     mutable: is_mutable,
                 }
             } else if annotation.is(PyWorld::type_object(py)) {
                 SystemParamType::World
             } else if annotation.is(PyCommands::type_object(py)) {
                 SystemParamType::Commands
+            } else if annotation.is(PyGizmos::type_object(py)) {
+                SystemParamType::Gizmos
             } else if annotation.get_type().is(MessageTypeParam::type_object(py)) {
                 // MessageWriter[T], MessageReader[T], or MessageMutator[T]
                 let message_param = annotation.extract::<MessageTypeParam>()?;
@@ -382,6 +443,9 @@ unsafe impl Sync for AssetTypePtr {}
 
 #[derive(Debug)]
 pub enum SystemParamType {
+    PipeInput {
+        value_type: Py<PyAny>,
+    },
     Query {
         param: Arc<PyQueryParam>,
     },
@@ -397,10 +461,13 @@ pub enum SystemParamType {
         type_ptr: AssetTypePtr,
         /// Optional wrapper class for `@material` redirects (e.g. HologramMaterial).
         wrapper_class: Option<AssetTypePtr>,
+        logical_type_id: Option<LogicalTypeId>,
+        logical_type_name: Option<String>,
         mutable: bool,
     },
     World,
     Commands,
+    Gizmos,
     MessageWriter {
         message_type: MessageType,
     },
@@ -419,6 +486,9 @@ pub enum SystemParamType {
 impl Clone for SystemParamType {
     fn clone(&self) -> Self {
         Python::attach(|py| match self {
+            SystemParamType::PipeInput { value_type } => SystemParamType::PipeInput {
+                value_type: value_type.clone_ref(py),
+            },
             SystemParamType::Query { param } => SystemParamType::Query {
                 param: Arc::clone(param),
             },
@@ -433,14 +503,19 @@ impl Clone for SystemParamType {
             SystemParamType::Assets {
                 type_ptr: ptr,
                 wrapper_class,
+                logical_type_id,
+                logical_type_name,
                 mutable,
             } => SystemParamType::Assets {
                 type_ptr: *ptr,
                 wrapper_class: *wrapper_class,
+                logical_type_id: *logical_type_id,
+                logical_type_name: logical_type_name.clone(),
                 mutable: *mutable,
             },
             SystemParamType::World => SystemParamType::World,
             SystemParamType::Commands => SystemParamType::Commands,
+            SystemParamType::Gizmos => SystemParamType::Gizmos,
             SystemParamType::MessageWriter { message_type } => SystemParamType::MessageWriter {
                 message_type: message_type.clone(),
             },
