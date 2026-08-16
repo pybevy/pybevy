@@ -12,9 +12,9 @@ Connect a gamepad to test this example.
 """
 
 from pybevy.input import (
-    GamepadAxisChanged,
-    GamepadButtonChanged,
-    GamepadConnection,
+    GamepadAxisChangedEvent,
+    GamepadButtonChangedEvent,
+    GamepadConnectionEvent,
 )
 from pybevy.prelude import *
 
@@ -107,7 +107,7 @@ def display_gamepad_state(query: Query[tuple[Gamepad, Entity]]) -> None:
             print(f"[Gamepad {entity}] Right Trigger: {right_trigger:.2f}")
 
 
-def handle_button_events(reader: MessageReader[GamepadButtonChanged]) -> None:
+def handle_button_events(reader: MessageReader[GamepadButtonChangedEvent]) -> None:
     """Handle gamepad button change events."""
     for event in reader:
         if event.value > 0.5:
@@ -116,7 +116,7 @@ def handle_button_events(reader: MessageReader[GamepadButtonChanged]) -> None:
             print(f"[Event] Button {event.button} released")
 
 
-def handle_axis_events(reader: MessageReader[GamepadAxisChanged]) -> None:
+def handle_axis_events(reader: MessageReader[GamepadAxisChangedEvent]) -> None:
     """Handle gamepad axis change events."""
     for event in reader:
         # Only print significant axis changes to avoid spam
@@ -124,10 +124,10 @@ def handle_axis_events(reader: MessageReader[GamepadAxisChanged]) -> None:
             print(f"[Event] Axis {event.axis} changed to {event.value:.2f}")
 
 
-def handle_connection_events(reader: MessageReader[GamepadConnection]) -> None:
+def handle_connection_events(reader: MessageReader[GamepadConnectionEvent]) -> None:
     """Handle gamepad connection/disconnection events."""
     for event in reader:
-        if event.connected:
+        if event.connected():
             print()
             print(" Gamepad connected!")
             print()
@@ -155,9 +155,9 @@ def main(app: App) -> App:
     """Configure and run the gamepad input example."""
     return (
         app.add_plugins(DefaultPlugins)
-        .add_message(GamepadButtonChanged)
-        .add_message(GamepadAxisChanged)
-        .add_message(GamepadConnection)
+        .add_message(GamepadButtonChangedEvent)
+        .add_message(GamepadAxisChangedEvent)
+        .add_message(GamepadConnectionEvent)
         .add_systems(Startup, setup)
         .add_systems(
             Update,

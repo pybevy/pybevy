@@ -1,11 +1,14 @@
 """Input handling for PyBevy - keyboard, mouse, and gamepad input."""
 
-from enum import Enum
-from typing import ClassVar, Literal
+from typing import ClassVar, Final, Generic, Literal, TypeVar
 
 from pybevy.app import App, Plugin
-from pybevy.ecs import Component, Entity, Message, Resource
+from pybevy.ecs import Component, Entity, Message, Resource, SystemSet
 from pybevy.math import Vec2
+
+ButtonT = TypeVar("ButtonT", "KeyCode", "MouseButton")
+
+InputSystems: Final[SystemSet]
 
 class InputPlugin(Plugin):
     """Plugin that provides input handling (keyboard, mouse, gamepad, touch).
@@ -15,118 +18,1533 @@ class InputPlugin(Plugin):
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...
 
-class KeyCode(Enum):
+class NativeKeyCode:
+    """Platform-specific physical key identifier."""
+
+    class Unidentified(NativeKeyCode):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Android(NativeKeyCode):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class MacOS(NativeKeyCode):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class Windows(NativeKeyCode):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class Xkb(NativeKeyCode):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    def __hash__(self) -> int: ...
+
+class NativeKey:
+    """Platform-specific logical key identifier."""
+
+    class Unidentified(NativeKey):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Android(NativeKey):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class MacOS(NativeKey):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class Windows(NativeKey):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class Xkb(NativeKey):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class Web(NativeKey):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    def __hash__(self) -> int: ...
+
+class Key:
+    """Logical meaning of a keyboard input."""
+
+    class Character(Key):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class Unidentified(Key):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: NativeKey
+        def __init__(self, value: NativeKey) -> None: ...
+
+    class Dead(Key):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str | None
+        def __init__(self, value: str | None) -> None: ...
+
+    class Alt(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AltGraph(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CapsLock(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Control(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Fn(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FnLock(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NumLock(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ScrollLock(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Shift(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Symbol(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SymbolLock(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Meta(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Hyper(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Super(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Enter(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Tab(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Space(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ArrowDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ArrowLeft(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ArrowRight(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ArrowUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class End(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Home(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PageDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PageUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Backspace(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Clear(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Copy(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CrSel(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Cut(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Delete(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class EraseEof(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ExSel(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Insert(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Paste(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Redo(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Undo(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Accept(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Again(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Attn(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Cancel(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ContextMenu(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Escape(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Execute(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Find(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Help(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Pause(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Play(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Props(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Select(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ZoomIn(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ZoomOut(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrightnessDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrightnessUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Eject(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LogOff(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Power(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PowerOff(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PrintScreen(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Hibernate(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Standby(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class WakeUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AllCandidates(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Alphanumeric(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CodeInput(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Compose(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Convert(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FinalMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GroupFirst(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GroupLast(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GroupNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GroupPrevious(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ModeChange(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NextCandidate(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NonConvert(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PreviousCandidate(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Process(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SingleCandidate(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class HangulMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class HanjaMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class JunjaMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Eisu(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Hankaku(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Hiragana(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class HiraganaKatakana(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class KanaMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class KanjiMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Katakana(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Romaji(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Zenkaku(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ZenkakuHankaku(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Soft1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Soft2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Soft3(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Soft4(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ChannelDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ChannelUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Close(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MailForward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MailReply(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MailSend(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaClose(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaFastForward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaPause(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaPlay(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaPlayPause(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaRecord(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaRewind(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaStop(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaTrackNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaTrackPrevious(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class New(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Open(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Print(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Save(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SpellCheck(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Key11(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Key12(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioBalanceLeft(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioBalanceRight(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioBassBoostDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioBassBoostToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioBassBoostUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioFaderFront(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioFaderRear(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioSurroundModeNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioTrebleDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioTrebleUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioVolumeDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioVolumeUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AudioVolumeMute(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MicrophoneToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MicrophoneVolumeDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MicrophoneVolumeUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MicrophoneVolumeMute(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SpeechCorrectionList(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SpeechInputToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchApplication1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchApplication2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchCalendar(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchContacts(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchMail(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchMediaPlayer(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchMusicPlayer(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchPhone(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchScreenSaver(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchSpreadsheet(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchWebBrowser(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchWebCam(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LaunchWordProcessor(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserBack(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserFavorites(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserForward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserHome(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserRefresh(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserSearch(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BrowserStop(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AppSwitch(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Call(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Camera(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CameraFocus(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class EndCall(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GoBack(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GoHome(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class HeadsetHook(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LastNumberRedial(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Notification(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MannerMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class VoiceDial(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TV(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TV3DMode(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVAntennaCable(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVAudioDescription(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVAudioDescriptionMixDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVAudioDescriptionMixUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVContentsMenu(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVDataService(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInput(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputComponent1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputComponent2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputComposite1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputComposite2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputHDMI1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputHDMI2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputHDMI3(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputHDMI4(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVInputVGA1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVMediaContext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVNetwork(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVNumberEntry(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVPower(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVRadioService(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVSatellite(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVSatelliteBS(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVSatelliteCS(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVSatelliteToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVTerrestrialAnalog(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVTerrestrialDigital(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class TVTimer(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AVRInput(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AVRPower(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ColorF0Red(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ColorF1Green(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ColorF2Yellow(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ColorF3Blue(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ColorF4Grey(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ColorF5Brown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ClosedCaptionToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Dimmer(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class DisplaySwap(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class DVR(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Exit(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteClear0(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteClear1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteClear2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteClear3(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteRecall0(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteRecall1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteRecall2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteRecall3(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteStore0(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteStore1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteStore2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FavoriteStore3(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Guide(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GuideNextDay(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class GuidePreviousDay(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Info(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class InstantReplay(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Link(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ListProgram(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class LiveContent(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Lock(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaApps(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaAudioTrack(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaLast(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaSkipBackward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaSkipForward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaStepBackward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaStepForward(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MediaTopMenu(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NavigateIn(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NavigateNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NavigateOut(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NavigatePrevious(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NextFavoriteChannel(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class NextUserProfile(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class OnDemand(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Pairing(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PinPDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PinPMove(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PinPToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PinPUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PlaySpeedDown(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PlaySpeedReset(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class PlaySpeedUp(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class RandomToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class RcLowBattery(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class RecordSpeedNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class RfBypass(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ScanChannelsToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ScreenModeNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Settings(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SplitScreenToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class STBInput(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class STBPower(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Subtitle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Teletext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class VideoModeNext(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Wink(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ZoomToggle(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F1(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F2(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F3(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F4(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F5(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F6(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F7(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F8(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F9(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F10(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F11(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F12(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F13(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F14(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F15(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F16(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F17(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F18(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F19(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F20(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F21(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F22(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F23(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F24(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F25(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F26(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F27(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F28(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F29(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F30(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F31(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F32(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F33(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F34(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class F35(Key):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    def __hash__(self) -> int: ...
+
+class KeyCode:
     """Keyboard key codes for input detection."""
 
+    class Unidentified(KeyCode):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: NativeKeyCode
+        def __init__(self, value: NativeKeyCode) -> None: ...
+
     # Function keys
-    F1 = ...
-    F2 = ...
-    F3 = ...
-    F4 = ...
-    F5 = ...
-    F6 = ...
-    F7 = ...
-    F8 = ...
-    F9 = ...
-    F10 = ...
-    F11 = ...
-    F12 = ...
+    Backquote: ClassVar[KeyCode]
+    Backslash: ClassVar[KeyCode]
+    BracketLeft: ClassVar[KeyCode]
+    BracketRight: ClassVar[KeyCode]
+    Comma: ClassVar[KeyCode]
+    Digit0: ClassVar[KeyCode]
+    Digit1: ClassVar[KeyCode]
+    Digit2: ClassVar[KeyCode]
+    Digit3: ClassVar[KeyCode]
+    Digit4: ClassVar[KeyCode]
+    Digit5: ClassVar[KeyCode]
+    Digit6: ClassVar[KeyCode]
+    Digit7: ClassVar[KeyCode]
+    Digit8: ClassVar[KeyCode]
+    Digit9: ClassVar[KeyCode]
+    Equal: ClassVar[KeyCode]
+    IntlBackslash: ClassVar[KeyCode]
+    IntlRo: ClassVar[KeyCode]
+    IntlYen: ClassVar[KeyCode]
+    KeyA: ClassVar[KeyCode]
+    KeyB: ClassVar[KeyCode]
+    KeyC: ClassVar[KeyCode]
+    KeyD: ClassVar[KeyCode]
+    KeyE: ClassVar[KeyCode]
+    KeyF: ClassVar[KeyCode]
+    KeyG: ClassVar[KeyCode]
+    KeyH: ClassVar[KeyCode]
+    KeyI: ClassVar[KeyCode]
+    KeyJ: ClassVar[KeyCode]
+    KeyK: ClassVar[KeyCode]
+    KeyL: ClassVar[KeyCode]
+    KeyM: ClassVar[KeyCode]
+    KeyN: ClassVar[KeyCode]
+    KeyO: ClassVar[KeyCode]
+    KeyP: ClassVar[KeyCode]
+    KeyQ: ClassVar[KeyCode]
+    KeyR: ClassVar[KeyCode]
+    KeyS: ClassVar[KeyCode]
+    KeyT: ClassVar[KeyCode]
+    KeyU: ClassVar[KeyCode]
+    KeyV: ClassVar[KeyCode]
+    KeyW: ClassVar[KeyCode]
+    KeyX: ClassVar[KeyCode]
+    KeyY: ClassVar[KeyCode]
+    KeyZ: ClassVar[KeyCode]
+    Minus: ClassVar[KeyCode]
+    Period: ClassVar[KeyCode]
+    Quote: ClassVar[KeyCode]
+    Semicolon: ClassVar[KeyCode]
+    Slash: ClassVar[KeyCode]
+    AltLeft: ClassVar[KeyCode]
+    AltRight: ClassVar[KeyCode]
+    Backspace: ClassVar[KeyCode]
+    CapsLock: ClassVar[KeyCode]
+    ContextMenu: ClassVar[KeyCode]
+    ControlLeft: ClassVar[KeyCode]
+    ControlRight: ClassVar[KeyCode]
+    Enter: ClassVar[KeyCode]
+    SuperLeft: ClassVar[KeyCode]
+    SuperRight: ClassVar[KeyCode]
+    ShiftLeft: ClassVar[KeyCode]
+    ShiftRight: ClassVar[KeyCode]
+    Space: ClassVar[KeyCode]
+    Tab: ClassVar[KeyCode]
+    Convert: ClassVar[KeyCode]
+    KanaMode: ClassVar[KeyCode]
+    Lang1: ClassVar[KeyCode]
+    Lang2: ClassVar[KeyCode]
+    Lang3: ClassVar[KeyCode]
+    Lang4: ClassVar[KeyCode]
+    Lang5: ClassVar[KeyCode]
+    NonConvert: ClassVar[KeyCode]
+    Delete: ClassVar[KeyCode]
+    End: ClassVar[KeyCode]
+    Help: ClassVar[KeyCode]
+    Home: ClassVar[KeyCode]
+    Insert: ClassVar[KeyCode]
+    PageDown: ClassVar[KeyCode]
+    PageUp: ClassVar[KeyCode]
+    ArrowDown: ClassVar[KeyCode]
+    ArrowLeft: ClassVar[KeyCode]
+    ArrowRight: ClassVar[KeyCode]
+    ArrowUp: ClassVar[KeyCode]
+    NumLock: ClassVar[KeyCode]
+    Numpad0: ClassVar[KeyCode]
+    Numpad1: ClassVar[KeyCode]
+    Numpad2: ClassVar[KeyCode]
+    Numpad3: ClassVar[KeyCode]
+    Numpad4: ClassVar[KeyCode]
+    Numpad5: ClassVar[KeyCode]
+    Numpad6: ClassVar[KeyCode]
+    Numpad7: ClassVar[KeyCode]
+    Numpad8: ClassVar[KeyCode]
+    Numpad9: ClassVar[KeyCode]
+    NumpadAdd: ClassVar[KeyCode]
+    NumpadBackspace: ClassVar[KeyCode]
+    NumpadClear: ClassVar[KeyCode]
+    NumpadClearEntry: ClassVar[KeyCode]
+    NumpadComma: ClassVar[KeyCode]
+    NumpadDecimal: ClassVar[KeyCode]
+    NumpadDivide: ClassVar[KeyCode]
+    NumpadEnter: ClassVar[KeyCode]
+    NumpadEqual: ClassVar[KeyCode]
+    NumpadHash: ClassVar[KeyCode]
+    NumpadMemoryAdd: ClassVar[KeyCode]
+    NumpadMemoryClear: ClassVar[KeyCode]
+    NumpadMemoryRecall: ClassVar[KeyCode]
+    NumpadMemoryStore: ClassVar[KeyCode]
+    NumpadMemorySubtract: ClassVar[KeyCode]
+    NumpadMultiply: ClassVar[KeyCode]
+    NumpadParenLeft: ClassVar[KeyCode]
+    NumpadParenRight: ClassVar[KeyCode]
+    NumpadStar: ClassVar[KeyCode]
+    NumpadSubtract: ClassVar[KeyCode]
+    Escape: ClassVar[KeyCode]
+    Fn: ClassVar[KeyCode]
+    FnLock: ClassVar[KeyCode]
+    PrintScreen: ClassVar[KeyCode]
+    ScrollLock: ClassVar[KeyCode]
+    Pause: ClassVar[KeyCode]
+    BrowserBack: ClassVar[KeyCode]
+    BrowserFavorites: ClassVar[KeyCode]
+    BrowserForward: ClassVar[KeyCode]
+    BrowserHome: ClassVar[KeyCode]
+    BrowserRefresh: ClassVar[KeyCode]
+    BrowserSearch: ClassVar[KeyCode]
+    BrowserStop: ClassVar[KeyCode]
+    Eject: ClassVar[KeyCode]
+    LaunchApp1: ClassVar[KeyCode]
+    LaunchApp2: ClassVar[KeyCode]
+    LaunchMail: ClassVar[KeyCode]
+    MediaPlayPause: ClassVar[KeyCode]
+    MediaSelect: ClassVar[KeyCode]
+    MediaStop: ClassVar[KeyCode]
+    MediaTrackNext: ClassVar[KeyCode]
+    MediaTrackPrevious: ClassVar[KeyCode]
+    Power: ClassVar[KeyCode]
+    Sleep: ClassVar[KeyCode]
+    AudioVolumeDown: ClassVar[KeyCode]
+    AudioVolumeMute: ClassVar[KeyCode]
+    AudioVolumeUp: ClassVar[KeyCode]
+    WakeUp: ClassVar[KeyCode]
+    Meta: ClassVar[KeyCode]
+    Hyper: ClassVar[KeyCode]
+    Turbo: ClassVar[KeyCode]
+    Abort: ClassVar[KeyCode]
+    Resume: ClassVar[KeyCode]
+    Suspend: ClassVar[KeyCode]
+    Again: ClassVar[KeyCode]
+    Copy: ClassVar[KeyCode]
+    Cut: ClassVar[KeyCode]
+    Find: ClassVar[KeyCode]
+    Open: ClassVar[KeyCode]
+    Paste: ClassVar[KeyCode]
+    Props: ClassVar[KeyCode]
+    Select: ClassVar[KeyCode]
+    Undo: ClassVar[KeyCode]
+    Hiragana: ClassVar[KeyCode]
+    Katakana: ClassVar[KeyCode]
+    F1: ClassVar[KeyCode]
+    F2: ClassVar[KeyCode]
+    F3: ClassVar[KeyCode]
+    F4: ClassVar[KeyCode]
+    F5: ClassVar[KeyCode]
+    F6: ClassVar[KeyCode]
+    F7: ClassVar[KeyCode]
+    F8: ClassVar[KeyCode]
+    F9: ClassVar[KeyCode]
+    F10: ClassVar[KeyCode]
+    F11: ClassVar[KeyCode]
+    F12: ClassVar[KeyCode]
+    F13: ClassVar[KeyCode]
+    F14: ClassVar[KeyCode]
+    F15: ClassVar[KeyCode]
+    F16: ClassVar[KeyCode]
+    F17: ClassVar[KeyCode]
+    F18: ClassVar[KeyCode]
+    F19: ClassVar[KeyCode]
+    F20: ClassVar[KeyCode]
+    F21: ClassVar[KeyCode]
+    F22: ClassVar[KeyCode]
+    F23: ClassVar[KeyCode]
+    F24: ClassVar[KeyCode]
+    F25: ClassVar[KeyCode]
+    F26: ClassVar[KeyCode]
+    F27: ClassVar[KeyCode]
+    F28: ClassVar[KeyCode]
+    F29: ClassVar[KeyCode]
+    F30: ClassVar[KeyCode]
+    F31: ClassVar[KeyCode]
+    F32: ClassVar[KeyCode]
+    F33: ClassVar[KeyCode]
+    F34: ClassVar[KeyCode]
+    F35: ClassVar[KeyCode]
 
-    # Modifier keys
-    ShiftLeft = ...
-    ShiftRight = ...
-    ControlLeft = ...
-    ControlRight = ...
-    AltLeft = ...
-    AltRight = ...
-    SuperLeft = ...  # Windows/Command key
-    SuperRight = ...
+    def __hash__(self) -> int: ...
 
-    # Common keys
-    Space = ...
-    Enter = ...
-    Escape = ...
-    Backspace = ...
-    Tab = ...
-    Delete = ...
-    Insert = ...
-    Home = ...
-    End = ...
-    PageUp = ...
-    PageDown = ...
-    CapsLock = ...
-    ScrollLock = ...
-    NumLock = ...
-
-    # Punctuation keys
-    Backquote = ...
-    Backslash = ...
-    BracketLeft = ...
-    BracketRight = ...
-    Comma = ...
-    Equal = ...
-    Minus = ...
-    Period = ...
-    Quote = ...
-    Semicolon = ...
-    Slash = ...
-
-    # Arrow keys
-    ArrowUp = ...
-    ArrowDown = ...
-    ArrowLeft = ...
-    ArrowRight = ...
-
-    # Letters
-    KeyA = ...
-    KeyB = ...
-    KeyC = ...
-    KeyD = ...
-    KeyE = ...
-    KeyF = ...
-    KeyG = ...
-    KeyH = ...
-    KeyI = ...
-    KeyJ = ...
-    KeyK = ...
-    KeyL = ...
-    KeyM = ...
-    KeyN = ...
-    KeyO = ...
-    KeyP = ...
-    KeyQ = ...
-    KeyR = ...
-    KeyS = ...
-    KeyT = ...
-    KeyU = ...
-    KeyV = ...
-    KeyW = ...
-    KeyX = ...
-    KeyY = ...
-    KeyZ = ...
-
-    # Numbers
-    Digit0 = ...
-    Digit1 = ...
-    Digit2 = ...
-    Digit3 = ...
-    Digit4 = ...
-    Digit5 = ...
-    Digit6 = ...
-    Digit7 = ...
-    Digit8 = ...
-    Digit9 = ...
-
-class ButtonInput(Resource):
+class ButtonInput(Resource, Generic[ButtonT]):
     """
-    Tracks the state of keyboard keys - whether they're pressed, just pressed, or just released.
+    Tracks button state - whether buttons are pressed, just pressed, or just released.
+
+    Subscript to pick the button type, matching Bevy's generic `ButtonInput<T>`:
+    `ButtonInput[KeyCode]` is the keyboard resource, `ButtonInput[MouseButton]`
+    the mouse one. A bare `ButtonInput` means the keyboard.
 
     This resource is automatically provided as a system parameter and should not be
     instantiated directly.
 
     Example:
         ```python
-        def handle_input_system(input: ButtonInput) -> None:
+        def handle_input_system(input: Res[ButtonInput[KeyCode]]) -> None:
             if input.just_pressed(KeyCode.Space):
                 print("Space bar was just pressed!")
 
@@ -141,7 +1559,7 @@ class ButtonInput(Resource):
     def __init__(self) -> None:
         """Create a new ButtonInput instance (typically done internally)."""
 
-    def just_pressed(self, input: KeyCode) -> bool:
+    def just_pressed(self, input: ButtonT) -> bool:
         """
         Returns true if the key was just pressed this frame.
 
@@ -152,7 +1570,7 @@ class ButtonInput(Resource):
             True if the key was just pressed this frame, False otherwise
         """
 
-    def just_released(self, input: KeyCode) -> bool:
+    def just_released(self, input: ButtonT) -> bool:
         """
         Returns true if the key was just released this frame.
 
@@ -163,7 +1581,7 @@ class ButtonInput(Resource):
             True if the key was just released this frame, False otherwise
         """
 
-    def pressed(self, input: KeyCode) -> bool:
+    def pressed(self, input: ButtonT) -> bool:
         """
         Returns true if the key is currently held down.
 
@@ -174,7 +1592,7 @@ class ButtonInput(Resource):
             True if the key is currently pressed, False otherwise
         """
 
-    def any_just_pressed(self, inputs: list[KeyCode]) -> bool:
+    def any_just_pressed(self, inputs: list[ButtonT]) -> bool:
         """
         Returns true if any of the keys were just pressed this frame.
 
@@ -185,7 +1603,7 @@ class ButtonInput(Resource):
             True if any key in the list was just pressed
         """
 
-    def any_pressed(self, inputs: list[KeyCode]) -> bool:
+    def any_pressed(self, inputs: list[ButtonT]) -> bool:
         """
         Returns true if any of the keys are currently pressed.
 
@@ -196,7 +1614,7 @@ class ButtonInput(Resource):
             True if any key in the list is currently pressed
         """
 
-    def all_pressed(self, inputs: list[KeyCode]) -> bool:
+    def all_pressed(self, inputs: list[ButtonT]) -> bool:
         """
         Returns true if all of the keys are currently pressed.
 
@@ -207,7 +1625,7 @@ class ButtonInput(Resource):
             True if all keys in the list are currently pressed
         """
 
-    def get_just_pressed(self) -> list[KeyCode]:
+    def get_just_pressed(self) -> list[ButtonT]:
         """
         Get all keys that were just pressed this frame.
 
@@ -215,7 +1633,7 @@ class ButtonInput(Resource):
             List of KeyCodes that were just pressed
         """
 
-    def get_pressed(self) -> list[KeyCode]:
+    def get_pressed(self) -> list[ButtonT]:
         """
         Get all keys that are currently pressed.
 
@@ -223,7 +1641,7 @@ class ButtonInput(Resource):
             List of KeyCodes that are currently pressed
         """
 
-    def get_just_released(self) -> list[KeyCode]:
+    def get_just_released(self) -> list[ButtonT]:
         """
         Get all keys that were just released this frame.
 
@@ -231,7 +1649,7 @@ class ButtonInput(Resource):
             List of KeyCodes that were just released
         """
 
-    def any_just_released(self, inputs: list[KeyCode]) -> bool:
+    def any_just_released(self, inputs: list[ButtonT]) -> bool:
         """
         Returns true if any of the keys were just released this frame.
 
@@ -242,7 +1660,7 @@ class ButtonInput(Resource):
             True if any key in the list was just released
         """
 
-    def all_just_pressed(self, inputs: list[KeyCode]) -> bool:
+    def all_just_pressed(self, inputs: list[ButtonT]) -> bool:
         """
         Returns true if all of the keys were just pressed this frame.
 
@@ -253,7 +1671,7 @@ class ButtonInput(Resource):
             True if all keys in the list were just pressed
         """
 
-    def all_just_released(self, inputs: list[KeyCode]) -> bool:
+    def all_just_released(self, inputs: list[ButtonT]) -> bool:
         """
         Returns true if all of the keys were just released this frame.
 
@@ -292,9 +1710,14 @@ class MouseButton:
         value: int
         def __init__(self, value: int) -> None: ...
 
+    def __hash__(self) -> int: ...
+
 class MouseInput(Resource):
     """
     Tracks the state of mouse buttons - whether they're pressed, just pressed, or just released.
+
+    `ButtonInput[MouseButton]` is the canonical spelling and resolves to this
+    class; the name remains valid.
 
     This resource is automatically provided as a system parameter and should not be
     instantiated directly.
@@ -302,13 +1725,13 @@ class MouseInput(Resource):
     Example:
         ```python
         def handle_mouse_system(mouse: MouseInput) -> None:
-            if mouse.just_pressed(MouseButton.Left):
+            if mouse.just_pressed(MouseButton.Left()):
                 print("Left mouse button was just pressed!")
 
-            if mouse.pressed(MouseButton.Right):
+            if mouse.pressed(MouseButton.Right()):
                 print("Right mouse button is being held")
 
-            if mouse.just_released(MouseButton.Middle):
+            if mouse.just_released(MouseButton.Middle()):
                 print("Middle mouse button was just released")
         ```
     """
@@ -406,6 +1829,15 @@ class MouseInput(Resource):
             List of MouseButtons that were just released
         """
 
+    def any_just_released(self, buttons: list[MouseButton]) -> bool:
+        """Returns true if any of the given buttons were just released."""
+
+    def all_just_pressed(self, buttons: list[MouseButton]) -> bool:
+        """Returns true if all of the given buttons were just pressed."""
+
+    def all_just_released(self, buttons: list[MouseButton]) -> bool:
+        """Returns true if all of the given buttons were just released."""
+
 class ButtonState:
     """State of a button (pressed or released)."""
 
@@ -415,6 +1847,8 @@ class ButtonState:
     def Released() -> ButtonState: ...
     def is_pressed(self) -> bool:
         """Returns true if this state is Pressed."""
+
+    def __hash__(self) -> int: ...
 
 class KeyboardInput(Message):
     """
@@ -435,15 +1869,10 @@ class KeyboardInput(Message):
     def __init__(
         self,
         key_code: KeyCode,
+        logical_key: Key,
         state: ButtonState,
-        *,
-        shift: bool = False,
-        ctrl: bool = False,
-        alt: bool = False,
-        super_key: bool = False,
-        repeat: bool = False,
-        logical_key: str | None = None,
         text: str | None = None,
+        repeat: bool = False,
         window: Entity = ...,
     ) -> None: ...
     @property
@@ -451,32 +1880,12 @@ class KeyboardInput(Message):
         """The key that was pressed or released."""
 
     @property
+    def logical_key(self) -> Key:
+        """The logical meaning of the key."""
+
+    @property
     def state(self) -> ButtonState:
         """Whether the key was pressed or released."""
-
-    @property
-    def logical_key(self) -> str | None:
-        """Logical key representation (if available)."""
-
-    @property
-    def shift(self) -> bool:
-        """Whether shift key is held."""
-
-    @property
-    def ctrl(self) -> bool:
-        """Whether ctrl key is held."""
-
-    @property
-    def alt(self) -> bool:
-        """Whether alt key is held."""
-
-    @property
-    def super_key(self) -> bool:
-        """Whether super/command/windows key is held."""
-
-    @property
-    def repeat(self) -> bool:
-        """Whether this is a repeated key event (key held down)."""
 
     @property
     def text(self) -> str | None:
@@ -485,6 +1894,10 @@ class KeyboardInput(Message):
 
         Returns None if this keypress cannot be interpreted as text.
         """
+
+    @property
+    def repeat(self) -> bool:
+        """Whether this is a repeated key event (key held down)."""
 
     @property
     def window(self) -> Entity:
@@ -554,6 +1967,8 @@ class MouseScrollUnit:
     Pixel: MouseScrollUnit
     """The pixel scroll unit - delta corresponds to pixels to scroll."""
 
+    def __hash__(self) -> int: ...
+
 class MouseWheel(Message):
     """
     Mouse wheel scroll event message.
@@ -602,67 +2017,89 @@ class GamepadButton:
     class South(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class East(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class North(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class West(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class C(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class Z(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class LeftTrigger(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class LeftTrigger2(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class RightTrigger(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class RightTrigger2(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class Select(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class Start(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class Mode(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class LeftThumb(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class RightThumb(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class DPadUp(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class DPadDown(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class DPadLeft(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class DPadRight(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class Other(GamepadButton):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: int
         def __init__(self, value: int) -> None: ...
+
     @staticmethod
     def all() -> list[GamepadButton]:
         """Returns a list of all standard gamepad buttons (excluding Other)."""
+
+    def __hash__(self) -> int: ...
 
 class GamepadAxis:
     """Gamepad axis codes for analog input detection."""
@@ -670,28 +2107,37 @@ class GamepadAxis:
     class LeftStickX(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class LeftStickY(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class LeftZ(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class RightStickX(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class RightStickY(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class RightZ(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
+
     class Other(GamepadAxis):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: int
         def __init__(self, value: int) -> None: ...
+
     @staticmethod
     def all() -> list[GamepadAxis]:
         """Returns a list of all standard gamepad axes (excluding Other)."""
+
+    def __hash__(self) -> int: ...
 
 class GamepadInput:
     """
@@ -801,7 +2247,7 @@ class Gamepad(Component):
     def product_id(self) -> int | None:
         """Returns the USB product ID as assigned by the vendor, if available."""
 
-class GamepadButtonChanged(Message):
+class GamepadButtonChangedEvent(Message):
     """
     Gamepad button event message.
 
@@ -810,22 +2256,37 @@ class GamepadButtonChanged(Message):
 
     Example:
         ```python
-        def handle_gamepad(reader: MessageReader[GamepadButtonChanged]) -> None:
+        def handle_gamepad(reader: MessageReader[GamepadButtonChangedEvent]) -> None:
             for event in reader:
                 print(f"Button {event.button} value: {event.value}")
         ```
     """
 
-    def __init__(self, button: GamepadButton, value: float) -> None: ...
+    def __init__(
+        self,
+        button: GamepadButton,
+        value: float,
+        *,
+        state: ButtonState = ...,
+        entity: Entity | None = None,
+    ) -> None: ...
+    @property
+    def entity(self) -> Entity:
+        """The gamepad this button belongs to."""
+
     @property
     def button(self) -> GamepadButton:
         """The gamepad button that changed."""
 
     @property
+    def state(self) -> ButtonState:
+        """Whether the button is pressed or released."""
+
+    @property
     def value(self) -> float:
         """Analog value of the button (0.0 to 1.0)."""
 
-class GamepadAxisChanged(Message):
+class GamepadAxisChangedEvent(Message):
     """
     Gamepad axis event message.
 
@@ -834,13 +2295,19 @@ class GamepadAxisChanged(Message):
 
     Example:
         ```python
-        def handle_gamepad(reader: MessageReader[GamepadAxisChanged]) -> None:
+        def handle_gamepad(reader: MessageReader[GamepadAxisChangedEvent]) -> None:
             for event in reader:
                 print(f"Axis {event.axis} value: {event.value}")
         ```
     """
 
-    def __init__(self, axis: GamepadAxis, value: float) -> None: ...
+    def __init__(
+        self, axis: GamepadAxis, value: float, *, entity: Entity | None = None
+    ) -> None: ...
+    @property
+    def entity(self) -> Entity:
+        """The gamepad this axis belongs to."""
+
     @property
     def axis(self) -> GamepadAxis:
         """The gamepad axis that changed."""
@@ -849,52 +2316,71 @@ class GamepadAxisChanged(Message):
     def value(self) -> float:
         """Axis value (-1.0 to 1.0)."""
 
-class GamepadConnection(Message):
+class GamepadConnection:
     """
-    Gamepad connection event message.
+    Whether a gamepad connected or disconnected, and its device metadata.
 
-    Contains information about gamepad connection/disconnection with device metadata.
-    Use with MessageReader to receive gamepad connection events.
+    This is the payload of `GamepadConnectionEvent.connection`. Match on it to
+    handle the two cases:
 
     Example:
         ```python
-        def handle_gamepad(reader: MessageReader[GamepadConnection]) -> None:
+        def handle_gamepad(reader: MessageReader[GamepadConnectionEvent]) -> None:
             for event in reader:
-                if event.connected:
-                    print(f"Gamepad connected: {event.name}")
-                    print(f"Vendor ID: {event.vendor_id}, Product ID: {event.product_id}")
-                else:
-                    print("Gamepad disconnected")
+                match event.connection:
+                    case GamepadConnection.Connected(name, vendor_id, product_id):
+                        print(f"Gamepad connected: {name} ({vendor_id}:{product_id})")
+                    case GamepadConnection.Disconnected():
+                        print("Gamepad disconnected")
         ```
     """
 
-    def __init__(
-        self,
-        connected: bool,
-        name: str | None = None,
-        vendor_id: int | None = None,
-        product_id: int | None = None,
-    ) -> None: ...
+    class Connected(GamepadConnection):
+        __match_args__: ClassVar[
+            tuple[Literal["name"], Literal["vendor_id"], Literal["product_id"]]
+        ]
+        name: str
+        vendor_id: int | None
+        product_id: int | None
+
+        def __init__(
+            self, name: str, vendor_id: int | None, product_id: int | None
+        ) -> None: ...
+
+    class Disconnected(GamepadConnection):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+class GamepadConnectionEvent(Message):
+    """
+    Gamepad connection event message.
+
+    Use with MessageReader to receive gamepad connection and disconnection
+    events. The device metadata lives on the `connection` payload.
+
+    Example:
+        ```python
+        def handle_gamepad(reader: MessageReader[GamepadConnectionEvent]) -> None:
+            for event in reader:
+                if event.connected():
+                    print(f"Gamepad {event.gamepad} connected")
+        ```
+    """
+
+    def __init__(self, gamepad: Entity, connection: GamepadConnection) -> None: ...
     @property
+    def gamepad(self) -> Entity:
+        """The gamepad entity that connected or disconnected."""
+
+    @property
+    def connection(self) -> GamepadConnection:
+        """The change in the gamepad's connection."""
+
     def connected(self) -> bool:
         """Whether the gamepad is connected."""
 
-    @property
-    def name(self) -> str | None:
-        """
-        The name of the gamepad, if connected.
-
-        This name is generally defined by the OS.
-        Example: "HID-compliant game controller" on Windows.
-        """
-
-    @property
-    def vendor_id(self) -> int | None:
-        """The USB vendor ID as assigned by the USB-IF, if available."""
-
-    @property
-    def product_id(self) -> int | None:
-        """The USB product ID as assigned by the vendor, if available."""
+    def disconnected(self) -> bool:
+        """Whether the gamepad is disconnected."""
 
 class TouchPhase:
     """
@@ -911,6 +2397,8 @@ class TouchPhase:
     Moved: TouchPhase
     Ended: TouchPhase
     Canceled: TouchPhase
+
+    def __hash__(self) -> int: ...
 
 class TouchInput(Message):
     """
@@ -1052,10 +2540,16 @@ class PanGesture(Message):
     def delta(self) -> Vec2:
         """Pan delta as a Vec2."""
 
-class GamepadButtonStateChanged(Message):
+class GamepadButtonStateChangedEvent(Message):
     """Gamepad button state change event."""
 
-    def __init__(self, button: GamepadButton, state: ButtonState) -> None: ...
+    def __init__(
+        self, button: GamepadButton, state: ButtonState, *, entity: Entity | None = None
+    ) -> None: ...
+    @property
+    def entity(self) -> Entity:
+        """The gamepad this button belongs to."""
+
     @property
     def button(self) -> GamepadButton:
         """The gamepad button that changed state."""
@@ -1134,10 +2628,10 @@ class GamepadRumbleRequest(Message):
         ```python
         def trigger_rumble(writer: MessageWriter[GamepadRumbleRequest]) -> None:
             # Strong rumble on both motors for 0.5 seconds
-            writer.send(GamepadRumbleRequest(duration_secs=0.5))
+            writer.write(GamepadRumbleRequest(duration_secs=0.5))
 
             # Custom motor intensities
-            writer.send(GamepadRumbleRequest(
+            writer.write(GamepadRumbleRequest(
                 duration_secs=0.3,
                 strong_motor=1.0,
                 weak_motor=0.5
@@ -1421,49 +2915,61 @@ class GamepadSettings(Component):
     Attached to gamepad entities to customize their input behavior.
     """
 
-    def __init__(self) -> None: ...
-    def button_settings_for(self, button: GamepadButton) -> ButtonSettings:
-        """Get button settings for a specific button."""
-
-    def axis_settings_for(self, axis: GamepadAxis) -> AxisSettings:
-        """Get axis settings for a specific axis."""
-
-    def button_axis_settings_for(self, button: GamepadButton) -> ButtonAxisSettings:
-        """Get button axis settings for a specific button."""
-
+    def __init__(
+        self,
+        default_button_settings: ButtonSettings | None = None,
+        default_axis_settings: AxisSettings | None = None,
+        default_button_axis_settings: ButtonAxisSettings | None = None,
+        button_settings: dict[GamepadButton, ButtonSettings] | None = None,
+        axis_settings: dict[GamepadAxis, AxisSettings] | None = None,
+        button_axis_settings: dict[GamepadButton, ButtonAxisSettings] | None = None,
+    ) -> None: ...
     @property
     def default_button_settings(self) -> ButtonSettings:
         """Get the default button settings."""
 
+    @default_button_settings.setter
+    def default_button_settings(self, value: ButtonSettings) -> None: ...
     @property
     def default_axis_settings(self) -> AxisSettings:
         """Get the default axis settings."""
 
+    @default_axis_settings.setter
+    def default_axis_settings(self, value: AxisSettings) -> None: ...
     @property
     def default_button_axis_settings(self) -> ButtonAxisSettings:
         """Get the default button axis settings."""
 
+    @default_button_axis_settings.setter
+    def default_button_axis_settings(self, value: ButtonAxisSettings) -> None: ...
     @property
     def button_settings(self) -> dict[GamepadButton, ButtonSettings]:
-        """Get all custom button settings."""
+        """Per-button overrides of `default_button_settings`.
 
+        Reading returns a copy, so assign the whole mapping back to change it:
+
+            settings.button_settings = {GamepadButton.South(): ButtonSettings(0.9, 0.1)}
+
+        For the value bevy would actually apply, fall back to the default:
+
+            settings.button_settings.get(button, settings.default_button_settings)
+        """
+
+    @button_settings.setter
+    def button_settings(self, value: dict[GamepadButton, ButtonSettings]) -> None: ...
     @property
     def axis_settings(self) -> dict[GamepadAxis, AxisSettings]:
-        """Get all custom axis settings."""
+        """Per-axis overrides of `default_axis_settings`."""
 
+    @axis_settings.setter
+    def axis_settings(self, value: dict[GamepadAxis, AxisSettings]) -> None: ...
     @property
     def button_axis_settings(self) -> dict[GamepadButton, ButtonAxisSettings]:
-        """Get all custom button axis settings."""
+        """Per-button overrides of `default_button_axis_settings`."""
+
+    @button_axis_settings.setter
+    def button_axis_settings(
+        self, value: dict[GamepadButton, ButtonAxisSettings]
+    ) -> None: ...
 
 # Type aliases for Bevy's Event suffix naming convention
-GamepadAxisChangedEvent = GamepadAxisChanged
-"""Alias for GamepadAxisChanged (Bevy naming convention)."""
-
-GamepadButtonChangedEvent = GamepadButtonChanged
-"""Alias for GamepadButtonChanged (Bevy naming convention)."""
-
-GamepadButtonStateChangedEvent = GamepadButtonStateChanged
-"""Alias for GamepadButtonStateChanged (Bevy naming convention)."""
-
-GamepadConnectionEvent = GamepadConnection
-"""Alias for GamepadConnection (Bevy naming convention)."""
