@@ -67,8 +67,8 @@ Volume.SILENT
 vol = Volume.Linear(0.5)
 vol.to_linear()          # 0.5
 vol.to_decibels()        # ~-6.02
-vol.increase_by_percentage(0.1)   # +10%
-vol.decrease_by_percentage(0.1)   # -10%
+vol.increase_by_percentage(10.0)  # +10%
+vol.decrease_by_percentage(10.0)  # -10%
 vol.fade_towards(Volume.Linear(1.0), 0.1)  # Smooth fade
 ```
 
@@ -131,7 +131,14 @@ def control_audio(query: Query[AudioSink]) -> None:
 
 **Important:** `AudioSink` is engine-managed. You can query it but cannot spawn it directly. It appears automatically after `AudioPlayer` starts playing.
 
-**Seeking limitation:** `try_seek()` is not supported on file-based audio loaded via `asset_server.load_audio()` due to a rodio limitation (the underlying decoder does not implement `Seekable`). Calling `try_seek()` on such sources will raise an error. Seeking works with procedural sources such as `Pitch`.
+**Seeking:** `try_seek()` needs a non-looping source whose decoder can seek:
+
+| Source | `PlaybackSettings.ONCE` | `PlaybackSettings.LOOP` |
+|--------|-------------------------|-------------------------|
+| `.wav` | seeks | fails |
+| `.ogg` | fails | fails |
+
+For seekable background music, use `.wav` with `ONCE` and restart it yourself.
 
 ## Spatial Audio
 
@@ -196,20 +203,15 @@ Or per-source:
 PlaybackSettings(spatial=True, spatial_scale=SpatialScale(2.0))
 ```
 
-## Procedural Audio (Pitch)
+## Procedural Audio (Pitch): not playable yet
 
-Generate sine wave tones programmatically:
+`Pitch` constructs and can be added to `Assets[Pitch]`, but **cannot be played**:
+`AudioPlayer` accepts only `Handle[AudioSource]`, and `AudioSource` has no Python
+constructor. Generate tones offline and load them as a file instead:
 
 ```python
-def setup(
-    commands: Commands,
-    assets: ResMut[Assets[Pitch]],
-) -> None:
-    handle = assets.add(Pitch(440.0, 2.0))  # A4 note, 2 seconds
-    commands.spawn(
-        AudioPlayer(handle),
-        PlaybackSettings.ONCE,
-    )
+handle = asset_server.load_audio("tones/a4.ogg")
+commands.spawn(AudioPlayer(handle), PlaybackSettings.ONCE)
 ```
 
 ## Start Position & Duration

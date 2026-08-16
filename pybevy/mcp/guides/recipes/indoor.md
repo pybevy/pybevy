@@ -65,7 +65,6 @@ def setup(
         torch_mat = materials.add(StandardMaterial(
             base_color=Color.srgb(1.0, 0.6, 0.1),
             emissive=LinearRgba.rgb(12.0, 6.0, 1.0),
-            unlit=True,
         ))
         commands.spawn(
             Mesh3d(torch_mesh), MeshMaterial3d(torch_mat),
@@ -91,5 +90,5 @@ if __name__ == "__main__":
 
 - **Low ambient** (20–50) keeps areas outside light range dark
 - **PointLight range** controls falloff distance - 8–12 for torches
-- **Emissive + unlit** spheres make visible light sources that glow with bloom
+- **Emissive** spheres make visible light sources that glow with bloom. Keep them lit: `unlit=True` outputs `base_color` alone and never reads `emissive`
 - **Shadows** are critical indoors - enable on at least one light

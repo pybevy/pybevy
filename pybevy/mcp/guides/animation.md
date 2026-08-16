@@ -15,6 +15,13 @@ from pybevy.animation import (
 from pybevy.world_serialization import WorldAsset, WorldAssetRoot, WorldInstanceReady
 from pybevy.gltf import GltfAssetLabel
 
+@component
+class AnimationToPlay(Component):
+    """Stores animation info to apply when the scene is ready."""
+    def __init__(self, graph_handle: Handle[AnimationGraph], index: AnimationNodeIndex):
+        self.graph_handle = graph_handle
+        self.index = index
+
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -37,6 +44,7 @@ def setup(
         )),
         Transform.from_xyz(0.0, 0.0, 0.0),
         Name("fox"),
+        AnimationToPlay(graph_handle, index),
     )
 ```
 
@@ -45,13 +53,6 @@ def setup(
 GLB scenes load asynchronously. The `AnimationPlayer` component is created by Bevy inside the scene hierarchy, not on your spawned entity. Use `WorldInstanceReady` to detect when loading finishes, then find the player in children.
 
 ```python
-@component
-class AnimationToPlay(Component):
-    """Stores animation info to apply when scene is ready."""
-    def __init__(self, graph_handle: Handle[AnimationGraph], index: AnimationNodeIndex):
-        self.graph_handle = graph_handle
-        self.index = index
-
 def play_when_ready(
     commands: Commands,
     scene_ready: MessageReader[WorldInstanceReady],
@@ -92,7 +93,10 @@ GLB files use index-based naming:
 - `GltfAssetLabel.Animation(1)` → second animation
 - `GltfAssetLabel.Animation(2)` → third animation
 
-There's no way to discover animation names from Python - you need to know the index or inspect the GLB file externally (e.g., with Blender or `gltf-transform`).
+Load the root `Gltf` asset to discover its clips. `gltf.animations` lists every
+`Handle[AnimationClip]`; `gltf.named_animations` maps source names to handles
+for clips that have names in the source file. Use the index-based labels when
+the file has unnamed clips.
 
 ## ActiveAnimation API
 
@@ -164,10 +168,11 @@ graph, _root_index = AnimationGraph.from_clips(clips)
 | `stop(index)` | Stop specific animation |
 | `stop_all()` | Stop all animations |
 | `pause_all()` / `resume_all()` | Pause/resume all |
-| `set_speed(factor)` | Global speed multiplier |
+| `adjust_speeds(factor)` | Multiply all active animation speeds |
 | `all_finished` | True when all animations complete (property) |
 | `is_playing_animation(index)` | Check if specific animation is active |
-| `animation(index)` | Get `ActiveAnimation` reference (None if not playing) |
+| `animation(index)` | Get a read-only `ActiveAnimation` reference (None if not playing) |
+| `animation_mut(index)` | Get a mutable `ActiveAnimation` reference (None if not playing) |
 
 ## See Also
 

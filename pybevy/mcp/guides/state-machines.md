@@ -13,7 +13,8 @@ from enum import Enum, auto
 
 ## Defining a State
 
-Decorate an `Enum` subclass with `@state`. Values must be integers.
+Decorate an `Enum` subclass with `@state`. State identity uses the enum members,
+so their underlying values may be integers, strings, or other valid `Enum` values.
 
 ```python
 from pybevy.prelude import *
@@ -39,7 +40,7 @@ app.init_state(GamePhase)
 
 `OnEnter` fires for the initial state on the first frame - no need for a separate Startup system.
 
-## OnEnter / OnExit Schedules
+## OnEnter / OnExit / OnTransition Schedules
 
 Systems registered with `OnEnter(state_value)` run once when transitioning **into** that state. `OnExit` runs once when **leaving**.
 
@@ -66,6 +67,19 @@ app.add_systems(OnEnter(GamePhase.PLAYING), setup_game_world)
 
 OnEnter/OnExit systems accept full system parameters (Commands, queries, resources, etc.).
 
+`OnTransition(exited, entered)` runs only for one exact state change. Both
+arguments are positional state members:
+
+```python
+def finish_menu_transition() -> None:
+    print("menu closed; gameplay is starting")
+
+app.add_systems(
+    OnTransition(GamePhase.MENU, GamePhase.PLAYING),
+    finish_menu_transition,
+)
+```
+
 ## Changing State at Runtime
 
 Queue transitions via `ResMut[NextState[StateType]]`. This mirrors Bevy's
@@ -78,7 +92,7 @@ def check_start_game(
     interaction_query: Query[Interaction, With[PlayButton]],
 ) -> None:
     for interaction in interaction_query:
-        if interaction.pressed():
+        if interaction.is_pressed():
             next_state.set(GamePhase.PLAYING)
 ```
 
@@ -154,9 +168,29 @@ if __name__ == "__main__":
     main().run()
 ```
 
+## Inspecting and Driving States as an Agent
+
+`State[T]` and `NextState[T]` report the active member through `get_resource`,
+and accept a transition through `set_resource`, using the same `variant`
+convention as enum components:
+
+```text
+get_resource {"resource_type": "State[game.Phase]"}
+# {"name": "State[game.Phase]", "present": true, "fields": {"variant": "MENU"}}
+
+# queue a transition
+set_resource {"resource_type": "NextState[game.Phase]", "value": {"variant": "PLAYING"}}
+```
+
+The bare `NextState` name works when exactly one machine is registered, matching
+the system-parameter rule above. An unknown member is rejected rather than
+silently queuing nothing.
+
+Transitions stay deferred: the value is queued and applied by the transition
+system on a later frame, so read `State[T]` back rather than assuming the change
+landed synchronously.
+
 ## Known Limitations
 
 - Bare `State` / `NextState` resource parameters require exactly one registered state machine
-- Hot reload crashes with `OnEnter`/`OnExit` schedules - use `run_scene` to restart
-- `DespawnOnExit[T]()` generic subscript doesn't work - manually despawn in `OnExit` systems
 - State transitions are deferred (apply between frames), not immediate

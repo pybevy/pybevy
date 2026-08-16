@@ -28,19 +28,22 @@ Three parameters work together:
 
 ```python
 glass = materials.add(StandardMaterial(
-    base_color=Color.srgba(0.9, 0.95, 1.0, 0.1),
+    base_color=Color.srgb(0.9, 0.95, 1.0),
     specular_transmission=1.0,
     ior=1.5,
     thickness=1.0,
     perceptual_roughness=0.0,     # Clear glass
     metallic=0.0,
     reflectance=0.5,
-    alpha_mode=AlphaMode.Blend(),
+    alpha_mode=AlphaMode.Opaque(),
 ))
 commands.spawn(Mesh3d(sphere_mesh), MeshMaterial3d(glass))
 ```
 
-**Important:** `alpha_mode=AlphaMode.Blend()` is required for specular transmission to render correctly.
+Specular transmission uses Bevy's transmissive render phase. Keep the material
+non-blended; `AlphaMode.Opaque()` is the usual choice and is the default.
+`Blend`, `Premultiplied`, `Add`, and `Multiply` instead select the transparent
+phase, where screen-space specular transmission is not evaluated.
 
 ### Frosted Glass
 
@@ -52,7 +55,7 @@ frosted = materials.add(StandardMaterial(
     ior=1.5,
     thickness=0.5,
     perceptual_roughness=0.4,     # Frosted look
-    alpha_mode=AlphaMode.Blend(),
+    alpha_mode=AlphaMode.Opaque(),
 ))
 ```
 
@@ -68,11 +71,19 @@ wine_glass = materials.add(StandardMaterial(
     perceptual_roughness=0.0,
     attenuation_color=Color.srgb(0.6, 0.0, 0.1),  # Deep red tint
     attenuation_distance=1.0,                        # How far light travels before fully tinted
-    alpha_mode=AlphaMode.Blend(),
+    alpha_mode=AlphaMode.Opaque(),
 ))
 ```
 
 Thicker regions appear more saturated. Good for stained glass, colored bottles, gemstones.
+
+### Screen-Space Reflections
+
+SSR and transmission can coexist in one scene, but a transmissive mesh is
+rendered after the deferred G-buffer pass and therefore does not contribute to
+SSR. Screen-space effects can also produce edge artifacts where glass overlaps
+reflected geometry. Keep SSR for surrounding opaque surfaces rather than
+expecting the glass itself to receive it.
 
 ## Diffuse Transmission (Leaves / Paper)
 

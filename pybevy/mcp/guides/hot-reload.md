@@ -6,7 +6,8 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 
 ### Full Reload
 - Clears all entities and custom Python resources
-- Preserves built-in resources (Time, AssetServer, WireframeConfig, GlobalVolume)
+- Preserves built-in resources (Time, AssetServer, WireframeConfig, GlobalVolume),
+  but resets the virtual Time clock
 - Re-runs ALL systems including Startup (re-creates the scene)
 - Entity IDs will change - use `Name` component for stable references
 - Custom `@component` and `@resource` types are re-aliased by name (no new ComponentId if structure unchanged)
@@ -18,7 +19,11 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - Only reloads Update/Last system functions
 - Startup systems are NOT re-run
 - Use for iterating on game logic without resetting scene state
-- Auto-escalates to Full if observers are pending
+- Auto-escalates to Full when Startup systems, resource definitions, observers,
+  or custom component layouts changed since the previous successful reload
+- On the first reload there is no definition baseline, so Partial conservatively
+  escalates when the scene declares Startup systems, resources, or observers;
+  later unchanged Partial reloads preserve scene state as described above
 
 ## MCP Reload Commands
 
@@ -37,11 +42,18 @@ get_last_error                     - Get Python error traceback if reload failed
 
 ## Workflow: Edit and Reload
 
-1. Edit the Python source file (e.g., `examples/mcp/mcp_scene.py`)
-2. Call `reload {"mode": "full"}` to apply changes
-3. Wait briefly for reload to complete
-4. Call `capture_screenshot` to verify the result
-5. If errors: `get_last_error` shows the Python traceback
+Scenes launched through `run_scene` are watched. Saving a Python file queues a
+Partial reload by default, so do not call `reload` after every edit. Structural
+changes may automatically escalate that request to Full.
+
+1. Edit and save the Python source file
+2. Check `get_reload_status` or call a capture tool to inspect the updated scene
+3. If errors occur, use `get_last_error` for the Python traceback
+
+Use `reload {"mode": "full"}` after saving when you specifically need a clean
+reset. A file-watcher request may already have run by then; an explicit Partial
+reload cannot restore state that an earlier Full reload cleared. The CLI's F6
+shortcut changes the mode used by later file saves.
 
 ## Keyboard Shortcuts (CLI hot-reload mode)
 
@@ -58,11 +70,18 @@ get_last_error                     - Get Python error traceback if reload failed
 | Changed Startup system (scene setup) | Full | Need to re-run Startup to apply |
 | Changed Update system logic | Partial | Faster, keeps scene state |
 | Added new `@component`/`@resource` types | Full | Need fresh registration |
-| Changed `@component` field structure | Full | Re-aliasing detects structural change |
+| Changed `@component` fields or storage mode | Full | Partial reload auto-escalates before applying the new layout |
 | Tweaking animation parameters | Partial | Preserves entity state |
+| First Partial reload in a scene with Startup, resources, or observers | Full | No definition baseline exists yet, so Partial is conservatively escalated |
 | Added/changed observers | Full | Auto-escalated from Partial |
 | Renamed/removed a system function | `run_scene` | Stale schedule entries persist across `reload` |
+| Edited a `.wgsl` shader or other asset | none | Assets are watched under hot reload and update on their own |
 | Scene looks broken | Full | Clean slate |
+
+Asset files are watched while hot reload is active, so editing a shader or texture
+updates the running scene with no `reload` call. Asset paths resolve against the
+directory the scene process was launched from, not the scene file's own directory,
+so editing a same-named file next to the scene changes nothing.
 
 ## Entity ID Stability
 
@@ -75,7 +94,7 @@ commands.spawn(Transform(), PointLight(intensity=1000), Name("sun"))
 
 ```
 # In MCP - address by name
-set_component {"name": "sun", "component": "PointLight", "fields": {"intensity": 2000}}
+set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity": 2000}}
 ```
 
 ## Error Recovery
@@ -107,6 +126,11 @@ When plugins are added or removed across reloads, the reload system detects the 
 - **Removed plugins**: Reported as `plugins_removed` (restart may be required)
 - Core Bevy plugins (DefaultPlugins, etc.) cannot be hot-removed - a restart is needed
 
+New bridge-backed Rust plugins cannot be installed into an App that has already
+started. If `plugins_added` includes one, use `run_scene` before relying on its
+resources or systems. For custom materials, install `ShaderMaterialPlugin()` on
+the first run; new `@material` classes added later reuse that plugin.
+
 ## Plugin.build() During Reload
 
 Custom Python plugins that define a `build()` method are re-executed during hot reload. Systems, resources, messages, and observers registered inside `build()` are captured in the temp app's pending collections and applied to the live app after reload completes.
@@ -123,7 +147,7 @@ class MyGamePlugin(Plugin):
 **What is NOT re-executed during reload:**
 - `DefaultPlugins` and other `PluginGroup` types - these persist from the initial load
 - Bridge-backed plugins (built-in Rust plugins) - they call `with_bevy_app()` which temp apps lack
-- For new plugin *types* added mid-development (not just new instances), `run_scene` restart may still be needed
+- New bridge-backed plugin types added mid-development require a `run_scene` restart
 
 ## Selective Module Flushing
 
@@ -149,6 +173,14 @@ Memory data is also available via MCP:
 get_performance  - includes memory_growth_mb, memory_peak_mb, memory_warning, reload_memory_snapshots
 ```
 
+The same response distinguishes process lifetime from reload lifetime:
+`uptime_secs` remains monotonic across reloads, while
+`generation_uptime_secs` resets after a full reload.
+
+`memory_growth_mb` is RSS since the first stats tick (about a second after startup),
+not reload leak: it reads hundreds of MB at `reload_count: 0`. For per-reload growth
+use `delta_mb` in `reload_memory_snapshots`.
+
 ## System Rename/Removal Detection
 
 When systems are renamed or removed across reloads, the reload system detects the delta:
@@ -158,15 +190,20 @@ When systems are renamed or removed across reloads, the reload system detects th
 - Old systems are disabled via generation guards and will not execute, but may appear in schedule conflict error messages
 - **Use `run_scene`** (not `reload`) to fully clear stale system registrations
 
+Call `get_system_list()` for scene-owned systems and their active, retained, or
+retired reload state. Pass `include_internal=True` only when diagnosing the
+full Bevy scheduler, including PyBevy and engine-internal systems. Resource
+clients can read `scene://systems` or `scene://systems/all`, respectively.
+
 ## Time Continuity
 
 Full reload resets `time.elapsed_secs()` to 0 (matches the "fresh play" mental model). Pause state and `relative_speed` are preserved: if you `pause_time` or `set_time_scale(0.1)` and then `reload`, the post-reload world is still paused and still at 0.1x. The same applies to `reload(pause=true, time_scale=...)`, which now actually take effect across the reset.
 
-**Workarounds for elapsed_secs reset:**
-- Persist accumulated time in a Resource (it survives reload, unlike `Time<Virtual>`)
-- Use delta-time accumulation rather than absolute elapsed time
-
-Partial reload (when it doesn't escalate) preserves all of these.
+Partial reload (when it doesn't escalate) preserves the virtual clock, entities,
+and custom resources. A custom resource can therefore hold an accumulated clock
+across partial reloads. Full reload clears that resource along with the entities;
+state that must survive a full reload needs an external store and must be restored
+by Startup.
 
 ## Troubleshooting
 
@@ -176,9 +213,16 @@ Partial reload (when it doesn't escalate) preserves all of these.
 - **Missing `app.insert_resource()`** - If your Startup system takes `ResMut[MyResource]`, the resource must already exist. Add `app.insert_resource(MyResource())` in your `@entrypoint` before `.add_systems(Startup, setup)`.
 - **Used `reload` after changing `@component` field structure** - Adding/removing fields or changing storage mode allocates a new `ComponentId`. Full reload handles this (entities are recreated), but if behavior is unexpected, use `run_scene` for a clean restart.
 
-### Stale entities after failed reload
+### Entity count after failed reload
 
-After a failed reload, entities from the previous run may still exist. Don't use entity counts to judge whether Startup succeeded - always check `get_last_error` first. A full `run_scene` gives a guaranteed clean state.
+The entity count is unreliable in both directions, so never use it to judge whether Startup succeeded:
+
+| Reload failed while | Entities |
+|---|---|
+| importing the module | previous run's entities still there |
+| running a Startup system | scene emptied - entities are cleared *before* Startup re-runs |
+
+Always check `get_last_error` first. A full `run_scene` gives a guaranteed clean state.
 
 ### GLB textures not loaded after reload_and_capture
 

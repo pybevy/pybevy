@@ -10,13 +10,13 @@ One-liner materials for common surfaces:
 |---------|-----------|
 | Gold | `metallic=1.0, perceptual_roughness=0.3, base_color=Color.srgb(1.0, 0.84, 0.0)` |
 | Chrome | `metallic=1.0, perceptual_roughness=0.05, base_color=Color.srgb(0.95, 0.95, 0.95)` |
-| Glass | `specular_transmission=1.0, ior=1.5, thickness=0.5, perceptual_roughness=0.0, alpha_mode=AlphaMode.Blend()` |
+| Glass | `specular_transmission=1.0, ior=1.5, thickness=0.5, perceptual_roughness=0.0, alpha_mode=AlphaMode.Opaque()` |
 | Marble | `metallic=0.0, perceptual_roughness=0.15, base_color=Color.srgb(0.95, 0.93, 0.88)` |
 | Wood | `metallic=0.0, perceptual_roughness=0.6, base_color=Color.srgb(0.55, 0.35, 0.15)` |
 | Rubber | `metallic=0.0, perceptual_roughness=0.95, base_color=Color.srgb(0.15, 0.15, 0.15)` |
 | Neon glow | `emissive=LinearRgba.rgb(10.0, 0.0, 5.0)` - requires Bloom on camera |
 | Car paint | `metallic=0.8, perceptual_roughness=0.3, clearcoat=1.0, clearcoat_perceptual_roughness=0.1` |
-| Water | `specular_transmission=0.9, ior=1.33, perceptual_roughness=0.0, base_color=Color.srgba(0.3, 0.5, 0.7, 0.4), alpha_mode=AlphaMode.Blend()` |
+| Water | `specular_transmission=0.9, ior=1.33, perceptual_roughness=0.0, base_color=Color.srgb(0.3, 0.5, 0.7), alpha_mode=AlphaMode.Opaque()` |
 
 ## Which Sub-Guide Do I Need?
 

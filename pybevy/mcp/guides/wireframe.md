@@ -60,18 +60,30 @@ commands.spawn(
 ## Line Width & Topology
 
 ```python
-from pybevy.pbr import WireframeConfig, WireframeMaterial, WireframeTopology
+from pybevy.pbr import (
+    WireframeConfig,
+    WireframeLineWidth,
+    WireframeTopology,
+)
 
 # Global defaults
 commands.insert_resource(WireframeConfig(
-    global_=True, default_line_width=2.0, default_topology=WireframeTopology.Quads))
+    global_=True,
+    default_line_width=2.0,
+    default_topology=WireframeTopology.Quads,
+))
 
-# Per-entity override
-commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), Wireframe(),
-               WireframeMaterial(line_width=3.0, topology=WireframeTopology.Triangles))
+# Per-entity overrides
+commands.spawn(
+    Mesh3d(mesh), MeshMaterial3d(mat), Wireframe(),
+    WireframeLineWidth(3.0),
+    WireframeTopology.Quads,
+)
 ```
 
-`WireframeTopology.Quads` draws quad edges (best-effort detection from triangles); `Triangles` shows every triangle edge.
+`WireframeTopology.Quads` draws quad edges (best-effort detection from
+triangles); `Triangles` shows every triangle edge. Both topology values are
+components and can override the global default per entity.
 
 ## Visual Tips
 

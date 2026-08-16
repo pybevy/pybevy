@@ -149,12 +149,14 @@ def chaser_ai(
 ) -> None:
     prey_positions = [(m.gx, m.gz) for m in prey]
     for mover in chasers:
-        # BFS toward nearest prey...
+        ...  # BFS toward nearest prey
 ```
 
 **Complex case (3+ systems need the same data):** Route through a resource to avoid duplicating reads:
 
 ```python
+from dataclasses import dataclass
+
 @resource
 @dataclass
 class GameState(Resource):
@@ -269,8 +271,12 @@ def check_catch(
 
 ## System Registration Order
 
+These systems must run in order: `sync_positions` writes the resource the three
+below it read. A bare tuple does **not** order systems, it only groups them, so
+this needs `chain`.
+
 ```python
-.add_systems(Update, (
+app.add_systems(Update, chain(
     sync_positions,   # 1. Read all positions into resource
     move_entities,    # 2. Interpolate transforms
     chaser_ai,        # 3. Pick chaser targets (reads resource)

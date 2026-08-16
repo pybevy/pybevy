@@ -68,7 +68,7 @@ camera.z = target.z + distance * cos(pitch) * cos(yaw)
 ```
 
 - **Yaw** (radians): Horizontal rotation around the **world Y-axis**. `yaw=0` places the camera on the +Z side of the target. Increasing yaw rotates counter-clockwise when viewed from above.
-- **Pitch** (radians): Vertical elevation angle. `pitch=0` is level with the target. Positive values look down from above. Automatically clamped to approximately ±1.47 rad (±84°) to prevent gimbal lock.
+- **Pitch** (radians): Vertical elevation angle. `pitch=0` is level with the target. Positive values look down from above. Mouse-drag rotation clamps it to approximately ±1.47 rad (±84°); values assigned directly are not clamped.
 
 Common starting values: `yaw=0.0, pitch=0.4` gives a slightly elevated view from the +Z side. `yaw=1.57` (~π/2) views from the +X side.
 

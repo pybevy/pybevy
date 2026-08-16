@@ -77,7 +77,7 @@ Intentionally near-black fog for horror/mystery/silhouette scenes. Different fro
 ```python
 DistanceFog(
     color=Color.srgb(0.04, 0.04, 0.06),        # Near-black, not gray
-    falloff=FogFalloff.Exponential(0.05-0.08),   # Very dense
+    falloff=FogFalloff.Exponential(0.065),       # Very dense; tune within 0.05-0.08
     directional_light_color=Color.srgb(0.5, 0.55, 0.7),  # Cool backscatter
     directional_light_exponent=80.0,             # Tight light cone through fog
 )
@@ -160,6 +160,8 @@ Event-driven particles (sparks, explosions, impacts) - spawn a batch, animate wi
 ### Components
 
 ```python
+from dataclasses import dataclass, field
+
 @component
 @dataclass
 class Particle(Component):
@@ -179,7 +181,14 @@ def spawn_sparks(commands: Commands, assets: Res[SparkAssets]) -> None:
         commands.spawn(
             Mesh3d(assets.mesh), MeshMaterial3d(assets.mat),
             Transform.from_xyz(0, 1, 0),
-            Particle(velocity=Vec3(math.cos(angle) * speed, 4.0 + (i % 3), math.sin(angle) * speed), life=1.0),
+            Particle(
+                vel=Vec3(
+                    math.cos(angle) * speed,
+                    4.0 + (i % 3),
+                    math.sin(angle) * speed,
+                ),
+                life=1.0,
+            ),
         )
 ```
 
@@ -202,4 +211,4 @@ def animate_particles(
             commands.entity(entity).despawn()
 ```
 
-**Tips:** Use `emissive` + `unlit=True` for glowing sparks. Scale down over lifetime for a fade effect (`t.scale = Vec3.splat(p.life)`).
+**Tips:** Use `emissive` on a lit material for glowing sparks. Adding `unlit=True` discards `emissive` and the sparks stop blooming (see `guide://lighting`). Scale down over lifetime for a fade effect (`t.scale = Vec3.splat(p.life)`).

@@ -38,9 +38,11 @@ commands.insert_resource(PointLightShadowMap(size=2048))        # Default: 1024
 Controls how shadow edges look. Added to the camera entity:
 
 ```python
+from pybevy.light import ShadowFilteringMethod
+
 commands.spawn(
     Camera3d(),
-    ShadowFilteringMethod.GAUSSIAN,  # Default - good without TAA
+    ShadowFilteringMethod.GAUSSIAN,  # Default, stable without temporal AA
 )
 ```
 
@@ -48,7 +50,7 @@ commands.spawn(
 |--------|------------|
 | `HARDWARE_2X2` | Fast, hard shadow edges. Budget/mobile. |
 | `GAUSSIAN` | Soft edges, good general-purpose (default) |
-| `TEMPORAL` | Softest, randomized. Best with TAA enabled. |
+| `TEMPORAL` | Softest, randomized; can shimmer because PyBevy does not yet expose TAA. |
 
 ## Contact Shadows (Screen-Space)
 
@@ -76,6 +78,11 @@ commands.spawn(
 
 `PointLight`, `SpotLight`, and `DirectionalLight` all have the `contact_shadows_enabled` flag (default `False`). Keep `length` short: this is a small-scale grounding effect layered on top of shadow maps, not a replacement for them.
 
+Do not combine `ContactShadows` with
+`DefaultOpaqueRendererMethod.deferred()`. The deferred lighting pipeline does
+not support the contact-shadow view binding and the resulting validation error
+prevents the scene from rendering. Use forward rendering for contact shadows.
+
 ## Bias Tuning
 
 Two bias values prevent shadow artifacts. Each light type has its own defaults:
@@ -102,27 +109,24 @@ Directional lights use cascaded shadow maps - multiple shadow maps at different 
 ```python
 from pybevy.light import CascadeShadowConfig
 
-# Default: 4 cascades
+# Bevy's default: 4 geometrically spaced cascades from 10 to 150 units
 commands.spawn(
     DirectionalLight(illuminance=10000.0, shadow_maps_enabled=True),
-    CascadeShadowConfig(
-        bounds=[10.0, 28.0, 78.0, 150.0],
-        overlap_proportion=0.2,
-        minimum_distance=0.1,
-    ),
+    CascadeShadowConfig(),
 )
 ```
 
 ### What `bounds` Means
 
-Each value is the maximum distance (in world units) that cascade covers:
+Each value is the maximum distance (in world units) that cascade covers. Bevy's
+computed defaults are approximately `[10, 24.66, 60.82, 150]`:
 
-| Cascade | Bounds `[10, 28, 78, 150]` | Coverage |
+| Cascade | Far bound | Coverage |
 |---------|---------------------------|----------|
 | 0 | 0–10 | Near objects - highest detail |
-| 1 | 10–28 | Mid-range |
-| 2 | 28–78 | Far |
-| 3 | 78–150 | Very far - lowest detail |
+| 1 | 10–24.66 | Mid-range |
+| 2 | 24.66–60.82 | Far |
+| 3 | 60.82–150 | Very far - lowest detail |
 
 ### Scene-Specific Tuning
 

@@ -6,6 +6,7 @@ ECS essentials (entities, components, systems, queries, borrow rules, resources,
 
 Every PyBevy scene needs this structure. The `@entrypoint` function receives an `App`, registers plugins and systems, and returns it.
 
+<!-- pybevy-snippet: typecheck -->
 ```python
 import math
 from dataclasses import dataclass
@@ -80,6 +81,11 @@ if __name__ == "__main__":
   ```
 - Custom `Plugin.build()` works with hot reload - systems and resources registered inside build() are re-captured on reload
 
+**WASM App rule:** one browser runtime may own one graphical `DefaultPlugins`/winit App. Additional
+headless or manually updated Apps may coexist, but do not call `run()` to start a second browser
+event loop. For multiple canvases or views, prefer windows, cameras, and render targets inside the
+one graphical App.
+
 ## ECS Essentials
 
 PyBevy uses Bevy's Entity Component System (ECS). Entities are IDs, components are data attached to entities, and systems are functions that process entities based on their components.
@@ -88,6 +94,7 @@ PyBevy uses Bevy's Entity Component System (ECS). Entities are IDs, components a
 
 Entities are spawned via `Commands` and identified by an `Entity` handle.
 
+<!-- pybevy-snippet: smoke -->
 ```python
 from pybevy.prelude import *
 
@@ -123,7 +130,7 @@ PyBevy wraps Bevy components as Python classes:
 - **Camera3d**, **Camera2d** -- cameras
 - **Mesh3d**, **MeshMaterial3d** -- mesh and material handles
 - **Name** -- human-readable entity name
-- **Visibility** -- `INHERITED`, `VISIBLE`, or `HIDDEN`
+- **Visibility** -- `Inherited`, `Visible`, or `Hidden`
 
 #### Custom Components
 
@@ -158,6 +165,8 @@ def damage_players(query: Query[Mut[Player]]) -> None:
 - **Python storage**: `str`, `list`, `dict`, custom classes - use `@component(storage="python")`. Slower (no View/Numba), but supports any Python type.
 
 ```python
+from dataclasses import dataclass, field
+
 @component(storage="python")
 @dataclass
 class Inventory(Component):
@@ -165,9 +174,28 @@ class Inventory(Component):
     items: list[str] = field(default_factory=list)
 ```
 
+`Query[Inventory]` rejects direct field assignment, but nested values and
+methods still reach the live stored object. Such reads are scheduled
+exclusively. A nested change does not trigger `Changed[Inventory]`; when change
+detection matters, copy the field and assign it through `Query[Mut[Inventory]]`:
+
+```python
+def add_item(query: Query[Mut[Inventory]]) -> None:
+    for inventory in query:
+        items = list(inventory.items)
+        items.append("potion")
+        inventory.items = items
+```
+
+After insertion, mutate the value through its ECS access. Do not retain a
+mutable external alias or insert the same object into multiple ECS slots; the
+scheduler cannot associate those aliases with the component access.
+
 ### Entity Hierarchies
 
 Parent-child relationships use `ChildOf`. Children inherit their parent's `Transform`.
+Despawning a parent recursively despawns all of its descendants. Remove or reparent
+children first if they must survive the parent.
 
 #### Explicit ChildOf
 
@@ -281,10 +309,33 @@ def my_system(
     query: Query[Mut[Transform], With[Player]],      # Read/write components
     time: Res[Time],                                 # Read-only resource
     state: ResMut[GameState],                        # Mutable resource
+    stats: Local[Stats],                             # Per-system persistent state
     writer: MessageWriter[DamageEvent],              # Send messages
     reader: MessageReader[DamageEvent],              # Read messages
 ) -> None:
     ...
+```
+
+`Local[T]` default-constructs one `T` for each system and retains it between
+runs. Use mutable object fields directly; no unwrap or snapshot is needed:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Stats:
+    frames: int = 0
+
+def track_frames(stats: Local[Stats]) -> None:
+    stats.frames += 1
+```
+
+For an immutable value, update the whole value through the typed `current`
+property. `get()` and `set()` are equivalent explicit aliases:
+
+```python
+def count_frames(counter: Local[int]) -> None:
+    counter.current += 1
 ```
 
 #### Conditional Systems
@@ -335,6 +386,23 @@ app.add_systems(
 Use `SystemSet("my_game.Standalone")` when a set does not belong to an enum
 family or its name is selected dynamically.
 
+Public Bevy unit system sets are exported as `SystemSet` values from their
+owning modules. Order against these values when Python logic must run around an
+engine phase:
+
+```python
+from pybevy.app import First
+from pybevy.ecs import system
+from pybevy.time import TimeSystems
+
+app.add_systems(First, system(record_frame_time).after(TimeSystems))
+```
+
+The reviewed native set exports are `AnimationSystems`,
+`AssetTrackingSystems`, `AssetEventSystems`, `InputSystems`,
+`EditableTextSystems`, `Text2dUpdateSystems`, `TimeSystems`, and `ExitSystems`.
+Import each from its corresponding `pybevy` submodule.
+
 Set-level conditions are evaluated once for the whole set:
 
 ```python
@@ -356,6 +424,38 @@ app.configure_sets(
 
 Keep one `chain(...)` homogeneous: use only systems or only system sets. Python
 tuple literals do not support Bevy's Rust-only `(a, b, c).chain()` spelling.
+
+#### Passing Values Between Systems
+
+Use `pipe(source, target)` when the downstream system needs the value returned
+by the upstream system. Declare that value as the target's first parameter with
+`In[T]`:
+
+```python
+from pybevy.prelude import In, Query, Transform, pipe
+
+def count_transforms(query: Query[Transform]) -> int:
+    return len(list(query))
+
+def report_count(count: In[int]) -> None:
+    print(f"transforms: {count}")
+
+app.add_systems(Update, pipe(count_transforms, report_count))
+```
+
+`system(source).pipe(target).pipe(final)` builds the same immutable compound
+configuration for longer pipelines. Each stage declares its own ECS access and
+runs sequentially inside one Bevy system, so a later stage may safely read data
+that an earlier stage mutates. Deferred `Commands` from all stages are applied
+after the complete pipe finishes and are not visible to downstream stages.
+Ordering and `run_if()` configuration on the returned `SystemConfig` applies to
+the whole compound system.
+
+Pipe values should be ordinary owned Python values. Query rows, mutable
+components, resource proxies, and other run-scoped wrappers expire when their
+source stage returns; passing one onward does not extend its validity. If a
+stage raises or returns a value that is not an instance of the next stage's
+`In[T]`, downstream stages are skipped and the original error is reported.
 
 ### Queries
 
@@ -408,6 +508,12 @@ Query[Player, Added[Player]]
 # Optional -- returns component or None
 Query[tuple[Transform, Optional[Visibility]]]  # Visibility | None per entity
 Query[Optional[Mut[Transform]]]                # mutable when present
+
+# AnyOf is query data -- match at least one and return optional values
+Query[AnyOf[tuple[Transform, Visibility]]]
+
+# Or combines query filters; each tuple item is one alternative
+Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 ```
 
 #### Borrow Rules (IMPORTANT)
@@ -431,7 +537,11 @@ def read_b(q: Query[Transform, With[B]]) -> None: ...
 
 Querying a component (e.g., `Query[tuple[Transform, TagA]]`) automatically implies `With[TagA]` - so `Without[TagA]` on another query proves disjointness. When in doubt, split into separate systems or use the Resource Flag Pattern (see below).
 
-**Change detection note:** Custom Python components using PyObject storage do NOT trigger Bevy's `Changed[T]` filter when fields are mutated. `Added[T]` still works for newly spawned components.
+**Change detection note:** Direct field assignments trigger `Changed[T]` for both
+wrapper and Python-object storage. Wrapper-backed `Vec2` and `Vec3` setters also
+mark their owning component. For Python-object storage, reassign a list, dict, or
+other mutable child after changing it in place so the assignment can be observed.
+
 #### Query Methods
 
 ```python
@@ -460,17 +570,39 @@ def use_time(time: Res[Time]) -> None:
     elapsed = time.elapsed_secs()
     dt = time.delta_secs()
 
+# Select a specific Bevy clock with Time[context].
+def use_real_time(time: Res[Time[Real]]) -> None:
+    elapsed_without_pause_or_scaling = time.elapsed_secs()
+
+def control_game_time(time: ResMut[Time[Virtual]]) -> None:
+    time.set_relative_speed(0.5)
+
 def load_model(asset_server: Res[AssetServer]) -> None:
-    handle = asset_server.load("models/character.gltf#Scene0")
+    from pybevy.world_serialization import WorldAsset
+
+    handle = asset_server.load("models/character.gltf#Scene0", WorldAsset)
 
     # For images and audio, use convenience methods (no asset_type needed):
     texture = asset_server.load_image("textures/my_texture.png")
     sound = asset_server.load_audio("sounds/click.ogg")
 ```
 
+#### Asset Handle Lifetime
+
+`Assets.add(...)` and the `AssetServer.load*` methods return strong handles.
+A strong handle keeps its asset alive; cloning it creates another owner, and
+the asset remains alive until every strong clone is dropped. Store handles in
+components, resources, or other state that lives as long as the asset is needed.
+After the last strong handle is dropped, Bevy removes the asset during asset
+tracking on a later schedule pass, not necessarily immediately.
+
 #### Custom Resources
 
 ```python
+from dataclasses import dataclass
+
+@resource
+@dataclass
 class GameState(Resource):
     score: int = 0
     level: int = 1
@@ -504,6 +636,7 @@ Messages provide buffered inter-system communication. An ordered reader can see 
 ```python
 from dataclasses import dataclass
 
+@message
 @dataclass
 class DamageEvent(Message):
     entity_id: int
@@ -513,7 +646,7 @@ class DamageEvent(Message):
 app.add_message(DamageEvent)
 ```
 
-> **Note:** Messages must be registered via `app.add_message(...)` inside the scene's `@entrypoint`. Unlike components and resources, there is no runtime `world.register_message()` or MCP `run_code` workaround: registration creates the App-local channel identity and scheduler access metadata used by reader and writer parameters. Adding a new message type requires editing the scene file and reloading.
+> **Note:** `@message` validates the `Message` base and marks the declaration; it does not create a channel. Messages must still be registered via `app.add_message(...)` inside the scene's `@entrypoint`. Unlike components and resources, there is no runtime `world.register_message()` or MCP `run_code` workaround: registration creates the App-local channel identity and scheduler access metadata used by reader and writer parameters. Adding a new message type requires editing the scene file and reloading.
 
 #### Sending and Receiving
 
@@ -539,20 +672,31 @@ the retained Python objects, so changing their fields is visible to later reader
 snapshots and cannot safely provide in-place mutation.
 
 Do not put a `MessageWriter[T]` or `MessageMutator[T]` together with another reader, writer, or
-mutator for `T` in one system. Bevy treats both as mutable channel access. Multiple
-`MessageReader[T]` parameters are allowed, and unrelated message channels remain compatible.
+mutator for `T` in one system. Bevy treats both as mutable channel access. Two
+native `MessageReader[T]` parameters may coexist. Custom Python messages
+are live channel objects, so two readers for the same custom channel conflict;
+use separate systems. Unrelated message channels remain compatible.
 
 ### Observers
 
 Observers react to events or lifecycle hooks without polling. Register with `app.add_observer()`.
 
 ```python
+from dataclasses import dataclass
+
 # React to a custom event
+@event
+@dataclass
+class PlayerDied(Event):
+    player_id: int
+
 def on_player_died(trigger: On[PlayerDied]) -> None:
     event = trigger.event()
     entity = trigger.entity()
 
 app.add_observer(on_player_died)
+
+# @event validates the Event base; add_observer still performs registration.
 
 # Lifecycle hooks: Add, Insert, Remove, Discard, Despawn
 def on_transform_added(trigger: On[Add, Transform]) -> None:
@@ -561,7 +705,9 @@ def on_transform_added(trigger: On[Add, Transform]) -> None:
 app.add_observer(on_transform_added)
 ```
 
-The `On` parameter supports filtering: `On[EventType, ComponentType]` only triggers for entities with that component. Use `On[EventType, tuple[A, B]]` to require multiple components.
+The `On` parameter supports filtering: `On[EventType, ComponentType]` only
+triggers for events targeting that component. `On[EventType, tuple[A, B]]`
+observes events targeting either component in the tuple.
 
 Lifecycle emissions follow Bevy 0.19 ordering. A first insertion emits `Add`
 then `Insert`; replacement emits `Discard` then `Insert`; explicit removal
@@ -607,9 +753,10 @@ values remain `RenderTarget.Image` instances and can be matched the same way.
 
 ### Mesh Primitives
 
-See `guide://mesh` for the full primitives table, builder patterns, and custom mesh creation. Key shapes: `Cuboid(x,y,z)`, `Sphere(radius)`, `Cylinder(radius, height)`, `Cone(radius, height)`, `Plane3d(normal, half_size=Vec2(w,h))`, `Torus(inner, outer)`.
+See `guide://mesh` for the full primitives table, builder patterns, and custom mesh creation. Key shapes: `Cuboid(x,y,z)`, `Sphere(radius)`, `Cylinder(radius, height)`, `Cone(radius, height)`, `Plane3d(normal, half_size=Vec2(w,h))`, `Torus(inner_radius, outer_radius)`.
 
-**Origin matters for positioning:** `Cone` has its base at origin (tip points +Y). `Cylinder` is centered (extends +/-half-height).
+**Origin matters for positioning:** `Cone` and `Cylinder` are centered on the
+origin along Y. The cone's tip points +Y.
 
 ### `import math` and `math.tau`
 
@@ -651,6 +798,8 @@ Many scenes need temporary entities spawned and despawned at runtime - projectil
 #### Basic Pattern: Spawn + Marker + Despawn
 
 ```python
+from dataclasses import dataclass
+
 @component
 class Projectile(Component):
     pass
@@ -694,6 +843,8 @@ For app-wide game flow (Menu → Playing → Paused → GameOver), use PyBevy's 
 For effects with distinct phases (telegraph -> strike -> cooldown), use a resource to track state:
 
 ```python
+from dataclasses import dataclass
+
 @resource
 @dataclass
 class EffectState(Resource):
@@ -745,6 +896,8 @@ Use separate marker components per phase (`WarningMarker`, `ActiveEffect`, `Flas
 Components are stored in Bevy's ECS archetype tables using fixed-size wrapper types. By default, `int`, `float`, `bool`, `Vec3`, and `Vec2` fields are allowed. Non-primitive fields require explicit opt-in:
 
 ```python
+from dataclasses import dataclass, field
+
 @component
 @dataclass
 class Velocity(Component):       # OK: primitive fields
@@ -770,9 +923,15 @@ Vec3/Vec2 fields support borrowed writeback - `comp.position.x = 5.0` writes dir
 
 Using `storage="python"` disables View batch execution and Numba JIT for that component. Only opt in when needed.
 
+Read queries over Python storage use shallow live proxies and exclusive
+scheduler access. Direct assignment is rejected; nested mutations are visible
+but do not mark the component changed.
+
 #### `@resource` fields - any Python type
 
-Resources are stored as plain Python objects in a side HashMap - they never cross a serialization boundary. **Any Python type works**, including `list`, `dict`, `Queue`, `Lock`, custom classes, etc.:
+Custom resources retain ordinary Python objects in ECS resource slots. **Any
+Python type works**, including `list`, `dict`, `Queue`, `Lock`, custom classes,
+and similar values:
 
 ```python
 import queue
@@ -794,15 +953,22 @@ class ThreadBridge(Resource):
         self.shared_state = {"status": "idle"}
 ```
 
-This is the idiomatic way to bridge background threads with ECS - store the shared `Queue`/`Lock` in a resource so systems access them via `Res[T]`/`ResMut[T]` instead of module globals.
+This is the idiomatic way to bridge background threads with ECS - store the shared `Queue`/`Lock` in a resource so systems access them via `Res[T]`/`ResMut[T]` instead of module globals. Custom `Res[T]` access is scheduled exclusively because nested objects and methods remain live; native resources keep ordinary shared-read scheduling.
 
-**Asset handles are `int`:** `meshes.add()` and `materials.add()` return `int` handle IDs, so storing them in `@resource` fields works naturally. See `guide://performance` for the cached asset pattern.
+**Asset handles are typed objects:** `meshes.add()` returns `Handle[Mesh]` and
+`materials.add()` returns `Handle[StandardMaterial]`. Store those handles
+directly in `@resource` fields when the asset must stay alive. `handle.id()`
+returns a copyable, non-owning `AssetId[T]` suitable for lookup, comparison, and
+dictionary keys; an `AssetId` does not keep its asset alive. See
+`guide://performance` for the cached asset pattern.
 
 ### Resource Flag Pattern (Cross-System Communication)
 
 When two systems need to interact but can't share mutable access to the same component (e.g., "detect hazard collision" needs `Query[Hazard, GridPos]` + reading player position, while "reset player" needs `Query[Mut[Transform], With[Player]]`), use a **resource flag** to decouple them:
 
 ```python
+from dataclasses import dataclass
+
 @resource
 @dataclass
 class GameState(Resource):
@@ -846,31 +1012,20 @@ For disjoint query patterns (`Without` filters to resolve borrow conflicts withi
 
 ### Runtime Material Swapping
 
-`MeshMaterial3d` and `Mesh3d` are **immutable newtype wrappers** around `Handle`. You cannot set fields on them - `.material`, `.handle`, `.0` all fail:
-
-```python
-# WRONG: All of these fail at runtime
-mat_comp.material = new_handle   # AttributeError: no attribute 'material'
-mat_comp.0 = new_handle          # SyntaxError: invalid syntax
-mat_comp.handle = new_handle     # AttributeError
-```
-
-**Workaround:** Use `commands.entity().insert()` to replace the entire component:
+`MeshMaterial3d.handle` is mutable when the component is queried through
+`Mut[MeshMaterial3d]`. Assign another `Handle[StandardMaterial]` to swap the
+material without replacing the component:
 
 ```python
 def swap_materials(
-    commands: Commands,
-    query: Query[tuple[Entity, MyMarker]],
+    query: Query[tuple[Mut[MeshMaterial3d], MyMarker]],
     assets: Res[CachedAssets],
     time: Res[Time],
 ) -> None:
     phase = int(time.elapsed_secs() / 3.0) % 2
-    for entity, marker in query:
-        handle = assets.mat_a if phase == 0 else assets.mat_b
-        commands.entity(entity).insert(MeshMaterial3d(handle))
+    for material, marker in query:
+        material.handle = assets.mat_a if phase == 0 else assets.mat_b
 ```
-
-**Important:** This requires `Entity` in the query tuple (not `Mut[MeshMaterial3d]`). Cache material handles in a `@resource` - never call `materials.add()` in Update.
 
 For custom shader materials, see `guide://shaders` for the `@material` decorator.
 
@@ -899,6 +1054,8 @@ from pybevy.prelude import *
 Every `@component` with data fields needs both `@dataclass` and `@component`. Marker components (no fields) only need `@component`:
 
 ```python
+from dataclasses import dataclass
+
 @component
 @dataclass
 class Health(Component):       # Has fields -> needs @dataclass
@@ -912,6 +1069,8 @@ class Player(Component):       # No fields -> marker, no @dataclass needed
 Resources can use `@dataclass` for simple primitive state, or a plain `__init__` for complex types:
 
 ```python
+from dataclasses import dataclass
+
 @resource
 @dataclass
 class Score(Resource):         # Simple state -> @dataclass is fine
