@@ -1,6 +1,15 @@
-use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
+use std::sync::Arc;
 
-use super::{PyEntity, component_type::PyComponentType};
+use pybevy_core::PyMessage;
+use pyo3::{
+    PyTraverseError, PyTypeInfo, PyVisit, exceptions::PyTypeError, prelude::*, types::PyType,
+};
+use smallvec::SmallVec;
+
+use super::{
+    PyEntity,
+    component_type::{PyComponentType, clone_retained_classes, retain_custom_classes},
+};
 
 /// Base class for all events in PyBevy.
 ///
@@ -100,6 +109,11 @@ pub struct PyOn {
 
 #[pymethods]
 impl PyOn {
+    /// Report the triggered event retained by an escaped observer parameter.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.event_data)
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
@@ -135,14 +149,8 @@ impl PyOn {
                         "Second parameter to On[Add, ...] must be a Component type",
                     ));
                 };
-                return Py::new(
-                    py,
-                    PyOnTypeParam {
-                        event_type: EventType::Add(comp_type),
-                        bundle_filter: None,
-                    },
-                )
-                .map(|obj| obj.into_any());
+                return Py::new(py, PyOnTypeParam::new(py, EventType::Add(comp_type), None))
+                    .map(|obj| obj.into_any());
             } else if first_type_obj.is(PyInsert::type_object(py)) {
                 let comp_type = if let Ok(comp_type_obj) = second_key.cast_exact::<PyType>() {
                     PyComponentType::try_from((comp_type_obj, py))?
@@ -153,10 +161,7 @@ impl PyOn {
                 };
                 return Py::new(
                     py,
-                    PyOnTypeParam {
-                        event_type: EventType::Insert(comp_type),
-                        bundle_filter: None,
-                    },
+                    PyOnTypeParam::new(py, EventType::Insert(comp_type), None),
                 )
                 .map(|obj| obj.into_any());
             } else if first_type_obj.is(PyRemove::type_object(py)) {
@@ -169,10 +174,7 @@ impl PyOn {
                 };
                 return Py::new(
                     py,
-                    PyOnTypeParam {
-                        event_type: EventType::Remove(comp_type),
-                        bundle_filter: None,
-                    },
+                    PyOnTypeParam::new(py, EventType::Remove(comp_type), None),
                 )
                 .map(|obj| obj.into_any());
             } else if first_type_obj.is(PyDiscard::type_object(py)) {
@@ -185,10 +187,7 @@ impl PyOn {
                 };
                 return Py::new(
                     py,
-                    PyOnTypeParam {
-                        event_type: EventType::Discard(comp_type),
-                        bundle_filter: None,
-                    },
+                    PyOnTypeParam::new(py, EventType::Discard(comp_type), None),
                 )
                 .map(|obj| obj.into_any());
             } else if first_type_obj.is(PyDespawn::type_object(py)) {
@@ -201,10 +200,7 @@ impl PyOn {
                 };
                 return Py::new(
                     py,
-                    PyOnTypeParam {
-                        event_type: EventType::Despawn(comp_type),
-                        bundle_filter: None,
-                    },
+                    PyOnTypeParam::new(py, EventType::Despawn(comp_type), None),
                 )
                 .map(|obj| obj.into_any());
             }
@@ -275,14 +271,7 @@ impl PyOn {
                 )));
             };
 
-            Py::new(
-                py,
-                PyOnTypeParam {
-                    event_type,
-                    bundle_filter,
-                },
-            )
-            .map(|obj| obj.into_any())
+            Py::new(py, PyOnTypeParam::new(py, event_type, bundle_filter)).map(|obj| obj.into_any())
         } else {
             // On[E] - event type only, no bundle filter
             let event_type = if let Ok(event_type_obj) = key.cast_exact::<PyType>() {
@@ -319,14 +308,7 @@ impl PyOn {
                 )));
             };
 
-            Py::new(
-                py,
-                PyOnTypeParam {
-                    event_type,
-                    bundle_filter: None,
-                },
-            )
-            .map(|obj| obj.into_any())
+            Py::new(py, PyOnTypeParam::new(py, event_type, None)).map(|obj| obj.into_any())
         }
     }
 
@@ -353,6 +335,17 @@ pub enum EventType {
 
     /// Custom user-defined events (up to 20 supported)
     Custom(Py<PyType>),
+}
+
+impl EventType {
+    /// Report a `Custom` event class to the cyclic GC; lifecycle variants hold
+    /// component pointers whose classes are retained by `PyOnTypeParam`.
+    pub(crate) fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        match self {
+            EventType::Custom(class) => visit.call(class),
+            _ => Ok(()),
+        }
+    }
 }
 
 impl Clone for EventType {
@@ -388,6 +381,11 @@ impl EventType {
         // Check if it's a subclass of Event
         if ty.is_subclass_of::<PyEvent>()? {
             Ok(EventType::Custom(ty.clone().unbind()))
+        } else if ty.is_subclass_of::<PyMessage>()? {
+            Err(PyTypeError::new_err(format!(
+                "{} is a Message subclass; observers require Event subclasses",
+                ty.name()?
+            )))
         } else {
             Err(PyTypeError::new_err(format!(
                 "Expected Event subclass, got {}",
@@ -415,8 +413,61 @@ impl EventType {
 /// This is returned by On.__class_getitem__ when using On[EventType] or On[EventType, BundleType]
 /// syntax in Python type annotations.
 #[pyclass(name = "OnTypeParam", frozen, from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyOnTypeParam {
     pub(crate) event_type: EventType,
     pub(crate) bundle_filter: Option<Vec<PyComponentType>>,
+    /// Strong references backing Python-owned component/resource pointers above.
+    ///
+    /// The param outlives the expression that built it, and nothing else is
+    /// obliged to keep a `@component` class alive, so observer registration
+    /// would otherwise dereference a freed type object.
+    pub(crate) retained_types: SmallVec<[Arc<Py<PyType>>; 4]>,
+}
+
+/// Deep-clones `retained_types` so every holder owns independent increfs; a
+/// shared handle visited by two traversing owners is a use-after-free.
+impl Clone for PyOnTypeParam {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            event_type: self.event_type.clone(),
+            bundle_filter: self.bundle_filter.clone(),
+            retained_types: clone_retained_classes(py, &self.retained_types),
+        })
+    }
+}
+
+impl PyOnTypeParam {
+    pub(crate) fn new(
+        py: Python<'_>,
+        event_type: EventType,
+        bundle_filter: Option<Vec<PyComponentType>>,
+    ) -> Self {
+        let from_event = match &event_type {
+            EventType::Add(component)
+            | EventType::Insert(component)
+            | EventType::Remove(component)
+            | EventType::Discard(component)
+            | EventType::Despawn(component) => Some(*component),
+            EventType::Custom(_) => None,
+        };
+        let from_filter = bundle_filter.iter().flatten().copied();
+        let retained = retain_custom_classes(py, from_event.into_iter().chain(from_filter));
+        Self {
+            event_type,
+            bundle_filter,
+            retained_types: retained,
+        }
+    }
+}
+
+#[pymethods]
+impl PyOnTypeParam {
+    /// Report held classes to the cyclic GC; see docs/safety.md.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for class in &self.retained_types {
+            visit.call(class.as_ref())?;
+        }
+        self.event_type.traverse(&visit)
+    }
 }

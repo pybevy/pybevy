@@ -4,39 +4,50 @@ use std::{
 };
 
 use bevy::{
-    asset::AssetEvent,
     ecs::{
         component::ComponentId,
         message::{Message, MessageCursor, Messages},
         world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
-    image::Image,
-    input::{
-        ButtonInput,
-        keyboard::{KeyCode, KeyboardInput},
-    },
-    mesh::Mesh,
+    input::keyboard::KeyboardInput,
     window::{WindowClosing, WindowCreated, WindowEvent, WindowResized, WindowScaleFactorChanged},
 };
-use pybevy_core::registry::global_registry;
+use pybevy_core::{
+    public_error::{
+        ASSET_BRIDGE_NOT_FOUND, ASSET_EVENT_TYPE_REQUIRED, ASSET_LOAD_FAILED_TYPE_REQUIRED,
+    },
+    registry::global_registry,
+};
 use pybevy_ecs::shared::message_resources::ensure_message_resource;
 use pybevy_world_serialization::WorldInstanceReadyMessage;
-use pyo3::{IntoPyObjectExt, exceptions::PyTypeError, prelude::*, types::PyType};
+use pyo3::{
+    IntoPyObjectExt, PyTraverseError, PyVisit,
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyTuple, PyType},
+};
 
 /// Persistent cursor storage shared between DynamicSystem and PyMessages.
 /// The Arc+Mutex allows frozen pyclass fields to hold mutable state.
 pub(crate) type CursorStorage = Arc<Mutex<Option<Box<dyn Any + Send + Sync>>>>;
 
 use super::message::{PyMessage, PyMessageId};
-use crate::ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource};
+use crate::{
+    assets::asset_load_failed_event::{
+        PyAssetLoadFailedEvent, materialize_asset_load_failed_record,
+    },
+    ecs::{
+        dynamic_system::lock_or_recover, helpers::validity_guard::ValidityFlag,
+        resource::PyResource,
+    },
+};
 
 /// Narrow world access for message wrappers.
 ///
 /// Holds the lifetime-erased [`UnsafeWorldCell`] (fenced by the same `ValidityFlag`
 /// as `PyQueryIter`) and derives a momentary `&mut World` per operation. The
-/// native message adapters/bridges only reach their `Messages<T>` resource (plus,
-/// for KeyboardInput readers, `ButtonInput<KeyCode>`), all
-/// of which `DynamicSystem::initialize` declares. This is the same
+/// native message adapters/bridges only reach their `Messages<T>` resource,
+/// which `DynamicSystem::initialize` declares. This is the same
 /// residual-pointer class as `query_runtime::world_ptr`.
 #[derive(Clone)]
 pub(crate) struct MessageWorld {
@@ -125,7 +136,7 @@ impl PyMessages {
     /// Lock cursor storage (if available) and return a mutable reference to the inner state.
     /// Returns a default None state when no cursor storage is configured.
     fn lock_cursor(&self) -> Option<std::sync::MutexGuard<'_, Option<Box<dyn Any + Send + Sync>>>> {
-        self.cursor_storage.as_ref().map(|cs| cs.lock().unwrap())
+        self.cursor_storage.as_ref().map(|cs| lock_or_recover(cs))
     }
 
     pub(crate) fn iter_to_python(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
@@ -138,35 +149,16 @@ impl PyMessages {
         let cursor_state = match guard.as_mut() {
             Some(g) => &mut **g,
             None => {
-                // No persistent cursor — use a temporary that's discarded
+                // No persistent cursor: use a temporary that's discarded
                 &mut None
             }
         };
 
         match &self.message_type {
             MessageType::KeyboardInput => {
-                // Special handling: needs ButtonInput<KeyCode> for modifier detection
-                let messages = world.get_resource::<Messages<KeyboardInput>>();
-                let keyboard = world.get_resource::<ButtonInput<KeyCode>>();
-
-                if let (Some(messages_res), Some(keyboard)) = (messages, keyboard) {
-                    let mut cursor = cursor_state
-                        .as_ref()
-                        .and_then(|s| s.downcast_ref::<MessageCursor<KeyboardInput>>())
-                        .cloned()
-                        .unwrap_or_else(|| messages_res.get_cursor());
-                    let mut result = Vec::new();
-                    for msg in cursor.read(messages_res) {
-                        if let Some(py_msg_tuple) = PyKeyboardInput::from_bevy(msg, keyboard) {
-                            let py_msg = Py::new(py, py_msg_tuple)?;
-                            result.push(py_msg.into_any());
-                        }
-                    }
-                    *cursor_state = Some(Box::new(cursor));
-                    Ok(result)
-                } else {
-                    Ok(Vec::new())
-                }
+                self.iter_messages::<KeyboardInput, _>(py, world, cursor_state, |msg, py| {
+                    Ok(Py::new(py, PyKeyboardInput::from_bevy(msg)?)?.into_any())
+                })
             }
             MessageType::GamepadRumbleRequest => {
                 // Write-only message type, no reading support
@@ -195,17 +187,25 @@ impl PyMessages {
                     },
                 )
             }
-            MessageType::AssetEventImage => {
-                use crate::assets::asset_event::PyAssetEvent;
-                self.iter_messages::<AssetEvent<Image>, _>(py, world, cursor_state, |event, py| {
-                    Ok(Py::new(py, (PyAssetEvent::from_bevy(event), PyMessage))?.into_any())
-                })
+            MessageType::AssetEvent(type_ptr) => {
+                use crate::assets::asset_event::materialize_asset_event_record;
+
+                let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+                bridge
+                    .read_events(world, cursor_state)
+                    .into_iter()
+                    .map(|event| materialize_asset_event_record(py, event))
+                    .collect()
             }
-            MessageType::AssetEventMesh => {
-                use crate::assets::asset_event::PyAssetEvent;
-                self.iter_messages::<AssetEvent<Mesh>, _>(py, world, cursor_state, |event, py| {
-                    Ok(Py::new(py, (PyAssetEvent::from_bevy(event), PyMessage))?.into_any())
-                })
+            MessageType::AssetLoadFailed(type_ptr) => {
+                let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+                bridge
+                    .read_load_failed_events(world, cursor_state)
+                    .into_iter()
+                    .map(|event| materialize_asset_load_failed_record(py, event))
+                    .collect()
             }
             MessageType::Custom(_) => Err(PyTypeError::new_err(
                 "custom messages use the shared Python message store",
@@ -253,17 +253,13 @@ impl PyMessages {
                     None => Ok(f(&mut EmptyMessages)),
                 }
             }
-            MessageType::AssetEventImage => {
-                match world.get_resource_mut::<Messages<AssetEvent<Image>>>() {
-                    Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
-                    None => Ok(f(&mut EmptyMessages)),
-                }
+            MessageType::AssetEvent(_) => {
+                unreachable!("AssetEvent message types are handled directly before with_messages()")
             }
-            MessageType::AssetEventMesh => {
-                match world.get_resource_mut::<Messages<AssetEvent<Mesh>>>() {
-                    Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
-                    None => Ok(f(&mut EmptyMessages)),
-                }
+            MessageType::AssetLoadFailed(_) => {
+                unreachable!(
+                    "AssetLoadFailedEvent message types are handled directly before with_messages()"
+                )
             }
             MessageType::Custom(_) => Err(PyTypeError::new_err(
                 "custom messages use the shared Python message store",
@@ -338,6 +334,11 @@ impl ErasedMessages for EmptyMessages {
 
 #[pymethods]
 impl PyMessages {
+    /// Report a custom message class held by the legacy `Messages[T]` wrapper.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.message_type.traverse(&visit)
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
@@ -345,7 +346,7 @@ impl PyMessages {
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let py = cls.py();
-        let ty = PyMessageType::from_message_type(key.cast::<PyType>()?)?;
+        let ty = PyMessageType::from_annotation(key)?;
         PyMessageTypeParam(ty).into_py_any(py)
     }
 
@@ -356,6 +357,17 @@ impl PyMessages {
     }
 
     pub fn clear(&self) -> PyResult<()> {
+        if let MessageType::AssetEvent(type_ptr) = &self.message_type {
+            let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+            return Ok(bridge.clear_events(self.world.world_mut()?));
+        }
+        if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
+            let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+            bridge.clear_load_failed_events(self.world.world_mut()?);
+            return Ok(());
+        }
         if let MessageType::Dynamic(type_ptr) = &self.message_type {
             let bridge =
                 global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
@@ -368,6 +380,16 @@ impl PyMessages {
     }
 
     pub fn is_empty(&self) -> PyResult<bool> {
+        if let MessageType::AssetEvent(type_ptr) = &self.message_type {
+            let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+            return Ok(bridge.events_is_empty(self.world.world_mut()?));
+        }
+        if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
+            let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+            return Ok(bridge.load_failed_events_is_empty(self.world.world_mut()?));
+        }
         if let MessageType::Dynamic(type_ptr) = &self.message_type {
             let bridge =
                 global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
@@ -380,6 +402,16 @@ impl PyMessages {
     }
 
     pub fn len(&self) -> PyResult<usize> {
+        if let MessageType::AssetEvent(type_ptr) = &self.message_type {
+            let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+            return Ok(bridge.event_count(self.world.world_mut()?));
+        }
+        if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
+            let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+            return Ok(bridge.load_failed_event_count(self.world.world_mut()?));
+        }
         if let MessageType::Dynamic(type_ptr) = &self.message_type {
             let bridge =
                 global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
@@ -399,14 +431,26 @@ pub enum MessageType {
     GamepadRumbleRequest,
     WindowEvent,
     WorldInstanceReady,
-    AssetEventImage,
-    #[allow(dead_code)] // variant used by message bridge system
-    AssetEventMesh,
+    AssetEvent(*const pyo3::ffi::PyTypeObject),
+    AssetLoadFailed(*const pyo3::ffi::PyTypeObject),
     // Python custom messages
     Custom(Py<PyType>),
     /// Dynamic message type registered via global message bridge registry.
     /// All event types with #[pymessage] use this variant.
     Dynamic(*const pyo3::ffi::PyTypeObject),
+}
+
+impl MessageType {
+    /// Report a `Custom` variant's class to the cyclic GC.
+    ///
+    /// `Dynamic` holds a bare pointer to a module-level wrapper class and the
+    /// remaining variants hold nothing, so only `Custom` owns a reference.
+    pub(crate) fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        match self {
+            MessageType::Custom(class) => visit.call(class),
+            _ => Ok(()),
+        }
+    }
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -420,8 +464,10 @@ impl PartialEq for MessageType {
             (MessageType::GamepadRumbleRequest, MessageType::GamepadRumbleRequest) => true,
             (MessageType::WindowEvent, MessageType::WindowEvent) => true,
             (MessageType::WorldInstanceReady, MessageType::WorldInstanceReady) => true,
-            (MessageType::AssetEventImage, MessageType::AssetEventImage) => true,
-            (MessageType::AssetEventMesh, MessageType::AssetEventMesh) => true,
+            (MessageType::AssetEvent(a), MessageType::AssetEvent(b)) => std::ptr::eq(*a, *b),
+            (MessageType::AssetLoadFailed(a), MessageType::AssetLoadFailed(b)) => {
+                std::ptr::eq(*a, *b)
+            }
             (MessageType::Custom(a), MessageType::Custom(b)) => a.is(b),
             (MessageType::Dynamic(a), MessageType::Dynamic(b)) => std::ptr::eq(*a, *b),
             _ => false,
@@ -436,8 +482,8 @@ impl Clone for MessageType {
             MessageType::GamepadRumbleRequest => MessageType::GamepadRumbleRequest,
             MessageType::WindowEvent => MessageType::WindowEvent,
             MessageType::WorldInstanceReady => MessageType::WorldInstanceReady,
-            MessageType::AssetEventImage => MessageType::AssetEventImage,
-            MessageType::AssetEventMesh => MessageType::AssetEventMesh,
+            MessageType::AssetEvent(ptr) => MessageType::AssetEvent(*ptr),
+            MessageType::AssetLoadFailed(ptr) => MessageType::AssetLoadFailed(*ptr),
             MessageType::Custom(ty) => Python::attach(|py| MessageType::Custom(ty.clone_ref(py))),
             MessageType::Dynamic(ptr) => MessageType::Dynamic(*ptr),
         }
@@ -464,14 +510,22 @@ impl MessageType {
                 "native:WorldInstanceReady".to_string(),
                 "Message<WorldInstanceReady>".to_string(),
             ),
-            Self::AssetEventImage => (
-                "native:AssetEvent<Image>".to_string(),
-                "Message<AssetEvent<Image>>".to_string(),
-            ),
-            Self::AssetEventMesh => (
-                "native:AssetEvent<Mesh>".to_string(),
-                "Message<AssetEvent<Mesh>>".to_string(),
-            ),
+            Self::AssetEvent(type_ptr) => {
+                let name = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .map_or("Asset", |bridge| bridge.name());
+                (
+                    format!("native:AssetEvent<{name}>"),
+                    format!("Message<AssetEvent<{name}>>"),
+                )
+            }
+            Self::AssetLoadFailed(type_ptr) => {
+                let name = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .map_or("Asset", |bridge| bridge.name());
+                (
+                    format!("native:AssetLoadFailedEvent<{name}>"),
+                    format!("Message<AssetLoadFailedEvent<{name}>>"),
+                )
+            }
             Self::Custom(class) => Python::attach(|py| {
                 let class = class.bind(py);
                 let module = class
@@ -516,11 +570,13 @@ impl MessageType {
             MessageType::WorldInstanceReady => {
                 Some(world.register_component::<Messages<WorldInstanceReadyMessage>>())
             }
-            MessageType::AssetEventImage => {
-                Some(world.register_component::<Messages<AssetEvent<Image>>>())
+            MessageType::AssetEvent(type_ptr) => {
+                global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .map(|bridge| bridge.register_event_resource_id(world))
             }
-            MessageType::AssetEventMesh => {
-                Some(world.register_component::<Messages<AssetEvent<Mesh>>>())
+            MessageType::AssetLoadFailed(type_ptr) => {
+                global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .map(|bridge| bridge.register_load_failed_resource_id(world))
             }
             MessageType::Custom(_) => None,
             MessageType::Dynamic(type_ptr) => {
@@ -530,18 +586,13 @@ impl MessageType {
         }
     }
 
-    /// All resource read ids a MessageReader for this type touches: the primary
-    /// `Messages<T>` buffer plus any auxiliary resource the reader consults.
+    /// All resource read ids a MessageReader for this type touches.
     /// `DynamicSystem::initialize` declares every id so the parallel executor
-    /// accounts for the full read set. KeyboardInput readers additionally read
-    /// `ButtonInput<KeyCode>` for modifier detection (see `iter_to_python`).
+    /// accounts for the full read set.
     pub(crate) fn reader_resource_ids(&self, world: &mut World) -> Vec<ComponentId> {
         let mut ids = Vec::new();
         if let Some(id) = self.register_resource_id(world) {
             ids.push(id);
-        }
-        if let MessageType::KeyboardInput = self {
-            ids.push(world.register_component::<ButtonInput<KeyCode>>());
         }
         ids
     }
@@ -552,6 +603,13 @@ impl MessageType {
 pub struct PyMessageType(pub(crate) MessageType);
 
 impl PyMessageType {
+    pub(crate) fn from_annotation(message: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(message_type) = message.extract::<PyRef<'_, PyMessageType>>() {
+            return Ok(message_type.clone());
+        }
+        Self::from_message_type(message.cast::<PyType>()?)
+    }
+
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
         use pybevy_input::{
             gamepad_rumble_request::PyGamepadRumbleRequest, keyboard_input::PyKeyboardInput,
@@ -567,6 +625,17 @@ impl PyMessageType {
         // Most message types use this path via #[pymessage] attribute
         if pybevy_core::registry::global_registry::contains_message_py_type(type_ptr) {
             return Ok(PyMessageType(MessageType::Dynamic(type_ptr)));
+        }
+
+        // Enum-backed message instances use nested variant classes, while the
+        // bridge is registered on their common message base class.
+        let mro = message.getattr("__mro__")?.cast_into::<PyTuple>()?;
+        for base in mro.iter().skip(1) {
+            let base = base.cast_into::<PyType>()?;
+            let base_ptr = base.as_type_ptr();
+            if pybevy_core::registry::global_registry::contains_message_py_type(base_ptr) {
+                return Ok(PyMessageType(MessageType::Dynamic(base_ptr)));
+            }
         }
 
         // Special handling types that don't use #[pymessage] (need extra resources/special logic)
@@ -586,15 +655,15 @@ impl PyMessageType {
             return Ok(PyMessageType(MessageType::WorldInstanceReady));
         }
 
-        // Check for AssetEvent types
+        // AssetEvent is generic over the asset channel. The bare class cannot
+        // identify which Bevy `Messages<AssetEvent<A>>` resource to access.
         use crate::assets::asset_event::PyAssetEvent;
-
-        // For now, we identify AssetEvent by checking if it's the AssetEvent class
-        // In the future, we might need to distinguish Image vs Mesh events differently
         if message.is(<PyAssetEvent as PyTypeInfo>::type_object(py)) {
-            // Default to Image events for now - this will need refinement
-            // when we expose separate AssetEvent[Image] and AssetEvent[Mesh] types
-            return Ok(PyMessageType(MessageType::AssetEventImage));
+            return Err(PyTypeError::new_err(ASSET_EVENT_TYPE_REQUIRED));
+        }
+
+        if message.is(<PyAssetLoadFailedEvent as PyTypeInfo>::type_object(py)) {
+            return Err(PyTypeError::new_err(ASSET_LOAD_FAILED_TYPE_REQUIRED));
         }
 
         // Check for generic PyMessage subclass (custom messages)
@@ -614,6 +683,14 @@ impl PyMessageType {
 #[derive(Debug, PartialEq)]
 pub struct PyMessageTypeParam(pub(crate) PyMessageType);
 
+#[pymethods]
+impl PyMessageTypeParam {
+    /// Report a custom class held by the `Messages[T]` annotation parameter.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.0.0.traverse(&visit)
+    }
+}
+
 /// Insert empty buffers for built-in message types whose owning plugin may be
 /// absent, keeping reader/writer resource access consistent. Registered in
 /// PreStartup so any plugin that owns a buffer (and its double-buffering update
@@ -626,6 +703,4 @@ pub(crate) fn ensure_builtin_message_resources(world: &mut World) {
     ensure_message_resource::<WindowScaleFactorChanged>(world);
     ensure_message_resource::<WindowClosing>(world);
     ensure_message_resource::<WorldInstanceReadyMessage>(world);
-    ensure_message_resource::<AssetEvent<Image>>(world);
-    ensure_message_resource::<AssetEvent<Mesh>>(world);
 }

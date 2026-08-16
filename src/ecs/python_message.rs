@@ -14,7 +14,7 @@ use bevy::{
 };
 use pybevy_ecs::shared::message_store::{
     MessageChannelId, MessageRegisterOutcome, MessageRegistryCore, MessageStore, MessageStoreError,
-    MessageTypeKey,
+    MessageTypeKey, WeakMessageStore,
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
@@ -27,6 +27,7 @@ use crate::ecs::message::PyMessage;
 
 pub(crate) type PythonMessageValue = Arc<Py<PyAny>>;
 pub(crate) type PythonMessageStore = MessageStore<PythonMessageValue>;
+pub(crate) type WeakPythonMessageStore = WeakMessageStore<PythonMessageValue>;
 
 /// Strong backend class handles paired with the neutral identity registry.
 #[derive(Default, Resource)]
@@ -65,11 +66,25 @@ impl PythonMessageClassTable {
 }
 
 /// Context-free state captured by a custom reader or writer wrapper.
-#[derive(Clone)]
 pub(crate) struct ResolvedPythonMessage {
-    pub store: PythonMessageStore,
+    /// Non-owning because a Python-visible wrapper must not keep all buffered
+    /// Python values alive behind an interpreter-invisible Rust store handle.
+    pub store: WeakPythonMessageStore,
     pub channel: MessageChannelId,
-    pub class: Arc<Py<PyType>>,
+    /// An independently owned reference for the Python-visible wrapper that
+    /// receives this value. It must not share the class table's `Arc`: Python's
+    /// collector needs the wrapper to report the exact reference it owns.
+    pub class: Py<PyType>,
+}
+
+impl Clone for ResolvedPythonMessage {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            store: self.store.clone(),
+            channel: self.channel,
+            class: self.class.clone_ref(py),
+        })
+    }
 }
 
 fn type_key(type_ptr: *const PyTypeObject) -> MessageTypeKey {
@@ -180,13 +195,14 @@ pub(crate) unsafe fn resolve_from_cell(
     // SAFETY: upheld by the caller and restricted to the declared resource.
     let store = unsafe { world.get_resource::<PythonMessageStore>() }
         .ok_or_else(|| PyTypeError::new_err("Python message store is not initialized"))?
-        .clone();
+        .downgrade();
     // SAFETY: upheld by the caller and restricted to the declared resource.
     let table = unsafe { world.get_resource::<PythonMessageClassTable>() }
         .ok_or_else(|| PyTypeError::new_err("Message class table is not initialized"))?;
-    let class = table
+    let shared_class = table
         .exact(key)
         .ok_or_else(|| PyTypeError::new_err("Message class is not registered"))?;
+    let class = Python::attach(|py| shared_class.as_ref().clone_ref(py));
     Ok(ResolvedPythonMessage {
         store,
         channel,
@@ -200,6 +216,22 @@ pub(crate) fn resolve_from_world(
 ) -> PyResult<ResolvedPythonMessage> {
     // SAFETY: an exclusive observer/external caller owns this live World.
     unsafe { resolve_from_cell(world.as_unsafe_world_cell_readonly(), type_ptr) }
+}
+
+pub(crate) fn python_message_is_registered(world: &World, type_ptr: *const PyTypeObject) -> bool {
+    let key = type_key(type_ptr);
+    let Some(registry) = world.get_resource::<MessageRegistryCore>() else {
+        return false;
+    };
+    if registry.channel_for_type(key).is_none() {
+        return false;
+    }
+    if !world.contains_resource::<PythonMessageStore>() {
+        return false;
+    }
+    world
+        .get_resource::<PythonMessageClassTable>()
+        .is_some_and(|table| table.exact(key).is_some())
 }
 
 /// Clear every custom channel while retaining channel identity and sequences.
