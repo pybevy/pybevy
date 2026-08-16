@@ -1,7 +1,9 @@
 from typing import ClassVar, Literal
 
+from pybevy.animation import AnimationClip
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, AssetPath, Handle
+from pybevy.collections import LiveSequence
 from pybevy.ecs import Component
 from pybevy.image import ImageSamplerDescriptor, RenderAssetUsages
 from pybevy.transform import Transform
@@ -9,6 +11,9 @@ from pybevy.transform import Transform
 class GltfPlugin(Plugin):
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...
+
+class GltfMaterial(Asset):
+    """Source material data loaded from a glTF file."""
 
 class Gltf(Asset):
     """Representation of a loaded glTF file."""
@@ -22,9 +27,9 @@ class Gltf(Asset):
     @property
     def named_meshes(self) -> list[tuple[str, Handle]]: ...
     @property
-    def materials(self) -> list[Handle]: ...
+    def materials(self) -> list[Handle[GltfMaterial]]: ...
     @property
-    def named_materials(self) -> list[tuple[str, Handle]]: ...
+    def named_materials(self) -> list[tuple[str, Handle[GltfMaterial]]]: ...
     @property
     def nodes(self) -> list[Handle]: ...
     @property
@@ -35,6 +40,10 @@ class Gltf(Asset):
     def named_skins(self) -> list[tuple[str, Handle]]: ...
     @property
     def default_scene(self) -> Handle | None: ...
+    @property
+    def animations(self) -> list[Handle[AnimationClip]]: ...
+    @property
+    def named_animations(self) -> dict[str, Handle[AnimationClip]]: ...
 
 class GltfMesh(Asset):
     """A glTF mesh, which may consist of multiple primitives."""
@@ -44,7 +53,7 @@ class GltfMesh(Asset):
     @property
     def name(self) -> str: ...
     @property
-    def primitives(self) -> list[GltfPrimitive]: ...
+    def primitives(self) -> LiveSequence[GltfPrimitive]: ...
     @property
     def extras(self) -> str | None:
         """Additional untyped data from the glTF file (JSON string)."""
@@ -82,7 +91,7 @@ class GltfPrimitive(Asset):
     @property
     def mesh(self) -> Handle: ...
     @property
-    def material(self) -> Handle | None: ...
+    def material(self) -> Handle[GltfMaterial] | None: ...
     @property
     def extras(self) -> str | None:
         """Additional untyped data from the glTF file (JSON string)."""
@@ -159,6 +168,26 @@ class GltfMaterialExtras(Component):
     @value.setter
     def value(self, value: str) -> None: ...
 
+class GltfConvertCoordinates:
+    def __init__(
+        self,
+        rotate_scene_entity: bool = False,
+        rotate_meshes: bool = False,
+    ) -> None: ...
+    @property
+    def rotate_scene_entity(self) -> bool: ...
+    @rotate_scene_entity.setter
+    def rotate_scene_entity(self, value: bool) -> None: ...
+    @property
+    def rotate_meshes(self) -> bool: ...
+    @rotate_meshes.setter
+    def rotate_meshes(self, value: bool) -> None: ...
+
+class GltfSkinnedMeshBoundsPolicy:
+    BindPose: GltfSkinnedMeshBoundsPolicy
+    Dynamic: GltfSkinnedMeshBoundsPolicy
+    NoFrustumCulling: GltfSkinnedMeshBoundsPolicy
+
 class GltfLoaderSettings:
     """Settings for loading glTF files."""
 
@@ -172,6 +201,9 @@ class GltfLoaderSettings:
         include_source: bool = False,
         default_sampler: ImageSamplerDescriptor | None = None,
         override_sampler: bool = False,
+        validate: bool = True,
+        convert_coordinates: GltfConvertCoordinates | None = None,
+        skinned_mesh_bounds_policy: GltfSkinnedMeshBoundsPolicy | None = None,
     ) -> None: ...
     @property
     def load_meshes(self) -> RenderAssetUsages: ...
@@ -205,6 +237,18 @@ class GltfLoaderSettings:
     def override_sampler(self) -> bool: ...
     @override_sampler.setter
     def override_sampler(self, value: bool) -> None: ...
+    @property
+    def validate(self) -> bool: ...
+    @validate.setter
+    def validate(self, value: bool) -> None: ...
+    @property
+    def convert_coordinates(self) -> GltfConvertCoordinates | None: ...
+    @convert_coordinates.setter
+    def convert_coordinates(self, value: GltfConvertCoordinates | None) -> None: ...
+    @property
+    def skinned_mesh_bounds_policy(self) -> GltfSkinnedMeshBoundsPolicy | None: ...
+    @skinned_mesh_bounds_policy.setter
+    def skinned_mesh_bounds_policy(self, value: GltfSkinnedMeshBoundsPolicy | None) -> None: ...
 class GltfAssetLabel:
     class Scene(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]

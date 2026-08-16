@@ -2,7 +2,7 @@ use bevy::shader::ShaderImport;
 use pyo3::prelude::*;
 
 #[pyclass(name = "ShaderImport", frozen, eq, from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderImport {
     AssetPath { value: String },
     Custom { value: String },
@@ -28,16 +28,6 @@ impl PyShaderImport {
 
     fn __str__(&self) -> String {
         self.module_name()
-    }
-
-    fn __hash__(&self) -> u64 {
-        use std::{
-            collections::hash_map::DefaultHasher,
-            hash::{Hash, Hasher},
-        };
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
     }
 }
 

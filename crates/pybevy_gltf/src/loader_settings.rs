@@ -1,14 +1,56 @@
-use bevy::gltf::GltfLoaderSettings;
+use bevy::{gltf::GltfLoaderSettings, image::ImageSamplerDescriptor};
 use pybevy_image::{image::PyRenderAssetUsages, sampler_descriptor::PyImageSamplerDescriptor};
 use pyo3::prelude::*;
 
-// NOTE: Bevy's GltfLoaderSettings also has a `convert_coordinates: Option<GltfConvertCoordinates>`
-// field, but GltfConvertCoordinates is private in bevy_gltf. Will be exposed once Bevy makes
-// the type public.
-#[pyclass(name = "GltfLoaderSettings")]
+use crate::{
+    convert_coordinates::PyGltfConvertCoordinates,
+    skinned_mesh_bounds_policy::PyGltfSkinnedMeshBoundsPolicy,
+};
+
+#[pyclass(name = "GltfLoaderSettings", skip_from_py_object)]
 #[derive(Default)]
 pub struct PyGltfLoaderSettings {
     pub(crate) inner: GltfLoaderSettings,
+}
+
+impl Clone for PyGltfLoaderSettings {
+    fn clone(&self) -> Self {
+        let mut inner = GltfLoaderSettings::default();
+        self.apply_to(&mut inner);
+        Self { inner }
+    }
+}
+
+impl PyGltfLoaderSettings {
+    pub fn apply_to(&self, settings: &mut GltfLoaderSettings) {
+        let GltfLoaderSettings {
+            load_meshes,
+            load_materials,
+            load_cameras,
+            load_lights,
+            load_animations,
+            include_source,
+            default_sampler,
+            override_sampler,
+            validate,
+            convert_coordinates,
+            skinned_mesh_bounds_policy,
+        } = &self.inner;
+
+        *settings = GltfLoaderSettings {
+            load_meshes: *load_meshes,
+            load_materials: *load_materials,
+            load_cameras: *load_cameras,
+            load_lights: *load_lights,
+            load_animations: *load_animations,
+            include_source: *include_source,
+            default_sampler: default_sampler.clone(),
+            override_sampler: *override_sampler,
+            validate: *validate,
+            convert_coordinates: *convert_coordinates,
+            skinned_mesh_bounds_policy: *skinned_mesh_bounds_policy,
+        };
+    }
 }
 
 #[pymethods]
@@ -24,6 +66,9 @@ impl PyGltfLoaderSettings {
         include_source = false,
         default_sampler = None,
         override_sampler = false,
+        validate = true,
+        convert_coordinates = None,
+        skinned_mesh_bounds_policy = None,
     ))]
     pub fn new(
         load_meshes: Option<PyRenderAssetUsages>,
@@ -34,8 +79,11 @@ impl PyGltfLoaderSettings {
         include_source: bool,
         default_sampler: Option<PyImageSamplerDescriptor>,
         override_sampler: bool,
-    ) -> Self {
-        Self {
+        validate: bool,
+        convert_coordinates: Option<PyGltfConvertCoordinates>,
+        skinned_mesh_bounds_policy: Option<PyGltfSkinnedMeshBoundsPolicy>,
+    ) -> PyResult<Self> {
+        Ok(Self {
             inner: GltfLoaderSettings {
                 load_meshes: load_meshes.map(Into::into).unwrap_or_default(),
                 load_materials: load_materials.map(Into::into).unwrap_or_default(),
@@ -43,11 +91,18 @@ impl PyGltfLoaderSettings {
                 load_lights,
                 load_animations,
                 include_source,
-                default_sampler: default_sampler.map(Into::into),
+                default_sampler: default_sampler
+                    .map(ImageSamplerDescriptor::try_from)
+                    .transpose()?,
                 override_sampler,
-                ..Default::default()
+                validate,
+                convert_coordinates: convert_coordinates
+                    .as_ref()
+                    .map(TryInto::try_into)
+                    .transpose()?,
+                skinned_mesh_bounds_policy: skinned_mesh_bounds_policy.map(Into::into),
             },
-        }
+        })
     }
 
     #[getter]
@@ -116,8 +171,9 @@ impl PyGltfLoaderSettings {
     }
 
     #[setter]
-    pub fn set_default_sampler(&mut self, value: Option<PyImageSamplerDescriptor>) {
-        self.inner.default_sampler = value.map(Into::into);
+    pub fn set_default_sampler(&mut self, value: Option<PyImageSamplerDescriptor>) -> PyResult<()> {
+        self.inner.default_sampler = value.map(ImageSamplerDescriptor::try_from).transpose()?;
+        Ok(())
     }
 
     #[getter]
@@ -128,6 +184,40 @@ impl PyGltfLoaderSettings {
     #[setter]
     pub fn set_override_sampler(&mut self, value: bool) {
         self.inner.override_sampler = value;
+    }
+
+    #[getter]
+    pub fn validate(&self) -> bool {
+        self.inner.validate
+    }
+
+    #[setter]
+    pub fn set_validate(&mut self, value: bool) {
+        self.inner.validate = value;
+    }
+
+    #[getter]
+    pub fn convert_coordinates(&self) -> Option<PyGltfConvertCoordinates> {
+        self.inner.convert_coordinates.map(Into::into)
+    }
+
+    #[setter]
+    pub fn set_convert_coordinates(
+        &mut self,
+        value: Option<PyGltfConvertCoordinates>,
+    ) -> PyResult<()> {
+        self.inner.convert_coordinates = value.as_ref().map(TryInto::try_into).transpose()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn skinned_mesh_bounds_policy(&self) -> Option<PyGltfSkinnedMeshBoundsPolicy> {
+        self.inner.skinned_mesh_bounds_policy.map(Into::into)
+    }
+
+    #[setter]
+    pub fn set_skinned_mesh_bounds_policy(&mut self, value: Option<PyGltfSkinnedMeshBoundsPolicy>) {
+        self.inner.skinned_mesh_bounds_policy = value.map(Into::into);
     }
 
     pub fn __repr__(&self) -> String {
@@ -147,5 +237,13 @@ impl From<GltfLoaderSettings> for PyGltfLoaderSettings {
 impl From<PyGltfLoaderSettings> for GltfLoaderSettings {
     fn from(py: PyGltfLoaderSettings) -> Self {
         py.inner
+    }
+}
+
+impl From<&PyGltfLoaderSettings> for GltfLoaderSettings {
+    fn from(py: &PyGltfLoaderSettings) -> Self {
+        let mut settings = GltfLoaderSettings::default();
+        py.apply_to(&mut settings);
+        settings
     }
 }

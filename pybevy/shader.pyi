@@ -28,7 +28,6 @@ class ShaderImport:
     def module_name(self) -> str:
         """Get the module name for this import."""
 
-    def __hash__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
@@ -92,7 +91,6 @@ class ShaderDefVal:
             Value formatted as string
         """
 
-    def __hash__(self) -> builtins.int: ...
     def __eq__(self, other: object) -> builtins.bool: ...
     def __ne__(self, other: object) -> builtins.bool: ...
 
@@ -165,6 +163,36 @@ class Source:
         def __init__(self, value: str) -> None: ...
 
     class GlslVertex(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class GlslTask(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class GlslMesh(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class GlslRayGeneration(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class GlslMiss(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class GlslAnyHit(Source):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class GlslClosestHit(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: str
         def __init__(self, value: str) -> None: ...

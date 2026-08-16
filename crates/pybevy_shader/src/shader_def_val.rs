@@ -2,7 +2,7 @@ use bevy::shader::ShaderDefVal;
 use pyo3::prelude::*;
 
 #[pyclass(name = "ShaderDefVal", frozen, eq, from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderDefVal {
     Bool { name: String, value: bool },
     Int { name: String, value: i32 },
@@ -40,16 +40,6 @@ impl PyShaderDefVal {
             | PyShaderDefVal::UInt { name, .. } => name,
         };
         format!("{}={}", name, self.value_as_string())
-    }
-
-    fn __hash__(&self) -> u64 {
-        use std::{
-            collections::hash_map::DefaultHasher,
-            hash::{Hash, Hasher},
-        };
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
     }
 }
 
