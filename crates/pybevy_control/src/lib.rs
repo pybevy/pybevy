@@ -10,7 +10,9 @@ pub mod server;
 pub mod sse;
 pub mod tools;
 
-pub use handlers::pyo3::execute::register_world_wrapper_hook;
+pub use handlers::pyo3::{
+    execute::register_world_wrapper_hook, mutate::register_lifecycle_mutation_hooks,
+};
 pub use plugin::PyControlPlugin;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 

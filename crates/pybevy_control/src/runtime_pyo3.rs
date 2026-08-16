@@ -4,8 +4,9 @@ use serde_json::Value;
 
 use crate::{
     bridge::{
-        ControlError, ControlRequest, EntityRef, GetComponentParams, QueryEntitiesParams,
-        RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
+        ControlError, ControlRequest, EntityRef, GetComponentParams, GetResourceParams,
+        QueryEntitiesParams, RemoveComponentParams, SetAssetParams, SetComponentParams,
+        SetResourceParams,
     },
     handlers,
     runtime::ControlRuntime,
@@ -56,8 +57,12 @@ impl ControlRuntime for Pyo3ControlRuntime {
         handlers::pyo3::scene::list_resources(world)
     }
 
-    fn list_systems(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::list_systems(world)
+    fn list_systems(
+        &mut self,
+        world: &mut World,
+        include_internal: bool,
+    ) -> Result<Value, ControlError> {
+        handlers::pyo3::scene::list_systems(world, include_internal)
     }
 
     fn query_entities(
@@ -65,7 +70,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: QueryEntitiesParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::query_entities(world, params.with, params.without)
+        handlers::pyo3::scene::query_entities(world, params.with, params.without, params.limit)
     }
 
     fn get_component_schema(
@@ -82,6 +87,14 @@ impl ControlRuntime for Pyo3ControlRuntime {
         params: GetComponentParams,
     ) -> Result<Value, ControlError> {
         handlers::pyo3::scene::get_component(world, params.entity, params.component)
+    }
+
+    fn get_resource(
+        &mut self,
+        world: &mut World,
+        params: GetResourceParams,
+    ) -> Result<Value, ControlError> {
+        handlers::pyo3::scene::get_resource(world, params.resource_type)
     }
 
     fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError> {
