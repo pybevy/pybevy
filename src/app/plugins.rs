@@ -7,7 +7,7 @@ use bevy::{
     diagnostic::FrameCountPlugin,
     image::ImagePlugin,
     log::LogPlugin,
-    prelude::PluginGroup,
+    prelude::{Plugin, PluginGroup},
     render::{
         RenderPlugin,
         settings::{RenderCreation, WgpuSettings},
@@ -16,7 +16,9 @@ use bevy::{
     window::{Window, WindowPlugin},
     winit::{WinitPlugin, WinitSettings},
 };
-use pybevy_core::PyPlugin;
+use pybevy_core::{
+    PluginGroupAddition, PluginGroupPlacement, PyPlugin, plugin::add_plugin_if_missing,
+};
 use pybevy_render::{plugin::PyRenderPlugin, wgpu_error_handler::WgpuErrorHandlerPlugin};
 use pybevy_window::{prelude::PyWindowPlugin, window::DEFAULT_APP_TITLE};
 use pybevy_winit::plugin::PyWinitPlugin;
@@ -27,7 +29,11 @@ use pyo3::{
     types::PyType,
 };
 
-use super::{app::PyApp, plugin::PyPluginGroup, plugin_config::PluginConfigType};
+use super::{
+    app::PyApp,
+    plugin::PyPluginGroup,
+    plugin_config::{PluginConfigType, plugin_config_type, try_plugin_config_type},
+};
 use crate::assets::configured_asset_plugin;
 
 fn default_window_plugin() -> WindowPlugin {
@@ -92,11 +98,9 @@ impl PyDefaultPlugins {
     }
 }
 
-#[derive(Clone)]
-enum PluginPosition {
-    End,
-    Before,
-    After,
+struct AddedPlugin {
+    addition: PluginGroupAddition<PluginConfigType, Py<PyAny>>,
+    config_type: Option<PluginConfigType>,
 }
 
 /// Thread-safe wrapper for Python type pointers used as plugin identifiers
@@ -119,7 +123,7 @@ unsafe impl Sync for PluginTypeId {}
 pub struct PyPluginGroupBuilder {
     configured_plugins: HashMap<PluginConfigType, Py<PyAny>>,
     disabled_plugins: HashSet<PluginConfigType>,
-    added_plugins: Vec<(PluginPosition, Py<PyAny>)>,
+    added_plugins: Vec<AddedPlugin>,
     /// Tracks the source plugin group type (e.g., DefaultPlugins) to prevent duplicate additions
     /// When DefaultPlugins().build() is called, this stores the DefaultPlugins type pointer
     pub(crate) source_type: Option<PluginTypeId>,
@@ -137,7 +141,13 @@ impl Clone for PyPluginGroupBuilder {
             added_plugins: self
                 .added_plugins
                 .iter()
-                .map(|(pos, plugin)| (pos.clone(), plugin.clone_ref(py)))
+                .map(|added| AddedPlugin {
+                    addition: PluginGroupAddition::new(
+                        added.addition.placement,
+                        added.addition.plugin.clone_ref(py),
+                    ),
+                    config_type: added.config_type,
+                })
                 .collect(),
             source_type: self.source_type,
         })
@@ -174,7 +184,7 @@ impl PyPluginGroupBuilder {
         }
 
         let plugin_type = plugin.get_type();
-        let config_type = PluginConfigType::from_py_type(py, &plugin_type)?;
+        let config_type = plugin_config_type(&plugin_type)?;
 
         // Clone to new instance (immutable builder pattern)
         let mut new_builder = self.clone();
@@ -186,7 +196,7 @@ impl PyPluginGroupBuilder {
     }
 
     pub fn disable(&self, py: Python, plugin_type: Bound<'_, PyType>) -> PyResult<Py<Self>> {
-        let config_type = PluginConfigType::from_py_type(py, &plugin_type)?;
+        let config_type = plugin_config_type(&plugin_type)?;
 
         let mut new_builder = self.clone();
         new_builder.disabled_plugins.insert(config_type);
@@ -201,10 +211,12 @@ impl PyPluginGroupBuilder {
             ));
         }
 
+        let config_type = try_plugin_config_type(&plugin.get_type());
         let mut new_builder = self.clone();
-        new_builder
-            .added_plugins
-            .push((PluginPosition::End, plugin.unbind()));
+        new_builder.added_plugins.push(AddedPlugin {
+            addition: PluginGroupAddition::new(PluginGroupPlacement::End, plugin.unbind()),
+            config_type,
+        });
 
         Py::new(py, (new_builder, PyPluginGroup))
     }
@@ -221,13 +233,17 @@ impl PyPluginGroupBuilder {
             ));
         }
 
-        // Validate target is a known plugin type (future: use for ordering)
-        let _target_type = PluginConfigType::from_py_type(py, &target)?;
+        let target_type = plugin_config_type(&target)?;
+        let config_type = require_native_group_plugin(&plugin, "add_before")?;
 
         let mut new_builder = self.clone();
-        new_builder
-            .added_plugins
-            .push((PluginPosition::Before, plugin.unbind()));
+        new_builder.added_plugins.push(AddedPlugin {
+            addition: PluginGroupAddition::new(
+                PluginGroupPlacement::Before(target_type),
+                plugin.unbind(),
+            ),
+            config_type: Some(config_type),
+        });
 
         Py::new(py, (new_builder, PyPluginGroup))
     }
@@ -244,19 +260,23 @@ impl PyPluginGroupBuilder {
             ));
         }
 
-        // Validate target is a known plugin type (future: use for ordering)
-        let _target_type = PluginConfigType::from_py_type(py, &target)?;
+        let target_type = plugin_config_type(&target)?;
+        let config_type = require_native_group_plugin(&plugin, "add_after")?;
 
         let mut new_builder = self.clone();
-        new_builder
-            .added_plugins
-            .push((PluginPosition::After, plugin.unbind()));
+        new_builder.added_plugins.push(AddedPlugin {
+            addition: PluginGroupAddition::new(
+                PluginGroupPlacement::After(target_type),
+                plugin.unbind(),
+            ),
+            config_type: Some(config_type),
+        });
 
         Py::new(py, (new_builder, PyPluginGroup))
     }
 
     pub fn enable(&self, py: Python, plugin_type: Bound<'_, PyType>) -> PyResult<Py<Self>> {
-        let config_type = PluginConfigType::from_py_type(py, &plugin_type)?;
+        let config_type = plugin_config_type(&plugin_type)?;
 
         let mut new_builder = self.clone();
         new_builder.disabled_plugins.remove(&config_type);
@@ -270,6 +290,16 @@ impl PyPluginGroupBuilder {
             self.insert_pre_plugin_resources(app.py(), bevy_app)?;
             let builder = self.apply_to_bevy(app.py())?;
             bevy_app.add_plugins(builder);
+            Ok(())
+        })?;
+
+        for added in &self.added_plugins {
+            if added.config_type.is_none() {
+                app.call_method1("add_plugins", (added.addition.plugin.bind(app.py()),))?;
+            }
+        }
+
+        app.borrow().with_bevy_app(|bevy_app| {
             bevy_app.add_plugins(WgpuErrorHandlerPlugin);
             // Register the WorldInstanceReady observer so MessageReader[WorldInstanceReady]
             // works without requiring an explicit WorldSerializationPlugin() addition.
@@ -286,9 +316,11 @@ impl PyPluginGroupBuilder {
     /// uses `init_resource::<WinitSettings>()` which is a no-op if already present.
     fn insert_pre_plugin_resources(&self, py: Python, bevy_app: &mut App) -> PyResult<()> {
         if let Some(plugin_obj) = self.configured_plugins.get(&PluginConfigType::Winit) {
-            let winit_plugin: PyRef<PyWinitPlugin> = plugin_obj.extract(py)?;
-            if let Some(ref settings) = winit_plugin.settings {
-                bevy_app.insert_resource(WinitSettings::from(settings.clone()));
+            insert_winit_settings(plugin_obj.bind(py), bevy_app)?;
+        }
+        for added in &self.added_plugins {
+            if added.config_type == Some(PluginConfigType::Winit) {
+                insert_winit_settings(added.addition.plugin.bind(py), bevy_app)?;
             }
         }
         Ok(())
@@ -312,14 +344,60 @@ impl PyPluginGroupBuilder {
             builder = disable_plugin(builder, disabled_type)?;
         }
 
-        // Apply added plugins (future enhancement)
-        // TODO review if needed anymore
-        // for (position, plugin) in &self.added_plugins {
-        //     builder = add_plugin(builder, position, plugin, py)?;
-        // }
+        for added in &self.added_plugins {
+            if let Some(config_type) = added.config_type {
+                builder = apply_added_plugin(builder, added, config_type, py)?;
+            }
+        }
 
         Ok(builder)
     }
+}
+
+fn require_native_group_plugin(
+    plugin: &Bound<'_, PyAny>,
+    method: &str,
+) -> PyResult<PluginConfigType> {
+    try_plugin_config_type(&plugin.get_type()).ok_or_else(|| {
+        let type_name = plugin
+            .get_type()
+            .name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        if pybevy_core::plugin::plugin_registry::has_plugin(plugin.get_type().as_type_ptr()) {
+            PyTypeError::new_err(format!(
+                "PluginGroupBuilder.{method}() cannot order native plugin '{type_name}' because it has no DefaultPlugins ordering adapter; use add()"
+            ))
+        } else {
+            PyTypeError::new_err(format!(
+                "PluginGroupBuilder.{method}() cannot order Python-defined plugin '{type_name}'; use add() or a native PyBevy plugin"
+            ))
+        }
+    })
+}
+
+fn insert_winit_settings(plugin: &Bound<'_, PyAny>, bevy_app: &mut App) -> PyResult<()> {
+    let winit_plugin: PyRef<PyWinitPlugin> = plugin.extract()?;
+    if let Some(ref settings) = winit_plugin.settings {
+        bevy_app.insert_resource(WinitSettings::from(settings.clone()));
+    }
+    Ok(())
+}
+
+fn configured_render_plugin(plugin_obj: &Py<PyAny>, py: Python<'_>) -> PyResult<RenderPlugin> {
+    let render_plugin: PyRef<PyRenderPlugin> = plugin_obj.extract(py)?;
+    let mut wgpu_settings = WgpuSettings::default();
+    if let Some(ref pp) = render_plugin.power_preference {
+        wgpu_settings.power_preference = (*pp).into();
+    }
+    let mut bevy_plugin = RenderPlugin {
+        render_creation: RenderCreation::Automatic(Box::new(wgpu_settings)),
+        ..Default::default()
+    };
+    if let Some(sync) = render_plugin.synchronous_pipeline_compilation {
+        bevy_plugin.synchronous_pipeline_compilation = sync;
+    }
+    Ok(bevy_plugin)
 }
 
 fn apply_plugin_configuration(
@@ -329,6 +407,9 @@ fn apply_plugin_configuration(
     py: Python,
 ) -> PyResult<PluginGroupBuilder> {
     match config_type {
+        PluginConfigType::Audio => Ok(builder.set(AudioPlugin::default())),
+        PluginConfigType::Image => Ok(builder.set(ImagePlugin::default())),
+        PluginConfigType::TaskPool => Ok(builder.set(TaskPoolPlugin::default())),
         PluginConfigType::Window => {
             let window_plugin: PyRef<PyWindowPlugin> = plugin_obj.extract(py)?;
             let bevy_plugin = WindowPlugin::try_from(&*window_plugin)?;
@@ -341,30 +422,99 @@ fn apply_plugin_configuration(
             Ok(builder.set(WinitPlugin::default()))
         }
 
-        PluginConfigType::Render => {
-            let render_plugin: PyRef<PyRenderPlugin> = plugin_obj.extract(py)?;
-            let mut wgpu_settings = WgpuSettings::default();
-            if let Some(ref pp) = render_plugin.power_preference {
-                wgpu_settings.power_preference = (*pp).into();
-            }
-            let mut bevy_plugin = RenderPlugin {
-                render_creation: RenderCreation::Automatic(Box::new(wgpu_settings)),
-                ..Default::default()
-            };
-            if let Some(sync) = render_plugin.synchronous_pipeline_compilation {
-                bevy_plugin.synchronous_pipeline_compilation = sync;
-            }
-            Ok(builder.set(bevy_plugin))
-        }
-
-        _ => Err(PyRuntimeError::new_err(format!(
-            "Plugin configuration not yet implemented: {:?}",
-            config_type
-        ))),
+        PluginConfigType::Render => Ok(builder.set(configured_render_plugin(plugin_obj, py)?)),
     }
 }
 
-// TODO: generate this match automatically from PluginConfigType variants (macro or build.rs)
+fn apply_added_plugin(
+    builder: PluginGroupBuilder,
+    added: &AddedPlugin,
+    config_type: PluginConfigType,
+    py: Python<'_>,
+) -> PyResult<PluginGroupBuilder> {
+    match config_type {
+        PluginConfigType::Audio => {
+            place_plugin(builder, added.addition.placement, AudioPlugin::default())
+        }
+        PluginConfigType::Image => {
+            place_plugin(builder, added.addition.placement, ImagePlugin::default())
+        }
+        PluginConfigType::TaskPool => {
+            place_plugin(builder, added.addition.placement, TaskPoolPlugin::default())
+        }
+        PluginConfigType::Window => {
+            let plugin: PyRef<PyWindowPlugin> = added.addition.plugin.extract(py)?;
+            place_plugin(
+                builder,
+                added.addition.placement,
+                WindowPlugin::try_from(&*plugin)?,
+            )
+        }
+        PluginConfigType::Winit => {
+            place_plugin(builder, added.addition.placement, WinitPlugin::default())
+        }
+        PluginConfigType::Render => place_plugin(
+            builder,
+            added.addition.placement,
+            configured_render_plugin(&added.addition.plugin, py)?,
+        ),
+    }
+}
+
+fn place_plugin<P: Plugin>(
+    builder: PluginGroupBuilder,
+    placement: PluginGroupPlacement<PluginConfigType>,
+    plugin: P,
+) -> PyResult<PluginGroupBuilder> {
+    match placement {
+        PluginGroupPlacement::End => Ok(builder.add(plugin)),
+        PluginGroupPlacement::Before(target) => place_before(builder, target, plugin),
+        PluginGroupPlacement::After(target) => place_after(builder, target, plugin),
+    }
+}
+
+fn place_before<P: Plugin>(
+    builder: PluginGroupBuilder,
+    target: PluginConfigType,
+    plugin: P,
+) -> PyResult<PluginGroupBuilder> {
+    let result = match target {
+        PluginConfigType::Audio => builder.try_add_before_overwrite::<AudioPlugin, _>(plugin),
+        PluginConfigType::Image => builder.try_add_before_overwrite::<ImagePlugin, _>(plugin),
+        PluginConfigType::Render => builder.try_add_before_overwrite::<RenderPlugin, _>(plugin),
+        PluginConfigType::TaskPool => builder.try_add_before_overwrite::<TaskPoolPlugin, _>(plugin),
+        PluginConfigType::Window => builder.try_add_before_overwrite::<WindowPlugin, _>(plugin),
+        PluginConfigType::Winit => builder.try_add_before_overwrite::<WinitPlugin, _>(plugin),
+    };
+    result.map_err(|_| {
+        PyRuntimeError::new_err(format!(
+            "target plugin '{}' is not present in DefaultPlugins",
+            target.public_name()
+        ))
+    })
+}
+
+fn place_after<P: Plugin>(
+    builder: PluginGroupBuilder,
+    target: PluginConfigType,
+    plugin: P,
+) -> PyResult<PluginGroupBuilder> {
+    let result = match target {
+        PluginConfigType::Audio => builder.try_add_after_overwrite::<AudioPlugin, _>(plugin),
+        PluginConfigType::Image => builder.try_add_after_overwrite::<ImagePlugin, _>(plugin),
+        PluginConfigType::Render => builder.try_add_after_overwrite::<RenderPlugin, _>(plugin),
+        PluginConfigType::TaskPool => builder.try_add_after_overwrite::<TaskPoolPlugin, _>(plugin),
+        PluginConfigType::Window => builder.try_add_after_overwrite::<WindowPlugin, _>(plugin),
+        PluginConfigType::Winit => builder.try_add_after_overwrite::<WinitPlugin, _>(plugin),
+    };
+    result.map_err(|_| {
+        PyRuntimeError::new_err(format!(
+            "target plugin '{}' is not present in DefaultPlugins",
+            target.public_name()
+        ))
+    })
+}
+
 fn disable_plugin(
     builder: PluginGroupBuilder,
     config_type: &PluginConfigType,
@@ -392,12 +542,10 @@ impl PyMinimalPlugins {
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
         app.borrow().with_bevy_app(|bevy_app| {
-            bevy_app.add_plugins((
-                TaskPoolPlugin::default(),
-                FrameCountPlugin,
-                TimePlugin,
-                ScheduleRunnerPlugin::default(),
-            ));
+            add_plugin_if_missing(bevy_app, TaskPoolPlugin::default());
+            add_plugin_if_missing(bevy_app, FrameCountPlugin);
+            add_plugin_if_missing(bevy_app, TimePlugin);
+            add_plugin_if_missing(bevy_app, ScheduleRunnerPlugin::default());
             Ok(())
         })
     }

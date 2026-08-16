@@ -28,29 +28,27 @@
 //!         transform.rotation *= Quat.from_rotation_y(time.delta_secs())
 //! ```
 
+#[cfg(feature = "native-hot-reload")]
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(feature = "native-hot-reload")]
-use std::{
-    path::Path,
-    time::{Duration, Instant},
-};
 
+#[cfg(feature = "native-hot-reload")]
+use bevy::prelude::{Res, Resource};
 use bevy::{
-    app::{
-        App, First, FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate, Last,
-        Main, Plugin, PostStartup, PostUpdate, PreStartup, PreUpdate, Startup, Update,
-    },
+    app::{App, Last, Plugin},
     ecs::schedule::{IntoScheduleConfigs, Schedules},
+    log::warn,
+};
+use pybevy_core::{
+    ComponentBridge, ensure_asset_access_registry, register_wrapped_reflect_types,
+    registry::global_registry,
 };
 #[cfg(feature = "native-hot-reload")]
-use notify::{EventKind, RecursiveMode, Watcher};
-use pybevy_core::{ComponentBridge, register_wrapped_reflect_types, registry::global_registry};
-use pybevy_reload::{HotReloadGeneration, SystemStage, generation_matches, startup_or_reload};
-use pyo3::{
-    exceptions::{PyAttributeError, PyImportError},
-    prelude::*,
-    types::PyList,
+use pybevy_reload::FileWatcher;
+use pybevy_reload::{
+    HotReloadGeneration, ReloadGenerationSet, SystemStage, generation_matches, startup_or_reload,
 };
+use pyo3::{exceptions::PyImportError, prelude::*, types::PyList};
 
 use crate::{
     _pybevy,
@@ -115,12 +113,42 @@ fn ensure_python_initialized() {
     });
 }
 
+/// Why a Python system could not be loaded.
+///
+/// Distinguishes an absent function from a real failure so auto-discovery can
+/// skip the former without also swallowing import errors or bad signatures.
+enum SystemLoadError {
+    /// The module imported cleanly but defines no such function.
+    MissingFunction,
+    /// Import failure, bad signature, or any other interpreter error.
+    Failed(PyErr),
+}
+
+/// Report a system that failed to load.
+///
+/// An auto-discovery probe finding no function is normal and stays silent.
+/// An explicitly requested system that is missing is a configuration error, so
+/// it is reported rather than silently dropped.
+fn report_system_load_error(module: &str, function: &str, optional: bool, error: SystemLoadError) {
+    match error {
+        SystemLoadError::MissingFunction if optional => {}
+        SystemLoadError::MissingFunction => {
+            warn!("Module '{module}' has no function '{function}': system not added");
+        }
+        SystemLoadError::Failed(error) => {
+            warn!("Failed to load Python system '{module}.{function}': {error}");
+        }
+    }
+}
+
 /// Builder for configuring Python systems before adding them to a Bevy app
 #[derive(Clone)]
 pub struct PySystemBuilder {
     module_name: String,
     function_name: String,
     stage: PyStage,
+    /// Auto-discovery probe: absence is expected and stays silent.
+    optional: bool,
 }
 
 impl PySystemBuilder {
@@ -135,6 +163,7 @@ impl PySystemBuilder {
             module_name: module_name.into(),
             function_name: function_name.into(),
             stage: PyStage::Update,
+            optional: false,
         }
     }
 
@@ -144,8 +173,14 @@ impl PySystemBuilder {
         self
     }
 
+    /// Mark this system as an auto-discovery probe whose absence is not an error
+    fn optional(mut self) -> Self {
+        self.optional = true;
+        self
+    }
+
     /// Build the DynamicSystem with default generation (0) and a fresh error state
-    fn build(self) -> PyResult<(DynamicSystem, PyStage)> {
+    fn build(self) -> Result<(DynamicSystem, PyStage), SystemLoadError> {
         self.build_with(0, Arc::new(Mutex::new(Vec::new())))
     }
 
@@ -154,25 +189,22 @@ impl PySystemBuilder {
         self,
         generation: u32,
         error_state: Arc<Mutex<Vec<PyErr>>>,
-    ) -> PyResult<(DynamicSystem, PyStage)> {
+    ) -> Result<(DynamicSystem, PyStage), SystemLoadError> {
         ensure_python_initialized();
 
         Python::attach(|py| {
             // Import the module
             let module = py.import(&self.module_name).map_err(|e| {
-                PyImportError::new_err(format!(
+                SystemLoadError::Failed(PyImportError::new_err(format!(
                     "Failed to import module '{}': {}",
                     self.module_name, e
-                ))
+                )))
             })?;
 
             // Get the function
-            let func = module.getattr(&self.function_name).map_err(|_| {
-                PyAttributeError::new_err(format!(
-                    "Module '{}' has no function '{}'",
-                    self.module_name, self.function_name
-                ))
-            })?;
+            let func = module
+                .getattr(&self.function_name)
+                .map_err(|_| SystemLoadError::MissingFunction)?;
 
             // Create DynamicSystem
             let system_stage = if self.stage.is_startup() {
@@ -189,7 +221,8 @@ impl PySystemBuilder {
                 error_state,
                 Arc::new(Mutex::new(None)),
                 system_stage,
-            )?;
+            )
+            .map_err(SystemLoadError::Failed)?;
 
             Ok((dynamic_system, self.stage))
         })
@@ -198,7 +231,7 @@ impl PySystemBuilder {
 
 /// Python source for the native plugin hot reload loader.
 ///
-/// Self-contained — no dependency on the pybevy Python package so that
+/// Self-contained: no dependency on the pybevy Python package so that
 /// `cargo test` works without a matching install. Loads the scene module
 /// via `importlib.util.spec_from_file_location` so that the module is
 /// registered in `sys.modules` (unlike `runpy.run_path`, which only
@@ -286,73 +319,40 @@ def _make_native_loader(module_name, systems):
     return loader
 "#;
 
-/// Start a background file watcher that triggers hot reload on `.py` file changes.
 #[cfg(feature = "native-hot-reload")]
-fn start_file_watcher(paths: &[String], reload_state: HotReloadState) {
-    let paths: Vec<String> = paths.to_vec();
+#[derive(Resource)]
+struct NativeFileWatcher(FileWatcher);
 
-    std::thread::spawn(move || {
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let mut watcher =
-            match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    if matches!(
-                        event.kind,
-                        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-                    ) {
-                        let has_py = event
-                            .paths
-                            .iter()
-                            .any(|p| p.extension().is_some_and(|e| e == "py"));
-                        if has_py {
-                            let _ = tx.send(());
-                        }
-                    }
-                }
-            }) {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("[Hot Reload] Warning: Failed to create file watcher: {}", e);
-                    return;
-                }
-            };
-
-        for path in &paths {
-            if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::Recursive) {
-                eprintln!("[Hot Reload] Warning: Failed to watch '{}': {}", path, e);
+#[cfg(feature = "native-hot-reload")]
+fn poll_native_file_watcher(
+    watcher: Option<Res<'_, NativeFileWatcher>>,
+    reload: Res<'_, HotReloadResource>,
+) {
+    let Some(watcher) = watcher else {
+        return;
+    };
+    let mut changed_paths = Vec::new();
+    loop {
+        match watcher.0.try_recv() {
+            Ok(Some(batch)) => changed_paths.extend_from_slice(batch.paths()),
+            Ok(None) => break,
+            Err(error) => {
+                eprintln!("[Hot Reload] File watcher error: {error}");
+                break;
             }
         }
+    }
+    if changed_paths.is_empty() {
+        return;
+    }
 
-        eprintln!("[Hot Reload] File watcher started for: {:?}", paths);
-
-        let debounce = Duration::from_millis(50);
-        let mut last_reload = Instant::now() - debounce;
-
-        loop {
-            match rx.recv() {
-                Ok(()) => {
-                    // Debounce: drain any events within the debounce window
-                    let deadline = Instant::now() + debounce;
-                    while rx
-                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                        .is_ok()
-                    {}
-
-                    if last_reload.elapsed() >= debounce {
-                        let mode = reload_state.get_default_mode();
-                        eprintln!(
-                            "[Hot Reload] File change detected, requesting {:?} reload",
-                            mode
-                        );
-                        reload_state.request_reload(mode);
-                        last_reload = Instant::now();
-                    }
-                }
-                Err(_) => break, // Channel closed
-            }
-        }
-    });
+    let mode = reload.state.get_default_mode();
+    eprintln!(
+        "[Hot Reload] File changes detected in {} Python file(s), requesting {:?} reload",
+        changed_paths.len(),
+        mode
+    );
+    reload.state.request_reload(mode);
 }
 
 /// Native Bevy plugin for integrating Python systems into Rust applications
@@ -530,6 +530,7 @@ impl PyBevyPlugin {
 impl Plugin for PyBevyPlugin {
     fn build(&self, app: &mut App) {
         ensure_python_initialized();
+        ensure_asset_access_registry(app.world_mut());
 
         // Reflect-register all bridged bevy types so MCP/editor tooling can
         // resolve them by name even without bevy's reflect_auto_register
@@ -579,9 +580,14 @@ impl Plugin for PyBevyPlugin {
         let systems_to_add = if self.systems.is_empty() {
             vec![
                 PySystemBuilder::new(self.module_name.clone(), "startup")
-                    .in_stage(PyStage::Startup),
-                PySystemBuilder::new(self.module_name.clone(), "update").in_stage(PyStage::Update),
-                PySystemBuilder::new(self.module_name.clone(), "last").in_stage(PyStage::Last),
+                    .in_stage(PyStage::Startup)
+                    .optional(),
+                PySystemBuilder::new(self.module_name.clone(), "update")
+                    .in_stage(PyStage::Update)
+                    .optional(),
+                PySystemBuilder::new(self.module_name.clone(), "last")
+                    .in_stage(PyStage::Last)
+                    .optional(),
             ]
         } else {
             self.systems.clone()
@@ -596,24 +602,24 @@ impl Plugin for PyBevyPlugin {
 }
 
 impl PyBevyPlugin {
-    /// Build without hot reload — current behavior, systems added directly
+    /// Build without hot reload: current behavior, systems added directly
     fn build_without_hot_reload(&self, app: &mut App, systems_to_add: Vec<PySystemBuilder>) {
         for builder in systems_to_add {
-            match builder.build() as PyResult<(DynamicSystem, PyStage)> {
+            let (module, function, optional) = (
+                builder.module_name.clone(),
+                builder.function_name.clone(),
+                builder.optional,
+            );
+            match builder.build() {
                 Ok((dynamic_system, stage)) => {
                     add_dynamic_system_to_schedule(app, dynamic_system, stage);
                 }
-                Err(e) => {
-                    // Only error if it's not a simple "function not found" error during auto-discovery
-                    if !e.to_string().contains("has no function") {
-                        eprintln!("Warning: Failed to load Python system: {}", e);
-                    }
-                }
+                Err(error) => report_system_load_error(&module, &function, optional, error),
             }
         }
     }
 
-    /// Build with hot reload — sets up reload infrastructure and adds systems with run conditions
+    /// Build with hot reload: sets up reload infrastructure and adds systems with run conditions
     fn build_with_hot_reload(&self, app: &mut App, systems_to_add: &[PySystemBuilder]) {
         eprintln!(
             "[Hot Reload] Enabling hot reload for native plugin '{}'",
@@ -685,11 +691,12 @@ impl PyBevyPlugin {
                         initial_generation,
                     );
                 }
-                Err(e) => {
-                    if !e.to_string().contains("has no function") {
-                        eprintln!("Warning: Failed to load Python system: {}", e);
-                    }
-                }
+                Err(error) => report_system_load_error(
+                    &builder.module_name,
+                    &builder.function_name,
+                    builder.optional,
+                    error,
+                ),
             }
         }
 
@@ -698,17 +705,39 @@ impl PyBevyPlugin {
             app.init_schedule(Last);
         }
 
-        // Add F5/F6 key handler and reload check systems to Last
+        #[cfg(feature = "native-hot-reload")]
+        if !self.python_paths.is_empty() {
+            let paths = self.python_paths.iter().map(PathBuf::from).collect();
+            match FileWatcher::with_defaults(paths) {
+                Ok(watcher) => {
+                    eprintln!(
+                        "[Hot Reload] File watcher started for: {:?}",
+                        self.python_paths
+                    );
+                    app.insert_resource(NativeFileWatcher(watcher));
+                }
+                Err(error) => {
+                    eprintln!("[Hot Reload] Warning: Failed to start file watcher: {error}");
+                }
+            }
+        }
+
+        // Add F5/F6 key handler and reload check systems to Last.
+        #[cfg(not(feature = "native-hot-reload"))]
         app.add_systems(
             Last,
             (handle_f5_reload_system, check_hot_reload_system).chain(),
         );
-
-        // Start file watcher if the native-hot-reload feature is enabled
         #[cfg(feature = "native-hot-reload")]
-        if !self.python_paths.is_empty() {
-            start_file_watcher(&self.python_paths, reload_state);
-        }
+        app.add_systems(
+            Last,
+            (
+                handle_f5_reload_system,
+                poll_native_file_watcher,
+                check_hot_reload_system,
+            )
+                .chain(),
+        );
 
         eprintln!("[Hot Reload] Native plugin hot reload ready (F5=reload, F6=toggle mode)");
     }
@@ -728,8 +757,18 @@ fn add_dynamic_system_to_schedule_with_run_condition(
 ) {
     let label = stage.intern_label();
     if stage.is_startup() {
-        app.add_systems(label, dynamic_system.run_if(startup_or_reload(generation)));
+        app.add_systems(
+            label,
+            dynamic_system
+                .run_if(startup_or_reload(generation))
+                .in_set(ReloadGenerationSet(generation)),
+        );
     } else {
-        app.add_systems(label, dynamic_system.run_if(generation_matches(generation)));
+        app.add_systems(
+            label,
+            dynamic_system
+                .run_if(generation_matches(generation))
+                .in_set(ReloadGenerationSet(generation)),
+        );
     }
 }
