@@ -556,6 +556,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "js-sys",
+ "notify-debouncer-full",
  "ron",
  "serde",
  "stackfuture",
@@ -2514,11 +2515,10 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "5.4.1"
+version = "5.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
- "concurrent-queue",
  "parking",
  "pin-project-lite",
 ]
@@ -2584,14 +2584,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "filetime"
-version = "0.2.27"
+name = "file-id"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f98844151eee8917efc50bd9e8318cb963ae8b297431495d3f758616ea5c57db"
+checksum = "e1fc6a637b6dc58414714eddd9170ff187ecb0933d4c7024d1abbd23a3cc26e9"
 dependencies = [
- "cfg-if",
- "libc",
- "libredox",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3314,11 +3312,11 @@ checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "inotify"
-version = "0.10.2"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd168d97690d0b8c412d6b6c10360277f4d7ee495c5d0d5d5fe0854923255cc"
+checksum = "533e68a5842e734946fe159fb03fc9bbbb254f590dd0d8ad321ae5ff7beca2c1"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.10.0",
  "inotify-sys",
  "libc",
 ]
@@ -3330,15 +3328,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e05c02b5e89bff3b946cedeca278abc628fe811e604f027c45a8aa3cf793d0eb"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "instant"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
@@ -3605,9 +3594,9 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "memmap2"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
@@ -3759,12 +3748,11 @@ checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 
 [[package]]
 name = "notify"
-version = "7.0.0"
+version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c533b4c39709f9ba5005d8002048266593c1cfaf3c5f0739d5b8ab0c6c504009"
+checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
 dependencies = [
  "bitflags 2.10.0",
- "filetime",
  "fsevent-sys",
  "inotify",
  "kqueue",
@@ -3773,16 +3761,29 @@ dependencies = [
  "mio",
  "notify-types",
  "walkdir",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "notify-debouncer-full"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c02b49179cfebc9932238d04d6079912d26de0379328872846118a0fa0dbb302"
+dependencies = [
+ "file-id",
+ "log",
+ "notify",
+ "notify-types",
+ "walkdir",
 ]
 
 [[package]]
 name = "notify-types"
-version = "1.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "585d3cb5e12e01aed9e8a1f70d5c6b5e86fe2a6e48fc8cd0b3e0b8df6f6eb174"
+checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
 dependencies = [
- "instant",
+ "bitflags 2.10.0",
 ]
 
 [[package]]
@@ -4557,7 +4558,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "accesskit",
  "bevy",
@@ -4566,7 +4567,6 @@ dependencies = [
  "image",
  "libc",
  "naga",
- "notify",
  "numpy",
  "paste",
  "pybevy_a11y",
@@ -4617,14 +4617,14 @@ dependencies = [
 
 [[package]]
 name = "pybevy-build"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "cargo_metadata",
 ]
 
 [[package]]
 name = "pybevy-python"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pybevy",
  "pyo3",
@@ -4632,7 +4632,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_a11y"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "accesskit",
  "bevy",
@@ -4643,7 +4643,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_animation"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4655,7 +4655,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_array"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "numpy",
@@ -4665,7 +4665,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_audio"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4679,7 +4679,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_bytecodevm"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy_ecs",
  "criterion",
@@ -4691,7 +4691,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_camera"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4708,7 +4708,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_color"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4719,7 +4719,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_control"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -4743,7 +4743,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "inventory",
@@ -4758,7 +4758,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_core_pipeline"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4768,7 +4768,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_ecs"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4782,7 +4782,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_gizmos"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_camera",
@@ -4795,7 +4795,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_gltf"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4807,7 +4807,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_image"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "image",
@@ -4822,7 +4822,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_input"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -4833,7 +4833,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_light"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4849,7 +4849,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_macros"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4859,7 +4859,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_material"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_macros",
@@ -4868,7 +4868,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_math"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "bevy_math",
@@ -4879,7 +4879,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_mesh"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4895,7 +4895,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_pbr"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4912,7 +4912,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_post_process"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4925,7 +4925,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_reload"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "image",
@@ -4939,7 +4939,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_render"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "crossbeam-channel",
@@ -4956,7 +4956,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_shader"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "naga",
@@ -4967,7 +4967,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_shader_types"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "tracing",
@@ -4975,7 +4975,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_sprite"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -4989,7 +4989,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_storage"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pyo3",
@@ -4997,7 +4997,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_text"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -5011,7 +5011,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_time"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -5021,7 +5021,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_transform"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -5033,7 +5033,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_ui"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -5047,7 +5047,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_window"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "numpy",
@@ -5060,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_winit"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -5070,7 +5070,7 @@ dependencies = [
 
 [[package]]
 name = "pybevy_world_serialization"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "pybevy_core",
@@ -5082,9 +5082,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3"
-version = "0.29.0"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd274650b21d4bfc26a0a47587962c1edb425f69287324355cd040c3ea66071c"
+checksum = "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"
 dependencies = [
  "inventory",
  "libc",
@@ -5099,18 +5099,18 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.29.0"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5e2a7d2f0d013342f295c048ad19237add5154a55b1c5a254c0ec93d4109078"
+checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
 dependencies = [
  "target-lexicon",
 ]
 
 [[package]]
 name = "pyo3-ffi"
-version = "0.29.0"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca85c467da1bbc8d866eea5deff9cf29ea5f7785054a17da36e65bda9c05845b"
+checksum = "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"
 dependencies = [
  "libc",
  "pyo3-build-config",
@@ -5118,9 +5118,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros"
-version = "0.29.0"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ac53762fd065daa3194dd09337a38bd793a188100fd1a9304c4ab312d901771"
+checksum = "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"
 dependencies = [
  "proc-macro2",
  "pyo3-macros-backend",
@@ -5130,9 +5130,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros-backend"
-version = "0.29.0"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca3a1557399783172dc5bf39cfca835157732532cba56b71d2292161e53b362"
+checksum = "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -5725,9 +5725,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 dependencies = [
  "portable-atomic",
 ]

@@ -1,6 +1,6 @@
 [package]
 name = "pybevy-build"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Build helper for downstream pybevy wheels — locates and copies Python sources"
 license = "MIT OR Apache-2.0"

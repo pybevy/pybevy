@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_array"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Bounded array core and backend adapters for PyBevy"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ pyo3 = ["numeric", "dep:pyo3", "dep:numpy"]
 [dependencies]
 pyo3 = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
-pybevy_bytecodevm = { path = "../pybevy_bytecodevm", version = "=0.2.1", features = ["parallel"], optional = true }
+pybevy_bytecodevm = { path = "../pybevy_bytecodevm", version = "=0.3.0", features = ["parallel"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

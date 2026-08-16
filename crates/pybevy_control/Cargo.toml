@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_control"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "HTTP control API for PyBevy - enables remote interaction with running scenes"
 license = "MIT OR Apache-2.0"

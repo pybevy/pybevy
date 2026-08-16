@@ -1,9 +1,9 @@
 [project]
 name = "pybevy"
-version = "0.2.1"
+version = "0.3.0"
 description = "PyBevy: A Python Real-Time Engine Built on Bevy"
 requires-python = ">=3.12,<4.0"
-dependencies = ["click ~= 8.3", "watchfiles ~= 1.1", "numpy (>=2.3.2,<2.5)", "httpx >= 0.27"]
+dependencies = ["typing-extensions >= 4.12; python_version < '3.13'"]
 authors = [{ name = "PyBevy Team", email = "info@pybevy.com" }]
 readme = "README.md"
 license = "MIT OR Apache-2.0"
@@ -11,6 +11,7 @@ license-files = ["LICENSE-APACHE", "LICENSE-MIT"]
 dynamic = ["classifiers"]
 
 [project.optional-dependencies]
+numpy = ["numpy (>=2.3.2,<2.5)"]
 numba = ["numba (>=0.65.0)"]
 jax = ["jax (>=0.4.30)", "jaxlib (>=0.4.30)"]
 
@@ -46,6 +47,7 @@ classifiers = [
 
 
 [tool.poetry.group.dev.dependencies]
+httpx = ">=0.27"
 pytest = "^9.0.3"
 maturin = { extras = ["patchelf"], version = "^1.9.2" }
 mypy = "^1.17.1"
@@ -56,7 +58,7 @@ pytest-xdist = "^3.8.0"
 pillow = "^12.2.0"
 types-pillow = "^10.2.0"
 pytest-cov = "^7.1.0"
-pyright = "^1.1.408"
+pyright = { extras = ["nodejs"], version = "^1.1.408" }
 pytest-timeout = "^2.3.1"
 
 [tool.poetry.group.jax]
@@ -135,6 +137,7 @@ exclude = [
 "pybevy/ecs/numba_ext.py" = ["ANN", "UP007", "UP008", "UP038", "RET503", "B904", "SIM102"]  # Numba special requirements
 "pybevy/contrib/*.py" = ["PLC0415"]  # Deferred imports to avoid circular deps
 "pybevy/expr.py" = ["A001"]  # Math functions intentionally shadow builtins (abs, min, max, round)
+"pybevy/array.pyi" = ["A001"]  # Array functions intentionally shadow builtins (abs/min/max/round/sum/all/any)
 "tests/mcp/test_getset_descriptor_detection.py" = ["PLC0415"]  # Deferred imports for optional module isolation
 "eval/*" = ["T20", "ANN201", "ANN001", "ANN401", "PLC0415"]  # Eval: print, relaxed annotations, deferred imports
 
