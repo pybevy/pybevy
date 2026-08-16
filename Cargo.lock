@@ -4776,8 +4776,11 @@ name = "pybevy_gizmos"
 version = "0.2.1"
 dependencies = [
  "bevy",
+ "pybevy_camera",
+ "pybevy_color",
  "pybevy_core",
  "pybevy_macros",
+ "pybevy_math",
  "pyo3",
 ]
 
