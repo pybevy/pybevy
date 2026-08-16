@@ -1,17 +1,20 @@
 from enum import Enum
-from typing import ClassVar, Literal
+from typing import ClassVar, Final, Literal
 
 import numpy as np
 
 from pybevy.app import App, Plugin
-from pybevy.ecs import Batchable, Component, Entity, Message
+from pybevy.ecs import Batchable, Component, Entity, Message, SystemSet
 from pybevy.input import (
     ButtonState,
+    KeyboardInput,
     MouseButton,
     MouseScrollUnit,
     TouchPhase,
 )
 from pybevy.math import CompassOctant, IVec2, UVec2, Vec2
+
+ExitSystems: Final[SystemSet]
 
 class ExitCondition(Enum):
     """Determines when the application should exit based on window state.
@@ -42,6 +45,7 @@ class WindowRef:
 class NormalizedWindowRef:
     @property
     def entity(self) -> Entity: ...
+    def __eq__(self, other: object) -> bool: ...
 
 class WindowPlugin(Plugin):
     """Plugin for window management.
@@ -91,11 +95,11 @@ class WindowResolution:
 
     def __init__(
         self,
-        width: float = 1280.0,
-        height: float = 720.0,
+        physical_width: int = 1280,
+        physical_height: int = 720,
         scale_factor_override: float | None = None,
     ) -> None:
-        """Create a new window resolution."""
+        """Create a new window resolution from a size in physical pixels."""
 
     @property
     def width(self) -> float:
@@ -143,7 +147,7 @@ class WindowResolution:
         """Set the base scale factor (used by window backend initialization)."""
 
     def with_scale_factor_override(self, scale_factor_override: float) -> WindowResolution:
-        """Builder method to set scale factor override, returns self for chaining."""
+        """Return a copy of this resolution with the given scale factor override."""
 
 class VideoModeSelection:
     """Video mode selection for fullscreen windows.
@@ -674,17 +678,19 @@ class CursorGrabMode:
     Cursor grab mode - controls whether cursor is locked or confined to window.
 
     Variants:
-        None_: Cursor can move freely (access as `CursorGrabMode.None` at runtime)
+        None_: Cursor can move freely
         Confined: Cursor is confined to the window bounds but can move within it
         Locked: Cursor is locked to the center of the window (for FPS camera control)
 
-    Note: In type stubs, use `None_` to avoid Python keyword conflict.
-    At runtime, PyO3 exposes it as `CursorGrabMode.None`.
+    Note: bevy spells this variant `None`, which is a Python keyword, so it is
+    exposed as `None_` in both the stubs and at runtime.
     """
 
     None_: CursorGrabMode
     Confined: CursorGrabMode
     Locked: CursorGrabMode
+
+    def __hash__(self) -> int: ...
 
 class CursorOptions(Component):
     """
@@ -707,7 +713,12 @@ class CursorOptions(Component):
         ```
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        visible: bool = True,
+        grab_mode: CursorGrabMode = CursorGrabMode.None_,
+        hit_test: bool = True,
+    ) -> None:
         """Create new cursor options with default settings."""
 
     @property
@@ -813,6 +824,7 @@ class SystemCursorIcon:
     ZoomIn: SystemCursorIcon
     ZoomOut: SystemCursorIcon
 
+    def __hash__(self) -> int: ...
 
 class WindowTheme:
     """System window theme preference.
@@ -865,6 +877,7 @@ class PresentMode:
     Mailbox: PresentMode
     """Single-frame queue (fast VSync). No tearing, newest frame used."""
 
+    def __hash__(self) -> int: ...
 
 class CompositeAlphaMode:
     """Alpha compositing mode for window surfaces.
@@ -894,6 +907,7 @@ class CompositeAlphaMode:
     Inherit: CompositeAlphaMode
     """Platform-specific default alpha handling."""
 
+    def __hash__(self) -> int: ...
 
 class WindowResizeConstraints:
     """Constraints on window resizing dimensions.
@@ -967,7 +981,7 @@ class ScreenEdge:
         All: All edges of the screen
     """
     None_: ScreenEdge
-    """No edge (default). At runtime, access as ScreenEdge.None."""
+    """No edge (default). Spelled `None_` because bevy's `None` is a Python keyword."""
 
     Top: ScreenEdge
     """Top edge of the screen."""
@@ -984,6 +998,7 @@ class ScreenEdge:
     All: ScreenEdge
     """All edges of the screen."""
 
+    def __hash__(self) -> int: ...
 
 class AppLifecycle:
     """Application lifecycle state.
@@ -1258,48 +1273,47 @@ class Ime(Message):
 
         def handle_ime(ime_events: MessageReader[Ime]) -> None:
             for ime in ime_events:
-                if ime.is_preedit():
-                    print(f"Composing: {ime.value}")
-                elif ime.is_commit():
-                    print(f"Insert: {ime.value}")
-                elif ime.is_enabled():
-                    print("IME enabled")
-                elif ime.is_disabled():
-                    print("IME disabled")
+                match ime:
+                    case Ime.Preedit(_, value, cursor):
+                        print(f"Composing: {value}, cursor={cursor}")
+                    case Ime.Commit(_, value):
+                        print(f"Insert: {value}")
+                    case Ime.Enabled():
+                        print("IME enabled")
+                    case Ime.Disabled():
+                        print("IME disabled")
         ```
     """
 
-    @property
-    def window(self) -> Entity:
-        """Get the window entity that received this event."""
+    class Preedit(Ime):
+        __match_args__: ClassVar[
+            tuple[Literal["window"], Literal["value"], Literal["cursor"]]
+        ]
+        window: Entity
+        value: str
+        cursor: tuple[int, int] | None
+        def __init__(
+            self,
+            window: Entity,
+            value: str,
+            cursor: tuple[int, int] | None = None,
+        ) -> None: ...
 
-    @property
-    def value(self) -> str | None:
-        """Get the text value (for Preedit and Commit events).
+    class Commit(Ime):
+        __match_args__: ClassVar[tuple[Literal["window"], Literal["value"]]]
+        window: Entity
+        value: str
+        def __init__(self, window: Entity, value: str) -> None: ...
 
-        Returns None for Enabled/Disabled events.
-        """
+    class Enabled(Ime):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
-    @property
-    def cursor(self) -> tuple[int, int] | None:
-        """Get the cursor position (for Preedit events only).
-
-        Returns the cursor begin and end position within the preedit string,
-        or None if the cursor should be hidden.
-        Returns None for non-Preedit events.
-        """
-
-    def is_preedit(self) -> bool:
-        """Check if this is a Preedit event (composing text)."""
-
-    def is_commit(self) -> bool:
-        """Check if this is a Commit event (text to insert)."""
-
-    def is_enabled(self) -> bool:
-        """Check if this is an Enabled event."""
-
-    def is_disabled(self) -> bool:
-        """Check if this is a Disabled event."""
+    class Disabled(Ime):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
 
 class FileDragAndDrop(Message):
@@ -1319,34 +1333,32 @@ class FileDragAndDrop(Message):
 
         def handle_file_drop(events: MessageReader[FileDragAndDrop]) -> None:
             for event in events:
-                if event.is_dropped_file():
-                    print(f"File dropped: {event.path}")
-                elif event.is_hovered_file():
-                    print(f"File hovering: {event.path}")
-                elif event.is_hovered_file_canceled():
-                    print("File hover canceled")
+                match event:
+                    case FileDragAndDrop.DroppedFile(_, path_buf):
+                        print(f"File dropped: {path_buf}")
+                    case FileDragAndDrop.HoveredFile(_, path_buf):
+                        print(f"File hovering: {path_buf}")
+                    case FileDragAndDrop.HoveredFileCanceled():
+                        print("File hover canceled")
         ```
     """
 
-    @property
-    def window(self) -> Entity:
-        """Get the window entity that received this event."""
+    class DroppedFile(FileDragAndDrop):
+        __match_args__: ClassVar[tuple[Literal["window"], Literal["path_buf"]]]
+        window: Entity
+        path_buf: str
+        def __init__(self, window: Entity, path_buf: str) -> None: ...
 
-    @property
-    def path(self) -> str | None:
-        """Get the file path (for DroppedFile and HoveredFile events).
+    class HoveredFile(FileDragAndDrop):
+        __match_args__: ClassVar[tuple[Literal["window"], Literal["path_buf"]]]
+        window: Entity
+        path_buf: str
+        def __init__(self, window: Entity, path_buf: str) -> None: ...
 
-        Returns None for HoveredFileCanceled events.
-        """
-
-    def is_dropped_file(self) -> bool:
-        """Check if this is a DroppedFile event."""
-
-    def is_hovered_file(self) -> bool:
-        """Check if this is a HoveredFile event."""
-
-    def is_hovered_file_canceled(self) -> bool:
-        """Check if this is a HoveredFileCanceled event."""
+    class HoveredFileCanceled(FileDragAndDrop):
+        __match_args__: ClassVar[tuple[Literal["window"]]]
+        window: Entity
+        def __init__(self, window: Entity) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1519,7 +1531,7 @@ class RequestRedraw(Message):
     Example:
         ```python
         def force_redraw(writer: MessageWriter[RequestRedraw]) -> None:
-            writer.send(RequestRedraw())
+            writer.write(RequestRedraw())
         ```
     """
 
@@ -1561,10 +1573,7 @@ class WindowEvent:
         - WindowScaleFactorChanged(scale_factor: float, window: Entity)
         - WindowBackendScaleFactorChanged(scale_factor: float, window: Entity)
         - WindowThemeChanged(theme: WindowTheme, window: Entity)
-        - KeyboardInput() - placeholder, use MessageReader[KeyboardInput] for full support
-
-    Note: KeyboardInput variant contains no data due to modifier key detection
-    requirements. Use MessageReader[KeyboardInput] directly for full keyboard support.
+        - KeyboardInput(value: KeyboardInput)
 
     Example:
         ```python
@@ -1610,15 +1619,14 @@ class WindowEvent:
         ) -> None: ...
 
     class FileDragAndDrop(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"], Literal["path"]]]
-        window: Entity
-        path: str | None
-        def __init__(self, window: Entity, path: str | None = None) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: FileDragAndDrop
+        def __init__(self, value: FileDragAndDrop) -> None: ...
 
     class Ime(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"]]]
-        window: Entity
-        def __init__(self, window: Entity) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: Ime
+        def __init__(self, value: Ime) -> None: ...
 
     class RequestRedraw(WindowEvent):
         __match_args__: ClassVar[tuple[()]]
@@ -1765,5 +1773,6 @@ class WindowEvent:
         def __init__(self, theme: WindowTheme, window: Entity) -> None: ...
 
     class KeyboardInput(WindowEvent):
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: KeyboardInput
+        def __init__(self, value: KeyboardInput) -> None: ...

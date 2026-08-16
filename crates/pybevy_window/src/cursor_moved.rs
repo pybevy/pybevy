@@ -54,16 +54,18 @@ impl PyCursorMoved {
         self.window
     }
 
-    fn __repr__(&self) -> String {
-        let pos = self.position.get();
-        format!(
+    fn __repr__(&self) -> PyResult<String> {
+        let pos = self.position.try_get()?;
+        let delta = match self.delta.as_ref() {
+            Some(d) => {
+                let dv = d.try_get()?;
+                Some(format!("Vec2({}, {})", dv.x, dv.y))
+            }
+            None => None,
+        };
+        Ok(format!(
             "CursorMoved(position=Vec2({}, {}), delta={:?})",
-            pos.x,
-            pos.y,
-            self.delta.as_ref().map(|d| {
-                let dv = d.get();
-                format!("Vec2({}, {})", dv.x, dv.y)
-            })
-        )
+            pos.x, pos.y, delta
+        ))
     }
 }

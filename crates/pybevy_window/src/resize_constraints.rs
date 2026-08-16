@@ -1,19 +1,43 @@
 use bevy::window::WindowResizeConstraints;
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
+#[pyvalue]
 #[pyclass(name = "WindowResizeConstraints", eq, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PyWindowResizeConstraints(pub WindowResizeConstraints);
+#[derive(Debug, Clone)]
+pub struct PyWindowResizeConstraints {
+    pub(crate) storage: ValueStorage<WindowResizeConstraints>,
+}
 
-impl From<WindowResizeConstraints> for PyWindowResizeConstraints {
-    fn from(value: WindowResizeConstraints) -> Self {
-        PyWindowResizeConstraints(value)
+impl PartialEq for PyWindowResizeConstraints {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.to_bevy(), other.to_bevy()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
-impl From<PyWindowResizeConstraints> for WindowResizeConstraints {
-    fn from(value: PyWindowResizeConstraints) -> Self {
-        value.0
+impl From<WindowResizeConstraints> for PyWindowResizeConstraints {
+    fn from(value: WindowResizeConstraints) -> Self {
+        PyWindowResizeConstraints::from_owned(value)
+    }
+}
+
+impl TryFrom<PyWindowResizeConstraints> for WindowResizeConstraints {
+    type Error = PyErr;
+
+    fn try_from(value: PyWindowResizeConstraints) -> PyResult<Self> {
+        Ok(value.storage.get()?)
+    }
+}
+
+impl TryFrom<&PyWindowResizeConstraints> for WindowResizeConstraints {
+    type Error = PyErr;
+
+    fn try_from(value: &PyWindowResizeConstraints) -> PyResult<Self> {
+        Ok(value.storage.get()?)
     }
 }
 
@@ -27,7 +51,7 @@ impl PyWindowResizeConstraints {
         max_height = f32::INFINITY,
     ))]
     pub fn new(min_width: f32, min_height: f32, max_width: f32, max_height: f32) -> Self {
-        PyWindowResizeConstraints(WindowResizeConstraints {
+        PyWindowResizeConstraints::from_owned(WindowResizeConstraints {
             min_width,
             min_height,
             max_width,
@@ -36,49 +60,54 @@ impl PyWindowResizeConstraints {
     }
 
     #[getter]
-    pub fn min_width(&self) -> f32 {
-        self.0.min_width
+    pub fn min_width(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.min_width)
     }
 
     #[setter]
-    pub fn set_min_width(&mut self, value: f32) {
-        self.0.min_width = value;
+    pub fn set_min_width(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.min_width = value;
+        Ok(())
     }
 
     #[getter]
-    pub fn min_height(&self) -> f32 {
-        self.0.min_height
+    pub fn min_height(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.min_height)
     }
 
     #[setter]
-    pub fn set_min_height(&mut self, value: f32) {
-        self.0.min_height = value;
+    pub fn set_min_height(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.min_height = value;
+        Ok(())
     }
 
     #[getter]
-    pub fn max_width(&self) -> f32 {
-        self.0.max_width
+    pub fn max_width(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.max_width)
     }
 
     #[setter]
-    pub fn set_max_width(&mut self, value: f32) {
-        self.0.max_width = value;
+    pub fn set_max_width(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.max_width = value;
+        Ok(())
     }
 
     #[getter]
-    pub fn max_height(&self) -> f32 {
-        self.0.max_height
+    pub fn max_height(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.max_height)
     }
 
     #[setter]
-    pub fn set_max_height(&mut self, value: f32) {
-        self.0.max_height = value;
+    pub fn set_max_height(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.max_height = value;
+        Ok(())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
+    pub fn __repr__(&self) -> PyResult<String> {
+        let c = self.to_bevy()?;
+        Ok(format!(
             "WindowResizeConstraints(min_width={}, min_height={}, max_width={}, max_height={})",
-            self.0.min_width, self.0.min_height, self.0.max_width, self.0.max_height
-        )
+            c.min_width, c.min_height, c.max_width, c.max_height
+        ))
     }
 }

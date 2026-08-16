@@ -1,5 +1,5 @@
 use bevy::{math::DVec2, window::Window};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
@@ -211,7 +211,7 @@ impl PyWindow {
 
     #[setter]
     pub fn set_ime_position(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.ime_position = value.into();
+        self.as_mut()?.ime_position = value.try_into()?;
         Ok(())
     }
 
@@ -393,23 +393,26 @@ impl PyWindow {
 
     #[getter]
     pub fn enabled_buttons(&self) -> PyResult<PyEnabledButtons> {
-        Ok(self.as_ref()?.enabled_buttons.into())
+        Ok(self.storage.borrow_field_as(|w| &w.enabled_buttons)?)
     }
 
     #[setter]
     pub fn set_enabled_buttons(&mut self, value: PyEnabledButtons) -> PyResult<()> {
-        self.as_mut()?.enabled_buttons = value.into();
+        let buttons = value.to_bevy()?;
+        self.as_mut()?.enabled_buttons = buttons;
         Ok(())
     }
 
     #[getter]
     pub fn position(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        crate::window_position::materialize_window_position(py, self.as_ref()?.position.clone())
+        Ok(computed_owned(
+            crate::window_position::materialize_window_position(py, self.as_ref()?.position)?,
+        ))
     }
 
     #[setter]
     pub fn set_position(&mut self, value: PyRef<'_, PyWindowPosition>) -> PyResult<()> {
-        self.as_mut()?.position = value.0.clone();
+        self.as_mut()?.position = value.0;
         Ok(())
     }
 
@@ -437,12 +440,13 @@ impl PyWindow {
 
     #[getter]
     pub fn resize_constraints(&self) -> PyResult<PyWindowResizeConstraints> {
-        Ok(self.as_ref()?.resize_constraints.into())
+        Ok(self.storage.borrow_field_as(|w| &w.resize_constraints)?)
     }
 
     #[setter]
     pub fn set_resize_constraints(&mut self, value: PyWindowResizeConstraints) -> PyResult<()> {
-        self.as_mut()?.resize_constraints = value.into();
+        let constraints = value.to_bevy()?;
+        self.as_mut()?.resize_constraints = constraints;
         Ok(())
     }
 
@@ -502,7 +506,7 @@ impl PyWindow {
 
     pub fn set_cursor_position(&mut self, position: Option<PyVec2>) -> PyResult<()> {
         self.as_mut()?
-            .set_cursor_position(position.map(|v| v.into()));
+            .set_cursor_position(position.map(TryInto::try_into).transpose()?);
         Ok(())
     }
 

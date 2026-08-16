@@ -133,9 +133,11 @@ impl PyWindowPositionAt {
     }
 
     #[new]
-    pub fn new(value: &PyIVec2) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyWindowPosition(WindowPosition::At(value.into())))
-            .add_subclass(Self)
+    pub fn new(value: &PyIVec2) -> PyResult<PyClassInitializer<Self>> {
+        Ok(
+            PyClassInitializer::from(PyWindowPosition(WindowPosition::At(value.try_into()?)))
+                .add_subclass(Self),
+        )
     }
 
     #[getter]

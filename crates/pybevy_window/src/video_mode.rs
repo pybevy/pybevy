@@ -33,12 +33,16 @@ impl From<PyVideoMode> for VideoMode {
 #[pymethods]
 impl PyVideoMode {
     #[new]
-    pub fn new(physical_size: PyUVec2, bit_depth: u16, refresh_rate_millihertz: u32) -> Self {
-        PyVideoMode {
-            physical_size: physical_size.into(),
+    pub fn new(
+        physical_size: PyUVec2,
+        bit_depth: u16,
+        refresh_rate_millihertz: u32,
+    ) -> PyResult<Self> {
+        Ok(PyVideoMode {
+            physical_size: physical_size.try_into()?,
             bit_depth,
             refresh_rate_millihertz,
-        }
+        })
     }
 
     #[getter]

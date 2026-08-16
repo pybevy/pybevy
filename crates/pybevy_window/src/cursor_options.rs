@@ -14,8 +14,18 @@ pub struct PyCursorOptions {
 #[pymethods]
 impl PyCursorOptions {
     #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        Self::from_owned(CursorOptions::default()).into()
+    #[pyo3(signature = (visible = true, grab_mode = PyCursorGrabMode::None, hit_test = true))]
+    pub fn new(
+        visible: bool,
+        grab_mode: PyCursorGrabMode,
+        hit_test: bool,
+    ) -> PyClassInitializer<Self> {
+        Self::from_owned(CursorOptions {
+            visible,
+            grab_mode: grab_mode.into(),
+            hit_test,
+        })
+        .into()
     }
 
     #[getter]
