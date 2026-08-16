@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_shader_types"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Shared ShaderMaterial types for PyBevy — no Python dependencies"
 license = "MIT OR Apache-2.0"

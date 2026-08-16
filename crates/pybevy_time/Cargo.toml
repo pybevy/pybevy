@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_time"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Time resources for PyBevy"
 license = "MIT OR Apache-2.0"
