@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemStruct, Path, Token, Type,
+    Fields, Ident, ItemStruct, Path, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -11,21 +11,51 @@ use crate::{
     util::{find_storage_field_type, reflect_registration_tokens, to_snake_case},
 };
 
+#[derive(Clone)]
+enum BatchFieldConstraint {
+    Finite,
+}
+
+impl Parse for BatchFieldConstraint {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        match ident.to_string().as_str() {
+            "finite" => Ok(Self::Finite),
+            _ => Err(syn::Error::new_spanned(
+                ident,
+                "unknown batch field constraint, expected: finite",
+            )),
+        }
+    }
+}
+
+impl BatchFieldConstraint {
+    fn tokens(&self) -> proc_macro2::TokenStream {
+        match self {
+            Self::Finite => {
+                quote! { pybevy_core::batch_columns::BatchValueConstraint::Finite }
+            }
+        }
+    }
+}
+
 /// A single field in view_fields/batch_only_fields.
 /// Can be a named field or a tuple index with a Python alias.
 #[derive(Clone)]
-struct BridgeField {
+pub(crate) struct BridgeField {
     /// Token stream for field access: `.intensity` or `.0` or `.0.x`
-    rust_accessor: proc_macro2::TokenStream,
+    pub(crate) rust_accessor: proc_macro2::TokenStream,
     /// Token stream for offset_of!: `intensity` or `0` or `0.x`
-    offset_path: proc_macro2::TokenStream,
+    pub(crate) offset_path: proc_macro2::TokenStream,
     /// Python-visible name used for from_numpy kwargs and View field names
-    python_name: Ident,
+    pub(crate) python_name: Ident,
+    /// Value-domain constraints applied by from_numpy after normalization.
+    constraints: Vec<BatchFieldConstraint>,
 }
 
 impl Parse for BridgeField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(syn::LitInt) {
+        let (rust_accessor, offset_path, python_name) = if input.peek(syn::LitInt) {
             // Tuple form: `0 as name` or `0.x as name`
             let idx: syn::LitInt = input.parse()?;
             let idx_val = idx.base10_parse::<usize>()?;
@@ -46,21 +76,32 @@ impl Parse for BridgeField {
             input.parse::<Token![as]>()?;
             let python_name: Ident = input.parse()?;
 
-            Ok(BridgeField {
-                rust_accessor: accessor_tokens,
-                offset_path: offset_tokens,
-                python_name,
-            })
+            (accessor_tokens, offset_tokens, python_name)
         } else {
             // Named field: `intensity`
             let ident: Ident = input.parse()?;
             let python_name = ident.clone();
-            Ok(BridgeField {
-                rust_accessor: quote! { .#ident },
-                offset_path: quote! { #ident },
-                python_name,
-            })
-        }
+            (quote! { .#ident }, quote! { #ident }, python_name)
+        };
+
+        let constraints = if input.peek(Token![=>]) {
+            input.parse::<Token![=>]>()?;
+            let content;
+            syn::bracketed!(content in input);
+            content
+                .parse_terminated(BatchFieldConstraint::parse, Token![,])?
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(BridgeField {
+            rust_accessor,
+            offset_path,
+            python_name,
+            constraints,
+        })
     }
 }
 
@@ -229,8 +270,23 @@ impl Parse for ComponentArgs {
 /// ```
 ///
 /// This skips the `From`, `TryFrom`, and `from_owned` implementations that require `Clone`.
+/// For a value-like component that can be reconstructed from `&T`, use
+/// `clone_with = path::to_fn` to keep Python insertion available.
 ///
 /// The main crate then adds `NativeComponent` impl separately.
+fn extra_field_defaults(input: &ItemStruct) -> proc_macro2::TokenStream {
+    let Fields::Named(fields) = &input.fields else {
+        return proc_macro2::TokenStream::new();
+    };
+    let inits = fields
+        .named
+        .iter()
+        .filter_map(|field| field.ident.as_ref())
+        .filter(|name| *name != "storage")
+        .map(|name| quote! { #name: Default::default() });
+    quote! { #(#inits,)* }
+}
+
 pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ComponentStorageArgs {
         bevy_type: Type,
@@ -244,6 +300,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         batch_only_fields: Option<Vec<BridgeField>>,
         view_only_fields: Option<Vec<ViewOnlyField>>,
         materialize: Option<Path>,
+        clone_with: Option<Path>,
     }
 
     impl Parse for ComponentStorageArgs {
@@ -259,6 +316,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut batch_only_fields = None;
             let mut view_only_fields = None;
             let mut materialize = None;
+            let mut clone_with = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -276,6 +334,12 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         bridge = true;
                         input.parse::<Token![=]>()?;
                         materialize = Some(input.parse()?);
+                    }
+                    "clone_with" => {
+                        bridge = true;
+                        no_clone = true;
+                        input.parse::<Token![=]>()?;
+                        clone_with = Some(input.parse()?);
                     }
                     "view_fields" => {
                         bridge = true;
@@ -305,7 +369,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, view_fields, batch_only_fields, view_only_fields",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, view_fields, batch_only_fields, view_only_fields",
                                 other
                             ),
                         ));
@@ -325,6 +389,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 batch_only_fields,
                 view_only_fields,
                 materialize,
+                clone_with,
             })
         }
     }
@@ -333,6 +398,10 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     let bevy_type = &args.bevy_type;
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
+
+    // Fields beyond `storage` are wrapper-local state, defaulted by every generated
+    // constructor so query-built instances do not inherit a stale value.
+    let extra_field_inits = extra_field_defaults(&input);
 
     // Unit component: no storage field, just the struct + optional bridge
     if args.unit {
@@ -360,12 +429,13 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             bevy_type,
             py_type,
             args.bridge_name.as_deref(),
-            args.no_clone || args.no_insert, // no_clone or no_insert both disable insert_from_python
+            args.no_insert || (args.no_clone && args.clone_with.is_none()),
             args.no_reflect,
             args.view_fields.as_ref(),
             args.batch_only_fields.as_ref(),
             args.view_only_fields.as_ref(),
             args.materialize.as_ref(),
+            args.clone_with.as_ref(),
             true, // emit inventory registration
         )
     } else {
@@ -393,12 +463,12 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             impl #py_type {
                 pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
                     let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
-                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
+                    Py::new(py, (Self { storage: owned, #extra_field_inits }, pybevy_core::PyComponent))
                 }
 
                 pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
                     let owned = pybevy_core::ComponentStorage::owned(self.storage.as_ref()?.clone());
-                    Py::new(py, (Self { storage: owned }, pybevy_core::PyComponent))
+                    Py::new(py, (Self { storage: owned, #extra_field_inits }, pybevy_core::PyComponent))
                 }
             }
         }
@@ -412,16 +482,16 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             impl #py_type {
                 /// Create from a borrowed component storage (for query iteration).
                 pub fn from_borrowed(storage: ComponentStorage<#bevy_type>) -> (Self, pybevy_core::PyComponent) {
-                    (Self { storage }, pybevy_core::PyComponent)
+                    (Self { storage, #extra_field_inits }, pybevy_core::PyComponent)
                 }
 
                 #[inline(always)]
-                pub fn as_ref(&self) -> PyResult<&#bevy_type> {
+                pub fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                     Ok(self.storage.as_ref()?)
                 }
 
                 #[inline(always)]
-                pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+                pub fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                     Ok(self.storage.as_mut()?)
                 }
             }
@@ -438,6 +508,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 fn from(component: #bevy_type) -> Self {
                     Self {
                         storage: ComponentStorage::owned(component),
+                        #extra_field_inits
                     }
                 }
             }
@@ -456,6 +527,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 fn try_from(component: &#bevy_type) -> PyResult<Self> {
                     Ok(Self {
                         storage: ComponentStorage::owned(component.clone()),
+                        #extra_field_inits
                     })
                 }
             }
@@ -463,21 +535,21 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             impl #py_type {
                 /// Create from an owned component value. Returns tuple for PyO3 class inheritance.
                 pub fn from_owned(component: #bevy_type) -> (Self, pybevy_core::PyComponent) {
-                    (Self { storage: ComponentStorage::owned(component) }, pybevy_core::PyComponent)
+                    (Self { storage: ComponentStorage::owned(component), #extra_field_inits }, pybevy_core::PyComponent)
                 }
 
                 /// Create from a borrowed component storage (for query iteration).
                 pub fn from_borrowed(storage: ComponentStorage<#bevy_type>) -> (Self, pybevy_core::PyComponent) {
-                    (Self { storage }, pybevy_core::PyComponent)
+                    (Self { storage, #extra_field_inits }, pybevy_core::PyComponent)
                 }
 
                 #[inline(always)]
-                pub fn as_ref(&self) -> PyResult<&#bevy_type> {
+                pub fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                     Ok(self.storage.as_ref()?)
                 }
 
                 #[inline(always)]
-                pub fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+                pub fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                     Ok(self.storage.as_mut()?)
                 }
             }
@@ -501,6 +573,7 @@ fn generate_bridge_tokens(
     batch_only_fields: Option<&Vec<BridgeField>>,
     view_only_fields: Option<&Vec<ViewOnlyField>>,
     materialize: Option<&Path>,
+    clone_with: Option<&Path>,
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
@@ -516,6 +589,7 @@ fn generate_bridge_tokens(
     } else {
         quote! { pyo3::Py::new(py, #py_type::from_borrowed(storage))?.into_any() }
     };
+    let can_insert = !no_insert;
 
     // Generate view_bridge method if view_fields (or view_only_fields) is specified
     let has_view_fields = view_fields.is_some() || view_only_fields.is_some();
@@ -650,6 +724,52 @@ fn generate_bridge_tokens(
                 ))
             }
         }
+    } else if let Some(clone_with) = clone_with {
+        quote! {
+            fn insert(
+                &self,
+                world: &mut bevy::ecs::world::World,
+                entity: bevy::ecs::entity::Entity,
+                component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<()> {
+                let py_component = component.extract::<pyo3::PyRef<#py_type>>()?;
+                world.entity_mut(entity).insert(#clone_with(py_component.storage.as_ref()?.reborrow()));
+                Ok(())
+            }
+
+            fn insert_into_entity(
+                &self,
+                entity: &mut bevy::ecs::world::EntityWorldMut,
+                component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<()> {
+                let py_component = component.extract::<pyo3::PyRef<#py_type>>()?;
+                entity.insert(#clone_with(py_component.storage.as_ref()?.reborrow()));
+                Ok(())
+            }
+
+            fn insert_bulk_uniform(
+                &self,
+                component: &pyo3::Bound<pyo3::PyAny>,
+                entities: &[bevy::ecs::entity::Entity],
+                world: &mut bevy::ecs::world::World,
+            ) -> pyo3::PyResult<()> {
+                let py_component = component.extract::<pyo3::PyRef<#py_type>>()?;
+                let source = py_component.storage.as_ref()?;
+                for &entity_id in entities {
+                    world.entity_mut(entity_id).insert(#clone_with(source.reborrow()));
+                }
+                Ok(())
+            }
+
+            fn prepare_uniform(
+                &self,
+                component: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<Box<dyn pybevy_core::PreparedUniformComponent>> {
+                let py_component = component.extract::<pyo3::PyRef<#py_type>>()?;
+                let native = #clone_with(py_component.storage.as_ref()?.reborrow());
+                Ok(Box::new(pybevy_core::PreparedNativeUniformWith::new(native, #clone_with)))
+            }
+        }
     } else {
         quote! {
             fn insert(
@@ -725,6 +845,10 @@ fn generate_bridge_tokens(
                 #component_name
             }
 
+            fn can_insert(&self) -> bool {
+                #can_insert
+            }
+
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 world.register_component::<#bevy_type>()
             }
@@ -737,25 +861,23 @@ fn generate_bridge_tokens(
                 validity: pybevy_core::ValidityFlagWithMode,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
-                let ptr = if validity.access_mode() == pybevy_core::AccessMode::Write {
-                    let mut untyped = entity.get_mut_by_id(component_id).ok_or_else(|| {
+                let storage = if validity.access_mode() == pybevy_core::AccessMode::Write {
+                    let ptr = entity.get_mut_ptr_by_id_unchanged(component_id).ok_or_else(|| {
                         pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
-                    })?;
-                    // SAFETY: component_id was registered for #bevy_type; MutUntyped guarantees valid mutable access.
-                    unsafe { untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type }
+                    })?.cast::<#bevy_type>();
+                    unsafe {
+                        pybevy_core::ComponentStorage::borrowed(ptr, validity)
+                    }
                 } else {
                     let untyped = entity.get_by_id(component_id).ok_or_else(|| {
                         pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                     })?;
-                    // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
-                    // SAFETY: component_id was registered for #bevy_type; pointer is not written through
-                    // because AccessMode::Read prevents mutation at the Python boundary.
-                    unsafe { untyped.deref::<#bevy_type>() as *const #bevy_type as *mut #bevy_type }
-                };
-
-                // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
-                let storage = unsafe {
-                    pybevy_core::ComponentStorage::borrowed(ptr, validity)
+                    let ptr = unsafe {
+                        untyped.deref::<#bevy_type>() as *const #bevy_type
+                    };
+                    unsafe {
+                        pybevy_core::ComponentStorage::borrowed_ref(ptr, validity.flag)
+                    }
                 };
 
                 let obj = #materialize_storage;
@@ -772,25 +894,23 @@ fn generate_bridge_tokens(
                     validity: pybevy_core::ValidityFlagWithMode,
                     py: pyo3::Python,
                 ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
-                    let ptr = if validity.access_mode() == pybevy_core::AccessMode::Write {
-                        let mut untyped = entity.get_mut_by_id(component_id).ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err("Component not found")
-                        })?;
-                        // SAFETY: component_id was registered for this type; MutUntyped guarantees valid mutable access.
-                        unsafe { untyped.as_mut().deref_mut::<#bevy_type>() as *mut #bevy_type }
+                    let storage = if validity.access_mode() == pybevy_core::AccessMode::Write {
+                        let ptr = entity.get_mut_ptr_by_id_unchanged(component_id).ok_or_else(|| {
+                            pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
+                        })?.cast::<#bevy_type>();
+                        unsafe {
+                            pybevy_core::ComponentStorage::borrowed(ptr, validity)
+                        }
                     } else {
                         let untyped = entity.get_by_id(component_id).ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err("Component not found")
+                            pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found"))
                         })?;
-                        // TODO(pybevy/pybevy#90): use a read-only ComponentStorage variant to avoid *const -> *mut cast
-                        // SAFETY: component_id was registered for this type; pointer is not written through
-                        // because AccessMode::Read prevents mutation at the Python boundary.
-                        unsafe { untyped.deref::<#bevy_type>() as *const #bevy_type as *mut #bevy_type }
-                    };
-
-                    // SAFETY: ptr is from a valid Bevy entity borrow; validity flag invalidates storage when borrow expires.
-                    let storage = unsafe {
-                        pybevy_core::ComponentStorage::borrowed(ptr, validity)
+                        let ptr = unsafe {
+                            untyped.deref::<#bevy_type>() as *const #bevy_type
+                        };
+                        unsafe {
+                            pybevy_core::ComponentStorage::borrowed_ref(ptr, validity.flag)
+                        }
                     };
 
                     let obj = #materialize_storage;
@@ -881,8 +1001,10 @@ fn generate_bridge_tokens(
             .map(|field| {
                 let accessor = &field.rust_accessor;
                 let name_str = field.python_name.to_string();
+                let constraints = field.constraints.iter().map(BatchFieldConstraint::tokens);
                 quote! {
                     pybevy_core::batch_field_meta_for(&default_val #accessor, #name_str)
+                        .with_constraints(&[#(#constraints),*])
                 }
             })
             .collect();
@@ -930,6 +1052,25 @@ fn generate_bridge_tokens(
         let field_normalize_stmts: Vec<_> = fields.iter().map(|field| {
             let name_str = field.python_name.to_string();
             let cols_var = quote::format_ident!("{}_cols", field.python_name);
+            let constraints: Vec<_> = field
+                .constraints
+                .iter()
+                .map(BatchFieldConstraint::tokens)
+                .collect();
+            let value_validation = if constraints.is_empty() {
+                quote! {}
+            } else {
+                quote! {
+                    let normalized_array: numpy::PyReadonlyArray2<f32> = normalized.extract()?;
+                    let normalized_values = normalized_array.as_slice()?;
+                    pybevy_core::batch_columns::validate_f32_values(
+                        #name_str,
+                        normalized_values,
+                        &[#(#constraints),*],
+                    )
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                }
+            };
             quote! {
                 if let Some(arr) = kwargs.get_item(#name_str)? {
                     let np = py.import("numpy")?;
@@ -946,6 +1087,7 @@ fn generate_bridge_tokens(
                     let reshaped = arr_bound.call_method1("reshape", ((rows, #cols_var),))?;
                     let contiguous = np.call_method1("ascontiguousarray", (&reshaped,))?;
                     let normalized = contiguous.call_method1("astype", (np.getattr("float32")?,))?;
+                    #value_validation
                     count_agreement.observe(#name_str, rows)
                         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
                     field_arrays.insert(#name_str.to_string(), normalized.unbind());
@@ -1023,12 +1165,13 @@ fn generate_bridge_tokens(
 
                 #(#field_normalize_stmts)*
 
-                let count = count_agreement.count().unwrap_or(0);
-                if count == 0 {
+                // A provided zero-row array is a valid empty batch; only the
+                // absence of any field array is an error.
+                let Some(count) = count_agreement.count() else {
                     return Err(pyo3::exceptions::PyValueError::new_err(
-                        "from_numpy() requires at least one field array"
+                        pybevy_core::batch_columns::BatchColumnError::NoFields.to_string(),
                     ));
-                }
+                };
 
                 // Get the component type pointer
                 let type_ptr = <#py_type as pyo3::PyTypeInfo>::type_object(py).as_type_ptr() as usize;
@@ -1245,12 +1388,12 @@ fn generate_standard_component(input: &ItemStruct, type_variant: &Ident) -> Toke
             }
 
             #[inline(always)]
-            pub(crate) fn as_ref(&self) -> PyResult<&#bevy_type> {
+            pub(crate) fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                 Ok(self.storage.as_ref()?)
             }
 
             #[inline(always)]
-            pub(crate) fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+            pub(crate) fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                 Ok(self.storage.as_mut()?)
             }
         }
@@ -1366,12 +1509,12 @@ fn generate_no_extract_component(input: &ItemStruct, type_variant: &Ident) -> To
             }
 
             #[inline(always)]
-            pub(crate) fn as_ref(&self) -> PyResult<&#bevy_type> {
+            pub(crate) fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
                 Ok(self.storage.as_ref()?)
             }
 
             #[inline(always)]
-            pub(crate) fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
+            pub(crate) fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
                 Ok(self.storage.as_mut()?)
             }
         }

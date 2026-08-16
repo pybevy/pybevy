@@ -41,6 +41,10 @@ pub(crate) fn generate_unit_bridge_tokens(
                 #component_name
             }
 
+            fn can_insert(&self) -> bool {
+                true
+            }
+
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 world.register_component::<#bevy_type>()
             }
@@ -120,7 +124,7 @@ pub(crate) fn generate_unit_bridge_tokens(
                         let obj = pyo3::Py::new(py, (#py_type, pybevy_core::PyComponent))?;
                         Ok(obj.into_any())
                     } else {
-                        Err(pyo3::exceptions::PyRuntimeError::new_err("Unit component not found"))
+                        Err(pyo3::exceptions::PyRuntimeError::new_err(concat!(#component_name, " not found")))
                     }
                 }
                 extract_impl

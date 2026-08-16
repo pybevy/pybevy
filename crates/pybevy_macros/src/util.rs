@@ -17,11 +17,11 @@ use syn::{
 pub(crate) fn pybevy_crate_paths() -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     match crate_name("pybevy") {
         Ok(FoundCrate::Itself) => {
-            // We're inside the pybevy crate itself — use direct deps
+            // We're inside the pybevy crate itself: use direct deps
             (quote! { pybevy_core }, quote! { pyo3 })
         }
         Ok(FoundCrate::Name(name)) => {
-            // External crate — use re-exports for pybevy_core,
+            // External crate: use re-exports for pybevy_core,
             // bare pyo3 (must be a direct dependency for PyO3 macros)
             let ident = Ident::new(&name, Span::call_site());
             (quote! { #ident::pybevy_core }, quote! { pyo3 })
@@ -205,7 +205,6 @@ pub(crate) fn generate_field_accessors(
 
         match field.annotation {
             FieldAnnotation::Color => {
-                // Color field: getter uses PyColor::from_color(), setter uses .into()
                 methods.extend(quote! {
                     #[getter]
                     pub fn #field_name(&self, py: pyo3::Python) -> pyo3::PyResult<pyo3::Py<#field_ty>> {
@@ -214,7 +213,8 @@ pub(crate) fn generate_field_accessors(
 
                     #[setter]
                     pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
-                        self.as_mut()?.#field_name = value.into();
+                        let value = value.resolved_copy()?;
+                        self.as_mut()?.#field_name = value;
                         Ok(())
                     }
                 });
