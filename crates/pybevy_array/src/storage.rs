@@ -239,6 +239,7 @@ impl ArrayStorage {
     /// on the current thread and must finish using the returned slice before any
     /// Python re-entry, world mutation, or other operation that could invalidate
     /// the borrow. This is the same check-and-use window required by [`Self::get`].
+    #[cfg(feature = "numeric")]
     pub(crate) unsafe fn as_f32_contiguous_unchecked(&self) -> Option<&[f32]> {
         match self {
             ArrayStorage::Float32(values) => Some(values),
@@ -262,6 +263,7 @@ impl ArrayStorage {
     /// The caller must retain a backing write guard and use the pointer only
     /// for a synchronous operation that cannot re-enter Python or otherwise
     /// invalidate a borrow.
+    #[cfg(feature = "pyo3")]
     pub(crate) fn as_mut_contiguous_ptr(&mut self) -> Option<*mut u8> {
         match self {
             ArrayStorage::Float32(values) => Some(values.as_mut_ptr().cast()),

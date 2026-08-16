@@ -139,6 +139,7 @@ impl ArrayWriteGuard {
         unsafe { &mut *self.backing.storage.get() }.set(flat, value);
     }
 
+    #[cfg(feature = "pyo3")]
     pub(crate) fn as_mut_contiguous_ptr(&mut self) -> Option<*mut u8> {
         // SAFETY: construction acquired the exclusive write claim.
         unsafe { &mut *self.backing.storage.get() }.as_mut_contiguous_ptr()
