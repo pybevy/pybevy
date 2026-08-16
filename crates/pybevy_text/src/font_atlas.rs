@@ -1,3 +1,8 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use bevy::{
     image::TextureAtlasLayout,
     text::{FontAtlas, FontAtlasKey},
@@ -106,8 +111,7 @@ impl PyFontAtlasKey {
     }
 
     pub fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
         self.id.hash(&mut hasher);
         self.index.hash(&mut hasher);
         self.font_size_bits.hash(&mut hasher);

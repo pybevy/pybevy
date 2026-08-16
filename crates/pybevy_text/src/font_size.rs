@@ -1,5 +1,8 @@
 use bevy::text::FontSize;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 #[pyclass(name = "FontSize", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,16 +44,32 @@ impl From<PyFontSize> for FontSize {
 /// Extract a [`FontSize`], mirroring bevy's `impl Into<FontSize>` parameters:
 /// a plain float is `FontSize::Px` (bevy's `From<f32>`), otherwise a `FontSize`.
 pub fn extract_font_size_from_any(obj: &Bound<'_, PyAny>) -> PyResult<FontSize> {
-    if let Ok(size) = obj.extract::<PyFontSize>() {
-        return Ok(size.into());
+    let size = if let Ok(size) = obj.extract::<PyFontSize>() {
+        size.into()
+    } else if let Ok(value) = obj.extract::<f32>() {
+        FontSize::Px(value)
+    } else {
+        return Err(PyTypeError::new_err(format!(
+            "expected a float (pixels) or FontSize, got {}",
+            obj.get_type().name()?
+        )));
+    };
+
+    let value = match size {
+        FontSize::Px(value)
+        | FontSize::Vw(value)
+        | FontSize::Vh(value)
+        | FontSize::VMin(value)
+        | FontSize::VMax(value)
+        | FontSize::Rem(value) => value,
+    };
+    if !value.is_finite() || value < 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "font_size must be finite and non-negative (got {value})"
+        )));
     }
-    if let Ok(value) = obj.extract::<f32>() {
-        return Ok(FontSize::Px(value));
-    }
-    Err(PyTypeError::new_err(format!(
-        "expected a float (pixels) or FontSize, got {}",
-        obj.get_type().name()?
-    )))
+
+    Ok(size)
 }
 
 #[pymethods]

@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 pub enum PyFontStyle {
     Normal(),
     Italic(),
+    #[py_bevy(tuple)]
     #[pyo3(constructor = (value = None))]
     Oblique {
         value: Option<f32>,

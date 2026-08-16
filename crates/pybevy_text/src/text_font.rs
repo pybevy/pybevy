@@ -98,6 +98,14 @@ impl PyTextFont {
         )
     }
 
+    #[staticmethod]
+    pub fn from_font_weight(py: Python<'_>, weight: PyFontWeight) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self::from_owned(TextFont::from_font_weight(FontWeight::from(weight))),
+        )
+    }
+
     #[getter]
     pub fn font(&self) -> PyResult<PyFontSource> {
         Ok((&self.as_ref()?.font).into())
@@ -166,7 +174,7 @@ impl PyTextFont {
 
     #[getter]
     pub fn font_features(&self) -> PyResult<PyFontFeatures> {
-        Ok(self.as_ref()?.font_features.clone().into())
+        PyFontFeatures::try_from(&self.as_ref()?.font_features)
     }
 
     #[setter]
@@ -175,54 +183,45 @@ impl PyTextFont {
         Ok(())
     }
 
-    #[pyo3(name = "with_font")]
-    pub fn with_font(slf: Py<Self>, py: Python<'_>, font: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+    pub fn with_font(&self, py: Python<'_>, font: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         let handle = extract_handle_from_any(font)?;
         let bevy_handle: Handle<Font> = (&handle).try_into()?;
-        slf.borrow_mut(py).as_mut()?.font = FontSource::Handle(bevy_handle);
-        Ok(slf)
+        let mut text_font = self.as_ref()?.clone();
+        text_font.font = FontSource::Handle(bevy_handle);
+        Py::new(py, Self::from_owned(text_font))
     }
 
-    #[pyo3(name = "with_family")]
-    pub fn with_family(slf: Py<Self>, py: Python<'_>, family: String) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.font = FontSource::Family(family.into());
-        Ok(slf)
+    pub fn with_family(&self, py: Python<'_>, family: String) -> PyResult<Py<Self>> {
+        let mut text_font = self.as_ref()?.clone();
+        text_font.font = FontSource::Family(family.into());
+        Py::new(py, Self::from_owned(text_font))
     }
 
-    #[pyo3(name = "with_font_size")]
     pub fn with_font_size(
-        slf: Py<Self>,
+        &self,
         py: Python<'_>,
         font_size: &Bound<'_, PyAny>,
     ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.font_size = extract_font_size_from_any(font_size)?;
-        Ok(slf)
+        let font_size = extract_font_size_from_any(font_size)?;
+        let mut text_font = self.as_ref()?.clone();
+        text_font.font_size = font_size;
+        Py::new(py, Self::from_owned(text_font))
     }
 
-    #[pyo3(name = "with_font_smoothing")]
     pub fn with_font_smoothing(
-        slf: Py<Self>,
+        &self,
         py: Python<'_>,
         font_smoothing: PyFontSmoothing,
     ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.font_smoothing = font_smoothing.into();
-        Ok(slf)
+        let mut text_font = self.as_ref()?.clone();
+        text_font.font_smoothing = font_smoothing.into();
+        Py::new(py, Self::from_owned(text_font))
     }
 
-    #[pyo3(name = "with_weight")]
-    pub fn with_weight(slf: Py<Self>, py: Python<'_>, weight: PyFontWeight) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.weight = weight.into();
-        Ok(slf)
-    }
-
-    #[pyo3(name = "with_font_features")]
-    pub fn with_font_features(
-        slf: Py<Self>,
-        py: Python<'_>,
-        font_features: PyFontFeatures,
-    ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py).as_mut()?.font_features = font_features.into();
-        Ok(slf)
+    pub fn with_font_weight(&self, py: Python<'_>, weight: PyFontWeight) -> PyResult<Py<Self>> {
+        let mut text_font = self.as_ref()?.clone();
+        text_font.weight = weight.into();
+        Py::new(py, Self::from_owned(text_font))
     }
 
     fn __eq__(&self, other: &Self) -> PyResult<bool> {
