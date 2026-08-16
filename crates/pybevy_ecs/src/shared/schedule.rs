@@ -7,10 +7,49 @@ use bevy::{
     },
     ecs::{
         resource::Resource,
-        schedule::{InternedScheduleLabel, ScheduleLabel, SystemSet},
+        schedule::{InternedScheduleLabel, InternedSystemSet, ScheduleLabel, SystemSet},
         world::World,
     },
 };
+
+/// Interpreter-neutral boolean expression over backend-owned condition leaves.
+///
+/// Each leaf is lowered independently so backends preserve its exact scheduler
+/// access and parameter plan instead of forcing all predicates through one
+/// callable signature.
+pub enum ConditionExpr<T> {
+    Leaf(T),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
+    Not(Box<Self>),
+}
+
+impl<T> ConditionExpr<T> {
+    #[must_use]
+    pub fn map_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> ConditionExpr<U> {
+        match self {
+            Self::Leaf(leaf) => ConditionExpr::Leaf(f(leaf)),
+            Self::And(left, right) => {
+                ConditionExpr::And(Box::new(left.map_ref(f)), Box::new(right.map_ref(f)))
+            }
+            Self::Or(left, right) => {
+                ConditionExpr::Or(Box::new(left.map_ref(f)), Box::new(right.map_ref(f)))
+            }
+            Self::Not(condition) => ConditionExpr::Not(Box::new(condition.map_ref(f))),
+        }
+    }
+
+    pub fn for_each_leaf(&self, f: &mut impl FnMut(&T)) {
+        match self {
+            Self::Leaf(leaf) => f(leaf),
+            Self::And(left, right) | Self::Or(left, right) => {
+                left.for_each_leaf(f);
+                right.for_each_leaf(f);
+            }
+            Self::Not(condition) => condition.for_each_leaf(f),
+        }
+    }
+}
 
 /// Namespace for a dynamic Python scheduler identity.
 ///
@@ -63,29 +102,76 @@ impl DynamicSetLabel {
     }
 }
 
+/// Interpreter-neutral target for Python-defined and native Bevy system sets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SystemSetTarget {
+    Dynamic(DynamicSetLabel),
+    Native {
+        label: InternedSystemSet,
+        qualified_name: String,
+    },
+}
+
+impl SystemSetTarget {
+    #[must_use]
+    pub fn dynamic(label: DynamicSetLabel) -> Self {
+        Self::Dynamic(label)
+    }
+
+    #[must_use]
+    pub fn native(label: InternedSystemSet, qualified_name: impl Into<String>) -> Self {
+        Self::Native {
+            label,
+            qualified_name: qualified_name.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn qualified_name(&self) -> &str {
+        match self {
+            Self::Dynamic(label) => label.qualified_name(),
+            Self::Native { qualified_name, .. } => qualified_name,
+        }
+    }
+
+    #[must_use]
+    pub fn intern(&self) -> InternedSystemSet {
+        match self {
+            Self::Dynamic(label) => label.clone().intern(),
+            Self::Native { label, .. } => *label,
+        }
+    }
+}
+
+impl From<DynamicSetLabel> for SystemSetTarget {
+    fn from(value: DynamicSetLabel) -> Self {
+        Self::dynamic(value)
+    }
+}
+
 /// Interpreter-neutral ordering metadata attached to a Python system or set.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ScheduleOrdering {
-    pub in_sets: Vec<DynamicSetLabel>,
-    pub before: Vec<DynamicSetLabel>,
-    pub after: Vec<DynamicSetLabel>,
+    pub in_sets: Vec<SystemSetTarget>,
+    pub before: Vec<SystemSetTarget>,
+    pub after: Vec<SystemSetTarget>,
 }
 
 impl ScheduleOrdering {
-    pub fn push_in_set(&mut self, set: DynamicSetLabel) {
+    pub fn push_in_set(&mut self, set: SystemSetTarget) {
         push_unique(&mut self.in_sets, set);
     }
 
-    pub fn push_before(&mut self, set: DynamicSetLabel) {
+    pub fn push_before(&mut self, set: SystemSetTarget) {
         push_unique(&mut self.before, set);
     }
 
-    pub fn push_after(&mut self, set: DynamicSetLabel) {
+    pub fn push_after(&mut self, set: SystemSetTarget) {
         push_unique(&mut self.after, set);
     }
 }
 
-fn push_unique(labels: &mut Vec<DynamicSetLabel>, label: DynamicSetLabel) {
+fn push_unique(labels: &mut Vec<SystemSetTarget>, label: SystemSetTarget) {
     if !labels.contains(&label) {
         labels.push(label);
     }
@@ -413,12 +499,12 @@ mod tests {
         let input = DynamicSetLabel::named("game.Input");
         let mut ordering = ScheduleOrdering::default();
 
-        ordering.push_in_set(movement.clone());
-        ordering.push_in_set(movement.clone());
-        ordering.push_after(input.clone());
-        ordering.push_after(input);
+        ordering.push_in_set(movement.clone().into());
+        ordering.push_in_set(movement.clone().into());
+        ordering.push_after(input.clone().into());
+        ordering.push_after(input.into());
 
-        assert_eq!(ordering.in_sets, vec![movement]);
+        assert_eq!(ordering.in_sets, vec![movement.into()]);
         assert_eq!(ordering.after.len(), 1);
     }
 

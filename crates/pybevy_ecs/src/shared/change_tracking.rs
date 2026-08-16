@@ -13,7 +13,7 @@ use bevy::ecs::{
     world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
 
-use super::run_scaffold::RunTicks;
+use super::run_ticks::RunTicks;
 
 /// Mark a specific component as changed through the run's existing world cell.
 ///

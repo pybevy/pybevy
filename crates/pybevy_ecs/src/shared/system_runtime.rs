@@ -2,15 +2,15 @@
 //!
 //! This module owns the Bevy-facing system shell and the unsafe contract that
 //! interpreter adapters must satisfy. It deliberately contains no
-//! interpreter-specific types. Main continues to use its existing `DynamicSystem` until
-//! the adapter migration; the core here is exercised with a fake interpreter
-//! so its ordering and safety boundaries can be reviewed independently.
+//! interpreter-specific types. Main uses this core through its PyO3 adapter;
+//! the backend-neutral seam supports other adapters, and a fake interpreter
+//! exercises its ordering and safety boundaries independently.
 
 use std::{
     collections::HashSet,
     marker::PhantomData,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU32, Ordering},
     },
     time::Duration,
@@ -21,22 +21,161 @@ use bevy::{
         change_detection::{CheckChangeTicks, Tick},
         entity::Entity,
         query::FilteredAccessSet,
+        schedule::{BoxedCondition, InternedSystemSet},
         system::{
-            ReadOnlySystem, RunSystemError, System, SystemIn, SystemParamValidationError,
-            SystemStateFlags,
+            BoxedSystem, In, ReadOnlySystem, RunSystemError, System, SystemIn, SystemInput,
+            SystemParamValidationError, SystemStateFlags,
         },
         world::{CommandQueue, DeferredWorld, World, WorldId, unsafe_world_cell::UnsafeWorldCell},
     },
     platform::time::Instant,
-    prelude::{DebugName, Resource, Time},
+    prelude::{DebugName, Resource, SystemSet, Time},
 };
 use pybevy_storage::{ValidityFlag, ValidityGuard};
 
 use super::{
     parity_trace::{ParityOpSink, ParityRunHandle, ParityTraceResource},
-    run_scaffold::RunTicks,
+    run_ticks::RunTicks,
     system_flags::compute_system_flags,
 };
+
+/// Sized adapter around an erased read-only condition.
+///
+/// Bevy's condition combinators require sized `System` values. This adapter
+/// preserves the inner condition's access, ticks, and deferred behavior while
+/// allowing independently prepared dynamic conditions to be composed.
+pub struct ErasedConditionSystem {
+    inner: BoxedCondition,
+}
+
+impl ErasedConditionSystem {
+    #[must_use]
+    pub fn new(inner: BoxedCondition) -> Self {
+        Self { inner }
+    }
+}
+
+impl System for ErasedConditionSystem {
+    type In = ();
+    type Out = bool;
+
+    fn name(&self) -> DebugName {
+        self.inner.name()
+    }
+
+    fn flags(&self) -> SystemStateFlags {
+        self.inner.flags()
+    }
+
+    unsafe fn run_unsafe(
+        &mut self,
+        input: SystemIn<'_, Self>,
+        world: UnsafeWorldCell,
+    ) -> Result<Self::Out, RunSystemError> {
+        // SAFETY: the caller supplies exactly the access declared by the inner
+        // read-only system; this adapter neither widens nor caches that access.
+        unsafe { self.inner.run_unsafe(input, world) }
+    }
+
+    fn apply_deferred(&mut self, world: &mut World) {
+        self.inner.apply_deferred(world);
+    }
+
+    fn queue_deferred(&mut self, world: DeferredWorld) {
+        self.inner.queue_deferred(world);
+    }
+
+    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+        self.inner.initialize(world)
+    }
+
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        self.inner.check_change_tick(check);
+    }
+
+    fn default_system_sets(&self) -> Vec<InternedSystemSet> {
+        self.inner.default_system_sets()
+    }
+
+    fn get_last_run(&self) -> Tick {
+        self.inner.get_last_run()
+    }
+
+    fn set_last_run(&mut self, last_run: Tick) {
+        self.inner.set_last_run(last_run);
+    }
+}
+
+// SAFETY: `ErasedConditionSystem` can only be constructed from a
+// `BoxedCondition`, whose trait object is already a `ReadOnlySystem`.
+unsafe impl ReadOnlySystem for ErasedConditionSystem {}
+
+/// Sized adapter around a boxed system with arbitrary input and output.
+///
+/// Bevy's `PipeSystem` requires sized inner systems, while dynamically built
+/// Python pipelines erase each already-composed prefix before adding another
+/// stage. This adapter forwards the exact input, access, ticks, and deferred
+/// state of that boxed prefix.
+pub struct ErasedSystem<I: SystemInput, O> {
+    inner: BoxedSystem<I, O>,
+}
+
+impl<I: SystemInput, O> ErasedSystem<I, O> {
+    pub fn new(inner: BoxedSystem<I, O>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<I: SystemInput + 'static, O: 'static> System for ErasedSystem<I, O> {
+    type In = I;
+    type Out = O;
+
+    fn name(&self) -> DebugName {
+        self.inner.name()
+    }
+
+    fn flags(&self) -> SystemStateFlags {
+        self.inner.flags()
+    }
+
+    unsafe fn run_unsafe(
+        &mut self,
+        input: SystemIn<'_, Self>,
+        world: UnsafeWorldCell,
+    ) -> Result<Self::Out, RunSystemError> {
+        // SAFETY: this adapter forwards the caller's exact input and World to
+        // the boxed system without widening its declared access.
+        unsafe { self.inner.run_unsafe(input, world) }
+    }
+
+    fn apply_deferred(&mut self, world: &mut World) {
+        self.inner.apply_deferred(world);
+    }
+
+    fn queue_deferred(&mut self, world: DeferredWorld) {
+        self.inner.queue_deferred(world);
+    }
+
+    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+        self.inner.initialize(world)
+    }
+
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        self.inner.check_change_tick(check);
+    }
+
+    fn default_system_sets(&self) -> Vec<InternedSystemSet> {
+        self.inner.default_system_sets()
+    }
+
+    fn get_last_run(&self) -> Tick {
+        self.inner.get_last_run()
+    }
+
+    fn set_last_run(&mut self, last_run: Tick) {
+        self.inner.set_last_run(last_run);
+    }
+}
 
 /// Stage in which a dynamic system was registered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +192,14 @@ pub struct HotReloadGeneration {
     startup_run_for_generations: Arc<Mutex<HashSet<u32>>>,
 }
 
+/// Groups every Python system registered by one hot-reload generation.
+///
+/// The active generation runs while the immediately preceding generation is
+/// retained, but gated off, for rollback. Keeping this label in the neutral
+/// ECS layer lets backends and diagnostics describe the same schedule state.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReloadGenerationSet(pub u32);
+
 impl HotReloadGeneration {
     pub fn new(generation_counter: Arc<AtomicU32>) -> Self {
         Self {
@@ -66,31 +213,31 @@ impl HotReloadGeneration {
         self.current = self.generation_counter.load(Ordering::SeqCst);
     }
 
+    /// Recover the marker set from a poisoning panic: losing the markers would
+    /// re-run Startup for a generation that already ran.
+    fn startup_runs(&self) -> MutexGuard<'_, HashSet<u32>> {
+        self.startup_run_for_generations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn mark_startup_run(&self) {
-        if let Ok(mut set) = self.startup_run_for_generations.lock() {
-            set.insert(self.current);
-        }
+        self.startup_runs().insert(self.current);
     }
 
     pub fn has_startup_run(&self, generation: u32) -> bool {
-        self.startup_run_for_generations
-            .lock()
-            .map(|set| set.contains(&generation))
-            .unwrap_or(false)
+        self.startup_runs().contains(&generation)
     }
 
     /// Forget a failed generation so a later retry is allowed to run Startup.
     pub fn forget_startup_run(&self, generation: u32) {
-        if let Ok(mut set) = self.startup_run_for_generations.lock() {
-            set.remove(&generation);
-        }
+        self.startup_runs().remove(&generation);
     }
 
     /// Retain only recent Startup markers after a successful reload.
     pub fn retain_startup_runs_since(&self, minimum_generation: u32) {
-        if let Ok(mut set) = self.startup_run_for_generations.lock() {
-            set.retain(|generation| *generation >= minimum_generation);
-        }
+        self.startup_runs()
+            .retain(|generation| *generation >= minimum_generation);
     }
 }
 
@@ -128,12 +275,14 @@ pub enum InvocationKind {
 pub enum OutputMode {
     Unit,
     Bool,
+    Value,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CallOutcome {
+#[derive(Debug)]
+pub enum CallOutcome<Value = ()> {
     Unit,
     Bool(bool),
+    Value(Value),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,6 +368,8 @@ pub type SystemHandle<B> = Arc<Mutex<<B as SystemInterpreter>::RetainedState>>;
 /// drop it before leaving the interpreter context, including during unwinding.
 pub unsafe trait SystemInterpreter: Send + Sync + 'static {
     type Event: Send + Sync + 'static;
+    /// Owned interpreter value passed between adjacent stages of a pipe.
+    type ValueToken: Send + Sync + 'static;
     type PreparedCall: Send + Sync + 'static;
     type ParamPlan: Send + Sync + 'static;
     type ScheduledRunState: Send + Sync + 'static;
@@ -263,8 +414,9 @@ pub unsafe trait SystemInterpreter: Send + Sync + 'static {
         prepared: Self::PreparedCall,
         params: &Self::ParamPlan,
         state: &mut Self::ScheduledRunState,
+        input: Option<Self::ValueToken>,
         ctx: InterpreterCallContext<'_, '_, Self::Event>,
-    ) -> Result<CallOutcome, InterpreterFailure<Self::ExceptionToken>>;
+    ) -> Result<CallOutcome<Self::ValueToken>, InterpreterFailure<Self::ExceptionToken>>;
 
     /// Build fresh observer arguments and invoke one prepared call.
     ///
@@ -278,7 +430,7 @@ pub unsafe trait SystemInterpreter: Send + Sync + 'static {
         params: &Self::ParamPlan,
         state: &mut Self::ObserverRunState,
         ctx: InterpreterCallContext<'_, '_, Self::Event>,
-    ) -> Result<CallOutcome, InterpreterFailure<Self::ExceptionToken>>;
+    ) -> Result<CallOutcome<Self::ValueToken>, InterpreterFailure<Self::ExceptionToken>>;
 
     fn store_failure(
         &self,
@@ -291,28 +443,28 @@ pub unsafe trait SystemInterpreter: Send + Sync + 'static {
     fn retire(&self, retained: &SystemHandle<Self>);
 }
 
-pub trait OutputPolicy: Send + Sync + 'static {
+pub trait OutputPolicy<Value>: Send + Sync + 'static {
     type Out: 'static;
     const MODE: OutputMode;
 
     fn skipped() -> Self::Out;
-    fn finish(outcome: CallOutcome) -> Self::Out;
+    fn finish(outcome: CallOutcome<Value>) -> Self::Out;
 }
 
 pub struct UnitOutput;
 
-impl OutputPolicy for UnitOutput {
+impl<Value> OutputPolicy<Value> for UnitOutput {
     type Out = ();
     const MODE: OutputMode = OutputMode::Unit;
 
     fn skipped() -> Self::Out {}
 
-    fn finish(_outcome: CallOutcome) -> Self::Out {}
+    fn finish(_outcome: CallOutcome<Value>) -> Self::Out {}
 }
 
 pub struct BoolOutput;
 
-impl OutputPolicy for BoolOutput {
+impl<Value> OutputPolicy<Value> for BoolOutput {
     type Out = bool;
     const MODE: OutputMode = OutputMode::Bool;
 
@@ -320,13 +472,77 @@ impl OutputPolicy for BoolOutput {
         false
     }
 
-    fn finish(outcome: CallOutcome) -> Self::Out {
+    fn finish(outcome: CallOutcome<Value>) -> Self::Out {
         match outcome {
             CallOutcome::Bool(value) => value,
             CallOutcome::Unit => {
                 panic!("SystemInterpreter returned unit output for a bool condition")
             }
+            CallOutcome::Value(_) => {
+                panic!("SystemInterpreter returned value output for a bool condition")
+            }
         }
+    }
+}
+
+/// A pipe stage returns `None` when it was skipped or failed, allowing every
+/// downstream stage to skip without inventing an interpreter value.
+pub struct OptionalValueOutput;
+
+impl<Value: 'static> OutputPolicy<Value> for OptionalValueOutput {
+    type Out = Option<Value>;
+    const MODE: OutputMode = OutputMode::Value;
+
+    fn skipped() -> Self::Out {
+        None
+    }
+
+    fn finish(outcome: CallOutcome<Value>) -> Self::Out {
+        match outcome {
+            CallOutcome::Value(value) => Some(value),
+            CallOutcome::Unit => {
+                panic!("SystemInterpreter returned unit output for a value stage")
+            }
+            CallOutcome::Bool(_) => {
+                panic!("SystemInterpreter returned bool output for a value stage")
+            }
+        }
+    }
+}
+
+/// Prepared input for one dynamic-system invocation.
+pub enum RuntimeInput<Value> {
+    None,
+    Value(Value),
+    Skip,
+}
+
+/// Maps a Bevy system input into the interpreter's owned value token.
+pub trait InputPolicy<Value>: Send + Sync + 'static {
+    type In: SystemInput;
+
+    fn prepare(input: <Self::In as SystemInput>::Inner<'_>) -> RuntimeInput<Value>;
+}
+
+/// Ordinary scheduled systems have no piped input.
+pub struct UnitInput;
+
+impl<Value> InputPolicy<Value> for UnitInput {
+    type In = ();
+
+    fn prepare(_input: ()) -> RuntimeInput<Value> {
+        RuntimeInput::None
+    }
+}
+
+/// Downstream pipe stages receive the previous stage's optional output.
+pub struct OptionalValueInput;
+
+impl<Value: 'static> InputPolicy<Value> for OptionalValueInput {
+    type In = In<Option<Value>>;
+
+    fn prepare(input: Option<Value>) -> RuntimeInput<Value> {
+        input.map_or(RuntimeInput::Skip, RuntimeInput::Value)
     }
 }
 
@@ -353,7 +569,11 @@ pub struct PreparedSystem<B: SystemInterpreter> {
     pub expected_generation: Option<u32>,
 }
 
-pub struct DynamicSystemCore<B: SystemInterpreter, O: OutputPolicy> {
+pub struct DynamicSystemCore<
+    B: SystemInterpreter,
+    O: OutputPolicy<B::ValueToken>,
+    I: InputPolicy<B::ValueToken> = UnitInput,
+> {
     interpreter: B,
     retained: SystemHandle<B>,
     params: B::ParamPlan,
@@ -372,9 +592,15 @@ pub struct DynamicSystemCore<B: SystemInterpreter, O: OutputPolicy> {
     pending_trace_runs: Vec<ParityRunHandle>,
     next_trace_run_index: u64,
     _output: PhantomData<O>,
+    _input: PhantomData<I>,
 }
 
-impl<B: SystemInterpreter, O: OutputPolicy> DynamicSystemCore<B, O> {
+impl<B, O, I> DynamicSystemCore<B, O, I>
+where
+    B: SystemInterpreter,
+    O: OutputPolicy<B::ValueToken>,
+    I: InputPolicy<B::ValueToken>,
+{
     pub fn new(prepared: PreparedSystem<B>) -> Self {
         Self {
             interpreter: prepared.interpreter,
@@ -395,6 +621,7 @@ impl<B: SystemInterpreter, O: OutputPolicy> DynamicSystemCore<B, O> {
             pending_trace_runs: Vec::new(),
             next_trace_run_index: 0,
             _output: PhantomData,
+            _input: PhantomData,
         }
     }
 
@@ -428,8 +655,13 @@ impl<B: SystemInterpreter, O: OutputPolicy> DynamicSystemCore<B, O> {
     }
 }
 
-impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
-    type In = ();
+impl<B, O, I> System for DynamicSystemCore<B, O, I>
+where
+    B: SystemInterpreter,
+    O: OutputPolicy<B::ValueToken>,
+    I: InputPolicy<B::ValueToken>,
+{
+    type In = I::In;
     type Out = O::Out;
 
     fn name(&self) -> DebugName {
@@ -442,7 +674,7 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
 
     unsafe fn run_unsafe(
         &mut self,
-        _input: SystemIn<'_, Self>,
+        input: SystemIn<'_, Self>,
         world: UnsafeWorldCell,
     ) -> Result<Self::Out, RunSystemError> {
         if let Some(validation) = &self.validation {
@@ -453,6 +685,12 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
             Some(world.id()),
             "Encountered a mismatched World. A System cannot be used with Worlds other than the one it was initialized with."
         );
+
+        let input = match I::prepare(input) {
+            RuntimeInput::None => None,
+            RuntimeInput::Value(value) => Some(value),
+            RuntimeInput::Skip => return Ok(O::skipped()),
+        };
 
         // SAFETY: initialize declares this resource read for non-exclusive
         // systems; exclusive systems own the whole World.
@@ -518,8 +756,13 @@ impl<B: SystemInterpreter, O: OutputPolicy> System for DynamicSystemCore<B, O> {
             // run, and the unsafe backend contract requires all arguments to be
             // dropped before returning.
             let result = unsafe {
-                self.interpreter
-                    .build_args_and_call_scheduled(prepared, &self.params, state, ctx)
+                self.interpreter.build_args_and_call_scheduled(
+                    prepared,
+                    &self.params,
+                    state,
+                    input,
+                    ctx,
+                )
             };
             drop(validity_guard);
             result
@@ -819,6 +1062,26 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn optional_pipe_value_policies_preserve_values_and_propagate_skips() {
+        assert!(
+            <OptionalValueOutput as OutputPolicy<u32>>::skipped().is_none(),
+            "a skipped source must not manufacture a pipe value"
+        );
+        assert_eq!(
+            <OptionalValueOutput as OutputPolicy<u32>>::finish(CallOutcome::Value(7)),
+            Some(7)
+        );
+        assert!(matches!(
+            <OptionalValueInput as InputPolicy<u32>>::prepare(None),
+            RuntimeInput::Skip
+        ));
+        assert!(matches!(
+            <OptionalValueInput as InputPolicy<u32>>::prepare(Some(7)),
+            RuntimeInput::Value(7)
+        ));
+    }
+
     #[derive(Resource, Default)]
     struct Counter(u32);
 
@@ -936,6 +1199,7 @@ mod tests {
     // owned strings without invoking code while its sink lock is held.
     unsafe impl SystemInterpreter for FakeInterpreter {
         type Event = ();
+        type ValueToken = ();
         type PreparedCall = FakeCall;
         type ParamPlan = FakePlan;
         type ScheduledRunState = FakeScheduledState;
@@ -998,8 +1262,10 @@ mod tests {
             prepared: Self::PreparedCall,
             params: &Self::ParamPlan,
             state: &mut Self::ScheduledRunState,
+            _input: Option<Self::ValueToken>,
             ctx: InterpreterCallContext<'_, '_, Self::Event>,
-        ) -> Result<CallOutcome, InterpreterFailure<Self::ExceptionToken>> {
+        ) -> Result<CallOutcome<Self::ValueToken>, InterpreterFailure<Self::ExceptionToken>>
+        {
             self.assert_retained_unlocked();
             *self
                 .last_validity
@@ -1035,7 +1301,8 @@ mod tests {
             params: &Self::ParamPlan,
             state: &mut Self::ObserverRunState,
             ctx: InterpreterCallContext<'_, '_, Self::Event>,
-        ) -> Result<CallOutcome, InterpreterFailure<Self::ExceptionToken>> {
+        ) -> Result<CallOutcome<Self::ValueToken>, InterpreterFailure<Self::ExceptionToken>>
+        {
             self.assert_retained_unlocked();
             self.observer_state_ids
                 .lock()
@@ -1166,6 +1433,23 @@ mod tests {
         let mut condition = DynamicConditionCore::new(condition.prepared).unwrap();
         condition.initialize(&mut world);
         assert!(condition.run((), &mut world).unwrap());
+    }
+
+    /// Exclusive systems must use Bevy's empty access-set shape. Declaring
+    /// read-all/write-all can wedge the multithreaded executor when mixed with
+    /// Bevy's own empty-access exclusive systems.
+    #[test]
+    fn exclusive_system_declares_empty_access() {
+        let mut world = World::new();
+        let mut fixture = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        fixture.prepared.flags.needs_exclusive = true;
+        let mut system = DynamicSystemCore::<_, UnitOutput>::new(fixture.prepared);
+
+        let access = system.initialize(&mut world);
+
+        assert!(!access.combined_access().has_any_read());
+        assert!(!access.combined_access().has_any_write());
+        assert!(system.flags().contains(SystemStateFlags::EXCLUSIVE));
     }
 
     #[test]
@@ -1455,6 +1739,27 @@ mod tests {
         }
         .unwrap();
         assert_eq!(fixture.observer_ids.lock().unwrap().as_slice(), &[0, 1]);
+    }
+
+    #[test]
+    fn startup_markers_survive_a_poisoned_lock() {
+        let generation = HotReloadGeneration::new(Arc::new(AtomicU32::new(3)));
+        generation.mark_startup_run();
+
+        let poisoner = generation.clone();
+        std::thread::spawn(move || {
+            let _guard = poisoner.startup_run_for_generations.lock().unwrap();
+            panic!("intentional poison");
+        })
+        .join()
+        .unwrap_err();
+
+        assert!(generation.has_startup_run(3));
+        generation.forget_startup_run(3);
+        assert!(!generation.has_startup_run(3));
+        generation.mark_startup_run();
+        generation.retain_startup_runs_since(4);
+        assert!(!generation.has_startup_run(3));
     }
 
     struct FakeProfiler {
