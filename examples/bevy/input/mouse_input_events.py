@@ -33,7 +33,6 @@ def print_mouse_events_system(
         print(f"Mouse wheel: {wheel_event}")
 
     # Note: Gesture events (macOS specific) not yet implemented:
-    # FIXME
     # - PinchGesture
     # - RotationGesture
     # - DoubleTapGesture
