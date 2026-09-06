@@ -30,6 +30,20 @@ use crate::{
     ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource},
 };
 
+/// #1: map a file extension to a registered, loadable asset bridge name so
+/// `load(path)` can infer the asset type. Conservative on purpose: only
+/// formats whose loaders ship today (fonts are excluded until the Font
+/// loader lands).
+fn bridge_name_for_extension(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" | "jpg" | "jpeg" | "bmp" | "tga" | "dds" | "ktx2" | "basis" | "exr"
+        | "hdr" | "webp" | "qoi" | "pam" | "ppm" | "pgm" | "pbm" => Some("Image"),
+        "ogg" | "oga" | "wav" | "mp3" | "flac" => Some("AudioSource"),
+        "gltf" | "glb" => Some("Gltf"),
+        _ => None,
+    }
+}
+
 /// Extract an AssetPath from a Python object (str or AssetPath).
 fn extract_asset_path(path: &Bound<'_, PyAny>) -> PyResult<AssetPath<'static>> {
     if path.is_instance_of::<PyString>() {
@@ -83,12 +97,28 @@ impl PyAssetServer {
 
 #[pymethods]
 impl PyAssetServer {
+    #[pyo3(signature = (path, asset_type=None))]
     pub fn load<'py>(
         &self,
         py: Python,
         path: Bound<'py, PyAny>,
-        asset_type: Bound<'py, PyType>,
+        asset_type: Option<Bound<'py, PyType>>,
     ) -> PyResult<Py<PyAny>> {
+        // #1: no explicit type -> infer it from the file extension
+        let Some(asset_type) = asset_type else {
+            let asset_path = extract_asset_path(&path)?;
+            let ext = asset_path.path().extension().and_then(|e| e.to_str()).unwrap_or("");
+            let name = bridge_name_for_extension(ext).ok_or_else(|| {
+                PyTypeError::new_err(format!(
+                    "can't infer the asset type of '{}' — pass it explicitly, e.g. \
+                     load(path, Image). Extensions recognized: images (png/jpg/jpeg/bmp/tga/\
+                     dds/ktx2/basis/exr/hdr/webp/qoi/pam/ppm/pgm/pbm), audio (ogg/oga/wav/\
+                     mp3/flac), and gltf/glb",
+                    asset_path
+                ))
+            })?;
+            return self.load_by_name(py, path, name);
+        };
         let type_ptr = asset_type.as_type_ptr();
         let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
             .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
