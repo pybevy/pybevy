@@ -1,0 +1,2156 @@
+# PyBevy Lint Configuration
+# This file configures the linter's behavior for Bevy API comparison
+[bevy]
+# Path to Bevy source (relative to project root or absolute)
+# Can be overridden with --bevy-path CLI option
+# path = "~/Documents/rust/bevy"
+
+# Types that are false matches across modules.
+# When a Bevy type from one crate matches a PyBevy class from a different module
+# by name only, but the types are actually unrelated, list them here to suppress
+# the false match. The Bevy type will be treated as unimplemented instead.
+# Format: "module::TypeName" (e.g., "ui::State")
+false_match_types = [
+    # bevy_ui::State is a focus tracking struct (FocusedEntity tracking),
+    # not the same as PyBevy's State which is an ECS state machine.
+    "ui::State",
+]
+
+# Registered component wrappers whose Bevy types do not expose reflection data.
+# Keep these in the generated oracle coverage on every interpreter backend.
+reflection_unavailable_types = [
+    "AtmosphereSettings",
+    "Exposure",
+    "ForwardDecal",
+    "LensDistortion",
+    "Strikethrough",
+    "Underline",
+]
+
+# Module placement overrides: types intentionally in a different PyBevy module
+# Format: "bevy_module::Type" = "pybevy_module"
+[bevy.module_placement_overrides]
+# Base classes in pybevy_core, exported from pybevy.ecs at Python level
+"ecs::ChildOf" = "core"
+"ecs::Children" = "core"
+"ecs::MessageId" = "core"
+# Handle/AssetPath in pybevy_core, exported from pybevy.assets at Python level
+"asset::AssetPath" = "core"
+
+# Crate mappings: pybevy_module -> bevy_crate
+# Maps PyBevy source directories to corresponding Bevy crates
+[bevy.crate_type_sources]
+bevy_math = ["glam"]
+
+[bevy.crate_mappings]
+transform = "bevy_transform"
+ecs = "bevy_ecs"
+app = "bevy_app"
+time = "bevy_time"
+math = "bevy_math"
+render = "bevy_render"
+pbr = "bevy_pbr"
+post_process = "bevy_post_process"
+sprite = "bevy_sprite"
+camera = "bevy_camera"
+core_pipeline = "bevy_core_pipeline"
+gizmos = "bevy_gizmos"
+light = "bevy_light"
+window = "bevy_window"
+assets = "bevy_asset"
+mesh = "bevy_mesh"
+material = "bevy_material"
+color = "bevy_color"
+gltf = "bevy_gltf"
+world_serialization = "bevy_world_serialization"
+animation = "bevy_animation"
+audio = "bevy_audio"
+image = "bevy_image"
+input = "bevy_input"
+ui = "bevy_ui"
+text = "bevy_text"
+a11y = "bevy_a11y"
+winit = "bevy_winit"
+shader = "bevy_shader"
+
+# Bevy crates to exclude from comparison (not relevant for Python bindings)
+[bevy.excluded_crates]
+crates = [
+    "bevy_android",
+    "bevy_derive",
+    "bevy_dylib",
+    "bevy_encase_derive",
+    "bevy_internal",
+    "bevy_macro_utils",
+    "bevy_ptr",
+    "bevy_reflect",
+    "bevy_tasks",
+    "bevy_utils",
+    "bevy_feathers",
+    "bevy_diagnostic",
+    "bevy_dev_tools",
+    "bevy_remote",
+    "bevy_log",
+]
+
+# Types to exclude from comparison (internal, derive-only, or not useful for Python)
+[bevy.excluded_types]
+# Patterns can use wildcards: "Reflect*", "*Builder", etc.
+patterns = [
+    "*Builder",
+    "*Plugin",
+    "*Systems",
+    "*Set",
+    "*Schedule",
+    "Reflect*",
+    "*Reflect",
+    "*TypePath",
+    "*TypeData",
+]
+
+# Engine-managed component types that don't need user-constructable defaults.
+# These are inserted/managed by Bevy's internal systems, not user code.
+# The linter will skip `default()` method warnings for these types.
+engine_managed_types = [
+    "InheritedVisibility",  # Managed by Bevy's visibility system
+    "ViewVisibility",       # Managed by Bevy's visibility system
+    "Children",             # Managed by Bevy's hierarchy system
+    "ComputedNode",         # Computed by Bevy's UI layout system
+    "FontAtlasSet",         # Managed by Bevy's text rendering system
+    "GlobalTransform",      # Computed by Bevy's transform propagation
+    "Cascades",             # Computed by Bevy's shadow cascade system
+]
+
+# Types intentionally excluded despite appearing in Bevy examples.
+# These won't trigger audit warnings. Use for types where PyBevy has an
+# alternative API (e.g., schedule labels replaced by Stage enum).
+audit_ignore = [
+    # Schedule labels - PyBevy uses Stage enum instead of individual types
+    "app::First",
+    "app::FixedFirst",
+    "app::FixedLast",
+    "app::FixedMain",
+    "app::FixedPostUpdate",
+    "app::FixedPreUpdate",
+    "app::FixedUpdate",
+    "app::Last",
+    "app::Main",
+    "app::PostStartup",
+    "app::PostUpdate",
+    "app::PreStartup",
+    "app::PreUpdate",
+    "app::Startup",
+    "app::Update",
+
+    # Time - PyBevy implements concrete specializations (Time<Virtual>, etc.)
+    "time::Time<T>",
+
+    # Low-level rendering types - not useful in Python API
+    "MeshVertexBufferLayoutRef",
+    "VertexBufferLayout",
+
+    # ECS internals - unsafe/low-level Rust types not applicable to Python
+    "ecs::EntityWorldMut",
+    "ecs::UnsafeWorldCell",
+    "ecs::ComponentHooks",
+    "ecs::SystemState",
+
+    # Geometry internals
+    "ConvexPolygon",
+    "PerimeterSegment",
+]
+
+# Specific types to exclude
+types = [
+    # Internal ECS types (global - used across modules)
+    "ecs::EntityRef",
+    "ecs::EntityMut",
+    "ecs::EntityWorldMut",
+    "ecs::UnsafeWorldCell",
+    "ecs::SystemMeta",
+    "ecs::SystemState",
+    "ecs::QueryState",
+
+    # bevy_transform internal types
+    "transform::ComputeGlobalTransformError",
+    "transform::TransformTreeChanged",
+
+    # bevy_text internal types - text rendering pipeline internals
+    "text::ComputedTextBlock",
+    "text::FontLoader",
+    "text::GlyphAtlasInfo",
+    "text::GlyphAtlasLocation",
+    "text::PositionedGlyph",
+    "text::TextEntity",
+    "text::TextError",
+    "text::TextIterScratch",
+    "text::TextLayoutInfo",
+    "text::TextMeasureInfo",
+    "text::TextPipeline",
+    "text::RunGeometry",       # Internal text layout type, not used in examples
+
+    # bevy_ui internal types - layout/measure pipeline internals
+    "ui::CalculatedClip",
+    "ui::ContentSize",
+    "ui::FixedMeasure",
+    "ui::ImageMeasure",
+    "ui::LayoutConfig",
+    "ui::LayoutContext",
+    "ui::LayoutError",
+    "ui::MeasureArgs",
+    "ui::NodeMeasure",
+    "ui::TextMeasure",
+    "ui::UiStack",
+    "ui::NodeQuery",
+    "ui::NodeQueryItem",
+    "ui::TextNodeFlags",
+    "ui::ValArithmeticError",
+    "ui::ValParseError",
+    "ui::ComputedUiRenderTargetInfo",
+    "ui::UiGlobalTransform",
+    "ui::Checkable",
+    "ui::GridPlacementError",
+    "ui::ImageNodeSize",
+    "ui::MaxTrackSizingFunction",
+    "ui::MinTrackSizingFunction",
+    "ui::OverrideClip",
+    "ui::ResolvedBorderRadius",
+    "ui::LayoutNode",          # Internal layout type, not used in examples
+    "ui::Line",                # Generic Line<String> type, not used in examples
+    "ui::UiSurface",           # Internal taffy layout surface, not used in examples
+
+    # bevy_image internal types
+    "image::CompressedImageFormatSupport",
+    "image::DataFormat",
+    "image::DynamicTextureAtlasBuilderError",
+    "image::FileTextureError",
+    "image::ImageLoader",
+    "image::ImageType",
+    "image::TextureAccessError",
+    "image::TextureAtlasBuilderError",
+    "image::TextureError",
+    "image::TextureReinterpretationError",  # Error type, not user-constructed
+    "image::TranscodeFormat",
+
+    # bevy_gltf internal types
+    "gltf::GltfExtensionHandlers",   # Arc<RwLock<Vec<Box<dyn Trait>>>> - not exposable in Python
+
+    # bevy_light internal types - render pipeline internals
+    "light::GlobalClusterSettings",
+    "light::ClusterFarZMode",
+    "light::ClusterZConfig",
+    "light::ClusterConfig",
+    "light::Clusters",
+    "light::ClusterVisibilityClass",
+    "light::ClusterableObjectCounts",
+    "light::ClusterableObjectType",
+
+    # bevy_mesh internal types
+    "mesh::AssetId",           # Generic handle type, not user-facing
+    "mesh::MeshAccessError",   # Error type, not user-constructed
+
+    # bevy_audio internal types
+    "audio::AudioLoader",
+
+    # bevy_sprite internal types
+    "sprite::TextureSlice",
+
+    # bevy_mesh internal types
+    "mesh::BaseMeshPipelineKey",
+    "mesh::CapsuleUvProfile",
+    "mesh::ConeAnchor",
+    "mesh::CylinderAnchor",
+    "mesh::GenerateTangentsError",
+    "mesh::IcosphereError",
+    "mesh::MeshMergeError",
+    "mesh::MeshTrianglesError",
+    "mesh::MeshVertexAttributeId",
+    "mesh::MeshVertexBufferLayout",
+    "mesh::MeshVertexBufferLayoutRef",
+    "mesh::MeshVertexBufferLayouts",
+    "mesh::MeshWindingInvertError",
+    "mesh::MissingVertexAttributeError",
+    "mesh::MorphBuildError",
+    "render::MorphTargetImage",
+    "mesh::PerimeterSegment",
+    "mesh::VertexAttributeDescriptor",
+    "mesh::VertexBufferLayout",
+
+    # Module-prefixed exclusions (not used in Bevy examples)
+    # Format: "module::TypeName" - excludes TypeName only from that module
+    # These are respected by the linter for module-prefixed exclusions
+
+    # bevy_a11y - accessibility types not used in examples
+    "a11y::AccessibilityRequested",
+    "a11y::ActionRequest",
+    "a11y::ManageAccessibilityUpdates",
+
+    # bevy_ecs - internal ECS machinery (archetype management, query state, etc.)
+    "ecs::AccessConflicts",
+    "ecs::ApplyDeferred",
+    "ecs::Archetype",
+    "ecs::ArchetypeEntity",
+    "ecs::ArchetypeGeneration",
+    "ecs::ArchetypeRecord",
+    "ecs::Archetypes",
+    "ecs::AutoInsertApplyDeferredPass",
+    "ecs::BundleId",
+    "ecs::BundleInfo",
+    "ecs::Bundles",
+    "ecs::CachedComponentObservers",
+    "ecs::CachedObservers",
+    "ecs::CachedSystemId",
+    "ecs::Chain",
+    "ecs::CompactNodeIdAndDirection",
+    "ecs::CompactNodeIdPair",
+    "ecs::ComponentEntry",
+    "ecs::ComponentHooks",
+    "ecs::ComponentIds",
+    "ecs::ComponentTicks",
+    "ecs::ConditionWithAccess",
+    "ecs::Dag",
+    "ecs::DefaultErrorHandler",
+    "ecs::DefaultQueryFilters",
+    "ecs::DynSystemParamState",
+    "ecs::Edges",
+    "ecs::EntityCloner",
+    "ecs::ComponentCloneCtx",
+    "ecs::EntityCommandError",
+    "ecs::EntityComponentError",
+    "ecs::EntityComponentsTrigger",
+    "ecs::EntityDespawnError",
+    "ecs::EntityEntryCommands",
+    "ecs::EntityFetcher",
+    "ecs::EntityHash",
+    "ecs::EntityHasher",
+    "ecs::EntityLocation",
+    "ecs::EntityMutableFetchError",
+    "ecs::EntityTrigger",
+    "ecs::ErrorContext",
+    "ecs::EventKey",
+    "ecs::FilteredAccess",
+    "ecs::GetComponentReflectError",
+    "ecs::GetEntityMutByIdError",
+    "ecs::GlobalTrigger",
+    "ecs::GraphInfo",
+    "ecs::IgnoreDeferred",
+    "ecs::InsertMode",
+    "ecs::Interner",
+    "ecs::MainThreadExecutor",
+    "ecs::MaybeLocation",
+    "ecs::MessageRegistry",
+    "ecs::MultiThreadedExecutor",
+    "ecs::NameOrEntity",
+    "ecs::NameOrEntityItem",
+    "ecs::NonSendMarker",
+    "ecs::ObservedBy",
+    "ecs::ObserverDescriptor",
+    "ecs::OccupiedComponentEntry",
+    "ecs::OptIn",
+    "ecs::OptOut",
+    "ecs::PropagateEntityTrigger",
+    "ecs::QueryEntityError",
+    "ecs::QueryLens",
+    "ecs::QueryParIter",
+    "ecs::QueryParManyIter",
+    "ecs::QueryParManyUniqueIter",
+    "ecs::QuerySingleError",
+    "ecs::QueuedComponents",
+    "ecs::ReadFetch",
+    "ecs::RegisteredSystemError",
+    "ecs::RelationshipHookMode",
+    "ecs::RemovedComponentEntity",
+    "ecs::RemovedComponentMessages",
+    "ecs::RemovedSystem",
+    "ecs::RequiredComponent",
+    "ecs::RequiredComponentConstructor",
+    "ecs::RequiredComponents",
+    "ecs::RequiredComponentsRegistrator",
+    "ecs::ResourceFetchError",
+    "ecs::SceneEntityMapper",
+    "ecs::ScheduleConfig",
+    "ecs::ScheduleConfigs",
+    "ecs::ScheduleGraph",
+    "ecs::ScheduleNotInitialized",
+    "ecs::ShouldUpdateMessages",
+    "ecs::SingleThreadedExecutor",
+    "ecs::SourceComponent",
+    "ecs::SparseSets",
+    "ecs::SpawnDetails",
+    "ecs::Spawned",
+    "ecs::Storages",
+    "ecs::SystemIdMarker",
+    "ecs::SystemName",
+    "ecs::SystemSets",
+    "ecs::SystemWithAccess",
+    "ecs::TableId",
+    "ecs::Tables",
+    "ecs::TriggerContext",
+    "ecs::TryFromFilteredError",
+    "ecs::TryInsertBatchError",
+    "ecs::TryRunScheduleError",
+    "ecs::UnboundedAccessError",
+    "ecs::UnsafeEntityCell",
+    "ecs::VacantComponentEntry",
+    "ecs::WithOneRelated",
+    "ecs::WithRelated",
+    "ecs::WorldId",
+    "ecs::WriteFetch",
+
+    # bevy_ecs - additional types not used in examples
+    "ecs::Access",                         # Internal ECS machinery
+    "ecs::AccessConflictError",            # Internal ECS machinery
+    "ecs::AmbiguousSystemConflictsWarning", # Internal scheduling
+    "ecs::Column",                         # Internal ECS machinery
+    "ecs::ComponentRelationshipAccessor",  # Internal ECS machinery
+    "ecs::ComponentTickCells",             # Internal ECS machinery
+    "ecs::Components",                     # Internal ECS machinery
+    "ecs::DagAnalysis",                    # Internal scheduling
+    "ecs::DagCrossDependencyError",        # Internal scheduling
+    "ecs::DagOverlappingGroupError",       # Internal scheduling
+    "ecs::DagRedundancyError",             # Internal scheduling
+    "ecs::DiGraphToposortError",           # Internal scheduling
+    "ecs::EcsAccessLevel",                 # Internal ECS machinery
+    "ecs::EcsAccessType",                  # Internal ECS machinery
+    "ecs::Entities",                       # Internal ECS machinery
+    "ecs::EntityAllocator",                # Internal ECS machinery
+    "ecs::EntityHashMap",                  # Internal ECS machinery
+    "ecs::EntityIndexMap",                 # Internal ECS machinery
+    "ecs::EntityNotSpawnedError",          # Error type
+    "ecs::EntityValidButNotSpawnedError",  # Error type
+    "ecs::ExclusiveMarker",                # Internal ECS machinery
+    "ecs::Immutable",                      # Internal ECS machinery
+    "ecs::Interned<ScheduleLabel>",        # Internal scheduling
+    "ecs::Interned<SystemSet>",            # Internal scheduling
+    "ecs::InvalidEntityError",             # Error type
+    "ecs::Observers",                      # Internal ECS machinery
+    "ecs::QueryAccessError",               # Error type
+    "ecs::RelationshipAccessor",           # Internal ECS machinery
+    "ecs::Resources",                      # Internal ECS machinery
+    "ecs::ScheduleCleanupPolicy",          # Internal scheduling
+    "ecs::ScheduleError",                  # Error type
+    "ecs::Spawn",                          # Internal ECS machinery
+    "ecs::SpawnError",                     # Error type
+    "ecs::SystemTypeSetAmbiguityError",    # Internal scheduling
+    "ecs::Table",                          # Internal ECS machinery
+    "ecs::UnsafeFilteredEntityMut",        # Internal ECS machinery
+
+    # bevy_render - render pipeline internals (GPU resources, buffers, etc.)
+    "render::BatchedInstanceBuffers",
+    "render::BindGroupId",
+    "render::BindGroupLayoutId",
+    "render::BindingNumber",
+    "render::BindlessBufferDescriptor",
+    "render::BindlessDescriptor",
+    "render::BindlessIndex",
+    "render::BindlessIndexTableDescriptor",
+    "render::BindlessResourceType",
+    "render::BindlessSlabResourceLimit",
+    "render::BinnedRenderPhaseBatch",
+    "render::BinnedRenderPhaseBatchSets",
+    "render::BufferId",
+    "render::BufferVec",
+    "render::CachedBinKey",
+    "render::CachedBinnedEntity",
+    "render::CachedPipeline",
+    "render::CachedTexture",
+    "render::CameraRenderGraph",
+    "render::CapturedScreenshots",
+    "render::ColorAttachment",
+    "render::ColorGradingUniform",
+    "render::ComputePipelineId",
+    "render::DefaultImageSampler",
+    "render::DepthAttachment",
+    "render::DrawError",
+    "render::DrawFunctionsInternal",
+    "render::DynamicBindGroupLayoutEntries",
+    "render::DynamicStorageBuffer",
+    "render::DynamicUniformBuffer",
+    "render::DynamicUniformBufferWriter",
+    "render::ErasedRenderAssets",
+    "render::ExtractedAssets",
+    "render::ExtractedWindow",
+    "render::ExtractedWindows",
+    "render::FallbackImageCubemap",
+    "render::FallbackImageFormatMsaaCache",
+    "render::FallbackImageZero",
+    "render::GlobalsBuffer",
+    "render::GlobalsUniform",
+    "render::GpuArrayBuffer",
+    "render::GpuOcclusionCullingWorkItemBuffers",
+    "render::GpuPreprocessingMode",
+    "render::InstanceInputUniformBuffer",
+    "render::ManualTextureView",
+    "render::MeshAllocatorSettings",
+    "render::MeshBufferSlice",
+    "render::MeshClassIndirectParametersBuffers",
+    "render::MissingRenderTargetInfoError",
+    "material::NoFragmentStateError",
+    "render::NonMeshEntities",
+    "render::OcclusionCullingSubview",
+    "render::OcclusionCullingSubviewEntities",
+    "render::OutputColorAttachment",
+    "render::OwnedData",
+    "render::PassSpanGuard",
+    "render::PhaseBatchedInstanceBuffers",
+    "render::PhaseIndirectParametersBuffers",
+    "render::PipelineDescriptor",
+    "render::PostProcessWrite",
+    "render::PrepareNextFrameAssets",
+    "render::PreprocessWorkItemBuffers",
+    "render::RenderAdapterInfo",
+    "render::RenderAppChannels",
+    "render::RenderAssetBytesPerFrame",
+    "render::RenderAssetBytesPerFrameLimiter",
+    "render::RenderBin",
+    "render::RenderCommandState",
+    "render::RenderExtractApp",
+    "render::RenderInstance",
+    "render::RenderPipelineId",
+    "render::RenderResources",
+    "render::RenderVisibilityRanges",
+    "render::SamplerId",
+    "render::ScreenshotCaptured",
+    "render::ScreenshotToScreenPipeline",
+    "render::SortedCamera",
+    "render::SortedCameras",
+    "render::SortedRenderPhase",
+    "render::SpecializedComputePipelines",
+    "render::StorageBuffer",
+    "render::SurfaceTexture",
+    "render::SyncToRenderWorld",
+    "render::TemporaryRenderEntity",
+    "render::Texture",
+    "render::TextureCache",
+    "render::TextureId",
+    "render::TextureViewId",
+    "render::TimeSpanGuard",
+    "render::UnbatchableBinnedEntities",
+    "render::UninitBufferVec",
+    "render::UntypedPhaseBatchedInstanceBuffers",
+    "render::ViewRangefinder3d",
+    "render::ViewTargetAttachments",
+    "render::ViewUniform",
+    "render::ViewUniformOffset",
+    "render::ViewUniforms",
+    "render::WgpuSettingsPriority",
+    "render::WindowSurfaces",
+    "render::WriteBufferRangeError",
+
+    # bevy_render - additional types not used in examples
+    "render::AssetExtractionError",        # Render pipeline internal
+    "render::BindGroupLayoutEntries",      # Render pipeline internal
+    "render::BinnedRenderPhase",           # Render pipeline internal
+    "render::ExtractedInstances",          # Render pipeline internal
+    "render::Pipeline",                    # Render pipeline internal
+    "render::TextureView",                 # Render pipeline internal
+
+    # bevy_pbr - PBR rendering pipeline internals
+    "pbr::AtmosphereTextures",
+    "pbr::AtmosphereTransform",
+    "pbr::AtmosphereTransforms",
+    "pbr::AtmosphereTransformsOffset",
+    "pbr::Bluenoise",
+    "pbr::BuildIndirectParametersBindGroups",
+    "pbr::BuildIndirectParametersPipeline",
+    "pbr::BuildIndirectParametersPipelineKey",
+    "pbr::DecalsBuffer",
+    "pbr::DeferredFragmentShader",
+    "pbr::DeferredLightingLayout",
+    "pbr::DeferredLightingPipeline",
+    "pbr::DeferredVertexShader",
+    "pbr::DownsamplingConfig",
+    "pbr::EnvironmentMapIds",
+    "pbr::EnvironmentMapViewLightProbeInfo",
+    "pbr::ErasedMaterialKey",
+    "material::ErasedMaterialKeyVTable",
+    "pbr::ErasedMaterialPipelineKey",
+    "pbr::ExtractedClusterConfig",
+    "pbr::ExtractedClusterableObjects",
+    "pbr::ExtractedDirectionalLight",
+    "pbr::FallbackBindlessResources",
+    "pbr::FogMeta",
+    "pbr::ForwardDecalMaterialExtUniform",
+    "pbr::GeneratorBindGroupLayouts",
+    "pbr::GeneratorBindGroups",
+    "pbr::GeneratorPipelines",
+    "pbr::GeneratorSamplers",
+    "pbr::GpuAtmosphereSettings",
+    "pbr::GpuDirectionalCascade",
+    "pbr::GpuDirectionalLight",
+    "pbr::GpuFog",
+    "pbr::GpuLights",
+    "pbr::IntermediateTextures",
+    "pbr::LightEntity",
+    "pbr::LightKeyCache",
+    "pbr::LightMeta",
+    "pbr::LightProbesBuffer",
+    "pbr::LightProbesUniform",
+    "pbr::LightmapSlab",
+    "pbr::MaterialBindGroupBindlessAllocator",
+    "pbr::MaterialBindGroupIndex",
+    "pbr::MaterialBindGroupNonBindlessAllocator",
+    "pbr::MaterialBindGroupSlot",
+    "pbr::MaterialBindingId",
+    "pbr::MaterialBindlessSlab",
+    "pbr::MaterialExtensionKey",
+    "pbr::MaterialExtensionPipeline",
+    "pbr::MaterialPipelineSpecializer",
+    "pbr::MaterialSlab",
+    "pbr::MaterialVertexShader",
+    "pbr::MeshBindGroupPair",
+    "pbr::MeshBindGroups",
+    "pbr::MeshCullingDataBuffer",
+    "pbr::MeshLayouts",
+    "pbr::MeshPhaseBindGroups",
+    "pbr::MeshPipelineViewLayout",
+    "pbr::MeshPipelineViewLayouts",
+    "pbr::MeshTransforms",
+    "pbr::MeshViewBindGroup",
+    "pbr::MeshesToReextractNextFrame",
+    "pbr::MeshletDeferredFragmentShader",
+    "pbr::MeshletFragmentShader",
+    "pbr::MeshletPrepassFragmentShader",
+    "pbr::MorphIndex",
+    "pbr::MorphIndices",
+    "pbr::MorphUniforms",
+    "pbr::PbrDeferredLightingDepthId",
+    "pbr::PhaseBuildIndirectParametersBindGroups",
+    "pbr::PhasePreprocessBindGroups",
+    "pbr::PrepassFragmentShader",
+    "pbr::PrepassPipeline",
+    "pbr::PrepassPipelineSpecializer",
+    "pbr::PrepassVertexShader",
+    "pbr::PrepassViewBindGroup",
+    "pbr::PreprocessBindGroups",
+    "pbr::PreprocessPhasePipelines",
+    "pbr::PreprocessPipeline",
+    "pbr::PreprocessPipelineKey",
+    "pbr::PreprocessPipelines",
+    "pbr::PreviousGlobalTransform",
+    "pbr::RenderClusteredDecals",
+    "pbr::RenderEnvironmentMap",
+    "pbr::RenderLightmaps",
+    "pbr::RenderMeshInstanceCpu",
+    "pbr::RenderMeshInstanceFlags",
+    "pbr::RenderMeshInstanceGpu",
+    "pbr::RenderMeshInstanceGpuQueue",
+    "pbr::RenderMeshInstanceGpuQueues",
+    "pbr::RenderMeshInstanceShared",
+    "pbr::RenderMeshInstancesCpu",
+    "pbr::RenderMeshInstancesGpu",
+    "pbr::RenderPhaseType",
+    "pbr::RenderWireframeInstances",
+    "pbr::RenderWireframeMaterial",
+    "pbr::ResetIndirectBatchSetsPipeline",
+    "pbr::ScreenSpaceAmbientOcclusionResources",
+    "pbr::ScreenSpaceReflectionsBuffer",
+    "pbr::ScreenSpaceReflectionsPipeline",
+    "pbr::ScreenSpaceReflectionsPipelineId",
+    "pbr::ScreenSpaceReflectionsPipelineKey",
+    "pbr::ScreenSpaceReflectionsUniform",
+    "pbr::ShadowBatchSetKey",
+    "pbr::ShadowBinKey",
+    "pbr::ShadowSamplers",
+    "pbr::ShadowView",
+    "pbr::ShadowsDrawFunction",
+    "pbr::SkinUniforms",
+    "pbr::SkipDeferredLighting",
+    "pbr::SkipGpuPreprocess",
+    "pbr::SpecializedMaterialViewPipelineCache",
+    "pbr::SpecializedPrepassMaterialPipelineCache",
+    "pbr::SpecializedPrepassMaterialViewPipelineCache",
+    "pbr::SpecializedShadowMaterialPipelineCache",
+    "pbr::SpecializedShadowMaterialViewPipelineCache",
+    "pbr::SpecializedWireframePipelineCache",
+    "pbr::SpecializedWireframeViewPipelineCache",
+    "pbr::StandardMaterialUniform",
+    "pbr::ViewClusterBindings",
+    "pbr::ViewFogUniformOffset",
+    "pbr::ViewKeyCache",
+    "pbr::ViewKeyPrepassCache",
+    "pbr::ViewLightEntities",
+    "pbr::ViewLightProbesUniformOffset",
+    "pbr::ViewLightsUniformOffset",
+    "pbr::ViewScreenSpaceReflectionsUniformOffset",
+    "pbr::ViewShadowBindings",
+    "pbr::Wireframe3d",
+    "pbr::Wireframe3dBatchSetKey",
+    "pbr::Wireframe3dBinKey",
+    "pbr::Wireframe3dPipeline",
+    "pbr::WireframeEntitiesNeedingSpecialization",
+
+    # bevy_pbr - additional types not used in examples
+    "pbr::AtmosphereBuffer",               # Render pipeline internal
+    "pbr::AtmosphereSampler",              # Render pipeline internal
+    "pbr::DeferredAlphaMaskDrawFunction",  # Render pipeline internal
+    "pbr::DeferredOpaqueDrawFunction",     # Render pipeline internal
+    "pbr::ExtractedAtmosphere",            # Render pipeline internal
+    "pbr::GpuAtmosphere",                  # Render pipeline internal
+    "pbr::GpuScatteringMedium",            # Render pipeline internal
+    "pbr::MainPassAlphaMaskDrawFunction",  # Render pipeline internal
+    "pbr::MainPassTransmissiveDrawFunction", # Render pipeline internal
+    "pbr::MainPassTransparentDrawFunction", # Render pipeline internal
+    "pbr::PrepassAlphaMaskDrawFunction",   # Render pipeline internal
+    "pbr::PrepassOpaqueDrawFunction",      # Render pipeline internal
+    "pbr::ScatteringMediumSampler",        # Render pipeline internal
+    "pbr::ScatteringTerm",                 # Render pipeline internal
+    "pbr::Shadow",                         # Render pipeline internal
+
+    # bevy_asset - asset system internals
+    "asset::AddAsyncError",
+    "asset::AssetAction",
+    "asset::AssetActionMinimal",
+    "asset::AssetHandleProvider",
+    "asset::AssetIndex",
+    "asset::AssetLoadError",
+    "asset::AssetLoaderError",
+    "asset::AssetMeta",
+    "asset::AssetMetaCheck",
+    "asset::AssetMetaMinimal",
+    "asset::AssetProcessorData",
+    "asset::AssetSourceEvent",
+    "asset::AssetSources",
+    "asset::AssetWriterError",
+    "asset::DeserializeMetaError",
+    "asset::Dir",
+    "asset::DirStream",
+    "asset::EmbeddedAssetRegistry",
+    "asset::FileAssetWriter",
+    "asset::InitializeError",
+    "asset::InvalidGenerationError",
+    "asset::LoadTransformAndSaveSettings",
+    "asset::LoadedAsset",
+    "asset::LoadedUntypedAsset",
+    "asset::LogEntryError",
+    "asset::MemoryAssetReader",
+    "asset::MissingAssetLoaderForExtensionError",
+    "asset::MissingAssetLoaderForTypeIdError",
+    "asset::MissingAssetLoaderForTypeNameError",
+    "asset::MissingAssetSourceError",
+    "asset::MissingAssetWriterError",
+    "asset::MissingProcessedAssetReaderError",
+    "asset::MissingProcessedAssetWriterError",
+    "asset::ParseAssetPathError",
+    "asset::ProcessContext",
+    "asset::ProcessDependencyInfo",
+    "asset::ProcessError",
+    "asset::ProcessResult",
+    "asset::ProcessStatus",
+    "asset::ProcessedInfo",
+    "asset::ProcessedInfoMinimal",
+    "asset::ProcessorAssetInfos",
+    "asset::ProcessorGatedReader",
+    "asset::ProcessorState",
+    "asset::ProcessorTransactionLog",
+    "asset::ReadAssetBytesError",
+    "asset::ReadLogError",
+    "asset::SliceReader",
+    "asset::StrongHandle",
+    "asset::TransactionLockedReader",
+    "asset::UntypedAssetId",
+    "asset::UntypedAssetLoadFailedEvent",
+    "asset::ValidateLogError",
+    "asset::WaitForAssetError",
+    "asset::WriteDefaultMetaError",
+    "asset::WriteLogError",
+
+    # bevy_asset - additional types not used in examples
+    "asset::AssetProcessor",               # Asset pipeline internal
+    "asset::AssetSourceBuilders",          # Asset pipeline internal
+    "asset::FileTransactionLogFactory",    # Asset pipeline internal
+    "asset::GetProcessorError",            # Error type
+    "asset::LogEntry",                     # Asset pipeline internal
+    "asset::MemoryAssetWriter",            # Asset pipeline internal
+    "asset::ReaderNotSeekableError",       # Error type
+    "asset::SetTransactionLogFactoryError", # Error type
+
+    # bevy_world_serialization - serialization internals
+    "world_serialization::DynamicEntity",
+    "world_serialization::EntitiesSerializer",
+    "world_serialization::EntitySerializer",
+    "world_serialization::WorldFilter",
+    "world_serialization::WorldInstance",
+    "world_serialization::WorldAssetLoader",
+    "world_serialization::WorldMapSerializer",
+    "world_serialization::DynamicWorldSerializer",
+    "world_serialization::WorldInstanceSpawnError",
+
+    # bevy_math - curve/sampling types not used in examples
+    "math::AabbCast3d",
+    "math::Affine3",
+    "math::AspectRatio",
+    "math::BackInCurve",
+    "math::BackInOutCurve",
+    "math::BackOutCurve",
+    "math::BounceInCurve",
+    "math::BounceInOutCurve",
+    "math::BounceOutCurve",
+    "math::BoundaryOf",
+    "math::BoundingSphereCast",
+    "math::ChainCurve",
+    "math::ChainError",
+    "math::ChunkedUnevenCore",
+    "math::ChunkedUnevenCoreError",
+    "math::CircularInCurve",
+    "math::CircularInOutCurve",
+    "math::CircularOutCurve",
+    "math::ConstantCurve",
+    "math::ContinuationCurve",
+    "math::ConvexPolygon",
+    "math::ConvexPolygonError",
+    "math::CubicBezierError",
+    "math::CubicInCurve",
+    "math::CubicInOutCurve",
+    "math::CubicNurbsError",
+    "math::CubicOutCurve",
+    "math::CubicSegment",
+    "math::CurveReparamCurve",
+    "math::Dir3A",
+    "math::Dir4",
+    "math::ElasticCurve",
+    "math::ElasticInCurve",
+    "math::ElasticInOutCurve",
+    "math::ElasticOutCurve",
+    "math::EvenCore",
+    "math::EvenCoreError",
+    "math::ExponentialInCurve",
+    "math::ExponentialInOutCurve",
+    "math::ExponentialOutCurve",
+    "math::ForeverCurve",
+    "math::GraphCurve",
+    "math::InsufficientDataError",
+    "math::InteriorOf",
+    "math::InterpolationDatum",
+    "math::InvalidDirectionError",
+    "math::InvalidIntervalError",
+    "math::LinearCurve",
+    "math::LinearReparamCurve",
+    "math::LinearReparamError",
+    "math::MapCurve",
+    "math::PingPongCurve",
+    "math::PingPongError",
+    "math::QuadraticInCurve",
+    "math::QuadraticInOutCurve",
+    "math::QuadraticOutCurve",
+    "math::QuarticInCurve",
+    "math::QuarticInOutCurve",
+    "math::QuarticOutCurve",
+    "math::QuinticInCurve",
+    "math::QuinticInOutCurve",
+    "math::QuinticOutCurve",
+    "math::RationalSegment",
+    "math::ReparamCurve",
+    "math::RepeatCurve",
+    "math::RepeatError",
+    "math::ResamplingError",
+    "math::ReverseCurve",
+    "math::ReverseError",
+    "math::SampleAutoCurve",
+    "math::SampleCurve",
+    "math::SampleDerivativeWrapper",
+    "math::SampleTwoDerivativesWrapper",
+    "math::SineInCurve",
+    "math::SineInOutCurve",
+    "math::SineOutCurve",
+    "math::SmoothStepCurve",
+    "math::SmoothStepInCurve",
+    "math::SmoothStepOutCurve",
+    "math::SmootherStepCurve",
+    "math::SmootherStepInCurve",
+    "math::SmootherStepOutCurve",
+    "math::SpacedPointsError",
+    "math::StepsCurve",
+    "math::UnevenCore",
+    "math::UnevenCoreError",
+    "math::UnevenSampleCurve",
+    "math::WithDerivative",
+    "math::WithTwoDerivatives",
+    "math::ZipCurve",
+
+    # bevy_window - internal window types not used in examples
+    "window::ClosingWindow",
+    "window::InternalWindowState",
+    "window::RawHandleWrapper",
+    "window::RawHandleWrapperHolder",
+    "window::ThreadLockedRawWindowHandleWrapper",
+    "window::WindowBackendScaleFactorChanged",
+    "window::WindowClosed",
+    "window::WindowClosing",
+    "window::WindowCreated",
+    "window::WindowDestroyed",
+    "window::WindowMoved",
+    "window::WindowOccluded",
+    "window::WindowScaleFactorChanged",
+    "window::WindowThemeChanged",
+
+    # bevy_app - schedule labels (PyBevy uses Stage enum instead of individual types)
+    "app::First",
+    "app::FixedFirst",
+    "app::FixedLast",
+    "app::FixedMain",
+    "app::FixedMainScheduleOrder",
+    "app::FixedPostUpdate",
+    "app::FixedPreUpdate",
+    "app::FixedUpdate",
+    "app::Last",
+    "app::Main",
+    "app::PostStartup",
+    "app::PostUpdate",
+    "app::PreStartup",
+    "app::PreUpdate",
+    "app::Startup",
+    "app::Update",
+
+    # bevy_app - internal app types
+    "app::Interned",       # Generic interned label type, not user-facing
+    "app::PluginsState",
+    "app::SpawnScene",
+    "app::SubApp",
+    "app::SubApps",
+    "app::TaskPoolThreadAssignmentPolicy",
+
+    # bevy_time - internal time types not used in examples
+    "time::TimeReceiver",
+    "time::TimeSender",
+    "time::Time<T>",  # Generic template - PyBevy implements concrete specializations
+
+    # bevy_camera - internal camera types not used in examples
+    "camera::CameraOutputMode",
+    "camera::CascadesFrusta",
+    "camera::CascadesVisibleEntities",
+    "camera::ComputedCameraValues",
+    "camera::CubeMapFace",
+    "camera::CustomProjection",
+    "camera::HalfSpace",
+    "camera::RenderTargetInfo",
+    "camera::ViewportConversionError",
+    "camera::VisibleEntities",
+    "camera::VisibleEntityRanges",
+    "camera::LoadOp",          # Generic render type (LoadOp<f32>), not user-facing
+    "camera::NoAutoAabb",      # Marker component, not used in examples
+
+    # bevy_animation - internal animation types not used in examples
+    "animation::AnimatableCurveEvaluator",
+    "animation::AnimationEvaluationState",
+    "animation::AnimationEventTrigger",
+    "animation::AnimationGraphAssetLoader",
+    "animation::AnimationGraphLoadError",
+    "animation::AnimationGraphSaveError",
+    "animation::AnimationTransition",
+    "animation::BlendInput",
+    "animation::CubicKeyframeCurve",
+    "animation::CubicRotationCurve",
+    "animation::NonPathHandleError",
+    "animation::SerializedAnimationClip",
+    "animation::SerializedAnimationGraphNode",
+    "animation::SerializedAnimationNodeType",
+    "animation::SteppedKeyframeCurve",
+    "animation::ThreadedAnimationGraph",
+    "animation::ThreadedAnimationGraphs",
+    "animation::WideCubicKeyframeCurve",
+    "animation::WideKeyframeCurveError",
+    "animation::WideLinearKeyframeCurve",
+    "animation::WideSteppedKeyframeCurve",
+    "animation::AssetId",                    # Generic handle type
+    "animation::AnimationEvaluationError",   # Error type
+    "animation::EvaluatorId",                # Internal evaluator ID
+    "animation::SerializedAnimationGraph",   # Serialization type
+
+    # bevy_input - internal input types not used in examples
+    "input::AxisSettingsError",
+    "input::ButtonSettingsError",
+    "input::ForceTouch",
+    "input::RawGamepadAxisChangedEvent",
+    "input::RawGamepadButtonChangedEvent",
+    "input::RawGamepadEvent",
+
+    # bevy_gltf - internal gltf types not used in examples
+    "gltf::DefaultGltfImageSampler",
+    "gltf::GltfError",
+    "gltf::GltfLoader",
+
+    # bevy_color - internal color types not used in examples
+    "color::ColorCurve",
+    "color::HexColorError",
+
+    # bevy_math - internal/error types
+    "math::MismatchedUnitsError",  # Error type, not user-constructed
+
+    # bevy_shader - internal shader types not used in examples
+    "shader::ShaderCache",
+    "shader::ShaderCacheSource",
+    "shader::ShaderId",
+    "shader::ShaderLoader",
+    "shader::ShaderSettings",
+]
+
+# PyBevy type name mappings to Bevy types
+# Format: "PyBevyName" = "BevyName" or "PyBevyName" = "bevy_crate::module::BevyName"
+[bevy.type_mappings]
+# When PyBevy uses different names than Bevy
+PyTransform = "Transform"
+PyVec3 = "Vec3"
+PyVec2 = "Vec2"
+PyQuat = "Quat"
+PyMat4 = "Mat4"
+PyMat3 = "Mat3"
+
+# Generic type specializations in Bevy -> PyBevy separate types
+# These specialized types have their own impl blocks in Bevy
+# Note: Use Py-prefixed names as that's what the Rust parser extracts
+PyTimeVirtual = "Time<Virtual>"
+PyTimeReal = "Time<Real>"
+PyTimeFixed = "Time<Fixed>"
+
+# Method exclusions - methods that shouldn't be compared
+[bevy.excluded_methods]
+# Methods that exist in Bevy but shouldn't be exposed in Python
+patterns = [
+    # Reflection traits - not relevant for Python
+    "from_reflect",
+    "type_path",
+    "type_path_table",
+    "short_type_path",
+    "type_ident",
+    "crate_name",
+    "module_path",
+    "get_type_registration",
+    "register_type",
+    "as_reflect",
+    "as_reflect_mut",
+    "reflect_*",
+    "clone_value",
+    "as_any",
+    "as_any_mut",
+    "as_partial_reflect",
+    "as_partial_reflect_mut",
+    "into_partial_reflect",
+    "try_into_reflect",
+    "try_as_reflect",
+    "try_as_reflect_mut",
+
+    # Reflect struct/enum methods
+    "field",
+    "field_mut",
+    "field_at",
+    "field_at_mut",
+    "field_len",
+    "name_at",
+    "index_of",
+    "iter_fields",
+    "clone_dynamic",
+    "variant_name",
+    "variant_index",
+    "variant_type",
+
+    # Standard Rust traits - have Python equivalents handled differently
+    "clone",      # Python uses copy protocol
+    "fmt",        # Python uses __repr__/__str__
+    "hash",       # Python uses __hash__
+    "partial_cmp", # Python uses comparison operators
+    "cmp",
+
+    # Internal/unsafe methods
+    "into_inner",
+    "from_raw_parts",
+    "as_ptr",
+    "as_mut_ptr",
+
+    # More reflection methods
+    "get_represented_type_info",
+    "into_any",
+    "into_reflect",
+    "register_type_dependencies",
+    "clone_behavior",
+    "register_required_components",
+
+    # Debug/Display trait methods
+    "debug",
+
+    # Operator overloads - Python uses __mul__, __add__ etc
+    "mul",
+    "add",
+    "sub",
+    "div",
+    "neg",
+    "mul_assign",
+    "add_assign",
+    "sub_assign",
+    "div_assign",
+
+    # More reflection methods
+    "set",
+    "try_apply",
+    "type_info",
+    "to_dynamic_struct",
+    "to_dynamic_tuple_struct",
+    "to_dynamic_enum",
+    "to_dynamic_tuple",
+    "to_dynamic_list",
+    "to_dynamic_array",
+    "to_dynamic_map",
+    "on_insert",
+    "on_add",
+    "on_remove",
+    "on_replace",
+
+    # Internal Vec3A variants (Bevy optimization, not needed in Python)
+    "*_vec3a",
+
+    # Serde traits - Python uses pickle/json differently
+    "serialize*",
+    "deserialize*",
+
+    # Deref trait methods - Rust-specific pattern
+    "deref",
+    "deref_mut",
+
+    # Bevy 0.18+ relationship accessor - internal ECS machinery, not user-facing
+    "relationship_accessor",
+
+    # Entity remapping trait - internal ECS machinery
+    "map_entities",
+]
+
+# Methods that can be auto-detected via PyBevy attributes
+# These won't be marked as "missing" if PyBevy has equivalent
+# Excluded traits - methods from these traits are skipped entirely
+# These traits have Rust-specific semantics that don't map to Python
+[bevy.excluded_traits]
+traits = [
+    # Asset visitor - internal Bevy asset system
+    "VisitAssetDependencies",
+
+    # Bevy audio internal trait
+    "Decodable",
+
+    # Text span access trait - internal, PyBevy uses text property getter/setter instead
+]
+
+# Per-type ignore configuration
+# Use [bevy.type_ignores.TypeName] to configure ignores for specific types
+#
+# Available options:
+#   ignore_constructor_warnings = true       # Suppress all constructor param warnings
+#   ignore_constructor_params = ["param"]    # Suppress specific param warnings
+#   intentional_signature_diffs = ["method"] # Mark signature diffs as intentional
+#   intentional_missing_methods = ["method"] # Mark missing methods as intentional
+#   intentional_missing_fields = ["field"]   # Mark missing fields as intentional
+#
+# Examples (commented out - uncomment when needed):
+#
+# # Transform: Constructor defaults are intentional per CLAUDE.md (PyO3 direct defaults pattern)
+# [bevy.type_ignores.Transform]
+# ignore_constructor_warnings = true
+# intentional_signature_diffs = ["from_matrix", "mul_transform"]
+# intentional_missing_methods = ["from_isometry", "to_isometry"]
+#
+# # Window: Constructor defaults are intentional for ergonomics
+# [bevy.type_ignores.Window]
+# ignore_constructor_warnings = true
+
+# AudioSink: Constructor takes rodio::Sink which is an internal Bevy type
+# The AudioSink component is created by Bevy's audio system, not by user code
+# Users spawn AudioPlayer with PlaybackSettings, and Bevy creates the sink
+[bevy.type_ignores.AudioSink]
+intentional_missing_methods = ["new"]
+notes = "new(Sink) not implementable - Sink is from rodio, internal to Bevy's audio system"
+
+# SpatialAudioSink: Same as AudioSink, uses rodio::SpatialSink
+[bevy.type_ignores.SpatialAudioSink]
+intentional_missing_methods = ["new"]
+notes = "new(SpatialSink) not implementable - SpatialSink is from rodio, internal to Bevy's audio system"
+
+# Gesture types: Tuple struct wrappers - Python needs explicit accessor
+[bevy.type_ignores.PinchGesture]
+intentional_extra_methods = ["value"]
+notes = "Python accessor for tuple struct .0 field - Bevy uses Deref<Target=f32>"
+
+[bevy.type_ignores.RotationGesture]
+intentional_extra_methods = ["value"]
+notes = "Python accessor for tuple struct .0 field - Bevy uses Deref<Target=f32>"
+
+# ButtonInput<T> generic - lint skips generic bases, methods exist in impl<T> ButtonInput<T>
+[bevy.type_ignores.ButtonInput]
+intentional_extra_methods = [
+    "pressed",
+    "just_pressed",
+    "just_released",
+    "any_just_pressed",
+    "any_pressed",
+    "all_pressed",
+    "get_just_pressed",
+    "get_pressed",
+    "get_just_released",
+    "any_just_released",
+    "all_just_pressed",
+    "all_just_released",
+]
+ignore_extends_warnings = true
+notes = "Methods exist in Bevy's impl<T> ButtonInput<T> - lint skips generic bases during iteration"
+
+# MouseInput maps to ButtonInput<MouseButton> - same generic impl
+[bevy.type_ignores.MouseInput]
+intentional_extra_methods = [
+    "pressed",
+    "just_pressed",
+    "just_released",
+    "any_just_pressed",
+    "any_pressed",
+    "all_pressed",
+    "get_just_pressed",
+    "get_pressed",
+    "get_just_released",
+]
+ignore_extends_warnings = true
+notes = "Methods exist in Bevy's impl<T> ButtonInput<T> - lint skips generic bases during iteration"
+
+# GamepadSettings: Renamed methods to avoid PyO3 getter conflict
+# Bevy's get_button_settings() conflicts with PyO3's internal getter for button_settings property
+[bevy.type_ignores.GamepadSettings]
+intentional_missing_methods = ["get_button_settings", "get_axis_settings", "get_button_axis_settings"]
+intentional_extra_methods = ["button_settings_for", "axis_settings_for", "button_axis_settings_for"]
+notes = "Methods renamed to *_for() to avoid conflict with PyO3 property getter naming"
+
+# Assets: Generic type in Bevy (Assets<T>) - false positive from linter
+# The linter sees Assets implementing Resource but PyAssets can't express the generic
+[bevy.type_ignores.Assets]
+ignore_extends_warnings = true
+notes = "Generic type false positive - Assets<T> is generic in Bevy, PyAssets is concrete wrapper"
+
+# Messages: Internal message system wrapper - false positive
+# Similar generic/internal type handling difference
+[bevy.type_ignores.Messages]
+ignore_extends_warnings = true
+notes = "Generic type false positive - internal message system wrapper"
+
+# SpatialScale: to_vec3 is Pythonic accessor for tuple struct field .0
+[bevy.type_ignores.SpatialScale]
+intentional_extra_methods = ["to_vec3() -> Vec3"]
+notes = "Python can't use .0 tuple struct field access"
+
+# DefaultSpatialScale: scale is Pythonic accessor for tuple struct field .0
+[bevy.type_ignores.DefaultSpatialScale]
+intentional_extra_methods = ["scale() -> SpatialScale"]
+notes = "Python can't use .0 tuple struct field access"
+
+# AccessibilityNode: Methods from accesskit::Node via Deref
+# Bevy's AccessibilityNode derives Deref/DerefMut to expose the inner Node's API
+[bevy.type_ignores.AccessibilityNode]
+deref_target_methods = [
+    # Text properties
+    "label",
+    "set_label",
+    "clear_label",
+    "value",
+    "set_value",
+    "clear_value",
+    "description",
+    "set_description",
+    "clear_description",
+    # Role
+    "role",
+    "set_role",
+    # States
+    "is_disabled",
+    "set_disabled",
+    "is_hidden",
+    "set_hidden",
+    "is_expanded",
+    "set_expanded",
+    "clear_expanded",
+    "is_selected",
+    "set_selected",
+    "clear_selected",
+    # Numeric values (for sliders, progress, etc.)
+    "numeric_value",
+    "set_numeric_value",
+    "clear_numeric_value",
+    "min_numeric_value",
+    "set_min_numeric_value",
+    "clear_min_numeric_value",
+    "max_numeric_value",
+    "set_max_numeric_value",
+    "clear_max_numeric_value",
+    # Bounds
+    "set_bounds",
+    "clear_bounds",
+]
+# AccessibilityNode uses builder pattern - read values via getters, set via methods like set_label
+intentional_readonly_properties = ["role", "label", "value", "description", "is_disabled", "is_hidden", "is_expanded", "is_selected", "numeric_value", "min_numeric_value", "max_numeric_value"]
+notes = "Methods from accesskit::Node exposed through Deref/DerefMut"
+
+# Intentional read-only properties (W007 suppressions)
+#
+# Properties that are intentionally read-only (getter without setter).
+# Suppress W007 warnings for these properties.
+#
+# Categories:
+# - Direction types: Setting x/y/z would break normalization invariant
+# - Matrix types: Complex internal structure, use methods to modify
+# - Computed/derived values: Calculated from other data
+# - Asset system: Read-only by design
+# - Engine-managed: State managed by Bevy, not user-modifiable
+
+# Direction types - normalized, setting components breaks invariant
+[bevy.type_ignores.Dir2]
+intentional_readonly_properties = ["x", "y"]
+notes = "Normalized direction - setting x/y individually would break normalization"
+
+[bevy.type_ignores.Dir3]
+intentional_readonly_properties = ["x", "y", "z"]
+notes = "Normalized direction - setting x/y/z individually would break normalization"
+
+# Rotation type - cos²+sin²=1 invariant, param renames
+[bevy.type_ignores.Rot2]
+intentional_readonly_properties = ["cos", "sin"]
+intentional_signature_diffs = [
+    { name = "nlerp", expected_params = { "rhs" = "PyRot2" } },
+    { name = "slerp", expected_params = { "rhs" = "PyRot2" } },
+    "sin_cos",
+]
+notes = """
+- cos/sin: Read-only (cos²+sin²=1 invariant), use from_radians/degrees
+- nlerp/slerp: end renamed to rhs for consistency
+- sin_cos: tuple return formatting diff"""
+
+# Matrix types - complex internal structure
+[bevy.type_ignores.Mat2]
+intentional_readonly_properties = ["x_axis", "y_axis"]
+notes = "Matrix columns - use from_cols or matrix operations to modify"
+
+[bevy.type_ignores.Mat3A]
+intentional_readonly_properties = ["x_axis", "y_axis", "z_axis"]
+notes = "Matrix columns - use from_cols or matrix operations to modify"
+
+[bevy.type_ignores.Affine3A]
+intentional_readonly_properties = ["matrix3", "translation"]
+notes = "Affine transform components - use from_* constructors to modify"
+
+# Half-space - computed/geometric
+[bevy.type_ignores.HalfSpace]
+intentional_readonly_properties = ["normal", "d", "normal_d"]
+notes = "Geometric properties computed from plane equation"
+
+# Curve - computed
+[bevy.type_ignores.CubicCurve2d]
+intentional_readonly_properties = ["segment_count"]
+notes = "Computed from curve segments"
+
+# Indices - derived length
+[bevy.type_ignores.Indices]
+intentional_readonly_properties = ["len"]
+notes = "Length is derived from indices data"
+
+# Asset system - read-only by design
+[bevy.type_ignores.AssetPath]
+intentional_readonly_properties = ["path", "source", "label"]
+notes = "Asset paths are immutable once created"
+
+[bevy.type_ignores.AssetEvent]
+intentional_readonly_properties = ["is_added", "asset"]
+intentional_signature_diffs = ["is_added", "is_loaded_with_dependencies", "is_modified", "is_removed", "is_unused"]
+notes = "Event properties are read-only; variant predicates inspect self instead of accepting an asset ID"
+
+[bevy.type_ignores.Handle]
+intentional_readonly_properties = ["asset_type"]
+notes = "Handle asset type is fixed at creation"
+
+[bevy.type_ignores.LoadedFolder]
+intentional_readonly_properties = ["handles"]
+notes = "Loaded folder contents are read-only"
+
+[bevy.type_ignores.AssetTypeParam]
+intentional_readonly_properties = ["asset_type"]
+notes = "Asset type parameter is fixed"
+
+# Image: read-only properties + intentional type wrapping and param renames
+[bevy.type_ignores.Image]
+intentional_extra_methods = ["_content_hash"]
+intentional_readonly_properties = ["dimension", "format", "mip_level_count"]
+intentional_signature_diffs = [
+    { name = "aspect_ratio", expected_return = "f32" },
+    { name = "convert", expected_return = "Option" },
+    { name = "pixel_bytes_mut", expected_return = "ImagePixelContextMut" },
+    { name = "reinterpret_size", expected_params = { "size" = "PyUVec2" } },
+    { name = "resize_in_place", expected_params = { "size" = "PyUVec2" } },
+]
+notes = """
+- _content_hash: Internal PyBevy snapshot/regression hook with a versioned canonical format
+- Read-only properties derived from texture_descriptor
+- aspect_ratio: Returns f32 instead of AspectRatio
+- convert: Return type wrapping
+- pixel_bytes_mut: Returns ImagePixelContextMut wrapper for safe mutation
+- reinterpret_size/resize_in_place: Param renamed new_size → size"""
+
+# Cascade shadow - engine-managed
+[bevy.type_ignores.Cascade]
+intentional_readonly_properties = ["cascades_texture_size", "far_bound", "texel_size", "min_distance_bias"]
+notes = "Shadow cascade properties computed by engine"
+
+[bevy.type_ignores.Cascades]
+intentional_readonly_properties = ["cascades"]
+ignore_constructor_warnings = true
+notes = "Engine-managed component - cascade data computed by Bevy's shadow system, not user-constructable"
+
+[bevy.type_ignores.MainPassResolutionOverride]
+intentional_readonly_properties = ["resolution"]
+notes = "Resolution override is engine-managed"
+
+# CameraMainTextureUsages: Python keyword collision and extra property
+[bevy.type_ignores.CameraMainTextureUsages]
+intentional_missing_methods = ["to_dynamic"]
+intentional_extra_methods = ["flags"]
+intentional_readonly_properties = ["flags"]
+renames = { "with" = "with_" }
+notes = "'with' renamed to 'with_' (Python keyword). 'flags' is Python-friendly accessor. to_dynamic needs PartialReflect."
+
+# Font - Asset loaded from font files (TTF, OTF)
+# Created via Font.try_from_bytes() or asset_server.load(), not constructor
+[bevy.type_ignores.Font]
+ignore_constructor_warnings = true
+notes = "Font is created via try_from_bytes() or asset loading, not a constructor"
+
+# FontAtlas - Low-level text rendering pipeline type
+# Users interact with Text2d/TextFont/TextColor, not FontAtlas internals
+[bevy.type_ignores.FontAtlas]
+intentional_missing_methods = ["add_glyph", "get_glyph_index", "has_glyph", "new"]
+intentional_missing_fields = ["dynamic_texture_atlas_builder", "glyph_to_atlas_index"]
+intentional_readonly_properties = ["texture", "texture_atlas"]
+ignore_constructor_warnings = true
+notes = """
+Methods and fields require types from text rendering pipeline not exposed in PyBevy:
+- cosmic_text::CacheKey: External crate dependency, would need separate bindings
+- GlyphAtlasLocation: Low-level glyph positioning, 0 usage in Bevy examples
+- DynamicTextureAtlasBuilder: Internal atlas packing, from bevy_image
+- TextError: Internal error type for pipeline failures
+These are public in Bevy but intended for internal text rendering, not user code."""
+
+[bevy.type_ignores.FontAtlasKey]
+intentional_readonly_properties = ["font", "font_size"]
+notes = "Font atlas key is immutable"
+
+[bevy.type_ignores.FontAtlasSet]
+intentional_missing_methods = ["get_mut"]
+notes = "get_mut requires Into<AssetId<Font>> which is internal - use get() for read access"
+
+# Text components use Deref to access inner value - Python needs explicit property
+[bevy.type_ignores.TextBackgroundColor]
+intentional_extra_methods = ["color() -> Color"]
+notes = "Python accessor for Deref<Target=Color> - Bevy uses *self to access inner value"
+
+[bevy.type_ignores.TextColor]
+intentional_extra_methods = ["color() -> Color"]
+notes = "Python accessor for Deref<Target=Color> - Bevy uses *self to access inner value"
+
+[bevy.type_ignores.TextSpan]
+intentional_extra_methods = ["text() -> str"]
+notes = "Python accessor for Deref<Target=String> - Bevy uses *self to access inner value"
+
+# Mesh: context wrappers for safe attribute access
+[bevy.type_ignores.Mesh]
+intentional_extra_methods = ["_content_hash"]
+intentional_readonly_properties = ["asset_usage", "enable_raytracing"]
+intentional_signature_diffs = [
+    { name = "attribute", expected_return = "MeshAttributeContext" },
+    { name = "attribute_mut", expected_return = "MeshAttributeContextMut" },
+]
+notes = """
+- _content_hash: Internal PyBevy snapshot/regression hook with a versioned canonical format
+- attribute/attribute_mut: Return context wrappers for safe borrowed access
+- asset_usage/enable_raytracing: Read-only properties set at creation"""
+
+# Mesh2d/Mesh3d: handle wrappers (same pattern as WorldAssetRoot)
+[bevy.type_ignores.Mesh2d]
+intentional_missing_methods = ["as_asset_id", "default"]
+notes = "as_asset_id covered by handle accessor, default needs a mesh handle"
+
+[bevy.type_ignores.Mesh3d]
+intentional_missing_methods = ["as_asset_id", "default"]
+notes = "as_asset_id covered by handle accessor, default needs a mesh handle"
+
+# SkinnedMesh: handle wrapper
+[bevy.type_ignores.SkinnedMesh]
+intentional_missing_methods = ["as_asset_id", "default"]
+notes = "as_asset_id covered by handle accessor, default needs a handle"
+
+[bevy.type_ignores.MeshVertexAttribute]
+intentional_readonly_properties = ["name", "id", "format"]
+notes = "Vertex attribute definition is immutable"
+
+[bevy.type_ignores.MorphWeights]
+intentional_readonly_properties = ["first_mesh"]
+notes = "Morph weights first mesh reference is fixed"
+
+# Shader: read-only source, generic params specialized to String
+[bevy.type_ignores.Shader]
+intentional_readonly_properties = ["source", "import_path", "imports"]
+intentional_signature_diffs = ["from_glsl", "from_wgsl_with_defs"]
+notes = """
+- Read-only properties: source, import_path, imports
+- from_glsl: ShaderStage -> String (Python doesn't have naga::ShaderStage)
+- from_wgsl_with_defs: Vec<ShaderDefVal> -> Vec<PyShaderDefVal> (wrapper naming)"""
+
+[bevy.type_ignores.ShaderDefVal]
+intentional_readonly_properties = ["name"]
+notes = "Shader define name is fixed"
+
+# Texture/Image loader - configuration types
+[bevy.type_ignores.TextureAtlasLayout]
+intentional_readonly_properties = ["size", "textures"]
+intentional_signature_diffs = [
+    { name = "new_empty", expected_params = { "size" = "PyUVec2" } },
+]
+notes = "Atlas layout is computed/fixed at creation. new_empty param renamed dimensions → size"
+
+[bevy.type_ignores.ImageSampler]
+intentional_readonly_properties = ["descriptor"]
+notes = "Sampler descriptor is configuration"
+
+[bevy.type_ignores.ImageLoaderSettings]
+intentional_readonly_properties = ["format", "is_srgb", "sampler", "asset_usage"]
+notes = "Loader settings are configuration"
+
+# Render asset usages - bitflags
+[bevy.type_ignores.RenderAssetUsages]
+intentional_readonly_properties = ["main_world", "render_world"]
+notes = "Usage flags are set at creation"
+
+# Extent - size struct
+[bevy.type_ignores.Extent3d]
+intentional_readonly_properties = ["width", "height", "depth_or_array_layers"]
+notes = "Extent dimensions - create new Extent3d to change"
+
+# Wireframe material
+[bevy.type_ignores.WireframeMaterial]
+intentional_readonly_properties = ["color"]
+notes = "Wireframe color - consider adding setter if needed"
+
+# App: Python API differences (explicit type params, callbacks, wrappers)
+[bevy.type_ignores.App]
+intentional_readonly_properties = ["_state"]
+intentional_signature_diffs = [
+    { name = "add_message", expected_params = { "message_type" = "PyType" } },
+    "configure_sets",
+    { name = "init_resource", expected_params = { "resource" = "PyAny" } },
+    { name = "is_plugin_added", expected_params = { "plugin_type" = "PyType" } },
+    { name = "run", expected_return = "PyResult" },
+    { name = "should_exit", expected_return = "Option" },
+    { name = "world", expected_params = { "callback" = "PyAny" } },
+]
+notes = """
+- Python needs explicit type params where Rust uses generics (add_message, init_resource, is_plugin_added)
+- world() takes a callback since Python can't return a borrowed &World reference
+- run() returns PyResult<()> (Python exception model)
+- configure_sets: leading underscore params (unused in current impl)"""
+
+# AppExit: extra code param for Python convenience
+[bevy.type_ignores.AppExit]
+intentional_signature_diffs = [
+    { name = "error", expected_params = { "code" = "u8" } },
+]
+notes = "error() takes explicit code param (Bevy uses AppExit::Error with default code)"
+
+# ComputedNode - computed layout values (outlined_node_size is a method, not a field)
+[bevy.type_ignores.ComputedNode]
+intentional_readonly_properties = ["outlined_node_size"]
+notes = "outlined_node_size is a computed method, not a stored field"
+
+# Remaining read-only primitive properties
+# These primitives have some properties that are intentionally read-only:
+# - Properties that return composite objects (Circle, Arc2d)
+# - Properties that require normalization invariants (direction, normal)
+# - Properties from frozen primitives not yet converted to mutable
+
+# Returns Circle object - would need special setter handling
+[bevy.type_ignores.Annulus]
+intentional_readonly_properties = ["inner_circle", "outer_circle"]
+notes = "Returns Circle objects - use constructor to change"
+
+[bevy.type_ignores.RegularPolygon]
+intentional_readonly_properties = ["circumcircle"]
+notes = "Returns Circle object - use constructor to change"
+
+# Returns Arc2d object
+[bevy.type_ignores.CircularSector]
+intentional_readonly_properties = ["arc"]
+notes = "Returns Arc2d object - use constructor to change"
+
+[bevy.type_ignores.CircularSegment]
+intentional_readonly_properties = ["arc"]
+notes = "Returns Arc2d object - use constructor to change"
+
+# Normalized direction types - setters would break invariants
+[bevy.type_ignores.Line2d]
+intentional_readonly_properties = ["direction"]
+notes = "Direction is normalized Dir2 - use constructor to change"
+
+[bevy.type_ignores.Plane2d]
+intentional_readonly_properties = ["normal"]
+notes = "Normal is normalized Dir2 - use constructor to change"
+
+# Transform: PyBevy-specific numpy integration
+[bevy.type_ignores.Transform]
+intentional_extra_methods = ["from_numpy"]
+notes = "PyBevy-specific numpy batch creation for performance"
+
+
+# Camera: Internal fields not exposed
+[bevy.type_ignores.Camera]
+intentional_missing_fields = ["computed", "output_mode"]
+notes = "computed/output_mode are internal Bevy fields for render pipeline"
+
+# ClearColor: Python accessor for tuple struct
+[bevy.type_ignores.ClearColor]
+intentional_extra_methods = ["color"]
+notes = "Python accessor for Deref<Target=Color>"
+
+# ClearColorConfig: None_ because 'None' is a Python keyword
+[bevy.type_ignores.ClearColorConfig]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
+# CubemapFrusta: Iterator methods require complex traits
+[bevy.type_ignores.CubemapFrusta]
+intentional_missing_methods = ["iter", "iter_mut"]
+intentional_extra_methods = ["get"]
+notes = "iter/iter_mut need DoubleEndedIterator - use get(index) in Python"
+
+# CubemapVisibleEntities: Iterator methods require complex traits
+[bevy.type_ignores.CubemapVisibleEntities]
+intentional_missing_methods = ["get_mut", "iter", "iter_mut"]
+intentional_signature_diffs = ["get"]
+notes = "get_mut needs field borrowing, iter needs DoubleEndedIterator - param renamed for Python clarity"
+
+# Exposure: Python param name differs for clarity
+[bevy.type_ignores.Exposure]
+intentional_missing_methods = ["to_dynamic"]
+intentional_signature_diffs = ["from_physical_camera"]
+notes = "to_dynamic needs PartialReflect, param renamed 'params' for Python clarity"
+
+# Frustum: CullingSphere is PyBevy's Sphere wrapper
+[bevy.type_ignores.Frustum]
+intentional_signature_diffs = ["intersects_sphere"]
+notes = "Uses PySphere wrapper instead of bevy::camera::primitives::Sphere"
+
+[bevy.type_ignores.NormalizedRenderTarget]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
+# OrthographicProjection: from_world is FromWorld trait, constructor defaults are intentional
+[bevy.type_ignores.OrthographicProjection]
+intentional_missing_methods = ["from_world"]
+ignore_constructor_warnings = true
+notes = "from_world is FromWorld trait (not user-callable), defaults follow CLAUDE.md pattern"
+
+# Projection: custom<P> requires generic trait bounds
+[bevy.type_ignores.Projection]
+intentional_missing_methods = ["custom"]
+intentional_missing_variants = ["Custom"]
+notes = "custom<P> and the Custom payload require an arbitrary native CameraProjection implementation"
+
+# RenderLayers: Python uses __and__/__or__/__xor__ operators
+[bevy.type_ignores.RenderLayers]
+intentional_missing_methods = ["bitand", "bitor", "bitxor"]
+intentional_signature_diffs = ["from_layers", "layer", "without"]
+intentional_extra_methods = ["all"]
+renames = { "with" = "with_" }
+notes = "bitand/bitor/bitxor implemented as __and__/__or__/__xor__, 'with' renamed 'with_' (Python keyword), Layer type -> u8"
+
+# RenderTarget: None_ because 'None' is Python keyword
+[bevy.type_ignores.RenderTarget]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
+# ScreenSpaceTransmissionQuality: Not exposed as Resource in PyBevy
+[bevy.type_ignores.ScreenSpaceTransmissionQuality]
+ignore_extends_warnings = true
+notes = "Used as field in Camera3d, not as standalone resource"
+
+# Sphere (CullingSphere): Different from bevy::camera::primitives::Sphere
+[bevy.type_ignores.Sphere]
+intentional_missing_methods = ["intersects_obb"]
+intentional_missing_fields = ["center"]
+intentional_extra_methods = ["area", "closest_point", "diameter", "mesh", "volume"]
+notes = "PySphere wraps bevy_math::primitives::Sphere (math primitive), not bevy_camera::primitives::Sphere"
+
+# Viewport: Pythonic signature for from_viewport_and_override
+[bevy.type_ignores.Viewport]
+intentional_signature_diffs = ["from_viewport_and_override"]
+notes = "Takes PyUVec2 instead of MainPassResolutionOverride for simplicity"
+
+# Visibility: Python helper methods
+[bevy.type_ignores.Visibility]
+intentional_extra_methods = ["from_numpy"]
+notes = "Python-friendly accessors and numpy integration"
+
+# VisibilityClass: Python helper methods
+[bevy.type_ignores.VisibilityClass]
+intentional_extra_methods = ["clear", "contains", "is_empty"]
+notes = "Python-friendly collection methods"
+
+# VisibilityRange: hash<H> requires generic Hasher
+[bevy.type_ignores.VisibilityRange]
+intentional_missing_methods = ["hash"]
+notes = "hash<H> requires generic Hasher trait parameter"
+
+# VisibleMeshEntities: Python helper
+[bevy.type_ignores.VisibleMeshEntities]
+intentional_extra_methods = ["is_empty"]
+notes = "Python-friendly collection method"
+
+# LoadOp: Generic type not used in examples
+# (Already excluded in types list)
+
+# These types are loaded from .gltf/.glb files, not constructed by users.
+# The "fields not in constructor" warnings are expected since these are read-only assets.
+
+# Gltf: Top-level glTF asset containing handles to all sub-assets
+[bevy.type_ignores.Gltf]
+ignore_constructor_warnings = true
+intentional_missing_fields = ["source"]
+notes = "Loaded from files, not user-constructed. source requires gltf::Gltf from external crate."
+
+# GltfMesh: Mesh asset from glTF file
+[bevy.type_ignores.GltfMesh]
+ignore_constructor_warnings = true
+intentional_missing_methods = ["new"]
+notes = "Loaded from files. new() requires gltf::Mesh from external crate."
+
+# GltfNode: Node asset from glTF file
+[bevy.type_ignores.GltfNode]
+ignore_constructor_warnings = true
+intentional_missing_methods = ["new"]
+notes = "Loaded from files. new() requires gltf::Node from external crate."
+
+# GltfPrimitive: Primitive asset from glTF file
+[bevy.type_ignores.GltfPrimitive]
+ignore_constructor_warnings = true
+intentional_missing_methods = ["new"]
+notes = "Loaded from files. new() requires gltf::Mesh and gltf::Primitive from external crate."
+
+# GltfSkin: Skin asset from glTF file
+[bevy.type_ignores.GltfSkin]
+ignore_constructor_warnings = true
+intentional_missing_methods = ["new"]
+notes = "Loaded from files. new() requires gltf::Skin from external crate."
+
+# GltfMeshName: Python accessor for tuple struct
+[bevy.type_ignores.GltfMeshName]
+intentional_extra_methods = ["name() -> str"]
+notes = "Python accessor for tuple struct .0 field - Bevy uses Deref<Target=str>"
+
+# GltfMaterialName: Python accessor for tuple struct
+[bevy.type_ignores.GltfMaterialName]
+intentional_extra_methods = ["name() -> str"]
+notes = "Python accessor for tuple struct .0 field - Bevy uses Deref<Target=str>"
+
+
+# Window: internal field + DVec2 vs tuple sig diff
+[bevy.type_ignores.Window]
+intentional_missing_fields = ["internal"]
+intentional_signature_diffs = ["set_physical_cursor_position"]
+notes = """
+- internal: InternalWindowState is engine-internal
+- set_physical_cursor_position: Takes Option<(f64,f64)> tuple instead of DVec2"""
+
+# WindowPosition: center is staticmethod constructor in Python (Bevy uses &mut self)
+[bevy.type_ignores.WindowPosition]
+intentional_signature_diffs = ["center"]
+notes = """
+center() is a static constructor instead of Bevy's &mut self mutator.
+WindowPosition is an enum value type (cloned on get, replaced on set).
+A &mut self center() would mutate a detached clone — changes wouldn't persist to ECS.
+Usage: window.position = WindowPosition.center(monitor)"""
+
+# CursorGrabMode: None is Python keyword
+[bevy.type_ignores.CursorGrabMode]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ (Python keyword)"
+
+
+# Sprite: Python-specific API differences
+[bevy.type_ignores.Sprite]
+intentional_missing_methods = ["compute_pixel_space_point", "default"]
+intentional_signature_diffs = ["as_asset_id"]
+notes = """
+- compute_pixel_space_point: Requires Assets<Image> and Assets<TextureAtlasLayout> resources (0 usage in Bevy examples)
+- default: Sprite requires an image handle - use Sprite.from_image() or Sprite.from_color() instead
+- as_asset_id: Returns PyHandle (PyBevy's unified asset ID wrapper) instead of AssetId<Image>"""
+
+# TextureSlicer: compute_slices is internal rendering method
+[bevy.type_ignores.TextureSlicer]
+intentional_missing_methods = ["compute_slices"]
+notes = "compute_slices requires TextureSlice type which is internal to sprite rendering pipeline"
+
+# SpriteImageMode: Python enum constructors
+[bevy.type_ignores.SpriteImageMode]
+intentional_extra_methods = ["scaled", "sliced", "tiled"]
+notes = "Python static constructors for enum variants (Rust uses variant syntax)"
+
+# SliceScaleMode: Python enum constructor
+[bevy.type_ignores.SliceScaleMode]
+intentional_extra_methods = ["tile"]
+notes = "Python static constructor for Tile variant (Rust uses variant syntax)"
+
+# Anchor: Python-specific accessors
+[bevy.type_ignores.Anchor]
+intentional_extra_methods = ["custom", "value"]
+notes = "custom() is Python constructor for Custom variant, value property is accessor for inner Vec2"
+
+
+# ShaderImport: Cow<String> -> String
+[bevy.type_ignores.ShaderImport]
+intentional_signature_diffs = [
+    { name = "module_name", expected_return = "String" },
+]
+notes = "Returns String instead of Cow<String> (Python doesn't have Cow)"
+
+# Source: Glsl(source, stage) split into GlslVertex/GlslFragment/GlslCompute
+[bevy.type_ignores.Source]
+intentional_missing_variants = ["Glsl"]
+intentional_extra_variants = [
+    "GlslVertex", "GlslTask", "GlslMesh", "GlslRayGeneration", "GlslMiss",
+    "GlslAnyHit", "GlslClosestHit", "GlslFragment", "GlslCompute",
+]
+notes = "Bevy's Glsl(source, stage) 2-tuple split into one variant per naga::ShaderStage for Python clarity"
+
+
+# Srgba: hex() takes &str in Python (Bevy uses generic T: AsRef<[u8]>)
+[bevy.type_ignores.Srgba]
+intentional_signature_diffs = [
+    { name = "hex", expected_params = { "hex" = "str" } },
+]
+notes = "hex() takes &str in Python - correct specialization of Bevy's generic T: AsRef<[u8]>"
+
+
+# AssetServer: Python needs explicit asset_type param where Rust uses generics
+[bevy.type_ignores.AssetServer]
+intentional_signature_diffs = [
+    { name = "get_handle", expected_params = { "asset_type" = "PyType" } },
+    { name = "load", expected_params = { "asset_type" = "PyType" } },
+    { name = "load_with_settings", expected_params = { "asset_type" = "PyType" } },
+]
+notes = "Python needs explicit asset_type param where Rust uses generics <A: Asset>"
+
+
+# World: Python API differences (explicit type params, wrapper returns)
+[bevy.type_ignores.World]
+intentional_signature_diffs = [
+    { name = "add_observer", expected_params = { "observer" = "PyAny" } },
+    { name = "component_id", expected_params = { "component" = "PyAny" } },
+    { name = "contains_resource", expected_params = { "resource" = "PyAny" } },
+    { name = "despawn", expected_return = "PyResult" },
+    { name = "entity", expected_params = { "entity" = "PyEntity" } },
+    { name = "get", expected_params = { "component_type" = "PyAny" } },
+    { name = "get_mut", expected_params = { "component_type" = "PyAny" } },
+    { name = "init_resource", expected_params = { "resource" = "PyAny" } },
+    "insert_resource",
+    { name = "register_component", expected_params = { "component" = "PyAny" } },
+    { name = "register_resource", expected_params = { "resource" = "PyAny" } },
+    { name = "resource", expected_params = { "resource" = "PyAny" } },
+    { name = "spawn", expected_params = { "components" = "PyTuple" } },
+    "spawn_batch",
+    { name = "spawn_empty", expected_return = "PyEntityCommands" },
+]
+notes = """
+Python needs explicit type params where Rust uses generics.
+Returns PyEntityCommands instead of EntityWorldMut (Python can't return borrowed refs).
+Param renames for Python clarity (bundle→components, etc.)."""
+
+
+# WireframeConfig: 'global' is a Python builtin, renamed to global_
+[bevy.type_ignores.WireframeConfig]
+renames = { "global" = "global_" }
+notes = "'global' renamed to 'global_' — 'global' is a Python keyword/builtin"
+
+# BorderRadius: single/multi corner static constructors clash with property getters in PyO3
+[bevy.type_ignores.BorderRadius]
+intentional_missing_methods = [
+    { name = "top_left", note = "Clashes with #[getter] top_left property in PyO3 — use with_top_left() or constructor kwargs" },
+    { name = "top_right", note = "Same PyO3 clash" },
+    { name = "bottom_right", note = "Same PyO3 clash" },
+    { name = "bottom_left", note = "Same PyO3 clash" },
+    { name = "left", note = "Same PyO3 clash" },
+    { name = "right", note = "Same PyO3 clash" },
+    { name = "top", note = "Same PyO3 clash" },
+    { name = "bottom", note = "Same PyO3 clash" },
+]
+
+
+# LinearGradient: Vec<ColorStop> → Vec<PyColorStop> wrapper naming
+[bevy.type_ignores.LinearGradient]
+intentional_signature_diffs = [
+    { name = "degrees", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_bottom", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_bottom_left", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_bottom_right", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_left", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_right", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_top", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_top_left", expected_params = { "stops" = "PyColorStop" } },
+    { name = "to_top_right", expected_params = { "stops" = "PyColorStop" } },
+]
+notes = "Vec<ColorStop> → Vec<PyColorStop> is standard PyBevy wrapper naming"
+
+# Display: None is Python keyword
+[bevy.type_ignores.Display]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ (Python keyword)"
+
+
+# Cuboid: param renames for clarity
+[bevy.type_ignores.Cuboid]
+intentional_signature_diffs = [
+    { name = "from_corners", expected_params = { "min" = "PyVec3", "max" = "PyVec3" } },
+]
+notes = "point1/point2 renamed to min/max for clarity"
+
+
+# AnimationClip: returns Python dict/list wrappers
+[bevy.type_ignores.AnimationClip]
+intentional_signature_diffs = [
+    { name = "curves", expected_return = "PyDict" },
+    { name = "curves_for_target", expected_return = "Vec" },
+]
+
+# AnimationGraph: Python keyword 'from' → 'from_', wrapper types, tuple returns
+[bevy.type_ignores.AnimationGraph]
+intentional_signature_diffs = [
+    { name = "add_edge", expected_params = { "from_" = "PyAnimationNodeIndex", "to" = "PyAnimationNodeIndex" } },
+    { name = "remove_edge", expected_params = { "from_" = "PyAnimationNodeIndex", "to" = "PyAnimationNodeIndex" } },
+    { name = "from_clip", expected_return = "PyTuple" },
+    { name = "from_clips", expected_return = "PyTuple" },
+]
+notes = "'from' renamed to 'from_' (Python keyword), NodeIndex → PyAnimationNodeIndex, returns tuple"
+
+# AnimationGraphNode: AnimationMask → u64
+[bevy.type_ignores.AnimationGraphNode]
+intentional_signature_diffs = [
+    { name = "add_mask", expected_params = { "mask" = "u64" } },
+    { name = "remove_mask", expected_params = { "mask" = "u64" } },
+]
+notes = "AnimationMask is u64 in Python (no separate wrapper needed)"
+
+# AnimationTargetId: Name → String
+[bevy.type_ignores.AnimationTargetId]
+intentional_signature_diffs = [
+    { name = "from_name", expected_params = { "name" = "String" } },
+]
+
+# AnimationTransitions: Duration → f64, wrapper types
+[bevy.type_ignores.AnimationTransitions]
+intentional_signature_diffs = [
+    { name = "play", expected_params = { "transition_duration" = "f64" } },
+]
+notes = "Duration → f64 seconds, AnimationPlayer wrapper type"
+
+
+# AudioSource: Loaded from files, not user-constructed
+[bevy.type_ignores.AudioSource]
+intentional_missing_methods = ["as_ref", "new"]
+ignore_constructor_warnings = true
+notes = "AudioSource loaded via asset_server.load(), not constructed. as_ref same as bytes property."
+
+# PlaybackSettings: default() covered by __init__() with default params
+[bevy.type_ignores.PlaybackSettings]
+intentional_missing_methods = ["default"]
+notes = "default() covered by __init__() - PlaybackSettings() creates ONCE preset"
+
+# SpatialListener: default() covered by __init__(gap=4.0)
+[bevy.type_ignores.SpatialListener]
+intentional_missing_methods = ["default"]
+notes = "default() covered by __init__(gap=4.0) matching Bevy's default"
+
+# WorldAsset/DynamicWorld are asset types loaded from files.
+# WorldInstanceReady is received via MessageReader, not constructed by users.
+
+# DynamicWorld: Asset loaded from .scn.ron files
+[bevy.type_ignores.DynamicWorld]
+runtime_injected_methods = [
+    { name = "from_world", note = "Installed by the root adapter because PyWorld belongs to the root crate; signature pinned by the runtime surface snapshot" },
+    { name = "serialize", note = "Installed by the root adapter to adapt Bevy's TypeRegistry parameter to the owning Python World; signature pinned by the runtime surface snapshot" },
+]
+intentional_missing_methods = [
+    { name = "default", note = "Use DynamicWorldRoot(handle) component to spawn" },
+    { name = "from_world_asset", note = "Requires World access" },
+    { name = "write_to_world", note = "Requires EntityHashMap, WorldInstanceSpawnError" },
+    { name = "write_to_world_with", note = "Requires AppTypeRegistry, EntityHashMap, WorldInstanceSpawnError" },
+]
+intentional_missing_fields = [
+    { name = "entities", note = "Contains DynamicEntity reflection type" },
+    { name = "resources", note = "Contains Box<PartialReflect> reflection type" },
+]
+ignore_constructor_warnings = true
+
+# WorldAsset: Asset loaded from files
+[bevy.type_ignores.WorldAsset]
+intentional_missing_methods = [
+    { name = "new", note = "Use WorldAssetRoot(handle) component to spawn" },
+    { name = "clone_with", note = "Requires AppTypeRegistry, WorldInstanceSpawnError" },
+    { name = "from_dynamic_world", note = "Requires AppTypeRegistry, WorldInstanceSpawnError" },
+    { name = "write_to_world_with", note = "Requires AppTypeRegistry, EntityHashMap, WorldInstanceSpawnError" },
+]
+intentional_missing_fields = [
+    { name = "world", note = "World is not directly exposed to Python" },
+]
+ignore_constructor_warnings = true
+
+# WorldAssetRoot: Handle wrapper component
+[bevy.type_ignores.WorldAssetRoot]
+intentional_missing_methods = ["as_asset_id", "default"]
+notes = """
+- as_asset_id: Use handle() which returns PyHandle (PyBevy's unified asset ID wrapper)
+- default: Requires a WorldAsset handle - use WorldAssetRoot(handle) instead"""
+
+# DynamicWorldRoot: Handle wrapper component
+[bevy.type_ignores.DynamicWorldRoot]
+intentional_missing_methods = ["as_asset_id", "default"]
+notes = """
+- as_asset_id: Use handle() which returns PyHandle (PyBevy's unified asset ID wrapper)
+- default: Requires a DynamicWorld handle - use DynamicWorldRoot(handle) instead"""
+
+# WorldInstanceReady: Message received when instance spawning completes
+[bevy.type_ignores.WorldInstanceReady]
+intentional_missing_methods = [
+    { name = "event_target", note = "EntityEvent trait - use entity field instead" },
+    { name = "event_target_mut", note = "EntityEvent trait - use entity field instead" },
+]
+ignore_constructor_warnings = true
+
+# WorldInstanceSpawner: Resource for spawning/despawning world instances
+# Sync methods require &mut World which doesn't fit PyBevy's system parameter model
+[bevy.type_ignores.WorldInstanceSpawner]
+intentional_missing_methods = [
+    { name = "default", note = "Engine-managed resource, auto-inserted by WorldSerializationPlugin" },
+    { name = "spawn_sync", note = "Requires &mut World - use deferred spawn() instead" },
+    { name = "spawn_dynamic_sync", note = "Requires &mut World - use deferred spawn_dynamic() instead" },
+    { name = "spawn_queued_instances", note = "Internal method - called by world_instance_spawner_system" },
+    { name = "despawn_sync", note = "Requires &mut World - use deferred despawn() instead" },
+    { name = "despawn_dynamic_sync", note = "Requires &mut World - use deferred despawn_dynamic() instead" },
+    { name = "despawn_instance_sync", note = "Requires &mut World - use deferred despawn_instance() instead" },
+    { name = "despawn_queued_world_asset_instances", note = "Internal method - called by world_instance_spawner_system" },
+    { name = "despawn_queued_dynamic_world_instances", note = "Internal method - called by world_instance_spawner_system" },
+    { name = "update_spawned_instances", note = "Internal method - called by world_instance_spawner_system" },
+    { name = "update_spawned_dynamic_worlds", note = "Internal method - called by world_instance_spawner_system" },
+]
+notes = "Sync methods need &mut World which isn't available via Res/ResMut. Use deferred methods (spawn, despawn) in systems."
+
+[test_coverage]
+test_path = "tests"
+
+# Typing/base facades excluded from runtime exercise coverage
+excluded_classes = [
+    "pybevy.app.Plugin",
+    "pybevy.assets.Asset",
+    "pybevy.ecs.Component",
+    "pybevy.ecs.Message",
+    "pybevy.ecs.Resource",
+    "pybevy.mesh.Meshable",
+]
+
+# Wildcard patterns for excluded classes
+# MeshBuilders are created via Shape.mesh(), not directly constructable — tested via shape tests
+# ViewColumns are internal View API types
+excluded_patterns = ["*MeshBuilder", "*ViewColumn"]
+
+[[validation.disabled]]
+code = "W007"
+reason = "read-only getters are the norm for engine-computed and derived values; a Rust setter missing from the stub is still caught by E007"
+
+[[validation.exceptions]]
+code = "E001"
+path = "render.ImageCopyPlugin"
+reason = "internal render-readback plugin used by decorators, not part of the public stub namespace"
+
+[[validation.exceptions]]
+code = "E001"
+path = "ecs.CustomComponentBatch"
+reason = "runtime batch transport created by Component.from_numpy rather than user-facing API"
+
+[[validation.exceptions]]
+code = "E001"
+path = "ecs.ResParam"
+reason = "runtime implementation object behind the public Res and ResMut typing aliases"
+
+[[validation.exceptions]]
+code = "E001"
+path = "ecs.Res"
+reason = "runtime subscription helper represented by the public PEP 695 Res typing alias"
+
+[[validation.exceptions]]
+code = "E001"
+path = "ecs.ResMut"
+reason = "runtime subscription helper represented by the public PEP 695 ResMut typing alias"
+
+[[validation.exceptions]]
+code = "E001"
+path = "camera.VisibilityBatch"
+reason = "generated from_numpy batch transport returned through the public Visibility facade"
+
+[[validation.exceptions]]
+code = "E001"
+path = "text.FontAtlasSetKeyIter"
+reason = "iterator implementation type returned by FontAtlasSet.__iter__, not module-exported API"
+
+[[validation.exceptions]]
+code = "E008"
+path = "math.Quat"
+reason = "runtime constructor deliberately raises TypeError; named safe constructors are the public contract"
+
+[[validation.exceptions]]
+code = "E001"
+path = "core.RustComponentBatch"
+reason = "macro-generated native batch transport returned through component from_numpy factories"
+
+[[validation.exceptions]]
+code = "E001"
+path = "core.Materializable"
+reason = "semantic runtime MRO marker discovered through concrete classes, not a module-exported stub symbol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "light.ScatteringMedium"
+reason = "private generated indexed adapter structurally implements the public LiveList[ScatteringTerm] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "light.CascadeShadowConfig"
+reason = "private generated indexed adapter structurally implements the public LiveList[float] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "image.TextureAtlasLayout"
+reason = "private generated indexed adapter structurally implements the public LiveList[URect] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.GltfMesh"
+reason = "private generated indexed adapter structurally implements the public LiveSequence[GltfPrimitive] protocol"
+
+[[validation.exceptions]]
+code = "E003"
+path = "ecs.ViewColumn"
+reason = "to_jax is installed at runtime by the optional pybevy.ecs.jax_ext extension module, not by the Rust class"
+
+[[validation.exceptions]]
+code = "E003"
+path = "ecs.ViewColumn"
+reason = "from_jax is installed at runtime by the optional pybevy.ecs.jax_ext extension module, not by the Rust class"
+
+[[validation.exceptions]]
+code = "E003"
+path = "mesh.Meshable"
+reason = "mesh() is implemented per primitive subclass; the abstract base only documents the contract"
+
+[[validation.exceptions]]
+code = "E003"
+path = "color.Color"
+reason = "materialize() is implemented in the main pybevy crate because it depends on StandardMaterial"
+
+[[validation.exceptions]]
+code = "E006"
+path = "array.Array"
+reason = "the dtype class is deliberately named lowercase to mirror numpy, so the PyDType wrapper name never matches"
+
