@@ -1297,15 +1297,14 @@ pub fn validate_contiguous_field_bytes(
             actual: data.len(),
         });
     }
-    if field_type == FieldType::Bool {
-        if let Some((index, value)) = data
+    if field_type == FieldType::Bool
+        && let Some((index, value)) = data
             .iter()
             .copied()
             .enumerate()
             .find(|(_, value)| !matches!(value, 0 | 1))
-        {
-            return Err(ViewRuntimeError::InvalidBooleanBufferValue { index, value });
-        }
+    {
+        return Err(ViewRuntimeError::InvalidBooleanBufferValue { index, value });
     }
     Ok(())
 }

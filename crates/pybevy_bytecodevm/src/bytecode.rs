@@ -1595,13 +1595,6 @@ impl VM {
     /// - Field pointer array allocation (computes pointers via stride)
     /// - Closure dispatch overhead (single call processes all entities)
     ///
-    /// # Arguments
-    ///
-    /// * `bytecode` - Compiled bytecode to execute
-    /// * `base_ptr` - Pointer to the first entity's component data
-    /// * `component_stride` - Bytes between consecutive entities' component data
-    /// * `count` - Number of entities to process
-    ///
     /// # Safety
     ///
     /// The caller must ensure:
@@ -1661,12 +1654,6 @@ impl VM {
     ///
     /// Each field can have a different base pointer and stride, allowing
     /// cross-component expressions like `pos.x = pos.x + vel.x`.
-    ///
-    /// # Arguments
-    /// * `bytecode` - The compiled bytecode to execute
-    /// * `field_bases` - Base pointer for each field (component_base + field_offset)
-    /// * `field_strides` - Stride for each field's component
-    /// * `count` - Number of entities to process
     ///
     /// # Safety
     /// - All pointers in field_bases must be valid for count * stride bytes
