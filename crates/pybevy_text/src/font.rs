@@ -4,7 +4,7 @@ use pybevy_macros::pyasset;
 use pyo3::{prelude::*, types::PyBytes};
 
 #[pyasset(Font, bridge)]
-#[pyclass(name = "Font", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "Font", module = "pybevy.text", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyFont {
     pub(crate) storage: AssetStorage<Font>,
@@ -23,5 +23,16 @@ impl PyFont {
     pub fn data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let font = self.as_ref()?;
         Ok(PyBytes::new(py, font.data.as_ref()))
+    }
+
+    #[getter]
+    pub fn alias(&self) -> PyResult<String> {
+        Ok(self.as_ref()?.alias.clone())
+    }
+
+    #[setter]
+    pub fn set_alias(&mut self, alias: String) -> PyResult<()> {
+        self.as_mut()?.alias = alias;
+        Ok(())
     }
 }
