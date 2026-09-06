@@ -71,14 +71,14 @@ use bevy::{
         render_asset::RenderAssets,
         render_resource::{
             Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, MapMode, PollType,
-            TexelCopyBufferInfo, TexelCopyBufferLayout,
+            TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
         },
         renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
         texture::GpuImage,
     },
 };
 use crossbeam_channel::{Receiver, Sender};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Component on camera entities: receives pixel data from render world
 /// Attached to cameras with RenderToBuffer component to enable frame extraction
@@ -134,6 +134,7 @@ pub struct ImageCopier {
     buffer: Buffer,
     enabled: Arc<AtomicBool>,
     pub src_image: Handle<Image>,
+    source_entity: Option<Entity>,
     /// Sender for this specific camera's frame data
     sender: Sender<Vec<u8>>,
 }
@@ -170,13 +171,24 @@ impl ImageCopier {
         ImageCopier {
             buffer,
             src_image,
+            source_entity: None,
             enabled: Arc::new(AtomicBool::new(true)),
             sender,
         }
     }
 
+    /// Associate the copier with the camera that owns it for diagnostics.
+    pub fn with_source_entity(mut self, entity: Entity) -> Self {
+        self.source_entity = Some(entity);
+        self
+    }
+
     pub fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    fn disable(&self) -> bool {
+        self.enabled.swap(false, Ordering::AcqRel)
     }
 }
 
@@ -184,17 +196,6 @@ impl ImageCopier {
 ///
 /// This is the core implementation used by both Rust and Python bindings.
 /// Call this after app initialization when RenderDevice is available.
-///
-/// # Arguments
-/// * `commands` - Bevy Commands for entity modification
-/// * `entity` - The camera entity to attach copier to
-/// * `image_handle` - Handle to the Image that the camera renders to
-/// * `width` - Width of the render target
-/// * `height` - Height of the render target
-/// * `render_device` - Bevy RenderDevice resource
-///
-/// # Returns
-/// The FrameReceiver that can be used to retrieve captured frames
 pub fn attach_image_copier(
     commands: &mut Commands,
     entity: Entity,
@@ -214,7 +215,8 @@ pub fn attach_image_copier(
         bytes_per_pixel,
         render_device,
         sender,
-    );
+    )
+    .with_source_entity(entity);
 
     // Add both components to the entity
     commands
@@ -420,6 +422,27 @@ fn image_copy_driver(
             debug!("[image_copy_driver] Source image not yet loaded, skipping");
             continue;
         };
+
+        let usage = src_image.texture_descriptor.usage;
+        if !usage.contains(TextureUsages::COPY_SRC) {
+            if image_copier.disable() {
+                let image_name = image_copier
+                    .src_image
+                    .path()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("{:?}", image_copier.src_image.id()));
+                let camera_name = image_copier
+                    .source_entity
+                    .map(|entity| format!("{entity:?}"))
+                    .unwrap_or_else(|| "unknown".to_string());
+                error!(
+                    "[image_copy_driver] GPU readback disabled for camera {camera_name}: image \
+                     {image_name} has texture usage {usage:?}, missing required texture usage \
+                     COPY_SRC; use Image.new_render_target() for camera targets that need readback"
+                );
+            }
+            continue;
+        }
 
         let mut encoder = render_context
             .render_device()
