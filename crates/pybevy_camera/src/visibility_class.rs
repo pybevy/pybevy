@@ -1,10 +1,10 @@
 use bevy::camera::visibility::VisibilityClass;
 use pybevy_core::{PyComponent, pycomponent::ComponentStorage, registry::global_registry};
 use pybevy_macros::pycomponent;
-use pyo3::{prelude::*, types::PyType};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
 
 #[pycomponent(VisibilityClass, bridge)]
-#[pyclass(name = "VisibilityClass", extends = PyComponent)]
+#[pyclass(name = "VisibilityClass", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyVisibilityClass {
     pub(crate) storage: ComponentStorage<VisibilityClass>,
 }
@@ -37,7 +37,7 @@ impl PyVisibilityClass {
                 .name()
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "<unknown>".to_string());
-            pyo3::exceptions::PyTypeError::new_err(format!(
+            PyTypeError::new_err(format!(
                 "Type '{}' is not a registered component type",
                 name
             ))
@@ -52,7 +52,7 @@ impl PyVisibilityClass {
                 .name()
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "<unknown>".to_string());
-            pyo3::exceptions::PyTypeError::new_err(format!(
+            PyTypeError::new_err(format!(
                 "Type '{}' is not a registered component type",
                 name
             ))

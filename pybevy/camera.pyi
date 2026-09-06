@@ -673,6 +673,23 @@ class Camera(Component):
             The clip-from-view (projection) matrix
         """
 
+    def world_to_ndc(
+        self, camera_transform: GlobalTransform, world_point: Vec3
+    ) -> Vec3 | None:
+        """Convert a world position to NDC (x/y in [-1, 1], z in [0, 1]). None if NaN."""
+
+    def ndc_to_world(
+        self, camera_transform: GlobalTransform, ndc_point: Vec3
+    ) -> Vec3 | None:
+        """Convert an NDC position to world space. None if NaN."""
+
+    def viewport_to_ndc(self, viewport_position: Vec2) -> Vec2:
+        """Convert a viewport position to NDC using this camera's viewport rect.
+
+        Raises:
+            ValueError: If the viewport size is not available
+        """
+
     def depth_ndc_to_view_z(self, ndc_depth: float) -> float:
         """Convert depth in Normalized Device Coordinates to view-space Z coordinate.
 
