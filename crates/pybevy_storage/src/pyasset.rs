@@ -776,8 +776,8 @@ impl<T: Asset> AssetStorage<T> {
     /// Get immutable reference to the asset, checking validity
     ///
     /// # Errors
-    /// Returns `StorageError` if the borrowed reference is no longer valid
-    /// (i.e., accessed outside of system execution context)
+    /// Returns [`StorageError`] if the borrowed reference is no longer valid
+    /// (for example, after its system execution context ends).
     #[inline(always)]
     pub fn as_ref(&self) -> Result<StorageRef<'_, T>, StorageError> {
         if let Some(resolver) = &self.resolver {
@@ -1094,7 +1094,8 @@ impl<T: Asset> AssetStorage<T> {
     /// Convert storage to owned asset, consuming self
     ///
     /// # Errors
-    /// Returns error if storage contains a borrowed reference or if asset was already consumed
+    /// Returns an error if storage contains a borrowed reference or if the asset
+    /// was already consumed.
     pub fn into_owned(mut self) -> Result<T, StorageError> {
         self.take()
     }

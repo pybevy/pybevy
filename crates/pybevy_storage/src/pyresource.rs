@@ -294,6 +294,7 @@ impl<T: Resource> ResourceStorage<T> {
                 let ptr = project(resource.get()?) as *const F;
                 // A shared projection is read-only even when its parent came
                 // from ResMut; config_mut-style APIs use the mutable twin.
+                // SAFETY: forwarded from this method's projection contract.
                 Ok(unsafe { S::borrowed_ref(ptr, resource.validity().clone()) })
             }
             ResourceStorageInner::Revalidating(resource) => {
