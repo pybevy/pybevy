@@ -104,6 +104,27 @@ class ImageFormatSetting:
         value: ImageFormat
         def __init__(self, value: ImageFormat) -> None: ...
 
+class SaveImageFormatSetting:
+    """How ImageSaver picks the file format: explicit, or from the path extension."""
+
+    class FromExtension(SaveImageFormatSetting):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Format(SaveImageFormatSetting):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: ImageFormat
+        def __init__(self, value: ImageFormat) -> None: ...
+
+class ImageSaverSettings:
+    """Settings for AssetServer.save_image. Default format is SaveImageFormatSetting.FromExtension."""
+
+    def __init__(self, format: SaveImageFormatSetting = SaveImageFormatSetting.FromExtension()) -> None: ...
+    @property
+    def format(self) -> SaveImageFormatSetting: ...
+    @format.setter
+    def format(self, value: SaveImageFormatSetting) -> None: ...
+
 class RenderAssetUsages:
     """Asset usage flags indicating which worlds can access this asset.
 
@@ -351,8 +372,8 @@ class Image(Asset):
         """Create a render target texture with RGBA8 sRGB format.
 
         Convenience method that creates a render target with the most commonly
-        used format (RGBA8_UNORM_SRGB). This is a shortcut for:
-        `Image.new_target_texture(width, height, TextureFormat.Rgba8UnormSrgb)`
+        used format (RGBA8_UNORM_SRGB) and enables GPU readback. Unlike
+        `Image.new_target_texture`, this constructor adds `COPY_SRC` usage.
 
         The texture is configured with proper usage flags for:
         - TEXTURE_BINDING: Can be sampled in shaders
@@ -889,7 +910,20 @@ class Image(Asset):
         Returns:
             Encoded image data as bytes
 
+        Format support:
+            PNG and other 8-bit destinations accept R8/RG8/RGBA8/BGRA8
+            unorm images. OpenEXR and HDR additionally accept R/RG/RGBA
+            16-bit and 32-bit float images without narrowing. Float R values
+            become RGB luminance; float RG values become (R, G, 0). For
+            compatibility with Bevy's existing 8-bit converter, R8 means
+            luminance and RG8 means luminance plus alpha. Farbfeld accepts
+            8-bit inputs widened exactly to 16 bits. DDS and KTX2 encoding
+            are not supported.
+
         Raises:
+            ValueError: If the texture format cannot be encoded to the chosen
+                file format, CPU pixel data is absent, or the image is not one
+                two-dimensional layer.
             RuntimeError: If encoding fails
 
         Example:
@@ -912,7 +946,19 @@ class Image(Asset):
             format: Output image format (default: PNG)
             quality: JPEG quality (0-100), only used for JPEG format (default: 95)
 
+        Format support:
+            PNG and other 8-bit destinations accept R8/RG8/RGBA8/BGRA8
+            unorm images. OpenEXR and HDR additionally accept R/RG/RGBA
+            16-bit and 32-bit float images without narrowing. Float R values
+            become RGB luminance; float RG values become (R, G, 0). R8 means
+            luminance and RG8 means luminance plus alpha. Farbfeld accepts
+            8-bit inputs widened exactly to 16 bits. DDS and KTX2 encoding
+            are not supported.
+
         Raises:
+            ValueError: If the texture format cannot be encoded to the chosen
+                file format, CPU pixel data is absent, or the image is not one
+                two-dimensional layer.
             RuntimeError: If encoding or file writing fails
 
         Example:
@@ -920,7 +966,6 @@ class Image(Asset):
             >>> image.save_to_file("output.png")
             >>> image.save_to_file("output.jpg", ImageFormat.Jpeg, quality=90)
         """
-
 
 class TextureAtlasLayout(Asset):
     """Layout defining texture regions for a texture atlas.
@@ -1100,7 +1145,6 @@ class TextureAtlas:
             ```
         """
 
-
 class TextureAtlasSources:
     """Maps from image handles to their index in the texture atlas.
 
@@ -1145,9 +1189,6 @@ class TextureAtlasSources:
 
     def __len__(self) -> int:
         """Get the number of textures (Python len() support)."""
-
-
-
 
 class ImageSamplerDescriptor:
     """Descriptor for configuring image sampling behavior.
@@ -1281,10 +1322,6 @@ class ImageSamplerDescriptor:
 
     @label.setter
     def label(self, value: str | None) -> None: ...
-
-
-
-
 
 class ImageFilterMode:
     """Image filtering mode for texture sampling."""
