@@ -17,7 +17,7 @@ workspace = true
 features = ["bevy_world_serialization", "bevy_asset", "bevy_log"]
 
 [dev-dependencies]
-bevy_a11y = "0.19.0"
+bevy_a11y = "0.19.1"
 ron = "0.12"
 serde = "1.0"
 
