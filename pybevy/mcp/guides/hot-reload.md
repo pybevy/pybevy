@@ -25,6 +25,17 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
   escalates when the scene declares Startup systems, resources, or observers;
   later unchanged Partial reloads preserve scene state as described above
 
+Partial mode does not reconstruct retained Startup-owned state. Two consequences
+matter during iteration:
+
+- An existing `@resource` remains the same Python value object. Adding a field
+  to its class does not backfill that field onto the live instance, so updated
+  systems can raise `AttributeError` when they read it. Use a Full reload to
+  clear and reconstruct custom resources from `@entrypoint` and Startup.
+- Mesh assets and handles created by Startup survive a Partial reload. Editing
+  mesh-building code has no visible effect until Startup runs again; use a Full
+  reload when changing generated geometry.
+
 ## MCP Reload Commands
 
 ```
@@ -100,12 +111,15 @@ set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity
 ## Error Recovery
 
 If a reload introduces a Python error:
-1. The scene may freeze or show stale state
+1. Import, annotation, and system-registration failures reject the candidate before
+   mutating the live scene, so the previous generation keeps running
 2. Call `get_last_error` to see the traceback
 3. Fix the Python source
 4. Call `reload {"mode": "full"}` to retry
 
-SSE events (`/mcp/v1/sse`) also broadcast errors in real-time.
+Runtime system failures are also printed to stderr once per registered system
+generation; `get_last_error` continues to expose the latest failure. SSE events
+(`/mcp/v1/sse`) broadcast errors in real-time.
 
 ## Type Re-aliasing (`@component` / `@resource`)
 
@@ -220,6 +234,7 @@ The entity count is unreliable in both directions, so never use it to judge whet
 | Reload failed while | Entities |
 |---|---|
 | importing the module | previous run's entities still there |
+| resolving or registering systems | previous run's entities still there |
 | running a Startup system | scene emptied - entities are cleared *before* Startup re-runs |
 
 Always check `get_last_error` first. A full `run_scene` gives a guaranteed clean state.
