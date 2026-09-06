@@ -23,7 +23,13 @@ use pyo3::{
     types::{PyTuple, PyType},
 };
 
-#[pyclass(name = "GizmoConfigGroup", subclass, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "GizmoConfigGroup",
+    module = "pybevy.gizmos",
+    subclass,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyGizmoConfigGroup;
 
@@ -59,7 +65,14 @@ fn config_group_registration(
 }
 
 #[pyenum(GizmoLineJoint, empty_tuple, unit_parens)]
-#[pyclass(name = "GizmoLineJoint", frozen, eq, hash, from_py_object)]
+#[pyclass(
+    name = "GizmoLineJoint",
+    module = "pybevy.gizmos",
+    frozen,
+    eq,
+    hash,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGizmoLineJoint {
     #[pyo3(name = "None_")]
@@ -73,7 +86,14 @@ pub enum PyGizmoLineJoint {
 }
 
 #[pyenum(GizmoLineStyle, manual, empty_tuple, unit_parens)]
-#[pyclass(name = "GizmoLineStyle", frozen, eq, hash, from_py_object)]
+#[pyclass(
+    name = "GizmoLineStyle",
+    module = "pybevy.gizmos",
+    frozen,
+    eq,
+    hash,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyGizmoLineStyle {
     Solid(),
@@ -156,7 +176,7 @@ impl PyGizmoLineStyle {
 }
 
 #[pyfield(GizmoLineConfig)]
-#[pyclass(name = "GizmoLineConfig", from_py_object)]
+#[pyclass(name = "GizmoLineConfig", module = "pybevy.gizmos", from_py_object)]
 #[derive(Debug)]
 pub struct PyGizmoLineConfig {
     storage: FieldStorage<GizmoLineConfig>,
@@ -237,7 +257,7 @@ impl PyGizmoLineConfig {
 }
 
 #[pyfield(GizmoConfig)]
-#[pyclass(name = "GizmoConfig", from_py_object)]
+#[pyclass(name = "GizmoConfig", module = "pybevy.gizmos", from_py_object)]
 #[derive(Debug)]
 pub struct PyGizmoConfig {
     storage: FieldStorage<GizmoConfig>,
@@ -325,7 +345,7 @@ impl PyGizmoConfig {
     no_remove,
     preserve_on_reload
 )]
-#[pyclass(name = "GizmoConfigStore", extends = PyResource)]
+#[pyclass(name = "GizmoConfigStore", module = "pybevy.gizmos", extends = PyResource)]
 pub struct PyGizmoConfigStore {
     pub(crate) storage: ResourceStorage<GizmoConfigStore>,
 }
@@ -351,7 +371,7 @@ impl PyGizmoConfigStore {
                 ),
             };
         let store = self.as_ref()?;
-        if project(&store).is_none() {
+        if project(store).is_none() {
             return Err(PyRuntimeError::new_err(missing_error));
         }
         // SAFETY: this wrapper exposes no operation that inserts or removes a
@@ -396,7 +416,7 @@ impl PyGizmoConfigStore {
             ),
         };
         let mut store = self.as_mut()?;
-        if project(&mut store).is_none() {
+        if project(store).is_none() {
             return Err(PyRuntimeError::new_err(missing_error));
         }
         // SAFETY: as above, and ResMut[GizmoConfigStore] supplies the unique
