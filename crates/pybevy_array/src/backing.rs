@@ -107,6 +107,22 @@ pub(crate) struct ArrayReadGuard {
     backing: Arc<ArrayBacking>,
 }
 
+impl ArrayReadGuard {
+    #[cfg(feature = "pyo3")]
+    pub(crate) fn f32_contiguous(&self) -> Option<&[f32]> {
+        // SAFETY: this guard owns a successful read claim for the lifetime of
+        // the returned slice. Its caller must finish before Python re-entry.
+        unsafe { self.deref().as_f32_contiguous_unchecked() }
+    }
+
+    #[cfg(feature = "pyo3")]
+    pub(crate) fn u8_contiguous(&self) -> Option<&[u8]> {
+        // SAFETY: this guard owns a successful read claim for the lifetime of
+        // the returned slice. Its caller must finish before Python re-entry.
+        unsafe { self.deref().as_u8_contiguous_unchecked() }
+    }
+}
+
 impl fmt::Debug for ArrayReadGuard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ArrayReadGuard").finish_non_exhaustive()
@@ -139,6 +155,7 @@ impl ArrayWriteGuard {
         unsafe { &mut *self.backing.storage.get() }.set(flat, value);
     }
 
+    #[cfg(feature = "pyo3")]
     pub(crate) fn as_mut_contiguous_ptr(&mut self) -> Option<*mut u8> {
         // SAFETY: construction acquired the exclusive write claim.
         unsafe { &mut *self.backing.storage.get() }.as_mut_contiguous_ptr()

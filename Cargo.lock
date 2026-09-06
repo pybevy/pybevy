@@ -4658,6 +4658,7 @@ name = "pybevy_array"
 version = "0.3.0"
 dependencies = [
  "criterion",
+ "half",
  "numpy",
  "pybevy_bytecodevm",
  "pyo3",

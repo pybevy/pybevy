@@ -10,6 +10,7 @@
 
 mod array;
 mod convert;
+mod dlpack;
 mod dtype;
 mod funcs;
 mod hint;
@@ -21,9 +22,14 @@ use std::sync::Arc;
 pub use array::PyArray;
 pub use dtype::PyDType;
 pub use lens::ArrayLens;
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyModule};
+use pyo3::{buffer::PyUntypedBuffer, exceptions::PyTypeError, prelude::*, types::PyModule};
 
-use crate::{ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore};
+use crate::{
+    ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore, decode_read_only_le_bytes,
+    encode_contiguous_le_bytes,
+};
+
+type EncodedArray = (ArrayDType, Vec<usize>, Vec<u8>);
 
 /// Wrap owned `float32` data as a read-only bounded array of `shape`. Engine
 /// APIs (mesh, image) use this to hand back attribute snapshots that carry the
@@ -31,6 +37,116 @@ use crate::{ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore};
 pub fn read_only_f32(data: Vec<f32>, shape: &[usize]) -> PyResult<PyArray> {
     let core = crate::kernels::read_only_f32_core(data, shape).map_err(kernels::map_kernel_err)?;
     Ok(PyArray::wrap(core))
+}
+
+/// Decode shared little-endian tensor storage into a read-only Python array.
+pub fn read_only_from_le_bytes(
+    dtype: ArrayDType,
+    bytes: &[u8],
+    shape: &[usize],
+) -> PyResult<PyArray> {
+    let core = decode_read_only_le_bytes(dtype, bytes, shape).map_err(kernels::map_array_err)?;
+    Ok(PyArray::wrap(core))
+}
+
+/// Copy a Python array's logical C order into shared little-endian storage.
+pub fn owned_contiguous_le_bytes(array: &PyArray) -> PyResult<(ArrayDType, Vec<usize>, Vec<u8>)> {
+    encode_contiguous_le_bytes(&array.core).map_err(kernels::map_array_err)
+}
+
+/// Normalize a bounded array, Python scalar/sequence, or loaded NumPy value
+/// into owned contiguous little-endian storage.
+///
+/// Native values stay on the portable bounded-array path. NumPy inspection is
+/// confined to this PyO3 adapter and always snapshots external storage first.
+pub fn owned_contiguous_le_bytes_from_any(
+    value: &Bound<'_, PyAny>,
+    dtype: Option<ArrayDType>,
+) -> PyResult<(ArrayDType, Vec<usize>, Vec<u8>)> {
+    if let Some(encoded) = snapshot_compatible_buffer(value, dtype)? {
+        return Ok(encoded);
+    }
+    let core = convert::array_from_object(value, dtype)?;
+    crate::encode_contiguous_le_bytes(&core).map_err(kernels::map_array_err)
+}
+
+fn buffer_dtype(buffer: &PyUntypedBuffer) -> Option<ArrayDType> {
+    if !cfg!(target_endian = "little") {
+        return None;
+    }
+    let format = buffer.format().to_bytes();
+    let code = match format {
+        [code] | [b'@' | b'=' | b'<', code] => *code,
+        _ => return None,
+    };
+    let dtype = match (code, buffer.item_size()) {
+        (b'e', 2) => ArrayDType::Float16,
+        (b'f', 4) => ArrayDType::Float32,
+        (b'd', 8) => ArrayDType::Float64,
+        (b'q' | b'l', 8) => ArrayDType::Int64,
+        (b'i' | b'l', 4) => ArrayDType::Int32,
+        (b'I' | b'L', 4) => ArrayDType::Uint32,
+        (b'H', 2) => ArrayDType::Uint16,
+        (b'B', 1) => ArrayDType::Uint8,
+        (b'?', 1) => ArrayDType::Bool,
+        _ => return None,
+    };
+    Some(dtype)
+}
+
+fn copy_buffer_bytes(buffer: &PyUntypedBuffer) -> Vec<u8> {
+    let len = buffer.len_bytes();
+    if len == 0 {
+        return Vec::new();
+    }
+    // SAFETY: the caller holds the exporting buffer for this synchronous copy,
+    // validated it as C-contiguous, and does not re-enter Python while reading.
+    unsafe { std::slice::from_raw_parts(buffer.buf_ptr().cast::<u8>(), len) }.to_vec()
+}
+
+fn encode_compatible_buffer(
+    value: &Bound<'_, PyAny>,
+    dtype: Option<ArrayDType>,
+    private_snapshot: bool,
+) -> PyResult<Option<EncodedArray>> {
+    let Ok(buffer) = PyUntypedBuffer::get(value) else {
+        return Ok(None);
+    };
+    let Some(buffer_dtype) = buffer_dtype(&buffer) else {
+        return Ok(None);
+    };
+    if dtype.is_some_and(|dtype| dtype != buffer_dtype)
+        || !buffer.is_c_contiguous()
+        || (!private_snapshot && !buffer.readonly())
+    {
+        return Ok(None);
+    }
+    let shape = buffer.shape().to_vec();
+    if crate::checked_num_elements(&shape).ok() != Some(buffer.item_count()) {
+        return Ok(None);
+    }
+    let bytes = copy_buffer_bytes(&buffer);
+    Ok(Some((buffer_dtype, shape, bytes)))
+}
+
+fn snapshot_compatible_buffer(
+    value: &Bound<'_, PyAny>,
+    dtype: Option<ArrayDType>,
+) -> PyResult<Option<EncodedArray>> {
+    if convert::is_numpy_array(value)? {
+        let Ok(buffer) = PyUntypedBuffer::get(value) else {
+            return Ok(None);
+        };
+        let Some(buffer_dtype) = buffer_dtype(&buffer) else {
+            return Ok(None);
+        };
+        if dtype.is_some_and(|dtype| dtype != buffer_dtype) || !buffer.is_c_contiguous() {
+            return Ok(None);
+        }
+        let snapshot = convert::numpy_contiguous_snapshot(value)?;
+        return encode_compatible_buffer(&snapshot, dtype, true);
+    }
+    encode_compatible_buffer(value, dtype, false)
 }
 
 /// Wrap external `float32` data as a read-only, zero-copy bounded array guarded
@@ -158,6 +274,7 @@ pub fn build_module<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyM
     funcs::register(&m)?;
 
     for dt in [
+        ArrayDType::Float16,
         ArrayDType::Float32,
         ArrayDType::Float64,
         ArrayDType::Int64,

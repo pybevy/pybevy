@@ -182,7 +182,7 @@ fn float_result_dtype(
         if let OperandRef::Array(c) = op {
             match c.dtype() {
                 ArrayDType::Float64 => has_f64 = true,
-                ArrayDType::Float32 => has_f32 = true,
+                ArrayDType::Float16 | ArrayDType::Float32 => has_f32 = true,
                 other => return Err(unsupported_dtype(op_name, other)),
             }
         }
@@ -526,11 +526,17 @@ pub fn evaluate_float_expression(
         return Err(KernelError::RequiresArrayOperand { op: "evaluate" });
     };
     let dtype = first.dtype();
-    if !matches!(dtype, ArrayDType::Float32 | ArrayDType::Float64) {
+    if !matches!(
+        dtype,
+        ArrayDType::Float16 | ArrayDType::Float32 | ArrayDType::Float64
+    ) {
         return Err(unsupported_dtype("evaluate", dtype));
     }
     for array in &arrays[1..] {
-        if !matches!(array.dtype(), ArrayDType::Float32 | ArrayDType::Float64) {
+        if !matches!(
+            array.dtype(),
+            ArrayDType::Float16 | ArrayDType::Float32 | ArrayDType::Float64
+        ) {
             return Err(unsupported_dtype("evaluate", array.dtype()));
         }
         if array.dtype() != dtype {
@@ -553,7 +559,7 @@ pub fn evaluate_float_expression(
     let mut output = try_alloc_vec::<bool>(ArrayDType::Bool, n)?;
     output.resize(n, false);
     match dtype {
-        ArrayDType::Float32 => {
+        ArrayDType::Float16 | ArrayDType::Float32 => {
             let columns: Vec<Vec<f32>> = arrays
                 .iter()
                 .map(|array| gather_f32(array, &result_shape))

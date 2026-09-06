@@ -1,5 +1,6 @@
 //! PyO3-facing dtype object and callable scalar cast.
 
+use half::f16;
 use pyo3::{
     exceptions::{PyOverflowError, PyTypeError},
     prelude::*,
@@ -73,7 +74,11 @@ impl PyDType {
 
 fn check_integer_range(value: i64, dtype: ArrayDType) -> PyResult<()> {
     let in_range = match dtype {
-        ArrayDType::Int64 | ArrayDType::Float32 | ArrayDType::Float64 | ArrayDType::Bool => true,
+        ArrayDType::Int64
+        | ArrayDType::Float16
+        | ArrayDType::Float32
+        | ArrayDType::Float64
+        | ArrayDType::Bool => true,
         ArrayDType::Int32 => i32::try_from(value).is_ok(),
         ArrayDType::Uint32 => u32::try_from(value).is_ok(),
         ArrayDType::Uint16 => u16::try_from(value).is_ok(),
@@ -114,6 +119,7 @@ pub fn parse_dtype(obj: Option<&Bound<'_, PyAny>>) -> PyResult<Option<ArrayDType
 /// Cast a scalar to a dtype and return it as `Scalar` (used by constructors).
 pub fn cast_scalar(value: Scalar, dtype: ArrayDType) -> Scalar {
     match dtype {
+        ArrayDType::Float16 => Scalar::F64(f64::from(f16::from_f64(value.to_f64()).to_f32())),
         ArrayDType::Float32 => Scalar::F64(f64::from(value.to_f64() as f32)),
         ArrayDType::Float64 => Scalar::F64(value.to_f64()),
         ArrayDType::Bool => Scalar::Bool(value.to_bool()),

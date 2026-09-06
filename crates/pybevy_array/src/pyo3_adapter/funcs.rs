@@ -7,6 +7,7 @@ use pyo3::{prelude::*, types::PyModule};
 use super::{
     array::PyArray,
     convert::{array_from_object, parse_shape},
+    dlpack,
     dtype::parse_dtype,
     kernels::{self, Reduce, extract_operand, extract_scalar, map_array_err},
 };
@@ -69,6 +70,11 @@ fn array(obj: &Bound<'_, PyAny>, dtype: Option<Bound<'_, PyAny>>) -> PyResult<Py
 #[pyo3(signature = (obj, dtype=None))]
 fn asarray(obj: &Bound<'_, PyAny>, dtype: Option<Bound<'_, PyAny>>) -> PyResult<PyArray> {
     Ok(wrap(array_from_object(obj, parse_dtype(dtype.as_ref())?)?))
+}
+
+#[pyfunction]
+fn from_dlpack(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PyArray> {
+    dlpack::from_dlpack(py, obj)
 }
 
 #[pyfunction]
@@ -313,6 +319,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     add!(
         array,
         asarray,
+        from_dlpack,
         zeros,
         ones,
         empty,

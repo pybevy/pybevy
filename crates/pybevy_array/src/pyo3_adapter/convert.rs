@@ -12,7 +12,9 @@ use super::{
     array::PyArray,
     kernels::{extract_scalar, map_array_err, scalar_to_py},
 };
-use crate::{ArrayDType, ArrayStorage, DenseArrayCore, MAX_NDIM, Scalar, checked_num_elements};
+use crate::{
+    ArrayDType, ArrayStorage, DenseArrayCore, Layout, MAX_NDIM, Scalar, checked_num_elements,
+};
 
 fn is_sequence(obj: &Bound<'_, PyAny>) -> bool {
     if obj.is_instance_of::<PyString>() {
@@ -172,7 +174,9 @@ where
 }
 
 /// Snapshot a real NumPy ndarray into owned bounded storage.
-fn array_from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<DenseArrayCore> {
+pub(super) fn numpy_contiguous_snapshot<'py>(
+    obj: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
     // NumPy ndarrays have no object-level mutation lock on free-threaded
     // Python. First ask NumPy to create a private base-ndarray snapshot, so the
     // safe Rust view below cannot alias a Python-visible writable array.
@@ -180,11 +184,34 @@ fn array_from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<DenseArrayCore> {
     kwargs.set_item("copy", true)?;
     kwargs.set_item("order", "C")?;
     kwargs.set_item("subok", false)?;
-    let snapshot = obj
-        .py()
+    obj.py()
         .import("numpy")?
         .getattr("array")?
-        .call((obj,), Some(&kwargs))?;
+        .call((obj,), Some(&kwargs))
+}
+
+/// Snapshot a real NumPy ndarray into owned bounded storage.
+fn array_from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<DenseArrayCore> {
+    let snapshot = numpy_contiguous_snapshot(obj)?;
+    let snapshot_dtype = snapshot.getattr("dtype")?;
+    let snapshot = if snapshot_dtype.getattr("isnative")?.extract::<bool>()? {
+        snapshot
+    } else {
+        let native_dtype = snapshot_dtype.call_method1("newbyteorder", ("=",))?;
+        let kwargs = PyDict::new(obj.py());
+        kwargs.set_item("dtype", native_dtype)?;
+        obj.py()
+            .import("numpy")?
+            .getattr("ascontiguousarray")?
+            .call((snapshot,), Some(&kwargs))?
+    };
+
+    let dtype = snapshot.getattr("dtype")?.str()?.to_str()?.to_owned();
+    if dtype == "float16" {
+        let bits = snapshot.call_method1("view", ("uint16",))?;
+        let array = bits.extract::<PyReadonlyArrayDyn<'_, u16>>()?;
+        return dense_core_from_numpy_snapshot(array, ArrayStorage::Float16);
+    }
 
     macro_rules! extract {
         ($rust:ty, $storage:ident) => {
@@ -203,13 +230,8 @@ fn array_from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<DenseArrayCore> {
     extract!(u8, Uint8);
     extract!(bool, Bool);
 
-    let dtype = snapshot
-        .getattr("dtype")
-        .and_then(|dtype| dtype.str())
-        .map(|dtype| dtype.to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
     Err(PyTypeError::new_err(format!(
-        "NumPy dtype '{dtype}' is not supported; expected float32, float64, \
+        "NumPy dtype '{dtype}' is not supported; expected float16, float32, float64, \
          int32, int64, uint8, uint16, uint32, or bool"
     )))
 }
@@ -237,6 +259,19 @@ fn array_from_numpy_scalar(obj: &Bound<'_, PyAny>) -> PyResult<Option<DenseArray
 
     let dtype_string = obj.getattr("dtype")?.str()?;
     let dtype = dtype_string.to_str()?;
+    if dtype == "float16" {
+        let scalar_array = numpy.getattr("asarray")?.call1((obj,))?;
+        let bits = scalar_array.call_method1("view", ("uint16",))?;
+        let array = bits.extract::<PyReadonlyArrayDyn<'_, u16>>()?;
+        let value = *array
+            .as_array()
+            .iter()
+            .next()
+            .expect("a NumPy scalar snapshot has one element");
+        return DenseArrayCore::from_storage(ArrayStorage::Float16(vec![value]), &[])
+            .map(Some)
+            .map_err(map_array_err);
+    }
     extract!(dtype, "float64", f64, Float64);
     extract!(dtype, "float32", f32, Float32);
     extract!(dtype, "int64", i64, Int64);
@@ -247,7 +282,7 @@ fn array_from_numpy_scalar(obj: &Bound<'_, PyAny>) -> PyResult<Option<DenseArray
     extract!(dtype, "bool", bool, Bool);
 
     Err(PyTypeError::new_err(format!(
-        "NumPy dtype '{dtype}' is not supported; expected float32, float64, \
+        "NumPy dtype '{dtype}' is not supported; expected float16, float32, float64, \
          int32, int64, uint8, uint16, uint32, or bool"
     )))
 }
@@ -312,45 +347,73 @@ fn reshaped<T: numpy::Element>(
     Ok(flat.reshape(dims)?.into_any().unbind())
 }
 
+fn reshaped_float16_bits(py: Python<'_>, data: Vec<u16>, shape: &[usize]) -> PyResult<Py<PyAny>> {
+    let bits = reshaped(py, data, shape)?;
+    let float16 = py.import("numpy")?.getattr("float16")?;
+    Ok(bits.bind(py).call_method1("view", (float16,))?.unbind())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypedCopyPath {
+    Contiguous,
+    Strided,
+}
+
+fn copy_selected<T: Copy>(values: &[T], layout: &Layout) -> (Vec<T>, TypedCopyPath) {
+    if layout.is_c_contiguous() {
+        let start = layout.offset;
+        let end = start + layout.num_elements();
+        return (values[start..end].to_vec(), TypedCopyPath::Contiguous);
+    }
+    (
+        layout.iter_offsets().map(|offset| values[offset]).collect(),
+        TypedCopyPath::Strided,
+    )
+}
+
 /// Copy the bounded array into an owned real NumPy array of the same dtype.
 pub fn to_numpy(py: Python<'_>, core: &DenseArrayCore) -> PyResult<Py<PyAny>> {
     // Fail with Python's ordinary ModuleNotFoundError before the rust-numpy
     // adapter tries to initialize its C API.
     py.import("numpy")?;
-    let scalars = core.to_scalars().map_err(map_array_err)?;
     let shape = core.shape();
-    match core.dtype() {
-        ArrayDType::Float64 => reshaped(py, scalars.iter().map(|s| s.to_f64()).collect(), shape),
-        ArrayDType::Float32 => reshaped(
-            py,
-            scalars.iter().map(|s| s.to_f64() as f32).collect(),
-            shape,
-        ),
-        ArrayDType::Int64 => reshaped(
-            py,
-            scalars.iter().map(|s| s.to_i64_trunc()).collect(),
-            shape,
-        ),
-        ArrayDType::Int32 => reshaped(
-            py,
-            scalars.iter().map(|s| s.to_i64_trunc() as i32).collect(),
-            shape,
-        ),
-        ArrayDType::Uint32 => reshaped(
-            py,
-            scalars.iter().map(|s| s.to_i64_trunc() as u32).collect(),
-            shape,
-        ),
-        ArrayDType::Uint16 => reshaped(
-            py,
-            scalars.iter().map(|s| s.to_i64_trunc() as u16).collect(),
-            shape,
-        ),
-        ArrayDType::Uint8 => reshaped(
-            py,
-            scalars.iter().map(|s| s.to_i64_trunc() as u8).collect(),
-            shape,
-        ),
-        ArrayDType::Bool => reshaped(py, scalars.iter().map(|s| s.to_bool()).collect(), shape),
+    let layout = core.layout();
+    let storage = core.read_storage().map_err(map_array_err)?;
+    macro_rules! export {
+        ($values:expr) => {{
+            let (data, _) = copy_selected($values, layout);
+            drop(storage);
+            return reshaped(py, data, shape);
+        }};
+    }
+    macro_rules! export_float16 {
+        ($values:expr) => {{
+            let (data, _) = copy_selected($values, layout);
+            drop(storage);
+            return reshaped_float16_bits(py, data, shape);
+        }};
+    }
+    match &*storage {
+        ArrayStorage::Float16(values) => export_float16!(values),
+        ArrayStorage::Float32(values) => export!(values),
+        ArrayStorage::Float64(values) => export!(values),
+        ArrayStorage::Int64(values) => export!(values),
+        ArrayStorage::Int32(values) => export!(values),
+        ArrayStorage::Uint32(values) => export!(values),
+        ArrayStorage::Uint16(values) => export!(values),
+        ArrayStorage::Uint8(values) => export!(values),
+        ArrayStorage::Bool(values) => export!(values),
+        ArrayStorage::BorrowedF32 { .. } | ArrayStorage::BorrowedMutF32 { .. } => {
+            let values = storage
+                .f32_contiguous()
+                .expect("f32 borrow has contiguous typed storage");
+            export!(values)
+        }
+        ArrayStorage::BorrowedU8 { .. } | ArrayStorage::BorrowedMutU8 { .. } => {
+            let values = storage
+                .u8_contiguous()
+                .expect("u8 borrow has contiguous typed storage");
+            export!(values)
+        }
     }
 }

@@ -29,6 +29,7 @@ pub struct DenseArrayCore {
     backing: Arc<ArrayBacking>,
     layout: Layout,
     writable: bool,
+    is_view: bool,
 }
 
 impl DenseArrayCore {
@@ -49,6 +50,7 @@ impl DenseArrayCore {
             backing: ArrayBacking::new(storage),
             layout: Layout::c_contiguous(shape)?,
             writable,
+            is_view: false,
         })
     }
 
@@ -78,6 +80,7 @@ impl DenseArrayCore {
             backing: ArrayBacking::new(storage),
             layout,
             writable,
+            is_view: false,
         })
     }
 
@@ -176,6 +179,15 @@ impl DenseArrayCore {
         self.backing.try_write()
     }
 
+    /// Acquire the backing's exclusive operation gate without applying the
+    /// array's logical writability policy. DLPack export uses this to prevent
+    /// every PyBevy read and write while a foreign consumer owns the pointer;
+    /// the protocol's read-only flag is advisory and cannot provide exclusion.
+    #[cfg(feature = "pyo3")]
+    pub(crate) fn exclusive_storage(&self) -> ArrayResult<ArrayWriteGuard> {
+        self.backing.try_write()
+    }
+
     /// Cast and write every logical element from an equally-shaped owned
     /// result into this array. The source is materialized before destination
     /// mutation, which keeps self-aliasing and overlapping borrowed views safe.
@@ -216,6 +228,11 @@ impl DenseArrayCore {
         self.layout.is_c_contiguous()
     }
 
+    /// Whether this array was created by a storage-sharing view operation.
+    pub fn is_view(&self) -> bool {
+        self.is_view
+    }
+
     pub fn set_read_only(&mut self) {
         self.writable = false;
     }
@@ -228,6 +245,7 @@ impl DenseArrayCore {
             backing: self.backing.clone(),
             layout,
             writable: self.writable,
+            is_view: true,
         })
     }
 
@@ -293,7 +311,16 @@ impl DenseArrayCore {
         let dtype = self.dtype();
         let mut out = ArrayStorage::zeros(dtype, layout.num_elements())?;
         for (i, off) in layout.iter_offsets().enumerate() {
-            out.set(i, storage.get(off));
+            if dtype == ArrayDType::Float16 {
+                out.set_float16_bits(
+                    i,
+                    storage
+                        .float16_bits(off)
+                        .expect("float16 dtype has float16 storage"),
+                );
+            } else {
+                out.set(i, storage.get(off));
+            }
         }
         DenseArrayCore::from_storage(out, &layout.shape)
     }
@@ -316,6 +343,9 @@ impl DenseArrayCore {
 
     /// Cast to `dtype`, producing a new contiguous array (NumPy `astype`).
     pub fn astype(&self, dtype: ArrayDType) -> ArrayResult<DenseArrayCore> {
+        if dtype == self.dtype() {
+            return self.copy();
+        }
         let storage = self.read_storage()?;
         let mut out = ArrayStorage::zeros(dtype, self.size())?;
         for (i, off) in self.layout.iter_offsets().enumerate() {
@@ -426,6 +456,22 @@ impl DenseArrayCore {
     /// mask shape must equal the array shape.
     pub fn mask_select(&self, mask: &[bool], mask_shape: &[usize]) -> ArrayResult<DenseArrayCore> {
         self.validate_mask(mask, mask_shape)?;
+        if self.dtype() == ArrayDType::Float16 {
+            let source = self.read_storage()?;
+            let selected = self
+                .layout
+                .iter_offsets()
+                .zip(mask)
+                .filter(|(_, keep)| **keep)
+                .map(|(offset, _)| {
+                    source
+                        .float16_bits(offset)
+                        .expect("float16 dtype has float16 storage")
+                })
+                .collect::<Vec<_>>();
+            let selected_len = selected.len();
+            return DenseArrayCore::from_storage(ArrayStorage::Float16(selected), &[selected_len]);
+        }
         let scalars = self.to_scalars()?;
         let selected: Vec<Scalar> = scalars
             .iter()
@@ -504,6 +550,11 @@ fn integer_range_len(start: i64, stop: i64, step: i64) -> ArrayResult<usize> {
 fn axis_out_dtype(input: ArrayDType, op: AxisReduce) -> ArrayDType {
     match op {
         AxisReduce::All | AxisReduce::Any => ArrayDType::Bool,
+        AxisReduce::Sum | AxisReduce::Mean | AxisReduce::Min | AxisReduce::Max
+            if input == ArrayDType::Float16 =>
+        {
+            ArrayDType::Float32
+        }
         AxisReduce::Sum | AxisReduce::Mean | AxisReduce::Min | AxisReduce::Max => input,
     }
 }
