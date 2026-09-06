@@ -1,5 +1,5 @@
 use bevy::ui::{
-    Checked, InteractionDisabled, IsDefaultUiCamera, Pressed,
+    Checked, InteractionDisabled, IsDefaultUiCamera, Pressed, Selectable,
     widget::{Button, Label},
 };
 use pybevy_core::PyComponent;
@@ -7,7 +7,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Label, unit, bridge)]
-#[pyclass(name = "Label", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Label", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyLabel;
 
@@ -48,7 +48,7 @@ impl PyLabel {
 }
 
 #[pycomponent(Checked, unit, bridge)]
-#[pyclass(name = "Checked", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Checked", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyChecked;
 
@@ -89,7 +89,7 @@ impl PyChecked {
 }
 
 #[pycomponent(Pressed, unit, bridge)]
-#[pyclass(name = "Pressed", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Pressed", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyPressed;
 
@@ -130,7 +130,7 @@ impl PyPressed {
 }
 
 #[pycomponent(InteractionDisabled, unit, bridge)]
-#[pyclass(name = "InteractionDisabled", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "InteractionDisabled", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyInteractionDisabled;
 
@@ -171,7 +171,7 @@ impl PyInteractionDisabled {
 }
 
 #[pycomponent(IsDefaultUiCamera, unit, bridge)]
-#[pyclass(name = "IsDefaultUiCamera", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "IsDefaultUiCamera", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyIsDefaultUiCamera;
 
@@ -208,7 +208,7 @@ impl PyIsDefaultUiCamera {
 }
 
 #[pycomponent(Button, unit, bridge)]
-#[pyclass(name = "Button", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Button", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyButton;
 
@@ -241,5 +241,42 @@ impl PyButton {
 
     pub fn __repr__(&self) -> &'static str {
         "Button()"
+    }
+}
+
+#[pycomponent(Selectable, unit, bridge, no_reflect)]
+#[pyclass(name = "Selectable", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PySelectable;
+
+impl From<Selectable> for PySelectable {
+    fn from(_: Selectable) -> Self {
+        PySelectable
+    }
+}
+
+impl From<PySelectable> for Selectable {
+    fn from(_: PySelectable) -> Self {
+        Selectable
+    }
+}
+
+impl TryFrom<&Selectable> for PySelectable {
+    type Error = PyErr;
+
+    fn try_from(_: &Selectable) -> PyResult<Self> {
+        Ok(PySelectable)
+    }
+}
+
+#[pymethods]
+impl PySelectable {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        (PySelectable, PyComponent).into()
+    }
+
+    pub fn __repr__(&self) -> &'static str {
+        "Selectable()"
     }
 }
