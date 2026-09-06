@@ -5,7 +5,7 @@ use pyo3::{PyRefMut, Python, exceptions::PyValueError, prelude::*};
 
 use super::{animation_node_index::PyAnimationNodeIndex, repeat_animation::PyRepeatAnimation};
 
-#[pyclass(name = "ActiveAnimation")]
+#[pyclass(name = "ActiveAnimation", module = "pybevy.animation")]
 pub struct PyActiveAnimation {
     pub(crate) storage: ComponentStorage<AnimationPlayer>,
     pub(crate) node_index: AnimationNodeIndex,
@@ -135,6 +135,16 @@ impl PyActiveAnimation {
     }
 
     #[getter]
+    pub fn last_seek_time(&self) -> PyResult<Option<f32>> {
+        self.with_animation(|anim| Ok(anim.last_seek_time()))
+    }
+
+    #[getter]
+    pub fn just_completed(&self) -> PyResult<bool> {
+        self.with_animation(|anim| Ok(anim.just_completed()))
+    }
+
+    #[getter]
     pub fn seek_time(&self) -> PyResult<f32> {
         self.with_animation(|anim| Ok(anim.seek_time()))
     }
@@ -168,7 +178,7 @@ impl PyActiveAnimation {
 }
 
 #[pycomponent(AnimationPlayer, bridge)]
-#[pyclass(name = "AnimationPlayer", extends = PyComponent)]
+#[pyclass(name = "AnimationPlayer", module = "pybevy.animation", extends = PyComponent)]
 pub struct PyAnimationPlayer {
     pub(crate) storage: ComponentStorage<AnimationPlayer>,
 }
