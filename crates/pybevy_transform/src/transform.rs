@@ -16,7 +16,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
     rotation => [finite],
     scale => [finite]
 ])]
-#[pyclass(name = "Transform", extends = pybevy_core::PyComponent, eq)]
+#[pyclass(name = "Transform", module = "pybevy.transform", extends = PyComponent, eq)]
 #[derive(Debug)]
 pub struct PyTransform {
     pub(crate) storage: ComponentStorage<Transform>,
@@ -29,6 +29,24 @@ impl PartialEq for PyTransform {
             _ => false,
         }
     }
+}
+
+// Bevy's look_at/look_to/align take `impl TryInto<Dir3>` and fall back to a
+// default axis on failed conversion; mirror that instead of raising.
+fn extract_dir3_with_fallback(
+    obj: &Bound<'_, PyAny>,
+    fallback: Dir3,
+    param: &str,
+) -> PyResult<Dir3> {
+    if obj.is_instance_of::<PyDir3>() {
+        return obj.extract::<PyDir3>()?.try_into();
+    }
+    if let Ok(vec) = obj.extract::<PyVec3>() {
+        return Ok(vec.try_into().unwrap_or(fallback));
+    }
+    Err(PyTypeError::new_err(format!(
+        "{param} must be a Vec3 or Dir3"
+    )))
 }
 
 pub(crate) fn format_transform_repr(
@@ -182,18 +200,9 @@ impl PyTransform {
     }
 
     pub fn look_at(&mut self, target: &PyVec3, up: &Bound<'_, PyAny>) -> PyResult<()> {
-        if up.is_instance_of::<PyDir3>() {
-            let up: Dir3 = up.extract::<PyDir3>()?.try_into()?;
-            self.as_mut()?.look_at(target.try_into()?, up);
-            Ok(())
-        } else if up.is_instance_of::<PyVec3>() {
-            let up = up.extract::<PyVec3>()?;
-            let up: Dir3 = up.try_into()?;
-            self.as_mut()?.look_at(target.try_into()?, up);
-            Ok(())
-        } else {
-            Err(PyTypeError::new_err("up must be a Vec3 or Dir3"))
-        }
+        let up = extract_dir3_with_fallback(up, Dir3::Y, "up")?;
+        self.as_mut()?.look_at(target.try_into()?, up);
+        Ok(())
     }
 
     pub fn looking_at(
@@ -210,7 +219,7 @@ impl PyTransform {
     pub fn looking_to(
         &self,
         py: Python<'_>,
-        direction: &PyVec3,
+        direction: &Bound<'_, PyAny>,
         up: &Bound<'_, PyAny>,
     ) -> PyResult<Py<Self>> {
         let mut transform = Self::from(*self.as_ref()?);
@@ -261,28 +270,11 @@ impl PyTransform {
         secondary_axis: &Bound<'_, PyAny>,
         secondary_direction: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let main_axis: Dir3 = if main_axis.is_instance_of::<PyDir3>() {
-            main_axis.extract::<PyDir3>()?.try_into()?
-        } else {
-            main_axis.extract::<PyVec3>()?.try_into()?
-        };
-
-        let main_direction: Dir3 = if main_direction.is_instance_of::<PyDir3>() {
-            main_direction.extract::<PyDir3>()?.try_into()?
-        } else {
-            main_direction.extract::<PyVec3>()?.try_into()?
-        };
-
-        let secondary_axis: Dir3 = if secondary_axis.is_instance_of::<PyDir3>() {
-            secondary_axis.extract::<PyDir3>()?.try_into()?
-        } else {
-            secondary_axis.extract::<PyVec3>()?.try_into()?
-        };
-        let secondary_direction: Dir3 = if secondary_direction.is_instance_of::<PyDir3>() {
-            secondary_direction.extract::<PyDir3>()?.try_into()?
-        } else {
-            secondary_direction.extract::<PyVec3>()?.try_into()?
-        };
+        let main_axis = extract_dir3_with_fallback(main_axis, Dir3::X, "main_axis")?;
+        let main_direction = extract_dir3_with_fallback(main_direction, Dir3::X, "main_direction")?;
+        let secondary_axis = extract_dir3_with_fallback(secondary_axis, Dir3::Y, "secondary_axis")?;
+        let secondary_direction =
+            extract_dir3_with_fallback(secondary_direction, Dir3::Y, "secondary_direction")?;
 
         self.as_mut()?.align(
             main_axis,
@@ -380,19 +372,11 @@ impl PyTransform {
         Ok(())
     }
 
-    pub fn look_to(&mut self, direction: &PyVec3, up: &Bound<'_, PyAny>) -> PyResult<()> {
-        if up.is_instance_of::<PyDir3>() {
-            let up: Dir3 = up.extract::<PyDir3>()?.try_into()?;
-            self.as_mut()?.look_to(direction, up);
-            Ok(())
-        } else if up.is_instance_of::<PyVec3>() {
-            let up = up.extract::<PyVec3>()?;
-            let up: Dir3 = up.try_into()?;
-            self.as_mut()?.look_to(direction, up);
-            Ok(())
-        } else {
-            Err(PyTypeError::new_err("up must be a Vec3 or Dir3"))
-        }
+    pub fn look_to(&mut self, direction: &Bound<'_, PyAny>, up: &Bound<'_, PyAny>) -> PyResult<()> {
+        let direction = extract_dir3_with_fallback(direction, Dir3::NEG_Z, "direction")?;
+        let up = extract_dir3_with_fallback(up, Dir3::Y, "up")?;
+        self.as_mut()?.look_to(direction, up);
+        Ok(())
     }
 
     pub fn transform_point(&self, point: &PyVec3) -> PyResult<PyVec3> {
