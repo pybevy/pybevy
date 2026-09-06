@@ -953,17 +953,17 @@ mod tests {
             ),
             (
                 "set_resource",
-                json!({"resource_type": "AmbientLight", "value": {"brightness": 1}}),
+                json!({"resource_type": "ClearColor", "value": {"color": "WHITE"}}),
                 RequestSpec::json(
                     Method::Put,
-                    "/api/v1/resources/AmbientLight",
-                    json!({"value": {"brightness": 1}}),
+                    "/api/v1/resources/ClearColor",
+                    json!({"value": {"color": "WHITE"}}),
                 ),
             ),
             (
                 "remove_resource",
-                json!({"resource_type": "AmbientLight"}),
-                RequestSpec::delete("/api/v1/resources/AmbientLight"),
+                json!({"resource_type": "ClearColor"}),
+                RequestSpec::delete("/api/v1/resources/ClearColor"),
             ),
             (
                 "set_asset",

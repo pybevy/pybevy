@@ -922,13 +922,12 @@ fn process_single_schedule(
                                     if is_transform_mutation {
                                         propagate_transforms(world);
                                     }
-                                    if is_render_mutation {
-                                        if let Some(readiness) = world.get_resource::<
+                                    if is_render_mutation
+                                        && let Some(readiness) = world.get_resource::<
                                             crate::handlers::screenshot::RenderFrameReadiness,
                                         >() {
                                             readiness.request_frame();
                                         }
-                                    }
                                 }
                                 Err(e) => {
                                     if let Some(ref label) = action.label {
