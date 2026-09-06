@@ -1,10 +1,7 @@
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::quote;
-use syn::{
-    Attribute, Fields, GenericArgument, Ident, ItemStruct, PathArguments, Type,
-    parse::{Parse, ParseStream},
-};
+use syn::{Attribute, Fields, GenericArgument, Ident, ItemStruct, PathArguments, Type};
 
 /// Resolve the path to the pybevy crate, handling both internal
 /// (within pybevy workspace) and external (user crate) usage.
@@ -51,20 +48,6 @@ pub(crate) fn reflect_registration_tokens(
                 },
             });
         }
-    }
-}
-
-/// Arguments for native_asset attribute macro (unchanged)
-/// The variant is parsed for validation but the actual type is extracted from the storage field.
-#[allow(dead_code)]
-pub(crate) struct AssetArgs {
-    variant: Ident,
-}
-
-impl Parse for AssetArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let variant: Ident = input.parse()?;
-        Ok(AssetArgs { variant })
     }
 }
 

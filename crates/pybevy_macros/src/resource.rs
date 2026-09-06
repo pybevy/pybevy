@@ -6,102 +6,9 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::{find_storage_field_type, reflect_registration_tokens};
-
-/// Generates boilerplate implementations for PyBevy resource wrapper types.
-///
-/// This macro generates:
-/// - `impl Clone for PyType`
-/// - `impl From<BevyType> for PyType`
-/// - Helper methods: `from_borrowed()`, `as_ref()`, `as_mut()`
-///
-/// # Usage
-///
-/// ```rust,ignore
-/// #[native_resource]
-/// #[pyclass(name = "Time", extends = PyResource)]
-/// pub struct PyTime {
-///     pub(crate) storage: ResourceStorage<Time>,
-/// }
-/// ```
-///
-/// For generic Bevy types (e.g., `Time<Fixed>`), specify the full type:
-///
-/// ```rust,ignore
-/// #[native_resource(Time<Fixed>)]
-/// #[pyclass(name = "_TimeFixed", extends = PyResource)]
-/// pub struct PyTimeFixed {
-///     pub(crate) storage: ResourceStorage<Time<Fixed>>,
-/// }
-/// ```
-pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemStruct);
-    let py_type = &input.ident;
-
-    // Find the storage field and extract the Bevy type
-    let bevy_type: Type = if attr.is_empty() {
-        // Infer from storage field
-        match find_storage_field_type(&input, "ResourceStorage") {
-            Ok(ty) => ty.clone(),
-            Err(e) => return e.to_compile_error().into(),
-        }
-    } else {
-        // Parse explicit type from attribute (for generics like Time<Fixed>)
-        parse_macro_input!(attr as Type)
-    };
-
-    let expanded = quote! {
-        #input
-
-        impl Clone for #py_type {
-            fn clone(&self) -> Self {
-                #py_type {
-                    storage: self.storage.clone(),
-                }
-            }
-        }
-
-        impl From<#bevy_type> for #py_type {
-            fn from(resource: #bevy_type) -> Self {
-                #py_type {
-                    storage: ResourceStorage::owned(resource),
-                }
-            }
-        }
-
-        impl TryFrom<#py_type> for #bevy_type {
-            type Error = PyErr;
-
-            fn try_from(value: #py_type) -> PyResult<Self> {
-                Ok(value.storage.into_owned()?)
-            }
-        }
-
-        impl #py_type {
-            /// Create from a borrowed resource storage (for Res/ResMut access).
-            pub(crate) fn from_borrowed(storage: ResourceStorage<#bevy_type>) -> PyClassInitializer<Self> {
-                resource_initializer(Self { storage })
-            }
-
-            #[inline(always)]
-            pub(crate) fn as_ref(&self) -> PyResult<&#bevy_type> {
-                Ok(self.storage.as_ref()?)
-            }
-
-            #[inline(always)]
-            pub(crate) fn as_mut(&mut self) -> PyResult<&mut #bevy_type> {
-                Ok(self.storage.as_mut()?)
-            }
-        }
-    };
-
-    TokenStream::from(expanded)
-}
+use crate::util::reflect_registration_tokens;
 
 /// Generates storage boilerplate for resource wrappers in feature crates.
-///
-/// Unlike `native_resource`, this macro does NOT generate PyResourceType enum handling,
-/// making it usable in feature crates that don't have access to `PyResourceType`.
 ///
 /// This macro generates:
 /// - `impl Clone for PyType`
@@ -323,6 +230,9 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Shared resource bridge code generation used by `#[pyresource(..., bridge)]`.
+// Each argument represents an independent macro capability; grouping them would
+// obscure the generated surface without improving call-site safety.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_resource_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
