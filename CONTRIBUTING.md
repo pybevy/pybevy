@@ -12,7 +12,7 @@ Thank you for your interest in contributing to `pybevy`! Let's make high-perform
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install libasound-dev libudev-dev mesa-vulkan-drivers vulkan-tools
+sudo apt-get install libasound-dev libudev-dev mesa-vulkan-drivers vulkan-tools libwayland-dev
 ```
 
 ### Development Setup

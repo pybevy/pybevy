@@ -1,13 +1,10 @@
 [advisories]
 version = 2
 ignore = [
-    # paste: unmaintained, pulled in by bevy.
     "RUSTSEC-2024-0436",
-    # ttf-parser: unmaintained with no patched release, pulled in by bevy_text
-    # and bevy_winit.
+    # ttf-parser: unmaintained, no patched release.
     "RUSTSEC-2026-0192",
-    # quick-xml: patched in 0.41, but the only path here is wayland-scanner,
-    # a proc macro that parses the wayland protocol XML shipped with itself.
+    # quick-xml: patched in 0.41, reachable only through wayland-scanner.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
 ]

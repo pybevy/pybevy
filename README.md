@@ -1,40 +1,36 @@
 # PyBevy: A Python Real-Time Engine Built on Bevy
 
-[![Discord](https://img.shields.io/discord/1282043096002986034.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/hA4zUneA8f)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](https://github.com/pybevy/pybevy#license)
 [![pypi](https://img.shields.io/pypi/v/pybevy)](https://pypi.org/project/pybevy/)
 [![pypi downloads](https://img.shields.io/pypi/dm/pybevy)](https://pypi.org/project/pybevy/)
+[![Discord](https://img.shields.io/discord/1282043096002986034.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/hA4zUneA8f)
 
-```bash
-$ pip install pybevy
-```
-
-> **Beta.** Python 3.12+. API evolving — breaking changes expected.
+> **[pybevy.com](https://pybevy.com)**: **Beta.** Python 3.12+. API evolving, breaking changes expected.
 > Independently developed, community-maintained. Not affiliated with the Bevy project.
 
-**[pybevy.com](https://pybevy.com)** — Project website & documentation
+Write Python, save the file, and see your 3D scene update. Use NumPy, JAX, and PyTorch in the same process as a real 3D renderer. A native MCP server puts coding agents on the same loop.
 
-Write Python, save the file, and see your 3D scene update. Use NumPy, JAX, and PyTorch in the same process as a real 3D renderer. And when you want it, the AI can join the loop — it writes code, sees the result, and iterates.
-
-- **Fast hot reload** — edit code, see changes near instantly, no restart, no recompile
-- **Built on Bevy's renderer and ECS** — PBR, volumetric fog, cascaded shadows, bloom, SSAO
-- **Python ecosystem in-process** — NumPy, JAX, PyTorch, Numba — just import
-- **Optional AI feedback loop** — the AI writes Python, reloads, inspects the running scene, and iterates
+- **Fast hot reload**: edit code, see changes near instantly, no restart, no recompile
+- **Built on Bevy's renderer and ECS**: PBR, volumetric fog, cascaded shadows, bloom, SSAO, and more
+- **Python ecosystem in-process**: NumPy, JAX, PyTorch, Numba. Just import.
+- **Native MCP server**: fast iteration and hot reload for coding agents
 - **If you know Bevy's Rust API**, PyBevy should feel immediately familiar
-
-![Hot reloading demo](https://raw.githubusercontent.com/pybevy/pybevy/main/assets/demo.webp)
 
 ## Getting Started
 
 ### Installation
 
 ```bash
-pip install pybevy --upgrade
+$ pip install pybevy
 ```
 
-Pre-compiled wheels are available for Linux (x86_64), macOS (Apple Silicon and x86_64), and Windows (x86_64). Python 3.12+.
+Pre-compiled wheels are available for Linux (x86_64), macOS (Apple Silicon and x86_64), and Windows (x86_64). Python 3.12+. See [Installation](docs/installation.md) for further details.
 
-Linux users may need system display and audio libraries. See [Installation](docs/installation.md) for platform details, Docker/headless setup, free-threaded Python, and building from source.
+PyBevy ships an integrated [MCP server](https://modelcontextprotocol.io/), so a coding agent works the same loop you do: write Python, hot reload, screenshot the result, inspect entities. See [docs/mcp.md](docs/mcp.md) for full setup.
+
+```bash
+codex mcp add pybevy -- pybevy mcp    # or claude/gemini/opencode...
+```
 
 ## Quick Example
 
@@ -50,40 +46,27 @@ class Rotator(Component):
     """Marks entities that should rotate."""
 
 
-def rotator_system(
-    time: Res[Time],
-    query: Query[Mut[Transform], With[Rotator]]
-) -> None:
+def rotate(time: Res[Time], query: Query[Mut[Transform], With[Rotator]]) -> None:
     for transform in query:
         transform.rotate_x(3.0 * time.delta_secs())
+
 
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    cube_handle = meshes.add(Cuboid(2.0, 2.0, 2.0))
-    cube_material = materials.add(StandardMaterial(
-        base_color=Color.srgb(0.8, 0.7, 0.6)
-    ))
+    cube = meshes.add(Cuboid(2.0, 2.0, 2.0))
+    material = materials.add(StandardMaterial(base_color=Color.srgb(0.8, 0.7, 0.6)))
 
-    # Parent cube — rotates
-    parent = commands.spawn(
-        Mesh3d(cube_handle),
-        MeshMaterial3d(cube_material),
-        Transform.from_xyz(0.0, 0.0, 1.0),
-        Rotator(),
-    )
-
-    # Child cube — follows the parent
-    parent.with_children(
-        lambda child: [
-            child.spawn(
-                Mesh3d(cube_handle),
-                MeshMaterial3d(cube_material),
-                Transform.from_xyz(0.0, 0.0, 3.0),
-            )
-        ]
+    commands.spawn(
+        Mesh3d(cube), MeshMaterial3d(material),
+        Transform.from_xyz(0.0, 0.0, 1.0), Rotator(),
+    ).with_children(
+        lambda parent: parent.spawn(
+            Mesh3d(cube), MeshMaterial3d(material),
+            Transform.from_xyz(0.0, 0.0, 3.0),
+        )
     )
 
     commands.spawn(PointLight(), Transform.from_xyz(4.0, 5.0, -4.0))
@@ -98,28 +81,33 @@ def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
         .add_systems(Startup, setup)
-        .add_systems(Update, rotator_system)
+        .add_systems(Update, rotate)
     )
+
 
 if __name__ == "__main__":
     main().run()
 ```
 
-Save this as `main.py` and run with hot reload:
+Save this as `main.py` and run with hot reload. Edit the code. The engine hot reloads near instantly, no restart, no recompile.
 
 ```bash
-pybevy watch --full main.py
+pybevy watch main.py
 ```
 
-Edit the code — the engine hot reloads near instantly, no restart, no recompile.
 
-The `--full` flag reloads everything on each change, including setup systems. Without it, only Update systems are reloaded — faster for iterating on runtime behavior once your scene is set up.
-
-### Native Plugin Approach (Rust + Python)
+### Integrate with Rust-based Bevy
 
 If you already have a Rust Bevy application, you can embed Python systems into it with `PyBevyPlugin`. Prototype in Python, ship critical paths in Rust.
 
 > **Security:** `PyBevyPlugin` embeds a full CPython interpreter with unrestricted host access. Never execute untrusted Python code. We advise against using this for user-submitted plugin/modding systems without external sandboxing.
+
+```toml
+# Cargo.toml
+[dependencies]
+bevy = "0.19"
+pybevy = { version = "0.3", features = ["native-plugin"] }
+```
 
 ```rust
 // main.rs - Your existing Rust Bevy application
@@ -158,17 +146,7 @@ def ai_behavior(query: Query[Mut[Transform]], time: Res[Time]) -> None:
 
 See [docs/native-plugin.md](docs/native-plugin.md) for the full guide, including `#[derive(PyComponent)]` for exposing Rust components to Python and hot reload details.
 
-### AI Feedback Loop
-
-PyBevy includes a built-in [MCP server](https://modelcontextprotocol.io/) that lets AI agents write Python, reload the scene, capture screenshots, inspect entities, and iterate — automatically. The AI sees what it builds.
-
-```bash
-claude mcp add pybevy -- pybevy mcp   # Claude Code
-codex mcp add pybevy -- pybevy mcp    # Codex
-gemini mcp add pybevy -- pybevy mcp   # Gemini CLI
-```
-
-Also works with Cursor and other MCP-compatible editors. See [docs/mcp.md](docs/mcp.md) for full setup.
+Reflected world data can be exchanged with Rust Bevy through `.scn.ron` assets. See the [Bevy interoperability guide](docs/bevy-interop.md).
 
 ## Bevy Compatibility
 
@@ -197,25 +175,26 @@ across Bevy's large surface area, crate splitting into ~30 feature crates, and p
 of the test/stub/documentation workflow.
 
 To keep that process grounded, PyBevy is backed by a custom Rust API compliance tool
-that validates bindings against Bevy's source and the Python stubs, and a test suite
-spanning 100K+ lines. Both publishing soon.
+that validates bindings against Bevy's source and the Python stubs, and an unpublished
+test suite spanning 100K+ lines.
 
 ## Limitations
 
-- **No built-in physics** — use NumPy or JAX for physics computation, PyBevy for visualization.
-- **Desktop only** — Linux, macOS, Windows. No mobile.
-- **Code only** — no visual editor.
-- **API is evolving** — see [Limitations](docs/limitations.md) for known constraints.
+- **No built-in physics**: use NumPy or JAX for physics computation, PyBevy for visualization.
+- **Desktop only**: Linux, macOS, Windows. No mobile.
+- **Code only**: no visual editor.
+- **API is evolving**: see [Limitations](docs/limitations.md) for known constraints.
 
 ## Documentation
 
-- **[pybevy.com](https://pybevy.com)** — Project website
-- **[Examples](https://github.com/pybevy/pybevy/tree/main/examples)** — Runnable examples covering 2D, 3D, ECS, animation, and more
-- **[Limitations](docs/limitations.md)** — Known limitations
+- **[pybevy.com](https://pybevy.com)**: Project website
+- **[Examples](https://github.com/pybevy/pybevy/tree/main/examples)**: Runnable examples covering 2D, 3D, ECS, animation, and more
+- **[Bevy interoperability](docs/bevy-interop.md)**: Exchange reflected world data through Bevy `.scn.ron` assets
+- **[Limitations](docs/limitations.md)**: Known limitations
 
 ## Community & Contributing
 
-- **Discord:** [Pybevy Discord](https://discord.gg/hA4zUneA8f) — questions, discussion, showcases
+- **Discord:** [Pybevy Discord](https://discord.gg/hA4zUneA8f), questions, discussion, showcases
 - **Contributing:** See [CONTRIBUTING.md](https://github.com/pybevy/pybevy/blob/main/CONTRIBUTING.md)
 
 ## License
@@ -228,7 +207,3 @@ All code in this repository is dual-licensed under either:
 at your option.
 
 By contributing, you agree your work will be released under both licenses.
-
----
-
-_When you want it, the world runs itself._
