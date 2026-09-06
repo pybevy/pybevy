@@ -10,6 +10,14 @@ pub use pybevy_storage::storage_error::enum_variant_changed;
 
 pub const ADD_SYSTEMS_SCHEDULE_TYPE: &str =
     "add_systems() schedule parameter must be Stage, OnEnter(), OnExit(), or OnTransition()";
+
+pub fn plugin_key_type(qualified_name: impl Display, received_type: impl Display) -> String {
+    format!("{qualified_name}.__pybevy_plugin_key__ must be str, got {received_type}")
+}
+
+pub fn duplicate_plugin_identity(qualified_name: impl Display, key: impl Display) -> String {
+    format!("plugin {qualified_name} with __pybevy_plugin_key__='{key}' was added more than once")
+}
 pub const ANISOTROPY_TEXTURE_UNAVAILABLE: &str = "anisotropy_texture is unavailable on macOS and iOS: Metal's 16-sampler-per-stage \
      limit is exceeded. anisotropy_strength and anisotropy_rotation still work.";
 pub const MULTI_LAYER_MATERIAL_TEXTURES_UNAVAILABLE: &str = "clearcoat textures are unavailable on macOS and iOS: Metal's 16-sampler-per-stage \
@@ -48,6 +56,7 @@ pub const FREQUENCY_NON_FINITE: &str = "Frequency must be finite";
 pub const FREQUENCY_NON_POSITIVE: &str = "Frequency must be greater than zero";
 pub const FREQUENCY_OUT_OF_RANGE: &str =
     "Frequency produces a timestep outside the supported duration range";
+pub const SPEED_NON_FINITE: &str = "Speed must be finite";
 pub const COLOR_INTERPOLATION_MISMATCH: &str =
     "cannot interpolate Color values from different color spaces";
 pub const EXPECTED_ASSET_ID_OR_HANDLE: &str = "expected an AssetId or Handle";
@@ -83,6 +92,7 @@ pub const OR_VIEW_UNSUPPORTED: &str =
     "Or[...] is not supported in View. Use Query for disjunctive filters.";
 pub const SHADER_DEFS_WITHOUT_NAMES: &str =
     "shader_defs contains enabled bits without matching shader_def_names entries";
+
 pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
 
@@ -146,6 +156,12 @@ pub fn resource_not_present(name: impl Display) -> String {
     format!("Resource type `{name}` not present in the world")
 }
 
+pub fn unregistered_message_write(name: impl Display) -> String {
+    format!(
+        "Unable to write message `{name}`: Message type is not registered; call app.add_message(T) first"
+    )
+}
+
 pub fn world_serialization_failed(error: impl Display) -> String {
     format!("failed to serialize world: {error}")
 }
@@ -163,6 +179,23 @@ pub fn world_serialization_skipped_custom_types(
     }
     format!(
         "DynamicWorld.from_world() skipped custom Python ECS values that Bevy cannot reflect: {}. Wrapper-stored @component values are serializable; Python-object components and custom @resource values are not.",
+        groups.join("; ")
+    )
+}
+
+pub fn world_serialization_skipped_reflected_types(
+    components: &[String],
+    resources: &[String],
+) -> String {
+    let mut groups = Vec::new();
+    if !components.is_empty() {
+        groups.push(format!("components [{}]", components.join(", ")));
+    }
+    if !resources.is_empty() {
+        groups.push(format!("resources [{}]", resources.join(", ")));
+    }
+    format!(
+        "DynamicWorld.from_world() skipped reflected ECS root values whose nested data cannot be serialized: {}.",
         groups.join("; ")
     )
 }
@@ -231,6 +264,10 @@ pub fn injected_system_parameter(type_name: &str, example: &str) -> String {
     format!(
         "{type_name} cannot be constructed directly; declare it as a system parameter annotation, for example `{example}`"
     )
+}
+
+pub fn system_annotations_unresolved(system: impl Display, error: impl Display) -> String {
+    format!("System function `{system}` annotations could not be resolved: {error}")
 }
 
 pub fn system_resource_not_found(
@@ -323,7 +360,11 @@ fn substring_relatives<'a>(unexpected: &str, candidates: &[&'a str]) -> Vec<&'a 
     scored.into_iter().map(|(_, name)| name).collect()
 }
 
-const SUGGESTION_CUTOFF: f64 = 0.6;
+/// Ratio floor for a confident suggestion. Real renames either contain the
+/// wrong keyword outright (`roughness` in `perceptual_roughness`) or score
+/// far above this; the 0.60-0.75 band is where shared-prefix neighbours like
+/// `emissive_intensity` -> `emissive_texture` produce confident nonsense.
+const SUGGESTION_CUTOFF: f64 = 0.75;
 /// Above this many keywords, listing them all is noise rather than help.
 const MAX_LISTED_KEYWORDS: usize = 16;
 
@@ -365,6 +406,45 @@ pub fn parse_unexpected_keyword(message: &str) -> Option<UnexpectedKeyword<'_>> 
         return None;
     }
     Some(UnexpectedKeyword { callable, keyword })
+}
+
+/// A parsed "not an instance of" TypeError.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NotAnInstance<'a> {
+    /// The type name of what the caller actually passed.
+    pub actual: &'a str,
+    /// The class the binding layer expected.
+    pub expected: &'a str,
+}
+
+/// Parse the binding layer's wording for a failed pyclass extraction.
+pub fn parse_not_an_instance(message: &str) -> Option<NotAnInstance<'_>> {
+    const MARKER: &str = " object is not an instance of ";
+    let (head, tail) = message.split_once(MARKER)?;
+    let actual = head.rsplit(':').next()?.trim().trim_matches('\'');
+    let expected = tail.trim().trim_end_matches('.').trim_matches('\'');
+    if actual.is_empty() || expected.is_empty() {
+        return None;
+    }
+    Some(NotAnInstance { actual, expected })
+}
+
+/// Whether `message` already carries a variant-constructor hint.
+pub fn has_variant_hint(message: &str) -> bool {
+    message.contains("variants are constructors")
+}
+
+/// Hint for passing a variant class where an instance was expected.
+///
+/// `variants` must be in declaration order. Returns None when the expected
+/// class has no nested variant classes, where the mistake is something else.
+pub fn variant_constructor_hint(expected: &str, variants: &[&str]) -> Option<String> {
+    let first = variants.first()?;
+    Some(format!(
+        "{expected} variants are constructors: pass {expected}.{first}() with \
+         parentheses, not {expected}.{first}. Variants: {}.",
+        variants.join(", ")
+    ))
 }
 
 /// The closest valid keyword to `unexpected`, if one is close enough.
@@ -477,6 +557,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_both_backend_not_an_instance_shapes() {
+        assert_eq!(
+            parse_not_an_instance("'type' object is not an instance of 'AlphaMode'"),
+            Some(NotAnInstance {
+                actual: "type",
+                expected: "AlphaMode"
+            })
+        );
+        assert_eq!(
+            parse_not_an_instance("TypeError: 'int' object is not an instance of 'AlphaMode'"),
+            Some(NotAnInstance {
+                actual: "int",
+                expected: "AlphaMode"
+            })
+        );
+        assert!(parse_not_an_instance("ValueError: something else").is_none());
+    }
+
+    #[test]
     fn parses_with_exception_class_prefix_and_dunder_init() {
         let parsed = parse_unexpected_keyword(
             "TypeError: Player.__init__() got an unexpected keyword argument 'helth'",
@@ -519,6 +618,23 @@ mod tests {
         assert_eq!(
             suggest_keyword("shadows_enabled", &["shadow_maps_enabled", "color"]),
             Some("shadow_maps_enabled")
+        );
+    }
+
+    #[test]
+    fn does_not_suggest_a_shared_prefix_neighbour() {
+        // Bevy 0.19 has no emissive_intensity; emissive is the real target.
+        assert_eq!(
+            suggest_keyword(
+                "emissive_intensity",
+                &[
+                    "emissive",
+                    "emissive_texture",
+                    "emissive_channel",
+                    "emissive_exposure_weight"
+                ],
+            ),
+            Some("emissive"),
         );
     }
 

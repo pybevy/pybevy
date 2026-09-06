@@ -1,5 +1,6 @@
 pub mod bindings;
 pub mod cleanup;
+mod fingerprint;
 pub mod registry;
 pub mod runtime_pyo3;
 pub mod state;

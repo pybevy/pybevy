@@ -42,6 +42,7 @@ pub mod system;
 pub mod system_config;
 pub mod system_input;
 pub(crate) mod system_interpreter;
+pub mod variant_hint;
 pub mod view;
 pub mod world;
 

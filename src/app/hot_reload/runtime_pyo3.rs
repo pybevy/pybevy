@@ -10,6 +10,7 @@ use bevy::ecs::{
     },
     world::World,
 };
+use pybevy_core::PluginIdentity;
 use pybevy_ecs::shared::schedule::{StateScheduleLabel, TransitionScheduleLabel};
 use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadMode, ReloadRuntime, SystemStage,
@@ -17,7 +18,10 @@ use pybevy_reload::{
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
-use super::{cleanup, registry::DynamicSystemRegistry, util::get_python_gc_objects};
+use super::{
+    cleanup, fingerprint::hash_system_code, registry::DynamicSystemRegistry,
+    util::get_python_gc_objects,
+};
 use crate::{
     app::{
         PyStage,
@@ -55,7 +59,7 @@ pub(crate) struct PendingDefinitions {
     pub state_systems: Vec<PendingStateSystems>,
     pub messages: Vec<Py<PyType>>,
     pub observers: Vec<Py<PyAny>>,
-    pub plugins: Vec<String>,
+    pub plugins: Vec<PluginIdentity>,
     pub component_layout_changes: Vec<String>,
 }
 
@@ -108,7 +112,11 @@ fn system_source_location(system: &Bound<'_, PyAny>) -> Option<String> {
     Some(format!("  File \"{file}\", line {line}, in {name}"))
 }
 
-fn annotate_registration_error(py: Python<'_>, system: &Bound<'_, PyAny>, error: PyErr) -> PyErr {
+pub(crate) fn annotate_registration_error(
+    py: Python<'_>,
+    system: &Bound<'_, PyAny>,
+    error: PyErr,
+) -> PyErr {
     if error.traceback(py).is_some() {
         return error;
     }
@@ -139,6 +147,28 @@ fn reload_error_from_py(error: &PyErr, message_prefix: &str, is_load_failure: bo
         traceback,
         is_load_failure,
     }
+}
+
+/// Print and release a loader exception without `PyErr::print` retaining it in
+/// Python's last-exception state. Loader tracebacks can own the temporary,
+/// `unsendable` PyApp through frame locals, so their final decref must happen
+/// while attached on the thread that created that app.
+fn print_and_drop_loader_error(error: PyErr) {
+    Python::attach(move |py| {
+        if let Some(traceback) = error
+            .traceback(py)
+            .and_then(|traceback| traceback.format().ok())
+        {
+            eprintln!("{}\n{error}", traceback.trim_end());
+        } else {
+            eprintln!("{error}");
+        }
+        // The exception may also be retained by module globals. Detach its
+        // frames so those external references cannot keep the temporary,
+        // thread-bound PyApp alive past this owning-thread cleanup.
+        error.set_traceback(py, None);
+        drop(error);
+    });
 }
 
 enum ReloadStateSchedule {
@@ -223,63 +253,6 @@ fn add_systems_to_schedule(
             )));
             return;
         }
-    }
-}
-
-/// Hash a Python callable's name and code object into `hasher`.
-///
-/// `marshal.dumps(func.__code__)` covers the bytecode, literals, and nested
-/// code objects deterministically. It also embeds the first line number, so
-/// shifting a function within its file counts as a change (conservative).
-/// Callables without `__code__` contribute only their qualified name.
-fn hash_callable_code(py: Python<'_>, obj: &Bound<'_, PyAny>, hasher: &mut impl std::hash::Hasher) {
-    use std::hash::Hash;
-
-    if let Ok(name) = obj
-        .getattr("__qualname__")
-        .and_then(|n| n.extract::<String>())
-    {
-        name.hash(hasher);
-    }
-    if let Ok(code) = obj.getattr("__code__")
-        && let Ok(dumped) = py
-            .import("marshal")
-            .and_then(|m| m.call_method1("dumps", (code,)))
-        && let Ok(bytes) = dumped.extract::<Vec<u8>>()
-    {
-        bytes.hash(hasher);
-    }
-    // Keyword defaults live outside __code__ but change call behavior.
-    if let Ok(defaults) = obj.getattr("__defaults__")
-        && let Ok(repr) = defaults.repr()
-    {
-        repr.to_string().hash(hasher);
-    }
-}
-
-/// Hash a registered system into `hasher`, unwrapping conditional and
-/// chained wrappers the same way `system_names` does.
-fn hash_system_code(
-    py: Python<'_>,
-    sys_bound: &Bound<'_, PyAny>,
-    hasher: &mut impl std::hash::Hasher,
-) {
-    if let Ok(config) = sys_bound.extract::<PySystemConfig>() {
-        hash_callable_code(py, config.system.bind(py), hasher);
-        for condition in &config.conditions {
-            hash_callable_code(py, condition.bind(py), hasher);
-        }
-    } else if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
-        hash_callable_code(py, conditional.system.bind(py), hasher);
-        conditional.condition.for_each_leaf(&mut |condition| {
-            hash_callable_code(py, condition.bind(py), hasher);
-        });
-    } else if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
-        for inner in chained.systems.bind(py).iter() {
-            hash_callable_code(py, &inner, hasher);
-        }
-    } else {
-        hash_callable_code(py, sys_bound, hasher);
     }
 }
 
@@ -442,7 +415,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         });
         let result = result.map_err(|e| {
             let error = reload_error_from_py(&e, "Reload loader failed: ", true);
-            Python::attach(|py| e.print(py));
+            print_and_drop_loader_error(e);
             error
         });
         if let Ok(defs) = &result {
@@ -513,7 +486,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         })
     }
 
-    fn plugin_names(&self, defs: &PendingDefinitions) -> Vec<String> {
+    fn plugin_names(&self, defs: &PendingDefinitions) -> Vec<PluginIdentity> {
         defs.plugins.clone()
     }
 

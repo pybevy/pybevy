@@ -3,10 +3,6 @@
 /// This module contains all user-facing error messages for plugin-related errors,
 /// making them easy to maintain and update in one place.
 /// Error message when a non-Plugin type is passed to add_plugins()
-///
-/// # Arguments
-/// * `plugin_name` - The name of the invalid class
-/// * `mro` - Method Resolution Order (inheritance chain)
 pub fn plugin_not_a_plugin_error(plugin_name: &str, mro: &str) -> String {
     format!(
         "Expected a Plugin instance or type, but got '{plugin_name}'\n\
@@ -30,9 +26,6 @@ pub fn plugin_not_a_plugin_error(plugin_name: &str, mro: &str) -> String {
 }
 
 /// Error message when a Plugin class is missing the @plugin decorator
-///
-/// # Arguments
-/// * `plugin_name` - The name of the plugin class missing the decorator
 pub fn plugin_missing_decorator_error(plugin_name: &str) -> String {
     format!(
         "Plugin class '{plugin_name}' must be decorated with @plugin decorator\n\

@@ -22,9 +22,13 @@ use bevy::{
     time::{Real, Time},
 };
 use pybevy_core::{
-    AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError, LastSystemError,
-    PyPlugin as PyPluginBase, added_plugins::AddedPythonPlugins, allocate_id, consume_unstored_id,
-    plugin::plugin_registry, register_wrapped_reflect_types,
+    ActiveSceneModule, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError,
+    LastSystemError, PluginIdentity, PyPlugin as PyPluginBase,
+    added_plugins::AddedPythonPlugins,
+    allocate_id, consume_unstored_id,
+    plugin::plugin_registry,
+    public_error::{duplicate_plugin_identity, plugin_key_type},
+    register_wrapped_reflect_types,
 };
 use pybevy_ecs::shared::schedule::{
     StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
@@ -32,7 +36,7 @@ use pybevy_ecs::shared::schedule::{
 use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyList, PyModule, PyTuple, PyType},
@@ -48,7 +52,7 @@ use crate::{
             bindings::{PyAppReloadState, add_hot_reload_system},
             cleanup::clear_entities_and_resources,
             registry::DynamicSystemRegistry,
-            runtime_pyo3::collect_system_names,
+            runtime_pyo3::{annotate_registration_error, collect_system_names},
             state::HotReloadState,
         },
         plugin::{PyPlugin, PyPluginGroup},
@@ -247,6 +251,28 @@ fn plugin_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<St
     }
 }
 
+fn plugin_instance_key(
+    plugin: &Bound<'_, PyAny>,
+    qualified_name: &str,
+) -> PyResult<Option<String>> {
+    let key = match plugin.getattr("__pybevy_plugin_key__") {
+        Ok(key) => key,
+        Err(error) if error.is_instance_of::<PyAttributeError>(plugin.py()) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if key.is_none() {
+        return Ok(None);
+    }
+    key.extract::<String>().map(Some).map_err(|_| {
+        let received_type = key
+            .get_type()
+            .name()
+            .and_then(|name| name.extract::<String>())
+            .unwrap_or_else(|_| "unknown".to_string());
+        PyTypeError::new_err(plugin_key_type(qualified_name, received_type))
+    })
+}
+
 fn app_store_error(error: AppStoreError) -> PyErr {
     match error {
         AppStoreError::Borrowed(operation) => {
@@ -319,7 +345,7 @@ impl Drop for MainAppOperationGuard {
     }
 }
 
-#[pyclass(name = "App", unsendable)]
+#[pyclass(name = "App", module = "pybevy.app", unsendable)]
 pub struct PyApp {
     /// Unique identifier for this PyApp instance.
     app_id: AppId,
@@ -380,17 +406,14 @@ pub struct PyApp {
     /// When is_reload_temp=true, observer functions are stored here for re-registration
     pending_observers: RefCell<Vec<Py<PyAny>>>,
 
-    /// Storage for plugin names used to seed and compare hot-reload definitions.
-    pending_plugins: RefCell<Vec<String>>,
+    /// Stable plugin identities used to seed and compare hot-reload definitions.
+    pending_plugins: RefCell<Vec<PluginIdentity>>,
 
     pending_system_names: RefCell<HashSet<String>>,
 
     /// Whether @entrypoint decorator has been applied
     /// run() requires this unless PYBEVY_TESTING env var is set
     entrypoint_set: Cell<bool>,
-
-    /// Invalidates the process-level native virtual filesystem without a Python callback.
-    filesystem_active: RefCell<Option<Arc<AtomicBool>>>,
 }
 
 impl PyApp {
@@ -417,6 +440,42 @@ impl PyApp {
         } else {
             SystemStage::UpdateOrLast
         }
+    }
+
+    /// Parse a candidate system before a reload can clear or otherwise mutate the live world.
+    fn preflight_reload_system(
+        py: Python<'_>,
+        system: &Bound<'_, PyAny>,
+        generation: u32,
+        error_state: &Arc<Mutex<Vec<PyErr>>>,
+        error_buffer: &SystemErrorBuffer,
+        system_stage: SystemStage,
+        is_startup: bool,
+    ) -> PyResult<()> {
+        if let Ok(chained) = system.extract::<PyChainedSystems>() {
+            for item in chained.systems.bind(py).iter() {
+                let _ = build_scheduled_system(
+                    &item,
+                    generation,
+                    error_state.clone(),
+                    error_buffer.clone(),
+                    system_stage,
+                    is_startup,
+                )
+                .map_err(|error| annotate_registration_error(py, &item, error))?;
+            }
+        } else {
+            let _ = build_scheduled_system(
+                system,
+                generation,
+                error_state.clone(),
+                error_buffer.clone(),
+                system_stage,
+                is_startup,
+            )
+            .map_err(|error| annotate_registration_error(py, system, error))?;
+        }
+        Ok(())
     }
 
     fn begin_operation(&self, operation: AppOperation) -> PyResult<MainAppOperationGuard> {
@@ -474,7 +533,6 @@ impl PyApp {
             pending_plugins: RefCell::new(Vec::new()),
             pending_system_names: RefCell::new(HashSet::new()),
             entrypoint_set: Cell::new(false),
-            filesystem_active: RefCell::new(None),
         }
     }
 
@@ -514,8 +572,8 @@ impl PyApp {
         self.pending_observers.borrow_mut().drain(..).collect()
     }
 
-    /// Extract plugin names for hot-reload baseline or delta detection.
-    pub(crate) fn take_pending_plugins(&self) -> Vec<String> {
+    /// Extract plugin identities for hot-reload baseline or delta detection.
+    pub(crate) fn take_pending_plugins(&self) -> Vec<PluginIdentity> {
         self.pending_plugins.borrow_mut().drain(..).collect()
     }
 
@@ -679,7 +737,6 @@ impl PyApp {
             pending_plugins: RefCell::new(Vec::new()),
             pending_system_names: RefCell::new(HashSet::new()),
             entrypoint_set: Cell::new(false),
-            filesystem_active: RefCell::new(None),
         })
     }
     #[pyo3(signature = (schedule, *systems))]
@@ -731,6 +788,17 @@ impl PyApp {
         match schedule_type {
             ScheduleType::OnEnter(_) | ScheduleType::OnExit(_) | ScheduleType::OnTransition(_) => {
                 if pyself.is_reload_temp.get() {
+                    for system in systems.iter() {
+                        let _ = build_scheduled_system(
+                            &system,
+                            current_generation,
+                            error_state.clone(),
+                            error_buffer.clone(),
+                            SystemStage::UpdateOrLast,
+                            false,
+                        )
+                        .map_err(|error| annotate_registration_error(py, &system, error))?;
+                    }
                     let system_funcs = systems.iter().map(Bound::unbind).collect();
                     pyself
                         .pending_state_systems
@@ -830,6 +898,15 @@ impl PyApp {
                             Err(_) => vec![system.clone()],
                         };
                         for sys in system_list {
+                            Self::preflight_reload_system(
+                                py,
+                                &sys,
+                                current_generation,
+                                &error_state,
+                                &error_buffer,
+                                Self::get_system_stage(stage),
+                                stage.is_startup(),
+                            )?;
                             system_funcs.push(sys.unbind());
                         }
                     }
@@ -1013,16 +1090,22 @@ impl PyApp {
                 }
             }
 
-            let name = plugin_type
+            let short_name = plugin_type
                 .name()
                 .and_then(|n| n.extract::<String>())
                 .unwrap_or_else(|_| "UnknownPlugin".to_string());
-            pyself.borrow(py).pending_plugins.borrow_mut().push(name);
 
             // Check if this plugin has already been added (important for hot reload)
             let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
             let type_key = type_ptr as usize;
-            let qualified_name = plugin_qualified_name(type_ptr, py);
+            let qualified_name =
+                plugin_qualified_name(type_ptr, py).unwrap_or_else(|| short_name.clone());
+            let instance_key = if is_plugin && !is_plugin_group {
+                plugin_instance_key(&plugin_instance, &qualified_name)?
+            } else {
+                None
+            };
+            let identity = PluginIdentity::new(qualified_name.clone(), instance_key);
             let is_reload = pyself.borrow(py).is_reload_temp.get();
             let bridge = plugin_registry::get_by_py_type(type_ptr);
             let native_already_added = if is_reload {
@@ -1041,17 +1124,27 @@ impl PyApp {
                 app_borrow
                     .plugin_registry
                     .borrow()
-                    .contains(type_key, qualified_name.as_deref())
+                    .contains(type_key, &identity)
             };
 
             if native_already_added || python_already_added {
+                if let Some(key) = identity.instance_key() {
+                    return Err(PyRuntimeError::new_err(duplicate_plugin_identity(
+                        identity.qualified_name(),
+                        key,
+                    )));
+                }
                 // Skip this plugin - it was already added in a previous generation
                 // This prevents "RecreationAttempt" errors with winit and other singleton plugins
-                pyself
-                    .borrow(py)
+                let app_borrow = pyself.borrow(py);
+                app_borrow
                     .plugin_registry
                     .borrow_mut()
-                    .insert(type_key, qualified_name.as_deref());
+                    .insert(type_key, identity.clone());
+                let mut pending = app_borrow.pending_plugins.borrow_mut();
+                if !pending.contains(&identity) {
+                    pending.push(identity);
+                }
                 if is_verbose() {
                     eprintln!("   Skipping already-added plugin: {}", plugin_type.name()?);
                 }
@@ -1096,11 +1189,20 @@ impl PyApp {
                     // Skip bridge-backed and native Rust plugins because a
                     // collection-only reload wrapper has no live App slot.
                     let has_bridge = bridge.is_some();
-                    let is_native = plugin_type
-                        .getattr("__module__")
-                        .and_then(|m| m.extract::<String>())
-                        .map(|m| m.starts_with("_pybevy") || m == "builtins")
+                    let is_decorated_python_plugin = plugin_type
+                        .getattr("__pybevy_plugin_decorated__")
+                        .and_then(|marker| marker.is_truthy())
                         .unwrap_or(false);
+                    let is_native = !is_decorated_python_plugin
+                        && plugin_type
+                            .getattr("__module__")
+                            .and_then(|m| m.extract::<String>())
+                            .map(|m| {
+                                m.starts_with("_pybevy")
+                                    || m.starts_with("pybevy.")
+                                    || m == "builtins"
+                            })
+                            .unwrap_or(false);
 
                     if !has_bridge && !is_native {
                         // Custom Python plugin: call build() to capture
@@ -1114,15 +1216,20 @@ impl PyApp {
             {
                 let app_borrow = pyself.borrow(py);
                 let mut registry = app_borrow.plugin_registry.borrow_mut();
-                registry.insert(type_key, qualified_name.as_deref());
+                registry.insert(type_key, identity.clone());
                 if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
                     let builder = plugin_instance.cast_exact::<PyPluginGroupBuilder>()?;
                     if let Some(source_type_id) = builder.borrow().source_type {
                         let source_ptr = source_type_id.as_ptr();
-                        let source_name = plugin_qualified_name(source_ptr, py);
-                        registry.insert(source_ptr as usize, source_name.as_deref());
+                        if let Some(source_name) = plugin_qualified_name(source_ptr, py) {
+                            registry.insert(
+                                source_ptr as usize,
+                                PluginIdentity::new(source_name, None),
+                            );
+                        }
                     }
                 }
+                app_borrow.pending_plugins.borrow_mut().push(identity);
             }
         }
 
@@ -1630,11 +1737,16 @@ impl PyApp {
         self.ensure_active()?;
 
         let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
-        let qualified_name = plugin_qualified_name(type_ptr, py);
+        let qualified_name = plugin_qualified_name(type_ptr, py).unwrap_or_else(|| {
+            plugin_type
+                .name()
+                .and_then(|name| name.extract::<String>())
+                .unwrap_or_else(|_| "UnknownPlugin".to_string())
+        });
         let python_added = self
             .plugin_registry
             .borrow()
-            .contains(type_ptr as usize, qualified_name.as_deref());
+            .contains_class(type_ptr as usize, &qualified_name);
 
         if python_added {
             return Ok(true);
@@ -1657,6 +1769,17 @@ impl PyApp {
         Py::new(py, reload_state)
     }
 
+    /// Record the importable scene module used by control `run_code` requests.
+    #[pyo3(name = "_set_scene_module")]
+    pub fn set_scene_module(pyself: PyRef<'_, Self>, module_name: String) -> PyResult<Py<PyApp>> {
+        pyself.ensure_active()?;
+        pyself.with_bevy_app(|app| {
+            app.insert_resource(ActiveSceneModule::new(module_name));
+            Ok::<(), PyErr>(())
+        })?;
+        Ok(pyself.into())
+    }
+
     /// Set the hot reload loader function (called by CLI)
     /// The loader should return a function that when called returns create_app function
     #[pyo3(name = "_set_hot_reload_loader")]
@@ -1666,7 +1789,8 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
         pyself.hot_reload_state.set_loader(loader.unbind());
-        let initial_plugins: HashSet<String> = pyself.take_pending_plugins().into_iter().collect();
+        let initial_plugins: HashSet<PluginIdentity> =
+            pyself.take_pending_plugins().into_iter().collect();
         let initial_systems = mem::take(&mut *pyself.pending_system_names.borrow_mut());
 
         // Add the hot reload system to the app if not already added
@@ -1677,10 +1801,9 @@ impl PyApp {
                 pyself.hot_reload_state.clone(),
                 pyself.system_error.clone(),
             );
-            if !initial_plugins.is_empty()
-                && let Some(mut tracker) = app.world_mut().get_resource_mut::<PluginTracker>()
-            {
+            if let Some(mut tracker) = app.world_mut().get_resource_mut::<PluginTracker>() {
                 tracker.known_plugins = initial_plugins;
+                tracker.baseline_initialized = true;
             }
             if let Some(mut registry) = app.world_mut().get_resource_mut::<DynamicSystemRegistry>()
             {
@@ -1854,9 +1977,6 @@ impl PyApp {
 /// to ensure task pools and worker threads are shut down before Python TLS cleanup
 impl Drop for PyApp {
     fn drop(&mut self) {
-        if let Some(active) = self.filesystem_active.get_mut().take() {
-            active.store(false, Ordering::Release);
-        }
         if !self.is_reload_temp.get() {
             // Check if we're on the same thread where the PyApp was created
             let current_thread = std::thread::current().id();

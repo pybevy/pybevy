@@ -15,7 +15,7 @@ use crate::ecs::observer_registry::ObserverRegistry;
 
 /// Represents a handle to perform deferred operations on an entity.
 /// Operations are queued and applied later when the Commands are flushed.
-#[pyclass(name = "EntityCommands", skip_from_py_object)]
+#[pyclass(name = "EntityCommands", module = "pybevy.ecs", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEntityCommands {
     pub(crate) id: Entity,
@@ -372,7 +372,7 @@ impl PyEntityCommands {
 /// set, and both address a live Python object whose lifetime the shared
 /// `validity` flag fences. A World-backed spawner rebuilds its temporary
 /// `PyCommands` per operation rather than storing a pointer to one.
-#[pyclass(name = "RelatedSpawnerCommands")]
+#[pyclass(name = "RelatedSpawnerCommands", module = "pybevy.ecs")]
 pub struct PyRelatedSpawnerCommands {
     target: Entity,
     commands_ptr: Option<usize>,
@@ -408,7 +408,7 @@ impl PyRelatedSpawnerCommands {
             target,
             commands_ptr: None,
             world_ptr: Some(world as *const super::world::PyWorld as usize),
-            validity: world.validity().unwrap_or_else(ValidityFlag::new),
+            validity: world.validity().unwrap_or_default(),
         }
     }
 

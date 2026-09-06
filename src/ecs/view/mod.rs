@@ -107,13 +107,13 @@ pub(crate) fn construct_view_class_item(
                     if matches!(changed.component_type, PyComponentType::Resource(_)) {
                         return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
                     }
-                    changed_filters.push(changed.component_type.clone());
+                    changed_filters.push(changed.component_type);
                 }
                 QueryFilter::Added(added) => {
                     if matches!(added.component_type, PyComponentType::Resource(_)) {
                         return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
                     }
-                    added_filters.push(added.component_type.clone());
+                    added_filters.push(added.component_type);
                 }
                 QueryFilter::Or(_) => {
                     return Err(PyRuntimeError::new_err(OR_VIEW_UNSUPPORTED));

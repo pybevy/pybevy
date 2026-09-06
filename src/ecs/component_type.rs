@@ -464,12 +464,6 @@ pub(crate) unsafe fn drop_py_object(ptr: OwningPtr<'_>) {
 ///
 /// Custom components are stored as `Py<PyAny>` objects and mark changes through
 /// their Python proxy hooks rather than Bevy's mutable untyped access.
-///
-/// # Arguments
-/// * `name` - The name for the descriptor (from the Python class)
-///
-/// # Returns
-/// A ComponentDescriptor configured for storing Python objects
 pub(crate) fn create_python_object_descriptor(name: String) -> ComponentDescriptor {
     unsafe {
         ComponentDescriptor::new_with_layout(
@@ -663,14 +657,6 @@ pub(crate) fn register_prepared_custom_component(
 /// pointers. This function detects that case via a name-based lookup and adds the new
 /// pointer as an alias for the existing ComponentId, so entities registered with the old
 /// pointer remain visible to queries using the new pointer.
-///
-/// # Arguments
-/// * `world` - The Bevy world to register the component in
-/// * `type_ptr` - The PyTypeObject pointer identifying the Python component class
-/// * `name` - The name of the component (from the Python class) for the descriptor
-///
-/// # Returns
-/// The ComponentId of the registered component
 pub(crate) fn register_custom_component(
     world: &mut World,
     type_ptr: *const PyTypeObject,
@@ -712,14 +698,6 @@ pub(crate) fn register_custom_component(
 ///
 /// This function centralizes the component type to Rust type mapping and registration,
 /// eliminating duplication across query_runtime.rs and view.rs.
-///
-/// # Arguments
-/// * `world` - The Bevy world to register the component in
-/// * `comp_type` - The PyComponentType to register
-/// * `custom_component_ids` - Map of custom component type pointers to their ComponentIds
-///
-/// # Returns
-/// The ComponentId of the registered component
 pub fn register_component_id(
     world: &mut World,
     comp_type: &PyComponentType,

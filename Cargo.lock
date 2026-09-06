@@ -5073,6 +5073,7 @@ name = "pybevy_world_serialization"
 version = "0.3.0"
 dependencies = [
  "bevy",
+ "bevy_a11y",
  "pybevy_core",
  "pybevy_macros",
  "pyo3",

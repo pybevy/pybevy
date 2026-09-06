@@ -32,7 +32,7 @@ use super::{
 ///     entity: Entity
 ///     radius: float
 /// ```
-#[pyclass(name = "Event", subclass, skip_from_py_object)]
+#[pyclass(name = "Event", module = "pybevy.ecs", subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEvent;
 
@@ -50,19 +50,19 @@ impl PyEvent {
 
 /// Marker class for component addition lifecycle events.
 /// Use with On[Add, ComponentType] to observe when components are added.
-#[pyclass(name = "Add", skip_from_py_object)]
+#[pyclass(name = "Add", module = "pybevy.ecs", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAdd;
 
 /// Marker class for component insertion lifecycle events.
 /// Use with On[Insert, ComponentType] to observe when components are inserted.
-#[pyclass(name = "Insert", skip_from_py_object)]
+#[pyclass(name = "Insert", module = "pybevy.ecs", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyInsert;
 
 /// Marker class for component removal lifecycle events.
 /// Use with On[Remove, ComponentType] to observe when components are removed.
-#[pyclass(name = "Remove", skip_from_py_object)]
+#[pyclass(name = "Remove", module = "pybevy.ecs", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRemove;
 
@@ -70,13 +70,13 @@ pub struct PyRemove;
 /// Use with On[Discard, ComponentType] to observe when a component value is
 /// discarded because it is replaced, removed, or despawned. Fires before the
 /// value is dropped, so observers can still read the original component data.
-#[pyclass(name = "Discard", skip_from_py_object)]
+#[pyclass(name = "Discard", module = "pybevy.ecs", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDiscard;
 
 /// Marker class for entity despawn lifecycle events.
 /// Use with On[Despawn, ComponentType] to observe when entities with the component are despawned.
-#[pyclass(name = "Despawn", skip_from_py_object)]
+#[pyclass(name = "Despawn", module = "pybevy.ecs", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDespawn;
 
@@ -101,7 +101,7 @@ pub struct PyDespawn;
 ///     event = trigger.event()
 ///     print(f"Mine {entity} exploded")
 /// ```
-#[pyclass(name = "On", frozen)]
+#[pyclass(name = "On", module = "pybevy.ecs", frozen)]
 pub struct PyOn {
     pub(crate) event_data: Py<PyAny>,
     pub(crate) entity: Option<bevy::ecs::entity::Entity>,
@@ -351,11 +351,11 @@ impl EventType {
 impl Clone for EventType {
     fn clone(&self) -> Self {
         match self {
-            EventType::Add(c) => EventType::Add(c.clone()),
-            EventType::Insert(c) => EventType::Insert(c.clone()),
-            EventType::Remove(c) => EventType::Remove(c.clone()),
-            EventType::Discard(c) => EventType::Discard(c.clone()),
-            EventType::Despawn(c) => EventType::Despawn(c.clone()),
+            EventType::Add(c) => EventType::Add(*c),
+            EventType::Insert(c) => EventType::Insert(*c),
+            EventType::Remove(c) => EventType::Remove(*c),
+            EventType::Discard(c) => EventType::Discard(*c),
+            EventType::Despawn(c) => EventType::Despawn(*c),
             EventType::Custom(ty) => Python::attach(|py| EventType::Custom(ty.clone_ref(py))),
         }
     }
@@ -412,7 +412,7 @@ impl EventType {
 ///
 /// This is returned by On.__class_getitem__ when using On[EventType] or On[EventType, BundleType]
 /// syntax in Python type annotations.
-#[pyclass(name = "OnTypeParam", frozen, from_py_object)]
+#[pyclass(name = "OnTypeParam", module = "pybevy.ecs", frozen, from_py_object)]
 #[derive(Debug)]
 pub struct PyOnTypeParam {
     pub(crate) event_type: EventType,

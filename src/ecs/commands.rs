@@ -51,7 +51,10 @@ use crate::ecs::{
         ComponentLayout, ComponentLayoutExt, ComponentStorageType, serialize_to_wrapper,
     },
     component_wrapper::*,
-    dynamic_system::{BufferedSystemError, SystemErrorBuffer, lock_or_recover},
+    dynamic_system::{
+        BufferedSystemError, SystemErrorBuffer, SystemErrorReport, lock_or_recover,
+        print_reported_system_error_once,
+    },
     observer::{PyEvent, PyOn},
     observer_registry::ObserverRegistry,
     parity_trace::{canonicalize_payload, canonicalize_payload_without_root_field},
@@ -194,6 +197,7 @@ pub(crate) fn validate_component_bundle(
 pub(crate) struct CommandErrorSink {
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
+    error_report: SystemErrorReport,
     retain_exception: bool,
 }
 
@@ -201,11 +205,13 @@ impl CommandErrorSink {
     pub(crate) fn new(
         error_state: Arc<Mutex<Vec<PyErr>>>,
         error_buffer: SystemErrorBuffer,
+        error_report: SystemErrorReport,
         retain_exception: bool,
     ) -> Self {
         Self {
             error_state,
             error_buffer,
+            error_report,
             retain_exception,
         }
     }
@@ -218,6 +224,14 @@ impl CommandErrorSink {
                     .format()
                     .unwrap_or_else(|_| "(traceback format failed)".into())
             });
+            if !self.retain_exception {
+                print_reported_system_error_once(
+                    &self.error_report,
+                    "deferred Python command",
+                    &message,
+                    traceback.as_deref(),
+                );
+            }
             *lock_or_recover(&self.error_buffer) = Some(BufferedSystemError {
                 error: message,
                 traceback,
@@ -239,7 +253,7 @@ impl CommandErrorSink {
 /// 2. ValidityFlag is Arc<AtomicBool> which is Send + Sync
 /// 3. Runtime validity checking prevents use after the system completes
 /// 4. The optional PyWorld reference is also Send (Py<T> is Send if T is Send)
-#[pyclass(name = "Commands")]
+#[pyclass(name = "Commands", module = "pybevy.ecs")]
 pub struct PyCommands {
     commands_ptr: *mut (),
     is_world: bool, // Flag to indicate if this wraps a World instead of Commands

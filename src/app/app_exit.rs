@@ -45,3 +45,24 @@ impl TryFrom<&PyAppExit> for AppExit {
         Ok(value.inner.clone().into())
     }
 }
+
+#[pymethods]
+impl PyAppExit {
+    #[staticmethod]
+    pub fn error(py: Python<'_>) -> PyResult<Py<PyAny>> {
+        materialize_app_exit(py, &AppExit::error())
+    }
+
+    #[staticmethod]
+    pub fn from_code(py: Python<'_>, code: u8) -> PyResult<Py<PyAny>> {
+        materialize_app_exit(py, &AppExit::from_code(code))
+    }
+
+    pub fn is_success(&self) -> bool {
+        matches!(self.inner, AppExitValue::Success)
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self.inner, AppExitValue::Error { .. })
+    }
+}

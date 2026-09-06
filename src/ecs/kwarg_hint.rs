@@ -37,7 +37,11 @@ fn parameter_names(py: Python<'_>, callable: &Bound<'_, PyAny>) -> Option<Vec<St
 /// Checked against `__name__` so a shadowing local cannot produce a confident
 /// hint about the wrong class. Nothing is cached: hot reload rebuilds Python
 /// types, and stale type pointers are exactly what CLAUDE.md forbids holding.
-fn resolve_callable<'py>(py: Python<'py>, error: &PyErr, name: &str) -> Option<Bound<'py, PyAny>> {
+pub(crate) fn resolve_callable<'py>(
+    py: Python<'py>,
+    traceback: Option<&Bound<'py, PyAny>>,
+    name: &str,
+) -> Option<Bound<'py, PyAny>> {
     let matches = |value: &Bound<'py, PyAny>| -> bool {
         value.is_instance_of::<PyType>()
             && value
@@ -48,9 +52,7 @@ fn resolve_callable<'py>(py: Python<'py>, error: &PyErr, name: &str) -> Option<B
     };
 
     // The frame that raised is the one that knows which `RectLight` it meant.
-    let mut frame = error
-        .traceback(py)
-        .and_then(|tb| tb.getattr("tb_frame").ok());
+    let mut frame = traceback.and_then(|tb| tb.getattr("tb_frame").ok());
     while let Some(current) = frame {
         for namespace in ["f_locals", "f_globals"] {
             if let Ok(scope) = current.getattr(namespace)
@@ -84,8 +86,20 @@ fn resolve_callable<'py>(py: Python<'py>, error: &PyErr, name: &str) -> Option<B
     None
 }
 
+/// The exception's traceback object, or None when it carries no traceback.
+pub(crate) fn traceback_of<'py>(value: &Bound<'py, PyAny>) -> Option<Bound<'py, PyAny>> {
+    value
+        .getattr("__traceback__")
+        .ok()
+        .filter(|tb| !tb.is_none())
+}
+
 /// The hint to append to `message`, or None to leave the error untouched.
-pub(crate) fn hint_for(py: Python<'_>, error: &PyErr, message: &str) -> Option<String> {
+pub(crate) fn hint_for(
+    py: Python<'_>,
+    traceback: Option<&Bound<'_, PyAny>>,
+    message: &str,
+) -> Option<String> {
     // CPython already suggests for pure-Python callables such as @component
     // dataclasses, and the binding layer may one day suggest at raise time.
     // Never hint twice.
@@ -93,26 +107,29 @@ pub(crate) fn hint_for(py: Python<'_>, error: &PyErr, message: &str) -> Option<S
         return None;
     }
     let parsed = parse_unexpected_keyword(message)?;
-    let callable = resolve_callable(py, error, parsed.callable)?;
+    let callable = resolve_callable(py, traceback, parsed.callable)?;
     let names = parameter_names(py, &callable)?;
     let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
     unexpected_keyword_hint(parsed.callable, parsed.keyword, &borrowed)
 }
 
-/// Rewrite `error` in place to carry a suggestion, when one applies.
+/// Rewrite an already-raised exception in place to carry a suggestion.
 ///
 /// Appends to the exception's own message rather than using `add_note`, so the
 /// result reads exactly like CPython's built-in suggestion and every consumer
 /// of the message (stderr, the re-raise from `app.run()`, `LastSystemError`,
 /// MCP `get_last_error`) picks it up without special-casing notes.
-pub(crate) fn enrich(py: Python<'_>, error: &PyErr) {
-    let message = error.to_string();
-    // `PyErr::to_string` renders "TypeError: msg"; the parser tolerates that.
-    let Some(hint) = hint_for(py, error, &message) else {
+pub(crate) fn enrich_value(py: Python<'_>, value: &Bound<'_, PyAny>) {
+    let Some(current) = value.str().ok().and_then(|s| s.extract::<String>().ok()) else {
         return;
     };
-    let value = error.value(py);
-    let current = value.str().ok().and_then(|s| s.extract::<String>().ok());
-    let Some(current) = current else { return };
+    let traceback = traceback_of(value);
+    let hint = hint_for(py, traceback.as_ref(), &current)
+        .or_else(|| crate::ecs::variant_hint::hint_for(py, traceback.as_ref(), &current));
+    let Some(hint) = hint else { return };
     let _ = value.setattr("args", (format!("{current}. {hint}"),));
+}
+
+pub(crate) fn enrich(py: Python<'_>, error: &PyErr) {
+    enrich_value(py, error.value(py));
 }

@@ -1,6 +1,7 @@
 use std::{any::TypeId, collections::HashSet};
 
 use bevy::{ecs::world::World, prelude::Resource};
+use pybevy_core::PluginIdentity;
 
 use crate::state::ReloadMode;
 
@@ -30,10 +31,12 @@ pub struct DefsFingerprint {
     pub has_observers: bool,
 }
 
-/// Stores the previous generation's [`DefsFingerprint`] between reloads.
+/// Stores the previous generation's [`DefsFingerprint`] and whether a failed,
+/// destructive reload requires the next candidate to rebuild the scene.
 #[derive(Resource, Default)]
 pub struct EscalationTracker {
     pub last: Option<DefsFingerprint>,
+    pub full_reload_required: bool,
 }
 
 /// Error type for reload operations.
@@ -93,8 +96,8 @@ pub trait ReloadRuntime {
     /// decide whether a Partial reload must escalate to Full.
     fn defs_fingerprint(&self, defs: &Self::Defs) -> DefsFingerprint;
 
-    /// Extract plugin names from pending definitions (for delta detection).
-    fn plugin_names(&self, defs: &Self::Defs) -> Vec<String>;
+    /// Extract stable plugin identities from pending definitions for delta detection.
+    fn plugin_names(&self, defs: &Self::Defs) -> Vec<PluginIdentity>;
 
     /// Extract system names from pending definitions (for delta detection).
     fn system_names(&self, defs: &Self::Defs) -> std::collections::HashSet<String>;

@@ -47,8 +47,9 @@ use super::{
     commands::CommandErrorSink,
     dynamic_system::{
         BufferedSystemError, DynamicSystemHandle, DynamicSystemInner, MainResolver,
-        SystemErrorBuffer, build_run_args, execute_prepared_observer, lock_or_recover,
-        lower_param_type, lower_params, resource_marker_validation_identity,
+        SystemErrorBuffer, SystemErrorReport, SystemErrorReportState, build_run_args,
+        execute_prepared_observer, lock_or_recover, lower_param_type, lower_params,
+        print_reported_system_error_once, resource_marker_validation_identity,
         resource_validation_identity, validate_pipe_target_params, validate_system_params,
     },
     messages::{CursorStorage, MessageType},
@@ -105,6 +106,7 @@ pub(crate) struct MainObserverRunState;
 pub(crate) struct MainFailureSink {
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
+    error_report: SystemErrorReport,
     retain_exception: bool,
 }
 
@@ -114,6 +116,7 @@ pub(crate) struct MainInterpreter {
     function_name: String,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
+    error_report: SystemErrorReport,
     retain_exception: bool,
 }
 
@@ -432,6 +435,7 @@ pub(crate) fn new_main_observer(
     let failure_sink = MainFailureSink {
         error_state: prepared.interpreter.error_state.clone(),
         error_buffer: prepared.interpreter.error_buffer.clone(),
+        error_report: prepared.interpreter.error_report.clone(),
         // Observer failures are reports, never delayed exception tokens.
         retain_exception: false,
     };
@@ -522,6 +526,7 @@ impl MainInterpreter {
                 function_name,
                 error_state,
                 error_buffer,
+                error_report: Arc::new(Mutex::new(SystemErrorReportState::default())),
                 retain_exception,
             },
             params: MainParamPlan {
@@ -699,6 +704,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
             failure_sink: MainFailureSink {
                 error_state: self.error_state.clone(),
                 error_buffer: self.error_buffer.clone(),
+                error_report: self.error_report.clone(),
                 retain_exception: self.retain_exception
                     || world
                         .get_resource::<pybevy_reload::HotReloadGeneration>()
@@ -743,6 +749,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
         retained: &SystemHandle<Self>,
         current_generation: Option<u32>,
     ) -> CallablePreflight<Self::PreparedCall, Self::ExceptionToken> {
+        lock_or_recover(&self.error_report).set_generation(current_generation.unwrap_or(0));
         Python::attach(|py| {
             let generation = current_generation.unwrap_or(0);
             let cached_snapshot = {
@@ -930,6 +937,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                     &CommandErrorSink::new(
                         self.error_state.clone(),
                         self.error_buffer.clone(),
+                        self.error_report.clone(),
                         self.retain_exception
                             || ctx
                                 .world
@@ -950,6 +958,9 @@ unsafe impl SystemInterpreter for MainInterpreter {
             // Run-scoped wrappers must drop while Python is attached and
             // before the neutral core invalidates `ctx.validity`.
             state.args.clear();
+            if result.is_ok() {
+                lock_or_recover(&self.error_report).clear();
+            }
             result
         })
     }
@@ -990,6 +1001,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                     &CommandErrorSink::new(
                         self.error_state.clone(),
                         self.error_buffer.clone(),
+                        self.error_report.clone(),
                         false,
                     ),
                     &message_cursors,
@@ -999,9 +1011,13 @@ unsafe impl SystemInterpreter for MainInterpreter {
             drop(callable);
             drop(params);
             drop(message_cursors);
-            result
+            let result = result
                 .map(|()| CallOutcome::Unit)
-                .map_err(|error| Self::failure(py, error))
+                .map_err(|error| Self::failure(py, error));
+            if result.is_ok() {
+                lock_or_recover(&self.error_report).clear();
+            }
+            result
         })
     }
 
@@ -1009,7 +1025,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
         &self,
         sink: &Self::FailureSink,
         mut failure: InterpreterFailure<Self::ExceptionToken>,
-        _metadata: &CallMetadata,
+        metadata: &CallMetadata,
         policy: StoredErrorPolicy,
     ) {
         {
@@ -1024,6 +1040,19 @@ unsafe impl SystemInterpreter for MainInterpreter {
             && let Some(exception) = failure.exception.take()
         {
             lock_or_recover(&sink.error_state).push(exception);
+        }
+        if !sink.retain_exception {
+            let kind = match metadata.kind {
+                InvocationKind::System => "Python system",
+                InvocationKind::Condition => "Python run condition",
+                InvocationKind::Observer => "Python observer",
+            };
+            print_reported_system_error_once(
+                &sink.error_report,
+                &format!("{kind} `{}`", metadata.name),
+                &failure.report.message,
+                failure.report.traceback.as_deref(),
+            );
         }
         // Any unretained token is dropped in an attached interpreter context,
         // outside both sink locks, so Python finalizers cannot run under them.

@@ -88,30 +88,10 @@ pub trait ResourceBridge: Send + Sync + 'static {
     ) -> PyResult<Option<Py<PyAny>>>;
 
     /// Get resource from world (read-only access)
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - World reference for accessing the resource
-    /// * `validity` - Validity flag for borrowed reference tracking
-    /// * `py` - Python GIL token
-    ///
-    /// # Errors
-    ///
-    /// Returns error if resource is not found or Python conversion fails.
     fn get(&self, world: &World, validity: ValidityFlagWithMode, py: Python)
     -> PyResult<Py<PyAny>>;
 
     /// Get resource from world (mutable access)
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference for accessing the resource
-    /// * `validity` - Validity flag for borrowed reference tracking
-    /// * `py` - Python GIL token
-    ///
-    /// # Errors
-    ///
-    /// Returns error if resource is not found or Python conversion fails.
     fn get_mut(
         &self,
         world: &mut World,
@@ -151,33 +131,12 @@ pub trait ResourceBridge: Send + Sync + 'static {
     ) -> PyResult<Py<PyAny>>;
 
     /// Insert resource into world
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference
-    /// * `resource` - Python object to convert and insert
-    ///
-    /// # Errors
-    ///
-    /// Returns error if Python conversion or insertion fails.
     fn insert(&self, world: &mut World, resource: &Bound<PyAny>) -> PyResult<()>;
 
     /// Remove resource from world
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference
     fn remove(&self, world: &mut World);
 
     /// Check if resource exists in world
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - World reference
-    ///
-    /// # Returns
-    ///
-    /// True if the resource exists in the world
     fn contains_in_world(&self, world: &World) -> bool;
 
     /// Get the ComponentId for this resource type in the world

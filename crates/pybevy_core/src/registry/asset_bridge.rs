@@ -115,17 +115,6 @@ pub trait AssetBridge: Send + Sync + 'static {
     fn load_failed_event_count(&self, world: &World) -> usize;
 
     /// Get asset from Assets resource and convert to Python object (read-only)
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - World reference for accessing Assets<T> resource
-    /// * `id` - Untyped ID of the asset
-    /// * `validity` - Validity flag for borrowed reference tracking
-    /// * `py` - Python GIL token
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Some(asset))` if asset exists, `Ok(None)` if not found.
     fn get(
         &self,
         world: &World,
@@ -136,17 +125,6 @@ pub trait AssetBridge: Send + Sync + 'static {
     ) -> PyResult<Option<Py<PyAny>>>;
 
     /// Get mutable asset from Assets resource
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `id` - Untyped ID of the asset
-    /// * `validity` - Validity flag for borrowed reference tracking
-    /// * `py` - Python GIL token
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Some(asset))` if asset exists, `Ok(None)` if not found.
     fn get_mut(
         &self,
         world: UnsafeWorldCell<'_>,
@@ -157,41 +135,12 @@ pub trait AssetBridge: Send + Sync + 'static {
     ) -> PyResult<Option<Py<PyAny>>>;
 
     /// Add new asset to Assets resource and return its handle
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `asset` - Python object to convert and add
-    /// * `py` - Python GIL token
-    ///
-    /// # Returns
-    ///
-    /// Untyped handle to the newly added asset.
     fn add(&self, world: &mut World, asset: &Bound<PyAny>, py: Python) -> PyResult<UntypedHandle>;
 
     /// Remove asset from Assets resource
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `id` - Untyped ID of the asset to remove
-    ///
-    /// # Returns
-    ///
-    /// `true` if asset was found and removed, `false` if not found.
     fn remove(&self, world: &mut World, id: UntypedAssetId) -> PyResult<bool>;
 
     /// Remove asset from Assets resource and return it as a Python object.
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference for accessing Assets<T> resource
-    /// * `id` - Untyped ID of the asset to remove
-    /// * `py` - Python GIL token
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Some(asset))` if asset was found and removed, `Ok(None)` if not found.
     fn remove_and_return(
         &self,
         world: &mut World,
@@ -251,27 +200,9 @@ pub trait AssetBridge: Send + Sync + 'static {
     }
 
     /// Load asset from file using AssetServer
-    ///
-    /// # Arguments
-    ///
-    /// * `asset_server` - Reference to Bevy's AssetServer
-    /// * `path` - Asset path to load
-    ///
-    /// # Returns
-    ///
-    /// Untyped handle to the loading asset.
     fn load(&self, asset_server: &AssetServer, path: AssetPath) -> UntypedHandle;
 
     /// Get existing handle for an asset by path
-    ///
-    /// # Arguments
-    ///
-    /// * `asset_server` - Reference to Bevy's AssetServer
-    /// * `path` - Asset path to get handle for
-    ///
-    /// # Returns
-    ///
-    /// `Some(handle)` if asset is already loaded, `None` otherwise.
     fn get_handle(&self, asset_server: &AssetServer, path: AssetPath) -> Option<UntypedHandle>;
 
     /// Clear programmatic assets of this type from the world.

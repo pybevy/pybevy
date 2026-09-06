@@ -32,7 +32,7 @@ use crate::{
 };
 
 /// Python-exposed reload state class (for CLI watcher thread)
-#[pyclass(name = "AppReloadState")]
+#[pyclass(name = "AppReloadState", module = "pybevy.app")]
 pub struct PyAppReloadState {
     state: HotReloadState,
 }
@@ -77,11 +77,16 @@ impl PyAppReloadState {
     pub fn is_partial_reload(&self) -> bool {
         self.state.is_partial_reload()
     }
+
+    /// Get the generation shared with `HotReloadControl`.
+    pub fn generation(&self) -> u32 {
+        self.state.current_generation()
+    }
 }
 
 /// Python-exposed hot reload control resource (for in-game systems)
 /// This allows Python systems to request reloads dynamically (e.g., on F5 press)
-#[pyclass(name = "HotReloadControl", extends = PyResource, frozen, skip_from_py_object)]
+#[pyclass(name = "HotReloadControl", module = "pybevy.app", extends = PyResource, frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyHotReloadControl {
     state: HotReloadState,
@@ -444,7 +449,7 @@ struct HotReloadMaintenance;
 /// app = App()
 /// app.add_plugins(HotReloadPlugin())
 /// ```
-#[pyclass(name = "HotReloadPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "HotReloadPlugin", module = "pybevy.app", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyHotReloadPlugin;
 

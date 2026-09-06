@@ -8,13 +8,6 @@ use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 /// components or resources. Returns "Unknown" if the type name cannot
 /// be extracted.
 ///
-/// # Arguments
-/// * `py` - Python GIL token
-/// * `type_ptr` - Pointer to the Python type object
-///
-/// # Returns
-/// The type name as a String, or "Unknown" if extraction fails
-///
 /// # Safety
 /// The type_ptr must be a valid PyTypeObject pointer that remains
 /// valid for the duration of this call.

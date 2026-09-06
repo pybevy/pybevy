@@ -1,37 +1,11 @@
-//! # PyWorld: Bevy ECS World Access
+//! Python bindings for Bevy's World, the central ECS container.
 //!
-//! This module provides Python bindings for Bevy's World, the central ECS container.
-//!
-//! ## Design Notes
-//!
-//! ### Why PyWorld Uses Custom Storage Instead of ComponentStorage
-//!
-//! PyWorld has fundamentally different semantics from components and uses a custom
-//! `WorldStorage` enum instead of reusing `ComponentStorage`:
-//!
-//! 1. **Interior Mutability**: Owned worlds use `Box<UnsafeCell<World>>` since PyWorld
-//!    methods take `&self` but need `&mut World` access. Components don't need this
-//!    because they're accessed through Query[T] (immutable) or Query[Mut[T]] (mutable).
-//!
-//! 2. **Conditional Validity**: Owned worlds are never invalidated (they live until GC),
-//!    while owned components are invalidated on drop to prevent use-after-free of field
-//!    borrows. This semantic difference requires `Option<ValidityFlag>`.
-//!
-//! 3. **Unique Operations**: PyWorld has spawn/despawn/trigger/resource operations that
-//!    don't fit the generic storage abstraction designed for component field access.
-//!
-//! ### Temporary World Access Helper
-//!
-//! For temporary World access with automatic validity management, use `PyWorld::with_temporary()`:
-//!
-//! ```rust,ignore
-//! PyWorld::with_temporary(app.world_mut(), py, |py_world| {
-//!     py_world.insert_resource(py, resource)?;
-//!     Ok(result)
-//! })?;
-//! ```
-//!
-//! This eliminates the boilerplate of creating ValidityFlag and ValidityGuard manually.
+//! PyWorld uses a custom `WorldStorage` enum instead of `ComponentStorage`
+//! because its `&self` methods need interior mutability over `&mut World`,
+//! owned worlds live until GC (so their validity flag is optional), and
+//! spawn/despawn/trigger/resource operations don't fit the component storage
+//! abstraction. Use `PyWorld::with_temporary()` for temporary access with
+//! automatic validity management.
 
 use std::{
     any::TypeId,
@@ -46,7 +20,9 @@ use bevy::{
 };
 use pybevy_core::{
     AssetAccessRegistry, AssetBorrowCounter, ensure_asset_access_registry,
-    ensure_no_live_asset_access, public_error::RESOURCE_ENTITY_DESPAWN, registry::global_registry,
+    ensure_no_live_asset_access,
+    public_error::{RESOURCE_ENTITY_DESPAWN, unregistered_message_write},
+    registry::global_registry,
     resource_initializer,
 };
 use pybevy_ecs::shared::{
@@ -109,7 +85,7 @@ enum EitherStateSchedule {
 /// This is passed to Python systems that request World access.
 ///
 /// Note: World access requires an exclusive system, which prevents parallel execution.
-#[pyclass(name = "World")]
+#[pyclass(name = "World", module = "pybevy.ecs")]
 pub struct PyWorld {
     storage: WorldStorage,
     // Runtime validity check - prevents use after the underlying World goes away.
@@ -142,10 +118,10 @@ impl Drop for PyWorld {
         // next access instead of dereferencing freed memory. Only owned worlds own their
         // flag; a borrowed world shares the system flag managed by ValidityGuard (and may
         // be one of several duplicates), so leave those untouched.
-        if let WorldStorage::Owned(_) = self.storage {
-            if let Some(flag) = &self.validity {
-                flag.set_invalid();
-            }
+        if let WorldStorage::Owned(_) = self.storage
+            && let Some(flag) = &self.validity
+        {
+            flag.set_invalid();
         }
     }
 }
@@ -957,6 +933,10 @@ impl PyWorld {
         if let MessageType::Custom(message_class) = &message_type {
             let type_ptr = message_class.bind(py).as_type_ptr();
             if !python_message_is_registered(world, type_ptr) {
+                eprintln!(
+                    "{}",
+                    unregistered_message_write(message_class.bind(py).name()?)
+                );
                 return Ok(None);
             }
             let resolved = resolve_from_world(world, type_ptr)?;
@@ -975,6 +955,7 @@ impl PyWorld {
                     .resource_id(world)
                     .is_some_and(|resource_id| world.get_resource_by_id(resource_id).is_some())
             {
+                eprintln!("{}", unregistered_message_write(bridge.name()));
                 return Ok(None);
             }
         }

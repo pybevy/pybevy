@@ -66,9 +66,6 @@ pub trait PythonObjectDescriptor {
 ///
 /// # Type Parameters
 /// * `D` - The backend's [`PythonObjectDescriptor`] implementation
-///
-/// # Returns
-/// The [`ComponentId`] assigned by Bevy for this component
 pub fn register_custom_component_descriptor<D: PythonObjectDescriptor>(
     world: &mut World,
     name: String,

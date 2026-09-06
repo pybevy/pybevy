@@ -1,8 +1,5 @@
 //! Opaque column view for zero-copy access via Numba JIT and JAX interop.
-//!
-//! This module implements the v4.0 "Opaque Handle" architecture, where Python
-//! users receive opaque ViewColumn handles that refuse numpy conversion and can
-//! be accessed through Numba JIT compilation or JAX array interop.
+//! Python users receive opaque ViewColumn handles that refuse numpy conversion.
 //!
 //! Safety model: ECS-backed columns retain a neutral `BatchColumn` capability.
 //! Rust-side accesses check its thread-affine run validity and hold the shared
@@ -36,15 +33,9 @@ use crate::ecs::{component_type::PyComponentType, view::view::get_component_fiel
 
 /// Opaque column view that can only be accessed through Numba JIT.
 ///
-/// This struct intentionally does NOT expose `__array_interface__` or allow
-/// numpy conversion. The ONLY way to access the data is through Numba JIT
-/// functions, where safety checks occur at the call boundary.
-///
-/// # Safety Model
-///
-/// - The run-scoped core validity is checked in the Numba unbox() function
-/// - Stale or cross-thread handles raise a RuntimeError before pointer exposure
-/// - Users cannot get a raw numpy array that bypasses checks
+/// Intentionally does not expose `__array_interface__` or allow numpy
+/// conversion; data is only reachable through Numba JIT functions, where
+/// safety checks occur at the call boundary.
 ///
 /// # Example
 ///
@@ -59,7 +50,7 @@ use crate::ecs::{component_type::PyComponentType, view::view::get_component_fiel
 ///         y = batch.col(Transform).translation.y
 ///         kernel(y)  # Safety check at call boundary
 /// ```
-#[pyclass(name = "ViewColumn")]
+#[pyclass(name = "ViewColumn", module = "pybevy.ecs")]
 pub struct PyViewColumn {
     /// Raw pointer to the data (NOT exposed directly to Python).
     ptr: *mut u8,
@@ -557,11 +548,7 @@ impl PyViewColumn {
     /// Create a sub-column view at a byte offset (for field peeling).
     ///
     /// This is the Python-facing API; Rust internals should use `at_offset_typed`.
-    ///
-    /// # Arguments
-    ///
-    /// - `offset`: Byte offset from the current pointer
-    /// - `dtype`: NumPy dtype string (e.g., "f4", "i8", "u1") or "struct" for composite
+    /// `dtype` is a NumPy dtype string ("f4", "i8", "u1", ...) or "struct" for composite.
     pub fn at_offset(&self, offset: usize, dtype: &str) -> PyResult<Self> {
         let field_type = match dtype {
             "u1" => Some(FieldType::Bool),

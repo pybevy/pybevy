@@ -395,26 +395,13 @@ fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Optio
     Some(format!("{}.{}", module, qualname))
 }
 
-/// Helper function to register a custom Python resource with Bevy's ECS.
-///
-/// This creates a ComponentDescriptor with the layout of a `Py<PyAny>` and registers
-/// its identity with the world. Concrete custom resource values use this descriptor
-/// as their dynamic component on Bevy's stable resource entity.
-///
-/// The neutral resource registry is App-local and uses integer type keys, keeping
-/// interpreter objects out of shared bookkeeping.
-///
-/// During hot reload, Python re-executes resource classes creating new PyTypeObject pointers.
-/// This function detects that case via a name-based lookup and adds the new pointer as an
-/// alias for the existing ComponentId, preserving access to previously inserted resource data.
-///
-/// # Arguments
-/// * `world` - The Bevy world to register the resource in
-/// * `type_ptr` - The PyTypeObject pointer identifying the Python resource class
-/// * `py` - The active interpreter token used to read class metadata
-///
-/// # Returns
-/// The ComponentId of the registered resource
+/// Register a custom Python resource with Bevy's ECS: creates a `Py<PyAny>`-layout
+/// ComponentDescriptor whose dynamic component carries the resource value on Bevy's
+/// stable resource entity. The neutral resource registry is App-local with integer
+/// type keys, keeping interpreter objects out of shared bookkeeping. Hot reload
+/// re-executes resource classes as new PyTypeObject pointers; a name-based lookup
+/// aliases the new pointer to the existing ComponentId so previously inserted
+/// resource data stays reachable.
 pub(crate) fn register_custom_resource(
     world: &mut World,
     type_ptr: *const PyTypeObject,

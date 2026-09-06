@@ -153,11 +153,6 @@ pub struct PySystemBuilder {
 
 impl PySystemBuilder {
     /// Create a new system builder for a Python function
-    ///
-    /// # Arguments
-    ///
-    /// * `module_name` - Python module path (e.g., "my_game.systems")
-    /// * `function_name` - Name of the system function in the module
     pub fn new(module_name: impl Into<String>, function_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
@@ -389,13 +384,9 @@ pub struct PyBevyPlugin {
 impl PyBevyPlugin {
     /// Create a new PyBevy plugin that will load systems from the specified Python module
     ///
-    /// # Arguments
-    ///
-    /// * `module_name` - Python module path (e.g., "my_game.systems")
-    ///
-    /// By default, this will look for functions named `startup`, `update`, and `last`
-    /// in the module and add them to the corresponding Bevy schedules.
-    /// Use `with_system()` to specify custom function names.
+    /// If no systems are specified, the plugin looks for functions named `startup`,
+    /// `update`, and `last` and adds the ones it finds to the corresponding schedules.
+    /// Use [`Self::with_system`] to specify custom function names.
     pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
@@ -424,11 +415,6 @@ impl PyBevyPlugin {
     }
 
     /// Add a specific system function from the Python module
-    ///
-    /// # Arguments
-    ///
-    /// * `function_name` - Name of the system function in the Python module
-    /// * `stage` - Which Bevy schedule stage to run the system in
     pub fn with_system(mut self, function_name: impl Into<String>, stage: PyStage) -> Self {
         let builder = PySystemBuilder::new(self.module_name.clone(), function_name).in_stage(stage);
         self.systems.push(builder);

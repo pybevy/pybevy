@@ -50,7 +50,13 @@ enum HandleKind {
     Uuid(Uuid),
 }
 
-#[pyclass(name = "Handle", subclass, frozen, from_py_object)]
+#[pyclass(
+    name = "Handle",
+    module = "pybevy.assets",
+    subclass,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyHandle {
     kind: HandleKind,
@@ -228,10 +234,6 @@ impl PyHandle {
     /// Create a non-owning UUID handle.
     ///
     /// This creates a handle that does not keep the asset alive.
-    ///
-    /// # Arguments
-    /// * `value` - A u128 value to use as the UUID
-    /// * `asset_type` - The Python type of the asset (e.g., `Mesh`, `Image`)
     #[staticmethod]
     pub fn uuid_from_u128<'py>(
         py: Python,
