@@ -54,7 +54,7 @@ fn convert_optional_handle(handle: Option<&Bound<'_, PyAny>>) -> PyResult<Option
 }
 
 #[pyasset(StandardMaterial, bridge, input_converter, material)]
-#[pyclass(name = "StandardMaterial", extends = PyMaterial, skip_from_py_object)]
+#[pyclass(name = "StandardMaterial", module = "pybevy.pbr", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyStandardMaterial {
     pub(crate) storage: AssetStorage<StandardMaterial>,
@@ -329,7 +329,7 @@ impl PyStandardMaterial {
             clearcoat_normal_texture: convert_optional_handle(clearcoat_normal_texture)?,
         };
 
-        Ok(Self::from_owned(material).into())
+        Ok(Self::from_owned(material))
     }
 
     #[staticmethod]
