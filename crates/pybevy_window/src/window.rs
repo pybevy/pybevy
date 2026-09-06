@@ -1,8 +1,10 @@
+use std::num::NonZero;
+
 use bevy::{math::DVec2, window::Window};
 use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
     composite_alpha_mode::PyCompositeAlphaMode, enabled_buttons::PyEnabledButtons,
@@ -15,7 +17,7 @@ use crate::{
 pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
 #[pycomponent(Window, bridge, view_fields = [decorations, resizable, transparent])]
-#[pyclass(name = "Window", extends = PyComponent)]
+#[pyclass(name = "Window", module = "pybevy.window", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyWindow {
     pub(crate) storage: ComponentStorage<Window>,
@@ -435,6 +437,37 @@ impl PyWindow {
     #[setter]
     pub fn set_composite_alpha_mode(&mut self, value: PyCompositeAlphaMode) -> PyResult<()> {
         self.as_mut()?.composite_alpha_mode = value.into();
+        Ok(())
+    }
+
+    #[getter]
+    pub fn borderless_game(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.borderless_game)
+    }
+
+    #[setter]
+    pub fn set_borderless_game(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.borderless_game = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn desired_maximum_frame_latency(&self) -> PyResult<Option<u32>> {
+        Ok(self
+            .as_ref()?
+            .desired_maximum_frame_latency
+            .map(|v| v.get()))
+    }
+
+    #[setter]
+    pub fn set_desired_maximum_frame_latency(&mut self, value: Option<u32>) -> PyResult<()> {
+        let latency = match value {
+            Some(v) => Some(NonZero::new(v).ok_or_else(|| {
+                PyValueError::new_err("desired_maximum_frame_latency must be at least 1")
+            })?),
+            None => None,
+        };
+        self.as_mut()?.desired_maximum_frame_latency = latency;
         Ok(())
     }
 

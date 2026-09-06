@@ -44,7 +44,7 @@ impl PyWindowRef {
         match self {
             Self::Primary() => "WindowRef.Primary()".to_string(),
             Self::Entity { value } => {
-                let value: PyEntity = (*value).into();
+                let value: PyEntity = (*value);
                 format!("WindowRef.Entity({value:?})")
             }
         }
