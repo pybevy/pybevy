@@ -546,6 +546,22 @@ class Window(Component):
         """Set the alpha compositing mode."""
 
     @property
+    def borderless_game(self) -> bool:
+        """Whether this is a borderless game window (macOS)."""
+
+    @borderless_game.setter
+    def borderless_game(self, value: bool) -> None:
+        """Set whether this is a borderless game window (macOS)."""
+
+    @property
+    def desired_maximum_frame_latency(self) -> int | None:
+        """Desired maximum frame latency in frames (``None`` lets the GPU choose)."""
+
+    @desired_maximum_frame_latency.setter
+    def desired_maximum_frame_latency(self, value: int | None) -> None:
+        """Set the desired maximum frame latency; must be ``None`` or at least 1."""
+
+    @property
     def resize_constraints(self) -> WindowResizeConstraints:
         """Get the window resize constraints."""
 
