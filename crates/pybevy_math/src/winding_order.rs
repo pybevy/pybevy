@@ -1,7 +1,7 @@
 use bevy::math::primitives::WindingOrder;
 use pyo3::prelude::*;
 
-#[pyclass(name = "WindingOrder", eq, skip_from_py_object)]
+#[pyclass(name = "WindingOrder", module = "pybevy.math", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyWindingOrder {
     Clockwise,

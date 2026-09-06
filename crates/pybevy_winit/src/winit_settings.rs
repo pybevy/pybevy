@@ -2,7 +2,12 @@ use bevy::winit::WinitSettings;
 use pyo3::prelude::*;
 
 use crate::update_mode::PyUpdateMode;
-#[pyclass(name = "WinitSettings", frozen, from_py_object)]
+#[pyclass(
+    name = "WinitSettings",
+    module = "pybevy.winit",
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyWinitSettings(pub(crate) WinitSettings);
 

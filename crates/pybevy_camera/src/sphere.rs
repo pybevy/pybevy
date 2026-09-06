@@ -5,7 +5,7 @@ use pybevy_math::vec3a::PyVec3A;
 use pyo3::prelude::*;
 
 #[pyvalue]
-#[pyclass(name = "Sphere", skip_from_py_object)]
+#[pyclass(name = "Sphere", module = "pybevy.camera", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PySphere {
     pub(crate) storage: ValueStorage<Sphere>,

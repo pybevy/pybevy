@@ -88,7 +88,7 @@ impl MessageTypeParam {
 /// Write-only handle to a message channel. Used as a system parameter to send messages.
 ///
 /// Usage: `def my_system(writer: MessageWriter[DamageEvent])`
-#[pyclass(name = "MessageWriter", frozen)]
+#[pyclass(name = "MessageWriter", module = "pybevy.ecs", frozen)]
 pub struct PyMessageWriter {
     pub(crate) message_type: MessageType,
     world: Option<MessageWorld>,
@@ -369,7 +369,7 @@ impl PyMessageWriter {
 /// Read-only handle to a message channel. Used as a system parameter to receive messages.
 ///
 /// Usage: `def my_system(reader: MessageReader[DamageEvent])`
-#[pyclass(name = "MessageReader", frozen)]
+#[pyclass(name = "MessageReader", module = "pybevy.ecs", frozen)]
 pub struct PyMessageReader {
     messages: Option<PyMessages>,
     python: Option<PythonMessageReader>,
@@ -628,7 +628,7 @@ impl PyMessageReaderIter {
 /// This is intentionally limited to custom messages: native bridges currently
 /// materialize owned Python snapshots, which cannot provide Bevy's in-place
 /// mutation semantics.
-#[pyclass(name = "MessageMutator", frozen)]
+#[pyclass(name = "MessageMutator", module = "pybevy.ecs", frozen)]
 pub struct PyMessageMutator {
     writer: PyMessageWriter,
     reader: PyMessageReader,

@@ -9,7 +9,7 @@ fn clone_show_aabb_gizmo(value: &ShowAabbGizmo) -> ShowAabbGizmo {
 }
 
 #[pycomponent(ShowAabbGizmo, bridge, clone_with = clone_show_aabb_gizmo)]
-#[pyclass(name = "ShowAabbGizmo", extends = PyComponent)]
+#[pyclass(name = "ShowAabbGizmo", module = "pybevy.gizmos", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyShowAabbGizmo {
     pub(crate) storage: ComponentStorage<ShowAabbGizmo>,

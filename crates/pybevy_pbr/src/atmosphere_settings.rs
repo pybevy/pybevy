@@ -15,7 +15,7 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     aerial_view_lut_max_distance,
     sky_max_samples
 ])]
-#[pyclass(name = "AtmosphereSettings", extends = PyComponent)]
+#[pyclass(name = "AtmosphereSettings", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyAtmosphereSettings {
     pub(crate) storage: ComponentStorage<AtmosphereSettings>,
 }

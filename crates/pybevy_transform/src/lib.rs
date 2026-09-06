@@ -13,7 +13,7 @@ pub mod prelude {
 }
 
 #[pyplugin(TransformPlugin)]
-#[pyclass(name = "TransformPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "TransformPlugin", module = "pybevy.transform", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransformPlugin;
 

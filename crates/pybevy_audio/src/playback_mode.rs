@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(PlaybackMode)]
-#[pyclass(name = "PlaybackMode", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "PlaybackMode",
+    module = "pybevy.audio",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyPlaybackMode {
     Once,

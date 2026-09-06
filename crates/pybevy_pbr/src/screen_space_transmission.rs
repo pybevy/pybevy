@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::screen_space_transmission_quality::PyScreenSpaceTransmissionQuality;
 
 #[pycomponent(ScreenSpaceTransmission, bridge)]
-#[pyclass(name = "ScreenSpaceTransmission", extends = PyComponent)]
+#[pyclass(name = "ScreenSpaceTransmission", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyScreenSpaceTransmission {
     pub(crate) storage: ComponentStorage<ScreenSpaceTransmission>,
 }

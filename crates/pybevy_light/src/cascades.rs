@@ -9,7 +9,7 @@ use pyo3::{
 use crate::cascade::PyCascade;
 
 #[pycomponent(Cascades, no_clone, bridge)]
-#[pyclass(name = "Cascades", extends = PyComponent)]
+#[pyclass(name = "Cascades", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyCascades {
     pub(crate) storage: ComponentStorage<Cascades>,

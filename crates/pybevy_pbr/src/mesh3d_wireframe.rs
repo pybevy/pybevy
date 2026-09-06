@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 #[pyhandle(Mesh3dWireframe)]
 #[pyclass(
-    name = "Mesh3dWireframe",
+    name = "Mesh3dWireframe", module = "pybevy.pbr",
     extends = PyComponent,
     eq,
     frozen,

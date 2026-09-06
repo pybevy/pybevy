@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "Segment2dMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "Segment2dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 pub struct PySegment2dMeshBuilder(Segment2dMeshBuilder);
 
 impl From<Segment2dMeshBuilder> for PySegment2dMeshBuilder {

@@ -3,7 +3,13 @@ use pyo3::prelude::*;
 
 use super::video_mode::PyVideoMode;
 
-#[pyclass(name = "VideoModeSelection", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "VideoModeSelection",
+    module = "pybevy.window",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyVideoModeSelection {
     Current(),

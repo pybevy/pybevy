@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(BackgroundColor, bridge)]
-#[pyclass(name = "BackgroundColor", extends = PyComponent, eq)]
+#[pyclass(name = "BackgroundColor", module = "pybevy.ui", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyBackgroundColor {
     pub(crate) storage: ComponentStorage<BackgroundColor>,

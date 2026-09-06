@@ -10,7 +10,7 @@ use crate::{
     primitives::{PyCylinderMeshBuilder, shapes::dim2::circle::PyCircle},
 };
 
-#[pyclass(name = "Cylinder", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Cylinder", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCylinder(pub(crate) Cylinder);
 

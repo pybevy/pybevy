@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircleMeshBuilder};
 
-#[pyclass(name = "Circle", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Circle", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCircle(pub(crate) Circle);
 

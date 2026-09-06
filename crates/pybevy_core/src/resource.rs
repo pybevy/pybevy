@@ -15,7 +15,7 @@ use crate::PyComponent;
 ///
 /// This is a marker class that provides the Python type hierarchy.
 /// All resource types (GlobalVolume, Time, etc.) extend this class.
-#[pyclass(name = "Resource", extends = PyComponent, subclass, frozen, skip_from_py_object)]
+#[pyclass(name = "Resource", module = "pybevy.ecs", extends = PyComponent, subclass, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyResource;
 

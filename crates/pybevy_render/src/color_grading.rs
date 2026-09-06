@@ -3,7 +3,7 @@ use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef, Val
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ColorGradingSection", from_py_object)]
+#[pyclass(name = "ColorGradingSection", module = "pybevy.render", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyColorGradingSection {
     storage: ValueStorage<ColorGradingSection>,
@@ -138,7 +138,7 @@ impl TryFrom<&PyColorGradingSection> for ColorGradingSection {
 }
 
 #[pyfield]
-#[pyclass(name = "ColorGradingGlobal", from_py_object)]
+#[pyclass(name = "ColorGradingGlobal", module = "pybevy.render", from_py_object)]
 #[derive(Debug)]
 pub struct PyColorGradingGlobal {
     storage: FieldStorage<ColorGradingGlobal>,

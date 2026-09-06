@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(WireframeColor, bridge, batch_only_fields = [color])]
-#[pyclass(name = "WireframeColor", extends = PyComponent)]
+#[pyclass(name = "WireframeColor", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyWireframeColor {
     pub(crate) storage: ComponentStorage<WireframeColor>,

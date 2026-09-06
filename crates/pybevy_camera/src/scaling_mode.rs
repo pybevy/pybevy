@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ScalingMode, empty_tuple, unit_parens)]
-#[pyclass(name = "ScalingMode", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "ScalingMode",
+    module = "pybevy.camera",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyScalingMode {
     WindowSize(),

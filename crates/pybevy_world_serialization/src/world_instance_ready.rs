@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::instance_id::PyInstanceId;
 
-#[pyclass(name = "WorldInstanceReady", extends = PyMessage, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "WorldInstanceReady", module = "pybevy.world_serialization", extends = PyMessage, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWorldInstanceReady {
     #[pyo3(get)]

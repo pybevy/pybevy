@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::video_mode::PyVideoMode;
 
 #[pycomponent(Monitor, no_clone, bridge)]
-#[pyclass(name = "Monitor", extends = PyComponent)]
+#[pyclass(name = "Monitor", module = "pybevy.window", extends = PyComponent)]
 pub struct PyMonitor {
     pub(crate) storage: ComponentStorage<Monitor>,
 }

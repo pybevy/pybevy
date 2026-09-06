@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(AnimationPlugin)]
-#[pyclass(name = "AnimationPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "AnimationPlugin", module = "pybevy.animation", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimationPlugin;
 

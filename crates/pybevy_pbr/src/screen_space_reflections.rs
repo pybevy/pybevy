@@ -10,7 +10,7 @@ use pyo3::prelude::*;
     bisection_steps,
     use_secant
 ])]
-#[pyclass(name = "ScreenSpaceReflections", extends = PyComponent)]
+#[pyclass(name = "ScreenSpaceReflections", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyScreenSpaceReflections {
     pub(crate) storage: ComponentStorage<ScreenSpaceReflections>,
 }

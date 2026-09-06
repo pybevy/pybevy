@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(ViewVisibility, bridge)]
-#[pyclass(name = "ViewVisibility", extends = PyComponent, frozen)]
+#[pyclass(name = "ViewVisibility", module = "pybevy.camera", extends = PyComponent, frozen)]
 #[derive(Debug)]
 pub struct PyViewVisibility {
     pub(crate) storage: ComponentStorage<ViewVisibility>,

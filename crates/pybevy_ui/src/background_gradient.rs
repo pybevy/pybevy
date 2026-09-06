@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::gradient::PyGradient;
 
 #[pycomponent(BackgroundGradient, bridge)]
-#[pyclass(name = "BackgroundGradient", extends = PyComponent, eq)]
+#[pyclass(name = "BackgroundGradient", module = "pybevy.ui", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyBackgroundGradient {
     pub(crate) storage: ComponentStorage<BackgroundGradient>,

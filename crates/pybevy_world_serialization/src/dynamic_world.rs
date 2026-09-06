@@ -4,7 +4,7 @@ use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 #[pyasset(DynamicWorld, no_clone, bridge)]
-#[pyclass(name = "DynamicWorld", extends = pybevy_core::PyAsset)]
+#[pyclass(name = "DynamicWorld", module = "pybevy.world_serialization", extends = pybevy_core::PyAsset)]
 pub struct PyDynamicWorld {
     pub(crate) storage: AssetStorage<DynamicWorld>,
 }

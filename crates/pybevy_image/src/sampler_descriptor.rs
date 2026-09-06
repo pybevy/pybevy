@@ -9,7 +9,12 @@ use crate::{
 };
 
 #[pyfield]
-#[pyclass(name = "ImageSamplerDescriptor", eq, from_py_object)]
+#[pyclass(
+    name = "ImageSamplerDescriptor",
+    module = "pybevy.image",
+    eq,
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyImageSamplerDescriptor {
     storage: FieldStorage<ImageSamplerDescriptor>,

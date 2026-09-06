@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use uuid::Uuid;
 
 #[pywrap(AnimationTargetId, bridge, copy)]
-#[pyclass(from_py_object, name = "AnimationTargetId", extends = PyComponent, frozen, eq, hash)]
+#[pyclass(from_py_object, name = "AnimationTargetId", module = "pybevy.animation", extends = PyComponent, frozen, eq, hash)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PyAnimationTargetId(pub(crate) AnimationTargetId);
 

@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(MeshTag, bridge, view_fields = [0 as value])]
-#[pyclass(name = "MeshTag", extends = PyComponent)]
+#[pyclass(name = "MeshTag", module = "pybevy.mesh", extends = PyComponent)]
 pub struct PyMeshTag {
     pub(crate) storage: ComponentStorage<MeshTag>,
 }

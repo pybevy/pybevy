@@ -7,7 +7,7 @@ use super::half_space::PyHalfSpace;
 use crate::{mat4::PyMat4, vec3::PyVec3};
 
 #[pyvalue]
-#[pyclass(name = "ViewFrustum", eq, from_py_object)]
+#[pyclass(name = "ViewFrustum", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyViewFrustum {
     pub(crate) storage: ValueStorage<ViewFrustum>,

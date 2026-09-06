@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use super::circle::PyCircle;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyAnnulusMeshBuilder};
 
-#[pyclass(name = "Annulus", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Annulus", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyAnnulus(pub(crate) Annulus);
 

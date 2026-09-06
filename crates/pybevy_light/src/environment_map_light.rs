@@ -5,7 +5,7 @@ use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
 #[pycomponent(EnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
-#[pyclass(name = "EnvironmentMapLight", extends = PyComponent)]
+#[pyclass(name = "EnvironmentMapLight", module = "pybevy.light", extends = PyComponent)]
 pub struct PyEnvironmentMapLight {
     pub(crate) storage: ComponentStorage<EnvironmentMapLight>,
 }

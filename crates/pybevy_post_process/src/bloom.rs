@@ -16,7 +16,7 @@ use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloom
     high_pass_frequency,
     max_mip_dimension
 ])]
-#[pyclass(name = "Bloom", extends = PyComponent)]
+#[pyclass(name = "Bloom", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyBloom {
     pub(crate) storage: ComponentStorage<Bloom>,
 }

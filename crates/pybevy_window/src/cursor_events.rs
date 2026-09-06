@@ -5,7 +5,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(CursorEntered)]
-#[pyclass(name = "CursorEntered", extends = PyMessage, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "CursorEntered", module = "pybevy.window", extends = PyMessage, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorEntered {
     #[pyo3(get)]
@@ -39,7 +39,7 @@ impl PyCursorEntered {
 }
 
 #[pymessage(CursorLeft)]
-#[pyclass(name = "CursorLeft", extends = PyMessage, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "CursorLeft", module = "pybevy.window", extends = PyMessage, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorLeft {
     #[pyo3(get)]

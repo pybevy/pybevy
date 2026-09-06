@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Strikethrough, unit, bridge)]
-#[pyclass(name = "Strikethrough", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Strikethrough", module = "pybevy.text", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyStrikethrough;
 
@@ -41,7 +41,7 @@ impl PyStrikethrough {
 }
 
 #[pycomponent(Underline, unit, bridge)]
-#[pyclass(name = "Underline", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Underline", module = "pybevy.text", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyUnderline;
 
@@ -77,7 +77,7 @@ impl PyUnderline {
 }
 
 #[pycomponent(StrikethroughColor, bridge, batch_only_fields = [0 as color])]
-#[pyclass(name = "StrikethroughColor", extends = PyComponent)]
+#[pyclass(name = "StrikethroughColor", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyStrikethroughColor {
     pub(crate) storage: ComponentStorage<StrikethroughColor>,
@@ -109,7 +109,7 @@ impl PyStrikethroughColor {
 }
 
 #[pycomponent(UnderlineColor, bridge, batch_only_fields = [0 as color])]
-#[pyclass(name = "UnderlineColor", extends = PyComponent)]
+#[pyclass(name = "UnderlineColor", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyUnderlineColor {
     pub(crate) storage: ComponentStorage<UnderlineColor>,

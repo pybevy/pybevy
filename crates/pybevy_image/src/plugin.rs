@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(ImagePlugin, default_plugin = Image)]
-#[pyclass(name = "ImagePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "ImagePlugin", module = "pybevy.image", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyImagePlugin;
 

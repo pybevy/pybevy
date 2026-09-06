@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[pymessage(MouseButtonInput)]
-#[pyclass(name = "MouseButtonInput", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "MouseButtonInput", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseButtonInput {
     pub button: PyMouseButton,
@@ -88,7 +88,7 @@ impl PyMouseButtonInput {
 }
 
 #[pymessage(MouseMotion)]
-#[pyclass(name = "MouseMotion", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "MouseMotion", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseMotion {
     pub delta: PyVec2,
@@ -132,7 +132,7 @@ impl PyMouseMotion {
 }
 
 #[pymessage(MouseWheel)]
-#[pyclass(name = "MouseWheel", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "MouseWheel", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseWheel {
     pub x: f32,

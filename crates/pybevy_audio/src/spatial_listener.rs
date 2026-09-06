@@ -5,7 +5,7 @@ use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[pycomponent(SpatialListener, bridge)]
-#[pyclass(name = "SpatialListener", extends = PyComponent)]
+#[pyclass(name = "SpatialListener", module = "pybevy.audio", extends = PyComponent)]
 pub struct PySpatialListener {
     pub(crate) storage: ComponentStorage<SpatialListener>,
 }

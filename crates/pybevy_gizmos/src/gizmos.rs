@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 
 use crate::config::PyGizmoConfig;
 
-#[pyclass(name = "Gizmos", frozen, skip_from_py_object)]
+#[pyclass(name = "Gizmos", module = "pybevy.gizmos", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyGizmos {
     config: FieldStorage<GizmoConfig>,

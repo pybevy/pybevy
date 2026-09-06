@@ -1,7 +1,13 @@
 use pybevy_core::PyAssetPath;
 use pyo3::prelude::*;
 
-#[pyclass(name = "GltfAssetLabel", frozen, eq, skip_from_py_object)]
+#[pyclass(
+    name = "GltfAssetLabel",
+    module = "pybevy.gltf",
+    frozen,
+    eq,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyGltfAssetLabel {
     Scene {

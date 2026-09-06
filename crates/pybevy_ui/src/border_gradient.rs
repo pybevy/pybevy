@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::gradient::PyGradient;
 
 #[pycomponent(BorderGradient, bridge)]
-#[pyclass(name = "BorderGradient", extends = PyComponent, eq)]
+#[pyclass(name = "BorderGradient", module = "pybevy.ui", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyBorderGradient {
     pub(crate) storage: ComponentStorage<BorderGradient>,

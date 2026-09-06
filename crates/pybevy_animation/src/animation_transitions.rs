@@ -9,7 +9,7 @@ use super::{
 };
 
 #[pycomponent(AnimationTransitions, bridge)]
-#[pyclass(name = "AnimationTransitions", extends = PyComponent)]
+#[pyclass(name = "AnimationTransitions", module = "pybevy.animation", extends = PyComponent)]
 pub struct PyAnimationTransitions {
     pub(crate) storage: ComponentStorage<AnimationTransitions>,
 }

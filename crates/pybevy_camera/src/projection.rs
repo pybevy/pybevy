@@ -12,7 +12,11 @@ use pyo3::prelude::*;
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};
 
 #[pyfield]
-#[pyclass(name = "PerspectiveProjection", from_py_object)]
+#[pyclass(
+    name = "PerspectiveProjection",
+    module = "pybevy.camera",
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyPerspectiveProjection {
     pub(crate) storage: FieldStorage<PerspectiveProjection>,
@@ -133,7 +137,11 @@ impl PyPerspectiveProjection {
 }
 
 #[pyfield]
-#[pyclass(name = "OrthographicProjection", from_py_object)]
+#[pyclass(
+    name = "OrthographicProjection",
+    module = "pybevy.camera",
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyOrthographicProjection {
     pub(crate) storage: FieldStorage<OrthographicProjection>,

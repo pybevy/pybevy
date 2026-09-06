@@ -5,7 +5,7 @@ use pyo3::{
     types::{PyDict, PyTuple},
 };
 
-#[pyclass(name = "PluginGroup", subclass)]
+#[pyclass(name = "PluginGroup", module = "pybevy.app", subclass)]
 #[derive(Debug)]
 pub struct PyPluginGroup;
 

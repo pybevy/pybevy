@@ -7,7 +7,12 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use super::cubic_curve::PyCubicCurve2d;
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "CubicHermite2d", frozen, skip_from_py_object)]
+#[pyclass(
+    name = "CubicHermite2d",
+    module = "pybevy.math",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyCubicHermite2d {
     hermite: CubicHermite<Vec2>,

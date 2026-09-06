@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySphereMeshBuilder};
 
-#[pyclass(name = "Sphere", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Sphere", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PySphere(pub Sphere);
 

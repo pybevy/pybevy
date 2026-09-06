@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use crate::{enums::PyVisualBox, node_image_mode::PyNodeImageMode};
 
 #[pycomponent(ImageNode, bridge)]
-#[pyclass(name = "ImageNode", extends = PyComponent)]
+#[pyclass(name = "ImageNode", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyImageNode {
     pub(crate) storage: ComponentStorage<ImageNode>,

@@ -4,7 +4,13 @@ use bevy::{
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[pyclass(name = "FontFeatureTag", frozen, eq, skip_from_py_object)]
+#[pyclass(
+    name = "FontFeatureTag",
+    module = "pybevy.text",
+    frozen,
+    eq,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyFontFeatureTag(pub(crate) FontFeatureTag);
 

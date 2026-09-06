@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::PyOverflowAxis;
 
-#[pyclass(name = "Overflow", eq, from_py_object)]
+#[pyclass(name = "Overflow", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyOverflow {
     storage: ValueStorage<Overflow>,

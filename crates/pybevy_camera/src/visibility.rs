@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::visibility_batch::PyVisibilityBatch;
 
 #[pycomponent(Visibility, bridge)]
-#[pyclass(name = "Visibility", extends = PyComponent, eq)]
+#[pyclass(name = "Visibility", module = "pybevy.camera", extends = PyComponent, eq)]
 #[derive(Debug)]
 pub struct PyVisibility {
     pub(crate) storage: ComponentStorage<Visibility>,

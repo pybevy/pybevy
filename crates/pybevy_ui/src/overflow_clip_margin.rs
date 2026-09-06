@@ -3,7 +3,13 @@ use pyo3::prelude::*;
 
 use crate::enums::PyVisualBox;
 
-#[pyclass(name = "OverflowClipMargin", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "OverflowClipMargin",
+    module = "pybevy.ui",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PyOverflowClipMargin {
     pub(crate) inner: OverflowClipMargin,

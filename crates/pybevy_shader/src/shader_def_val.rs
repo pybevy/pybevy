@@ -1,7 +1,13 @@
 use bevy::shader::ShaderDefVal;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ShaderDefVal", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "ShaderDefVal",
+    module = "pybevy.shader",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderDefVal {
     Bool { name: String, value: bool },

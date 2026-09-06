@@ -7,7 +7,11 @@ use crate::{
     skinned_mesh_bounds_policy::PyGltfSkinnedMeshBoundsPolicy,
 };
 
-#[pyclass(name = "GltfLoaderSettings", skip_from_py_object)]
+#[pyclass(
+    name = "GltfLoaderSettings",
+    module = "pybevy.gltf",
+    skip_from_py_object
+)]
 #[derive(Default)]
 pub struct PyGltfLoaderSettings {
     pub(crate) inner: GltfLoaderSettings,

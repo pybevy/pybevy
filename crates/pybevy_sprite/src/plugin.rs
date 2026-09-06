@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(SpritePlugin)]
-#[pyclass(name = "SpritePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "SpritePlugin", module = "pybevy.sprite", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpritePlugin;
 
@@ -30,7 +30,7 @@ impl PluginBuild for PySpritePlugin {
 }
 
 #[pyplugin(ColorMaterialPlugin)]
-#[pyclass(name = "ColorMaterialPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "ColorMaterialPlugin", module = "pybevy.sprite", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyColorMaterialPlugin;
 

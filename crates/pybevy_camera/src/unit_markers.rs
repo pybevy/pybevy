@@ -10,7 +10,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(NoCpuCulling, unit, bridge, no_reflect)]
-#[pyclass(name = "NoCpuCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NoCpuCulling", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoCpuCulling;
 
@@ -47,7 +47,7 @@ impl PyNoCpuCulling {
 }
 
 #[pycomponent(NoFrustumCulling, unit, bridge)]
-#[pyclass(name = "NoFrustumCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NoFrustumCulling", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoFrustumCulling;
 
@@ -84,7 +84,7 @@ impl PyNoFrustumCulling {
 }
 
 #[pycomponent(Camera2d, unit, bridge)]
-#[pyclass(name = "Camera2d", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Camera2d", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCamera2d;
 
@@ -126,7 +126,7 @@ impl PyCamera2d {
 
 #[pycomponent(ShadowLodOrigin, unit, bridge)]
 #[pyclass(
-    name = "ShadowLodOrigin",
+    name = "ShadowLodOrigin", module = "pybevy.camera",
     extends = PyComponent,
     frozen,
     eq,
@@ -168,7 +168,7 @@ impl PyShadowLodOrigin {
 }
 
 #[pycomponent(DepthPrepass, unit, bridge)]
-#[pyclass(name = "DepthPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "DepthPrepass", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDepthPrepass;
 
@@ -205,7 +205,7 @@ impl PyDepthPrepass {
 }
 
 #[pycomponent(NormalPrepass, unit, bridge)]
-#[pyclass(name = "NormalPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NormalPrepass", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNormalPrepass;
 
@@ -242,7 +242,7 @@ impl PyNormalPrepass {
 }
 
 #[pycomponent(MotionVectorPrepass, unit, bridge)]
-#[pyclass(name = "MotionVectorPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "MotionVectorPrepass", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMotionVectorPrepass;
 
@@ -279,7 +279,7 @@ impl PyMotionVectorPrepass {
 }
 
 #[pycomponent(DeferredPrepass, unit, bridge)]
-#[pyclass(name = "DeferredPrepass", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "DeferredPrepass", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDeferredPrepass;
 

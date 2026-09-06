@@ -3,7 +3,12 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ImageArrayLayout)]
-#[pyclass(name = "ImageArrayLayout", frozen, from_py_object)]
+#[pyclass(
+    name = "ImageArrayLayout",
+    module = "pybevy.image",
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy)]
 pub enum PyImageArrayLayout {
     RowCount {

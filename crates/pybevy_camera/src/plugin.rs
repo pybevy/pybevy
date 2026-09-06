@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(CameraPlugin)]
-#[pyclass(name = "CameraPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "CameraPlugin", module = "pybevy.camera", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCameraPlugin;
 

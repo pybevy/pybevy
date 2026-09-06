@@ -1,5 +1,11 @@
 use pyo3::{exceptions::PyNotImplementedError, prelude::*};
-#[pyclass(name = "MeshBuilder", subclass, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "MeshBuilder",
+    module = "pybevy.mesh",
+    subclass,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyMeshBuilder;
 

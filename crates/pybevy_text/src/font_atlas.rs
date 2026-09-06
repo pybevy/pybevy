@@ -13,7 +13,12 @@ use pyo3::prelude::*;
 
 use crate::{font_hinting::PyFontHinting, font_smoothing::PyFontSmoothing};
 
-#[pyclass(name = "FontAtlas", frozen, skip_from_py_object)]
+#[pyclass(
+    name = "FontAtlas",
+    module = "pybevy.text",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyFontAtlas {
     texture_atlas: TextureAtlasLayout,
@@ -54,7 +59,13 @@ impl PyFontAtlas {
     }
 }
 
-#[pyclass(name = "FontAtlasKey", frozen, eq, skip_from_py_object)]
+#[pyclass(
+    name = "FontAtlasKey",
+    module = "pybevy.text",
+    frozen,
+    eq,
+    skip_from_py_object
+)]
 #[derive(Clone, PartialEq)]
 pub struct PyFontAtlasKey {
     id: u32,

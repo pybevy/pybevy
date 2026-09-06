@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pycomponent(RenderLayers, bridge)]
-#[pyclass(name = "RenderLayers", extends = PyComponent, eq)]
+#[pyclass(name = "RenderLayers", module = "pybevy.camera", extends = PyComponent, eq)]
 #[derive(Debug)]
 pub struct PyRenderLayers {
     pub(crate) storage: ComponentStorage<RenderLayers>,

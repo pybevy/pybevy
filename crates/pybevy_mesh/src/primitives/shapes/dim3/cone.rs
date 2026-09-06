@@ -10,7 +10,7 @@ use crate::{
     primitives::{PyConeMeshBuilder, shapes::dim2::circle::PyCircle},
 };
 
-#[pyclass(name = "Cone", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Cone", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCone(pub(crate) Cone);
 

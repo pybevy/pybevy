@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(WireframeTopology, bridge, copy)]
-#[pyclass(name = "WireframeTopology", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "WireframeTopology", module = "pybevy.pbr", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyWireframeTopology(pub(crate) WireframeTopology);
 

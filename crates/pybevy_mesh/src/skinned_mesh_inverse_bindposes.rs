@@ -5,7 +5,7 @@ use pybevy_math::mat4::PyMat4;
 use pyo3::prelude::*;
 
 #[pyasset(SkinnedMeshInverseBindposes, no_clone, bridge, not_loadable)]
-#[pyclass(name = "SkinnedMeshInverseBindposes", extends = PyAsset)]
+#[pyclass(name = "SkinnedMeshInverseBindposes", module = "pybevy.mesh", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PySkinnedMeshInverseBindposes {
     pub storage: AssetStorage<SkinnedMeshInverseBindposes>,

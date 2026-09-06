@@ -8,7 +8,7 @@ const DEFAULT_USAGES: u32 = TextureUsages::RENDER_ATTACHMENT.bits()
     | TextureUsages::COPY_SRC.bits();
 
 #[pywrap(CameraMainTextureUsages, bridge)]
-#[pyclass(name = "CameraMainTextureUsages", extends = PyComponent, frozen, skip_from_py_object)]
+#[pyclass(name = "CameraMainTextureUsages", module = "pybevy.camera", extends = PyComponent, frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyCameraMainTextureUsages(pub(crate) CameraMainTextureUsages);
 

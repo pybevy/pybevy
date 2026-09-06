@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(ComputedStackIndex, no_clone, bridge)]
-#[pyclass(name = "ComputedStackIndex", extends = PyComponent)]
+#[pyclass(name = "ComputedStackIndex", module = "pybevy.ui", extends = PyComponent)]
 pub struct PyComputedStackIndex {
     pub(crate) storage: ComponentStorage<ComputedStackIndex>,
 }

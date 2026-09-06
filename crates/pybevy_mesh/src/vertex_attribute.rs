@@ -100,7 +100,13 @@ pub(crate) fn attribute_id(attribute: &MeshVertexAttribute) -> u64 {
     hasher.finish()
 }
 
-#[pyclass(name = "MeshVertexAttribute", frozen, eq, skip_from_py_object)]
+#[pyclass(
+    name = "MeshVertexAttribute",
+    module = "pybevy.mesh",
+    frozen,
+    eq,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshVertexAttribute(pub MeshVertexAttribute);
 
@@ -135,7 +141,12 @@ impl PyMeshVertexAttribute {
     }
 }
 
-#[pyclass(name = "VertexAttributeValues", eq, skip_from_py_object)]
+#[pyclass(
+    name = "VertexAttributeValues",
+    module = "pybevy.mesh",
+    eq,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyVertexAttributeValues(pub VertexAttributeValues);
 

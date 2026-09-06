@@ -19,7 +19,7 @@ fn require_positive_duration(duration: Duration) -> PyResult<Duration> {
 }
 
 #[pyresource(Time, bridge)]
-#[pyclass(name = "Time", extends = PyResource, from_py_object)]
+#[pyclass(name = "Time", module = "pybevy.time", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTime {
     pub storage: ResourceStorage<Time>,

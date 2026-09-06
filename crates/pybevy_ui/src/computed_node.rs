@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pycomponent(ComputedNode, no_clone, bridge)]
-#[pyclass(name = "ComputedNode", extends = PyComponent)]
+#[pyclass(name = "ComputedNode", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyComputedNode {
     pub(crate) storage: ComponentStorage<ComputedNode>,

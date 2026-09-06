@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::physical_camera_parameters::PyPhysicalCameraParameters;
 
 #[pycomponent(Exposure, bridge, view_fields = [ev100])]
-#[pyclass(name = "Exposure", extends = PyComponent)]
+#[pyclass(name = "Exposure", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyExposure {
     pub(crate) storage: ComponentStorage<Exposure>,
 }

@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(WireframeLineWidth, bridge, view_fields = [width])]
-#[pyclass(name = "WireframeLineWidth", extends = PyComponent)]
+#[pyclass(name = "WireframeLineWidth", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyWireframeLineWidth {
     pub(crate) storage: ComponentStorage<WireframeLineWidth>,

@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pycomponent(Anchor, bridge)]
-#[pyclass(name = "Anchor", extends = PyComponent, eq)]
+#[pyclass(name = "Anchor", module = "pybevy.sprite", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyAnchor {
     pub(crate) storage: ComponentStorage<Anchor>,

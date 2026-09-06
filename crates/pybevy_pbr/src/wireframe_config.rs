@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use crate::wireframe_topology::PyWireframeTopology;
 
 #[pyresource(WireframeConfig, bridge)]
-#[pyclass(name = "WireframeConfig", extends = PyResource, from_py_object)]
+#[pyclass(name = "WireframeConfig", module = "pybevy.pbr", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeConfig {
     pub storage: ResourceStorage<WireframeConfig>,

@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "Capsule3dMeshBuilder", extends = PyMeshBuilder)]
+#[pyclass(name = "Capsule3dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
 pub struct PyCapsule3dMeshBuilder(pub(crate) Capsule3dMeshBuilder);
 

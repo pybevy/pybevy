@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[pycomponent(TextFont, bridge)]
-#[pyclass(name = "TextFont", extends = PyComponent)]
+#[pyclass(name = "TextFont", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextFont {
     pub(crate) storage: ComponentStorage<TextFont>,

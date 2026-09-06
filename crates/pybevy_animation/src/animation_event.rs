@@ -1,6 +1,11 @@
 use pyo3::prelude::*;
 
-#[pyclass(name = "AnimationEvent", eq, skip_from_py_object)]
+#[pyclass(
+    name = "AnimationEvent",
+    module = "pybevy.animation",
+    eq,
+    skip_from_py_object
+)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyAnimationEvent {
     #[pyo3(get, set)]
@@ -26,7 +31,11 @@ impl PyAnimationEvent {
     }
 }
 
-#[pyclass(name = "AnimationEventData", skip_from_py_object)]
+#[pyclass(
+    name = "AnimationEventData",
+    module = "pybevy.animation",
+    skip_from_py_object
+)]
 #[derive(Debug)]
 pub struct PyAnimationEventData {
     #[pyo3(get, set)]

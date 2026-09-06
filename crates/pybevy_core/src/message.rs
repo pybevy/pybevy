@@ -22,7 +22,7 @@ use pyo3::{
 ///     value: int
 ///     text: str
 /// ```
-#[pyclass(name = "Message", subclass, skip_from_py_object)]
+#[pyclass(name = "Message", module = "pybevy.ecs", subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMessage;
 
@@ -38,7 +38,7 @@ impl PyMessage {
 /// A unique identifier for a sent message.
 ///
 /// Returned by `MessageWriter.write()` and can be used to track message delivery.
-#[pyclass(name = "MessageId", frozen)]
+#[pyclass(name = "MessageId", module = "pybevy.ecs", frozen)]
 #[derive(Debug)]
 pub struct PyMessageId(#[allow(dead_code)] pub(crate) Box<dyn Any + Send + Sync>);
 

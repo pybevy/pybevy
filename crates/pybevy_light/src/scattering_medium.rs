@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use crate::{scattering_term::PyScatteringTerm, scattering_terms::PyScatteringTerms};
 
 #[pyasset(ScatteringMedium, bridge, not_loadable)]
-#[pyclass(name = "ScatteringMedium", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "ScatteringMedium", module = "pybevy.light", extends = PyAsset, skip_from_py_object)]
 pub struct PyScatteringMedium {
     pub(crate) storage: AssetStorage<ScatteringMedium>,
 }

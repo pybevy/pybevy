@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(PrimaryWindow, bridge)]
-#[pyclass(name = "PrimaryWindow", extends = PyComponent, frozen, eq)]
+#[pyclass(name = "PrimaryWindow", module = "pybevy.window", extends = PyComponent, frozen, eq)]
 #[derive(PartialEq)]
 pub struct PyPrimaryWindow {
     pub(crate) storage: ComponentStorage<PrimaryWindow>,

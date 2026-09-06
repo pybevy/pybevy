@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pywrap(Msaa, bridge, copy)]
-#[pyclass(name = "Msaa", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Msaa", module = "pybevy.render", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyMsaa(pub(crate) Msaa);
 

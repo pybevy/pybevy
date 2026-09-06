@@ -49,7 +49,7 @@ unsafe impl Sync for CustomComponentStorage {}
 /// for health in query:
 ///     health.value += 10.0  # Calls __getattribute__ then __setattr__
 /// ```
-#[pyclass(name = "CustomComponent", extends = PyComponent)]
+#[pyclass(name = "CustomComponent", module = "pybevy.ecs", extends = PyComponent)]
 pub struct PyCustomComponent {
     storage: CustomComponentStorage,
 }

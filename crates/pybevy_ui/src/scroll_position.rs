@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pycomponent(ScrollPosition, bridge, view_fields = [0.x as x, 0.y as y])]
-#[pyclass(name = "ScrollPosition", extends = PyComponent)]
+#[pyclass(name = "ScrollPosition", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyScrollPosition {
     pub(crate) storage: ComponentStorage<ScrollPosition>,

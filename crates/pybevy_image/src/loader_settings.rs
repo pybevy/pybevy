@@ -239,7 +239,7 @@ pub fn register_image_sampler_variants(module: &Bound<'_, PyModule>) -> PyResult
     Ok(())
 }
 
-#[pyclass(name = "ImageLoaderSettings", from_py_object)]
+#[pyclass(name = "ImageLoaderSettings", module = "pybevy.image", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyImageLoaderSettings {
     inner: ImageLoaderSettings,

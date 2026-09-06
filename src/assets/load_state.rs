@@ -1,7 +1,13 @@
 use bevy::asset::LoadState;
 use pyo3::prelude::*;
 
-#[pyclass(name = "LoadState", eq, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "LoadState",
+    module = "pybevy.assets",
+    eq,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyLoadState {
     NotLoaded(),

@@ -2,7 +2,7 @@ use bevy::light::cascade::Cascade;
 use pybevy_math::mat4::PyMat4;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Cascade", frozen, skip_from_py_object)]
+#[pyclass(name = "Cascade", module = "pybevy.light", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCascade {
     inner: Cascade,

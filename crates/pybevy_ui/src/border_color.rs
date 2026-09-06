@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(BorderColor, bridge)]
-#[pyclass(name = "BorderColor", extends = PyComponent, eq)]
+#[pyclass(name = "BorderColor", module = "pybevy.ui", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyBorderColor {
     pub(crate) storage: ComponentStorage<BorderColor>,

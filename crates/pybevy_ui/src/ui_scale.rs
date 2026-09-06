@@ -8,7 +8,7 @@ fn clone_ui_scale(value: &UiScale) -> PyResult<UiScale> {
 }
 
 #[pyresource(UiScale, no_clone, bridge, clone_with = clone_ui_scale)]
-#[pyclass(name = "UiScale", extends = PyResource)]
+#[pyclass(name = "UiScale", module = "pybevy.ui", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyUiScale {
     pub(crate) storage: ResourceStorage<UiScale>,

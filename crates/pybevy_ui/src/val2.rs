@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::val::{PyVal, validate_finite_val};
 
-#[pyclass(name = "Val2", frozen, eq, from_py_object)]
+#[pyclass(name = "Val2", module = "pybevy.ui", frozen, eq, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PyVal2 {
     pub(crate) inner: Val2,

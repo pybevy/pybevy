@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(WireframePlugin)]
-#[pyclass(name = "WireframePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "WireframePlugin", module = "pybevy.pbr", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyWireframePlugin;
 

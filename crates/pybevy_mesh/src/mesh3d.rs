@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
 #[pyhandle(Mesh3d)]
-#[pyclass(name = "Mesh3d", extends = PyComponent, eq, frozen, skip_from_py_object)]
+#[pyclass(name = "Mesh3d", module = "pybevy.mesh", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMesh3d(pub(crate) PyHandle);
 

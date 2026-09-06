@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pycomponent(TemporalJitter, bridge)]
-#[pyclass(name = "TemporalJitter", extends = PyComponent)]
+#[pyclass(name = "TemporalJitter", module = "pybevy.render", extends = PyComponent)]
 pub struct PyTemporalJitter {
     pub(crate) storage: ComponentStorage<TemporalJitter>,
 }

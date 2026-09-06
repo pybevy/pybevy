@@ -6,7 +6,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(TimerMode)]
-#[pyclass(name = "TimerMode", eq, from_py_object)]
+#[pyclass(name = "TimerMode", module = "pybevy.time", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTimerMode {
     Once,
@@ -23,7 +23,7 @@ impl PyTimerMode {
     }
 }
 
-#[pyclass(name = "Timer", eq, skip_from_py_object)]
+#[pyclass(name = "Timer", module = "pybevy.time", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyTimer {
     pub(crate) timer: Timer,

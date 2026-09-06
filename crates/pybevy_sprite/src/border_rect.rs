@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pyvalue]
-#[pyclass(name = "BorderRect", eq, from_py_object)]
+#[pyclass(name = "BorderRect", module = "pybevy.sprite", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBorderRect {
     pub(crate) storage: ValueStorage<BorderRect>,

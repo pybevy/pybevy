@@ -12,7 +12,7 @@ use pyo3::prelude::*;
     contact_shadows_enabled,
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
-#[pyclass(name = "DirectionalLight", extends = PyComponent)]
+#[pyclass(name = "DirectionalLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyDirectionalLight {
     pub(crate) storage: ComponentStorage<DirectionalLight>,

@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "Triangle3dMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "Triangle3dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyTriangle3dMeshBuilder(pub(crate) Triangle3dMeshBuilder);
 

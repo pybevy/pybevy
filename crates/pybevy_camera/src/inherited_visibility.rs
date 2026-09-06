@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(InheritedVisibility, bridge)]
-#[pyclass(name = "InheritedVisibility", extends = PyComponent, frozen)]
+#[pyclass(name = "InheritedVisibility", module = "pybevy.camera", extends = PyComponent, frozen)]
 #[derive(Debug)]
 pub struct PyInheritedVisibility {
     pub(crate) storage: ComponentStorage<InheritedVisibility>,

@@ -17,7 +17,7 @@ use pyo3::prelude::*;
     contact_shadows_enabled,
     affects_lightmapped_mesh_diffuse
 ], batch_only_fields = [color])]
-#[pyclass(name = "SpotLight", extends = PyComponent)]
+#[pyclass(name = "SpotLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySpotLight {
     pub(crate) storage: ComponentStorage<SpotLight>,

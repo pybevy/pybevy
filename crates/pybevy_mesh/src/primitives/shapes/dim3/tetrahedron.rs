@@ -13,7 +13,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTetrahedronMeshBuilder,
 };
 
-#[pyclass(name = "Tetrahedron", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Tetrahedron", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyTetrahedron(pub(crate) Tetrahedron);
 

@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRegularPolygonMeshBuilder,
 };
 
-#[pyclass(name = "RegularPolygon", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "RegularPolygon", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRegularPolygon(pub(crate) RegularPolygon);
 

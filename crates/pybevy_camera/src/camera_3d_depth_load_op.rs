@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(Camera3dDepthLoadOp, empty_tuple, unit_parens)]
-#[pyclass(name = "Camera3dDepthLoadOp", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "Camera3dDepthLoadOp",
+    module = "pybevy.camera",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyCamera3dDepthLoadOp {
     #[py_bevy(tuple)]

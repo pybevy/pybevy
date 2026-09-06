@@ -10,7 +10,7 @@ use crate::ecs::{
     query::{query_helpers::parse_anyof_items, query_param::AnyOfItem},
 };
 
-#[pyclass(name = "With", from_py_object)]
+#[pyclass(name = "With", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWith {
     pub(crate) values: SmallVec<[PyComponentType; 4]>,
@@ -30,7 +30,7 @@ impl PyWith {
     }
 }
 
-#[pyclass(name = "Without", from_py_object)]
+#[pyclass(name = "Without", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWithout {
     pub(crate) values: SmallVec<[PyComponentType; 4]>,
@@ -50,7 +50,7 @@ impl PyWithout {
     }
 }
 
-#[pyclass(name = "Changed", from_py_object)]
+#[pyclass(name = "Changed", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyChanged {
     pub(crate) component_type: PyComponentType,
@@ -70,7 +70,7 @@ impl PyChanged {
     }
 }
 
-#[pyclass(name = "Added", from_py_object)]
+#[pyclass(name = "Added", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAdded {
     pub(crate) component_type: PyComponentType,
@@ -90,7 +90,7 @@ impl PyAdded {
     }
 }
 
-#[pyclass(name = "Has", from_py_object)]
+#[pyclass(name = "Has", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHas {
     pub(crate) component_type: PyComponentType,
@@ -110,13 +110,13 @@ impl PyHas {
     }
 }
 
-#[pyclass(name = "AnyOf", from_py_object)]
+#[pyclass(name = "AnyOf", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAnyOf {
     pub(crate) items: SmallVec<[AnyOfItem; 4]>,
 }
 
-#[pyclass(name = "Or", from_py_object)]
+#[pyclass(name = "Or", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOr {
     pub(crate) values: Vec<QueryFilter>,

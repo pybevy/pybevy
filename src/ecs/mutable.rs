@@ -6,7 +6,7 @@ use pyo3::{
 
 /// Wrapper for mutable access to components and resources
 /// Usage: Mut[Transform], Mut[Time], etc.
-#[pyclass(name = "Mut")]
+#[pyclass(name = "Mut", module = "pybevy.ecs")]
 pub struct PyMut {
     #[pyo3(get, name = "inner_type")]
     ty: Py<PyType>,

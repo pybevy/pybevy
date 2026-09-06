@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[pycomponent(Gamepad, no_clone, bridge)]
-#[pyclass(name = "Gamepad", extends = PyComponent, frozen)]
+#[pyclass(name = "Gamepad", module = "pybevy.input", extends = PyComponent, frozen)]
 pub struct PyGamepad {
     pub(crate) storage: ComponentStorage<Gamepad>,
 }

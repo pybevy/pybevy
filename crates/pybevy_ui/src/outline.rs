@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::val::PyVal;
 
 #[pycomponent(Outline, bridge)]
-#[pyclass(name = "Outline", extends = PyComponent)]
+#[pyclass(name = "Outline", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyOutline {
     pub(crate) storage: ComponentStorage<Outline>,

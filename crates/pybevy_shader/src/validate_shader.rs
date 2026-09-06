@@ -1,7 +1,13 @@
 use bevy::shader::ValidateShader;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ValidateShader", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "ValidateShader",
+    module = "pybevy.shader",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PyValidateShader {
     #[default]

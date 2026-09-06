@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::{justify::PyJustify, line_break::PyLineBreak};
 
 #[pycomponent(TextLayout, bridge)]
-#[pyclass(name = "TextLayout", extends = PyComponent)]
+#[pyclass(name = "TextLayout", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextLayout {
     pub(crate) storage: ComponentStorage<TextLayout>,

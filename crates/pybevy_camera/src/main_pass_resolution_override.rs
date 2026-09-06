@@ -16,7 +16,7 @@ fn clone_main_pass_resolution_override(
     bridge,
     clone_with = clone_main_pass_resolution_override
 )]
-#[pyclass(name = "MainPassResolutionOverride", extends = PyComponent, frozen)]
+#[pyclass(name = "MainPassResolutionOverride", module = "pybevy.camera", extends = PyComponent, frozen)]
 #[derive(Debug)]
 pub struct PyMainPassResolutionOverride {
     pub(crate) storage: ComponentStorage<MainPassResolutionOverride>,

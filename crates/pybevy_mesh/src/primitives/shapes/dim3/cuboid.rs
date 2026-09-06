@@ -13,7 +13,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCuboidMeshBuilder};
 
 #[pyvalue]
-#[pyclass(name = "Cuboid", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Cuboid", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCuboid {
     pub(crate) storage: ValueStorage<Cuboid>,

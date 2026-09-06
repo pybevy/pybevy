@@ -1,7 +1,7 @@
 use bevy::text::FontWidth;
 use pyo3::prelude::*;
 
-#[pyclass(name = "FontWidth", frozen, eq, from_py_object)]
+#[pyclass(name = "FontWidth", module = "pybevy.text", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyFontWidth(pub(crate) FontWidth);
 

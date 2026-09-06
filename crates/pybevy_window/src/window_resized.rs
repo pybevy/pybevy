@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(WindowResized)]
-#[pyclass(name = "WindowResized", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "WindowResized", module = "pybevy.window", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWindowResized {
     pub width: f32,

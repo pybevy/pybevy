@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "CircularSegmentMeshBuilder", extends = PyMeshBuilder)]
+#[pyclass(name = "CircularSegmentMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
 pub struct PyCircularSegmentMeshBuilder(pub(crate) CircularSegmentMeshBuilder);
 

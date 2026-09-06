@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::volume::PyVolume;
 
 #[pyresource(GlobalVolume, bridge)]
-#[pyclass(name = "GlobalVolume", extends = PyResource, from_py_object)]
+#[pyclass(name = "GlobalVolume", module = "pybevy.audio", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyGlobalVolume {
     pub(crate) storage: ResourceStorage<GlobalVolume>,

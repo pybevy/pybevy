@@ -6,13 +6,13 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::font_feature_tag::{PyFontFeatureTag, tag_characters};
 
-#[pyclass(name = "FontFeatures", frozen, from_py_object)]
+#[pyclass(name = "FontFeatures", module = "pybevy.text", frozen, from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyFontFeatures {
     features: Vec<(FontFeatureTag, u32)>,
 }
 
-#[pyclass(name = "FontFeaturesBuilder", from_py_object)]
+#[pyclass(name = "FontFeaturesBuilder", module = "pybevy.text", from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyFontFeaturesBuilder {
     features: Vec<(FontFeatureTag, u32)>,

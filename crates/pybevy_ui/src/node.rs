@@ -18,7 +18,7 @@ use crate::{
 };
 
 #[pycomponent(Node, bridge)]
-#[pyclass(name = "Node", extends = PyComponent)]
+#[pyclass(name = "Node", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyNode {
     pub(crate) storage: ComponentStorage<Node>,

@@ -9,14 +9,14 @@ use pyo3::prelude::*;
 use crate::{gltf_primitives::PyGltfPrimitives, label::PyGltfAssetLabel};
 
 #[pyasset(GltfMaterial, no_clone, bridge)]
-#[pyclass(name = "GltfMaterial", extends = PyAsset)]
+#[pyclass(name = "GltfMaterial", module = "pybevy.gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfMaterial {
     pub storage: AssetStorage<GltfMaterial>,
 }
 
 #[pyasset(Gltf, no_clone, bridge)]
-#[pyclass(name = "Gltf", extends = PyAsset)]
+#[pyclass(name = "Gltf", module = "pybevy.gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltf {
     pub storage: AssetStorage<Gltf>,
@@ -128,7 +128,7 @@ impl PyGltf {
 }
 
 #[pyasset(GltfMesh, no_clone, bridge)]
-#[pyclass(name = "GltfMesh", extends = PyAsset)]
+#[pyclass(name = "GltfMesh", module = "pybevy.gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfMesh {
     pub storage: AssetStorage<GltfMesh>,
@@ -167,7 +167,7 @@ impl PyGltfMesh {
 }
 
 #[pyasset(GltfNode, no_clone, bridge)]
-#[pyclass(name = "GltfNode", extends = PyAsset)]
+#[pyclass(name = "GltfNode", module = "pybevy.gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfNode {
     pub storage: AssetStorage<GltfNode>,
@@ -225,7 +225,7 @@ impl PyGltfNode {
 }
 
 #[pyasset(GltfPrimitive, no_clone, bridge)]
-#[pyclass(name = "GltfPrimitive", extends = PyAsset)]
+#[pyclass(name = "GltfPrimitive", module = "pybevy.gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfPrimitive {
     pub storage: AssetStorage<GltfPrimitive>,
@@ -282,7 +282,7 @@ impl PyGltfPrimitive {
 }
 
 #[pyasset(GltfSkin, no_clone, bridge)]
-#[pyclass(name = "GltfSkin", extends = PyAsset)]
+#[pyclass(name = "GltfSkin", module = "pybevy.gltf", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PyGltfSkin {
     pub storage: AssetStorage<GltfSkin>,

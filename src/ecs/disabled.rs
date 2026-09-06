@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Disabled, unit, bridge)]
-#[pyclass(name = "Disabled", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Disabled", module = "pybevy.ecs", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyDisabled;
 

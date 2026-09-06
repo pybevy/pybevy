@@ -4,7 +4,7 @@ use pyo3::{
     prelude::*,
 };
 
-#[pyclass(name = "FontSize", frozen, eq, from_py_object)]
+#[pyclass(name = "FontSize", module = "pybevy.text", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyFontSize {
     Px { value: f32 },

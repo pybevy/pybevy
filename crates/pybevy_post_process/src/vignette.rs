@@ -12,7 +12,7 @@ use pyo3::prelude::*;
     roundness,
     edge_compensation
 ])]
-#[pyclass(name = "Vignette", extends = PyComponent)]
+#[pyclass(name = "Vignette", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyVignette {
     pub(crate) storage: ComponentStorage<Vignette>,
 }

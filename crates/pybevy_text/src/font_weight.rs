@@ -1,7 +1,13 @@
 use bevy::text::FontWeight;
 use pyo3::prelude::*;
 
-#[pyclass(name = "FontWeight", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "FontWeight",
+    module = "pybevy.text",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyFontWeight(pub(crate) FontWeight);
 

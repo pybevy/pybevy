@@ -4,7 +4,7 @@ use pybevy_macros::pyasset;
 use pyo3::{prelude::*, types::PyBytes};
 
 #[pyasset(AudioSource, bridge)]
-#[pyclass(name = "AudioSource", extends = pybevy_core::PyAsset, skip_from_py_object)]
+#[pyclass(name = "AudioSource", module = "pybevy.audio", extends = pybevy_core::PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAudioSource {
     pub(crate) storage: AssetStorage<AudioSource>,

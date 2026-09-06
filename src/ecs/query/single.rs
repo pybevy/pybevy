@@ -16,7 +16,7 @@ use crate::ecs::query::query_helpers::construct_query_class_item_with_options;
 ///     transform, player_data = player  # Guaranteed to be single entity
 ///     transform.translation.x += 10.0
 /// ```
-#[pyclass(name = "Single", frozen)]
+#[pyclass(name = "Single", module = "pybevy.ecs", frozen)]
 pub struct PySingle;
 
 #[pymethods]

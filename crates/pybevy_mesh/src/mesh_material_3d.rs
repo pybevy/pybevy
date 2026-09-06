@@ -10,7 +10,7 @@ use pybevy_macros::pycomponent;
 use pyo3::{prelude::*, types::PyType};
 
 #[pycomponent(MeshMaterial3d<StandardMaterial>, bridge)]
-#[pyclass(name = "MeshMaterial3d", extends = PyComponent, eq, skip_from_py_object)]
+#[pyclass(name = "MeshMaterial3d", module = "pybevy.mesh", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Debug, PartialEq)]
 pub struct PyMeshMaterial3d {
     pub(crate) storage: ComponentStorage<MeshMaterial3d<StandardMaterial>>,

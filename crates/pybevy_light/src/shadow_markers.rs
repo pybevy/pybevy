@@ -7,7 +7,7 @@ use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[pycomponent(NotShadowCaster, unit, bridge)]
-#[pyclass(name = "NotShadowCaster", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NotShadowCaster", module = "pybevy.light", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNotShadowCaster;
 
@@ -44,7 +44,7 @@ impl PyNotShadowCaster {
 }
 
 #[pycomponent(NotShadowReceiver, unit, bridge)]
-#[pyclass(name = "NotShadowReceiver", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NotShadowReceiver", module = "pybevy.light", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNotShadowReceiver;
 
@@ -81,7 +81,7 @@ impl PyNotShadowReceiver {
 }
 
 #[pycomponent(TransmittedShadowReceiver, unit, bridge)]
-#[pyclass(name = "TransmittedShadowReceiver", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "TransmittedShadowReceiver", module = "pybevy.light", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyTransmittedShadowReceiver;
 
@@ -118,7 +118,7 @@ impl PyTransmittedShadowReceiver {
 }
 
 #[pycomponent(VolumetricLight, unit, bridge)]
-#[pyclass(name = "VolumetricLight", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "VolumetricLight", module = "pybevy.light", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyVolumetricLight;
 
@@ -155,7 +155,7 @@ impl PyVolumetricLight {
 }
 
 #[pycomponent(LightProbe, bridge)]
-#[pyclass(name = "LightProbe", extends = PyComponent)]
+#[pyclass(name = "LightProbe", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyLightProbe {
     pub(crate) storage: ComponentStorage<LightProbe>,

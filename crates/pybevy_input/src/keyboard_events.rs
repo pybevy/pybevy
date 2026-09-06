@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(KeyboardFocusLost)]
-#[pyclass(name = "KeyboardFocusLost", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "KeyboardFocusLost", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyKeyboardFocusLost;
 

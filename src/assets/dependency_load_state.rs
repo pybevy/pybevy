@@ -1,7 +1,13 @@
 use bevy::asset::DependencyLoadState;
 use pyo3::prelude::*;
 
-#[pyclass(name = "DependencyLoadState", eq, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "DependencyLoadState",
+    module = "pybevy.assets",
+    eq,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyDependencyLoadState {
     NotLoaded(),

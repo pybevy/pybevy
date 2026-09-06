@@ -10,7 +10,7 @@ use pyo3::prelude::*;
     width,
     height
 ], batch_only_fields = [color])]
-#[pyclass(name = "RectLight", extends = PyComponent)]
+#[pyclass(name = "RectLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyRectLight {
     pub(crate) storage: ComponentStorage<RectLight>,

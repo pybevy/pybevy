@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Interaction, bridge)]
-#[pyclass(name = "Interaction", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Interaction", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyInteraction(pub(crate) Interaction);
 

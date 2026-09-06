@@ -5,7 +5,7 @@ use pybevy_math::uvec2::PyUVec2;
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 #[pyfield]
-#[pyclass(name = "Viewport", skip_from_py_object)]
+#[pyclass(name = "Viewport", module = "pybevy.camera", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyViewport {
     storage: FieldStorage<Viewport>,

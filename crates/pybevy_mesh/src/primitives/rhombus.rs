@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "RhombusMeshBuilder", extends = PyMeshBuilder)]
+#[pyclass(name = "RhombusMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
 pub struct PyRhombusMeshBuilder(pub(crate) RhombusMeshBuilder);
 

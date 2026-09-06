@@ -8,7 +8,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pymessage(PinchGesture)]
-#[pyclass(name = "PinchGesture", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "PinchGesture", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPinchGesture(pub f32);
 
@@ -42,7 +42,7 @@ impl PyPinchGesture {
 }
 
 #[pymessage(RotationGesture)]
-#[pyclass(name = "RotationGesture", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "RotationGesture", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyRotationGesture(pub f32);
 
@@ -76,7 +76,7 @@ impl PyRotationGesture {
 }
 
 #[pymessage(DoubleTapGesture)]
-#[pyclass(name = "DoubleTapGesture", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "DoubleTapGesture", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyDoubleTapGesture;
 
@@ -105,7 +105,7 @@ impl PyDoubleTapGesture {
 }
 
 #[pymessage(PanGesture)]
-#[pyclass(name = "PanGesture", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "PanGesture", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyPanGesture(pub f32, pub f32);
 

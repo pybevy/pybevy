@@ -2,7 +2,13 @@ use bevy::image::ImageFormatSetting;
 use pyo3::prelude::*;
 
 use crate::image_format::PyImageFormat;
-#[pyclass(name = "ImageFormatSetting", eq, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "ImageFormatSetting",
+    module = "pybevy.image",
+    eq,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyImageFormatSetting {
     FromExtension(),

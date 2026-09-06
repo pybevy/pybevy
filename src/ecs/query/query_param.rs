@@ -13,7 +13,7 @@ use crate::ecs::{
 ///
 /// `Query[Transform, With[Velocity]]` would create a `PyQueryParam` with
 /// `component_types` containing `Transform` and `filters` containing `With[Velocity]
-#[pyclass(name = "QueryParam", frozen, from_py_object)]
+#[pyclass(name = "QueryParam", module = "pybevy.ecs", frozen, from_py_object)]
 #[derive(Debug)]
 pub struct PyQueryParam {
     /// The component types in the query parameter.

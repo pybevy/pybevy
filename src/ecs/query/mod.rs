@@ -39,7 +39,7 @@ impl From<QueryFilter> for ParamType {
 }
 
 /// An ECS Query that can be used to retrieve entities and their components.
-#[pyclass(name = "Query", frozen)]
+#[pyclass(name = "Query", module = "pybevy.ecs", frozen)]
 pub struct PyQuery;
 
 #[pymethods]

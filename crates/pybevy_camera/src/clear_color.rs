@@ -5,7 +5,7 @@ use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 #[pyresource(ClearColor, bridge)]
-#[pyclass(name = "ClearColor", extends = PyResource, from_py_object)]
+#[pyclass(name = "ClearColor", module = "pybevy.camera", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyClearColor {
     pub storage: ResourceStorage<ClearColor>,

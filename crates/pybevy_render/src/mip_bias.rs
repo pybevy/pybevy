@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(MipBias, bridge)]
-#[pyclass(name = "MipBias", extends = PyComponent, frozen, skip_from_py_object)]
+#[pyclass(name = "MipBias", module = "pybevy.render", extends = PyComponent, frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyMipBias(pub(crate) MipBias);
 

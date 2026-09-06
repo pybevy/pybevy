@@ -1,7 +1,13 @@
 use bevy::ui::GridPlacement;
 use pyo3::prelude::*;
 
-#[pyclass(name = "GridPlacement", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "GridPlacement",
+    module = "pybevy.ui",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGridPlacement {
     pub(crate) inner: GridPlacement,

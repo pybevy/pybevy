@@ -7,7 +7,7 @@ use pyo3::{
 
 use crate::ecs::system_config::{PySystemSetConfig, system_set_value};
 
-#[pyclass(name = "ChainedSystems", from_py_object)]
+#[pyclass(name = "ChainedSystems", module = "pybevy.app", from_py_object)]
 pub struct PyChainedSystems {
     pub systems: Py<PyTuple>,
 }
@@ -42,7 +42,7 @@ impl PyChainedSystems {
 }
 
 /// A sequence of system sets configured with Bevy's chained ordering semantics.
-#[pyclass(name = "ChainedSystemSets", from_py_object)]
+#[pyclass(name = "ChainedSystemSets", module = "pybevy.app", from_py_object)]
 pub struct PyChainedSystemSets {
     pub sets: Py<PyTuple>,
 }

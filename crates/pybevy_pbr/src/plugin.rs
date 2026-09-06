@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(PbrPlugin)]
-#[pyclass(name = "PbrPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "PbrPlugin", module = "pybevy.pbr", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyPbrPlugin;
 

@@ -4,7 +4,7 @@ use bevy::time::Stopwatch;
 use pybevy_core::duration_from_py;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Stopwatch", eq, skip_from_py_object)]
+#[pyclass(name = "Stopwatch", module = "pybevy.time", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PyStopwatch {
     pub(crate) stopwatch: Stopwatch,
