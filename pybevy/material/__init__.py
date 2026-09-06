@@ -311,8 +311,15 @@ def material(
                     textures[tf.slot_index] = value
 
             if kwargs:
-                unknown = ", ".join(kwargs.keys())
-                raise TypeError(f"Unknown material fields: {unknown}")
+                unknown = sorted(kwargs)
+                valid = [f.name for f in layout]
+                valid += [bf.name for bf in bool_fields]
+                valid += [tf.name for tf in texture_fields]
+                message = f"Unknown material fields: {', '.join(unknown)}"
+                hint = _pybevy._keyword_hint(cls.__name__, unknown[0], valid)
+                if hint:
+                    message = f"{message}. {hint}"
+                raise TypeError(message)
 
             self._data = data
             self._base = base
@@ -442,7 +449,7 @@ def material(
         _cls.from_ref = classmethod(from_ref)
         _cls.from_mut = classmethod(from_mut)
 
-        # Phase 5 metadata: enables Assets[HologramMaterial], MeshMaterial3d[HologramMaterial]
+        # Asset metadata: enables Assets[HologramMaterial], MeshMaterial3d[HologramMaterial]
         _cls.__pybevy_asset_type__ = ShaderMaterial
         _cls.__pybevy_component_type__ = MeshMaterial3dShader
         _cls.__pybevy_logical_type_id__ = material_type_id

@@ -220,9 +220,6 @@ class Expr:
         The random value is deterministic based on the entity, so the same entity
         will always get the same random value. This is useful for procedural generation.
 
-        Returns:
-            Random float in [0.0, 1.0)
-
         Example:
             # Randomize height field
             view[Transform].translation.y.set(y.random() * 10.0)
@@ -239,13 +236,6 @@ class Expr:
         The random value is deterministic based on the entity, so the same entity
         will always get the same random value. This is useful for procedural generation.
 
-        Args:
-            min: Minimum value (inclusive)
-            max: Maximum value (exclusive)
-
-        Returns:
-            Random float in [min, max)
-
         Example:
             # Randomize scale between 0.5 and 2.0
             view[Transform].scale.x.set(x.random_range(0.5, 2.0))
@@ -257,17 +247,9 @@ class Expr:
         true_value: Union["Expr", float, int],
         false_value: Union["Expr", float, int],
     ) -> "Expr":
-        """
-        Conditional selection: return true_value if self is true, else false_value.
+        """Conditional selection: return true_value if self is true, else false_value.
 
         This allows per-entity branching based on boolean conditions.
-
-        Args:
-            true_value: Value to return when this expression is true
-            false_value: Value to return when this expression is false
-
-        Returns:
-            Expression that selects between values based on condition
 
         Example:
             # Clamp negative values to zero
@@ -420,9 +402,6 @@ class FieldExpr(Expr):
         This triggers compilation and execution of the expression,
         writing the result back to all entities in the view.
 
-        Args:
-            value: Expression or constant to assign to this field
-
         Example:
             # Set all x values to random
             transform.translation.x.set(transform.translation.x.random())
@@ -438,16 +417,10 @@ class FieldExpr(Expr):
 
 
 class Vec3Expression:
-    """
-    Represents a Vec3 expression built from component-wise operations.
+    """Vec3 expression built from component-wise operations, allowing bulk
+    assignments instead of three separate field writes:
 
-    This allows bulk Vec3 operations like:
         transform.translation = transform.translation + velocity
-
-    Instead of requiring three separate assignments:
-        transform.translation.x = transform.translation.x + velocity.x
-        transform.translation.y = transform.translation.y + velocity.y
-        transform.translation.z = transform.translation.z + velocity.z
     """
 
     def __init__(
@@ -642,17 +615,9 @@ class Vec3Expr:
         parent._trigger_assignment(f"{self.base_field_name}.z", value)
 
     def set(self, vec3_expr: Union["Vec3Expression", "Vec3Expr"]) -> None:
-        """
-        Bulk assignment of all three components at once.
+        """Bulk assignment of all three components at once (x, then y, then z):
 
-        This allows:
             transform.translation.set(transform.translation + velocity)
-
-        Instead of three separate assignments. Each component is assigned
-        in sequence (x, then y, then z).
-
-        Args:
-            vec3_expr: A Vec3Expression or Vec3Expr to assign
         """
         parent = _assignment_parent(self._parent_proxy)
         parent._trigger_assignment(f"{self.base_field_name}.x", vec3_expr.x)
@@ -815,17 +780,9 @@ class QuatExpr:
 
 
 def const(value: float) -> Expr:
-    """
-    Create a constant expression node.
+    """Create a constant expression node.
 
-    This is usually not needed - numeric literals are automatically converted.
-    But it can be useful for explicit constant creation.
-
-    Args:
-        value: The constant float value
-
-    Returns:
-        A constant expression node
+    Usually not needed: numeric literals are converted automatically.
     """
     return Expr(op="const", args=[value])
 
@@ -835,20 +792,10 @@ def where(
     true_value: Expr | float | int,
     false_value: Expr | float | int,
 ) -> Expr:
-    """
-    Conditional selection: choose between two values based on a boolean condition.
+    """Conditional selection: choose between two values based on a boolean condition.
 
-    This is the conditional logic operation that enables per-entity branching.
-    For each entity, if the condition evaluates to true, the true_value is selected,
-    otherwise the false_value is selected.
-
-    Args:
-        condition: A boolean expression (e.g., `x > 5.0`, `health <= 0.0`)
-        true_value: Value to use when condition is true
-        false_value: Value to use when condition is false
-
-    Returns:
-        An expression that evaluates to true_value or false_value based on condition
+    Enables per-entity branching: for each entity, ``true_value`` is selected when
+    ``condition`` is true, otherwise ``false_value``.
 
     Examples:
         >>> # Clamp negative values to zero

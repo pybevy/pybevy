@@ -546,6 +546,16 @@ def entrypoint(func: Callable) -> Callable:
 
     @wraps(func)
     def wrapper(app: AppClass | None = None) -> AppClass:
+        auto_created = app is None
+        if auto_created:
+            from .util.hot_reload import _is_executing_scene_module
+
+            if _is_executing_scene_module():
+                raise RuntimeError(
+                    f"{func.__name__}() was called while PyBevy was loading the scene "
+                    "module. Keep the auto-created app runner behind "
+                    '`if __name__ == "__main__":`.'
+                )
         if app is None:
             app = AppClass()
 
@@ -558,13 +568,13 @@ def entrypoint(func: Callable) -> Callable:
         try:
             result = func(app)
         except Exception as e:
-            # Add a clearer error message before re-raising
-            # The traceback will be printed by the caller (CLI or test harness)
+            from . import _pybevy  # type: ignore
+
+            _pybevy._enrich_exception(e)
             print(f"\n❌ Error configuring app in '{func.__name__}()':", file=sys.stderr)
             print(f"   {type(e).__name__}: {e}", file=sys.stderr)
             print(file=sys.stderr)
 
-            # Re-raise the exception so it can be handled by the caller
             raise
 
         # Auto-inject McpPlugin when launched via `pybevy mcp`
