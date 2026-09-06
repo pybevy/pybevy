@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[pyplugin(ControlBevyPlugin)]
-#[pyclass(name = "McpPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "McpPlugin", module = "pybevy.mcp", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyControlPlugin {
     pub port: u16,

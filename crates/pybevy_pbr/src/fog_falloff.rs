@@ -8,7 +8,7 @@ use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
 #[pyenum(FogFalloff, no_repr)]
-#[pyclass(name = "FogFalloff", frozen, from_py_object)]
+#[pyclass(name = "FogFalloff", module = "pybevy.pbr", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyFogFalloff {
     Linear {

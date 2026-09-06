@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(FocusPolicy, bridge)]
-#[pyclass(name = "FocusPolicy", extends = PyComponent, eq, skip_from_py_object)]
+#[pyclass(name = "FocusPolicy", module = "pybevy.ui", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyFocusPolicy(pub(crate) FocusPolicy);
 

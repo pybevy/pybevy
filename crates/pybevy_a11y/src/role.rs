@@ -1,7 +1,14 @@
 use accesskit::Role;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Role", eq, frozen, from_py_object, hash)]
+#[pyclass(
+    name = "Role",
+    module = "pybevy.a11y",
+    eq,
+    frozen,
+    from_py_object,
+    hash
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyRole {
     Unknown,

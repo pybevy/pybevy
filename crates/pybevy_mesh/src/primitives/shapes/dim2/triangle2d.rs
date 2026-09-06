@@ -10,7 +10,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTriangle2dMeshBuilder,
 };
 
-#[pyclass(name = "Triangle2d", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Triangle2d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyTriangle2d(pub(crate) Triangle2d);
 

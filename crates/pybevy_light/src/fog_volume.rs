@@ -12,7 +12,7 @@ use pyo3::prelude::*;
     scattering_asymmetry,
     light_intensity
 ], batch_only_fields = [fog_color, light_tint])]
-#[pyclass(name = "FogVolume", extends = PyComponent)]
+#[pyclass(name = "FogVolume", module = "pybevy.light", extends = PyComponent)]
 pub struct PyFogVolume {
     pub(crate) storage: ComponentStorage<FogVolume>,
 }

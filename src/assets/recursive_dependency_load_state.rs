@@ -1,7 +1,13 @@
 use bevy::asset::RecursiveDependencyLoadState;
 use pyo3::prelude::*;
 
-#[pyclass(name = "RecursiveDependencyLoadState", eq, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "RecursiveDependencyLoadState",
+    module = "pybevy.assets",
+    eq,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyRecursiveDependencyLoadState {
     NotLoaded(),

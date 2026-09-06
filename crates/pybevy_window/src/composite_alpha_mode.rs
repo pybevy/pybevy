@@ -3,7 +3,14 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(CompositeAlphaMode)]
-#[pyclass(name = "CompositeAlphaMode", eq, from_py_object, frozen, hash)]
+#[pyclass(
+    name = "CompositeAlphaMode",
+    module = "pybevy.window",
+    eq,
+    from_py_object,
+    frozen,
+    hash
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyCompositeAlphaMode {
     Auto,

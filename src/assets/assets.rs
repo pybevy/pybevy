@@ -46,7 +46,7 @@ use crate::ecs::{
 };
 
 /// Wrapper for Bevy's Assets<T> resource providing Python access to asset collections.
-#[pyclass(name = "Assets", extends = PyResource)]
+#[pyclass(name = "Assets", module = "pybevy.assets", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyAssets {
     runtime: AssetRuntimeCore<TypeId>,
@@ -432,7 +432,7 @@ impl PyAssets {
     }
 }
 
-#[pyclass(name = "AssetIter")]
+#[pyclass(name = "AssetIter", module = "pybevy.assets")]
 #[derive(Debug)]
 pub struct PyAssetIter {
     values: VecDeque<(PyAssetId, Py<PyAny>)>,

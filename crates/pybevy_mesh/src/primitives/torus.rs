@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "TorusMeshBuilder", extends = PyMeshBuilder)]
+#[pyclass(name = "TorusMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
 pub struct PyTorusMeshBuilder(pub(crate) TorusMeshBuilder);
 

@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use crate::mouse_scroll_unit::PyMouseScrollUnit;
 
 #[pyresource(AccumulatedMouseMotion, no_clone, bridge)]
-#[pyclass(name = "AccumulatedMouseMotion", extends = PyResource)]
+#[pyclass(name = "AccumulatedMouseMotion", module = "pybevy.input", extends = PyResource)]
 pub struct PyAccumulatedMouseMotion {
     pub(crate) storage: ResourceStorage<AccumulatedMouseMotion>,
 }
@@ -41,7 +41,7 @@ impl PyAccumulatedMouseMotion {
 }
 
 #[pyresource(AccumulatedMouseScroll, bridge)]
-#[pyclass(name = "AccumulatedMouseScroll", extends = PyResource, eq, from_py_object)]
+#[pyclass(name = "AccumulatedMouseScroll", module = "pybevy.input", extends = PyResource, eq, from_py_object)]
 #[derive(Debug)]
 pub struct PyAccumulatedMouseScroll {
     pub(crate) storage: ResourceStorage<AccumulatedMouseScroll>,

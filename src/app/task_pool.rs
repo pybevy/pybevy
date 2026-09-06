@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::app::app::PyApp;
 
 #[pyplugin(TaskPoolPlugin, default_plugin = TaskPool)]
-#[pyclass(name = "TaskPoolPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "TaskPoolPlugin", module = "pybevy.app", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTaskPoolPlugin;
 

@@ -4,7 +4,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ClearColorConfig, empty_tuple, no_repr)]
-#[pyclass(name = "ClearColorConfig", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "ClearColorConfig",
+    module = "pybevy.camera",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyClearColorConfig {
     Default(),

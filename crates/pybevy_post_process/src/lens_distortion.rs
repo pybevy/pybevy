@@ -9,7 +9,7 @@ use pyo3::prelude::*;
     scale,
     edge_curvature
 ])]
-#[pyclass(name = "LensDistortion", extends = PyComponent)]
+#[pyclass(name = "LensDistortion", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyLensDistortion {
     pub(crate) storage: ComponentStorage<LensDistortion>,
 }

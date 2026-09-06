@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::{falloff::PyFalloff, phase_function::PyPhaseFunction};
 
 #[pyfield]
-#[pyclass(name = "ScatteringTerm", from_py_object)]
+#[pyclass(name = "ScatteringTerm", module = "pybevy.light", from_py_object)]
 pub struct PyScatteringTerm {
     pub(crate) storage: FieldStorage<ScatteringTerm>,
 }

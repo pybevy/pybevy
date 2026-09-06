@@ -7,7 +7,7 @@ use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pycomponent(MorphWeights, bridge)]
-#[pyclass(name = "MorphWeights", extends = PyComponent)]
+#[pyclass(name = "MorphWeights", module = "pybevy.mesh", extends = PyComponent)]
 pub struct PyMorphWeights {
     pub(crate) storage: ComponentStorage<MorphWeights>,
 }

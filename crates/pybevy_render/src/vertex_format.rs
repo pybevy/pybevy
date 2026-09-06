@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(VertexFormat)]
-#[pyclass(name = "VertexFormat", eq, from_py_object)]
+#[pyclass(name = "VertexFormat", module = "pybevy.render", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyVertexFormat {
     Uint8,

@@ -3,7 +3,13 @@ use pyo3::prelude::*;
 
 use crate::{monitor_selection::PyMonitorSelection, video_mode_selection::PyVideoModeSelection};
 
-#[pyclass(name = "WindowMode", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "WindowMode",
+    module = "pybevy.window",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyWindowMode {
     Windowed(),

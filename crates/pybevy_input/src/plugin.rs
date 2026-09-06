@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(InputPlugin)]
-#[pyclass(name = "InputPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "InputPlugin", module = "pybevy.input", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyInputPlugin;
 

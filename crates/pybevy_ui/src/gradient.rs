@@ -7,7 +7,7 @@ use crate::{
     radial_gradient::PyRadialGradient,
 };
 
-#[pyclass(name = "Gradient", eq, frozen, from_py_object)]
+#[pyclass(name = "Gradient", module = "pybevy.ui", eq, frozen, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGradient {
     pub inner: Gradient,

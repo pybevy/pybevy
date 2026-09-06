@@ -1,7 +1,7 @@
 use bevy::render::render_resource::Extent3d;
 use pyo3::prelude::*;
 
-#[pyclass(name = "Extent3d", from_py_object)]
+#[pyclass(name = "Extent3d", module = "pybevy.render", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyExtent3d {
     pub width: u32,

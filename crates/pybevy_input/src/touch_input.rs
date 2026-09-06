@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use crate::touch_phase::PyTouchPhase;
 
 #[pymessage(TouchInput)]
-#[pyclass(name = "TouchInput", extends = PyMessage, frozen, skip_from_py_object)]
+#[pyclass(name = "TouchInput", module = "pybevy.input", extends = PyMessage, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTouchInput {
     #[pyo3(get)]

@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "CuboidMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "CuboidMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyCuboidMeshBuilder(CuboidMeshBuilder);
 

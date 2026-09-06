@@ -6,7 +6,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId};
 
 #[pyclass(
-    name = "VariableCurve",
+    name = "VariableCurve", module = "pybevy.animation",
     extends = PyAnimationCurve,
     frozen,
     from_py_object
@@ -15,7 +15,7 @@ use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationT
 pub struct PyVariableCurve(pub(crate) VariableCurve);
 
 #[pyasset(AnimationClip, bridge)]
-#[pyclass(name = "AnimationClip", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "AnimationClip", module = "pybevy.animation", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAnimationClip {
     pub(crate) storage: AssetStorage<AnimationClip>,

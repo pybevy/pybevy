@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(CorePipelinePlugin)]
-#[pyclass(name = "CorePipelinePlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "CorePipelinePlugin", module = "pybevy.core_pipeline", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCorePipelinePlugin;
 

@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::frustum::PyFrustum;
 
 #[pycomponent(CubemapFrusta, bridge)]
-#[pyclass(name = "CubemapFrusta", extends = PyComponent)]
+#[pyclass(name = "CubemapFrusta", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyCubemapFrusta {
     pub(crate) storage: ComponentStorage<CubemapFrusta>,
 }

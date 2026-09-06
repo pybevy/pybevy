@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(ShadowFilteringMethod, bridge)]
-#[pyclass(name = "ShadowFilteringMethod", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "ShadowFilteringMethod", module = "pybevy.light", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyShadowFilteringMethod(pub(crate) ShadowFilteringMethod);
 

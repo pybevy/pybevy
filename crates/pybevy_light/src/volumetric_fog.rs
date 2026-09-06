@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(VolumetricFog, bridge, view_fields = [ambient_intensity, step_count, jitter], batch_only_fields = [ambient_color])]
-#[pyclass(name = "VolumetricFog", extends = PyComponent)]
+#[pyclass(name = "VolumetricFog", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyVolumetricFog {
     pub(crate) storage: ComponentStorage<VolumetricFog>,

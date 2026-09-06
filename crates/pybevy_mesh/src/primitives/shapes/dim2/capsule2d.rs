@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCapsule2dMeshBuilder,
 };
 
-#[pyclass(name = "Capsule2d", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Capsule2d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCapsule2d(pub(crate) Capsule2d);
 

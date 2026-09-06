@@ -67,7 +67,7 @@ pub(crate) enum ProxyKind {
 /// `world.get` / `world.get_mut` (`ProxyKind::WorldGet`) the ValidityFlag does not cover
 /// structural mutations, so `data_ptr` is treated as a stale hint and the current
 /// address is re-resolved from `(world_ptr, entity, component_id)` on every access.
-#[pyclass(name = "LazyWrapperProxy")]
+#[pyclass(name = "LazyWrapperProxy", module = "pybevy.ecs")]
 pub struct PyLazyWrapperProxy {
     /// Pointer to the raw wrapper bytes in the ECS.
     ///

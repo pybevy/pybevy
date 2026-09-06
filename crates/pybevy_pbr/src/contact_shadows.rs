@@ -8,7 +8,7 @@ use pyo3::prelude::*;
     thickness,
     length
 ])]
-#[pyclass(name = "ContactShadows", extends = PyComponent)]
+#[pyclass(name = "ContactShadows", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyContactShadows {
     pub(crate) storage: ComponentStorage<ContactShadows>,
 }

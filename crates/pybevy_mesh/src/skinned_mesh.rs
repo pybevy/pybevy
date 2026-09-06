@@ -8,7 +8,7 @@ use pyo3::{
 };
 
 #[pycomponent(SkinnedMesh, bridge)]
-#[pyclass(name = "SkinnedMesh", extends = PyComponent)]
+#[pyclass(name = "SkinnedMesh", module = "pybevy.mesh", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySkinnedMesh {
     pub(crate) storage: ComponentStorage<SkinnedMesh>,

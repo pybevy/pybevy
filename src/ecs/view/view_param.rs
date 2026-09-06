@@ -9,7 +9,7 @@ use crate::ecs::component_type::{PyComponentType, clone_retained_classes, retain
 ///
 /// `View[Mut[Transform], Velocity]` would create a `PyViewParam` with
 /// component types containing `Transform` (mutable) and `Velocity` (read-only)
-#[pyclass(name = "ViewParam", frozen, from_py_object)]
+#[pyclass(name = "ViewParam", module = "pybevy.ecs", frozen, from_py_object)]
 #[derive(Debug)]
 pub struct PyViewParam {
     /// The component types in the view parameter with their mutability

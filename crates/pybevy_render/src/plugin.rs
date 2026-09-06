@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::power_preference::PyPowerPreference;
 
 #[pyplugin(bevy::render::RenderPlugin, default_plugin = Render)]
-#[pyclass(name = "RenderPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "RenderPlugin", module = "pybevy.render", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyRenderPlugin {
     pub power_preference: Option<PyPowerPreference>,

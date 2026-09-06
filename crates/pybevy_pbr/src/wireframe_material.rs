@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use crate::wireframe_topology::PyWireframeTopology;
 
 #[pyasset(WireframeMaterial, bridge, not_loadable)]
-#[pyclass(name = "WireframeMaterial", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "WireframeMaterial", module = "pybevy.pbr", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeMaterial {
     pub storage: AssetStorage<WireframeMaterial>,

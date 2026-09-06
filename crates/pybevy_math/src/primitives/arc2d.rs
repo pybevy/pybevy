@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Arc2d", eq, from_py_object)]
+#[pyclass(name = "Arc2d", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyArc2d {
     pub(crate) arc: Arc2d,

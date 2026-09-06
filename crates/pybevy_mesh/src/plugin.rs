@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(MeshPlugin)]
-#[pyclass(name = "MeshPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "MeshPlugin", module = "pybevy.mesh", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyMeshPlugin;
 

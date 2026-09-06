@@ -11,7 +11,7 @@ use pybevy_math::{
 use pyo3::prelude::*;
 
 #[pycomponent(Aabb, bridge)]
-#[pyclass(name = "Aabb", extends = PyComponent)]
+#[pyclass(name = "Aabb", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyAabb {
     pub(crate) storage: ComponentStorage<Aabb>,
 }

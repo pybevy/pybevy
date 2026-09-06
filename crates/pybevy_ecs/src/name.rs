@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Name, bridge)]
-#[pyclass(name = "Name", extends = PyComponent, eq)]
+#[pyclass(name = "Name", module = "pybevy.ecs", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyName {
     pub(crate) storage: ComponentStorage<Name>,

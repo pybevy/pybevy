@@ -6,7 +6,7 @@ use crate::{
     val::PyVal,
 };
 
-#[pyclass(name = "ConicGradient", eq, from_py_object)]
+#[pyclass(name = "ConicGradient", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyConicGradient {
     pub(crate) inner: ConicGradient,

@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
 #[pyhandle(DynamicWorldRoot)]
-#[pyclass(name = "DynamicWorldRoot", extends = PyComponent, eq, frozen, skip_from_py_object)]
+#[pyclass(name = "DynamicWorldRoot", module = "pybevy.world_serialization", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyDynamicWorldRoot(pub(crate) PyHandle);
 

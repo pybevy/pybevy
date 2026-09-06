@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "RectangleMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "RectangleMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyRectangleMeshBuilder(RectangleMeshBuilder);
 

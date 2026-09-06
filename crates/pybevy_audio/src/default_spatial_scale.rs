@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::spatial_scale::PySpatialScale;
 
 #[pyresource(DefaultSpatialScale, bridge)]
-#[pyclass(name = "DefaultSpatialScale", extends = PyResource, from_py_object)]
+#[pyclass(name = "DefaultSpatialScale", module = "pybevy.audio", extends = PyResource, from_py_object)]
 pub struct PyDefaultSpatialScale {
     pub(crate) storage: ResourceStorage<DefaultSpatialScale>,
 }

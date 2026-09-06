@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::vec2::PyVec2;
 
 #[pyvalue]
-#[pyclass(name = "Rect", from_py_object)]
+#[pyclass(name = "Rect", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRect {
     pub(crate) storage: ValueStorage<Rect>,

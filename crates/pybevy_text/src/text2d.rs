@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Text2d, bridge)]
-#[pyclass(name = "Text2d", extends = PyComponent)]
+#[pyclass(name = "Text2d", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyText2d {
     pub(crate) storage: ComponentStorage<Text2d>,

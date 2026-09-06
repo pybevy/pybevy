@@ -4,7 +4,7 @@ use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 #[pyasset(WorldAsset, no_clone, bridge)]
-#[pyclass(name = "WorldAsset", extends = pybevy_core::PyAsset)]
+#[pyclass(name = "WorldAsset", module = "pybevy.world_serialization", extends = pybevy_core::PyAsset)]
 #[derive(Debug)]
 pub struct PyWorldAsset {
     pub(crate) storage: AssetStorage<WorldAsset>,

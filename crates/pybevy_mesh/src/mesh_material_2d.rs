@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
 #[pyhandle(MeshMaterial2d::<ColorMaterial>, "MeshMaterial2d")]
-#[pyclass(name = "MeshMaterial2d", extends = PyComponent, eq, frozen, skip_from_py_object)]
+#[pyclass(name = "MeshMaterial2d", module = "pybevy.mesh", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMeshMaterial2d(pub(crate) PyHandle);
 

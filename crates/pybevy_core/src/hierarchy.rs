@@ -9,7 +9,7 @@ use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::{ComponentStorage, PyComponent, PyEntity, StorageMut, StorageRef};
 
-#[pyclass(name = "ChildOf", extends = PyComponent, frozen)]
+#[pyclass(name = "ChildOf", module = "pybevy.ecs", extends = PyComponent, frozen)]
 #[derive(Debug)]
 pub struct PyChildOf {
     pub(crate) storage: ComponentStorage<ChildOf>,
@@ -100,7 +100,7 @@ impl PyChildOf {
 ///
 /// Maintained by Bevy when ChildOf relationships change.
 /// Not modifiable directly: add/remove ChildOf on children instead.
-#[pyclass(name = "Children", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Children", module = "pybevy.ecs", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyChildren {
     entities: Vec<PyEntity>,
@@ -170,7 +170,7 @@ impl PyChildren {
     }
 }
 
-#[pyclass(name = "ChildrenIterator")]
+#[pyclass(name = "ChildrenIterator", module = "pybevy.ecs")]
 pub struct PyChildrenIterator {
     children: Vec<PyEntity>,
     index: usize,

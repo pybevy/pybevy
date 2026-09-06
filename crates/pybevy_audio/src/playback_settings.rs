@@ -8,7 +8,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume::PyVolume};
 
 #[pycomponent(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
-#[pyclass(name = "PlaybackSettings", extends = PyComponent)]
+#[pyclass(name = "PlaybackSettings", module = "pybevy.audio", extends = PyComponent)]
 pub struct PyPlaybackSettings {
     pub(crate) storage: ComponentStorage<PlaybackSettings>,
 }

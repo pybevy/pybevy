@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::val::PyVal;
 
 #[pyvalue]
-#[pyclass(name = "ShadowStyle", eq, from_py_object)]
+#[pyclass(name = "ShadowStyle", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyShadowStyle {
     pub(crate) storage: ValueStorage<ShadowStyle>,

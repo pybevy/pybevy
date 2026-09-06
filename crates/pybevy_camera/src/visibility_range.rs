@@ -7,7 +7,7 @@ use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
 #[pycomponent(VisibilityRange, bridge, view_fields = [use_aabb])]
-#[pyclass(name = "VisibilityRange", extends = PyComponent)]
+#[pyclass(name = "VisibilityRange", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyVisibilityRange {
     pub(crate) storage: ComponentStorage<VisibilityRange>,
 }

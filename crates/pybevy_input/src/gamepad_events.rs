@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[pymessage(GamepadButtonChangedEvent)]
-#[pyclass(name = "GamepadButtonChangedEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "GamepadButtonChangedEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonChangedEvent {
     pub entity: PyEntity,
@@ -100,7 +100,7 @@ impl PyGamepadButtonChangedEvent {
 }
 
 #[pymessage(GamepadAxisChangedEvent)]
-#[pyclass(name = "GamepadAxisChangedEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "GamepadAxisChangedEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadAxisChangedEvent {
     pub entity: PyEntity,
@@ -210,7 +210,7 @@ fn optional_id(id: Option<u16>) -> String {
 }
 
 #[pymessage(GamepadConnectionEvent)]
-#[pyclass(name = "GamepadConnectionEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "GamepadConnectionEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadConnectionEvent {
     pub gamepad: PyEntity,
@@ -275,7 +275,7 @@ impl PyGamepadConnectionEvent {
 }
 
 #[pymessage(GamepadButtonStateChangedEvent)]
-#[pyclass(name = "GamepadButtonStateChangedEvent", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "GamepadButtonStateChangedEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonStateChangedEvent {
     pub entity: PyEntity,

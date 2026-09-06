@@ -8,7 +8,7 @@ use crate::{
     key_code::{PyKeyCode, materialize_key_code},
 };
 
-#[pyclass(name = "KeyboardInput", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "KeyboardInput", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyKeyboardInput {
     pub key_code: bevy::input::keyboard::KeyCode,

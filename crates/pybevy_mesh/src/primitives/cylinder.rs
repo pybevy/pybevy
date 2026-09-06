@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "CylinderMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "CylinderMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyCylinderMeshBuilder(CylinderMeshBuilder);
 

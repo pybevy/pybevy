@@ -11,7 +11,7 @@ use pybevy_macros::{pycomponent, pyresource};
 use pyo3::prelude::*;
 
 #[pyresource(GlobalAmbientLight, bridge)]
-#[pyclass(name = "GlobalAmbientLight", extends = PyResource, from_py_object)]
+#[pyclass(name = "GlobalAmbientLight", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {
     // TODO: make to crate-pub only. sweep for similar pub's
@@ -78,7 +78,7 @@ impl PyGlobalAmbientLight {
 }
 
 #[pycomponent(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color])]
-#[pyclass(name = "AmbientLight", extends = PyComponent)]
+#[pyclass(name = "AmbientLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyAmbientLight {
     pub(crate) storage: ComponentStorage<AmbientLight>,

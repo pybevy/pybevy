@@ -16,7 +16,7 @@ use crate::instance_id::PyInstanceId;
     no_remove,
     no_reflect
 )]
-#[pyclass(name = "WorldInstanceSpawner", extends = PyResource)]
+#[pyclass(name = "WorldInstanceSpawner", module = "pybevy.world_serialization", extends = PyResource)]
 pub struct PyWorldInstanceSpawner {
     pub(crate) storage: ResourceStorage<WorldInstanceSpawner>,
 }

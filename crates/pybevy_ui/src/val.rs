@@ -6,7 +6,7 @@ use pyo3::{
 
 use crate::ui_rect::PyUiRect;
 
-#[pyclass(name = "Val", frozen, from_py_object)]
+#[pyclass(name = "Val", module = "pybevy.ui", frozen, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyVal {
     pub(crate) inner: Val,

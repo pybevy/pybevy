@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "PlaneMeshBuilder", extends = PyMeshBuilder)]
+#[pyclass(name = "PlaneMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
 pub struct PyPlaneMeshBuilder(PlaneMeshBuilder);
 

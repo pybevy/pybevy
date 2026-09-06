@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pymessage(CursorMoved)]
-#[pyclass(name = "CursorMoved", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "CursorMoved", module = "pybevy.window", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorMoved {
     pub position: PyVec2,

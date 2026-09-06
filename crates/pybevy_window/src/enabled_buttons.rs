@@ -4,7 +4,7 @@ use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 #[pyvalue]
-#[pyclass(name = "EnabledButtons", eq, from_py_object)]
+#[pyclass(name = "EnabledButtons", module = "pybevy.window", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEnabledButtons {
     pub(crate) storage: ValueStorage<EnabledButtons>,

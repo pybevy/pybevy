@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(TextPlugin)]
-#[pyclass(name = "TextPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "TextPlugin", module = "pybevy.text", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTextPlugin;
 

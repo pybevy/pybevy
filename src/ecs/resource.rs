@@ -17,7 +17,7 @@ use pyo3::{
 use crate::ecs::component::PyComponentId;
 
 #[pycomponent(IsResource, no_clone, no_insert, bridge)]
-#[pyclass(name = "IsResource", extends = PyComponent, frozen)]
+#[pyclass(name = "IsResource", module = "pybevy.ecs", extends = PyComponent, frozen)]
 pub struct PyIsResource {
     storage: ComponentStorage<IsResource>,
 }

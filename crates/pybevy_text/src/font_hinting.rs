@@ -3,7 +3,14 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(FontHinting)]
-#[pyclass(name = "FontHinting", eq, skip_from_py_object, frozen, hash)]
+#[pyclass(
+    name = "FontHinting",
+    module = "pybevy.text",
+    eq,
+    skip_from_py_object,
+    frozen,
+    hash
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyFontHinting {
     Disabled,

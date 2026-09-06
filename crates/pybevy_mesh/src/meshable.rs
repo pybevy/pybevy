@@ -7,7 +7,13 @@ use crate::primitives::{
     PySegment2d, PySphere, PyTetrahedron, PyTorus, PyTriangle2d, PyTriangle3d,
 };
 
-#[pyclass(name = "Meshable", subclass, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "Meshable",
+    module = "pybevy.mesh",
+    subclass,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyMeshable;
 

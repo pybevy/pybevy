@@ -7,7 +7,12 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
-#[pyclass(name = "ButtonSettings", frozen, skip_from_py_object)]
+#[pyclass(
+    name = "ButtonSettings",
+    module = "pybevy.input",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyButtonSettings {
     pub(crate) inner: ButtonSettings,
@@ -58,7 +63,12 @@ impl PyButtonSettings {
     }
 }
 
-#[pyclass(name = "AxisSettings", frozen, skip_from_py_object)]
+#[pyclass(
+    name = "AxisSettings",
+    module = "pybevy.input",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyAxisSettings {
     pub(crate) inner: AxisSettings,
@@ -141,7 +151,12 @@ impl PyAxisSettings {
     }
 }
 
-#[pyclass(name = "ButtonAxisSettings", frozen, skip_from_py_object)]
+#[pyclass(
+    name = "ButtonAxisSettings",
+    module = "pybevy.input",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyButtonAxisSettings {
     pub(crate) inner: ButtonAxisSettings,
@@ -193,7 +208,7 @@ impl PyButtonAxisSettings {
 }
 
 #[pycomponent(GamepadSettings, no_clone, bridge)]
-#[pyclass(name = "GamepadSettings", extends = PyComponent)]
+#[pyclass(name = "GamepadSettings", module = "pybevy.input", extends = PyComponent)]
 pub struct PyGamepadSettings {
     pub(crate) storage: ComponentStorage<GamepadSettings>,
 }

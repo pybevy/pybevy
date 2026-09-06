@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 #[pymessage(RequestRedraw)]
-#[pyclass(name = "RequestRedraw", extends = PyMessage, eq, skip_from_py_object)]
+#[pyclass(name = "RequestRedraw", module = "pybevy.window", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyRequestRedraw;
 

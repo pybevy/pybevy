@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(GizmoPlugin)]
-#[pyclass(name = "GizmoPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "GizmoPlugin", module = "pybevy.gizmos", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyGizmoPlugin;
 

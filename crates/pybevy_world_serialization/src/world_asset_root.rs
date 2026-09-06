@@ -4,7 +4,7 @@ use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
 #[pyhandle(WorldAssetRoot)]
-#[pyclass(name = "WorldAssetRoot", extends = PyComponent, eq, frozen, skip_from_py_object)]
+#[pyclass(name = "WorldAssetRoot", module = "pybevy.world_serialization", extends = PyComponent, eq, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyWorldAssetRoot(pub(crate) PyHandle);
 

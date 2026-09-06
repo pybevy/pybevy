@@ -4,7 +4,7 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 #[pyplugin(GltfPlugin)]
-#[pyclass(name = "GltfPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "GltfPlugin", module = "pybevy.gltf", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyGltfPlugin;
 

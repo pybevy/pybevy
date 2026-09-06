@@ -42,7 +42,7 @@ pub fn world_instance_ready_bridge(trigger: On<WorldInstanceReady>, mut commands
 }
 
 #[pyplugin(bevy::world_serialization::WorldSerializationPlugin)]
-#[pyclass(name = "WorldSerializationPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "WorldSerializationPlugin", module = "pybevy.world_serialization", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyWorldSerializationPlugin;
 

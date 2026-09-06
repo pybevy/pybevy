@@ -69,7 +69,7 @@ pub(crate) fn hot_reload_enabled() -> bool {
     std::env::var("PYBEVY_HOT_RELOAD").is_ok_and(|value| value == "1")
 }
 
-#[pyclass(name = "AssetPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "AssetPlugin", module = "pybevy.assets", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAssetPlugin;
 

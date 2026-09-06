@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ImageFilterMode)]
-#[pyclass(name = "ImageFilterMode", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "ImageFilterMode",
+    module = "pybevy.image",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyImageFilterMode {
     Nearest,

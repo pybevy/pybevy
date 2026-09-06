@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "RegularPolygonMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "RegularPolygonMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyRegularPolygonMeshBuilder(pub(crate) RegularPolygonMeshBuilder);
 

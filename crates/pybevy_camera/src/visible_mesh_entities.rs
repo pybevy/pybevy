@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(VisibleMeshEntities, bridge)]
-#[pyclass(name = "VisibleMeshEntities", extends = PyComponent)]
+#[pyclass(name = "VisibleMeshEntities", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyVisibleMeshEntities {
     pub(crate) storage: ComponentStorage<VisibleMeshEntities>,
 }

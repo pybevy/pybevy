@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use super::role::PyRole;
 
 #[pycomponent(AccessibilityNode, bridge, no_reflect)]
-#[pyclass(name = "AccessibilityNode", extends = PyComponent)]
+#[pyclass(name = "AccessibilityNode", module = "pybevy.a11y", extends = PyComponent)]
 pub struct PyAccessibilityNode {
     pub(crate) storage: ComponentStorage<AccessibilityNode>,
 }

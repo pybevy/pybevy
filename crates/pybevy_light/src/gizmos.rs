@@ -47,7 +47,7 @@ impl PyLightGizmoColor {
 
 #[pyfield(LightGizmoConfigGroup)]
 #[pyclass(
-    name = "LightGizmoConfigGroup",
+    name = "LightGizmoConfigGroup", module = "pybevy.light",
     extends = PyGizmoConfigGroup,
     from_py_object
 )]
@@ -245,7 +245,7 @@ fn clone_show_light_gizmo(value: &ShowLightGizmo) -> ShowLightGizmo {
 }
 
 #[pycomponent(ShowLightGizmo, bridge, clone_with = clone_show_light_gizmo)]
-#[pyclass(name = "ShowLightGizmo", extends = PyComponent)]
+#[pyclass(name = "ShowLightGizmo", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyShowLightGizmo {
     pub(crate) storage: ComponentStorage<ShowLightGizmo>,

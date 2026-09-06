@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::winit_settings::PyWinitSettings;
 
 #[pyplugin(bevy::winit::WinitPlugin, default_plugin = Winit)]
-#[pyclass(name = "WinitPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "WinitPlugin", module = "pybevy.winit", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyWinitPlugin {
     pub settings: Option<PyWinitSettings>,

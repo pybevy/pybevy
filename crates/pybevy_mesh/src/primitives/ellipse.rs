@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "EllipseMeshBuilder", extends = PyMeshBuilder)]
+#[pyclass(name = "EllipseMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
 pub struct PyEllipseMeshBuilder(pub(crate) EllipseMeshBuilder);
 

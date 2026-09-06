@@ -6,13 +6,13 @@ use pyo3::prelude::*;
 
 use crate::prelude::PyApp;
 
-#[pyclass(name = "ScheduleRunnerPlugin", extends = PyPlugin, skip_from_py_object)]
+#[pyclass(name = "ScheduleRunnerPlugin", module = "pybevy.app", extends = PyPlugin, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduleRunnerPlugin {
     run_mode: PyRunMode,
 }
 
-#[pyclass(name = "RunMode", frozen, eq, from_py_object)]
+#[pyclass(name = "RunMode", module = "pybevy.app", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyRunMode {
     #[pyo3(constructor = (wait = None))]

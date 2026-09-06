@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::val::PyVal;
 
 #[pyvalue]
-#[pyclass(name = "UiRect", eq, from_py_object)]
+#[pyclass(name = "UiRect", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyUiRect {
     pub(crate) storage: ValueStorage<UiRect>,

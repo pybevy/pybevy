@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySegment2dMeshBuilder,
 };
 
-#[pyclass(name = "Segment2d", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Segment2d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PySegment2d(pub(crate) Segment2d);
 

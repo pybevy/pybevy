@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use crate::sphere::PySphere;
 
 #[pycomponent(Frustum, bridge)]
-#[pyclass(name = "Frustum", extends = PyComponent)]
+#[pyclass(name = "Frustum", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyFrustum {
     pub(crate) storage: ComponentStorage<Frustum>,
 }

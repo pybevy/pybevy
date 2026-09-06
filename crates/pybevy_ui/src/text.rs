@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(Text, bridge)]
-#[pyclass(name = "Text", extends = PyComponent)]
+#[pyclass(name = "Text", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyText {
     pub(crate) storage: ComponentStorage<Text>,

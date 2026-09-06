@@ -73,7 +73,7 @@ impl InstalledSystemSetConfigs {
 }
 
 /// A stable, interpreter-independent Bevy system-set identity.
-#[pyclass(name = "SystemSet", frozen, from_py_object)]
+#[pyclass(name = "SystemSet", module = "pybevy.ecs", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PySystemSet {
     pub(crate) label: SystemSetTarget,
@@ -281,7 +281,7 @@ impl PySystemConfig {
 }
 
 /// Fluent configuration for one Python system set.
-#[pyclass(name = "SystemSetConfig", from_py_object)]
+#[pyclass(name = "SystemSetConfig", module = "pybevy.ecs", from_py_object)]
 pub struct PySystemSetConfig {
     pub(crate) set: PySystemSet,
     pub(crate) ordering: ScheduleOrdering,

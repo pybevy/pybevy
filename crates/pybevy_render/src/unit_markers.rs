@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 ///
 /// When added to a camera entity, enables high dynamic range rendering.
 #[pycomponent(Hdr, unit, bridge)]
-#[pyclass(name = "Hdr", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "Hdr", module = "pybevy.render", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyHdr;
 
@@ -53,7 +53,7 @@ impl PyHdr {
 /// Prevents the entity from being automatically batched with similar
 /// entities during rendering.
 #[pycomponent(NoAutomaticBatching, unit, bridge, no_reflect)]
-#[pyclass(name = "NoAutomaticBatching", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NoAutomaticBatching", module = "pybevy.render", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoAutomaticBatching;
 
@@ -93,7 +93,7 @@ impl PyNoAutomaticBatching {
 ///
 /// Prevents the entity from using indirect draw calls during rendering.
 #[pycomponent(NoIndirectDrawing, unit, bridge, no_reflect)]
-#[pyclass(name = "NoIndirectDrawing", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "NoIndirectDrawing", module = "pybevy.render", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyNoIndirectDrawing;
 
@@ -135,7 +135,7 @@ impl PyNoIndirectDrawing {
 /// which can improve performance by not rendering objects hidden behind
 /// other objects. The camera must also have a `DepthPrepass` component.
 #[pycomponent(OcclusionCulling, unit, bridge)]
-#[pyclass(name = "OcclusionCulling", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "OcclusionCulling", module = "pybevy.render", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyOcclusionCulling;
 

@@ -10,7 +10,7 @@ use pyo3::{exceptions::PyIndexError, prelude::*};
 use crate::{shadow_style::PyShadowStyle, val::PyVal};
 
 #[pycomponent(BoxShadow, bridge)]
-#[pyclass(name = "BoxShadow", extends = PyComponent)]
+#[pyclass(name = "BoxShadow", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyBoxShadow {
     pub(crate) storage: ComponentStorage<BoxShadow>,

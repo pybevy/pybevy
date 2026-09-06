@@ -18,7 +18,7 @@ use pyo3::prelude::*;
 use crate::sprite_image_mode::PySpriteImageMode;
 
 #[pycomponent(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
-#[pyclass(name = "Sprite", extends = PyComponent)]
+#[pyclass(name = "Sprite", module = "pybevy.sprite", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySprite {
     pub(crate) storage: ComponentStorage<Sprite>,

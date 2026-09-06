@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 use crate::texture_atlas::PyTextureAtlas;
 
-#[pyclass(name = "TextureAtlasSources")]
+#[pyclass(name = "TextureAtlasSources", module = "pybevy.image")]
 #[derive(Debug)]
 pub struct PyTextureAtlasSources {
     inner: TextureAtlasSources,

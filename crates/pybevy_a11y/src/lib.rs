@@ -11,7 +11,7 @@ pub mod prelude {
 }
 
 #[pyplugin(AccessibilityPlugin)]
-#[pyclass(name = "AccessibilityPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "AccessibilityPlugin", module = "pybevy.a11y", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAccessibilityPlugin;
 

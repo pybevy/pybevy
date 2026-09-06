@@ -12,7 +12,7 @@ const DEFAULT_DEPTH_TEXTURE_USAGE: u32 = TextureUsages::RENDER_ATTACHMENT.bits()
 const DEFAULT_DEPTH_CLEAR_VALUE: f32 = 0.0;
 
 #[pycomponent(Camera3d, bridge)]
-#[pyclass(name = "Camera3d", extends = PyComponent)]
+#[pyclass(name = "Camera3d", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyCamera3d {
     pub(crate) storage: ComponentStorage<Camera3d>,
 }

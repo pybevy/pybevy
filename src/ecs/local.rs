@@ -7,7 +7,7 @@ use pyo3::{
 /// `Local[SomeType]` default-constructs one value per system. Mutable values
 /// expose their attributes directly; use `current` to read or replace the
 /// complete value, including for immutable types.
-#[pyclass(name = "Local")]
+#[pyclass(name = "Local", module = "pybevy.ecs")]
 pub struct PyLocal {
     #[pyo3(get, name = "value_type")]
     pub(crate) ty: Py<PyType>,

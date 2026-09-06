@@ -4,7 +4,7 @@ use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 #[pyasset(LoadedFolder, no_clone, bridge)]
-#[pyclass(name = "LoadedFolder", extends = pybevy_core::PyAsset)]
+#[pyclass(name = "LoadedFolder", module = "pybevy.assets", extends = pybevy_core::PyAsset)]
 pub struct PyLoadedFolder {
     storage: AssetStorage<LoadedFolder>,
 }

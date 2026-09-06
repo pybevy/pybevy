@@ -4,7 +4,11 @@ use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 #[pyvalue]
-#[pyclass(name = "GltfConvertCoordinates", from_py_object)]
+#[pyclass(
+    name = "GltfConvertCoordinates",
+    module = "pybevy.gltf",
+    from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyGltfConvertCoordinates {
     pub(crate) storage: ValueStorage<GltfConvertCoordinates>,

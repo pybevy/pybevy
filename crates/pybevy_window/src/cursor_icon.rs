@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::cursor::PySystemCursorIcon;
 
 #[pycomponent(CursorIcon, bridge)]
-#[pyclass(name = "CursorIcon", extends = PyComponent)]
+#[pyclass(name = "CursorIcon", module = "pybevy.window", extends = PyComponent)]
 pub struct PyCursorIcon {
     pub(crate) storage: ComponentStorage<CursorIcon>,
 }

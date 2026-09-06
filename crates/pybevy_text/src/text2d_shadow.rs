@@ -6,7 +6,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pycomponent(Text2dShadow, bridge)]
-#[pyclass(name = "Text2dShadow", extends = PyComponent)]
+#[pyclass(name = "Text2dShadow", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyText2dShadow {
     pub(crate) storage: ComponentStorage<Text2dShadow>,

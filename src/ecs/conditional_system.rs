@@ -72,7 +72,7 @@ fn extract_condition_expr_at(
 
 /// Wrapper for a system with a run condition
 /// Similar to Bevy's IntoSystemConfigs::run_if()
-#[pyclass(name = "ConditionalSystem", from_py_object)]
+#[pyclass(name = "ConditionalSystem", module = "pybevy.ecs", from_py_object)]
 pub struct PyConditionalSystem {
     /// The system function to run
     pub system: Py<PyAny>,

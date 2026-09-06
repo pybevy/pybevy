@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(NoWireframe, bridge)]
-#[pyclass(name = "NoWireframe", extends = PyComponent)]
+#[pyclass(name = "NoWireframe", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyNoWireframe {
     pub(crate) storage: ComponentStorage<NoWireframe>,

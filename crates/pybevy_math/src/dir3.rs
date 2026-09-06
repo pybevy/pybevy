@@ -7,7 +7,7 @@ use pyo3::{
 
 use crate::{quat::PyQuat, vec3::PyVec3};
 
-#[pyclass(name = "Dir3", eq, from_py_object)]
+#[pyclass(name = "Dir3", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDir3 {
     storage: ValueStorage<Dir3>,

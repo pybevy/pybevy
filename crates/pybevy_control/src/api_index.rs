@@ -1048,7 +1048,7 @@ fn extract_return_type(sig: &str) -> String {
 }
 
 /// Python-accessible wrapper around ApiIndex
-#[pyclass(name = "ApiIndex")]
+#[pyclass(name = "ApiIndex", module = "pybevy.mcp")]
 pub struct PyApiIndex {
     inner: ApiIndex,
 }

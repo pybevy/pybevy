@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 #[pyenum(ScreenSpaceAmbientOcclusionQualityLevel, empty_tuple, unit_parens)]
 #[pyclass(
     name = "ScreenSpaceAmbientOcclusionQualityLevel",
+    module = "pybevy.pbr",
     frozen,
     eq,
     hash,

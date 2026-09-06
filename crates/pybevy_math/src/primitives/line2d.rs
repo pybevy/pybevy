@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::dir2::PyDir2;
 
-#[pyclass(name = "Line2d", eq, skip_from_py_object)]
+#[pyclass(name = "Line2d", module = "pybevy.math", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyLine2d {
     pub(crate) inner: Line2d,

@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 #[pycomponent(CascadeShadowConfig, bridge, view_fields = [overlap_proportion, minimum_distance])]
-#[pyclass(name = "CascadeShadowConfig", extends = PyComponent)]
+#[pyclass(name = "CascadeShadowConfig", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyCascadeShadowConfig {
     pub(crate) storage: ComponentStorage<CascadeShadowConfig>,

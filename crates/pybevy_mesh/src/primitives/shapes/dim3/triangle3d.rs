@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTriangle3dMeshBuilder,
 };
 
-#[pyclass(name = "Triangle3d", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Triangle3d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyTriangle3d(pub(crate) Triangle3d);
 

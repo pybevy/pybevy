@@ -11,7 +11,7 @@ use crate::{
     vec3::PyVec3,
 };
 
-#[pyclass(name = "Ray2d", eq, from_py_object)]
+#[pyclass(name = "Ray2d", module = "pybevy.math", eq, from_py_object)]
 #[pyvalue]
 #[derive(Debug, Clone)]
 pub struct PyRay2d {
@@ -124,7 +124,7 @@ impl PyRay2d {
     }
 }
 
-#[pyclass(name = "Ray3d", eq, skip_from_py_object)]
+#[pyclass(name = "Ray3d", module = "pybevy.math", eq, skip_from_py_object)]
 #[pyvalue]
 #[derive(Debug, Clone)]
 pub struct PyRay3d {

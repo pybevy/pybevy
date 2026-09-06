@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(TextBounds, bridge)]
-#[pyclass(name = "TextBounds", extends = PyComponent)]
+#[pyclass(name = "TextBounds", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextBounds {
     pub(crate) storage: ComponentStorage<TextBounds>,

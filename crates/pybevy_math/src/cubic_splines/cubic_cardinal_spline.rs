@@ -7,7 +7,11 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use super::cubic_curve::PyCubicCurve2d;
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "CubicCardinalSpline2d", skip_from_py_object)]
+#[pyclass(
+    name = "CubicCardinalSpline2d",
+    module = "pybevy.math",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyCubicCardinalSpline2d {
     spline: CubicCardinalSpline<Vec2>,

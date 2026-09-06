@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(DirectionalLightTexture, bridge, view_only_fields = [tiled: bool])]
-#[pyclass(name = "DirectionalLightTexture", extends = PyComponent)]
+#[pyclass(name = "DirectionalLightTexture", module = "pybevy.light", extends = PyComponent)]
 pub struct PyDirectionalLightTexture {
     pub(crate) storage: ComponentStorage<DirectionalLightTexture>,
 }
@@ -46,7 +46,7 @@ impl PyDirectionalLightTexture {
 }
 
 #[pycomponent(SpotLightTexture, bridge)]
-#[pyclass(name = "SpotLightTexture", extends = PyComponent)]
+#[pyclass(name = "SpotLightTexture", module = "pybevy.light", extends = PyComponent)]
 pub struct PySpotLightTexture {
     pub(crate) storage: ComponentStorage<SpotLightTexture>,
 }
@@ -75,7 +75,7 @@ impl PySpotLightTexture {
 }
 
 #[pycomponent(PointLightTexture, bridge)]
-#[pyclass(name = "PointLightTexture", extends = PyComponent)]
+#[pyclass(name = "PointLightTexture", module = "pybevy.light", extends = PyComponent)]
 pub struct PyPointLightTexture {
     pub(crate) storage: ComponentStorage<PointLightTexture>,
 }

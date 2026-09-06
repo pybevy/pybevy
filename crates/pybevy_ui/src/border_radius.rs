@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-#[pyclass(name = "BorderRadius", frozen, from_py_object)]
+#[pyclass(name = "BorderRadius", module = "pybevy.ui", frozen, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyBorderRadius {
     pub(crate) inner: BorderRadius,

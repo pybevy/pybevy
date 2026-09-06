@@ -2,7 +2,7 @@ use bevy::ecs::entity::Entity;
 use pybevy_core::{PyEntity, PyMessage};
 use pyo3::prelude::*;
 
-#[pyclass(name = "GamepadRumbleRequest", extends = PyMessage, skip_from_py_object)]
+#[pyclass(name = "GamepadRumbleRequest", module = "pybevy.input", extends = PyMessage, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyGamepadRumbleRequest {
     pub duration_secs: f32,

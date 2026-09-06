@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(IrradianceVolume, bridge, view_fields = [intensity, affects_lightmapped_meshes])]
-#[pyclass(name = "IrradianceVolume", extends = PyComponent)]
+#[pyclass(name = "IrradianceVolume", module = "pybevy.light", extends = PyComponent)]
 pub struct PyIrradianceVolume {
     pub(crate) storage: ComponentStorage<IrradianceVolume>,
 }

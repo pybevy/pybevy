@@ -121,7 +121,7 @@ pub fn state(py: Python, cls: Bound<PyType>) -> PyResult<Py<PyType>> {
 /// State<S> resource - holds the current state value
 ///
 /// Access via Res[State[GameState]] in systems
-#[pyclass(name = "State", frozen, extends = PyResource)]
+#[pyclass(name = "State", module = "pybevy.ecs", frozen, extends = PyResource)]
 pub struct PyState {
     /// Current state value (Python enum member) - uses internal mutability for transitions
     current: Arc<Mutex<Py<PyAny>>>,
@@ -228,7 +228,7 @@ impl PyState {
 /// NextState<S> resource - queue for pending state transitions
 ///
 /// Use ResMut[NextState[GameState]] to queue transitions
-#[pyclass(name = "NextState", frozen, extends = PyResource)]
+#[pyclass(name = "NextState", module = "pybevy.ecs", frozen, extends = PyResource)]
 pub struct PyNextState {
     /// Internal state: Unchanged or Pending(value)
     inner: Arc<Mutex<NextStateInner>>,
@@ -747,7 +747,7 @@ pub(crate) fn register_reloaded_state_machine(
 }
 
 /// Schedule label for systems that run when entering a state
-#[pyclass(name = "OnEnterSchedule", frozen)]
+#[pyclass(name = "OnEnterSchedule", module = "pybevy.ecs", frozen)]
 pub struct PyOnEnterSchedule {
     state_value: Py<PyAny>,
 }
@@ -778,7 +778,7 @@ impl PyOnEnterSchedule {
 }
 
 /// Schedule label for systems that run when exiting a state
-#[pyclass(name = "OnExitSchedule", frozen)]
+#[pyclass(name = "OnExitSchedule", module = "pybevy.ecs", frozen)]
 pub struct PyOnExitSchedule {
     state_value: Py<PyAny>,
 }
@@ -809,7 +809,7 @@ impl PyOnExitSchedule {
 }
 
 /// Schedule label for systems that run during state transitions
-#[pyclass(name = "OnTransitionSchedule", frozen)]
+#[pyclass(name = "OnTransitionSchedule", module = "pybevy.ecs", frozen)]
 pub struct PyOnTransitionSchedule {
     exited: Py<PyAny>,
     entered: Py<PyAny>,
@@ -982,7 +982,7 @@ fn state_scoped_component_alias(
 ///     DespawnOnExit(GameState.IN_GAME)
 /// ))
 /// ```
-#[pyclass(name = "DespawnOnExit", frozen, extends = PyComponent)]
+#[pyclass(name = "DespawnOnExit", module = "pybevy.ecs", frozen, extends = PyComponent)]
 pub struct PyDespawnOnExit {
     state_value: Py<PyAny>,
 }
@@ -1028,7 +1028,7 @@ impl PyDespawnOnExit {
 ///     DespawnOnEnter(GameState.IN_GAME)
 /// ))
 /// ```
-#[pyclass(name = "DespawnOnEnter", frozen, extends = PyComponent)]
+#[pyclass(name = "DespawnOnEnter", module = "pybevy.ecs", frozen, extends = PyComponent)]
 pub struct PyDespawnOnEnter {
     state_value: Py<PyAny>,
 }

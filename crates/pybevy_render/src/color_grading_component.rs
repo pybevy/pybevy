@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::color_grading::{PyColorGradingGlobal, PyColorGradingSection};
 
 #[pycomponent(ColorGrading, bridge)]
-#[pyclass(name = "ColorGrading", extends = PyComponent)]
+#[pyclass(name = "ColorGrading", module = "pybevy.render", extends = PyComponent)]
 pub struct PyColorGrading {
     pub(crate) storage: ComponentStorage<ColorGrading>,
 }

@@ -4,7 +4,12 @@ use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 #[pyvalue]
-#[pyclass(name = "WindowResizeConstraints", eq, from_py_object)]
+#[pyclass(
+    name = "WindowResizeConstraints",
+    module = "pybevy.window",
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyWindowResizeConstraints {
     pub(crate) storage: ValueStorage<WindowResizeConstraints>,

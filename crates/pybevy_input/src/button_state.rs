@@ -3,7 +3,14 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(ButtonState, empty_tuple)]
-#[pyclass(name = "ButtonState", eq, frozen, from_py_object, hash)]
+#[pyclass(
+    name = "ButtonState",
+    module = "pybevy.input",
+    eq,
+    frozen,
+    from_py_object,
+    hash
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyButtonState {
     Pressed(),

@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(PrimaryMonitor, bridge)]
-#[pyclass(name = "PrimaryMonitor", extends = PyComponent, frozen)]
+#[pyclass(name = "PrimaryMonitor", module = "pybevy.window", extends = PyComponent, frozen)]
 pub struct PyPrimaryMonitor {
     pub(crate) storage: ComponentStorage<PrimaryMonitor>,
 }

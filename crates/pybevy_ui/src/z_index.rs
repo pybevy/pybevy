@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(ZIndex, bridge)]
-#[pyclass(name = "ZIndex", extends = PyComponent, eq, skip_from_py_object)]
+#[pyclass(name = "ZIndex", module = "pybevy.ui", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyZIndex(pub(crate) ZIndex);
 
@@ -33,7 +33,7 @@ impl PyZIndex {
 }
 
 #[pywrap(GlobalZIndex, bridge)]
-#[pyclass(name = "GlobalZIndex", extends = PyComponent, eq, skip_from_py_object)]
+#[pyclass(name = "GlobalZIndex", module = "pybevy.ui", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyGlobalZIndex(pub(crate) GlobalZIndex);
 

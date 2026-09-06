@@ -7,7 +7,14 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::public_error::invalid_entity_bits;
 
-#[pyclass(name = "Entity", eq, hash, frozen, from_py_object)]
+#[pyclass(
+    name = "Entity",
+    module = "pybevy.ecs",
+    eq,
+    hash,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyEntity(pub Entity);
 

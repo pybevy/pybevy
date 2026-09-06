@@ -10,7 +10,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};
 
 #[pyvalue]
-#[pyclass(name = "Plane3d", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Plane3d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyPlane3d {
     pub(crate) storage: ValueStorage<Plane3d>,

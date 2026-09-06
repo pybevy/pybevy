@@ -9,7 +9,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircularSectorMeshBuilder,
 };
 
-#[pyclass(name = "CircularSector", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "CircularSector", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCircularSector(pub(crate) CircularSector);
 

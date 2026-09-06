@@ -4,7 +4,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, sphere_kind::PySphereKind};
 
-#[pyclass(name = "SphereMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "SphereMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PySphereMeshBuilder(SphereMeshBuilder);
 

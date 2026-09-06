@@ -10,7 +10,7 @@ use crate::ecs::{
 ///
 /// This wraps a PyQueryIter but validates that exactly one entity exists matching
 /// the query filter before returning the result.
-#[pyclass(name = "SingleQuery")]
+#[pyclass(name = "SingleQuery", module = "pybevy.ecs")]
 pub struct PySingleQuery {
     /// The underlying query iterator
     query_iter: Py<PyQueryIter>,

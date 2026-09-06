@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(AnimatedBy, bridge)]
-#[pyclass(name = "AnimatedBy", extends = PyComponent)]
+#[pyclass(name = "AnimatedBy", module = "pybevy.animation", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyAnimatedBy {
     pub(crate) storage: ComponentStorage<AnimatedBy>,

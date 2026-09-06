@@ -47,7 +47,7 @@ fn default_window_plugin() -> WindowPlugin {
     }
 }
 
-#[pyclass(name = "DefaultPlugins", extends = PyPluginGroup)]
+#[pyclass(name = "DefaultPlugins", module = "pybevy.app", extends = PyPluginGroup)]
 pub struct PyDefaultPlugins;
 
 #[pymethods]
@@ -119,7 +119,7 @@ impl PluginTypeId {
 unsafe impl Send for PluginTypeId {}
 unsafe impl Sync for PluginTypeId {}
 
-#[pyclass(name = "PluginGroupBuilder", extends = PyPluginGroup, skip_from_py_object)]
+#[pyclass(name = "PluginGroupBuilder", module = "pybevy.app", extends = PyPluginGroup, skip_from_py_object)]
 pub struct PyPluginGroupBuilder {
     configured_plugins: HashMap<PluginConfigType, Py<PyAny>>,
     disabled_plugins: HashSet<PluginConfigType>,
@@ -529,7 +529,7 @@ fn disable_plugin(
     }
 }
 
-#[pyclass(name = "MinimalPlugins", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "MinimalPlugins", module = "pybevy.app", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyMinimalPlugins;
 

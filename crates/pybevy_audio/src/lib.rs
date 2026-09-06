@@ -27,7 +27,7 @@ pub mod prelude {
 }
 
 #[pyplugin(AudioPlugin, default_plugin = Audio)]
-#[pyclass(name = "AudioPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "AudioPlugin", module = "pybevy.audio", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAudioPlugin;
 

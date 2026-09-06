@@ -1,7 +1,13 @@
 use bevy::shader::ShaderImport;
 use pyo3::prelude::*;
 
-#[pyclass(name = "ShaderImport", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "ShaderImport",
+    module = "pybevy.shader",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderImport {
     AssetPath { value: String },

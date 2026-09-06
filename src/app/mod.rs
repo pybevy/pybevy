@@ -20,7 +20,7 @@ pub mod plugins;
 pub mod schedule_runner;
 pub mod task_pool;
 
-#[pyclass(name = "Stage", frozen, from_py_object)]
+#[pyclass(name = "Stage", module = "pybevy.app", frozen, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum PyStage {
     Startup,

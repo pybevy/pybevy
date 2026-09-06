@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(TextColor, bridge, batch_only_fields = [0 as color])]
-#[pyclass(name = "TextColor", extends = PyComponent)]
+#[pyclass(name = "TextColor", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextColor {
     pub(crate) storage: ComponentStorage<TextColor>,

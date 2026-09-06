@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use crate::alpha_mode_2d::PyAlphaMode2d;
 
 #[pyasset(ColorMaterial, bridge)]
-#[pyclass(name = "ColorMaterial", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "ColorMaterial", module = "pybevy.sprite", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyColorMaterial {
     pub(crate) storage: AssetStorage<ColorMaterial>,

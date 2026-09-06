@@ -2,7 +2,13 @@ use bevy::render::render_resource::TextureFormat;
 use pybevy_core::public_error::unsupported_texture_format;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[pyclass(name = "TextureFormat", eq, frozen, from_py_object)]
+#[pyclass(
+    name = "TextureFormat",
+    module = "pybevy.render",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyTextureFormat {
     R8Unorm,

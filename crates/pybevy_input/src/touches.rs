@@ -5,7 +5,7 @@ use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 #[pyresource(Touches, no_clone, bridge, default_insert, no_reflect)]
-#[pyclass(name = "Touches", extends = PyResource)]
+#[pyclass(name = "Touches", module = "pybevy.input", extends = PyResource)]
 pub struct PyTouches {
     pub(crate) storage: ResourceStorage<Touches>,
 }
@@ -125,7 +125,7 @@ impl PyTouches {
 
 /// Owned snapshot of touch data. Can't wrap Bevy's `Touch` directly because its fields are private
 /// with no public constructor.
-#[pyclass(name = "Touch", skip_from_py_object)]
+#[pyclass(name = "Touch", module = "pybevy.input", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTouch {
     id: u64,

@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-#[pyclass(name = "TetrahedronMeshBuilder", extends = PyMeshBuilder, frozen)]
+#[pyclass(name = "TetrahedronMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyTetrahedronMeshBuilder(pub(crate) TetrahedronMeshBuilder);
 

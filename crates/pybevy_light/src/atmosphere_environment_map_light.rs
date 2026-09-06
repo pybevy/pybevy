@@ -5,7 +5,7 @@ use pybevy_math::uvec2::PyUVec2;
 use pyo3::prelude::*;
 
 #[pycomponent(AtmosphereEnvironmentMapLight, bridge, no_reflect, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
-#[pyclass(name = "AtmosphereEnvironmentMapLight", extends = PyComponent)]
+#[pyclass(name = "AtmosphereEnvironmentMapLight", module = "pybevy.light", extends = PyComponent)]
 pub struct PyAtmosphereEnvironmentMapLight {
     pub(crate) storage: ComponentStorage<AtmosphereEnvironmentMapLight>,
 }
