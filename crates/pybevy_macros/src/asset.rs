@@ -6,97 +6,9 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::{AssetArgs, find_storage_field_type, reflect_registration_tokens};
-
-/// Generates boilerplate implementations for PyBevy asset wrapper types.
-///
-/// This macro generates:
-/// - `impl NativeAsset for PyType`
-/// - `impl From<BevyType> for PyType`
-/// - `impl TryFrom<PyType> for BevyType`
-/// - Helper methods: `from_borrowed()`, `as_ref()`, `as_mut()`
-///
-/// # Usage
-///
-/// ```rust,ignore
-/// #[native_asset(Shader)]  // PyAssetType variant name
-/// #[pyclass(name = "Shader", extends = PyAsset)]
-/// #[derive(Debug, Clone)]
-/// pub struct PyShader {
-///     storage: AssetStorage<Shader>,  // Bevy type is inferred from here
-/// }
-/// ```
-///
-/// The macro parses the `storage` field to extract the Bevy asset type (`Shader` in this case).
-pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let _args = parse_macro_input!(attr as AssetArgs);
-    let input = parse_macro_input!(item as ItemStruct);
-
-    let py_type = &input.ident;
-
-    // Find the storage field and extract the Bevy type
-    let bevy_type = match find_storage_field_type(&input, "AssetStorage") {
-        Ok(ty) => ty.clone(),
-        Err(e) => return e.to_compile_error().into(),
-    };
-
-    let expanded = quote! {
-        #input
-
-        impl NativeAsset for #py_type {
-            type Asset = #bevy_type;
-
-            fn take(&mut self) -> PyResult<Self::Asset> {
-                Ok(self.storage.take()?)
-            }
-        }
-
-        impl From<#bevy_type> for #py_type {
-            fn from(asset: #bevy_type) -> Self {
-                Self {
-                    storage: AssetStorage::owned(asset),
-                }
-            }
-        }
-
-        impl TryFrom<#py_type> for #bevy_type {
-            type Error = PyErr;
-
-            fn try_from(py_asset: #py_type) -> PyResult<Self> {
-                Ok(py_asset.storage.into_owned()?)
-            }
-        }
-
-        impl #py_type {
-            /// Create from an owned asset value. Returns tuple for PyO3 class inheritance.
-            pub fn from_owned(asset: #bevy_type) -> (Self, PyAsset) {
-                (Self { storage: AssetStorage::owned(asset) }, PyAsset)
-            }
-
-            /// Create from a borrowed asset storage (for asset iteration).
-            pub fn from_borrowed(storage: AssetStorage<#bevy_type>) -> (Self, PyAsset) {
-                (Self { storage }, PyAsset)
-            }
-
-            #[inline(always)]
-            pub fn as_ref(&self) -> PyResult<pybevy_core::StorageRef<'_, #bevy_type>> {
-                Ok(self.storage.as_ref()?)
-            }
-
-            #[inline(always)]
-            pub fn as_mut(&mut self) -> PyResult<pybevy_core::StorageMut<'_, #bevy_type>> {
-                Ok(self.storage.as_mut()?)
-            }
-        }
-    };
-
-    TokenStream::from(expanded)
-}
+use crate::util::reflect_registration_tokens;
 
 /// Generates storage boilerplate for asset wrappers in feature crates.
-///
-/// Unlike `native_asset`, this macro does NOT generate PyAssetType enum handling,
-/// making it usable in feature crates that don't have access to `PyAssetType`.
 ///
 /// This macro generates:
 /// - `impl NativeAsset for PyType`

@@ -25,11 +25,6 @@ pub fn pybevy_app(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn native_asset(attr: TokenStream, item: TokenStream) -> TokenStream {
-    asset::native_asset(attr, item)
-}
-
-#[proc_macro_attribute]
 pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
     asset::pyasset(attr, item)
 }
@@ -42,11 +37,6 @@ pub fn pyhandle(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     component::pycomponent(attr, item)
-}
-
-#[proc_macro_attribute]
-pub fn native_component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    component::native_component(attr, item)
 }
 
 #[proc_macro_derive(PyComponent, attributes(color, borrowed, read_only, py_name))]
@@ -82,11 +72,6 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
     plugin::pyplugin(attr, item)
-}
-
-#[proc_macro_attribute]
-pub fn native_resource(attr: TokenStream, item: TokenStream) -> TokenStream {
-    resource::native_resource(attr, item)
 }
 
 #[proc_macro_attribute]

@@ -10,9 +10,6 @@ use crate::util::reflect_registration_tokens;
 
 /// Generates storage boilerplate for newtype component wrappers in feature crates.
 ///
-/// Unlike `native_component(X, newtype)`, this macro does NOT generate `NativeComponent` impl,
-/// making it usable in feature crates that don't have access to `PyComponentType`.
-///
 /// This macro generates:
 /// - `impl From<BevyType> for PyType`
 /// - `impl TryFrom<PyType> for BevyType`
