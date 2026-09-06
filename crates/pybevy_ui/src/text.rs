@@ -28,4 +28,15 @@ impl PyText {
         self.as_mut()?.0 = value;
         Ok(())
     }
+
+    /// Alias for `content`, matching `Text2d.text`.
+    #[getter]
+    pub fn text(&self) -> PyResult<String> {
+        self.content()
+    }
+
+    #[setter]
+    pub fn set_text(&mut self, value: String) -> PyResult<()> {
+        self.set_content(value)
+    }
 }
