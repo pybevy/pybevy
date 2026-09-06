@@ -5,7 +5,11 @@ use bevy::{
     image::{Image, ImageSampler, TextureFormatPixelInfo},
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
 };
-use image::{ImageFormat as RustImageFormat, codecs::jpeg::JpegEncoder};
+use half::f16;
+use image::{
+    DynamicImage, ImageBuffer, ImageFormat as RustImageFormat, Luma, LumaA, Rgb, Rgba,
+    codecs::jpeg::JpegEncoder,
+};
 use pybevy_array::{BorrowProbe, PyArray, borrowed_read_only_u8, extract_u8_array_data, owned_u8};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
@@ -55,11 +59,10 @@ fn extract_u8_data_from_any(data: &Bound<'_, PyAny>) -> PyResult<ExtractedU8Data
         return data
             .extract::<Vec<u8>>()
             .map(|bytes| ExtractedU8Data { bytes, shape: None })
-            .map_err(|error| {
+            .inspect_err(|error| {
                 let _ = error
                     .value(data.py())
                     .call_method1("add_note", ("while processing image byte data",));
-                error
             });
     }
 
@@ -282,7 +285,279 @@ fn py_format_to_rust(format: PyImageFormat) -> PyResult<RustImageFormat> {
     })
 }
 
-#[pyclass(name = "RenderAssetUsages", from_py_object, frozen)]
+enum ExportPixels {
+    Rgba8(Vec<u8>),
+    Luma8(Vec<u8>),
+    LumaA8(Vec<u8>),
+    Rgba32F(Vec<f32>),
+    Rgb32F(Vec<f32>),
+}
+
+fn export_error(source: TextureFormat, destination: PyImageFormat) -> PyErr {
+    let suffix = if matches!(
+        source,
+        TextureFormat::Rgba32Float
+            | TextureFormat::Rgba16Float
+            | TextureFormat::Rg32Float
+            | TextureFormat::Rg16Float
+            | TextureFormat::R32Float
+            | TextureFormat::R16Float
+    ) {
+        "; use OpenExr or Hdr"
+    } else {
+        ""
+    };
+    let destination = if destination == PyImageFormat::Ktx2 {
+        "KTX2".to_owned()
+    } else {
+        format!("{destination:?}")
+    };
+    PyValueError::new_err(format!("cannot encode {source:?} as {destination}{suffix}"))
+}
+
+fn checked_image_data(image: &Image) -> PyResult<(&[u8], u32, u32)> {
+    let descriptor = &image.texture_descriptor;
+    if descriptor.dimension != TextureDimension::D2 || descriptor.size.depth_or_array_layers != 1 {
+        return Err(PyValueError::new_err(format!(
+            "cannot encode image dimension {:?} with {} depth or array layers; expected one 2D layer",
+            descriptor.dimension, descriptor.size.depth_or_array_layers
+        )));
+    }
+    let data = image
+        .data
+        .as_deref()
+        .ok_or_else(|| PyValueError::new_err("image has no CPU pixel data; read it back first"))?;
+    Ok((data, descriptor.size.width, descriptor.size.height))
+}
+
+fn validate_export_len(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    bytes_per_pixel: usize,
+) -> PyResult<()> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(bytes_per_pixel))
+        .ok_or_else(|| PyValueError::new_err("image export byte length overflows usize"))?;
+    if data.len() != expected {
+        return Err(PyValueError::new_err(format!(
+            "image has {} CPU pixel bytes, expected {expected}",
+            data.len()
+        )));
+    }
+    Ok(())
+}
+
+fn f32_values(data: &[u8]) -> Vec<f32> {
+    data.chunks_exact(4)
+        .map(|bytes| f32::from_ne_bytes(bytes.try_into().expect("four-byte chunk")))
+        .collect()
+}
+
+fn f16_values(data: &[u8]) -> Vec<f32> {
+    data.chunks_exact(2)
+        .map(|bytes| {
+            f16::from_bits(u16::from_ne_bytes(
+                bytes.try_into().expect("two-byte chunk"),
+            ))
+            .to_f32()
+        })
+        .collect()
+}
+
+fn export_pixels(image: &Image, destination: PyImageFormat) -> PyResult<(ExportPixels, u32, u32)> {
+    let (data, width, height) = checked_image_data(image)?;
+    let format = image.texture_descriptor.format;
+    let pixels = match format {
+        TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm => {
+            validate_export_len(data, width, height, 4)?;
+            ExportPixels::Rgba8(data.to_vec())
+        }
+        TextureFormat::Bgra8UnormSrgb | TextureFormat::Bgra8Unorm => {
+            validate_export_len(data, width, height, 4)?;
+            let mut rgba = data.to_vec();
+            for pixel in rgba.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+            ExportPixels::Rgba8(rgba)
+        }
+        TextureFormat::R8Unorm => {
+            validate_export_len(data, width, height, 1)?;
+            ExportPixels::Luma8(data.to_vec())
+        }
+        TextureFormat::Rg8Unorm => {
+            validate_export_len(data, width, height, 2)?;
+            ExportPixels::LumaA8(data.to_vec())
+        }
+        TextureFormat::Rgba32Float => {
+            validate_export_len(data, width, height, 16)?;
+            ExportPixels::Rgba32F(f32_values(data))
+        }
+        TextureFormat::Rgba16Float => {
+            validate_export_len(data, width, height, 8)?;
+            ExportPixels::Rgba32F(f16_values(data))
+        }
+        TextureFormat::Rg32Float => {
+            validate_export_len(data, width, height, 8)?;
+            let mut rgb = Vec::with_capacity(data.len() / 8 * 3);
+            for pair in f32_values(data).chunks_exact(2) {
+                rgb.extend_from_slice(&[pair[0], pair[1], 0.0]);
+            }
+            ExportPixels::Rgb32F(rgb)
+        }
+        TextureFormat::Rg16Float => {
+            validate_export_len(data, width, height, 4)?;
+            let mut rgb = Vec::with_capacity(data.len() / 4 * 3);
+            for pair in f16_values(data).chunks_exact(2) {
+                rgb.extend_from_slice(&[pair[0], pair[1], 0.0]);
+            }
+            ExportPixels::Rgb32F(rgb)
+        }
+        TextureFormat::R32Float => {
+            validate_export_len(data, width, height, 4)?;
+            let mut rgb = Vec::with_capacity(data.len() / 4 * 3);
+            for value in f32_values(data) {
+                rgb.extend_from_slice(&[value, value, value]);
+            }
+            ExportPixels::Rgb32F(rgb)
+        }
+        TextureFormat::R16Float => {
+            validate_export_len(data, width, height, 2)?;
+            let mut rgb = Vec::with_capacity(data.len() / 2 * 3);
+            for value in f16_values(data) {
+                rgb.extend_from_slice(&[value, value, value]);
+            }
+            ExportPixels::Rgb32F(rgb)
+        }
+        _ => return Err(export_error(format, destination)),
+    };
+    Ok((pixels, width, height))
+}
+
+fn rgba32_from_8(pixels: &ExportPixels) -> Vec<f32> {
+    match pixels {
+        ExportPixels::Rgba8(values) => values
+            .chunks_exact(4)
+            .flat_map(|pixel| pixel.iter().map(|value| f32::from(*value) / 255.0))
+            .collect(),
+        ExportPixels::Luma8(values) => values
+            .iter()
+            .flat_map(|value| {
+                let value = f32::from(*value) / 255.0;
+                [value, value, value, 1.0]
+            })
+            .collect(),
+        ExportPixels::LumaA8(values) => values
+            .chunks_exact(2)
+            .flat_map(|pixel| {
+                let value = f32::from(pixel[0]) / 255.0;
+                [value, value, value, f32::from(pixel[1]) / 255.0]
+            })
+            .collect(),
+        ExportPixels::Rgba32F(_) | ExportPixels::Rgb32F(_) => {
+            unreachable!("float pixels are not widened from 8-bit")
+        }
+    }
+}
+
+fn rgb32_from_pixels(pixels: &ExportPixels) -> Vec<f32> {
+    match pixels {
+        ExportPixels::Rgba8(_) | ExportPixels::Luma8(_) | ExportPixels::LumaA8(_) => {
+            rgba32_from_8(pixels)
+                .chunks_exact(4)
+                .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+                .collect()
+        }
+        ExportPixels::Rgba32F(values) => values
+            .chunks_exact(4)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect(),
+        ExportPixels::Rgb32F(values) => values.clone(),
+    }
+}
+
+fn rgba16_from_8(pixels: &ExportPixels) -> Vec<u16> {
+    let rgba = match pixels {
+        ExportPixels::Rgba8(values) => values.clone(),
+        ExportPixels::Luma8(values) => values
+            .iter()
+            .flat_map(|value| [*value, *value, *value, u8::MAX])
+            .collect(),
+        ExportPixels::LumaA8(values) => values
+            .chunks_exact(2)
+            .flat_map(|pixel| [pixel[0], pixel[0], pixel[0], pixel[1]])
+            .collect(),
+        ExportPixels::Rgba32F(_) | ExportPixels::Rgb32F(_) => {
+            unreachable!("float pixels cannot be encoded as Farbfeld")
+        }
+    };
+    rgba.into_iter()
+        .map(|value| u16::from(value) * 257)
+        .collect()
+}
+
+fn export_dynamic_image(image: &Image, destination: PyImageFormat) -> PyResult<DynamicImage> {
+    let source = image.texture_descriptor.format;
+    if matches!(destination, PyImageFormat::Dds | PyImageFormat::Ktx2) {
+        return Err(export_error(source, destination));
+    }
+    let (pixels, width, height) = export_pixels(image, destination)?;
+    let dynamic = match destination {
+        PyImageFormat::OpenExr => match pixels {
+            ExportPixels::Rgba32F(values) => DynamicImage::ImageRgba32F(
+                ImageBuffer::<Rgba<f32>, _>::from_raw(width, height, values)
+                    .expect("validated RGBA32F image length"),
+            ),
+            ExportPixels::Rgb32F(values) => DynamicImage::ImageRgb32F(
+                ImageBuffer::<Rgb<f32>, _>::from_raw(width, height, values)
+                    .expect("validated RGB32F image length"),
+            ),
+            values => DynamicImage::ImageRgba32F(
+                ImageBuffer::<Rgba<f32>, _>::from_raw(width, height, rgba32_from_8(&values))
+                    .expect("validated widened RGBA image length"),
+            ),
+        },
+        PyImageFormat::Hdr => DynamicImage::ImageRgb32F(
+            ImageBuffer::<Rgb<f32>, _>::from_raw(width, height, rgb32_from_pixels(&pixels))
+                .expect("validated RGB32F image length"),
+        ),
+        PyImageFormat::Farbfeld => match pixels {
+            ExportPixels::Rgba32F(_) | ExportPixels::Rgb32F(_) => {
+                return Err(export_error(source, destination));
+            }
+            values => DynamicImage::ImageRgba16(
+                ImageBuffer::<Rgba<u16>, _>::from_raw(width, height, rgba16_from_8(&values))
+                    .expect("validated widened RGBA16 image length"),
+            ),
+        },
+        _ => match pixels {
+            ExportPixels::Rgba8(values) => DynamicImage::ImageRgba8(
+                ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, values)
+                    .expect("validated RGBA8 image length"),
+            ),
+            ExportPixels::Luma8(values) => DynamicImage::ImageLuma8(
+                ImageBuffer::<Luma<u8>, _>::from_raw(width, height, values)
+                    .expect("validated Luma8 image length"),
+            ),
+            ExportPixels::LumaA8(values) => DynamicImage::ImageLumaA8(
+                ImageBuffer::<LumaA<u8>, _>::from_raw(width, height, values)
+                    .expect("validated LumaA8 image length"),
+            ),
+            ExportPixels::Rgba32F(_) | ExportPixels::Rgb32F(_) => {
+                return Err(export_error(source, destination));
+            }
+        },
+    };
+    Ok(dynamic)
+}
+
+#[pyclass(
+    name = "RenderAssetUsages",
+    module = "pybevy.image",
+    from_py_object,
+    frozen
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyRenderAssetUsages {
     inner: RenderAssetUsages,
@@ -361,7 +636,7 @@ impl PyRenderAssetUsages {
     }
 }
 
-#[pyclass(name = "ImageDataContext")]
+#[pyclass(name = "ImageDataContext", module = "pybevy.image")]
 pub struct ImageDataContext {
     array: Py<PyArray>,
     anchor: Arc<AssetBorrowAnchor>,
@@ -385,7 +660,7 @@ impl ImageDataContext {
     }
 }
 
-#[pyclass(name = "ImageDataContextMut")]
+#[pyclass(name = "ImageDataContextMut", module = "pybevy.image")]
 pub struct ImageDataContextMut {
     array: Py<PyArray>,
     anchor: Arc<AssetBorrowAnchorMut>,
@@ -409,7 +684,7 @@ impl ImageDataContextMut {
     }
 }
 
-#[pyclass(name = "ImagePixelContextMut")]
+#[pyclass(name = "ImagePixelContextMut", module = "pybevy.image")]
 pub struct ImagePixelContextMut {
     array: Py<PyArray>,
     anchor: Arc<AssetBorrowAnchorMut>,
@@ -434,7 +709,7 @@ impl ImagePixelContextMut {
 }
 
 #[pyasset(Image, bridge)]
-#[pyclass(name = "Image", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "Image", module = "pybevy.image", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyImage {
     pub storage: AssetStorage<Image>,
@@ -1038,9 +1313,7 @@ impl PyImage {
     #[pyo3(signature = (format=PyImageFormat::Png, quality=None))]
     pub fn save_to_buffer(&self, format: PyImageFormat, quality: Option<u8>) -> PyResult<Vec<u8>> {
         image_with!(self, |image: &Image| {
-            let dynamic_image = image.clone().try_into_dynamic().map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to convert image to dynamic image: {e}"))
-            })?;
+            let dynamic_image = export_dynamic_image(image, format)?;
 
             let mut buffer = Cursor::new(Vec::new());
 

@@ -4810,6 +4810,7 @@ name = "pybevy_image"
 version = "0.3.0"
 dependencies = [
  "bevy",
+ "half",
  "image",
  "pybevy_array",
  "pybevy_color",
