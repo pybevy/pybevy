@@ -32,7 +32,7 @@ impl Drop for TempDirectory {
 }
 
 fn run_linter(root: &Path, mode: &str) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_pybevy_lint"))
+    Command::new(env!("CARGO_BIN_EXE_pybevy-lint"))
         .current_dir(root)
         .args([
             "--python-path",

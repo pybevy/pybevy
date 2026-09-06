@@ -16,7 +16,18 @@ fn is_project_artifact_directory(entry: &walkdir::DirEntry) -> bool {
     if !entry.file_type().is_dir() {
         return false;
     }
-    if matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+    if entry.file_name().to_str() == Some("target") {
+        return true;
+    }
+    // No PyBevy source lives in a dot directory, and several hold Rust that is
+    // not ours: a repo-local CARGO_HOME carries the whole registry under
+    // .cache/registry/src, and parsing third-party crates there fails the run.
+    if entry.depth() > 0
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| n.starts_with('.'))
+    {
         return true;
     }
     entry.depth() > 0 && entry.path().join(".git").exists()

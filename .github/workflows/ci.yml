@@ -202,7 +202,7 @@ jobs:
     env:
       # Matches BEVY_REVISION and CARGO_PUBLIC_API_VERSION in
       # crates/pybevy_lint/src/bevy_audit.rs.
-      BEVY_REVISION: c6f634ca9f406d68ba5109d921247b654cb42c10
+      BEVY_REVISION: b56fc29d3016e641754765244b5ba3f9cc504671
       CARGO_PUBLIC_API_VERSION: 0.50.1
 
     steps:

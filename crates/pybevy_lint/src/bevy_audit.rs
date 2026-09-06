@@ -16,8 +16,8 @@ use crate::{
 };
 
 pub const BEVY_REPOSITORY: &str = "https://github.com/bevyengine/bevy";
-pub const BEVY_TAG: &str = "v0.19.0";
-pub const BEVY_REVISION: &str = "c6f634ca9f406d68ba5109d921247b654cb42c10";
+pub const BEVY_TAG: &str = "v0.19.1";
+pub const BEVY_REVISION: &str = "b56fc29d3016e641754765244b5ba3f9cc504671";
 pub const CARGO_PUBLIC_API_VERSION: &str = "0.50.1";
 pub const PINNED_LOCKFILE_PATH: &str = "tests/parity/bevy_019_Cargo.lock";
 
