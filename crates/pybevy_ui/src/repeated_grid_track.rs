@@ -1,7 +1,15 @@
 use bevy::ui::RepeatedGridTrack;
 use pyo3::prelude::*;
 
-#[pyclass(name = "RepeatedGridTrack", eq, frozen, from_py_object)]
+use crate::grid_track_repetition::extract_grid_track_repetition_from_any;
+
+#[pyclass(
+    name = "RepeatedGridTrack",
+    module = "pybevy.ui",
+    eq,
+    frozen,
+    from_py_object
+)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyRepeatedGridTrack {
     pub(crate) inner: RepeatedGridTrack,
@@ -35,17 +43,23 @@ impl PyRepeatedGridTrack {
     }
 
     #[staticmethod]
-    pub fn px(repetition: u16, value: f32) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::px(repetition, value),
-        }
+    pub fn px(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::px(
+                extract_grid_track_repetition_from_any(repetition)?,
+                value,
+            ),
+        })
     }
 
     #[staticmethod]
-    pub fn percent(repetition: u16, value: f32) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::percent(repetition, value),
-        }
+    pub fn percent(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::percent(
+                extract_grid_track_repetition_from_any(repetition)?,
+                value,
+            ),
+        })
     }
 
     #[staticmethod]

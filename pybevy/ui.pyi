@@ -2103,6 +2103,38 @@ class Checked(Component):
     def __eq__(self, other: object) -> bool: ...
 
 
+class Selectable(Component):
+    """Marker component: the widget can be selected (ARIA "selected" state)."""
+    def __init__(self) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+
+
+class AutoDirectionalNavigation(Component):
+    """Auto-generate directional navigation edges to other focusable entities."""
+
+    def __init__(self, respect_tab_order: bool = False) -> None: ...
+    @property
+    def respect_tab_order(self) -> bool: ...
+    @respect_tab_order.setter
+    def respect_tab_order(self, value: bool) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+
+
+class IgnoreScroll(Component):
+    """Ignore the parent's ScrollPosition on the given axes (keep the node fixed)."""
+
+    def __init__(self, ignore_x: bool = False, ignore_y: bool = False) -> None: ...
+    @property
+    def ignore_x(self) -> bool: ...
+    @ignore_x.setter
+    def ignore_x(self, value: bool) -> None: ...
+    @property
+    def ignore_y(self) -> bool: ...
+    @ignore_y.setter
+    def ignore_y(self, value: bool) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+
+
 class JustifyItems:
     """Justify items enum for grid layout.
 
@@ -2377,6 +2409,23 @@ class GridPlacement:
         """Return a new placement with the span set."""
 
 
+class GridTrackRepetition:
+    """How many times a repeated grid track repeats (CSS repeat)."""
+
+    class Count(GridTrackRepetition):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: int
+        def __init__(self, value: int) -> None: ...
+
+    class AutoFill(GridTrackRepetition):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class AutoFit(GridTrackRepetition):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+
 class RepeatedGridTrack:
     """Repeated grid track definition for CSS Grid templates.
 
@@ -2399,11 +2448,11 @@ class RepeatedGridTrack:
     def __init__(self) -> None: ...
 
     @staticmethod
-    def px(repetition: int, value: float) -> RepeatedGridTrack:
+    def px(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
         """Create repeated tracks with fixed pixel size."""
 
     @staticmethod
-    def percent(repetition: int, value: float) -> RepeatedGridTrack:
+    def percent(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
         """Create repeated tracks with percentage size."""
 
     @staticmethod
@@ -3489,6 +3538,7 @@ __all__ = [
     "AlignItems",
     "AlignSelf",
     "AngularColorStop",
+    "AutoDirectionalNavigation",
     "BackgroundColor",
     "BackgroundGradient",
     "BorderColor",
@@ -3511,6 +3561,8 @@ __all__ = [
     "GridAutoFlow",
     "GridPlacement",
     "GridTrack",
+    "GridTrackRepetition",
+    "IgnoreScroll",
     "ImageNode",
     "InlineDirection",
     "Interaction",
@@ -3535,6 +3587,7 @@ __all__ = [
     "RelativeCursorPosition",
     "RepeatedGridTrack",
     "ScrollPosition",
+    "Selectable",
     "ShadowStyle",
     "Text",
     "TextShadow",

@@ -1,4 +1,5 @@
 pub mod angular_color_stop;
+pub mod auto_directional_navigation;
 pub mod background_color;
 pub mod background_gradient;
 pub mod border_color;
@@ -14,6 +15,8 @@ pub mod focus_policy;
 pub mod gradient;
 pub mod grid_placement;
 pub mod grid_track;
+pub mod grid_track_repetition;
+pub mod ignore_scroll;
 pub mod image_node;
 pub mod interaction;
 pub mod linear_gradient;
@@ -102,6 +105,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<markers::PyInteractionDisabled>()?;
     m.add_class::<markers::PyIsDefaultUiCamera>()?;
     m.add_class::<markers::PyButton>()?;
+    m.add_class::<markers::PySelectable>()?;
 
     m.add_class::<focus_policy::PyFocusPolicy>()?;
     m.add_class::<interaction::PyInteraction>()?;
@@ -129,6 +133,9 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<node_image_mode::PyNodeImageMode>()?;
     m.add_class::<grid_placement::PyGridPlacement>()?;
     m.add_class::<repeated_grid_track::PyRepeatedGridTrack>()?;
+    m.add_class::<grid_track_repetition::PyGridTrackRepetition>()?;
+    m.add_class::<auto_directional_navigation::PyAutoDirectionalNavigation>()?;
+    m.add_class::<ignore_scroll::PyIgnoreScroll>()?;
 
     m.add_class::<border_radius::PyBorderRadius>()?;
     m.add_class::<angular_color_stop::PyAngularColorStop>()?;
