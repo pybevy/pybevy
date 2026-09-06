@@ -5008,6 +5008,7 @@ dependencies = [
  "pybevy_macros",
  "pybevy_math",
  "pyo3",
+ "smol_str",
 ]
 
 [[package]]

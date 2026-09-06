@@ -59,6 +59,11 @@ class Font(Asset):
             Font file data as bytes
         """
 
+    @property
+    def alias(self) -> str: ...
+    @alias.setter
+    def alias(self, value: str) -> None: ...
+
 class FontAtlas:
     """A font atlas containing rasterized glyphs.
 
@@ -962,6 +967,159 @@ class LetterSpacing(Component):
 
     def __eq__(self, other: object) -> bool: ...
 
+
+class TextEdit:
+    """Deferred text edit/navigation command applied by the text systems."""
+
+    class Copy(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Cut(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Paste(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Insert(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    class Backspace(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BackspaceWord(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Delete(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class DeleteWord(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Left(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class Right(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class WordLeft(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class WordRight(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class Up(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class Down(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class TextStart(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class TextEnd(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class HardLineStart(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class HardLineEnd(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class LineStart(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class LineEnd(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: bool
+        def __init__(self, value: bool) -> None: ...
+
+    class CollapseSelection(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SelectAll(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SelectAllIfCollapsed(TextEdit):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MoveToPoint(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: tuple[float, float]
+        def __init__(self, value: tuple[float, float]) -> None: ...
+
+    class SelectWordAtPoint(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: tuple[float, float]
+        def __init__(self, value: tuple[float, float]) -> None: ...
+
+    class SelectLineAtPoint(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: tuple[float, float]
+        def __init__(self, value: tuple[float, float]) -> None: ...
+
+    class SelectedHardLineAtPoint(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: tuple[float, float]
+        def __init__(self, value: tuple[float, float]) -> None: ...
+
+    class ExtendSelectionToPoint(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: tuple[float, float]
+        def __init__(self, value: tuple[float, float]) -> None: ...
+
+    class ShiftClickExtension(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: tuple[float, float]
+        def __init__(self, value: tuple[float, float]) -> None: ...
+
+    class ImeSetCompose(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"], Literal["cursor"]]]
+        value: str
+        cursor: tuple[int, int] | None
+        def __init__(self, value: str, cursor: tuple[int, int] | None) -> None: ...
+
+    class ImeCommit(TextEdit):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: str
+        def __init__(self, value: str) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
+
+
 class EditableText(Component):
     """An editable text input field.
 
@@ -986,6 +1144,12 @@ class EditableText(Component):
 
     def clear(self) -> None:
         """Clear the text buffer and any pending edits."""
+
+    def queue_edit(self, edit: TextEdit) -> None:
+        """Queue a text edit command; applied by the text systems next frame."""
+
+    def is_composing(self) -> bool:
+        """True while the IME is composing text for this input."""
 
     @property
     def max_characters(self) -> int | None: ...
@@ -1016,6 +1180,34 @@ class EditableText(Component):
     def visible_width(self) -> float | None: ...
     @visible_width.setter
     def visible_width(self, value: float | None) -> None: ...
+
+class TextCursorStyle(Component):
+    """Cursor and selection appearance for an entity's EditableText. Bevy defaults:
+    slate-700 cursor, sky-300 selection, sky-400 unfocused selection."""
+
+    def __init__(
+        self,
+        color: Color = ...,
+        selection_color: Color = ...,
+        unfocused_selection_color: Color = ...,
+        selected_text_color: Color | None = None,
+    ) -> None: ...
+    @property
+    def color(self) -> Color: ...
+    @color.setter
+    def color(self, value: Color) -> None: ...
+    @property
+    def selection_color(self) -> Color: ...
+    @selection_color.setter
+    def selection_color(self, value: Color) -> None: ...
+    @property
+    def unfocused_selection_color(self) -> Color: ...
+    @unfocused_selection_color.setter
+    def unfocused_selection_color(self, value: Color) -> None: ...
+    @property
+    def selected_text_color(self) -> Color | None: ...
+    @selected_text_color.setter
+    def selected_text_color(self, value: Color | None) -> None: ...
 
 class TextPlugin(Plugin):
     """Plugin that adds text rendering support to the app.

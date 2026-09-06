@@ -5,8 +5,10 @@ use pybevy_core::{ComponentStorage, PyComponent, duration_from_py};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
+use crate::text_edit::PyTextEdit;
+
 #[pycomponent(EditableText, bridge, no_reflect, view_fields = [cursor_width, allow_newlines])]
-#[pyclass(name = "EditableText", extends = PyComponent)]
+#[pyclass(name = "EditableText", module = "pybevy.text", extends = PyComponent)]
 pub struct PyEditableText {
     pub(crate) storage: ComponentStorage<EditableText>,
 }
@@ -55,6 +57,15 @@ impl PyEditableText {
     pub fn clear(&mut self) -> PyResult<()> {
         self.as_mut()?.clear();
         Ok(())
+    }
+
+    pub fn queue_edit(&mut self, edit: &PyTextEdit) -> PyResult<()> {
+        self.as_mut()?.queue_edit(edit.clone().into());
+        Ok(())
+    }
+
+    pub fn is_composing(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_composing())
     }
 
     #[getter]
