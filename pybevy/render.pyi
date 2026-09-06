@@ -299,27 +299,38 @@ class ColorGradingGlobal:
     ) -> None: ...
 
     @property
-    def exposure(self) -> float: ...
+    def exposure(self) -> float:
+        """Exposure value (EV) offset, measured in stops."""
     @exposure.setter
     def exposure(self, value: float) -> None: ...
 
     @property
-    def temperature(self) -> float: ...
+    def temperature(self) -> float:
+        """Adjustment to the CIE 1931 chromaticity x value. Positive values
+        make colors redder, negative bluer, with no effect on luminance. The
+        white point sits at x = 0.3127, so useful values are roughly -0.1 to
+        0.1."""
     @temperature.setter
     def temperature(self, value: float) -> None: ...
 
     @property
-    def tint(self) -> float: ...
+    def tint(self) -> float:
+        """Adjustment to the CIE 1931 chromaticity y value. Positive values
+        make colors more magenta, negative greener, with no effect on
+        luminance. Same scale as `temperature`: roughly -0.1 to 0.1."""
     @tint.setter
     def tint(self, value: float) -> None: ...
 
     @property
-    def hue(self) -> float: ...
+    def hue(self) -> float:
+        """Hue adjustment in radians. No effect on saturation or brightness."""
     @hue.setter
     def hue(self, value: float) -> None: ...
 
     @property
-    def post_saturation(self) -> float: ...
+    def post_saturation(self) -> float:
+        """Saturation applied after tonemapping. Below 1.0 desaturates, 0.0
+        gives BT.709 grayscale, above 1.0 increases saturation."""
     @post_saturation.setter
     def post_saturation(self, value: float) -> None: ...
 

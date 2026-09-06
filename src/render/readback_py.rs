@@ -55,10 +55,11 @@ pub fn spawn_image_copier(
                 )
             })?;
 
-        let (frame_receiver, sender) = FrameReceiver::new(width, height);
-        let copier = ImageCopier::new(handle, width, height, render_device, sender);
         let entity = Entity::try_from_bits(camera_entity)
             .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(camera_entity)))?;
+        let (frame_receiver, sender) = FrameReceiver::new(width, height);
+        let copier = ImageCopier::new(handle, width, height, render_device, sender)
+            .with_source_entity(entity);
 
         bevy_app
             .world_mut()
