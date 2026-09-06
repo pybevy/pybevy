@@ -3,14 +3,15 @@ use bevy::{
         Alpha, ColorToPacked, Gray, LinearRgba, Luminance, Mix, Srgba,
         color_difference::EuclideanDistance,
     },
-    math::StableInterpolate,
+    math::{StableInterpolate, Vec3, Vec4},
 };
 use pybevy_core::{StorageMut, StorageRef, ValueStorage};
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyList};
+use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba};
 
-#[pyclass(name = "Srgba", eq, skip_from_py_object)]
+#[pyclass(name = "Srgba", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PySrgba {
     pub(crate) storage: ValueStorage<Srgba>,
@@ -251,18 +252,16 @@ impl PySrgba {
         Ok([color.red, color.green, color.blue])
     }
 
-    pub fn to_vec4(&self) -> PyResult<pybevy_math::vec4::PyVec4> {
-        use bevy::math::Vec4;
+    pub fn to_vec4(&self) -> PyResult<PyVec4> {
         let color = self.as_ref()?;
         let vec4 = Vec4::new(color.red, color.green, color.blue, color.alpha);
-        Ok(pybevy_math::vec4::PyVec4::from(vec4))
+        Ok(PyVec4::from(vec4))
     }
 
-    pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
-        use bevy::math::Vec3;
+    pub fn to_vec3(&self) -> PyResult<PyVec3> {
         let color = self.as_ref()?;
         let vec3 = Vec3::new(color.red, color.green, color.blue);
-        Ok(pybevy_math::vec3::PyVec3::from(vec3))
+        Ok(PyVec3::from(vec3))
     }
 
     #[staticmethod]
@@ -276,25 +275,23 @@ impl PySrgba {
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
-        let v: bevy::math::Vec4 = color.try_into()?;
+    pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
+        let v: Vec4 = color.try_into()?;
         Ok(PySrgba::from_srgba(Srgba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
-        let v: bevy::math::Vec3 = color.try_into()?;
+    pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
+        let v: Vec3 = color.try_into()?;
         Ok(PySrgba::from_srgba(Srgba::rgb(v.x, v.y, v.z)))
     }
 
-    pub fn to_u8_array(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
-        let color = self.as_ref()?;
-        Ok(PyList::new(py, ColorToPacked::to_u8_array(*color))?.unbind())
+    pub fn to_u8_array(&self) -> PyResult<[u8; 4]> {
+        Ok(ColorToPacked::to_u8_array(*self.as_ref()?))
     }
 
-    pub fn to_u8_array_no_alpha(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
-        let color = self.as_ref()?;
-        Ok(PyList::new(py, ColorToPacked::to_u8_array_no_alpha(*color))?.unbind())
+    pub fn to_u8_array_no_alpha(&self) -> PyResult<[u8; 3]> {
+        Ok(ColorToPacked::to_u8_array_no_alpha(*self.as_ref()?))
     }
 
     #[staticmethod]

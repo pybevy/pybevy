@@ -582,6 +582,12 @@ impl PyColor {
         Ok(())
     }
 
+    pub fn set_saturation(&mut self, saturation: f32) -> PyResult<()> {
+        let color = self.resolved_copy()?.with_saturation(saturation);
+        *self.as_mut()? = color;
+        Ok(())
+    }
+
     pub fn mix_assign(&mut self, other: &Self, factor: f32) -> PyResult<()> {
         let other = other.resolved_copy()?;
         let color = self.resolved_copy()?.mix(&other, factor);

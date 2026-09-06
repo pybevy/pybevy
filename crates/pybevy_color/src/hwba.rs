@@ -1,12 +1,16 @@
-use bevy::color::{Alpha, Gray, Hue, Hwba, LinearRgba, Mix, Srgba};
+use bevy::{
+    color::{Alpha, Gray, Hue, Hwba, LinearRgba, Mix, Srgba},
+    math::{Vec3, Vec4},
+};
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
+use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
-#[pyclass(name = "Hwba", eq, skip_from_py_object)]
+#[pyclass(name = "Hwba", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHwba {
     storage: ValueStorage<Hwba>,
@@ -60,6 +64,11 @@ impl PyHwba {
     #[pyo3(name = "WHITE")]
     pub fn white() -> Self {
         Self::from_owned(Hwba::WHITE)
+    }
+
+    #[staticmethod]
+    pub fn gray(lightness: f32) -> Self {
+        Self::from_owned(Hwba::gray(lightness))
     }
 
     #[getter]
@@ -176,27 +185,27 @@ impl PyHwba {
         Self::from_owned(Hwba::new(color[0], color[1], color[2], 1.0))
     }
 
-    pub fn to_vec4(&self) -> PyResult<pybevy_math::vec4::PyVec4> {
+    pub fn to_vec4(&self) -> PyResult<PyVec4> {
         let color = self.as_ref()?;
         Ok(bevy::math::Vec4::new(color.hue, color.whiteness, color.blackness, color.alpha).into())
     }
 
-    pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
+    pub fn to_vec3(&self) -> PyResult<PyVec3> {
         let color = self.as_ref()?;
         Ok(bevy::math::Vec3::new(color.hue, color.whiteness, color.blackness).into())
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
-        let value: bevy::math::Vec4 = color.try_into()?;
+    pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
+        let value: Vec4 = color.try_into()?;
         Ok(Self::from_owned(Hwba::new(
             value.x, value.y, value.z, value.w,
         )))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
-        let value: bevy::math::Vec3 = color.try_into()?;
+    pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
+        let value: Vec3 = color.try_into()?;
         Ok(Self::from_owned(Hwba::new(value.x, value.y, value.z, 1.0)))
     }
 

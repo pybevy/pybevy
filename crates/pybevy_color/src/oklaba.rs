@@ -2,14 +2,15 @@ use bevy::{
     color::{
         Alpha, Gray, LinearRgba, Luminance, Mix, Oklaba, Srgba, color_difference::EuclideanDistance,
     },
-    math::StableInterpolate,
+    math::{StableInterpolate, Vec3, Vec4},
 };
 use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
-#[pyclass(name = "Oklaba", eq, skip_from_py_object)]
+#[pyclass(name = "Oklaba", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOklaba {
     pub(crate) storage: ValueStorage<Oklaba>,
@@ -221,29 +222,27 @@ impl PyOklaba {
         PyOklaba::oklaba(Oklaba::lab(color[0], color[1], color[2]))
     }
 
-    pub fn to_vec4(&self) -> PyResult<pybevy_math::vec4::PyVec4> {
-        use bevy::math::Vec4;
+    pub fn to_vec4(&self) -> PyResult<PyVec4> {
         let c = self.as_ref()?;
         let vec4 = Vec4::new(c.lightness, c.a, c.b, c.alpha);
-        Ok(pybevy_math::vec4::PyVec4::from(vec4))
+        Ok(PyVec4::from(vec4))
     }
 
-    pub fn to_vec3(&self) -> PyResult<pybevy_math::vec3::PyVec3> {
-        use bevy::math::Vec3;
+    pub fn to_vec3(&self) -> PyResult<PyVec3> {
         let c = self.as_ref()?;
         let vec3 = Vec3::new(c.lightness, c.a, c.b);
-        Ok(pybevy_math::vec3::PyVec3::from(vec3))
+        Ok(PyVec3::from(vec3))
     }
 
     #[staticmethod]
-    pub fn from_vec4(color: &pybevy_math::vec4::PyVec4) -> PyResult<Self> {
-        let v: bevy::math::Vec4 = color.try_into()?;
+    pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
+        let v: Vec4 = color.try_into()?;
         Ok(PyOklaba::oklaba(Oklaba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
-    pub fn from_vec3(color: &pybevy_math::vec3::PyVec3) -> PyResult<Self> {
-        let v: bevy::math::Vec3 = color.try_into()?;
+    pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
+        let v: Vec3 = color.try_into()?;
         Ok(PyOklaba::oklaba(Oklaba::lab(v.x, v.y, v.z)))
     }
 
