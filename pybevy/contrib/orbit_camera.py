@@ -136,12 +136,6 @@ class OrbitCameraPlugin(Plugin):
 
     Automatically adds the orbit camera control system to Update stage.
 
-    Features:
-        - Orbit rotation with left mouse drag
-        - Pan camera (move target) with Shift + left mouse drag
-        - Zoom with mouse wheel
-        - Configurable sensitivity and distance limits
-
     Example:
         >>> from pybevy.contrib import OrbitCameraPlugin
         >>> from pybevy.prelude import *

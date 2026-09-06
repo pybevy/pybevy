@@ -6,8 +6,8 @@ import signal
 import sys
 import threading
 import traceback
-from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Protocol
 
 from .util.hot_reload import (
     resolve_changed_files,
@@ -22,6 +22,12 @@ else:
         from .app import App
     except ImportError:
         App = object
+
+
+class _CreateAppFunction(Protocol):
+    __module__: str
+
+    def __call__(self, app: App | None = None) -> App: ...
 
 
 class CliUsageError(ValueError):
@@ -470,7 +476,7 @@ def _run_script(
 
     def load_create_app_function(
         script_path: str, changed_files: set | None = None
-    ) -> Callable[[], App]:
+    ) -> _CreateAppFunction:
         """Load just the create_app function without executing it
 
         Args:
@@ -535,7 +541,7 @@ def _run_script(
                 # Standalone script without package - use run_path
                 # Handle caching BEFORE reloading module
                 from .decorators import (  # type: ignore[attr-defined]
-                    _component_cache_enabled,
+                    _component_cache_enabled,  # pyright: ignore[reportAttributeAccessIssue]
                 )
 
                 if changed_files is not None:
@@ -659,7 +665,8 @@ def _run_script(
     def load_full_app(script_path: str) -> App:
         """Load and create the initial app instance"""
         create_app_func = load_create_app_function(script_path)
-        return create_app_func()
+        app = create_app_func()
+        return app._set_scene_module(create_app_func.__module__)
 
     # Store changed files and reload mode for selective reload
     changed_files_cache: dict[str, object] = {"files": set(), "partial_mode": False}
@@ -698,9 +705,12 @@ def _run_script(
             # Instead, _set_hot_reload_loader() initializes hot reload internally.
             if hasattr(app, "_set_hot_reload_loader") and hot_reload:
                 # Create a loader that checks the reload mode from the state
-                def loader() -> Callable[[], App]:
+                def loader() -> _CreateAppFunction:
                     files = changed_files_cache.get("files")
                     assert files is None or isinstance(files, set)
+                    # Consume this batch before loading. A newer edit that arrives
+                    # during the attempt must remain queued for the next reload.
+                    changed_files_cache["files"] = set()
 
                     # Check reload mode from state
                     is_partial = False
@@ -715,15 +725,11 @@ def _run_script(
                         )
 
                     # Load entrypoint with selective reload based on mode
-                    result = load_create_app_function(
+                    return load_create_app_function(
                         script_path, resolve_changed_files(is_partial, files)
                     )
 
-                    # Clear cache after loading
-                    changed_files_cache["files"] = set()
-                    return result
-
-                app._set_hot_reload_loader(loader)  # type: ignore
+                app._set_hot_reload_loader(loader)
 
             app.run()
         except KeyboardInterrupt:

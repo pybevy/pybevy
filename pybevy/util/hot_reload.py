@@ -22,11 +22,22 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from types import CodeType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..app import App
+
+
+_EXECUTING_SCENE_MODULE: ContextVar[bool] = ContextVar(
+    "pybevy_executing_scene_module", default=False
+)
+
+
+def _is_executing_scene_module() -> bool:
+    """Return whether the current context is importing a scene definition."""
+    return _EXECUTING_SCENE_MODULE.get()
 
 
 def flush_user_modules(
@@ -190,29 +201,33 @@ def exec_scene_module(
         or os.path.abspath(existing_file) != os.path.abspath(module_file)
     )
 
-    if foreign:
-        print(
-            f"⚠️  Scene module name {module_name!r} collides with an already-imported "
-            f"module ({existing_file}); not registering in sys.modules. Imports of "
-            f"{module_name!r} will not see the scene's classes; consider renaming the file.",
-            file=sys.stderr,
-        )
-        spec.loader.exec_module(module)
-    else:
-        sys.modules[module_name] = module
-        try:
+    token = _EXECUTING_SCENE_MODULE.set(True)
+    try:
+        if foreign:
+            print(
+                f"⚠️  Scene module name {module_name!r} collides with an already-imported "
+                f"module ({existing_file}); not registering in sys.modules. Imports of "
+                f"{module_name!r} will not see the scene's classes; consider renaming the file.",
+                file=sys.stderr,
+            )
             spec.loader.exec_module(module)
-        except BaseException:
-            sys.modules.pop(module_name, None)
-            raise
-        # Keep the parent package attribute in sync, as a normal import would.
-        if "." in module_name:
-            parent_name, _, child = module_name.rpartition(".")
-            parent = sys.modules.get(parent_name)
-            if parent is not None:
-                setattr(parent, child, module)
-        if verbose:
-            print(f"   → Registered scene module {module_name!r} in sys.modules")
+        else:
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except BaseException:
+                sys.modules.pop(module_name, None)
+                raise
+            # Keep the parent package attribute in sync, as a normal import would.
+            if "." in module_name:
+                parent_name, _, child = module_name.rpartition(".")
+                parent = sys.modules.get(parent_name)
+                if parent is not None:
+                    setattr(parent, child, module)
+            if verbose:
+                print(f"   → Registered scene module {module_name!r} in sys.modules")
+    finally:
+        _EXECUTING_SCENE_MODULE.reset(token)
 
     return vars(module)
 
@@ -255,7 +270,11 @@ def reload_module_from_source(module_path: str, module_name: str | None = None, 
             del sys.modules[key]
         importlib.invalidate_caches()
 
-    return runpy.run_path(module_path, init_globals={}, run_name=key)
+    token = _EXECUTING_SCENE_MODULE.set(True)
+    try:
+        return runpy.run_path(module_path, init_globals={}, run_name=key)
+    finally:
+        _EXECUTING_SCENE_MODULE.reset(token)
 
 
 def reload_module_by_name(module_name: str) -> dict:
@@ -530,6 +549,9 @@ def create_hot_reload_loader(
 
             files = changed_files_cache.get("files")
             assert files is None or isinstance(files, set)
+            # Consume this batch before loading. A newer edit that arrives
+            # during the attempt must remain queued for the next reload.
+            changed_files_cache["files"] = set()
 
             # Check the actual reload mode from the reload state
             is_partial = False
@@ -546,9 +568,6 @@ def create_hot_reload_loader(
                 resolve_changed_files(is_partial, files),
                 verbose=verbose,
             )
-
-            # Clear the file cache after loading
-            changed_files_cache["files"] = set()
 
             # Apply wrapper if provided (e.g., to re-add plugins)
             if entrypoint_wrapper is not None:
@@ -570,7 +589,6 @@ def create_hot_reload_loader(
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()  # Force flush to pipe!
             raise  # Re-raise for pybevy Rust to handle
-
     return loader
 
 

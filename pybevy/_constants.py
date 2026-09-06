@@ -32,7 +32,20 @@ def _apply() -> None:
     from .color import Color, Hwba, Laba, LinearRgba, Oklaba, Srgba, Xyza
     from .image import RenderAssetUsages
     from .light import SunDisk
-    from .math import Affine2, IVec2, Quat, Rot2, URect, UVec2, UVec3, Vec2, Vec3, Vec4
+    from .math import (
+        Affine2,
+        Interval,
+        IRect,
+        IVec2,
+        Quat,
+        Rot2,
+        URect,
+        UVec2,
+        UVec3,
+        Vec2,
+        Vec3,
+        Vec4,
+    )
     from .post_process import Bloom
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
@@ -85,6 +98,8 @@ def _apply() -> None:
             "FRAC_PI_2", "FRAC_PI_3", "FRAC_PI_4", "FRAC_PI_6", "FRAC_PI_8",
         ]),
         (URect, ["EMPTY"]),
+        (IRect, ["EMPTY"]),
+        (Interval, ["UNIT", "EVERYWHERE"]),
         # sprite
         (Anchor, [
             "CENTER", "BOTTOM_LEFT", "BOTTOM_CENTER", "BOTTOM_RIGHT",
