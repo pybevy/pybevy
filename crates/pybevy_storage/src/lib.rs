@@ -64,7 +64,7 @@ pub use storage_error::StorageError;
 pub use storage_traits::{BorrowableStorage, FromBorrowedStorage, computed_owned};
 pub use validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard};
 pub use value_storage::{ValueStorage, ValueStorageInner};
-pub use view_bridge::{FieldOffset, FieldType, ViewBridge, ViewFieldAccess};
+pub use view_bridge::{FieldOffset, FieldType, ViewBridge};
 
 #[cfg(all(test, target_pointer_width = "64"))]
 mod layout_tests {

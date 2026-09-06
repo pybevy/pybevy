@@ -89,15 +89,9 @@ pub trait BorrowableStorage<T>: Sized {
 
 /// Trait for Python wrapper types that can be created from borrowed storage
 ///
-/// This enables the `borrow_field_as` helper method to return the final Python type
-/// directly, reducing boilerplate from:
-/// ```rust,ignore
-/// Ok(PyVec3::from_borrowed(self.storage.borrow_field(|t| &t.translation)?))
-/// ```
-/// to:
-/// ```rust,ignore
-/// self.storage.borrow_field_as(|t| &t.translation)
-/// ```
+/// This enables the `borrow_field_as` helper to return the final Python type directly:
+/// `self.storage.borrow_field_as(|t| &t.translation)` instead of
+/// `Ok(PyVec3::from_borrowed(self.storage.borrow_field(|t| &t.translation)?))`.
 pub trait FromBorrowedStorage<S> {
     fn from_borrowed(storage: S) -> Self;
 }

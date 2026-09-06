@@ -306,7 +306,7 @@ impl<T: Copy> ValueStorage<T> {
     /// For borrowed values, copies the current value.
     ///
     /// # Errors
-    /// Returns error if borrowed value is no longer valid
+    /// Returns an error if the borrowed value is no longer valid.
     #[inline(always)]
     pub fn get(&self) -> Result<T, StorageError> {
         Ok(*self.as_ref()?)

@@ -1,12 +1,13 @@
-//! View API bridge trait for runtime type dispatch
+//! View API bridge types for runtime type dispatch
 //!
-//! This module provides the `ViewBridge` struct and related traits that allow feature crates
+//! This module provides the `ViewBridge` struct and related types that allow feature crates
 //! to register their View API support without the core crate needing to import bytecode VM types.
 //!
 //! # Architecture
 //!
-//! Feature crates implement `ViewFieldAccess` trait and provide a `ViewBridge` when registering
-//! their component bridges. The main crate uses these function pointers for View API operations.
+//! Feature crates provide a `ViewBridge` when registering their component
+//! bridges (the `pycomponent` macro generates it from `view_fields`).
+//! The main crate uses these function pointers for View API operations.
 //!
 //! # Safety Model
 //!
@@ -79,40 +80,6 @@ pub struct FieldOffset {
     pub offset: usize,
     /// Type of the field
     pub field_type: FieldType,
-}
-
-/// Trait for components that support View API field access
-///
-/// This trait provides compile-time verified field offsets for the View API.
-/// Typically implemented using a macro that generates lookups from `offset_of!`.
-///
-/// # Example
-///
-/// ```ignore
-/// impl ViewFieldAccess for PyPointLight {
-///     fn field_offset(field_name: &str) -> Option<FieldOffset> {
-///         match field_name {
-///             "intensity" => Some(FieldOffset { offset: offset_of!(PointLight, intensity), field_type: FieldType::F32 }),
-///             "range" => Some(FieldOffset { offset: offset_of!(PointLight, range), field_type: FieldType::F32 }),
-///             _ => None,
-///         }
-///     }
-///
-///     fn field_names() -> &'static [&'static str] {
-///         &["intensity", "range"]
-///     }
-/// }
-/// ```
-pub trait ViewFieldAccess {
-    /// Get the byte offset for a field by name
-    ///
-    /// Returns `None` if the field doesn't exist or isn't accessible via View API.
-    fn field_offset(field_name: &str) -> Option<FieldOffset>;
-
-    /// List all field names that support View API access
-    ///
-    /// Used for generating helpful error messages when a field is not found.
-    fn field_names() -> &'static [&'static str];
 }
 
 /// Bridge struct containing function pointers for View API operations

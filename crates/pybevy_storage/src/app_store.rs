@@ -222,6 +222,8 @@ impl AppStoreCore {
 
     /// Install an App using a fresh, single-use token.
     ///
+    /// The raw `AppId` is not accepted; only the token can install an app.
+    ///
     /// ```compile_fail
     /// use bevy::prelude::App;
     /// use pybevy_storage::{allocate_id, AppStoreCore};

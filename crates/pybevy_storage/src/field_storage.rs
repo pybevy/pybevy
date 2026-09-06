@@ -299,15 +299,6 @@ impl<T: Clone> FieldStorage<T> {
     ///
     /// # Example
     ///
-    /// Prefer using `borrow_field_as` for simpler syntax:
-    /// ```rust,ignore
-    /// #[getter]
-    /// pub fn physical_position(&self) -> PyResult<PyUVec2> {
-    ///     self.storage.borrow_field_as(|v| &v.physical_position)
-    /// }
-    /// ```
-    ///
-    /// Or use `borrow_field` directly when more control is needed:
     /// ```rust,ignore
     /// let storage = self.storage.borrow_field(|v| &v.physical_position)?;
     /// Ok(PyUVec2::from_borrowed(storage))
