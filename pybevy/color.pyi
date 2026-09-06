@@ -198,6 +198,8 @@ class Color:
     # Saturation trait methods
     def saturation(self) -> float: ...
     def with_saturation(self, saturation: float) -> Color: ...
+    def set_saturation(self, saturation: float) -> None:
+        """Set the saturation channel (mutates in place)."""
 
     # EuclideanDistance trait methods
     def distance(self, other: Color) -> float: ...
@@ -249,6 +251,12 @@ class LinearRgba:
     def mix_assign(self, other: LinearRgba, factor: float) -> None:
         """Mix with another color in place."""
 
+    # StableInterpolate trait methods
+    def interpolate_stable(self, other: LinearRgba, t: float) -> LinearRgba:
+        """Interpolate between two colors using stable linear interpolation."""
+    def interpolate_stable_assign(self, other: LinearRgba, t: float) -> None:
+        """Stably interpolate with another color in place."""
+
     # EuclideanDistance trait methods
     def distance(self, other: LinearRgba) -> float: ...
     def distance_squared(self, other: LinearRgba) -> float: ...
@@ -297,15 +305,17 @@ class LinearRgba:
         """Create from Vec3(r, g, b), alpha defaults to 1.0."""
 
     # ColorToPacked trait methods
-    def to_u8_array(self) -> list[int]:
-        """Convert to [r, g, b, a] u8 array [0-255]."""
-    def to_u8_array_no_alpha(self) -> list[int]:
-        """Convert to [r, g, b] u8 array [0-255] without alpha."""
+    def to_u8_array(self) -> bytes:
+        """Convert to (r, g, b, a) bytes [0-255]."""
+    def to_u8_array_no_alpha(self) -> bytes:
+        """Convert to (r, g, b) bytes [0-255] without alpha."""
+    def as_u32(self) -> int:
+        """Convert to a u32 with RGBA channels in little-endian byte order."""
     @staticmethod
-    def from_u8_array(color: list[int] | tuple[int, int, int, int]) -> LinearRgba:
+    def from_u8_array(color: list[int] | tuple[int, int, int, int] | bytes) -> LinearRgba:
         """Create from [r, g, b, a] u8 array [0-255]."""
     @staticmethod
-    def from_u8_array_no_alpha(color: list[int] | tuple[int, int, int]) -> LinearRgba:
+    def from_u8_array_no_alpha(color: list[int] | tuple[int, int, int] | bytes) -> LinearRgba:
         """Create from [r, g, b] u8 array [0-255], alpha defaults to 255."""
 
 class Srgba:
@@ -400,15 +410,15 @@ class Srgba:
         """Convert from gamma-encoded sRGB to linear RGBA."""
 
     # ColorToPacked trait methods
-    def to_u8_array(self) -> list[int]:
-        """Convert to [r, g, b, a] u8 array [0-255]."""
-    def to_u8_array_no_alpha(self) -> list[int]:
-        """Convert to [r, g, b] u8 array [0-255] without alpha."""
+    def to_u8_array(self) -> bytes:
+        """Convert to (r, g, b, a) bytes [0-255]."""
+    def to_u8_array_no_alpha(self) -> bytes:
+        """Convert to (r, g, b) bytes [0-255] without alpha."""
     @staticmethod
-    def from_u8_array(color: list[int] | tuple[int, int, int, int]) -> Srgba:
+    def from_u8_array(color: list[int] | tuple[int, int, int, int] | bytes) -> Srgba:
         """Create from [r, g, b, a] u8 array [0-255]."""
     @staticmethod
-    def from_u8_array_no_alpha(color: list[int] | tuple[int, int, int]) -> Srgba:
+    def from_u8_array_no_alpha(color: list[int] | tuple[int, int, int] | bytes) -> Srgba:
         """Create from [r, g, b] u8 array [0-255], alpha defaults to 255."""
 
 class Hsla:
@@ -752,6 +762,9 @@ class Hwba:
     ) -> None: ...
     @staticmethod
     def hwb(hue: float, whiteness: float, blackness: float) -> Hwba: ...
+    @staticmethod
+    def gray(lightness: float) -> Hwba:
+        """Create a gray color with the given lightness (0.0 = black, 1.0 = white)."""
     def with_hue(self, hue: float) -> Hwba: ...
     def set_hue(self, hue: float) -> None: ...
     def rotate_hue(self, degrees: float) -> Hwba: ...
