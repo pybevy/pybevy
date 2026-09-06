@@ -316,15 +316,7 @@ impl CachedQuery {
 /// execution and must not escape the Python GIL callback. Python code must not
 /// store references to this object or any iterators derived from it beyond the
 /// system function scope; the shared `ValidityFlag` fences any that leak.
-///
-/// # Performance Notes
-/// For benchmarking, the main bottlenecks are typically:
-/// 1. Bevy's `iter.next()` - iterating entities and fetching components
-/// 2. `Py::new()` - creating Python wrapper objects (PyTransformMut, etc.)
-/// 3. `clone_ref(py)` - Python reference counting overhead
-/// 4. `PyTuple::new()` - allocating tuples for multi-component returns
-/// 5. GIL acquisition/release (handled by PyO3 automatically)
-#[pyclass(name = "QueryIter")]
+#[pyclass(name = "QueryIter", module = "pybevy.ecs")]
 pub struct PyQueryIter {
     /// The query parameter information: an `Arc` handle cloned from the cache at
     /// construction. Kept as a direct field so hot-path extraction reads
@@ -397,7 +389,7 @@ impl QueryCache {
 }
 
 /// Python iterator for one fresh traversal of a runtime Query.
-#[pyclass(name = "QueryIterator")]
+#[pyclass(name = "QueryIterator", module = "pybevy.ecs")]
 pub struct PyQueryIterator {
     query: Py<PyQueryIter>,
     state: QueryIteratorState,
@@ -1225,12 +1217,6 @@ impl PyQueryIter {
 
     /// Iterate over query results for a specific list of entities.
     /// Entities that don't match the query filters are skipped.
-    ///
-    /// # Arguments
-    /// * `entities` - An iterable of Entity objects to query
-    ///
-    /// # Returns
-    /// A list of query results in the same order as the input entities (skipping non-matching ones)
     ///
     /// # Example
     /// ```python

@@ -60,7 +60,7 @@ use crate::ecs::{
 ///
 /// The run-scoped core owns the World cell and rejects stale or cross-thread
 /// access before any pointer operation.
-#[pyclass(name = "View", frozen, skip_from_py_object)]
+#[pyclass(name = "View", module = "pybevy.ecs", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyView {
     /// Stable interpreter adapter and run-scoped neutral runtime.
@@ -252,7 +252,7 @@ impl PyView {
             .borrowed_mut
             .lock()
             .map_err(|_| PyRuntimeError::new_err("View mutable-borrow lock was poisoned"))?
-            .insert(comp_type.clone());
+            .insert(comp_type);
         if !inserted {
             return Err(PyRuntimeError::new_err(format!(
                 "Component type {} already has a mutable column borrowed. Cannot get multiple mutable columns for the same component.",
@@ -628,7 +628,7 @@ fn create_field_proxy<'py>(
 }
 
 /// Read-only column proxy for component fields
-#[pyclass(name = "ViewCol", frozen)]
+#[pyclass(name = "ViewCol", module = "pybevy.ecs", frozen)]
 pub struct PyViewCol {
     #[allow(dead_code)] // retained for unsafe deref in column operations
     view_ptr: *const PyView,
@@ -668,7 +668,12 @@ impl PyViewCol {
 }
 
 /// Mutable column proxy for component fields
-#[pyclass(name = "ViewColMut", frozen, skip_from_py_object)]
+#[pyclass(
+    name = "ViewColMut",
+    module = "pybevy.ecs",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyViewColMut {
     view_ptr: *const PyView,
@@ -765,7 +770,7 @@ impl PyViewColMut {
 ///
 /// PyBatch provides access to a contiguous range of component storage within
 /// one table, enabling zero-copy ViewColumn creation for Numba JIT kernels.
-#[pyclass(name = "Batch", frozen)]
+#[pyclass(name = "Batch", module = "pybevy.ecs", frozen)]
 pub struct PyBatch {
     cached: Arc<CachedPyView>,
     slice: BatchSlice,
@@ -932,7 +937,7 @@ impl PyBatch {
 }
 
 /// Iterator over exact contiguous filtered batches in a View.
-#[pyclass(name = "BatchIterator")]
+#[pyclass(name = "BatchIterator", module = "pybevy.ecs")]
 pub struct PyBatchIterator {
     cached: Arc<CachedPyView>,
     slices: Vec<BatchSlice>,

@@ -551,8 +551,7 @@ pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflic
         "System '{}' has conflicting {} access:\n\
          - Parameter {} requests {} access to {}\n\
          - Parameter {} already has {} access to {}\n\
-         Rust's borrowing rules forbid multiple mutable references or \
-         mixing mutable and immutable references to the same data.",
+         {}",
         func_name,
         category,
         conflict.param_idx,
@@ -568,8 +567,34 @@ pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflic
         } else {
             "immutable"
         },
-        conflict.existing_name
+        conflict.existing_name,
+        conflict_remedy(category),
     )
+}
+
+/// The actionable half of a conflict message: what to change, not why the
+/// rule exists.
+fn conflict_remedy(category: &str) -> &'static str {
+    match category {
+        "asset" => {
+            "Every @material class is a logical view over one underlying \
+             Assets<ShaderMaterial> collection, so two Assets[...] parameters \
+             for different @material types address the same resource. Use one \
+             system per material type."
+        }
+        "message" => {
+            "A MessageWriter cannot share its channel with another reader or \
+             writer in the same system. Split the send and the read into \
+             separate systems."
+        }
+        _ => {
+            "Different With[...] filters do not prove two queries are disjoint, \
+             because one entity could hold both markers. Add Without[...] to \
+             each query to prove exclusion (Query[tuple[Mut[Transform], Bat, \
+             Without[BatWing]]] and Query[tuple[Mut[Transform], BatWing, \
+             Without[Bat]]]), or split the queries across systems."
+        }
+    }
 }
 
 /// Interpreter-neutral reason a parameter is rejected in a run condition.

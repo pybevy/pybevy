@@ -76,17 +76,6 @@ pub trait ComponentBridge: Send + Sync + 'static {
     fn register(&self, world: &mut World) -> ComponentId;
 
     /// Extract component from entity and return as Python object
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Mutable filtered entity reference from query iteration
-    /// * `component_id` - Pre-registered ComponentId for this component
-    /// * `validity` - Validity flag for borrowed reference tracking
-    /// * `py` - Python GIL token
-    ///
-    /// # Errors
-    ///
-    /// Returns error if component extraction or Python conversion fails.
     fn extract(
         &self,
         entity: &mut FilteredEntityAccess,
@@ -103,31 +92,12 @@ pub trait ComponentBridge: Send + Sync + 'static {
     fn extract_fn(&self) -> ExtractFn;
 
     /// Insert component into entity via world access
-    ///
-    /// # Arguments
-    ///
-    /// * `world` - Mutable world reference
-    /// * `entity` - Entity to insert component into
-    /// * `component` - Python object to convert and insert
-    ///
-    /// # Errors
-    ///
-    /// Returns error if Python conversion or insertion fails.
     fn insert(&self, world: &mut World, entity: Entity, component: &Bound<PyAny>) -> PyResult<()>;
 
     /// Insert component directly into an EntityWorldMut
     ///
     /// This is used by batch spawn to avoid double-mutable-borrow issues.
     /// Default implementation panics - bridges should override this.
-    ///
-    /// # Arguments
-    ///
-    /// * `entity` - Mutable entity reference with world access
-    /// * `component` - Python object to convert and insert
-    ///
-    /// # Errors
-    ///
-    /// Returns error if Python conversion or insertion fails.
     fn insert_into_entity(
         &self,
         entity: &mut EntityWorldMut,

@@ -51,9 +51,9 @@ impl CachedPyView {
         let mut mutable_components = HashSet::new();
         for param_type in &param.parameters {
             let ViewParamType::Component { comp_type, mutable } = param_type;
-            component_types.push(comp_type.clone());
+            component_types.push(*comp_type);
             if *mutable {
-                mutable_components.insert(comp_type.clone());
+                mutable_components.insert(*comp_type);
             }
         }
 
@@ -82,7 +82,7 @@ impl CachedPyView {
                     component_type.register_simple(world, py)
                 }
             };
-            component_ids.insert(component_type.clone(), component_id);
+            component_ids.insert(*component_type, component_id);
         }
 
         let data_ids: HashSet<ComponentId> = component_types

@@ -5,14 +5,16 @@ use std::{
 
 use pybevy_core::{
     LogicalTypeId,
-    public_error::{pipe_input_must_be_first, pipe_target_requires_input},
+    public_error::{
+        pipe_input_must_be_first, pipe_target_requires_input, system_annotations_unresolved,
+    },
 };
 use pybevy_gizmos::gizmos::PyGizmos;
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
-    types::{PyAny, PyDict, PyTuple, PyType},
+    types::{PyAny, PyTuple, PyType},
 };
 use smallvec::SmallVec;
 
@@ -159,7 +161,7 @@ impl SystemFunction {
         let typing = py.import("typing")?;
         let type_hints = typing
             .call_method1("get_type_hints", (func,))
-            .unwrap_or_else(|_| PyDict::new(py).into_any());
+            .map_err(|error| PyTypeError::new_err(system_annotations_unresolved(&name, error)))?;
         let inspect = py.import("inspect")?;
         let parameters = inspect
             .call_method1("signature", (func,))?
@@ -195,10 +197,7 @@ impl SystemFunction {
         let typing_module = py.import("typing")?;
         let type_hints = typing_module
             .call_method1("get_type_hints", (func,))
-            .unwrap_or_else(|_| {
-                // If get_type_hints fails, fall back to empty dict
-                PyDict::new(py).into_any()
-            });
+            .map_err(|error| PyTypeError::new_err(system_annotations_unresolved(&name, error)))?;
 
         let sig_module = py.import("inspect")?;
 

@@ -43,7 +43,13 @@ use pyo3::{
 ///     def build(self, app):
 ///         app.add_systems(Startup, my_system)
 /// ```
-#[pyclass(name = "Plugin", subclass, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "Plugin",
+    module = "pybevy.app",
+    subclass,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyPlugin;
 
@@ -53,6 +59,14 @@ impl PyPlugin {
     #[pyo3(signature = (*_args, **_kwargs))]
     pub fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         PyPlugin
+    }
+
+    /// Stable identity for plugin classes that support multiple instances.
+    ///
+    /// Python subclasses opt in by overriding this property with a string.
+    #[getter]
+    pub const fn __pybevy_plugin_key__(&self) -> Option<&'static str> {
+        None
     }
 
     /// Build the plugin by adding systems, resources, etc. to the app.

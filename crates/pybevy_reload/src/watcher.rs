@@ -251,7 +251,7 @@ fn watch_worker(
             );
         }
         collect_event_paths(&first_event, &ignore_patterns, &mut paths);
-        let deadline = Instant::now() + debounce;
+        let mut deadline = Instant::now() + debounce;
 
         while Instant::now() < deadline {
             if stop_receiver.try_recv().is_ok() {
@@ -260,6 +260,7 @@ fn watch_worker(
             let remaining = deadline.saturating_duration_since(Instant::now());
             match event_receiver.recv_timeout(remaining.min(EVENT_POLL_INTERVAL)) {
                 Ok(Ok(event)) => {
+                    let path_count_before_event = paths.len();
                     if prune_recursive_watches {
                         handle_directory_event(
                             &mut watcher,
@@ -270,7 +271,15 @@ fn watch_worker(
                             &batch_sender,
                         );
                     }
-                    collect_event_paths(&event, &ignore_patterns, &mut paths);
+                    let relevant_python_event =
+                        collect_event_paths(&event, &ignore_patterns, &mut paths);
+                    // Debounce from the most recent event, not the first one. Editors
+                    // commonly save through several rename/write operations spread
+                    // across more than one debounce interval. Unrelated filesystem
+                    // activity must not postpone a pending Python reload forever.
+                    if relevant_python_event || paths.len() > path_count_before_event {
+                        deadline = Instant::now() + debounce;
+                    }
                 }
                 Ok(Err(error)) => {
                     if batch_sender
@@ -440,19 +449,26 @@ fn forget_removed_watch_paths(event: &Event, watched_paths: &mut BTreeSet<PathBu
     }
 }
 
-fn collect_event_paths(event: &Event, ignore_patterns: &[String], paths: &mut BTreeSet<PathBuf>) {
+fn collect_event_paths(
+    event: &Event,
+    ignore_patterns: &[String],
+    paths: &mut BTreeSet<PathBuf>,
+) -> bool {
     if !matches!(
         &event.kind,
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
     ) {
-        return;
+        return false;
     }
 
+    let mut relevant = false;
     for path in &event.paths {
         if is_python_path(path, ignore_patterns) {
+            relevant = true;
             paths.insert(absolute_path(path));
         }
     }
+    relevant
 }
 
 fn is_python_path(path: &Path, ignore_patterns: &[String]) -> bool {
@@ -640,6 +656,63 @@ mod tests {
             .unwrap()
             .expect("watcher did not report the created Python file");
 
+        assert!(batch.paths().contains(&absolute_path(&source_path)));
+        watcher.stop().unwrap();
+    }
+
+    #[test]
+    fn one_save_sequence_produces_one_trailing_edge_batch() {
+        let directory = TempDirectory::new();
+        let watcher = FileWatcher::start(
+            vec![directory.0.clone()],
+            Vec::new(),
+            Duration::from_millis(300),
+        )
+        .unwrap();
+        let source_path = directory.0.join("scene.py");
+
+        fs::write(&source_path, "value = 1\n").unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        fs::write(&source_path, "value = 2\n").unwrap();
+        std::thread::sleep(Duration::from_millis(180));
+
+        assert_eq!(
+            watcher.try_recv().unwrap(),
+            None,
+            "the first event emitted a batch before the save sequence went quiet"
+        );
+        let batch = watcher
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .expect("watcher did not report the completed save sequence");
+        assert!(batch.paths().contains(&absolute_path(&source_path)));
+        std::thread::sleep(Duration::from_millis(350));
+        assert_eq!(watcher.try_recv().unwrap(), None);
+        watcher.stop().unwrap();
+    }
+
+    #[test]
+    fn unrelated_events_do_not_postpone_a_python_batch() {
+        let directory = TempDirectory::new();
+        let watcher = FileWatcher::start(
+            vec![directory.0.clone()],
+            Vec::new(),
+            Duration::from_millis(300),
+        )
+        .unwrap();
+        let source_path = directory.0.join("scene.py");
+        let unrelated_path = directory.0.join("editor-state.txt");
+
+        fs::write(&source_path, "value = 1\n").unwrap();
+        for value in 0..4 {
+            std::thread::sleep(Duration::from_millis(100));
+            fs::write(&unrelated_path, format!("{value}\n")).unwrap();
+        }
+
+        let batch = watcher
+            .try_recv()
+            .unwrap()
+            .expect("unrelated events postponed the pending Python batch");
         assert!(batch.paths().contains(&absolute_path(&source_path)));
         watcher.stop().unwrap();
     }

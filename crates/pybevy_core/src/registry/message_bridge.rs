@@ -75,20 +75,6 @@ pub trait MessageBridge: Send + Sync + 'static {
     }
 
     /// Write a message to the world
-    ///
-    /// # Arguments
-    ///
-    /// * `py` - Python GIL token
-    /// * `world` - Mutable world reference
-    /// * `message` - Python message object to write
-    ///
-    /// # Returns
-    ///
-    /// Message ID wrapped in a Box<dyn Any>
-    ///
-    /// # Errors
-    ///
-    /// Returns error if the message type is read-only or conversion fails.
     fn write_message(
         &self,
         _py: Python,

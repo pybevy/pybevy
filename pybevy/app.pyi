@@ -169,6 +169,9 @@ class Plugin:
         app.add_plugins(MyGamePlugin())
         ```
     """
+    @property
+    def __pybevy_plugin_key__(self) -> str | None:
+        """Stable key for multiple instances, or None for class-only identity."""
     def build(self, app: App) -> None: ...
 
 class PluginGroup:
@@ -386,6 +389,8 @@ class AppReloadState:
         """Get the current default reload mode ('Full' or 'Partial')."""
     def is_partial_reload(self) -> bool:
         """Check if the next reload will be in partial mode."""
+    def generation(self) -> int:
+        """Get the generation shared with HotReloadControl."""
 
 class HotReloadControl(Resource):
     """Control hot reload behavior from within systems.
@@ -597,8 +602,9 @@ class App:
         """
 
     def _set_hot_reload_loader(
-        self, loader: Callable[[], Callable[[], App]]
+        self, loader: Callable[[], Callable[[App], App]]
     ) -> App: ...
+    def _set_scene_module(self, module_name: str) -> App: ...
 
 
 class Schedule:
@@ -744,3 +750,14 @@ class AppExit(Message):
         __match_args__: ClassVar[tuple[Literal["code"]]]
         code: int
         def __init__(self, code: int) -> None: ...
+
+    @staticmethod
+    def error() -> AppExit.Error:
+        """Create an AppExit::Error with exit code 1."""
+    @staticmethod
+    def from_code(code: int) -> AppExit:
+        """Exit with the given code; 0 becomes Success."""
+    def is_success(self) -> bool:
+        """True if this is AppExit::Success."""
+    def is_error(self) -> bool:
+        """True if this is AppExit::Error."""

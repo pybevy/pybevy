@@ -28,8 +28,8 @@ impl PrimitiveType {
             "float" => Some(Self::F64),
             "int" => Some(Self::I64),
             "bool" => Some(Self::Bool),
-            "Vec3" | "builtins.Vec3" => Some(Self::Vec3),
-            "Vec2" | "builtins.Vec2" => Some(Self::Vec2),
+            "Vec3" | "pybevy.math.Vec3" => Some(Self::Vec3),
+            "Vec2" | "pybevy.math.Vec2" => Some(Self::Vec2),
             _ => None,
         }
     }
@@ -599,7 +599,7 @@ mod tests {
             Some(PrimitiveType::Bool)
         );
         assert_eq!(
-            PrimitiveType::from_annotation_name("builtins.Vec3"),
+            PrimitiveType::from_annotation_name("pybevy.math.Vec3"),
             Some(PrimitiveType::Vec3)
         );
         assert_eq!(

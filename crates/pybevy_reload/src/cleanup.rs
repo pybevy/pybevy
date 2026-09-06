@@ -7,6 +7,8 @@ use bevy::{
     time::{Time, Virtual},
     window::{Monitor, Window},
 };
+#[cfg(test)]
+use pybevy_core::PluginIdentity;
 
 use crate::{BaseEntitySet, Retained, runtime::ReloadRuntime};
 
@@ -176,7 +178,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> crate::runtime::DefsFingerprint {
             crate::runtime::DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> std::collections::HashSet<String> {
@@ -607,7 +609,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> crate::runtime::DefsFingerprint {
             crate::runtime::DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> std::collections::HashSet<String> {
@@ -853,7 +855,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> crate::runtime::DefsFingerprint {
             crate::runtime::DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> std::collections::HashSet<String> {

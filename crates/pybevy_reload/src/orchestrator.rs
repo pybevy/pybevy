@@ -7,6 +7,7 @@ use bevy::{
     prelude::Without,
     time::{Real, Time},
 };
+use pybevy_core::PluginIdentity;
 
 use crate::{
     BaseEntitySet, ReloadStartupScheduleOrder,
@@ -44,7 +45,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     let old_generation = hot_reload_state.current_generation();
 
-    // PHASE 1: VALIDATE — load definitions before committing.
+    // Validate first: load definitions before committing.
     let next_generation = old_generation + 1;
     emit_reload_progress(
         world,
@@ -90,7 +91,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         ReloadProgress::new(ReloadProgressPhase::DefinitionsReady, next_generation, mode),
     );
 
-    // PHASE 2: COMMIT — increment generation (point of no return).
+    // Commit: increment generation (point of no return).
     hot_reload_state.increment_generation();
     let new_generation = hot_reload_state.current_generation();
 
@@ -176,36 +177,45 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     let fingerprint = runtime.defs_fingerprint(&defs);
     let mut mode = mode;
     if mode == ReloadMode::Partial {
+        let recovery_required = world
+            .get_resource::<EscalationTracker>()
+            .is_some_and(|tracker| tracker.full_reload_required);
         let previous = world
             .get_resource::<EscalationTracker>()
-            .and_then(|t| t.last.clone());
-        let reason = match &previous {
-            Some(previous) => {
-                if fingerprint.component_layout_changed {
-                    Some("custom component layout changed")
-                } else if previous.startup_code != fingerprint.startup_code {
-                    Some("Startup systems changed")
-                } else if previous.resource_types != fingerprint.resource_types {
-                    Some("resource definitions changed")
-                } else if previous.observer_code != fingerprint.observer_code {
-                    Some("observers changed")
-                } else {
-                    None
+            .and_then(|tracker| tracker.last.clone());
+        let reason = if recovery_required {
+            Some("recovering from failed Full reload")
+        } else {
+            match &previous {
+                Some(previous) => {
+                    if fingerprint.component_layout_changed {
+                        Some("custom component layout changed")
+                    } else if previous.startup_code != fingerprint.startup_code {
+                        Some("Startup systems changed")
+                    } else if previous.resource_types != fingerprint.resource_types {
+                        Some("resource definitions changed")
+                    } else if previous.observer_code != fingerprint.observer_code {
+                        Some("observers changed")
+                    } else {
+                        None
+                    }
                 }
-            }
-            // No baseline yet: conservatively escalate if the scene defines
-            // anything only a Full reload applies.
-            None if fingerprint.component_layout_changed => Some("custom component layout changed"),
-            None => {
-                match (
-                    fingerprint.has_startup,
-                    fingerprint.has_resources,
-                    fingerprint.has_observers,
-                ) {
-                    (true, _, _) => Some("no fingerprint baseline, Startup systems present"),
-                    (false, true, _) => Some("no fingerprint baseline, resources present"),
-                    (false, false, true) => Some("no fingerprint baseline, observers present"),
-                    _ => None,
+                // No baseline yet: conservatively escalate if the scene defines
+                // anything only a Full reload applies.
+                None if fingerprint.component_layout_changed => {
+                    Some("custom component layout changed")
+                }
+                None => {
+                    match (
+                        fingerprint.has_startup,
+                        fingerprint.has_resources,
+                        fingerprint.has_observers,
+                    ) {
+                        (true, _, _) => Some("no fingerprint baseline, Startup systems present"),
+                        (false, true, _) => Some("no fingerprint baseline, resources present"),
+                        (false, false, true) => Some("no fingerprint baseline, observers present"),
+                        _ => None,
+                    }
                 }
             }
         };
@@ -235,52 +245,60 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     // Plugin delta detection
     {
         let plugin_names = runtime.plugin_names(&defs);
-        if !plugin_names.is_empty() {
-            let new_plugin_set: std::collections::HashSet<String> =
-                plugin_names.into_iter().collect();
+        let new_plugin_set: HashSet<PluginIdentity> = plugin_names.into_iter().collect();
 
-            let (added, removed) = {
-                if let Some(mut tracker) = world.get_resource_mut::<PluginTracker>() {
-                    if tracker.known_plugins.is_empty() {
-                        tracker.known_plugins = new_plugin_set;
-                        (Vec::new(), Vec::new())
-                    } else {
-                        let added: Vec<_> = new_plugin_set
-                            .difference(&tracker.known_plugins)
-                            .cloned()
-                            .collect();
-                        let removed: Vec<_> = tracker
-                            .known_plugins
-                            .difference(&new_plugin_set)
-                            .cloned()
-                            .collect();
-                        (added, removed)
-                    }
-                } else {
+        let (mut added, mut removed) = {
+            if let Some(mut tracker) = world.get_resource_mut::<PluginTracker>() {
+                if !tracker.baseline_initialized {
+                    tracker.known_plugins = new_plugin_set;
+                    tracker.baseline_initialized = true;
                     (Vec::new(), Vec::new())
+                } else {
+                    let added = new_plugin_set
+                        .difference(&tracker.known_plugins)
+                        .cloned()
+                        .collect();
+                    let removed = tracker
+                        .known_plugins
+                        .difference(&new_plugin_set)
+                        .cloned()
+                        .collect();
+                    (added, removed)
                 }
-            };
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        };
+        added.sort();
+        removed.sort();
 
-            if !added.is_empty() || !removed.is_empty() {
+        if !added.is_empty() || !removed.is_empty() {
+            let added: Vec<String> = added
+                .into_iter()
+                .map(|plugin| plugin.report_name())
+                .collect();
+            let removed: Vec<String> = removed
+                .into_iter()
+                .map(|plugin| plugin.report_name())
+                .collect();
+            if !added.is_empty() {
+                eprintln!(
+                    "⚠️ [Hot Reload] New plugins detected (restart may be required): {:?}",
+                    added
+                );
+            }
+            if !removed.is_empty() {
+                eprintln!(
+                    "⚠️ [Hot Reload] Plugins removed (restart required to take effect): {:?}",
+                    removed
+                );
+            }
+            if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
                 if !added.is_empty() {
-                    eprintln!(
-                        "⚠️ [Hot Reload] New plugins detected (restart may be required): {:?}",
-                        added
-                    );
+                    result.plugins_added = Some(added);
                 }
                 if !removed.is_empty() {
-                    eprintln!(
-                        "⚠️ [Hot Reload] Plugins removed (restart required to take effect): {:?}",
-                        removed
-                    );
-                }
-                if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
-                    if !added.is_empty() {
-                        result.plugins_added = Some(added);
-                    }
-                    if !removed.is_empty() {
-                        result.plugins_removed = Some(removed);
-                    }
+                    result.plugins_removed = Some(removed);
                 }
             }
         }
@@ -292,41 +310,48 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     );
 
     if let Err(e) = runtime.register_states(world, &defs, mode) {
-        fail_registration(world, hot_reload_state, old_generation, &e);
+        fail_registration(world, hot_reload_state, old_generation, mode, &e);
         return Err(e);
     }
 
     if mode == ReloadMode::Full {
         if let Err(e) = runtime.register_resources(world, &defs) {
-            fail_registration(world, hot_reload_state, old_generation, &e);
+            fail_registration(world, hot_reload_state, old_generation, mode, &e);
             return Err(e);
         }
     } else if let Err(e) = runtime.rebind_resources(world, &defs) {
-        fail_registration(world, hot_reload_state, old_generation, &e);
+        fail_registration(world, hot_reload_state, old_generation, mode, &e);
         return Err(e);
     }
 
     if let Err(e) = runtime.register_messages(world, &defs, new_generation) {
-        fail_registration(world, hot_reload_state, old_generation, &e);
+        fail_registration(world, hot_reload_state, old_generation, mode, &e);
         return Err(e);
     }
 
-    if mode == ReloadMode::Full {
-        if let Err(e) = runtime.register_observers(world, &defs) {
-            fail_registration(world, hot_reload_state, old_generation, &e);
-            return Err(e);
-        }
+    if mode == ReloadMode::Full
+        && let Err(e) = runtime.register_observers(world, &defs)
+    {
+        fail_registration(world, hot_reload_state, old_generation, mode, &e);
+        return Err(e);
     }
 
     // System delta detection
     {
         let new_system_names = runtime.system_names(&defs);
+        let no_reloadable_systems = new_system_names.is_empty();
         let removed = runtime.detect_system_delta(world, new_system_names);
         if !removed.is_empty() {
-            eprintln!(
-                "⚠️ [Hot Reload] Systems removed/renamed (stale schedule entries remain, use run_scene to clear): {:?}",
-                removed
-            );
+            if mode == ReloadMode::Partial && no_reloadable_systems {
+                eprintln!(
+                    "⚠️ [Hot Reload] Partial reload removed the last reloadable Python system; scene logic is now idle"
+                );
+            } else {
+                eprintln!(
+                    "⚠️ [Hot Reload] Systems removed/renamed (stale schedule entries remain, use run_scene to clear): {:?}",
+                    removed
+                );
+            }
             if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
                 result.systems_removed = Some(removed);
             }
@@ -338,7 +363,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     let system_handles = match runtime.register_systems(world, defs, new_generation) {
         Ok(handles) => handles,
         Err(e) => {
-            fail_registration(world, hot_reload_state, old_generation, &e);
+            fail_registration(world, hot_reload_state, old_generation, mode, &e);
             return Err(e);
         }
     };
@@ -458,6 +483,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
             runtime.clear_param_cache();
             runtime.retire_handles(&system_handles);
+            require_full_recovery(world);
 
             return Err(ReloadError {
                 message: error_msg,
@@ -551,6 +577,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
         runtime.clear_param_cache();
         runtime.retire_handles(&system_handles);
+        require_full_recovery(world);
 
         return Err(ReloadError {
             message: error_msg,
@@ -628,10 +655,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     // Update Time<Real>'s last-seen instant so the next frame's delta doesn't
     // include time spent performing the reload. Must be at the very end so the
     // delta between here and the next time_system call is minimal.
-    if mode == ReloadMode::Full {
-        if let Some(mut time_real) = world.get_resource_mut::<Time<Real>>() {
-            time_real.update_with_instant(Instant::now());
-        }
+    if mode == ReloadMode::Full
+        && let Some(mut time_real) = world.get_resource_mut::<Time<Real>>()
+    {
+        time_real.update_with_instant(Instant::now());
     }
 
     if is_verbose() {
@@ -649,9 +676,9 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     // pointing at definitions that never took effect, so the next Partial
     // reload with matching Startup/resource/observer fingerprints skipped
     // escalation and silently kept the old generation's state.
-    world
-        .get_resource_or_insert_with(EscalationTracker::default)
-        .last = Some(fingerprint);
+    let mut tracker = world.get_resource_or_insert_with(EscalationTracker::default);
+    tracker.last = Some(fingerprint);
+    tracker.full_reload_required = false;
 
     Ok(())
 }
@@ -663,6 +690,7 @@ fn fail_registration<S: HotReloadStateAccess>(
     world: &mut World,
     hot_reload_state: &S,
     old_generation: u32,
+    mode: ReloadMode,
     error: &ReloadError,
 ) {
     hot_reload_state.set_generation(old_generation);
@@ -673,6 +701,16 @@ fn fail_registration<S: HotReloadStateAccess>(
     result.failure_reason = Some(error.message.clone());
     result.failure_traceback = error.traceback.clone();
     result.running_previous_generation = true;
+
+    if mode == ReloadMode::Full {
+        require_full_recovery(world);
+    }
+}
+
+fn require_full_recovery(world: &mut World) {
+    world
+        .get_resource_or_insert_with(EscalationTracker::default)
+        .full_reload_required = true;
 }
 
 /// Trait abstracting the generation counter manipulation on the shared hot reload state.
@@ -735,7 +773,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
             DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> HashSet<String> {
@@ -857,7 +895,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
             self.fingerprint.clone()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> HashSet<String> {
@@ -1119,7 +1157,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
             self.0.clone()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> HashSet<String> {
@@ -1251,6 +1289,48 @@ mod tests {
             world.resource::<pybevy_core::ReloadResult>().escalated,
             "a Partial reload matching a previously-failed generation must escalate"
         );
+    }
+
+    /// A Full reload can clear the live scene before its Startup system fails.
+    /// Restoring the exact previous source still has to run Startup again even
+    /// though its fingerprint matches the last successful generation.
+    #[test]
+    fn failed_full_reload_forces_exact_baseline_recovery_to_full() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let good_fingerprint = DefsFingerprint {
+            startup_code: 41,
+            has_startup: true,
+            ..Default::default()
+        };
+
+        let mut good = FingerprintRuntime(good_fingerprint.clone());
+        assert!(perform_reload(&mut world, &mut good, ReloadMode::Full, &state).is_ok());
+
+        let mut failing = StartupErrorRuntime {
+            fingerprint: DefsFingerprint {
+                startup_code: 42,
+                has_startup: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut failing, ReloadMode::Full, &state).is_err());
+
+        let tracker = world.resource::<EscalationTracker>();
+        assert_eq!(tracker.last, Some(good_fingerprint.clone()));
+        assert!(tracker.full_reload_required);
+
+        let mut restored = FingerprintRuntime(good_fingerprint);
+        assert!(perform_reload(&mut world, &mut restored, ReloadMode::Partial, &state).is_ok());
+
+        let result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(result.escalated);
+        assert_eq!(
+            result.escalation_reason.as_deref(),
+            Some("recovering from failed Full reload")
+        );
+        assert!(!world.resource::<EscalationTracker>().full_reload_required);
     }
 
     #[test]
@@ -1411,7 +1491,7 @@ mod tests {
             fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
                 DefsFingerprint::default()
             }
-            fn plugin_names(&self, _defs: &()) -> Vec<String> {
+            fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
                 vec![]
             }
             fn system_names(&self, _defs: &()) -> HashSet<String> {
@@ -1524,12 +1604,12 @@ mod tests {
         let (mut world, gen_counter) = setup_world();
         let state = MockState::new(gen_counter);
 
-        // Step 1: successful reload (gen 0 -> 1)
+        // successful reload (gen 0 -> 1)
         let result = perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state);
         assert!(result.is_ok(), "first reload should succeed");
         assert_eq!(state.current_generation(), 1);
 
-        // Step 2: failing reload (gen 1 -> 2, rolled back to 1)
+        // failing reload (gen 1 -> 2, rolled back to 1)
         let result = perform_reload(
             &mut world,
             &mut StartupErrorRuntime::default(),
@@ -1539,7 +1619,7 @@ mod tests {
         assert!(result.is_err(), "second reload should fail");
         assert_eq!(state.current_generation(), 1);
 
-        // Step 3: successful reload (gen 1 -> 2 again) - must run Startup
+        // successful reload (gen 1 -> 2 again) - must run Startup
         let result = perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state);
         assert!(result.is_ok(), "third reload should succeed");
         assert_eq!(state.current_generation(), 2);
@@ -1563,7 +1643,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
             DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> HashSet<String> {
@@ -1640,7 +1720,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
             DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> HashSet<String> {
@@ -1800,7 +1880,7 @@ mod tests {
         fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
             DefsFingerprint::default()
         }
-        fn plugin_names(&self, _defs: &()) -> Vec<String> {
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
             vec![]
         }
         fn system_names(&self, _defs: &()) -> HashSet<String> {

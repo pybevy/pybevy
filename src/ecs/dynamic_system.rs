@@ -1,6 +1,6 @@
 use std::{
     any::TypeId,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -121,6 +121,54 @@ pub(crate) struct BufferedSystemError {
     pub(crate) traceback: Option<String>,
 }
 
+/// Per-system state for stderr error deduplication.
+///
+/// Callable resolution updates the generation before a system can fail. A
+/// successful invocation clears the remembered errors, allowing a later
+/// regression to be reported again.
+#[derive(Default)]
+pub(crate) struct SystemErrorReportState {
+    generation: u32,
+    reported_errors: HashSet<String>,
+}
+
+impl SystemErrorReportState {
+    pub(crate) fn set_generation(&mut self, generation: u32) {
+        if self.generation != generation {
+            self.generation = generation;
+            self.reported_errors.clear();
+        }
+    }
+
+    fn should_report(&mut self, error: &str) -> bool {
+        self.reported_errors.insert(error.to_owned())
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.reported_errors.clear();
+    }
+}
+
+pub(crate) type SystemErrorReport = Arc<Mutex<SystemErrorReportState>>;
+
+/// Emit one complete report per error text and hot-reload generation.
+pub(crate) fn print_reported_system_error_once(
+    error_report: &SystemErrorReport,
+    context: &str,
+    error: &str,
+    traceback: Option<&str>,
+) {
+    if !lock_or_recover(error_report).should_report(error) {
+        return;
+    }
+    let details = match traceback {
+        Some(traceback) if traceback.contains(error) => traceback.trim_end().to_owned(),
+        Some(traceback) => format!("{}\n{error}", traceback.trim_end()),
+        None => error.to_owned(),
+    };
+    eprintln!("❌ [PyBevy] {context} failed:\n{details}");
+}
+
 /// Shared slot holding the most recent buffered system error. Cloned into every
 /// DynamicSystem and into the `LastErrorBuffer` resource the drain system reads.
 pub(crate) type SystemErrorBuffer = Arc<Mutex<Option<BufferedSystemError>>>;
@@ -190,7 +238,7 @@ fn component_spec(
         SchedulerAccess::Shared
     };
     ComponentSpec {
-        key: comp_type.clone(),
+        key: *comp_type,
         label: name.clone(),
         name,
         mutable,
@@ -230,7 +278,7 @@ fn resource_uses_python_storage(resource_type: &Bound<'_, PyType>) -> bool {
 
 fn filter_spec(comp_type: &PyComponentType, py: Python<'_>) -> FilterSpec<MainKeys> {
     FilterSpec {
-        key: comp_type.clone(),
+        key: *comp_type,
         label: comp_type.display_name(py),
     }
 }

@@ -74,13 +74,19 @@ impl DurationFromFrequencyError {
     }
 }
 
-pub fn try_duration_from_hz(hz: f64) -> Result<Duration, DurationFromFrequencyError> {
-    if !hz.is_finite() {
+/// Validate that `frequency` is finite and strictly positive.
+pub fn try_finite_positive_frequency(frequency: f64) -> Result<f64, DurationFromFrequencyError> {
+    if !frequency.is_finite() {
         return Err(DurationFromFrequencyError::NonFinite);
     }
-    if hz <= 0.0 {
+    if frequency <= 0.0 {
         return Err(DurationFromFrequencyError::NonPositive);
     }
+    Ok(frequency)
+}
+
+pub fn try_duration_from_hz(hz: f64) -> Result<Duration, DurationFromFrequencyError> {
+    let hz = try_finite_positive_frequency(hz)?;
     try_positive_duration_from_secs_f64(1.0 / hz)
         .map_err(|_| DurationFromFrequencyError::OutOfRange)
 }
@@ -209,5 +215,26 @@ mod tests {
             Err(DurationFromFrequencyError::OutOfRange)
         );
         assert_eq!(try_duration_from_hz(2.0), Ok(Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn finite_positive_frequency_rejects_invalid_values() {
+        assert_eq!(
+            try_finite_positive_frequency(f64::NAN),
+            Err(DurationFromFrequencyError::NonFinite)
+        );
+        assert_eq!(
+            try_finite_positive_frequency(f64::INFINITY),
+            Err(DurationFromFrequencyError::NonFinite)
+        );
+        assert_eq!(
+            try_finite_positive_frequency(0.0),
+            Err(DurationFromFrequencyError::NonPositive)
+        );
+        assert_eq!(
+            try_finite_positive_frequency(-440.0),
+            Err(DurationFromFrequencyError::NonPositive)
+        );
+        assert_eq!(try_finite_positive_frequency(440.0), Ok(440.0));
     }
 }

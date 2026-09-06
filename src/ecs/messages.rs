@@ -90,7 +90,7 @@ impl MessageWorld {
 ///
 /// Provides read and write access to a specific message type's resource,
 /// used by `MessageReader` and `MessageWriter` system parameters.
-#[pyclass(name = "Messages", extends = PyResource, frozen)]
+#[pyclass(name = "Messages", module = "pybevy.ecs", extends = PyResource, frozen)]
 pub struct PyMessages {
     pub(crate) message_type: MessageType,
     pub(crate) world: MessageWorld,
@@ -360,7 +360,10 @@ impl PyMessages {
         if let MessageType::AssetEvent(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-            return Ok(bridge.clear_events(self.world.world_mut()?));
+            return {
+                let _: () = bridge.clear_events(self.world.world_mut()?);
+                Ok(())
+            };
         }
         if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
@@ -598,7 +601,13 @@ impl MessageType {
     }
 }
 
-#[pyclass(name = "MessageType", eq, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "MessageType",
+    module = "pybevy.ecs",
+    eq,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, PartialEq, Clone)]
 pub struct PyMessageType(pub(crate) MessageType);
 
@@ -679,7 +688,7 @@ impl PyMessageType {
     }
 }
 
-#[pyclass(name = "MessageTypeParam", frozen)]
+#[pyclass(name = "MessageTypeParam", module = "pybevy.ecs", frozen)]
 #[derive(Debug, PartialEq)]
 pub struct PyMessageTypeParam(pub(crate) PyMessageType);
 

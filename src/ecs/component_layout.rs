@@ -195,16 +195,6 @@ impl ComponentStorageTypeExt for ComponentStorageType {
 }
 
 /// Serialize a Python object to wrapper bytes according to the layout
-///
-/// # Arguments
-/// * `obj` - Python object to serialize
-/// * `layout` - Component layout describing field offsets and types
-///
-/// # Returns
-/// A Vec<u8> containing the serialized data
-///
-/// # Errors
-/// Returns PyErr if serialization fails (e.g., field not found, wrong type)
 pub fn serialize_to_wrapper(obj: &Bound<'_, PyAny>, layout: &ComponentLayout) -> PyResult<Vec<u8>> {
     layout
         .serialize_with(|field| {

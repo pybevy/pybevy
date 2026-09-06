@@ -14,12 +14,17 @@ use pyo3::{
 ///
 /// All asset types (Mesh, StandardMaterial, AudioSource, etc.) extend this class
 /// to provide a common interface and enable isinstance() checks.
-#[pyclass(name = "Asset", subclass, skip_from_py_object)]
+#[pyclass(
+    name = "Asset",
+    module = "pybevy.assets",
+    subclass,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyAsset;
 
 /// Base class for `@material` classes, so `Assets[T]` accepts them.
-#[pyclass(name = "Material", extends = PyAsset, subclass, skip_from_py_object)]
+#[pyclass(name = "Material", module = "pybevy.pbr", extends = PyAsset, subclass, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMaterial;
 
@@ -49,6 +54,6 @@ pub trait NativeAsset {
     /// moving the asset out of Python into Bevy's Assets<T> storage.
     ///
     /// # Errors
-    /// Returns error if asset was already consumed or is borrowed
+    /// Returns an error if the asset was already consumed or is borrowed.
     fn take(&mut self) -> PyResult<Self::Asset>;
 }

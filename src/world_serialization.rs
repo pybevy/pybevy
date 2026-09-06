@@ -29,6 +29,14 @@ fn _dynamic_world_from_world(py: Python<'_>, world: &PyWorld) -> PyResult<Py<PyD
         let message = CString::new(message).expect("NUL bytes were escaped");
         PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 2)?;
     }
+    if !extraction.skipped_reflected_types.is_empty() {
+        let message = extraction
+            .skipped_reflected_types
+            .warning_message()
+            .replace('\0', "\\0");
+        let message = CString::new(message).expect("NUL bytes were escaped");
+        PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 2)?;
+    }
     Py::new(py, PyDynamicWorld::from_owned(extraction.dynamic_world))
 }
 

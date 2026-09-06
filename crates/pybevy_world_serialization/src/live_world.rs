@@ -2,14 +2,19 @@
 
 use std::{collections::HashSet, error::Error, fmt};
 
-use bevy::{ecs::reflect::AppTypeRegistry, prelude::World, world_serialization::DynamicWorld};
+use bevy::{
+    ecs::reflect::AppTypeRegistry,
+    prelude::World,
+    reflect::{PartialReflect, TypeRegistry},
+    world_serialization::{DynamicWorld, serde::WorldMapSerializer, serialize_ron},
+};
 use pybevy_core::{
     component_layout::ComponentStorageType,
     custom_component::CustomComponentRegistry,
     custom_resource::CustomResourceRegistry,
     public_error::{
         WORLD_SERIALIZATION_TYPE_REGISTRY_MISSING, world_serialization_failed,
-        world_serialization_skipped_custom_types,
+        world_serialization_skipped_custom_types, world_serialization_skipped_reflected_types,
     },
 };
 
@@ -47,6 +52,23 @@ pub struct SkippedCustomTypes {
     pub resources: Vec<String>,
 }
 
+/// Reflected ECS roots omitted because some nested value is not serializable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SkippedReflectedTypes {
+    pub components: Vec<String>,
+    pub resources: Vec<String>,
+}
+
+impl SkippedReflectedTypes {
+    pub fn is_empty(&self) -> bool {
+        self.components.is_empty() && self.resources.is_empty()
+    }
+
+    pub fn warning_message(&self) -> String {
+        world_serialization_skipped_reflected_types(&self.components, &self.resources)
+    }
+}
+
 impl SkippedCustomTypes {
     pub fn is_empty(&self) -> bool {
         self.components.is_empty() && self.resources.is_empty()
@@ -61,6 +83,7 @@ impl SkippedCustomTypes {
 pub struct LiveWorldExtraction {
     pub dynamic_world: DynamicWorld,
     pub skipped_custom_types: SkippedCustomTypes,
+    pub skipped_reflected_types: SkippedReflectedTypes,
 }
 
 fn type_registry(world: &World) -> Result<AppTypeRegistry, LiveWorldSerializationError> {
@@ -94,6 +117,60 @@ fn serialize_with_registry(
     dynamic_world
         .serialize(&registry.read())
         .map_err(|error| LiveWorldSerializationError::Serialization(error.to_string()))
+}
+
+fn reflected_type_path(value: &dyn PartialReflect) -> String {
+    value
+        .get_represented_type_info()
+        .map(|type_info| type_info.type_path())
+        .unwrap_or_else(|| value.reflect_type_path())
+        .to_owned()
+}
+
+fn reflected_root_is_serializable(
+    value: &Box<dyn PartialReflect>,
+    registry: &TypeRegistry,
+) -> bool {
+    if value.get_represented_type_info().is_none() {
+        return false;
+    }
+    serialize_ron(WorldMapSerializer {
+        entries: std::slice::from_ref(value),
+        registry,
+    })
+    .is_ok()
+}
+
+fn filter_unserializable_reflected_roots(
+    dynamic_world: &mut DynamicWorld,
+    registry: &TypeRegistry,
+) -> SkippedReflectedTypes {
+    let mut skipped = SkippedReflectedTypes::default();
+    dynamic_world.resources.retain(|resource| {
+        let serializable = reflected_root_is_serializable(resource, registry);
+        if !serializable {
+            skipped
+                .resources
+                .push(reflected_type_path(resource.as_partial_reflect()));
+        }
+        serializable
+    });
+    for entity in &mut dynamic_world.entities {
+        entity.components.retain(|component| {
+            let serializable = reflected_root_is_serializable(component, registry);
+            if !serializable {
+                skipped
+                    .components
+                    .push(reflected_type_path(component.as_partial_reflect()));
+            }
+            serializable
+        });
+    }
+    skipped.components.sort();
+    skipped.components.dedup();
+    skipped.resources.sort();
+    skipped.resources.dedup();
+    skipped
 }
 
 fn skipped_custom_types(world: &World) -> SkippedCustomTypes {
@@ -142,9 +219,13 @@ pub fn extract_live_world(
     world: &World,
 ) -> Result<LiveWorldExtraction, LiveWorldSerializationError> {
     let registry = type_registry(world)?;
+    let mut dynamic_world = extract_with_registry(world, &registry)?;
+    let skipped_reflected_types =
+        filter_unserializable_reflected_roots(&mut dynamic_world, &registry.read());
     Ok(LiveWorldExtraction {
-        dynamic_world: extract_with_registry(world, &registry)?,
+        dynamic_world,
         skipped_custom_types: skipped_custom_types(world),
+        skipped_reflected_types,
     })
 }
 

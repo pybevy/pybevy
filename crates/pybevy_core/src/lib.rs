@@ -58,11 +58,13 @@ pub mod reflect_registration;
 pub mod registry;
 pub mod reload_request;
 pub mod resource;
+pub mod scene_module;
 pub mod source_location;
 
 // Storage layer, re-exported from pybevy_storage
 use std::any::TypeId;
 
+pub use added_plugins::PluginIdentity;
 use bevy::ecs::{
     component::{Component, ComponentId},
     entity::Entity,
@@ -83,6 +85,7 @@ use pyo3::{
     prelude::*,
     types::{PyList, PyType},
 };
+pub use scene_module::ActiveSceneModule;
 
 #[pyclass(name = "_FloatLiveList", skip_from_py_object)]
 #[derive(Clone)]
@@ -449,7 +452,8 @@ pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
 pub use duration::{
     duration_from_hz, duration_from_py, duration_from_secs_f64, positive_duration_from_secs_f64,
-    try_duration_from_hz, try_duration_from_secs_f64, try_positive_duration_from_secs_f64,
+    try_duration_from_hz, try_duration_from_secs_f64, try_finite_positive_frequency,
+    try_positive_duration_from_secs_f64,
 };
 pub use entity::PyEntity;
 pub use handle::{PyHandle, ensure_asset_type, extract_handle_from_any};
@@ -466,8 +470,8 @@ pub use pybevy_storage::{
     FieldStorage, FieldStorageInner, FieldType, FilteredEntityAccess, FromBorrowedStorage,
     PendingViewClaim, ReadViewClaim, ResourceStorage, ResourceStorageInner, StorageError,
     StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage,
-    ValueStorageInner, ViewBridge, ViewCounters, ViewFieldAccess, allocate_id, computed_owned,
-    consume_unstored_id, ensure_asset_access_registry,
+    ValueStorageInner, ViewBridge, ViewCounters, allocate_id, computed_owned, consume_unstored_id,
+    ensure_asset_access_registry,
 };
 pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
 pub use registry::{

@@ -346,7 +346,7 @@ fn get_type_id_registry() -> &'static RwLock<TypeIdRegistry> {
 ///
 /// This should be called by both:
 /// - Feature crate #[pycomponent(..., bridge)] attributes
-/// - Main crate native_component! macros
+/// - Main crate `#[pycomponent(...)]`, `#[pyresource(...)]`, and `#[pyasset(...)]` storage macros
 pub fn register_type_id<P: pyo3::PyTypeInfo, B: 'static>() {
     pyo3::Python::attach(|py| {
         let ptr = P::type_object(py).as_type_ptr();

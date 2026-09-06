@@ -1,12 +1,8 @@
-pub use pybevy_macros::{
-    PyComponent, native_asset, native_component, native_resource, pybevy_app, pyfield,
-};
+pub use pybevy_macros::{PyComponent, pybevy_app, pyfield};
 use pyo3::{prelude::*, types::IntoPyDict};
 
 pub mod prelude {
-    pub use pybevy_macros::{
-        PyComponent, native_asset, native_component, native_resource, pybevy_app, pyfield,
-    };
+    pub use pybevy_macros::{PyComponent, pybevy_app, pyfield};
 
     pub use crate::app::app::PyApp;
 }
@@ -60,6 +56,23 @@ fn _color_materialize(color: &pybevy_color::color::PyColor, py: Python<'_>) -> P
         pybevy_pbr::standard_material::PyStandardMaterial::from_owned(material),
     )?;
     Ok(py_material.into_any())
+}
+
+/// Attach PyBevy's diagnostic hints to an already-raised exception.
+///
+/// The system executor enriches automatically at its own error boundary; this
+/// is for the Python-level boundaries that run outside any system, such as
+/// `@entrypoint`.
+#[pyfunction]
+fn _enrich_exception(py: Python<'_>, exc: &Bound<'_, PyAny>) {
+    ecs::kwarg_hint::enrich_value(py, exc);
+}
+
+/// The suggestion text for an unexpected keyword, or None to stay silent.
+#[pyfunction]
+fn _keyword_hint(callable: &str, keyword: &str, valid: Vec<String>) -> Option<String> {
+    let borrowed: Vec<&str> = valid.iter().map(String::as_str).collect();
+    pybevy_core::public_error::unexpected_keyword_hint(callable, keyword, &borrowed)
 }
 
 /// Populates a PyModule with all pybevy submodules and classes.
@@ -158,6 +171,8 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let atexit = py.import("atexit")?;
     let cleanup_fn = wrap_pyfunction!(app::app::cleanup_apps_on_shutdown, m)?;
     atexit.call_method1("register", (cleanup_fn,))?;
+    m.add_function(wrap_pyfunction!(_enrich_exception, m)?)?;
+    m.add_function(wrap_pyfunction!(_keyword_hint, m)?)?;
 
     Ok(())
 }
