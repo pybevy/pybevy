@@ -9,8 +9,8 @@ use crate::{
     mouse_input::PyMouseInput,
 };
 
-#[pyresource(ButtonInput<KeyCode>, no_clone, bridge, "ButtonInput", no_mut, default_insert)]
-#[pyclass(name = "ButtonInput", extends = PyResource, frozen)]
+#[pyresource(ButtonInput<KeyCode>, no_clone, bridge, "ButtonInput", default_insert)]
+#[pyclass(name = "ButtonInput", module = "pybevy.input", extends = PyResource)]
 pub struct PyButtonInput {
     pub(crate) storage: ResourceStorage<ButtonInput<KeyCode>>,
 }
@@ -35,10 +35,10 @@ impl PyButtonInput {
             )
         })?;
 
-        if key_type.is(&PyKeyCode::type_object(py)) {
+        if key_type.is(PyKeyCode::type_object(py)) {
             return Ok(PyButtonInput::type_object(py).unbind());
         }
-        if key_type.is(&PyMouseButton::type_object(py)) {
+        if key_type.is(PyMouseButton::type_object(py)) {
             return Ok(PyMouseInput::type_object(py).unbind());
         }
 
@@ -124,6 +124,44 @@ impl PyButtonInput {
     pub fn all_just_released(&self, inputs: Vec<PyKeyCode>) -> PyResult<bool> {
         let bevy_keys: Vec<KeyCode> = inputs.iter().map(|k| k.to_bevy()).collect();
         Ok(self.as_ref()?.all_just_released(bevy_keys))
+    }
+
+    pub fn press(&mut self, input: PyKeyCode) -> PyResult<()> {
+        self.as_mut()?.press(input.to_bevy());
+        Ok(())
+    }
+
+    pub fn release(&mut self, input: PyKeyCode) -> PyResult<()> {
+        self.as_mut()?.release(input.to_bevy());
+        Ok(())
+    }
+
+    pub fn release_all(&mut self) -> PyResult<()> {
+        self.as_mut()?.release_all();
+        Ok(())
+    }
+
+    pub fn clear_just_pressed(&mut self, input: PyKeyCode) -> PyResult<bool> {
+        Ok(self.as_mut()?.clear_just_pressed(input.to_bevy()))
+    }
+
+    pub fn clear_just_released(&mut self, input: PyKeyCode) -> PyResult<bool> {
+        Ok(self.as_mut()?.clear_just_released(input.to_bevy()))
+    }
+
+    pub fn reset(&mut self, input: PyKeyCode) -> PyResult<()> {
+        self.as_mut()?.reset(input.to_bevy());
+        Ok(())
+    }
+
+    pub fn reset_all(&mut self) -> PyResult<()> {
+        self.as_mut()?.reset_all();
+        Ok(())
+    }
+
+    pub fn clear(&mut self) -> PyResult<()> {
+        self.as_mut()?.clear();
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

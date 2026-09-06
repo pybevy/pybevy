@@ -5,8 +5,8 @@ use pyo3::prelude::*;
 
 use crate::mouse_button::PyMouseButton;
 
-#[pyresource(ButtonInput<MouseButton>, no_clone, bridge, "MouseInput", no_mut, default_insert)]
-#[pyclass(name = "MouseInput", extends = PyResource, frozen)]
+#[pyresource(ButtonInput<MouseButton>, no_clone, bridge, "MouseInput", default_insert)]
+#[pyclass(name = "MouseInput", module = "pybevy.input", extends = PyResource)]
 pub struct PyMouseInput {
     pub(crate) storage: ResourceStorage<ButtonInput<MouseButton>>,
 }
@@ -79,6 +79,44 @@ impl PyMouseInput {
     pub fn all_just_released(&self, buttons: Vec<PyMouseButton>) -> PyResult<bool> {
         let bevy_buttons: Vec<MouseButton> = buttons.into_iter().map(|b| b.into()).collect();
         Ok(self.as_ref()?.all_just_released(bevy_buttons))
+    }
+
+    pub fn press(&mut self, button: PyMouseButton) -> PyResult<()> {
+        self.as_mut()?.press(button.into());
+        Ok(())
+    }
+
+    pub fn release(&mut self, button: PyMouseButton) -> PyResult<()> {
+        self.as_mut()?.release(button.into());
+        Ok(())
+    }
+
+    pub fn release_all(&mut self) -> PyResult<()> {
+        self.as_mut()?.release_all();
+        Ok(())
+    }
+
+    pub fn clear_just_pressed(&mut self, button: PyMouseButton) -> PyResult<bool> {
+        Ok(self.as_mut()?.clear_just_pressed(button.into()))
+    }
+
+    pub fn clear_just_released(&mut self, button: PyMouseButton) -> PyResult<bool> {
+        Ok(self.as_mut()?.clear_just_released(button.into()))
+    }
+
+    pub fn reset(&mut self, button: PyMouseButton) -> PyResult<()> {
+        self.as_mut()?.reset(button.into());
+        Ok(())
+    }
+
+    pub fn reset_all(&mut self) -> PyResult<()> {
+        self.as_mut()?.reset_all();
+        Ok(())
+    }
+
+    pub fn clear(&mut self) -> PyResult<()> {
+        self.as_mut()?.clear();
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

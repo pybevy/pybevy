@@ -1682,6 +1682,30 @@ class ButtonInput(Resource, Generic[ButtonT]):
             True if all keys in the list were just released
         """
 
+    def press(self, input: ButtonT) -> None:
+        """Mark the button as pressed for the current frame (input simulation)."""
+
+    def release(self, input: ButtonT) -> None:
+        """Mark the button as released for the current frame (input simulation)."""
+
+    def release_all(self) -> None:
+        """Release all currently pressed buttons."""
+
+    def clear_just_pressed(self, input: ButtonT) -> bool:
+        """Clear the just-pressed state for the button; returns whether it was set."""
+
+    def clear_just_released(self, input: ButtonT) -> bool:
+        """Clear the just-released state for the button; returns whether it was set."""
+
+    def reset(self, input: ButtonT) -> None:
+        """Clear the pressed, just-pressed, and just-released state for the button."""
+
+    def reset_all(self) -> None:
+        """Clear the pressed, just-pressed, and just-released state for all buttons."""
+
+    def clear(self) -> None:
+        """Clear the just-pressed and just-released state (simulates an elapsed time step)."""
+
 class MouseButton:
     """Mouse button codes for input detection."""
 
@@ -1836,6 +1860,31 @@ class MouseInput(Resource):
         """Returns true if all of the given buttons were just pressed."""
 
     def all_just_released(self, buttons: list[MouseButton]) -> bool:
+        """Returns true if all of the given buttons were just released."""
+
+    def press(self, button: MouseButton) -> None:
+        """Mark the button as pressed for the current frame (input simulation)."""
+
+    def release(self, button: MouseButton) -> None:
+        """Mark the button as released for the current frame (input simulation)."""
+
+    def release_all(self) -> None:
+        """Release all currently pressed buttons."""
+
+    def clear_just_pressed(self, button: MouseButton) -> bool:
+        """Clear the just-pressed state for the button; returns whether it was set."""
+
+    def clear_just_released(self, button: MouseButton) -> bool:
+        """Clear the just-released state for the button; returns whether it was set."""
+
+    def reset(self, button: MouseButton) -> None:
+        """Clear the pressed, just-pressed, and just-released state for the button."""
+
+    def reset_all(self) -> None:
+        """Clear the pressed, just-pressed, and just-released state for all buttons."""
+
+    def clear(self) -> None:
+        """Clear the just-pressed and just-released state (simulates an elapsed time step)."""
         """Returns true if all of the given buttons were just released."""
 
 class ButtonState:
