@@ -7,7 +7,7 @@
 mod shader_def_registry;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
     sync::{OnceLock, RwLock},
 };
@@ -16,7 +16,7 @@ use bevy::{
     asset::{Asset, AssetId, AssetLoadFailedEvent, AssetServer, Assets, Handle},
     ecs::{
         message::MessageReader,
-        system::{Res, ResMut},
+        system::{Local, Res, ResMut},
     },
     image::Image,
     math::Vec4,
@@ -39,6 +39,7 @@ use tracing::error;
 static SHADER_REGISTRY: OnceLock<RwLock<HashMap<u64, Handle<Shader>>>> = OnceLock::new();
 /// Retains generated shader modules so their assets remain available for imports.
 static BINDINGS_REGISTRY: OnceLock<RwLock<BindingsRegistry>> = OnceLock::new();
+const GENERATED_MATERIAL_IMPORT_PREFIX: &str = "pybevy::gen::";
 
 #[derive(Clone)]
 struct GeneratedBindingsShader {
@@ -166,6 +167,62 @@ fn stage_uses_shader(
             .and_then(|path| get_shader_handle(hash_shader_path(path)))
             .is_some_and(|handle| handle.id() == shader_id)
     })
+}
+
+fn expected_generated_material_import(bindings_wgsl: &str) -> Option<&str> {
+    bindings_wgsl.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("#define_import_path ")
+            .map(str::trim)
+            .filter(|path| path.starts_with(GENERATED_MATERIAL_IMPORT_PREFIX))
+    })
+}
+
+fn mismatched_generated_material_imports<'a>(
+    shader: &'a Shader,
+    expected: &'a str,
+) -> impl Iterator<Item = &'a str> + 'a {
+    shader
+        .imports
+        .iter()
+        .filter_map(move |import| match import {
+            ShaderImport::Custom(actual)
+                if actual.starts_with(GENERATED_MATERIAL_IMPORT_PREFIX) && actual != expected =>
+            {
+                Some(actual.as_str())
+            }
+            _ => None,
+        })
+}
+
+fn validate_material_shader_import(
+    stage: ShaderStage,
+    shader_path: &str,
+    expected: &str,
+    shaders: &Assets<Shader>,
+    reported_mismatches: &HashSet<String>,
+    current_mismatches: &mut HashSet<String>,
+) {
+    let Some(handle) = get_shader_handle(hash_shader_path(shader_path)) else {
+        return;
+    };
+    let Some(shader) = shaders.get(&handle) else {
+        return;
+    };
+
+    for actual in mismatched_generated_material_imports(shader, expected) {
+        let message = format!(
+            "Custom {} shader '{}' imports generated material '{}', but this material expects \
+             '{}'",
+            stage.label(),
+            shader_path,
+            actual,
+            expected
+        );
+        if current_mismatches.insert(message.clone()) && !reported_mismatches.contains(&message) {
+            error!("{message}");
+        }
+    }
 }
 
 // Shader params uniform buffer
@@ -347,6 +404,7 @@ pub fn sync_shader_handles(
     asset_server: Res<AssetServer>,
     mut shaders: ResMut<Assets<Shader>>,
     mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
+    mut reported_mismatches: Local<HashSet<String>>,
 ) {
     for failure in load_failures.read() {
         for stage in [ShaderStage::Fragment, ShaderStage::Vertex] {
@@ -361,12 +419,43 @@ pub fn sync_shader_handles(
         }
     }
 
+    let mut current_mismatches = HashSet::new();
     for (_, material) in materials.iter() {
         if let Some(path) = &material.extension.fragment_shader_path {
             sync_shader_path(path, &asset_server);
         }
         if let Some(path) = &material.extension.vertex_shader_path {
             sync_shader_path(path, &asset_server);
+        }
+
+        // Bevy retries a missing import without logging because an asset may
+        // still arrive later. A typo that names another generated material is
+        // already available, though, and can silently compile against the
+        // wrong binding layout. Check it against this material's own module.
+        if let Some(expected) = material
+            .extension
+            .bindings_wgsl
+            .as_deref()
+            .and_then(expected_generated_material_import)
+        {
+            for (stage, path) in [
+                (
+                    ShaderStage::Fragment,
+                    &material.extension.fragment_shader_path,
+                ),
+                (ShaderStage::Vertex, &material.extension.vertex_shader_path),
+            ] {
+                if let Some(path) = path {
+                    validate_material_shader_import(
+                        stage,
+                        path,
+                        expected,
+                        &shaders,
+                        &reported_mismatches,
+                        &mut current_mismatches,
+                    );
+                }
+            }
         }
         if let Some(type_id) = material.extension.logical_type_id
             && !material.extension.shader_def_names.is_empty()
@@ -387,4 +476,5 @@ pub fn sync_shader_handles(
             );
         }
     }
+    *reported_mismatches = current_mismatches;
 }
