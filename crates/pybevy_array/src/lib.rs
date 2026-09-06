@@ -14,6 +14,7 @@
 
 mod backing;
 mod broadcast;
+mod codec;
 mod core;
 mod dtype;
 mod error;
@@ -30,7 +31,8 @@ mod pyo3_adapter;
 pub use core::{AxisReduce, DenseArrayCore};
 
 pub use broadcast::{broadcast_shapes, broadcast_strides};
-pub use dtype::ArrayDType;
+pub use codec::{decode_read_only_le_bytes, encode_contiguous_le_bytes};
+pub use dtype::{ArrayDType, DlpackDType};
 pub use error::{ArrayError, ArrayResult};
 #[cfg(feature = "pyo3")]
 pub use pyo3_adapter::*;

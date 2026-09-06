@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use half::f16;
+
 use crate::{
     dtype::ArrayDType,
     error::{ArrayError, ArrayResult},
@@ -103,6 +105,9 @@ unsafe impl Sync for BorrowedMutU8Slice {}
 
 #[derive(Debug)]
 pub enum ArrayStorage {
+    /// IEEE 754 binary16 payloads. Bits are retained verbatim so codecs and
+    /// DLPack exchange preserve signed zero and NaN payloads.
+    Float16(Vec<u16>),
     Float32(Vec<f32>),
     Float64(Vec<f64>),
     Int64(Vec<i64>),
@@ -141,6 +146,7 @@ impl PartialEq for ArrayStorage {
     fn eq(&self, other: &Self) -> bool {
         use ArrayStorage::*;
         match (self, other) {
+            (Float16(a), Float16(b)) => a == b,
             (Float32(a), Float32(b)) => a == b,
             (Float64(a), Float64(b)) => a == b,
             (Int64(a), Int64(b)) => a == b,
@@ -197,6 +203,7 @@ impl PartialEq for ArrayStorage {
 impl ArrayStorage {
     pub fn dtype(&self) -> ArrayDType {
         match self {
+            ArrayStorage::Float16(_) => ArrayDType::Float16,
             ArrayStorage::Float32(_) => ArrayDType::Float32,
             ArrayStorage::Float64(_) => ArrayDType::Float64,
             ArrayStorage::Int64(_) => ArrayDType::Int64,
@@ -216,6 +223,7 @@ impl ArrayStorage {
 
     pub fn len(&self) -> usize {
         match self {
+            ArrayStorage::Float16(v) => v.len(),
             ArrayStorage::Float32(v) => v.len(),
             ArrayStorage::Float64(v) => v.len(),
             ArrayStorage::Int64(v) => v.len(),
@@ -239,6 +247,7 @@ impl ArrayStorage {
     /// on the current thread and must finish using the returned slice before any
     /// Python re-entry, world mutation, or other operation that could invalidate
     /// the borrow. This is the same check-and-use window required by [`Self::get`].
+    #[cfg(feature = "numeric")]
     pub(crate) unsafe fn as_f32_contiguous_unchecked(&self) -> Option<&[f32]> {
         match self {
             ArrayStorage::Float32(values) => Some(values),
@@ -255,6 +264,29 @@ impl ArrayStorage {
         }
     }
 
+    /// Return the contiguous `u8` backing slice for owned `Uint8` or either
+    /// borrowed `u8` storage variant.
+    ///
+    /// # Safety
+    /// For borrowed storage, the caller must hold a successful read claim for
+    /// the whole use of the returned slice and must not re-enter Python.
+    #[cfg(feature = "pyo3")]
+    pub(crate) unsafe fn as_u8_contiguous_unchecked(&self) -> Option<&[u8]> {
+        match self {
+            ArrayStorage::Uint8(values) => Some(values),
+            ArrayStorage::BorrowedU8 { slice, .. } => {
+                // SAFETY: the caller upholds the probe-validity contract above.
+                Some(unsafe { std::slice::from_raw_parts(slice.ptr, slice.len) })
+            }
+            ArrayStorage::BorrowedMutU8 { slice, .. } => {
+                // SAFETY: the caller holds the read claim and the exclusive
+                // lease prevents a concurrent mutable alias.
+                Some(unsafe { std::slice::from_raw_parts(slice.ptr.cast_const(), slice.len) })
+            }
+            _ => None,
+        }
+    }
+
     /// Return the base pointer for writable, byte-addressable contiguous
     /// storage. Bit-packed boolean storage and read-only borrows have no such
     /// pointer.
@@ -262,8 +294,10 @@ impl ArrayStorage {
     /// The caller must retain a backing write guard and use the pointer only
     /// for a synchronous operation that cannot re-enter Python or otherwise
     /// invalidate a borrow.
+    #[cfg(feature = "pyo3")]
     pub(crate) fn as_mut_contiguous_ptr(&mut self) -> Option<*mut u8> {
         match self {
+            ArrayStorage::Float16(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Float32(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Float64(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Int64(values) => Some(values.as_mut_ptr().cast()),
@@ -396,6 +430,11 @@ impl ArrayStorage {
     /// Allocate `len` elements of `dtype`, each set to `value` (cast to dtype).
     pub fn filled(dtype: ArrayDType, len: usize, value: Scalar) -> ArrayResult<Self> {
         Ok(match dtype {
+            ArrayDType::Float16 => ArrayStorage::Float16(try_filled_vec(
+                dtype,
+                len,
+                f16::from_f64(value.to_f64()).to_bits(),
+            )?),
             ArrayDType::Float32 => {
                 ArrayStorage::Float32(try_filled_vec(dtype, len, value.to_f64() as f32)?)
             }
@@ -432,6 +471,7 @@ impl ArrayStorage {
     /// [`crate::shape::Layout`], which bounds every offset to storage length.
     pub fn get(&self, flat: usize) -> Scalar {
         match self {
+            ArrayStorage::Float16(v) => Scalar::F64(f64::from(f16::from_bits(v[flat]).to_f32())),
             ArrayStorage::Float32(v) => Scalar::F64(f64::from(v[flat])),
             ArrayStorage::Float64(v) => Scalar::F64(v[flat]),
             ArrayStorage::Int64(v) => Scalar::I64(v[flat]),
@@ -470,9 +510,89 @@ impl ArrayStorage {
         }
     }
 
+    /// Append elements selected by validated flat offsets in little-endian
+    /// byte order. The caller must hold a backing read guard for the whole
+    /// operation; borrowed variants are dereferenced only within that guard.
+    pub(crate) fn append_le_bytes(
+        &self,
+        offsets: impl IntoIterator<Item = usize>,
+        output: &mut Vec<u8>,
+    ) {
+        macro_rules! append_numeric {
+            ($values:expr) => {
+                for offset in offsets {
+                    output.extend_from_slice(&$values[offset].to_le_bytes());
+                }
+            };
+        }
+
+        match self {
+            ArrayStorage::Float16(values) => append_numeric!(values),
+            ArrayStorage::Float32(values) => append_numeric!(values),
+            ArrayStorage::Float64(values) => append_numeric!(values),
+            ArrayStorage::Int64(values) => append_numeric!(values),
+            ArrayStorage::Int32(values) => append_numeric!(values),
+            ArrayStorage::Uint32(values) => append_numeric!(values),
+            ArrayStorage::Uint16(values) => append_numeric!(values),
+            ArrayStorage::Uint8(values) => {
+                output.extend(offsets.into_iter().map(|offset| values[offset]));
+            }
+            ArrayStorage::Bool(values) => {
+                output.extend(offsets.into_iter().map(|offset| u8::from(values[offset])));
+            }
+            ArrayStorage::BorrowedF32 { slice, .. } => {
+                for offset in offsets {
+                    assert!(
+                        offset < slice.len,
+                        "validated array offset is out of bounds"
+                    );
+                    // SAFETY: the caller holds the read guard whose probe check
+                    // covers this operation, and the validated offset is in bounds.
+                    let value = unsafe { *slice.ptr.add(offset) };
+                    output.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            ArrayStorage::BorrowedMutF32 { slice, .. } => {
+                for offset in offsets {
+                    assert!(
+                        offset < slice.len,
+                        "validated array offset is out of bounds"
+                    );
+                    // SAFETY: as above; the mutable borrow's exclusive lease
+                    // also prevents another alias from changing the referent.
+                    let value = unsafe { *slice.ptr.add(offset) };
+                    output.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            ArrayStorage::BorrowedU8 { slice, .. } => {
+                for offset in offsets {
+                    assert!(
+                        offset < slice.len,
+                        "validated array offset is out of bounds"
+                    );
+                    // SAFETY: the read guard checked the probe and the offset.
+                    output.push(unsafe { *slice.ptr.add(offset) });
+                }
+            }
+            ArrayStorage::BorrowedMutU8 { slice, .. } => {
+                for offset in offsets {
+                    assert!(
+                        offset < slice.len,
+                        "validated array offset is out of bounds"
+                    );
+                    // SAFETY: the read guard and exclusive lease cover this access.
+                    output.push(unsafe { *slice.ptr.add(offset) });
+                }
+            }
+        }
+    }
+
     /// Write `value` (cast to this storage's dtype) at `flat`.
     pub fn set(&mut self, flat: usize, value: Scalar) {
         match self {
+            ArrayStorage::Float16(v) => {
+                v[flat] = f16::from_f64(value.to_f64()).to_bits();
+            }
             ArrayStorage::Float32(v) => v[flat] = value.to_f64() as f32,
             ArrayStorage::Float64(v) => v[flat] = value.to_f64(),
             ArrayStorage::Int64(v) => v[flat] = value.to_i64_trunc(),
@@ -502,6 +622,22 @@ impl ArrayStorage {
                 // the probe, and the asset write lease makes this unique.
                 unsafe { *slice.ptr.add(flat) = value.to_i64_trunc() as u8 };
             }
+        }
+    }
+
+    /// Return an owned float16 element's raw IEEE 754 payload.
+    pub(crate) fn float16_bits(&self, flat: usize) -> Option<u16> {
+        match self {
+            ArrayStorage::Float16(values) => Some(values[flat]),
+            _ => None,
+        }
+    }
+
+    /// Replace an owned float16 element without decoding its payload.
+    pub(crate) fn set_float16_bits(&mut self, flat: usize, bits: u16) {
+        match self {
+            ArrayStorage::Float16(values) => values[flat] = bits,
+            _ => unreachable!("float16 bits require float16 storage"),
         }
     }
 }

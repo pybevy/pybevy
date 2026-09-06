@@ -11,7 +11,7 @@ use pyo3::{
     basic::CompareOp,
     exceptions::{PyAttributeError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyList, PySlice, PyTuple},
+    types::{PyCapsule, PyList, PySlice, PyTuple},
 };
 
 use super::{
@@ -329,6 +329,29 @@ fn require_default_reduction_options(
 
 #[pymethods]
 impl PyArray {
+    fn __dlpack_device__(&self) -> (i32, i32) {
+        (1, 0)
+    }
+
+    #[pyo3(signature = (*, stream=None, max_version=None, dl_device=None, copy=None))]
+    fn __dlpack__<'py>(
+        &self,
+        py: Python<'py>,
+        stream: Option<Bound<'_, PyAny>>,
+        max_version: Option<(u32, u32)>,
+        dl_device: Option<(i32, i32)>,
+        copy: Option<bool>,
+    ) -> PyResult<Bound<'py, PyCapsule>> {
+        super::dlpack::export(
+            &self.core,
+            py,
+            stream.as_ref(),
+            max_version,
+            dl_device,
+            copy,
+        )
+    }
+
     #[getter]
     fn shape<'py>(&self, py: Python<'py>) -> Bound<'py, PyTuple> {
         PyTuple::new(py, self.core.shape().iter().copied()).expect("usize tuple")
@@ -448,6 +471,9 @@ impl PyArray {
         ArrayLens::new(slf.py(), slf)
     }
 
+    // The seven Python arguments mirror NumPy's reduction protocol; `py` is
+    // the additional interpreter token required by the PyO3 adapter.
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (axis=None, dtype=None, out=None, keepdims=false, initial=None, r#where=None))]
     fn sum(
         &self,

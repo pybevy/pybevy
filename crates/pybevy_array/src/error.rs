@@ -12,6 +12,12 @@ pub enum ArrayError {
         shape_elements: usize,
         storage_len: usize,
     },
+    /// Encoded bytes do not equal the dtype width times the shape product.
+    ByteLengthMismatch {
+        dtype: ArrayDType,
+        expected: usize,
+        actual: usize,
+    },
     /// An integer index was out of range for its axis.
     IndexOutOfBounds {
         axis: usize,
@@ -67,6 +73,15 @@ impl fmt::Display for ArrayError {
             } => write!(
                 f,
                 "storage length {storage_len} does not match shape element count {shape_elements}"
+            ),
+            ArrayError::ByteLengthMismatch {
+                dtype,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "byte length {actual} does not match expected {expected} for dtype {}",
+                dtype.name()
             ),
             ArrayError::IndexOutOfBounds { axis, index, size } => write!(
                 f,
