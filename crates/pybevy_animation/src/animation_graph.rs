@@ -9,7 +9,7 @@ use pybevy_core::{
 use pybevy_macros::pyasset;
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyList, PyTuple},
 };
@@ -17,7 +17,7 @@ use pyo3::{
 use crate::animation_node_index::PyAnimationNodeIndex;
 
 #[pyasset(AnimationGraph, bridge)]
-#[pyclass(name = "AnimationGraph", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "AnimationGraph", module = "pybevy.animation", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyAnimationGraph {
     pub(crate) storage: AssetStorage<AnimationGraph>,
@@ -36,9 +36,7 @@ impl PyAnimationGraph {
         py: Python<'py>,
     ) -> PyResult<Bound<'py, PyTuple>> {
         if clip.is_none() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "clip cannot be None",
-            ));
+            return Err(PyTypeError::new_err("clip cannot be None"));
         }
         let handle = extract_handle_from_any(clip)?;
         let (graph, animation_node_index) = AnimationGraph::from_clip((&handle).try_into()?);
@@ -102,9 +100,7 @@ impl PyAnimationGraph {
         parent: &PyAnimationNodeIndex,
     ) -> PyResult<PyAnimationNodeIndex> {
         if clip.is_none() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "clip cannot be None",
-            ));
+            return Err(PyTypeError::new_err("clip cannot be None"));
         }
         let handle = extract_handle_from_any(clip)?;
         let handle = (&handle).try_into()?;
@@ -168,7 +164,12 @@ fn validate_weight(weight: f32) -> PyResult<f32> {
     }
 }
 
-#[pyclass(name = "AnimationNodeType", eq, skip_from_py_object)]
+#[pyclass(
+    name = "AnimationNodeType",
+    module = "pybevy.animation",
+    eq,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyAnimationNodeType {
     Clip { handle: PyHandle },
@@ -201,7 +202,11 @@ impl PyAnimationNodeType {
     }
 }
 
-#[pyclass(name = "AnimationGraphNode", skip_from_py_object)]
+#[pyclass(
+    name = "AnimationGraphNode",
+    module = "pybevy.animation",
+    skip_from_py_object
+)]
 pub struct PyAnimationGraphNode {
     graph: Py<PyAnimationGraph>,
     index: AnimationNodeIndex,
