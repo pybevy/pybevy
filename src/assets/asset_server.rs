@@ -1,20 +1,26 @@
 use std::any::TypeId;
 
 use bevy::{
-    asset::{AssetPath, AssetServer},
+    asset::{
+        AssetPath, AssetServer,
+        saver::{SaveAssetError, SavedAsset, save_using_saver},
+    },
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
     gltf::{Gltf, GltfLoaderSettings},
-    image::Image,
+    image::{Image, ImageSaver, ImageSaverSettings, SaveImageError},
 };
 use pybevy_core::{
     extract_asset_id_from_any, handle::PyHandle, public_error::invalid_asset_type,
     registry::global_registry,
 };
 use pybevy_gltf::loader_settings::PyGltfLoaderSettings;
-use pybevy_image::loader_settings::PyImageLoaderSettings;
+use pybevy_image::{
+    image::PyImage, image_saver_settings::PyImageSaverSettings,
+    loader_settings::PyImageLoaderSettings,
+};
 use pyo3::{
     IntoPyObjectExt,
-    exceptions::{PyRuntimeError, PyTypeError},
+    exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyString, PyType},
 };
@@ -40,7 +46,7 @@ fn extract_asset_path(path: &Bound<'_, PyAny>) -> PyResult<AssetPath<'static>> {
 }
 
 /// Python wrapper for Bevy's AssetServer
-#[pyclass(name = "AssetServer", extends = PyResource)]
+#[pyclass(name = "AssetServer", module = "pybevy.assets", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyAssetServer {
     /// World cell (lifetime-erased), valid only while `validity` is active. Only
@@ -247,6 +253,52 @@ impl PyAssetServer {
                 Ok(Some(py_handle.into_py_any(py)?))
             }
             None => Ok(None),
+        }
+    }
+
+    #[pyo3(signature = (image, path, settings = None))]
+    pub fn save_image(
+        &self,
+        py: Python,
+        image: &PyImage,
+        path: &Bound<'_, PyAny>,
+        settings: Option<&PyImageSaverSettings>,
+    ) -> PyResult<()> {
+        let asset_server = self.asset_server()?;
+        let asset_path = extract_asset_path(path)?;
+        let image = image.storage.as_ref()?.clone();
+        let settings: ImageSaverSettings = settings
+            .map(|s| ImageSaverSettings::from(s.clone()))
+            .unwrap_or_default();
+
+        // Save path is pure file IO, never touches the World: blocking cannot deadlock
+        let result = py.detach(|| {
+            bevy::platform::future::block_on(save_using_saver(
+                asset_server.clone(),
+                &ImageSaver,
+                &asset_path,
+                SavedAsset::from_asset(&image),
+                &settings,
+            ))
+        });
+        result.map_err(save_asset_error_to_py)?;
+        Ok(())
+    }
+}
+
+fn save_asset_error_to_py(error: SaveAssetError) -> PyErr {
+    match &error {
+        SaveAssetError::MissingSource(_) | SaveAssetError::MissingWriter(_) => {
+            PyRuntimeError::new_err(error.to_string())
+        }
+        SaveAssetError::WriterError(_) => PyOSError::new_err(error.to_string()),
+        SaveAssetError::SaverError(bevy_error) => {
+            match bevy_error.downcast_ref::<SaveImageError>() {
+                Some(SaveImageError::IoError(_) | SaveImageError::ImageError(_)) => {
+                    PyOSError::new_err(error.to_string())
+                }
+                _ => PyValueError::new_err(error.to_string()),
+            }
         }
     }
 }

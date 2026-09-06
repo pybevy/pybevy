@@ -6,7 +6,7 @@ from pybevy.audio import AudioSource
 from pybevy.color import Color
 from pybevy.ecs import Message, Resource, SystemSet
 from pybevy.gltf import GltfLoaderSettings
-from pybevy.image import Image, ImageLoaderSettings
+from pybevy.image import Image, ImageLoaderSettings, ImageSaverSettings
 from pybevy.mesh import Mesh, Meshable, MeshBuilder
 from pybevy.pbr import StandardMaterial
 from pybevy.sprite import ColorMaterial
@@ -213,6 +213,22 @@ class AssetServer(Resource):
 
         Equivalent to `load_with_settings(path, Image, settings)`.
         """
+    def save_image(
+        self,
+        image: Image,
+        path: str | AssetPath,
+        settings: ImageSaverSettings | None = None,
+    ) -> None:
+        """Save an image to a file, blocking until the write completes.
+
+        Absolute paths are written as-is; relative paths resolve against the
+        default asset source root. PNG is the supported format.
+
+        Raises:
+            ValueError: Unsupported format/extension or the image has no pixel data.
+            OSError: File write failure.
+            RuntimeError: No asset source or writer is registered.
+        """
     def load_mesh(self, path: str | AssetPath) -> Handle[Mesh]: ...
     def load_audio(self, path: str | AssetPath) -> Handle[AudioSource]: ...
     def load_folder(self, path: str | AssetPath) -> Handle[LoadedFolder]:
@@ -272,12 +288,23 @@ class AssetServer(Resource):
 
         Example:
             ```python
-            def check_loading(
+            from dataclasses import dataclass
+
+            from pybevy.assets import AssetServer, Handle
+            from pybevy.decorators import resource
+            from pybevy.ecs import Res, Resource
+            from pybevy.world_serialization import WorldAsset
+
+            @resource
+            @dataclass
+            class WorldHandle(Resource):
+                value: Handle[WorldAsset]
+
+            def is_world_ready(
                 asset_server: Res[AssetServer],
-                scene_handle: Res[SceneHandle]
-            ):
-                if asset_server.is_loaded_with_dependencies(scene_handle.0):
-                    print("Scene fully loaded!")
+                world_handle: Res[WorldHandle],
+            ) -> bool:
+                return asset_server.is_loaded_with_dependencies(world_handle.value)
             ```
         """
 
@@ -396,6 +423,17 @@ class AssetEvent(Message, Generic[A_co]):
     Each Bevy variant is represented by an exact nested class carrying its
     ``AssetId[A]``.
     """
+
+    def is_loaded_with_dependencies(self, asset_id: AssetId[A_co] | Handle[A_co]) -> bool:
+        """True if this event is LoadedWithDependencies and matches the id."""
+    def is_added(self, asset_id: AssetId[A_co] | Handle[A_co]) -> bool:
+        """True if this event is Added and matches the id."""
+    def is_modified(self, asset_id: AssetId[A_co] | Handle[A_co]) -> bool:
+        """True if this event is Modified and matches the id."""
+    def is_removed(self, asset_id: AssetId[A_co] | Handle[A_co]) -> bool:
+        """True if this event is Removed and matches the id."""
+    def is_unused(self, asset_id: AssetId[A_co] | Handle[A_co]) -> bool:
+        """True if this event is Unused and matches the id."""
 
     class Added(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["id"]]]

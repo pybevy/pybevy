@@ -2,7 +2,7 @@ use bevy::{
     asset::{Asset, AssetEvent},
     image::Image,
 };
-use pybevy_core::{AssetEventRecord, MaterializedPyAssetId, PyAssetId};
+use pybevy_core::{AssetEventRecord, MaterializedPyAssetId, PyAssetId, extract_asset_id_from_any};
 use pybevy_macros::pyenum;
 use pyo3::{prelude::*, types::PyType};
 
@@ -94,6 +94,31 @@ pub enum PyAssetEvent {
 
 #[pymethods]
 impl PyAssetEvent {
+    pub fn is_added(&self, asset_id: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let id = extract_asset_id_from_any(asset_id)?;
+        Ok(self.inner == AssetEventValue::Added { id })
+    }
+
+    pub fn is_modified(&self, asset_id: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let id = extract_asset_id_from_any(asset_id)?;
+        Ok(self.inner == AssetEventValue::Modified { id })
+    }
+
+    pub fn is_removed(&self, asset_id: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let id = extract_asset_id_from_any(asset_id)?;
+        Ok(self.inner == AssetEventValue::Removed { id })
+    }
+
+    pub fn is_unused(&self, asset_id: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let id = extract_asset_id_from_any(asset_id)?;
+        Ok(self.inner == AssetEventValue::Unused { id })
+    }
+
+    pub fn is_loaded_with_dependencies(&self, asset_id: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let id = extract_asset_id_from_any(asset_id)?;
+        Ok(self.inner == AssetEventValue::LoadedWithDependencies { id })
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(
