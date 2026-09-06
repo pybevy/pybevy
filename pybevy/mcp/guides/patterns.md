@@ -79,6 +79,11 @@ if __name__ == "__main__":
       def build(self, app: App) -> None:
           app.add_systems(Update, my_system)
   ```
+- A plugin class is normally installed once. If one class intentionally supports
+  multiple instances, define an optional `__pybevy_plugin_key__` property that
+  returns a stable string. PyBevy then identifies each instance by
+  `(module.qualname, instance_key)`. Reusing a key raises `RuntimeError`, and a
+  present hook that does not return `str` raises `TypeError` from `add_plugins()`.
 - Custom `Plugin.build()` works with hot reload - systems and resources registered inside build() are re-captured on reload
 
 **WASM App rule:** one browser runtime may own one graphical `DefaultPlugins`/winit App. Additional

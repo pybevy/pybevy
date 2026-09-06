@@ -158,6 +158,10 @@ commands.spawn(
 Without `Hdr`, only global exposure and post-saturation are applied; hue,
 temperature, tint, and the shadow/midtone/highlight controls are ignored.
 
+`ColorGradingGlobal.temperature` and `tint` shift the white point along the
+CIE 1931 chromaticity x and y axes: positive `temperature` renders redder,
+positive `tint` more magenta. Useful values sit within roughly -0.1 to 0.1.
+
 ### Vignette and Lens Distortion
 
 Use these camera components for lens-style framing and warping. Explicit subtle
