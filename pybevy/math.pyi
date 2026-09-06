@@ -412,7 +412,7 @@ class Vec2:
     def cmpgt(self, rhs: Vec2) -> tuple[bool, bool]: ...
     def cmple(self, rhs: Vec2) -> tuple[bool, bool]: ...
     def cmplt(self, rhs: Vec2) -> tuple[bool, bool]: ...
-    def angle_between(self, other: Vec2) -> float: ...
+    def angle_to(self, other: Vec2) -> float: ...
     def to_angle(self) -> float: ...
     def xx(self) -> Vec2: ...
     def xy(self) -> Vec2: ...
@@ -728,6 +728,12 @@ class URect:
     def height(self) -> int:
         """Get the height of the rectangle."""
 
+    def inflate(self, expansion: int) -> URect:
+        """Expand the rectangle by `expansion` units on every side.
+
+        Negative values shrink it.
+        """
+
     def contains(self, point: UVec2) -> bool:
         """Check if a point is inside the rectangle."""
 
@@ -745,6 +751,140 @@ class URect:
 
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+class IRect:
+    """A rectangle defined by minimum and maximum corner points (signed integers)."""
+
+    min: IVec2
+    max: IVec2
+
+    EMPTY: ClassVar[IRect]
+
+    def __init__(self, x0: int, y0: int, x1: int, y1: int) -> None:
+        """Create an IRect from corner coordinates.
+
+        Args:
+            x0: X coordinate of the first corner.
+            y0: Y coordinate of the first corner.
+            x1: X coordinate of the second corner.
+            y1: Y coordinate of the second corner.
+        """
+
+    @staticmethod
+    def from_corners(p0: IVec2, p1: IVec2) -> IRect:
+        """Create an IRect from two corner points."""
+
+    @staticmethod
+    def from_center_size(origin: IVec2, size: IVec2) -> IRect:
+        """Create an IRect from center point and size."""
+
+    @staticmethod
+    def from_center_half_size(origin: IVec2, half_size: IVec2) -> IRect:
+        """Create an IRect from center point and half size."""
+
+    def center(self) -> IVec2:
+        """Get the center point of the rectangle."""
+
+    def size(self) -> IVec2:
+        """Get the size of the rectangle."""
+
+    def half_size(self) -> IVec2:
+        """Get half the size of the rectangle."""
+
+    def width(self) -> int:
+        """Get the width of the rectangle."""
+
+    def height(self) -> int:
+        """Get the height of the rectangle."""
+
+    def inflate(self, expansion: int) -> IRect:
+        """Expand the rectangle by `expansion` units on every side.
+
+        Negative values shrink it.
+        """
+
+    def contains(self, point: IVec2) -> bool:
+        """Check if a point is inside the rectangle."""
+
+    def is_empty(self) -> bool:
+        """Check if the rectangle has zero area."""
+
+    def intersect(self, other: IRect) -> IRect:
+        """Get the intersection of this rectangle with another."""
+
+    def union(self, other: IRect) -> IRect:
+        """Get the union of this rectangle with another."""
+
+    def union_point(self, point: IVec2) -> IRect:
+        """Expand this rectangle to include a point."""
+
+    def as_rect(self) -> Rect:
+        """Convert this rectangle to a float `Rect`."""
+
+    def as_urect(self) -> URect:
+        """Convert this rectangle to a `URect`."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+
+class Interval:
+    """A nonempty closed interval, possibly unbounded in either direction."""
+
+    @property
+    def start(self) -> float:
+        """The start endpoint."""
+
+    @property
+    def end(self) -> float:
+        """The end endpoint."""
+
+    UNIT: ClassVar[Interval]
+    EVERYWHERE: ClassVar[Interval]
+
+    def __init__(self, start: float, end: float) -> None:
+        """Create an interval with the given start and end.
+
+        Raises:
+            ValueError: if the interval would be empty or have a NaN endpoint.
+        """
+
+    def intersect(self, other: Interval) -> Interval:
+        """Get the intersection of this interval with another.
+
+        Raises:
+            ValueError: if the resulting interval would be empty.
+        """
+
+    def length(self) -> float:
+        """Get the length of the interval."""
+
+    def is_bounded(self) -> bool:
+        """Check if both endpoints are finite."""
+
+    def has_finite_start(self) -> bool:
+        """Check if the start endpoint is finite."""
+
+    def has_finite_end(self) -> bool:
+        """Check if the end endpoint is finite."""
+
+    def contains(self, item: float) -> bool:
+        """Check if a value is inside the interval."""
+
+    def contains_interval(self, other: Interval) -> bool:
+        """Check if another interval is fully contained in this one."""
+
+    def clamp(self, value: float) -> float:
+        """Clamp a value to the interval."""
+
+    def spaced_points(self, max_spacing: int) -> list[float]:
+        """Get evenly spaced points within the interval."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+    def __lt__(self, other: object) -> bool: ...
+    def __le__(self, other: object) -> bool: ...
+    def __gt__(self, other: object) -> bool: ...
+    def __ge__(self, other: object) -> bool: ...
 
 class Circle(Meshable):
     def __init__(self, radius: float = 0.5) -> None: ...
@@ -810,6 +950,7 @@ class Quat:
     def from_rotation_arc(start: Vec3, end: Vec3) -> Quat: ...
     def length(self) -> float: ...
     def length_squared(self) -> float: ...
+    def dot(self, rhs: Quat) -> float: ...
     def normalize(self) -> Quat: ...
     def conjugate(self) -> Quat: ...
     def inverse(self) -> Quat: ...
@@ -845,6 +986,8 @@ class Quat:
     def __mul__(self, other: Quat) -> Quat: ...
     @overload
     def __mul__(self, other: Vec3) -> Vec3: ...
+    @overload
+    def __mul__(self, other: Vec3A) -> Vec3A: ...
     def __rmul__(self, other: Quat) -> Quat: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
@@ -925,7 +1068,12 @@ class Mat2:
     def abs(self) -> Mat2: ...
     def is_finite(self) -> bool: ...
     def is_nan(self) -> bool: ...
-    def __mul__(self, other: Mat2 | float) -> Mat2: ...
+    @overload
+    def __mul__(self, other: Mat2) -> Mat2: ...
+    @overload
+    def __mul__(self, other: float) -> Mat2: ...
+    @overload
+    def __mul__(self, other: Vec2) -> Vec2: ...
     def __add__(self, other: Mat2) -> Mat2: ...
     def __sub__(self, other: Mat2) -> Mat2: ...
     def __neg__(self) -> Mat2: ...
@@ -1132,6 +1280,19 @@ class InfinitePlane3d:
     @staticmethod
     def from_dir(normal: Dir3) -> InfinitePlane3d:
         """Create an infinite plane from a direction."""
+    @staticmethod
+    def from_points(a: Vec3, b: Vec3, c: Vec3) -> tuple[InfinitePlane3d, Vec3]:
+        """Create the plane through three points, returning it with its center."""
+    def signed_distance(self, isometry: Isometry3d | Vec3 | Vec3A | Quat, point: Vec3) -> float:
+        """Signed distance from the plane to a point."""
+    def project_point(self, isometry: Isometry3d | Vec3 | Vec3A | Quat, point: Vec3) -> Vec3:
+        """Project a point onto the plane."""
+    def isometry_into_xy(self, origin: Vec3) -> Isometry3d:
+        """Isometry mapping this plane onto the XY plane."""
+    def isometry_from_xy(self, origin: Vec3) -> Isometry3d:
+        """Inverse isometry mapping the XY plane onto this plane."""
+    def isometries_xy(self, origin: Vec3) -> tuple[Isometry3d, Isometry3d]:
+        """Both isometries: plane to XY and back."""
     @property
     def normal(self) -> Dir3: ...
 
@@ -1143,7 +1304,7 @@ class HalfSpace:
     """
 
     @property
-    def normal(self) -> Vec4: ...
+    def normal(self) -> Vec3A: ...
     @property
     def d(self) -> float: ...
     @property
@@ -1254,6 +1415,7 @@ class Vec4:
     NEG_Y: ClassVar[Vec4]
     NEG_Z: ClassVar[Vec4]
     NEG_W: ClassVar[Vec4]
+    AXES: ClassVar[tuple[Vec4, Vec4, Vec4, Vec4]]
 
     def __init__(self, x: float, y: float, z: float, w: float) -> None: ...
     @staticmethod
@@ -1473,6 +1635,8 @@ class Mat3A:
     def __mul__(self, other: Mat3A) -> Mat3A: ...
     @overload
     def __mul__(self, other: Vec3A) -> Vec3A: ...
+    @overload
+    def __mul__(self, other: Vec3) -> Vec3: ...
     def __rmul__(self, scalar: float) -> Mat3A: ...
     def __neg__(self) -> Mat3A: ...
     def __repr__(self) -> str: ...
@@ -1613,6 +1777,13 @@ class Isometry2d:
     def inverse_transform_point(self, point: Vec2) -> Vec2:
         """Transform a point using the inverse of this isometry."""
 
+    @overload
+    def __mul__(self, other: Isometry2d) -> Isometry2d: ...
+    @overload
+    def __mul__(self, other: Vec2) -> Vec2: ...
+    @overload
+    def __mul__(self, other: Dir2) -> Dir2: ...
+
     def __eq__(self, other: object) -> bool: ...
 
 class Aabb2d:
@@ -1663,6 +1834,8 @@ class Aabb2d:
 
     def contains(self, other: Aabb2d) -> bool:
         """Check if this bounding box completely contains another."""
+    def intersects(self, other: Aabb2d | BoundingCircle) -> bool:
+        """True if this box intersects another Aabb2d or a BoundingCircle."""
 
     def merge(self, other: Aabb2d) -> Aabb2d:
         """Merge with another bounding box, returning the smallest box containing both."""
@@ -1681,6 +1854,12 @@ class Aabb2d:
 
     def bounding_circle(self) -> BoundingCircle:
         """Get the bounding circle that contains this bounding box."""
+
+    def rotated_by(self, rotation: Rot2 | float) -> Aabb2d:
+        """New box rotated around the origin by radians (or Rot2)."""
+
+    def transformed_by(self, translation: Vec2, rotation: Rot2 | float) -> Aabb2d:
+        """New box rotated then translated."""
 
     def intersects_aabb(self, other: Aabb2d) -> bool:
         """Check if this bounding box intersects with another Aabb2d."""
@@ -1752,8 +1931,16 @@ class BoundingCircle:
     def aabb_2d(self) -> Aabb2d:
         """Get the axis-aligned bounding box that contains this circle."""
 
+    def rotated_by(self, rotation: Rot2 | float) -> BoundingCircle:
+        """New circle rotated around the origin by radians (or Rot2)."""
+
+    def transformed_by(self, translation: Vec2, rotation: Rot2 | float) -> BoundingCircle:
+        """New circle rotated then translated."""
+
     def intersects_circle(self, other: BoundingCircle) -> bool:
         """Check if this circle intersects with another BoundingCircle."""
+    def intersects(self, other: BoundingCircle | Aabb2d) -> bool:
+        """True if this circle intersects another BoundingCircle or an Aabb2d."""
 
     def intersects_aabb(self, aabb: Aabb2d) -> bool:
         """Check if this circle intersects with an Aabb2d."""
@@ -1801,6 +1988,15 @@ class Isometry3d:
 
     def inverse_transform_point(self, point: Vec3A | Vec3) -> Vec3:
         """Inverse-transform a point (undo translation then undo rotation)."""
+
+    @overload
+    def __mul__(self, other: Isometry3d) -> Isometry3d: ...
+    @overload
+    def __mul__(self, other: Vec3A) -> Vec3A: ...
+    @overload
+    def __mul__(self, other: Vec3) -> Vec3: ...
+    @overload
+    def __mul__(self, other: Dir3) -> Dir3: ...
 
 class Aabb3d:
     """Axis-aligned bounding box in 3D space."""
@@ -1863,8 +2059,16 @@ class Aabb3d:
     def bounding_sphere(self) -> BoundingSphere:
         """Get the bounding sphere that contains this AABB."""
 
+    def rotated_by(self, rotation: Quat) -> Aabb3d:
+        """New box rotated around the origin."""
+
+    def transformed_by(self, translation: Vec3A | Vec3, rotation: Quat) -> Aabb3d:
+        """New box rotated then translated."""
+
     def intersects_aabb(self, other: Aabb3d) -> bool:
         """Check if this AABB intersects with another Aabb3d."""
+    def intersects(self, other: Aabb3d | BoundingSphere) -> bool:
+        """True if this box intersects another Aabb3d or a BoundingSphere."""
 
     def intersects_sphere(self, sphere: BoundingSphere) -> bool:
         """Check if this AABB intersects with a BoundingSphere."""
@@ -1927,8 +2131,16 @@ class BoundingSphere:
     def aabb_3d(self) -> Aabb3d:
         """Get the axis-aligned bounding box that contains this sphere."""
 
+    def rotated_by(self, rotation: Quat) -> BoundingSphere:
+        """New sphere rotated around the origin."""
+
+    def transformed_by(self, translation: Vec3A | Vec3, rotation: Quat) -> BoundingSphere:
+        """New sphere rotated then translated."""
+
     def intersects_sphere(self, other: BoundingSphere) -> bool:
         """Check if this sphere intersects with another BoundingSphere."""
+    def intersects(self, other: BoundingSphere | Aabb3d) -> bool:
+        """True if this sphere intersects another BoundingSphere or an Aabb3d."""
 
     def intersects_aabb(self, aabb: Aabb3d) -> bool:
         """Check if this sphere intersects with an Aabb3d."""
@@ -2371,10 +2583,12 @@ class EaseFunction:
         """
     
     def ease(self, t: float) -> float:
-        """Evaluate the easing function at time t (typically 0.0 to 1.0).
+        """Evaluate the easing function at time t.
+        
+        Values of t outside [0.0, 1.0] are clamped into the domain.
         
         Args:
-            t: Time parameter, typically in range [0.0, 1.0]
+            t: Time parameter, clamped to [0.0, 1.0]
             
         Returns:
             Eased value
@@ -2601,7 +2815,7 @@ class Capsule3d(Meshable):
     @half_length.setter
     def half_length(self, value: float) -> None: ...
 
-    def __init__(self, radius: float, length: float) -> None:
+    def __init__(self, radius: float = 0.5, length: float = 1.0) -> None:
         """Create a new 3D capsule.
 
         Args:
@@ -2945,6 +3159,29 @@ class Line2d:
     direction: Dir2
 
     def __init__(self, direction: Dir2) -> None:
+        """Create a new infinite line.
+
+        Args:
+            direction: The direction of the line
+        """
+
+    def __eq__(self, other: object) -> bool: ...
+
+class Line3d:
+    """An infinite line going through the origin along a direction in 3D space.
+
+    The line extends infinitely in both the given direction and its opposite direction.
+    For a finite line segment, use Segment3d instead.
+
+    Example:
+        >>> from pybevy.math import Line3d, Dir3
+        >>> # Create a line along the X axis
+        >>> line = Line3d(Dir3(1, 0, 0))
+    """
+
+    direction: Dir3
+
+    def __init__(self, direction: Dir3) -> None:
         """Create a new infinite line.
 
         Args:
@@ -4229,3 +4466,269 @@ class Rot2:
     @overload
     def __mul__(self, other: Vec2) -> Vec2:
         """Rotate a 2D vector."""
+
+class CubicCurve3d:
+    """A 3D cubic curve composed of cubic segments."""
+
+    @property
+    def segment_count(self) -> int:
+        """The number of cubic segments in this curve."""
+
+    def position(self, t: float) -> Vec3:
+        """Compute the position on the curve at parameter t."""
+
+    def velocity(self, t: float) -> Vec3:
+        """Compute the velocity on the curve at parameter t."""
+
+    def acceleration(self, t: float) -> Vec3:
+        """Compute the acceleration on the curve at parameter t."""
+
+    def iter_positions(self, subdivisions: int) -> list[Vec3]:
+        """Sample positions along the curve."""
+
+    def iter_velocities(self, subdivisions: int) -> list[Vec3]:
+        """Sample velocities along the curve."""
+
+    def iter_accelerations(self, subdivisions: int) -> list[Vec3]:
+        """Sample accelerations along the curve."""
+
+class CubicBezier3d:
+    """A 3D cubic Bezier curve defined by control point segments.
+
+    Example:
+        >>> bezier = CubicBezier3d([[Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)]])
+    """
+
+    def __init__(self, control_points: list[list[Vec3]]) -> None: ...
+
+    def to_curve(self) -> CubicCurve3d:
+        """Convert to a `CubicCurve3d` for evaluation."""
+
+class CubicCardinalSpline3d:
+    """A 3D cubic cardinal spline.
+
+    Example:
+        >>> spline = CubicCardinalSpline3d(0.1, [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 1, 0)])
+    """
+
+    def __init__(self, tension: float, control_points: list[Vec3]) -> None: ...
+
+    @staticmethod
+    def new_catmull_rom(control_points: list[Vec3]) -> CubicCardinalSpline3d:
+        """Create a Catmull-Rom spline through the points."""
+
+    def to_curve(self) -> CubicCurve3d:
+        """Convert to a `CubicCurve3d` for evaluation."""
+
+    @property
+    def tension(self) -> float:
+        """The spline tension."""
+
+    @tension.setter
+    def tension(self, value: float) -> None: ...
+
+class CubicHermite3d:
+    """A 3D cubic Hermite spline.
+
+    Example:
+        >>> spline = CubicHermite3d([Vec3(0, 0, 0), Vec3(1, 0, 0)], [Vec3(1, 0, 0), Vec3(0, 1, 0)])
+    """
+
+    def __init__(self, control_points: list[Vec3], tangents: list[Vec3]) -> None: ...
+
+    def to_curve(self) -> CubicCurve3d:
+        """Convert to a `CubicCurve3d` for evaluation."""
+
+class CubicBSpline2d:
+    """A 2D cubic B-spline.
+
+    Example:
+        >>> spline = CubicBSpline2d([Vec2(0, 0), Vec2(1, 0), Vec2(2, 1), Vec2(3, 0)])
+    """
+
+    def __init__(self, control_points: list[Vec2]) -> None: ...
+
+    def to_curve(self) -> CubicCurve2d:
+        """Convert to a `CubicCurve2d` for evaluation."""
+
+class CubicBSpline3d:
+    """A 3D cubic B-spline.
+
+    Example:
+        >>> spline = CubicBSpline3d([Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 1, 0), Vec3(3, 0, 0)])
+    """
+
+    def __init__(self, control_points: list[Vec3]) -> None: ...
+
+    def to_curve(self) -> CubicCurve3d:
+        """Convert to a `CubicCurve3d` for evaluation."""
+
+class LinearSpline2d:
+    """A 2D linear spline.
+
+    Example:
+        >>> spline = LinearSpline2d([Vec2(0, 0), Vec2(1, 1), Vec2(2, 0)])
+    """
+
+    def __init__(self, points: list[Vec2]) -> None: ...
+
+    def to_curve(self) -> CubicCurve2d:
+        """Convert to a `CubicCurve2d` for evaluation."""
+
+class LinearSpline3d:
+    """A 3D linear spline.
+
+    Example:
+        >>> spline = LinearSpline3d([Vec3(0, 0, 0), Vec3(1, 1, 1), Vec3(2, 0, 0)])
+    """
+
+    def __init__(self, points: list[Vec3]) -> None: ...
+
+    def to_curve(self) -> CubicCurve3d:
+        """Convert to a `CubicCurve3d` for evaluation."""
+
+class CubicNurbs2d:
+    """A 2D non-uniform rational B-spline (NURBS) curve.
+
+    Example:
+        >>> nurbs = CubicNurbs2d([Vec2(0, 0), Vec2(1, 0), Vec2(2, 1), Vec2(3, 0)])
+    """
+
+    def __init__(self, control_points: list[Vec2], weights: list[float] | None = None, knots: list[float] | None = None) -> None:
+        """Create a NURBS curve.
+
+        Raises:
+            ValueError: if fewer than 4 control points, wrong knot/weight counts,
+                descending knots, or constant knots.
+        """
+
+    def to_curve(self) -> RationalCurve2d:
+        """Convert to a `RationalCurve2d` for evaluation."""
+
+    @property
+    def control_points(self) -> list[Vec2]:
+        """The control points."""
+
+    @property
+    def weights(self) -> list[float]:
+        """The per-point weights."""
+
+    @property
+    def knots(self) -> list[float]:
+        """The knot vector."""
+
+class CubicNurbs3d:
+    """A 3D non-uniform rational B-spline (NURBS) curve.
+
+    Example:
+        >>> nurbs = CubicNurbs3d([Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 1, 0), Vec3(3, 0, 0)])
+    """
+
+    def __init__(self, control_points: list[Vec3], weights: list[float] | None = None, knots: list[float] | None = None) -> None:
+        """Create a NURBS curve.
+
+        Raises:
+            ValueError: if fewer than 4 control points, wrong knot/weight counts,
+                descending knots, or constant knots.
+        """
+
+    def to_curve(self) -> RationalCurve3d:
+        """Convert to a `RationalCurve3d` for evaluation."""
+
+    @property
+    def control_points(self) -> list[Vec3]:
+        """The control points."""
+
+    @property
+    def weights(self) -> list[float]:
+        """The per-point weights."""
+
+    @property
+    def knots(self) -> list[float]:
+        """The knot vector."""
+
+class RationalCurve2d:
+    """A 2D rational curve produced by `CubicNurbs2d.to_curve`."""
+
+    @property
+    def segment_count(self) -> int:
+        """The number of rational segments."""
+
+    def position(self, t: float) -> Vec2:
+        """Compute the position on the curve at parameter t."""
+
+    def velocity(self, t: float) -> Vec2:
+        """Compute the velocity on the curve at parameter t."""
+
+    def acceleration(self, t: float) -> Vec2:
+        """Compute the acceleration on the curve at parameter t."""
+
+class RationalCurve3d:
+    """A 3D rational curve produced by `CubicNurbs3d.to_curve`."""
+
+    @property
+    def segment_count(self) -> int:
+        """The number of rational segments."""
+
+    def position(self, t: float) -> Vec3:
+        """Compute the position on the curve at parameter t."""
+
+    def velocity(self, t: float) -> Vec3:
+        """Compute the velocity on the curve at parameter t."""
+
+    def acceleration(self, t: float) -> Vec3:
+        """Compute the acceleration on the curve at parameter t."""
+
+class AabbCast2d:
+    """A 2D AABB swept along a ray for collision testing."""
+
+    def __init__(self, aabb: Aabb2d, origin: Vec2, direction: Dir2, max: float) -> None:
+        """Cast an `Aabb2d` from an origin along a direction for at most `max` distance."""
+
+    @staticmethod
+    def from_ray(aabb: Aabb2d, ray: Ray2d, max: float) -> AabbCast2d:
+        """Cast an `Aabb2d` along a `Ray2d` for at most `max` distance."""
+
+    def aabb_collision_at(self, aabb: Aabb2d) -> float | None:
+        """Distance at which the swept AABB first hits `aabb`, or None."""
+
+    @property
+    def aabb(self) -> Aabb2d:
+        """The AABB being cast."""
+
+    @aabb.setter
+    def aabb(self, value: Aabb2d) -> None: ...
+
+    @property
+    def ray(self) -> RayCast2d:
+        """The ray along which the AABB is cast."""
+
+    @ray.setter
+    def ray(self, value: RayCast2d) -> None: ...
+
+class BoundingCircleCast:
+    """A 2D circle swept along a ray for collision testing."""
+
+    def __init__(self, circle: BoundingCircle, origin: Vec2, direction: Dir2, max: float) -> None:
+        """Cast a `BoundingCircle` from an origin along a direction for at most `max` distance."""
+
+    @staticmethod
+    def from_ray(circle: BoundingCircle, ray: Ray2d, max: float) -> BoundingCircleCast:
+        """Cast a `BoundingCircle` along a `Ray2d` for at most `max` distance."""
+
+    def circle_collision_at(self, circle: BoundingCircle) -> float | None:
+        """Distance at which the swept circle first hits `circle`, or None."""
+
+    @property
+    def circle(self) -> BoundingCircle:
+        """The circle being cast."""
+
+    @circle.setter
+    def circle(self, value: BoundingCircle) -> None: ...
+
+    @property
+    def ray(self) -> RayCast2d:
+        """The ray along which the circle is cast."""
+
+    @ray.setter
+    def ray(self, value: RayCast2d) -> None: ...

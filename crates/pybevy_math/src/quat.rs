@@ -1,12 +1,16 @@
-use bevy::math::{EulerRot, Quat};
+use bevy::math::{EulerRot, Quat, Vec3A};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
-    Bound, IntoPyObjectExt, basic::CompareOp, exceptions::PyTypeError, prelude::*, types::PyAny,
+    Bound, IntoPyObjectExt,
+    basic::CompareOp,
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyAny, PyDict, PyTuple},
 };
 
-use crate::vec3::PyVec3;
+use crate::{vec3::PyVec3, vec3a::PyVec3A};
 
-#[pyclass(name = "EulerRot", from_py_object)]
+#[pyclass(name = "EulerRot", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub enum PyEulerRot {
     ZYX,
@@ -66,7 +70,7 @@ impl From<PyEulerRot> for EulerRot {
     }
 }
 
-#[pyclass(name = "Quat", from_py_object)]
+#[pyclass(name = "Quat", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyQuat {
     storage: ValueStorage<Quat>,
@@ -140,10 +144,10 @@ impl PyQuat {
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     pub fn py_new(
-        _args: &Bound<'_, pyo3::types::PyTuple>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        Err(pyo3::exceptions::PyTypeError::new_err(
+        Err(PyTypeError::new_err(
             "Quat cannot be constructed directly (raw xyzw components are error-prone); \
              use Quat.from_xyzw(x, y, z, w), Quat.from_axis_angle(axis, angle), \
              Quat.from_euler(EulerRot.XYZ, x, y, z), or Quat.IDENTITY",
@@ -266,6 +270,10 @@ impl PyQuat {
         Ok(self.as_ref()?.length())
     }
 
+    pub fn dot(&self, rhs: &PyQuat) -> PyResult<f32> {
+        Ok(self.as_ref()?.dot(rhs.try_get()?))
+    }
+
     pub fn length_squared(&self) -> PyResult<f32> {
         Ok(self.as_ref()?.length_squared())
     }
@@ -333,6 +341,9 @@ impl PyQuat {
         } else if let Ok(other_vec3) = other.extract::<PyVec3>() {
             let v = *self_quat * other_vec3.try_get()?;
             Ok(Py::new(py, PyVec3::from_vec3(v))?.into_any())
+        } else if let Ok(other_vec3a) = other.extract::<PyVec3A>() {
+            let v = *self_quat * Vec3A::try_from(&other_vec3a)?;
+            Ok(Py::new(py, PyVec3A::from_vec3a(v))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -354,11 +365,27 @@ impl PyQuat {
         Ok(format!("Quat({}, {}, {}, {})", q.x, q.y, q.z, q.w))
     }
 
-    pub fn __richcmp__(&self, other: &PyQuat, op: CompareOp) -> PyResult<bool> {
-        match op {
-            CompareOp::Eq => Ok(self.try_get()? == other.try_get()?),
-            CompareOp::Ne => Ok(self.try_get()? != other.try_get()?),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_quat) = other.extract::<PyQuat>() {
+            return match op {
+                CompareOp::Eq => Ok(self.try_get()? == other_quat.try_get()?),
+                CompareOp::Ne => Ok(self.try_get()? != other_quat.try_get()?),
+                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            };
         }
+        Err(PyTypeError::new_err(
+            "Can only compare Quat with another Quat",
+        ))
     }
+}
+
+/// Accept a PyQuat, matching bevy's `impl Into<Quat>` parameters.
+pub fn extract_quat_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Quat> {
+    if let Ok(value) = obj.extract::<PyQuat>() {
+        return Quat::try_from(value);
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected Quat, got {}",
+        obj.get_type().name()?
+    )))
 }

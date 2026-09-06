@@ -1,36 +1,37 @@
 use bevy::math::{
-    Vec2,
-    bounding::{BoundingCircle, BoundingVolume, IntersectsVolume},
+    Isometry2d, Vec2,
+    bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use super::aabb2d::PyAabb2d;
-use crate::vec2::PyVec2;
+use crate::{
+    rot2::extract_rot2_from_any,
+    vec2::{PyVec2, extract_vec2_from_any},
+};
 
-#[pyclass(name = "BoundingCircle", skip_from_py_object)]
+#[pyclass(name = "BoundingCircle", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingCircle {
     storage: ValueStorage<BoundingCircle>,
 }
 
-impl From<PyBoundingCircle> for BoundingCircle {
+impl TryFrom<PyBoundingCircle> for BoundingCircle {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_circle: PyBoundingCircle) -> Self {
-        match py_circle.storage.get() {
-            Ok(val) => val,
-            Err(_) => BoundingCircle::new(Vec2::ZERO, 0.0),
-        }
+    fn try_from(py_circle: PyBoundingCircle) -> PyResult<Self> {
+        Ok(py_circle.storage.get()?)
     }
 }
 
-impl From<&PyBoundingCircle> for BoundingCircle {
+impl TryFrom<&PyBoundingCircle> for BoundingCircle {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_circle: &PyBoundingCircle) -> Self {
-        match py_circle.storage.get() {
-            Ok(val) => val,
-            Err(_) => BoundingCircle::new(Vec2::ZERO, 0.0),
-        }
+    fn try_from(py_circle: &PyBoundingCircle) -> PyResult<Self> {
+        Ok(py_circle.storage.get()?)
     }
 }
 
@@ -65,11 +66,8 @@ impl PyBoundingCircle {
         Ok(self.storage.as_mut()?)
     }
 
-    pub(crate) fn to_bounding_circle(&self) -> BoundingCircle {
-        match self.storage.get() {
-            Ok(val) => val,
-            Err(_) => BoundingCircle::new(Vec2::ZERO, 0.0),
-        }
+    pub(crate) fn to_bounding_circle(&self) -> PyResult<BoundingCircle> {
+        Ok(self.storage.get()?)
     }
 }
 
@@ -104,14 +102,47 @@ impl PyBoundingCircle {
     }
 
     pub fn contains(&self, other: &PyBoundingCircle) -> PyResult<bool> {
-        let other_circle: BoundingCircle = other.into();
+        let other_circle: BoundingCircle = other.try_into()?;
         Ok(self.as_ref()?.contains(&other_circle))
     }
 
+    /// True if this BoundingCircle intersects another BoundingCircle or an Aabb2d.
+    pub fn intersects(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if other.is_instance_of::<PyBoundingCircle>() {
+            let other_circle: BoundingCircle =
+                BoundingCircle::try_from(&*other.cast::<PyBoundingCircle>()?.borrow())?;
+            return Ok(self.as_ref()?.intersects(&other_circle));
+        }
+        if other.is_instance_of::<PyAabb2d>() {
+            let aabb: Aabb2d = Aabb2d::try_from(&*other.cast::<PyAabb2d>()?.borrow())?;
+            return Ok(self.as_ref()?.intersects(&aabb));
+        }
+        Err(PyTypeError::new_err("expected BoundingCircle or Aabb2d"))
+    }
+
     pub fn merge(&self, other: &PyBoundingCircle) -> PyResult<PyBoundingCircle> {
-        let other_circle: BoundingCircle = other.into();
+        let other_circle: BoundingCircle = other.try_into()?;
         Ok(PyBoundingCircle::from_bounding_circle(
             self.as_ref()?.merge(&other_circle),
+        ))
+    }
+
+    pub fn rotated_by(&self, rotation: &Bound<'_, PyAny>) -> PyResult<PyBoundingCircle> {
+        let rotation = extract_rot2_from_any(rotation)?;
+        Ok(PyBoundingCircle::from_bounding_circle(
+            (*self.as_ref()?).rotated_by(rotation),
+        ))
+    }
+
+    pub fn transformed_by(
+        &self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<PyBoundingCircle> {
+        let translation = extract_vec2_from_any(translation)?;
+        let rotation = extract_rot2_from_any(rotation)?;
+        Ok(PyBoundingCircle::from_bounding_circle(
+            (*self.as_ref()?).transformed_by(translation, rotation),
         ))
     }
 
@@ -142,12 +173,12 @@ impl PyBoundingCircle {
     }
 
     pub fn intersects_circle(&self, other: &PyBoundingCircle) -> PyResult<bool> {
-        let other_circle: BoundingCircle = other.into();
+        let other_circle: BoundingCircle = other.try_into()?;
         Ok(self.as_ref()?.intersects(&other_circle))
     }
 
     pub fn intersects_aabb(&self, aabb: &PyAabb2d) -> PyResult<bool> {
-        let aabb_2d: bevy::math::bounding::Aabb2d = aabb.into();
+        let aabb_2d: Aabb2d = aabb.try_into()?;
         Ok(self.as_ref()?.intersects(&aabb_2d))
     }
 
@@ -156,8 +187,6 @@ impl PyBoundingCircle {
         isometry: super::aabb2d::PyIsometry2d,
         points: Vec<PyVec2>,
     ) -> PyResult<PyBoundingCircle> {
-        use bevy::math::Isometry2d;
-
         let iso: Isometry2d = isometry.into();
         let point_refs: Vec<Vec2> = points
             .into_iter()

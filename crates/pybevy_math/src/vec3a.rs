@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "Vec3A", from_py_object)]
+#[pyclass(name = "Vec3A", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVec3A {
     storage: ValueStorage<Vec3A>,
@@ -272,7 +272,7 @@ impl PyVec3A {
 /// back from one of these types usable as an argument to the next call.
 pub fn extract_vec3a_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Vec3A> {
     if let Ok(value) = obj.extract::<PyVec3A>() {
-        return Ok(value.try_into()?);
+        return value.try_into();
     }
     if let Ok(value) = obj.extract::<PyVec3>() {
         return Ok(Vec3A::from(Vec3::try_from(value)?));

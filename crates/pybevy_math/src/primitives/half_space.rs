@@ -1,9 +1,9 @@
 use bevy::math::{Vec4, primitives::HalfSpace};
 use pyo3::prelude::*;
 
-use crate::vec4::PyVec4;
+use crate::{vec3a::PyVec3A, vec4::PyVec4};
 
-#[pyclass(name = "HalfSpace", frozen, from_py_object)]
+#[pyclass(name = "HalfSpace", module = "pybevy.math", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyHalfSpace {
     pub(crate) inner: HalfSpace,
@@ -38,10 +38,8 @@ impl PyHalfSpace {
     }
 
     #[getter]
-    pub fn normal(&self) -> PyVec4 {
-        // HalfSpace.normal() returns Vec3A, but we return Vec4 with w=0 for simplicity
-        let n = self.inner.normal();
-        PyVec4::from_vec4(Vec4::new(n.x, n.y, n.z, 0.0))
+    pub fn normal(&self) -> PyVec3A {
+        PyVec3A::from_vec3a(self.inner.normal())
     }
 
     #[getter]

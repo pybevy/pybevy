@@ -8,10 +8,19 @@ use pyo3::{
 
 use crate::vec3::PyVec3;
 
-#[pyclass(name = "Vec2", from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
+#[pyclass(name = "Vec2", module = "pybevy.math", from_py_object)]
+#[derive(Debug, Clone)]
 pub struct PyVec2 {
     pub(crate) storage: ValueStorage<Vec2>,
+}
+
+impl PartialEq for PyVec2 {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (self.try_get(), other.try_get()),
+            (Ok(left), Ok(right)) if left == right
+        )
+    }
 }
 
 impl TryFrom<PyVec2> for Vec2 {
@@ -528,7 +537,7 @@ impl PyVec2 {
         Ok(PyVec2::from_vec2(Vec2::from_slice(&slice)))
     }
 
-    pub fn angle_between(&self, other: &PyVec2) -> PyResult<f32> {
+    pub fn angle_to(&self, other: &PyVec2) -> PyResult<f32> {
         Ok(self.as_ref()?.angle_to(*other.as_ref()?))
     }
 
@@ -568,4 +577,15 @@ impl PyVec2 {
     pub fn yy(&self) -> PyResult<PyVec2> {
         Ok(self.as_ref()?.yy().into())
     }
+}
+
+/// Accept a PyVec2, matching bevy's `impl Into<Vec2>` parameters.
+pub fn extract_vec2_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Vec2> {
+    if let Ok(value) = obj.extract::<PyVec2>() {
+        return value.try_into();
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected Vec2, got {}",
+        obj.get_type().name()?
+    )))
 }

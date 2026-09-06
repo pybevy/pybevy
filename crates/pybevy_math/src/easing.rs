@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(JumpAt)]
-#[pyclass(name = "JumpAt", eq, from_py_object)]
+#[pyclass(name = "JumpAt", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyJumpAt {
     Start,
@@ -13,7 +13,7 @@ pub enum PyJumpAt {
     Both,
 }
 
-#[pyclass(name = "EaseFunction", skip_from_py_object)]
+#[pyclass(name = "EaseFunction", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyEaseFunction {
     ease_fn: EaseFunction,
@@ -238,7 +238,7 @@ impl PyEaseFunction {
     }
 
     pub fn ease(&self, t: f32) -> f32 {
-        self.ease_fn.sample_unchecked(t)
+        self.ease_fn.sample_clamped(t)
     }
 
     fn __repr__(&self) -> String {

@@ -1,9 +1,9 @@
 use bevy::math::{Dir2, primitives::Plane2d};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{dir2::PyDir2, vec2::PyVec2};
 
-#[pyclass(name = "Plane2d", eq, skip_from_py_object)]
+#[pyclass(name = "Plane2d", module = "pybevy.math", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyPlane2d {
     pub(crate) inner: Plane2d,
@@ -14,8 +14,8 @@ impl PyPlane2d {
     #[new]
     #[pyo3(signature = (normal = PyVec2::Y))]
     pub fn new(normal: PyVec2) -> PyResult<Self> {
-        let dir = Dir2::new(normal.try_get()?)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
+        let dir =
+            Dir2::new(normal.try_get()?).map_err(|e| PyValueError::new_err(format!("{}", e)))?;
         Ok(Self {
             inner: Plane2d { normal: dir },
         })

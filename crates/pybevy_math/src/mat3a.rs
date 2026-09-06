@@ -1,10 +1,14 @@
-use bevy::math::{Mat3A, Vec3A};
+use bevy::math::{Mat3A, Vec3, Vec3A};
 use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyIndexError, PyTypeError},
+    prelude::*,
+};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
 
-#[pyclass(name = "Mat3A", from_py_object)]
+#[pyclass(name = "Mat3A", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMat3A {
     storage: ValueStorage<Mat3A>,
@@ -151,9 +155,7 @@ impl PyMat3A {
             0 => Ok(mat.x_axis.into()),
             1 => Ok(mat.y_axis.into()),
             2 => Ok(mat.z_axis.into()),
-            _ => Err(pyo3::exceptions::PyIndexError::new_err(
-                "Column index out of range (0-2)",
-            )),
+            _ => Err(PyIndexError::new_err("Column index out of range (0-2)")),
         }
     }
 
@@ -208,6 +210,8 @@ impl PyMat3A {
             Ok(Py::new(py, PyMat3A::mat3a(self_mat * *other_mat.as_ref()?))?.into_any())
         } else if let Ok(vec) = other.extract::<PyVec3A>() {
             Ok(Py::new(py, PyVec3A::from_vec3a(self_mat * Vec3A::try_from(&vec)?))?.into_any())
+        } else if let Ok(vec) = other.extract::<PyVec3>() {
+            Ok(Py::new(py, PyVec3::from_vec3(self_mat * Vec3::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -229,13 +233,19 @@ impl PyMat3A {
         ))
     }
 
-    fn __richcmp__(&self, other: &PyMat3A, op: CompareOp) -> PyResult<bool> {
-        let self_mat = *self.as_ref()?;
-        let other_mat = *other.as_ref()?;
-        match op {
-            CompareOp::Eq => Ok(self_mat == other_mat),
-            CompareOp::Ne => Ok(self_mat != other_mat),
-            _ => Err(PyTypeError::new_err("Mat3A only supports == and !=")),
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_mat) = other.extract::<PyMat3A>() {
+            let self_mat = *self.as_ref()?;
+            let other_mat = *other_mat.as_ref()?;
+            match op {
+                CompareOp::Eq => Ok(self_mat == other_mat),
+                CompareOp::Ne => Ok(self_mat != other_mat),
+                _ => Err(PyTypeError::new_err("Mat3A only supports == and !=")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare Mat3A with another Mat3A",
+            ))
         }
     }
 }
