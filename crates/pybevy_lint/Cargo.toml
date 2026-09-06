@@ -9,7 +9,7 @@ repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
 
 [[bin]]
-name = "pybevy_lint"
+name = "pybevy-lint"
 path = "src/main.rs"
 
 [dependencies]
