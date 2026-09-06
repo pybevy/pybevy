@@ -33,6 +33,9 @@ class Tonemapping(Component):
 
     def __init__(self) -> None: ...
 
+    def is_enabled(self) -> bool:
+        """True unless this is Tonemapping.NONE."""
+
     NONE: ClassVar[Tonemapping]
     REINHARD: ClassVar[Tonemapping]
     REINHARD_LUMINANCE: ClassVar[Tonemapping]

@@ -4,7 +4,7 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Tonemapping, bridge)]
-#[pyclass(name = "Tonemapping", extends = PyComponent, frozen, skip_from_py_object)]
+#[pyclass(name = "Tonemapping", module = "pybevy.core_pipeline", extends = PyComponent, frozen, skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyTonemapping(pub(crate) Tonemapping);
 
@@ -70,6 +70,10 @@ impl PyTonemapping {
     #[pyo3(name = "PBR_NEUTRAL")]
     pub fn pbr_neutral(py: Python) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(Tonemapping::KhronosPbrNeutral))
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.0 != Tonemapping::None
     }
 
     pub fn __repr__(&self) -> &'static str {
