@@ -335,9 +335,7 @@ fn construct_component_from_fields<'py>(
 
     match class.call0() {
         Ok(instance) => {
-            for ((field_name, field_value), declared) in
-                fields.iter().zip(declared_fields.into_iter())
-            {
+            for ((field_name, field_value), declared) in fields.iter().zip(declared_fields) {
                 if declared.is_none() && instance.getattr(field_name.as_str()).is_err() {
                     return Err(format!("{comp_name}: unknown field '{field_name}'"));
                 }
@@ -803,7 +801,7 @@ fn set_component_python(
                 } else if payload.len() == 1 {
                     payload
                         .remove("value")
-                        .unwrap_or_else(|| serde_json::Value::Object(payload))
+                        .unwrap_or(serde_json::Value::Object(payload))
                 } else {
                     serde_json::Value::Object(payload)
                 };
@@ -2330,13 +2328,13 @@ pub(crate) fn convert_field_value(
                 "Vec4" | "Quat" => Some(("[x, y, z, w]", 4)),
                 _ => None,
             };
-            if let Some((shape, expected_len)) = expected_shape {
-                if arr.len() != expected_len {
-                    return Err(format!(
-                        "{type_name} expects {shape}, got {} elements",
-                        arr.len()
-                    ));
-                }
+            if let Some((shape, expected_len)) = expected_shape
+                && arr.len() != expected_len
+            {
+                return Err(format!(
+                    "{type_name} expects {shape}, got {} elements",
+                    arr.len()
+                ));
             }
 
             let pybevy_math = PyModule::import(py, "pybevy.math").map_err(|e| e.to_string())?;

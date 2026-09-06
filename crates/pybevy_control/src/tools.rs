@@ -104,10 +104,10 @@ pub fn list_tools() -> Vec<Value> {
             }
             if let Some(ref_req) = resolved.get("required").and_then(|r| r.as_array()) {
                 for r in ref_req {
-                    if let Some(s) = r.as_str() {
-                        if !required.contains(&s.to_string()) {
-                            required.push(s.to_string());
-                        }
+                    if let Some(s) = r.as_str()
+                        && !required.contains(&s.to_string())
+                    {
+                        required.push(s.to_string());
                     }
                 }
             }
@@ -149,22 +149,21 @@ fn resolve_refs(value: &mut Value, definitions: &Map<String, Value>) {
     match value {
         Value::Object(obj) => {
             // Handle allOf with a single $ref entry (schemars pattern for described refs)
-            if let Some(all_of) = obj.get("allOf").and_then(|a| a.as_array()) {
-                if all_of.len() == 1 {
-                    if let Some(ref_path) = all_of[0].get("$ref").and_then(|r| r.as_str()) {
-                        let def_name = ref_path
-                            .trim_start_matches("#/$defs/")
-                            .trim_start_matches("#/definitions/");
-                        if let Some(def) = definitions.get(def_name) {
-                            // Preserve the description from the field, merge with definition
-                            let desc = obj.get("description").cloned();
-                            *value = def.clone();
-                            if let (Some(d), Some(obj)) = (desc, value.as_object_mut()) {
-                                obj.insert("description".to_string(), d);
-                            }
-                            return;
-                        }
+            if let Some(all_of) = obj.get("allOf").and_then(|a| a.as_array())
+                && all_of.len() == 1
+                && let Some(ref_path) = all_of[0].get("$ref").and_then(|r| r.as_str())
+            {
+                let def_name = ref_path
+                    .trim_start_matches("#/$defs/")
+                    .trim_start_matches("#/definitions/");
+                if let Some(def) = definitions.get(def_name) {
+                    // Preserve the description from the field, merge with definition
+                    let desc = obj.get("description").cloned();
+                    *value = def.clone();
+                    if let (Some(d), Some(obj)) = (desc, value.as_object_mut()) {
+                        obj.insert("description".to_string(), d);
                     }
+                    return;
                 }
             }
             // Handle direct $ref
@@ -223,13 +222,13 @@ fn clean_schema_noise(value: &mut Value) {
                 obj.remove("minimum");
             }
             // Simplify ["integer", "null"] -> "integer", ["boolean", "null"] -> "boolean", etc.
-            if let Some(type_val) = obj.get("type").cloned() {
-                if let Some(arr) = type_val.as_array() {
-                    let non_null: Vec<&Value> =
-                        arr.iter().filter(|v| v.as_str() != Some("null")).collect();
-                    if non_null.len() == 1 {
-                        obj.insert("type".to_string(), non_null[0].clone());
-                    }
+            if let Some(type_val) = obj.get("type").cloned()
+                && let Some(arr) = type_val.as_array()
+            {
+                let non_null: Vec<&Value> =
+                    arr.iter().filter(|v| v.as_str() != Some("null")).collect();
+                if non_null.len() == 1 {
+                    obj.insert("type".to_string(), non_null[0].clone());
                 }
             }
             // Recurse into nested schemas (items, properties, etc.)
@@ -327,6 +326,21 @@ mod tests {
         let include_internal = &tool["inputSchema"]["properties"]["include_internal"];
         assert_eq!(include_internal["type"], "boolean");
         assert_eq!(include_internal["default"], false);
+    }
+
+    #[test]
+    fn get_resource_advertises_an_actual_resource_example() {
+        let tools = list_tools();
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "get_resource")
+            .expect("get_resource tool");
+        let description = tool["inputSchema"]["properties"]["resource_type"]["description"]
+            .as_str()
+            .expect("resource_type description");
+
+        assert!(description.contains("ClearColor"));
+        assert!(!description.contains("AmbientLight"));
     }
 
     #[test]

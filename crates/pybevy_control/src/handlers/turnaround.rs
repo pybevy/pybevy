@@ -465,7 +465,7 @@ fn composite_turnaround(
     let min_cols = preferred.min(2);
     let cols = (min_cols..=preferred)
         .rev()
-        .find(|&c| count % c == 0)
+        .find(|&c| count.is_multiple_of(c))
         .unwrap_or(preferred);
     let rows = count.div_ceil(cols);
 

@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::OnceLock};
 
 use bevy::ecs::world::World;
-use pybevy_core::{CustomComponentInfo, CustomResourceInfo, ValidityFlag, ValidityGuard};
+use pybevy_core::{
+    ActiveSceneModule, CustomComponentInfo, CustomResourceInfo, ValidityFlag, ValidityGuard,
+};
 use pyo3::{
     exceptions::PyRuntimeError,
     ffi::{PyObject, PyTypeObject},
@@ -111,6 +113,39 @@ fn inject_registered_custom_types(
     Ok(())
 }
 
+fn inject_active_scene_namespace(
+    world: &World,
+    py: Python<'_>,
+    globals: &Bound<'_, PyDict>,
+) -> PyResult<bool> {
+    let Some(module_name) = world
+        .get_resource::<ActiveSceneModule>()
+        .map(|identity| identity.name().to_owned())
+    else {
+        return Ok(false);
+    };
+
+    let modules = py
+        .import("sys")?
+        .getattr("modules")?
+        .cast_into::<PyDict>()?;
+    let module = modules
+        .get_item(&module_name)?
+        .ok_or_else(|| {
+            PyRuntimeError::new_err(format!(
+                "Active scene module `{module_name}` is not present in sys.modules"
+            ))
+        })?
+        .cast_into::<PyModule>()?;
+
+    // Scene names override incidental CLI `__main__` globals. The injected
+    // World wrapper is installed afterwards and is therefore always reserved.
+    for (name, value) in module.dict().iter() {
+        globals.set_item(name, value)?;
+    }
+    Ok(true)
+}
+
 /// Create the root adapter's Python `World` wrapper for another PyO3 control
 /// handler.
 ///
@@ -141,9 +176,14 @@ pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Val
             .and_then(|m| m.dict().copy())
             .map_err(|e| ControlError::internal(format!("Failed to create globals: {e}")))?;
 
-        inject_registered_custom_types(world, py, &globals).map_err(|e| {
-            ControlError::internal(format!("Failed to inject registered scene types: {e}"))
+        let injected_scene = inject_active_scene_namespace(world, py, &globals).map_err(|e| {
+            ControlError::internal(format!("Failed to inject active scene namespace: {e}"))
         })?;
+        if !injected_scene {
+            inject_registered_custom_types(world, py, &globals).map_err(|e| {
+                ControlError::internal(format!("Failed to inject registered scene types: {e}"))
+            })?;
+        }
 
         // Inject world if hook is registered
         if WORLD_WRAPPER_HOOK.get().is_some() {
@@ -236,7 +276,9 @@ pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Val
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::sync::{Mutex, Once, PoisonError};
+
+    use serde_json::Value;
 
     use super::*;
 
@@ -247,11 +289,19 @@ mod tests {
         });
     }
 
+    // sys.stdout is process-global, so parallel runs steal each other's capture.
+    static STREAMS: Mutex<()> = Mutex::new(());
+
+    fn run(code: &str) -> Value {
+        init_python();
+        let _streams = STREAMS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut world = World::new();
+        execute_python(&mut world, code.to_string()).unwrap()
+    }
+
     #[test]
     fn execute_simple_code() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(&mut world, "x = 1 + 1".to_string()).unwrap();
+        let result = run("x = 1 + 1");
         assert_eq!(result["success"], true);
         assert_eq!(result["stdout"], "");
         assert!(result["error"].is_null());
@@ -259,19 +309,14 @@ mod tests {
 
     #[test]
     fn execute_with_print_captures_stdout() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(&mut world, "print('hello world')".to_string()).unwrap();
+        let result = run("print('hello world')");
         assert_eq!(result["success"], true);
         assert_eq!(result["stdout"], "hello world\n");
     }
 
     #[test]
     fn execute_with_error_captures_traceback() {
-        init_python();
-        let mut world = World::new();
-        let result =
-            execute_python(&mut world, "raise ValueError('test error')".to_string()).unwrap();
+        let result = run("raise ValueError('test error')");
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
         assert!(error.contains("ValueError"));
@@ -280,15 +325,11 @@ mod tests {
 
     #[test]
     fn execute_preserves_source_escapes_triple_quotes_and_unicode() {
-        init_python();
-        let mut world = World::new();
-        let code = r#"print(repr("\n"))
+        let result = run(r#"print(repr("\n"))
 print(repr("\t"))
 print(b"\x00".hex())
 print("""triple ' quotes""")
-print("héllø 🦀")"#;
-
-        let result = execute_python(&mut world, code.to_string()).unwrap();
+print("héllø 🦀")"#);
 
         assert_eq!(result["success"], true);
         assert_eq!(
@@ -300,11 +341,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_runtime_traceback_uses_caller_filename_and_line() {
-        init_python();
-        let mut world = World::new();
-        let code = "first = 1\nsecond = 2\nraise RuntimeError('boom')";
-
-        let result = execute_python(&mut world, code.to_string()).unwrap();
+        let result = run("first = 1\nsecond = 2\nraise RuntimeError('boom')");
 
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
@@ -314,13 +351,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_with_syntax_error() {
-        init_python();
-        let mut world = World::new();
-        let result = execute_python(
-            &mut world,
-            "first = 1\nif True print('invalid')".to_string(),
-        )
-        .unwrap();
+        let result = run("first = 1\nif True print('invalid')");
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
         assert!(error.contains("File \"<pybevy run_code>\", line 2"));
@@ -329,11 +360,7 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_reports_an_embedded_null_as_a_python_syntax_error() {
-        init_python();
-        let mut world = World::new();
-        let code = format!("print(1){}print(2)", '\0');
-
-        let result = execute_python(&mut world, code).unwrap();
+        let result = run(&format!("print(1){}print(2)", '\0'));
 
         assert_eq!(result["success"], false);
         let error = result["error"].as_str().unwrap();
@@ -343,9 +370,56 @@ print("héllø 🦀")"#;
 
     #[test]
     fn execute_empty_code() {
+        let result = run("");
+        assert_eq!(result["success"], true);
+    }
+
+    #[test]
+    fn execute_uses_the_live_active_scene_namespace() {
         init_python();
         let mut world = World::new();
-        let result = execute_python(&mut world, String::new()).unwrap();
-        assert_eq!(result["success"], true);
+        world.insert_resource(ActiveSceneModule::new("pybevy_test_active_scene"));
+
+        Python::attach(|py| {
+            let modules = py
+                .import("sys")
+                .unwrap()
+                .getattr("modules")
+                .unwrap()
+                .cast_into::<PyDict>()
+                .unwrap();
+            let first = PyModule::new(py, "pybevy_test_active_scene").unwrap();
+            first.dict().set_item("scene_value", 41).unwrap();
+            modules
+                .set_item("pybevy_test_active_scene", &first)
+                .unwrap();
+
+            let first_result = execute_python(
+                &mut world,
+                "print(scene_value); print(__name__)".to_string(),
+            )
+            .unwrap();
+            assert_eq!(first_result["success"], true);
+            assert_eq!(first_result["stdout"], "41\npybevy_test_active_scene\n");
+
+            let replacement = PyModule::new(py, "pybevy_test_active_scene").unwrap();
+            replacement
+                .dict()
+                .set_item("replacement_value", 42)
+                .unwrap();
+            modules
+                .set_item("pybevy_test_active_scene", &replacement)
+                .unwrap();
+
+            let replacement_result = execute_python(
+                &mut world,
+                "print('scene_value' in globals()); print(replacement_value)".to_string(),
+            )
+            .unwrap();
+            assert_eq!(replacement_result["success"], true);
+            assert_eq!(replacement_result["stdout"], "False\n42\n");
+
+            modules.del_item("pybevy_test_active_scene").unwrap();
+        });
     }
 }

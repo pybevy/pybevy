@@ -94,7 +94,7 @@ pub struct GetComponentParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetResourceParams {
-    /// Resource type name (e.g. 'AmbientLight', 'State[game.Phase]')
+    /// Resource type name (e.g. 'ClearColor', 'State[game.Phase]')
     pub resource_type: String,
 }
 
@@ -979,12 +979,9 @@ pub fn push_pending_reload(
     // Surface validation errors (e.g. an out-of-range time_scale) directly.
     // Otherwise the caller would silently drop the bad param and still receive
     // a false "reload_completed" from the deferred response waiter below.
-    if let Err(e) = handlers::reload::trigger_reload(
-        world,
-        params.mode.clone(),
-        params.pause,
-        params.time_scale,
-    ) {
+    if let Err(e) =
+        handlers::reload::trigger_reload(world, params.mode, params.pause, params.time_scale)
+    {
         let _ = response_tx.send(Err(e));
         return;
     }
@@ -1006,12 +1003,9 @@ pub fn push_pending_reload_and_capture(
 ) {
     // Surface validation errors (e.g. an out-of-range time_scale) directly
     // instead of dropping the bad param and reporting a false success later.
-    if let Err(e) = handlers::reload::trigger_reload(
-        world,
-        params.mode.clone(),
-        params.pause,
-        params.time_scale,
-    ) {
+    if let Err(e) =
+        handlers::reload::trigger_reload(world, params.mode, params.pause, params.time_scale)
+    {
         let _ = response_tx.send(Err(e));
         return;
     }
