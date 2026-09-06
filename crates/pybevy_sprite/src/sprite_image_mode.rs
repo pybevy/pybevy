@@ -5,7 +5,13 @@ use pyo3::prelude::*;
 use crate::{scaling_mode::PySpriteScalingMode, texture_slicer::PyTextureSlicer};
 
 #[pyenum(SpriteImageMode, empty_tuple, no_repr)]
-#[pyclass(name = "SpriteImageMode", frozen, eq, from_py_object)]
+#[pyclass(
+    name = "SpriteImageMode",
+    module = "pybevy.sprite",
+    frozen,
+    eq,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PySpriteImageMode {
     Auto(),
@@ -35,7 +41,7 @@ impl PySpriteImageMode {
 
     pub fn scale(&self) -> Option<PySpriteScalingMode> {
         match self {
-            Self::Scale { mode } => Some((*mode).into()),
+            Self::Scale { mode } => Some((*mode)),
             _ => None,
         }
     }
@@ -44,11 +50,11 @@ impl PySpriteImageMode {
         match self {
             Self::Auto() => "SpriteImageMode.Auto()".to_string(),
             Self::Scale { mode } => {
-                let mode: PySpriteScalingMode = (*mode).into();
+                let mode: PySpriteScalingMode = (*mode);
                 format!("SpriteImageMode.Scale(mode={mode:?})")
             }
             Self::Sliced { slicer } => {
-                let slicer: PyTextureSlicer = slicer.clone().into();
+                let slicer: PyTextureSlicer = slicer.clone();
                 format!("SpriteImageMode.Sliced(slicer={slicer:?})")
             }
             Self::Tiled {

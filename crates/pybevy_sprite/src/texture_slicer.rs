@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use crate::{border_rect::PyBorderRect, slice_scale_mode::PySliceScaleMode};
 
-#[pyclass(name = "TextureSlicer", eq, from_py_object)]
+#[pyclass(name = "TextureSlicer", module = "pybevy.sprite", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyTextureSlicer {
     border: BorderRect,
@@ -117,8 +117,8 @@ impl From<PyTextureSlicer> for TextureSlicer {
     fn from(slicer: PyTextureSlicer) -> Self {
         TextureSlicer {
             border: slicer.border,
-            center_scale_mode: slicer.center_scale_mode.into(),
-            sides_scale_mode: slicer.sides_scale_mode.into(),
+            center_scale_mode: slicer.center_scale_mode,
+            sides_scale_mode: slicer.sides_scale_mode,
             max_corner_scale: slicer.max_corner_scale,
         }
     }
@@ -128,8 +128,8 @@ impl From<TextureSlicer> for PyTextureSlicer {
     fn from(slicer: TextureSlicer) -> Self {
         PyTextureSlicer {
             border: slicer.border,
-            center_scale_mode: slicer.center_scale_mode.into(),
-            sides_scale_mode: slicer.sides_scale_mode.into(),
+            center_scale_mode: slicer.center_scale_mode,
+            sides_scale_mode: slicer.sides_scale_mode,
             max_corner_scale: slicer.max_corner_scale,
         }
     }
