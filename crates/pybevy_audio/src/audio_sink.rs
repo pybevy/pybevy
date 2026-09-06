@@ -1,14 +1,26 @@
 use std::time::Duration;
 
 use bevy::audio::{AudioSink, AudioSinkPlayback};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::SPEED_NON_FINITE};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 use crate::volume::PyVolume;
 
+/// Playback speed must be finite; negative (reverse) speed is allowed.
+pub(crate) fn validate_sink_speed(speed: f32) -> PyResult<()> {
+    if speed.is_finite() {
+        Ok(())
+    } else {
+        Err(PyValueError::new_err(SPEED_NON_FINITE))
+    }
+}
+
 #[pycomponent(AudioSink, no_clone, bridge, no_reflect)]
-#[pyclass(name = "AudioSink", extends = PyComponent)]
+#[pyclass(name = "AudioSink", module = "pybevy.audio", extends = PyComponent)]
 pub struct PyAudioSink {
     pub(crate) storage: ComponentStorage<AudioSink>,
 }
@@ -44,6 +56,7 @@ impl PyAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
+        validate_sink_speed(speed)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }

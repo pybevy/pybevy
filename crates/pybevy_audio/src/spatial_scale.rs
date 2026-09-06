@@ -1,23 +1,20 @@
 use bevy::audio::SpatialScale;
 use pybevy_math::vec3::PyVec3;
-use pyo3::{prelude::*, types::PyFloat};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyFloat};
 
 fn parse_scale_arg(ob: &Bound<'_, PyAny>) -> PyResult<SpatialScale> {
     if let Ok(f) = ob.cast::<PyFloat>() {
         Ok(SpatialScale::new(f.extract()?))
     } else if let Ok(i) = ob.extract::<i64>() {
-        // Handle int as float
         Ok(SpatialScale::new(i as f32))
     } else if let Ok(v) = ob.extract::<PyVec3>() {
         Ok(SpatialScale(v.try_into()?))
     } else {
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "Expected float or Vec3",
-        ))
+        Err(PyTypeError::new_err("Expected float or Vec3"))
     }
 }
 
-#[pyclass(name = "SpatialScale", frozen, from_py_object)]
+#[pyclass(name = "SpatialScale", module = "pybevy.audio", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpatialScale {
     pub inner: SpatialScale,

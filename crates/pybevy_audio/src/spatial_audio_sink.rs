@@ -10,10 +10,10 @@ use pybevy_math::vec3::PyVec3;
 use pybevy_transform::transform::PyTransform;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::volume::PyVolume;
+use crate::{audio_sink::validate_sink_speed, volume::PyVolume};
 
 #[pycomponent(SpatialAudioSink, no_clone, bridge, no_reflect)]
-#[pyclass(name = "SpatialAudioSink", extends = PyComponent)]
+#[pyclass(name = "SpatialAudioSink", module = "pybevy.audio", extends = PyComponent)]
 pub struct PySpatialAudioSink {
     pub(crate) storage: ComponentStorage<SpatialAudioSink>,
 }
@@ -49,6 +49,7 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
+        validate_sink_speed(speed)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }
@@ -103,7 +104,7 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_listener_position(&self, position: &PyTransform, gap: f32) -> PyResult<()> {
-        let bevy_transform: Transform = position.as_ref()?.clone();
+        let bevy_transform: Transform = *position.as_ref()?;
         self.as_ref()?.set_listener_position(bevy_transform, gap);
         Ok(())
     }

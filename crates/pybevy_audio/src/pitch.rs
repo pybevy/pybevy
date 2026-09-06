@@ -1,10 +1,16 @@
 use bevy::audio::Pitch;
-use pybevy_core::{AssetStorage, duration_from_secs_f64};
+use pybevy_core::{AssetStorage, duration_from_secs_f64, try_finite_positive_frequency};
 use pybevy_macros::pyasset;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+fn validate_frequency(frequency: f32) -> PyResult<()> {
+    try_finite_positive_frequency(frequency as f64)
+        .map_err(|error| PyValueError::new_err(error.message()))?;
+    Ok(())
+}
 
 #[pyasset(Pitch, bridge)]
-#[pyclass(name = "Pitch", extends = pybevy_core::PyAsset, skip_from_py_object)]
+#[pyclass(name = "Pitch", module = "pybevy.audio", extends = pybevy_core::PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyPitch {
     pub(crate) storage: AssetStorage<Pitch>,
@@ -15,6 +21,7 @@ impl PyPitch {
     #[new]
     #[pyo3(signature = (frequency, duration))]
     pub fn new(frequency: f32, duration: f64) -> PyResult<PyClassInitializer<Self>> {
+        validate_frequency(frequency)?;
         let pitch = Pitch::new(frequency, duration_from_secs_f64(duration)?);
         Ok(Self::from_owned(pitch).into())
     }
@@ -26,6 +33,7 @@ impl PyPitch {
 
     #[setter]
     pub fn set_frequency(&mut self, frequency: f32) -> PyResult<()> {
+        validate_frequency(frequency)?;
         self.as_mut()?.frequency = frequency;
         Ok(())
     }
