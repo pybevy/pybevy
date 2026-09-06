@@ -1,4 +1,4 @@
-use bevy::camera::Camera;
+use bevy::{camera::Camera, math::Vec3};
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
@@ -14,7 +14,7 @@ use super::{
 };
 
 #[pycomponent(Camera, bridge, view_fields = [is_active])]
-#[pyclass(name = "Camera", extends = PyComponent)]
+#[pyclass(name = "Camera", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyCamera {
     pub(crate) storage: ComponentStorage<Camera>,
 }
@@ -264,6 +264,42 @@ impl PyCamera {
 
     pub fn clip_from_view(&self) -> PyResult<PyMat4> {
         Ok(self.as_ref()?.clip_from_view().into())
+    }
+
+    pub fn world_to_ndc(
+        &self,
+        camera_transform: &PyGlobalTransform,
+        world_point: PyVec3,
+    ) -> PyResult<Option<PyVec3>> {
+        let camera = self.as_ref()?;
+        let transform = camera_transform.as_ref()?;
+        let world_pos = world_point.try_into()?;
+
+        Ok(camera
+            .world_to_ndc(&transform, world_pos)
+            .map(|v: Vec3| v.into()))
+    }
+
+    pub fn ndc_to_world(
+        &self,
+        camera_transform: &PyGlobalTransform,
+        ndc_point: PyVec3,
+    ) -> PyResult<Option<PyVec3>> {
+        let camera = self.as_ref()?;
+        let transform = camera_transform.as_ref()?;
+        let ndc = ndc_point.try_into()?;
+
+        Ok(camera.ndc_to_world(&transform, ndc).map(|v: Vec3| v.into()))
+    }
+
+    pub fn viewport_to_ndc(&self, viewport_position: PyVec2) -> PyResult<PyVec2> {
+        let camera = self.as_ref()?;
+        let viewport_pos = viewport_position.try_into()?;
+
+        camera
+            .viewport_to_ndc(viewport_pos)
+            .map(|v| v.into())
+            .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
     }
 
     pub fn depth_ndc_to_view_z(&self, ndc_depth: f32) -> PyResult<f32> {

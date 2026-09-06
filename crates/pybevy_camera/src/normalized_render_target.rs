@@ -44,15 +44,15 @@ impl PyNormalizedRenderTarget {
     fn __repr__(&self) -> String {
         match self {
             Self::Window { value } => {
-                let value: PyNormalizedWindowRef = (*value).into();
+                let value: PyNormalizedWindowRef = (*value);
                 format!("NormalizedRenderTarget.Window({value:?})")
             }
             Self::Image { value } => {
-                let value: PyImageRenderTarget = value.clone().into();
+                let value: PyImageRenderTarget = value.clone();
                 format!("NormalizedRenderTarget.Image({value:?})")
             }
             Self::TextureView { value } => {
-                let value: PyManualTextureViewHandle = (*value).into();
+                let value: PyManualTextureViewHandle = (*value);
                 format!("NormalizedRenderTarget.TextureView({value:?})")
             }
             Self::None { width, height } => {
