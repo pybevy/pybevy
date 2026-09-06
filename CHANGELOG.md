@@ -2,6 +2,152 @@
 
 ## Unreleased
 
+### CPU DLPack array interop
+
+On CPython, `pybevy.array.Array` now exports owned contiguous storage through
+the standard DLPack protocol, and `pybevy.array.from_dlpack()` copies a
+C-contiguous CPU tensor into bounded storage. A zero-copy consumer receives an
+exclusive storage lease, so every PyBevy access raises until the consumer
+releases its tensor. Views, borrowed engine storage, boolean storage, and
+explicit `copy=True` exports are detached copies. RustPython deliberately does
+not expose this CPython capsule boundary.
+
+### Legacy `native_*` macros removed (breaking)
+
+The `native_component`, `native_asset`, and `native_resource` proc macros
+have been removed along with the `NativeComponent` trait. They were unused
+internally; use `pycomponent`, `pyasset`, and `pyresource` instead.
+
+### MCP Hub removed (breaking)
+
+The unauthenticated local `pybevy hub` process broker and its automatic
+fallback have been removed. MCP scene requests now launch their owned
+`pybevy dev` subprocess directly on Linux, macOS, and Windows. In environments
+without a graphical session, use `run_scene(..., headless=True)`. Scene crashes
+are reported with their captured output and are no longer silently restarted.
+
+### Render-resource types moved to `pybevy.render` (breaking)
+
+`Extent3d`, `TextureDimension`, `TextureFormat`, and `VertexFormat` moved to
+`pybevy.render`, alongside `TextureViewDimension`, matching Bevy's public
+module. The legacy `pybevy.wgpu` module has been removed.
+
+### Asset handle UUID terminology (breaking)
+
+`Handle.weak_from_u128()` is now `Handle.uuid_from_u128()`, and
+`Handle.is_weak()` is now `Handle.is_uuid()`. UUID-backed handle reprs now use
+`Uuid(...)`. This matches Bevy 0.19's `Handle::Uuid` variant; Bevy no longer has
+a general weak-handle variant.
+
+### Asset IDs now match Bevy (breaking)
+
+`Handle.id()`, `AssetEvent.id`, `Sprite.as_asset_id()`, and `Assets` iteration
+now return `AssetId[A]` rather than integers or non-owning handles. `Assets`
+lookup/removal methods and `AssetServer` state queries accept either
+`Handle[A]` or `AssetId[A]`. This removes the synthetic UUID encoding that was
+previously used for index-based asset IDs. Bevy's exact `AssetId.Index` and
+`AssetId.Uuid` variants are available for matching and variant-local field
+access.
+
+## 0.3.0
+
+### Bevy 0.19
+
+PyBevy now targets Bevy 0.19 (upgraded from 0.18). Bevy's own 0.18 -> 0.19
+migration notes apply to any native Rust code embedding PyBevy.
+
+### Bounding-volume corner types now mirror Bevy (breaking)
+
+`Aabb3d.min`, `Aabb3d.max`, `BoundingSphere.center` and `Isometry3d.translation`
+now expose `Vec3A`, matching the Bevy field types they wrap. They previously
+converted to `Vec3` on read and back on write.
+
+The conversion hid a defect: because the returned `Vec3` was a converted copy
+rather than a view of the field, a nested write such as `aabb.min.x = 5.0` was
+silently discarded. These properties now behave like every other wrapper field.
+A field reached from an ECS-borrowed instance persists writes; one reached from
+an owned instance returns a read-only snapshot and raises rather than dropping
+the write.
+
+Migration: pass and compare `Vec3A` instead of `Vec3` when reading these four
+properties. `Vec3A(x, y, z)` constructs one.
+
+Parameters that Bevy declares as `impl Into<Vec3A>` accept either spelling, so a
+value read back from one of these types can be passed straight into the next
+call. That covers `Aabb3d(...)`, `Aabb3d.from_min_max`, `closest_point`, `grow`,
+`shrink`, `scale_around_center`, `BoundingSphere(...)`, `Isometry3d(...)`,
+`Isometry3d.from_translation`, and the isometry transform-point methods.
+
+Whole-field assignment (`aabb.min = Vec3A(...)`) is the supported way to change
+a corner; assigning through a component or asset that owns the bounding volume
+continues to work unchanged.
+
+### Nested field writes no longer silently vanish
+
+`Rect`, `URect` and `BorderRect` stored their corner vectors as plain wrapper
+values, so a getter returned a clone while a setter was also exposed, and
+`rect.min.x = 5.0` mutated a throwaway. All three are now storage-backed, so
+such a write either persists (borrowed instances) or raises
+`RuntimeError` (owned instances) instead of being discarded. `Aabb2d.min`,
+`Aabb2d.max`, `BoundingCircle.center` and `Affine2.translation` had the same
+defect and are fixed the same way.
+
+`PluginGroupBuilder` no longer drops retained additions. Python-defined plugins
+added with `add()` execute after the native group, native PyBevy plugins use
+Bevy's real `add_before`/`add_after` ordering, and `set()` now applies Audio,
+Image, and TaskPool plugins instead of failing during group construction.
+Relative placement of a Python-defined plugin now raises immediately because
+its `build(app)` callback cannot safely re-enter an App borrowed by Bevy's
+native group builder.
+
+### Mesh vertex-attribute arrays: bounded Array API (breaking)
+
+Mesh vertex-attribute access now returns PyBevy's portable **bounded**
+`pybevy.array.Array` (the bounded surface, identical on CPython and RustPython)
+instead of a real-NumPy view exposed through a context manager. Reads are
+zero-copy on CPython and safe **without** a `with` block: an escaped or
+post-system reference raises a clean error instead of reading freed mesh memory
+(the old numpy view could dangle). For anyone who needs real NumPy, `.to_numpy()`
+(CPython) and `.copy()` remain available on the returned array.
+
+Migration:
+
+- Read access no longer uses a `with` block; the accessor returns the array directly:
+  - `with mesh.positions() as p: ...` -> `p = mesh.positions()`
+  - same for `normals()`, `uvs()`, and `attribute(id)`
+- Mutable access keeps the `with` block but now yields the in-place bounded array
+  (writes land directly in the mesh; the array is closed on exit):
+  - `with mesh.positions_mut() as p: ...` (call unchanged; `p` is now a bounded array)
+  - same for `normals_mut()`, `uvs_mut()`, and `attribute_mut(id)`
+  - the bounded array carries only the documented surface, so NumPy-only idioms such
+    as `p[0] = [1.0, 2.0, 3.0]` (list RHS) are not supported; assign elementwise
+    (`p[0, 0] = 1.0`) or with a matching-shape array
+- Removed the transitional `positions_array()`/`normals_array()`/`uvs_array()`/
+  `attribute_array()` and their `*_mut_array()` variants: the base accessor names
+  now return the bounded array
+- Removed `positions_copy()` / `normals_copy()`. For a detached snapshot, call
+  `.copy()` (bounded) or `.to_numpy()` (real NumPy, CPython only) on the read array:
+  - `mesh.positions_copy()` -> `mesh.positions().copy()` (or `.to_numpy()`)
+- Removed the `MeshAttributeContext` / `MeshAttributeContextMut` classes
+
+Whole-array `Array.sum()` and `Array.mean()` now use a fixed eight-lane f64
+accumulation order across backends, including for float32 inputs. This pins
+deterministic results; low-order bits may differ from NumPy's reduction order.
+Contiguous and borrowed float arrays use the tiled reduction path, while
+non-contiguous arrays materialize in logical row-major order before applying
+the same accumulation contract.
+
+Writable contiguous arrays now expose `Array.lens()` for fused in-place
+expressions. Numeric subscripts select final-axis lanes, with negative indices
+supported; scalar and one-dimensional arrays use lane zero. The generic array
+does not assign vector or color names based only on shape. Mutable mesh
+attribute borrows use the same lens API inside their existing `with` scope.
+
+Float32 element-wise array expressions now retain float32 intermediates on both
+the contiguous tiled path and the dense fallback. Constants and scalar
+broadcasts narrow once to float32; float64 array expressions continue to use
+float64 intermediates.
+
 ### Bevy 0.19 upgrade
 
 PyBevy now tracks Bevy 0.19.0 (from 0.18). PyBevy mirrors Bevy's API surface,
@@ -29,6 +175,8 @@ so upstream renames, module moves, and default changes flow through to Python.
 - `ComputedNode.stack_index` removed; query the new `ComputedStackIndex` component instead
 - `FontAtlas.texture_atlas` now returns a `TextureAtlasLayout` (Bevy stores the layout inline; it is no longer a `Handle`); `FontAtlasKey` gained `id`/`index`/`variations_hash`
 - `FontStyle` is now a proper enum: `FontStyle.Normal()`, `FontStyle.Italic()`, `FontStyle.Oblique(angle)` (was `NORMAL`/`ITALIC` constants + `oblique()`)
+- Removed the misleading `pybevy.input.Axis` resource facade. Bevy 0.19 keeps analog state on each `Gamepad` component; query `Gamepad` and use `get_axis()`, `get_axis_unclamped()`, `left_stick()`, or `right_stick()`.
+- `Val` equality now mirrors Bevy exactly: payload comparisons are exact and all zero-valued units compare equal. `Val` is now unhashable, matching Bevy's lack of a `Hash` implementation, and a `Val.px(...)` no longer compares equal to a bare Python number on RP2.
 - `Cone.from_dimensions`/`Cylinder.from_dimensions` removed; `Cuboid.from_corners(min=, max=)` -> `(point1=, point2=)`
 - `GltfAssetLabel.MorphTarget` removed (the sub-asset no longer exists in Bevy); `GltfAssetLabel.Material(n)` now labels a `GltfMaterial` sub-asset, the processed `StandardMaterial` lives under the `"/std"` label suffix
 - `Shader.with_import_path()` removed (Bevy has no such builder); assign the `import_path` property instead
@@ -44,6 +192,7 @@ so upstream renames, module moves, and default changes flow through to Python.
 - `Skybox`: `image` is now optional (`Skybox()` == Bevy's default with no image); the `image` property returns `None` when unset
 - Constructor defaults aligned with Bevy 0.19 `Default` impls: `Cone`/`Cylinder` radius 0.5; `CircularSector`/`CircularSegment` radius 0.5, half_angle 2*pi/3; `RegularPolygon` circumradius 0.5; `Segment2d` endpoints (-0.5,0)/(0.5,0); `FocusPolicy()` is `Pass`; `TextShadow` offset (4,4), color rgba(0,0,0,0.75); `DistanceFog.directional_light_color` `NONE`; `ColorMaterial.alpha_mode` `Blend`; `Outline` width `px(1)`, color `WHITE`; `ShadowStyle` percent offsets/blur, color `BLACK`; `ColorStop`/`AngularColorStop` color `WHITE`; `ScreenSpaceAmbientOcclusion.constant_object_thickness` 0.25; `ScreenSpaceReflections` linear_steps 10, bisection_steps 5
 - Bare `Query[Entity]` also matches resource entities in Bevy 0.19 (resources are stored as entities); filter with component markers where exact counts matter
+- `Resource` now inherits `Component`, matching Bevy 0.19. Bridged native resources can be read through `Query[T]` on their stable resource entity and mutable wrappers through `Query[Mut[T]]`; `Res`/`ResMut` remain the preferred singleton system parameters and conflict with resource queries over the same value.
 - `PbrPlugin` now requires `GltfPlugin` to be added before it (Bevy's `PbrPlugin::build` registers a glTF material extension handler; `DefaultPlugins` order provides this automatically, manual plugin lists must add `GltfPlugin` first)
 - System-parameter validation failures and command errors now panic via Bevy's default error handler (Bevy 0.19 validates parameters while fetching data and routes failures to the app error handler; on 0.18 such systems were skipped silently). Consequence for manual plugin lists: `LightPlugin` needs `ImagePlugin` and `GizmoPlugin` present or its atmosphere/light-gizmo systems panic (`DefaultPlugins` provides both automatically)
 - `Image(...)` constructor now mirrors Bevy's `Image::new` parameter order (`size`, `dimension`, `data`, `format`, `asset_usage`): `data` moved from 2nd to 3rd position, so pass it as a keyword; a data/size/format length mismatch now raises `ValueError` instead of a debug panic
