@@ -1,41 +1,40 @@
 use bevy::math::{
-    Vec3, Vec3A,
-    bounding::{BoundingSphere, BoundingVolume, IntersectsVolume},
+    Isometry3d, Vec3, Vec3A,
+    bounding::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use super::aabb3d::PyAabb3d;
 use crate::{
+    quat::extract_quat_from_any,
     vec3::PyVec3,
     vec3a::{PyVec3A, extract_vec3a_from_any},
 };
 
 #[pyvalue]
-#[pyclass(name = "BoundingSphere", skip_from_py_object)]
+#[pyclass(name = "BoundingSphere", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingSphere {
     storage: ValueStorage<BoundingSphere>,
 }
 
-impl From<PyBoundingSphere> for BoundingSphere {
+impl TryFrom<PyBoundingSphere> for BoundingSphere {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_sphere: PyBoundingSphere) -> Self {
-        match py_sphere.storage.get() {
-            Ok(val) => val,
-            Err(_) => BoundingSphere::new(Vec3A::ZERO, 0.0),
-        }
+    fn try_from(py_sphere: PyBoundingSphere) -> PyResult<Self> {
+        Ok(py_sphere.storage.get()?)
     }
 }
 
-impl From<&PyBoundingSphere> for BoundingSphere {
+impl TryFrom<&PyBoundingSphere> for BoundingSphere {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_sphere: &PyBoundingSphere) -> Self {
-        match py_sphere.storage.get() {
-            Ok(val) => val,
-            Err(_) => BoundingSphere::new(Vec3A::ZERO, 0.0),
-        }
+    fn try_from(py_sphere: &PyBoundingSphere) -> PyResult<Self> {
+        Ok(py_sphere.storage.get()?)
     }
 }
 
@@ -79,14 +78,47 @@ impl PyBoundingSphere {
     }
 
     pub fn contains(&self, other: &PyBoundingSphere) -> PyResult<bool> {
-        let other_sphere: BoundingSphere = other.into();
+        let other_sphere: BoundingSphere = other.try_into()?;
         Ok(self.as_ref()?.contains(&other_sphere))
     }
 
+    /// True if this BoundingSphere intersects another BoundingSphere or an Aabb3d.
+    pub fn intersects(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if other.is_instance_of::<PyBoundingSphere>() {
+            let other_sphere: BoundingSphere =
+                BoundingSphere::try_from(&*other.cast::<PyBoundingSphere>()?.borrow())?;
+            return Ok(self.as_ref()?.intersects(&other_sphere));
+        }
+        if other.is_instance_of::<PyAabb3d>() {
+            let aabb: Aabb3d = Aabb3d::try_from(&*other.cast::<PyAabb3d>()?.borrow())?;
+            return Ok(self.as_ref()?.intersects(&aabb));
+        }
+        Err(PyTypeError::new_err("expected BoundingSphere or Aabb3d"))
+    }
+
     pub fn merge(&self, other: &PyBoundingSphere) -> PyResult<PyBoundingSphere> {
-        let other_sphere: BoundingSphere = other.into();
+        let other_sphere: BoundingSphere = other.try_into()?;
         Ok(PyBoundingSphere::from_owned(
             self.as_ref()?.merge(&other_sphere),
+        ))
+    }
+
+    pub fn rotated_by(&self, rotation: &Bound<'_, PyAny>) -> PyResult<PyBoundingSphere> {
+        let rotation = extract_quat_from_any(rotation)?;
+        Ok(PyBoundingSphere::from_owned(
+            (*self.as_ref()?).rotated_by(rotation),
+        ))
+    }
+
+    pub fn transformed_by(
+        &self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<PyBoundingSphere> {
+        let translation = extract_vec3a_from_any(translation)?;
+        let rotation = extract_quat_from_any(rotation)?;
+        Ok(PyBoundingSphere::from_owned(
+            (*self.as_ref()?).transformed_by(translation, rotation),
         ))
     }
 
@@ -113,12 +145,12 @@ impl PyBoundingSphere {
     }
 
     pub fn intersects_sphere(&self, other: &PyBoundingSphere) -> PyResult<bool> {
-        let other_sphere: BoundingSphere = other.into();
+        let other_sphere: BoundingSphere = other.try_into()?;
         Ok(self.as_ref()?.intersects(&other_sphere))
     }
 
     pub fn intersects_aabb(&self, aabb: &PyAabb3d) -> PyResult<bool> {
-        let aabb_3d: bevy::math::bounding::Aabb3d = aabb.into();
+        let aabb_3d: Aabb3d = aabb.try_into()?;
         Ok(self.as_ref()?.intersects(&aabb_3d))
     }
 
@@ -127,8 +159,6 @@ impl PyBoundingSphere {
         isometry: super::aabb3d::PyIsometry3d,
         points: Vec<PyVec3>,
     ) -> PyResult<PyBoundingSphere> {
-        use bevy::math::Isometry3d;
-
         let iso: Isometry3d = isometry.try_into()?;
         let point_refs: Vec<Vec3A> = points
             .into_iter()

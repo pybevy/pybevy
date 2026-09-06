@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
 
-#[pyclass(name = "Affine3A", skip_from_py_object)]
+#[pyclass(name = "Affine3A", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAffine3A {
     storage: ValueStorage<Affine3A>,
@@ -232,13 +232,19 @@ impl PyAffine3A {
         ))
     }
 
-    fn __richcmp__(&self, other: &PyAffine3A, op: CompareOp) -> PyResult<bool> {
-        let self_aff = *self.as_ref()?;
-        let other_aff = *other.as_ref()?;
-        match op {
-            CompareOp::Eq => Ok(self_aff == other_aff),
-            CompareOp::Ne => Ok(self_aff != other_aff),
-            _ => Err(PyTypeError::new_err("Affine3A only supports == and !=")),
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_aff) = other.extract::<PyRef<'_, PyAffine3A>>() {
+            let self_aff = *self.as_ref()?;
+            let other_aff = *other_aff.as_ref()?;
+            match op {
+                CompareOp::Eq => Ok(self_aff == other_aff),
+                CompareOp::Ne => Ok(self_aff != other_aff),
+                _ => Err(PyTypeError::new_err("Affine3A only supports == and !=")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare Affine3A with another Affine3A",
+            ))
         }
     }
 }

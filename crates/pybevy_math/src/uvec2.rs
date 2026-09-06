@@ -1,8 +1,12 @@
 use bevy::math::UVec2;
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyZeroDivisionError},
+    prelude::*,
+};
 
-#[pyclass(name = "UVec2", from_py_object)]
+#[pyclass(name = "UVec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyUVec2 {
     storage: ValueStorage<UVec2>,
@@ -146,13 +150,19 @@ impl PyUVec2 {
         Ok(format!("UVec2(x={}, y={})", vec.x, vec.y))
     }
 
-    pub fn __richcmp__(&self, other: &PyUVec2, op: CompareOp) -> PyResult<bool> {
-        let a = self.as_ref()?;
-        let b = other.as_ref()?;
-        match op {
-            CompareOp::Eq => Ok(a == b),
-            CompareOp::Ne => Ok(a != b),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_vec) = other.extract::<PyUVec2>() {
+            let a = self.as_ref()?;
+            let b = other_vec.as_ref()?;
+            match op {
+                CompareOp::Eq => Ok(a == b),
+                CompareOp::Ne => Ok(a != b),
+                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare UVec2 with another UVec2",
+            ))
         }
     }
 
@@ -169,6 +179,9 @@ impl PyUVec2 {
     }
 
     pub fn __truediv__(&self, scalar: u32) -> PyResult<PyUVec2> {
+        if scalar == 0 {
+            return Err(PyZeroDivisionError::new_err("UVec2 division by zero"));
+        }
         Ok(PyUVec2::from_uvec2(*self.as_ref()? / scalar))
     }
 

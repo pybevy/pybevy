@@ -1,10 +1,10 @@
 use bevy::math::FloatOrd;
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
-use pyo3::{basic::CompareOp, prelude::*};
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 #[pyvalue]
-#[pyclass(name = "FloatOrd", frozen, from_py_object)]
+#[pyclass(name = "FloatOrd", module = "pybevy.math", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyFloatOrd {
     pub(crate) storage: ValueStorage<FloatOrd>,
@@ -52,17 +52,22 @@ impl PyFloatOrd {
         Ok(Self::from_owned(-*self.as_ref()?))
     }
 
-    pub fn __richcmp__(&self, other: &Self, op: CompareOp) -> PyResult<bool> {
-        let left = self.as_ref()?;
-        let right = other.as_ref()?;
-        Ok(match op {
-            CompareOp::Eq => *left == *right,
-            CompareOp::Ne => *left != *right,
-            CompareOp::Lt => *left < *right,
-            CompareOp::Le => *left <= *right,
-            CompareOp::Gt => *left > *right,
-            CompareOp::Ge => *left >= *right,
-        })
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other) = other.extract::<Self>() {
+            let left = self.as_ref()?;
+            let right = other.as_ref()?;
+            return Ok(match op {
+                CompareOp::Eq => *left == *right,
+                CompareOp::Ne => *left != *right,
+                CompareOp::Lt => *left < *right,
+                CompareOp::Le => *left <= *right,
+                CompareOp::Gt => *left > *right,
+                CompareOp::Ge => *left >= *right,
+            });
+        }
+        Err(PyTypeError::new_err(
+            "Can only compare FloatOrd with another FloatOrd",
+        ))
     }
 
     pub fn __hash__(&self) -> PyResult<isize> {

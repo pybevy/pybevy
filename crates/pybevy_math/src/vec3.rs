@@ -8,7 +8,7 @@ use pyo3::{
 
 use super::{vec2::PyVec2, vec4::PyVec4};
 
-#[pyclass(name = "Vec3", from_py_object)]
+#[pyclass(name = "Vec3", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVec3 {
     pub(crate) storage: ValueStorage<Vec3>,
@@ -72,7 +72,7 @@ impl PyVec3 {
 
     #[inline(always)]
     pub fn into_vec3(self) -> PyResult<Vec3> {
-        Ok(self.try_into()?)
+        self.try_into()
     }
 
     #[inline(always)]

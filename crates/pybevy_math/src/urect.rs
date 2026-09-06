@@ -6,7 +6,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 use super::uvec2::PyUVec2;
 
 #[pyvalue]
-#[pyclass(name = "URect", from_py_object)]
+#[pyclass(name = "URect", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyURect {
     pub(crate) storage: ValueStorage<URect>,
@@ -101,6 +101,10 @@ impl PyURect {
         Ok(self.to_bevy()?.height())
     }
 
+    pub fn inflate(&self, expansion: i32) -> PyResult<PyURect> {
+        Ok(self.to_bevy()?.inflate(expansion).into())
+    }
+
     pub fn size(&self) -> PyResult<PyUVec2> {
         Ok(self.to_bevy()?.size().into())
     }
@@ -137,13 +141,19 @@ impl PyURect {
         ))
     }
 
-    pub fn __richcmp__(&self, other: &PyURect, op: CompareOp) -> PyResult<bool> {
-        let a = self.to_bevy()?;
-        let b = other.to_bevy()?;
-        match op {
-            CompareOp::Eq => Ok(a == b),
-            CompareOp::Ne => Ok(a != b),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_rect) = other.extract::<PyURect>() {
+            let a = self.to_bevy()?;
+            let b = other_rect.to_bevy()?;
+            match op {
+                CompareOp::Eq => Ok(a == b),
+                CompareOp::Ne => Ok(a != b),
+                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare URect with another URect",
+            ))
         }
     }
 }

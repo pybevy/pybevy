@@ -8,7 +8,7 @@ use pyo3::{
 
 use super::{mat3::PyMat3, quat::PyQuat, vec3::PyVec3, vec4::PyVec4};
 
-#[pyclass(name = "Mat4", from_py_object)]
+#[pyclass(name = "Mat4", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMat4 {
     storage: ValueStorage<Mat4>,
@@ -431,13 +431,19 @@ impl PyMat4 {
         ))
     }
 
-    fn __richcmp__(&self, other: &PyMat4, op: CompareOp) -> PyResult<bool> {
-        let self_mat = *self.as_ref()?;
-        let other_mat = *other.as_ref()?;
-        match op {
-            CompareOp::Eq => Ok(self_mat == other_mat),
-            CompareOp::Ne => Ok(self_mat != other_mat),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_mat) = other.extract::<PyMat4>() {
+            let self_mat = *self.as_ref()?;
+            let other_mat = *other_mat.as_ref()?;
+            match op {
+                CompareOp::Eq => Ok(self_mat == other_mat),
+                CompareOp::Ne => Ok(self_mat != other_mat),
+                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare Mat4 with another Mat4",
+            ))
         }
     }
 }

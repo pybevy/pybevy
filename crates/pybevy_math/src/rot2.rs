@@ -2,11 +2,11 @@ use std::f32::consts::PI;
 
 use bevy::math::{Rot2, StableInterpolate, Vec2};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Rot2", eq, from_py_object)]
+#[pyclass(name = "Rot2", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRot2 {
     storage: ValueStorage<Rot2>,
@@ -258,4 +258,18 @@ impl PyRot2 {
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!("Rot2(radians={})", self.as_ref()?.as_radians()))
     }
+}
+
+/// Accept a PyRot2 or a float angle in radians, matching bevy's `impl Into<Rot2>`.
+pub fn extract_rot2_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Rot2> {
+    if let Ok(value) = obj.extract::<PyRot2>() {
+        return Rot2::try_from(value);
+    }
+    if let Ok(radians) = obj.extract::<f32>() {
+        return Ok(Rot2::from(radians));
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected Rot2 or float radians, got {}",
+        obj.get_type().name()?
+    )))
 }

@@ -4,7 +4,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3::PyMat3, vec2::PyVec2};
 
-#[pyclass(name = "Affine2", from_py_object)]
+#[pyclass(name = "Affine2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyAffine2 {
     storage: ValueStorage<Affine2>,
@@ -256,7 +256,7 @@ impl PyAffine2 {
     }
 }
 
-#[pyclass(name = "Mat2", from_py_object)]
+#[pyclass(name = "Mat2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMat2 {
     storage: ValueStorage<Mat2>,
@@ -434,6 +434,9 @@ impl PyMat2 {
                 PyMat2::from_mat2(self.try_get()? * other_mat.try_get()?),
             )?
             .into_any())
+        } else if let Ok(other_vec) = other.extract::<PyVec2>() {
+            let transformed: Vec2 = self.try_get()? * Vec2::try_from(other_vec)?;
+            Ok(Py::new(py, PyVec2::from_vec2(transformed))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

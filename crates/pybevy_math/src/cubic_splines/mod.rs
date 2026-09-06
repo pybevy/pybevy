@@ -1,4 +1,16 @@
 pub mod cubic_bezier;
+pub mod cubic_bezier3d;
+pub mod cubic_bspline2d;
+pub mod cubic_bspline3d;
 pub mod cubic_cardinal_spline;
+pub mod cubic_cardinal_spline3d;
 pub mod cubic_curve;
+pub mod cubic_curve3d;
 pub mod cubic_hermite;
+pub mod cubic_hermite3d;
+pub mod cubic_nurbs2d;
+pub mod cubic_nurbs3d;
+pub mod linear_spline2d;
+pub mod linear_spline3d;
+pub mod rational_curve2d;
+pub mod rational_curve3d;

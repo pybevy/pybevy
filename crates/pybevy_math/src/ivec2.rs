@@ -1,8 +1,12 @@
 use bevy::math::IVec2;
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyOverflowError, PyTypeError, PyZeroDivisionError},
+    prelude::*,
+};
 
-#[pyclass(name = "IVec2", from_py_object)]
+#[pyclass(name = "IVec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyIVec2 {
     storage: ValueStorage<IVec2>,
@@ -164,13 +168,19 @@ impl PyIVec2 {
         Ok(format!("IVec2(x={}, y={})", vec.x, vec.y))
     }
 
-    pub fn __richcmp__(&self, other: &PyIVec2, op: CompareOp) -> PyResult<bool> {
-        let a = self.as_ref()?;
-        let b = other.as_ref()?;
-        match op {
-            CompareOp::Eq => Ok(a == b),
-            CompareOp::Ne => Ok(a != b),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_vec) = other.extract::<PyIVec2>() {
+            let a = self.as_ref()?;
+            let b = other_vec.as_ref()?;
+            match op {
+                CompareOp::Eq => Ok(a == b),
+                CompareOp::Ne => Ok(a != b),
+                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare IVec2 with another IVec2",
+            ))
         }
     }
 
@@ -187,6 +197,14 @@ impl PyIVec2 {
     }
 
     pub fn __truediv__(&self, scalar: i32) -> PyResult<PyIVec2> {
+        if scalar == 0 {
+            return Err(PyZeroDivisionError::new_err("IVec2 division by zero"));
+        }
+        if scalar == -1 && *self.as_ref()? == IVec2::MIN {
+            return Err(PyOverflowError::new_err(
+                "IVec2 division overflows: i32::MIN / -1",
+            ));
+        }
         Ok(PyIVec2::from_ivec2(*self.as_ref()? / scalar))
     }
 

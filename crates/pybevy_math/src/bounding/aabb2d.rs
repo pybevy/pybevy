@@ -1,36 +1,38 @@
 use bevy::math::{
-    Isometry2d, Vec2,
-    bounding::{Aabb2d, BoundingVolume, IntersectsVolume},
+    Dir2, Isometry2d, Vec2,
+    bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use super::bounding_circle::PyBoundingCircle;
-use crate::vec2::PyVec2;
+use crate::{
+    dir2::PyDir2,
+    rot2::extract_rot2_from_any,
+    vec2::{PyVec2, extract_vec2_from_any},
+};
 
-#[pyclass(name = "Aabb2d", skip_from_py_object)]
+#[pyclass(name = "Aabb2d", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAabb2d {
     storage: ValueStorage<Aabb2d>,
 }
 
-impl From<PyAabb2d> for Aabb2d {
+impl TryFrom<PyAabb2d> for Aabb2d {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_aabb: PyAabb2d) -> Self {
-        match py_aabb.storage.get() {
-            Ok(val) => val,
-            Err(_) => Aabb2d::new(Vec2::ZERO, Vec2::ZERO),
-        }
+    fn try_from(py_aabb: PyAabb2d) -> PyResult<Self> {
+        Ok(py_aabb.storage.get()?)
     }
 }
 
-impl From<&PyAabb2d> for Aabb2d {
+impl TryFrom<&PyAabb2d> for Aabb2d {
+    type Error = PyErr;
+
     #[inline(always)]
-    fn from(py_aabb: &PyAabb2d) -> Self {
-        match py_aabb.storage.get() {
-            Ok(val) => val,
-            Err(_) => Aabb2d::new(Vec2::ZERO, Vec2::ZERO),
-        }
+    fn try_from(py_aabb: &PyAabb2d) -> PyResult<Self> {
+        Ok(py_aabb.storage.get()?)
     }
 }
 
@@ -115,13 +117,44 @@ impl PyAabb2d {
     }
 
     pub fn contains(&self, other: &PyAabb2d) -> PyResult<bool> {
-        let other_aabb: Aabb2d = other.into();
+        let other_aabb: Aabb2d = other.try_into()?;
         Ok(self.as_ref()?.contains(&other_aabb))
     }
 
+    /// True if this Aabb2d intersects another Aabb2d or a BoundingCircle.
+    pub fn intersects(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if other.is_instance_of::<PyAabb2d>() {
+            let other_aabb: Aabb2d = Aabb2d::try_from(&*other.cast::<PyAabb2d>()?.borrow())?;
+            return Ok(self.as_ref()?.intersects(&other_aabb));
+        }
+        if other.is_instance_of::<PyBoundingCircle>() {
+            let circle: BoundingCircle =
+                BoundingCircle::try_from(&*other.cast::<PyBoundingCircle>()?.borrow())?;
+            return Ok(self.as_ref()?.intersects(&circle));
+        }
+        Err(PyTypeError::new_err("expected Aabb2d or BoundingCircle"))
+    }
+
     pub fn merge(&self, other: &PyAabb2d) -> PyResult<PyAabb2d> {
-        let other_aabb: Aabb2d = other.into();
+        let other_aabb: Aabb2d = other.try_into()?;
         Ok(PyAabb2d::from_aabb2d(self.as_ref()?.merge(&other_aabb)))
+    }
+
+    pub fn rotated_by(&self, rotation: &Bound<'_, PyAny>) -> PyResult<PyAabb2d> {
+        let rotation = extract_rot2_from_any(rotation)?;
+        Ok((*self.as_ref()?).rotated_by(rotation).into())
+    }
+
+    pub fn transformed_by(
+        &self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<PyAabb2d> {
+        let translation = extract_vec2_from_any(translation)?;
+        let rotation = extract_rot2_from_any(rotation)?;
+        Ok((*self.as_ref()?)
+            .transformed_by(translation, rotation)
+            .into())
     }
 
     pub fn grow(&self, amount: PyVec2) -> PyResult<PyAabb2d> {
@@ -152,12 +185,12 @@ impl PyAabb2d {
     }
 
     pub fn intersects_aabb(&self, other: &PyAabb2d) -> PyResult<bool> {
-        let other_aabb: Aabb2d = other.into();
+        let other_aabb: Aabb2d = other.try_into()?;
         Ok(self.as_ref()?.intersects(&other_aabb))
     }
 
     pub fn intersects_circle(&self, circle: &PyBoundingCircle) -> PyResult<bool> {
-        let bounding_circle = circle.to_bounding_circle();
+        let bounding_circle = circle.to_bounding_circle()?;
         Ok(self.as_ref()?.intersects(&bounding_circle))
     }
 
@@ -185,7 +218,7 @@ impl PyAabb2d {
     }
 }
 
-#[pyclass(name = "Isometry2d", eq, from_py_object)]
+#[pyclass(name = "Isometry2d", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyIsometry2d {
     inner: Isometry2d,
@@ -275,6 +308,27 @@ impl PyIsometry2d {
         Ok(PyVec2::from_vec2(
             self.inner.inverse_transform_point(point.try_into()?),
         ))
+    }
+
+    pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let iso = self.inner;
+        if let Ok(other_iso) = other.extract::<PyIsometry2d>() {
+            Ok(Py::new(
+                py,
+                PyIsometry2d {
+                    inner: iso * other_iso.inner,
+                },
+            )?
+            .into_any())
+        } else if let Ok(other_vec) = other.extract::<PyVec2>() {
+            let transformed: Vec2 = iso * Vec2::try_from(other_vec)?;
+            Ok(Py::new(py, PyVec2::from_vec2(transformed))?.into_any())
+        } else if let Ok(other_dir) = other.extract::<PyDir2>() {
+            let rotated: Dir2 = iso * other_dir.into_dir2()?;
+            Ok(Py::new(py, PyDir2::from_dir2(rotated))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
     }
 
     fn __repr__(&self) -> String {

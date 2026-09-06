@@ -1,6 +1,10 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::vec3::PyVec3;
 
@@ -9,7 +13,7 @@ fn bool_tuple(value: BVec4A) -> (bool, bool, bool, bool) {
     (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0, mask & 8 != 0)
 }
 
-#[pyclass(name = "Vec4", from_py_object)]
+#[pyclass(name = "Vec4", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVec4 {
     pub(crate) storage: ValueStorage<Vec4>,
@@ -177,6 +181,17 @@ impl PyVec4 {
         Self::vec4(Vec4::NEG_W)
     }
 
+    #[classattr]
+    #[pyo3(name = "AXES")]
+    pub fn axes() -> (Self, Self, Self, Self) {
+        (
+            Self::vec4(Vec4::X),
+            Self::vec4(Vec4::Y),
+            Self::vec4(Vec4::Z),
+            Self::vec4(Vec4::W),
+        )
+    }
+
     #[new]
     pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
         PyVec4::vec4(Vec4::new(x, y, z, w))
@@ -263,7 +278,7 @@ impl PyVec4 {
     #[staticmethod]
     pub fn from_slice(a: Vec<f32>) -> PyResult<PyVec4> {
         if a.len() < 4 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
+            return Err(PyValueError::new_err(
                 "from_slice requires at least 4 elements",
             ));
         }

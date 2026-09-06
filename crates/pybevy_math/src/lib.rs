@@ -7,6 +7,8 @@ pub mod dir2;
 pub mod dir3;
 pub mod easing;
 pub mod float_ord;
+pub mod interval;
+pub mod irect;
 pub mod ivec2;
 pub mod mat3;
 pub mod mat3a;
@@ -38,6 +40,8 @@ pub mod prelude {
         dir3::PyDir3,
         easing::{PyEaseFunction, PyJumpAt},
         float_ord::PyFloatOrd,
+        interval::PyInterval,
+        irect::PyIRect,
         ivec2::PyIVec2,
         mat3::PyMat3,
         mat3a::PyMat3A,
@@ -79,12 +83,16 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<dir3::PyDir3>()?;
     m.add_class::<range::PyRange>()?;
     m.add_class::<rect::PyRect>()?;
+    m.add_class::<irect::PyIRect>()?;
+    m.add_class::<interval::PyInterval>()?;
     m.add_class::<urect::PyURect>()?;
     m.add_class::<quat::PyQuat>()?;
     m.add_class::<quat::PyEulerRot>()?;
     m.add_class::<bounding::PyAabb2d>()?;
     m.add_class::<bounding::PyAabb3d>()?;
+    m.add_class::<bounding::PyAabbCast2d>()?;
     m.add_class::<bounding::PyBoundingCircle>()?;
+    m.add_class::<bounding::PyBoundingCircleCast>()?;
     m.add_class::<bounding::PyBoundingSphere>()?;
     m.add_class::<bounding::PyIsometry2d>()?;
     m.add_class::<bounding::PyIsometry3d>()?;
@@ -93,7 +101,19 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bounding::PyRayCast2d>()?;
     m.add_class::<bounding::PyRayCast3d>()?;
     m.add_class::<cubic_splines::cubic_curve::PyCubicCurve2d>()?;
+    m.add_class::<cubic_splines::cubic_curve3d::PyCubicCurve3d>()?;
     m.add_class::<cubic_splines::cubic_bezier::PyCubicBezier2d>()?;
+    m.add_class::<cubic_splines::cubic_bezier3d::PyCubicBezier3d>()?;
+    m.add_class::<cubic_splines::cubic_cardinal_spline3d::PyCubicCardinalSpline3d>()?;
+    m.add_class::<cubic_splines::cubic_hermite3d::PyCubicHermite3d>()?;
+    m.add_class::<cubic_splines::cubic_bspline2d::PyCubicBSpline2d>()?;
+    m.add_class::<cubic_splines::cubic_bspline3d::PyCubicBSpline3d>()?;
+    m.add_class::<cubic_splines::cubic_nurbs2d::PyCubicNurbs2d>()?;
+    m.add_class::<cubic_splines::cubic_nurbs3d::PyCubicNurbs3d>()?;
+    m.add_class::<cubic_splines::linear_spline2d::PyLinearSpline2d>()?;
+    m.add_class::<cubic_splines::linear_spline3d::PyLinearSpline3d>()?;
+    m.add_class::<cubic_splines::rational_curve2d::PyRationalCurve2d>()?;
+    m.add_class::<cubic_splines::rational_curve3d::PyRationalCurve3d>()?;
     m.add_class::<cubic_splines::cubic_cardinal_spline::PyCubicCardinalSpline2d>()?;
     m.add_class::<cubic_splines::cubic_hermite::PyCubicHermite2d>()?;
     m.add_class::<rot2::PyRot2>()?;
@@ -108,6 +128,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<primitives::PyHalfSpace>()?;
     m.add_class::<primitives::PyViewFrustum>()?;
     m.add_class::<primitives::PyLine2d>()?;
+    m.add_class::<primitives::PyLine3d>()?;
     m.add_class::<primitives::PyPlane2d>()?;
     m.add_class::<primitives::PyArc2d>()?;
     m.add_class::<primitives::PyInfinitePlane3d>()?;
