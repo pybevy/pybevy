@@ -15,7 +15,7 @@ use pyo3::{PyTypeInfo, prelude::*, types::PyType};
 use crate::standard_material::PyStandardMaterial;
 
 #[pycomponent(ForwardDecal, unit, bridge)]
-#[pyclass(name = "ForwardDecal", extends = PyComponent, frozen, eq, skip_from_py_object)]
+#[pyclass(name = "ForwardDecal", module = "pybevy.pbr", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyForwardDecal;
 
@@ -51,7 +51,11 @@ impl PyForwardDecal {
 }
 
 #[pyfield]
-#[pyclass(name = "ForwardDecalMaterialExt", from_py_object)]
+#[pyclass(
+    name = "ForwardDecalMaterialExt",
+    module = "pybevy.pbr",
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyForwardDecalMaterialExt {
     storage: FieldStorage<ForwardDecalMaterialExt>,
@@ -84,7 +88,7 @@ impl PyForwardDecalMaterialExt {
     material
 )]
 #[pyclass(
-    name = "ForwardDecalMaterial",
+    name = "ForwardDecalMaterial", module = "pybevy.pbr",
     extends = PyMaterial,
     skip_from_py_object
 )]
@@ -109,7 +113,7 @@ impl PyForwardDecalMaterial {
             Some(extension) => (&*extension).try_into()?,
             None => ForwardDecalMaterialExt::default(),
         };
-        Ok(Self::from_owned(ForwardDecalMaterial { base, extension }).into())
+        Ok(Self::from_owned(ForwardDecalMaterial { base, extension }))
     }
 
     #[classattr]
@@ -157,7 +161,7 @@ impl PyForwardDecalMaterial {
     bridge
 )]
 #[pyclass(
-    name = "MeshMaterial3dForwardDecal",
+    name = "MeshMaterial3dForwardDecal", module = "pybevy.pbr",
     extends = PyComponent,
     eq,
     skip_from_py_object

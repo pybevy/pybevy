@@ -25,7 +25,7 @@ use crate::{
 };
 
 #[pyasset(ShaderMaterial, bridge, not_loadable, input_converter, material)]
-#[pyclass(name = "ShaderMaterial", extends = PyMaterial, skip_from_py_object)]
+#[pyclass(name = "ShaderMaterial", module = "pybevy.pbr", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
     pub storage: AssetStorage<ShaderMaterial>,
@@ -137,7 +137,7 @@ impl PyShaderMaterial {
                 bindings_wgsl,
             },
         };
-        Ok(Self::from_owned(material).into())
+        Ok(Self::from_owned(material))
     }
 
     #[getter]
@@ -275,7 +275,7 @@ impl PyShaderMaterial {
 }
 
 #[pyplugin(MaterialPlugin::<ShaderMaterial>)]
-#[pyclass(name = "ShaderMaterialPlugin", extends = PyPlugin, frozen, skip_from_py_object)]
+#[pyclass(name = "ShaderMaterialPlugin", module = "pybevy.pbr", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
 
@@ -298,7 +298,7 @@ impl PluginBuild for PyShaderMaterialPlugin {
 }
 
 #[pycomponent(MeshMaterial3d<ShaderMaterial>, bridge)]
-#[pyclass(name = "MeshMaterial3dShader", extends = PyComponent, eq, skip_from_py_object)]
+#[pyclass(name = "MeshMaterial3dShader", module = "pybevy.pbr", extends = PyComponent, eq, skip_from_py_object)]
 #[derive(Debug, PartialEq)]
 pub struct PyMeshMaterial3dShader {
     pub(crate) storage: ComponentStorage<MeshMaterial3d<ShaderMaterial>>,
