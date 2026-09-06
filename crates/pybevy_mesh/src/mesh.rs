@@ -19,8 +19,10 @@ use pybevy_macros::pyasset;
 use pybevy_math::{quat::PyQuat, vec3::PyVec3};
 use pybevy_transform::transform::PyTransform;
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
+    types::PyBytes,
 };
 
 use crate::{
@@ -31,7 +33,7 @@ use crate::{
     vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues, attribute_id},
 };
 #[pyasset(Mesh, bridge, input_converter)]
-#[pyclass(name = "Mesh", extends = PyAsset, skip_from_py_object)]
+#[pyclass(name = "Mesh", module = "pybevy.mesh", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyMesh {
     pub(crate) storage: AssetStorage<Mesh>,
@@ -76,6 +78,8 @@ fn extract_attribute_values(
     Ok(attr_values)
 }
 
+// bevy validates these preconditions with assert!, not Err: converting them to
+// ValueError so a bad mesh is a catchable error rather than a frame panic.
 fn check_flat_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
     let indexed = mesh
         .try_indices_option()
@@ -91,6 +95,48 @@ fn check_flat_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
     if topology != PrimitiveTopology::TriangleList {
         return Err(PyValueError::new_err(format!(
             "compute_flat_normals requires PrimitiveTopology.TriangleList (got {topology:?})"
+        )));
+    }
+    Ok(())
+}
+
+// bevy asserts indexed + TriangleList here; surface as ValueError, not a panic.
+fn check_area_weighted_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
+    let indexed = mesh
+        .try_indices_option()
+        .map_err(|error| mesh_operation_error("compute_area_weighted_normals", error))?
+        .is_some();
+    if !indexed {
+        return Err(PyValueError::new_err(
+            "compute_area_weighted_normals requires indexed geometry; use compute_flat_normals() \
+             on non-indexed geometry instead",
+        ));
+    }
+    let topology = mesh.primitive_topology();
+    if topology != PrimitiveTopology::TriangleList {
+        return Err(PyValueError::new_err(format!(
+            "compute_area_weighted_normals requires PrimitiveTopology.TriangleList (got {topology:?})"
+        )));
+    }
+    Ok(())
+}
+
+// bevy asserts indexed + TriangleList here; surface as ValueError, not a panic.
+fn check_smooth_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
+    let indexed = mesh
+        .try_indices_option()
+        .map_err(|error| mesh_operation_error("compute_custom_smooth_normals", error))?
+        .is_some();
+    if !indexed {
+        return Err(PyValueError::new_err(
+            "compute_custom_smooth_normals requires indexed geometry; use compute_flat_normals() \
+             on non-indexed geometry instead",
+        ));
+    }
+    let topology = mesh.primitive_topology();
+    if topology != PrimitiveTopology::TriangleList {
+        return Err(PyValueError::new_err(format!(
+            "compute_custom_smooth_normals requires PrimitiveTopology.TriangleList (got {topology:?})"
         )));
     }
     Ok(())
@@ -295,6 +341,15 @@ impl PyMesh {
         Ok(mesh_with!(self, |mesh: &Mesh| mesh.count_vertices()))
     }
 
+    pub fn create_packed_vertex_buffer_data<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        mesh_with!(self, |mesh: &Mesh| {
+            Ok(PyBytes::new(py, &mesh.create_packed_vertex_buffer_data()))
+        })
+    }
+
     pub fn contains_attribute(&self, attribute: &PyMeshVertexAttribute) -> PyResult<bool> {
         mesh_with!(self, |mesh: &Mesh| mesh
             .try_contains_attribute(attribute.0.id))
@@ -366,10 +421,7 @@ impl PyMesh {
 
     pub fn insert_indices<'py>(&mut self, indices: &Bound<'py, PyAny>) -> PyResult<()> {
         let bevy_indices = if let Ok(vref) = indices.extract::<PyRef<PyIndices>>() {
-            match &*vref {
-                PyIndices::U16(vec) => Indices::U16(vec.clone()),
-                PyIndices::U32(vec) => Indices::U32(vec.clone()),
-            }
+            vref.inner.clone()
         } else if let Ok(arr_u32) = indices.extract::<PyReadonlyArray1<u32>>() {
             Indices::U32(arr_u32.as_slice()?.to_vec())
         } else if let Ok(arr_u16) = indices.extract::<PyReadonlyArray1<u16>>() {
@@ -412,6 +464,18 @@ impl PyMesh {
         Ok(())
     }
 
+    pub fn compute_area_weighted_normals(&mut self) -> PyResult<()> {
+        let mesh = self.as_ref()?;
+        check_area_weighted_normal_preconditions(&mesh)?;
+        drop(mesh);
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .try_compute_area_weighted_normals()
+            .map_err(|error| mesh_operation_error("compute_area_weighted_normals", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
+    }
+
     pub fn compute_flat_normals(&mut self) -> PyResult<()> {
         let mesh = self.as_ref()?;
         check_flat_normal_preconditions(&mesh)?;
@@ -429,6 +493,55 @@ impl PyMesh {
         candidate
             .try_compute_smooth_normals()
             .map_err(|error| mesh_operation_error("compute_smooth_normals", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
+    }
+
+    /// Per-triangle Python callback mutating the accumulating normals list in place.
+    #[pyo3(signature = (per_triangle, *))]
+    pub fn compute_custom_smooth_normals<'py>(
+        &mut self,
+        py: Python<'py>,
+        per_triangle: &Bound<'py, PyAny>,
+    ) -> PyResult<()> {
+        let mesh = self.as_ref()?;
+        check_smooth_normal_preconditions(&mesh)?;
+        drop(mesh);
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        let mut caught: Option<PyErr> = None;
+        candidate
+            .try_compute_custom_smooth_normals(|[a, b, c], positions, normals| {
+                if caught.is_some() {
+                    return;
+                }
+                let indices = (a, b, c);
+                let positions_list: Vec<(f32, f32, f32)> =
+                    positions.iter().map(|p| (p[0], p[1], p[2])).collect();
+                let normals_py =
+                    pyo3::types::PyList::new(py, normals.iter().map(|n| (n.x, n.y, n.z)))
+                        .expect("tuple list conversion cannot fail");
+                match per_triangle.call1((indices, positions_list, &normals_py)) {
+                    Ok(_) => {
+                        for (index, slot) in normals.iter_mut().enumerate() {
+                            let value = normals_py
+                                .get_item(index)
+                                .and_then(|item| item.extract::<(f32, f32, f32)>());
+                            match value {
+                                Ok((x, y, z)) => *slot = bevy::math::Vec3::new(x, y, z),
+                                Err(error) => {
+                                    caught = Some(error);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => caught = Some(error),
+                }
+            })
+            .map_err(|error| mesh_operation_error("compute_custom_smooth_normals", error))?;
+        if let Some(error) = caught {
+            return Err(error);
+        }
         mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
         Ok(())
     }
@@ -482,7 +595,7 @@ impl PyMesh {
     }
 
     pub fn transform_by(&mut self, transform: &PyTransform) -> PyResult<()> {
-        let transform: Transform = transform.as_ref()?.clone();
+        let transform: Transform = *transform.as_ref()?;
         mesh_with!(self, |mesh: &Mesh| mesh
             .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
         .map_err(|error| mesh_operation_error("transform_by", error))?;
@@ -816,7 +929,7 @@ fn attribute_f32_ptr_mut(
 /// Context manager yielding an in-place mutable bounded array over a mesh
 /// attribute. Writes land directly in the mesh; on exit the array is closed
 /// (further reads/writes raise) and the exclusive write count released.
-#[pyclass(name = "MeshBoundedContextMut")]
+#[pyclass(name = "MeshBoundedContextMut", module = "pybevy.mesh")]
 pub struct MeshBoundedContextMut {
     array: Py<PyArray>,
     anchor: Arc<AssetBorrowAnchorMut>,
@@ -824,6 +937,10 @@ pub struct MeshBoundedContextMut {
 
 #[pymethods]
 impl MeshBoundedContextMut {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.array)
+    }
+
     fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
         self.array.clone_ref(py)
     }
