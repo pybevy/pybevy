@@ -1,0 +1,33 @@
+[package]
+name = "pybevy_lint"
+version = "0.3.0"
+edition = "2024"
+description = "Linter for PyBevy: validates Rust PyO3 bindings against Python type stubs"
+publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
+
+[[bin]]
+name = "pybevy_lint"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+colored = "3"
+dirs = "5"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syn = { version = "2", features = ["full", "parsing", "extra-traits", "visit"] }
+toml = "0.8"
+tree-sitter = "0.24"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+walkdir = "2"
+
+[lints]
+workspace = true

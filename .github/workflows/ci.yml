@@ -194,3 +194,67 @@ jobs:
             echo "::error::Rust coverage ${COVERAGE}% is below ${RUST_COVERAGE_THRESHOLD}% threshold"
             exit 1
           fi
+
+  api-compliance:
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+
+    env:
+      # Matches BEVY_REVISION and CARGO_PUBLIC_API_VERSION in
+      # crates/pybevy_lint/src/bevy_audit.rs.
+      BEVY_REVISION: c6f634ca9f406d68ba5109d921247b654cb42c10
+      CARGO_PUBLIC_API_VERSION: 0.50.1
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Install dependencies
+        run: sudo apt-get -y update && sudo apt-get install -y libasound-dev libudev-dev libwayland-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Check out the pinned Bevy tree
+        uses: actions/checkout@v4
+        with:
+          repository: bevyengine/bevy
+          ref: ${{ env.BEVY_REVISION }}
+          path: .bevy
+
+      # cargo-public-api builds rustdoc JSON, which is nightly-only.
+      - uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0
+        with:
+          toolchain: stable
+
+      - uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@bc1860267c1b189716ecde249f61cf86e8408d91
+        with:
+          prefix-key: pybevy-api-compliance
+          cache-on-failure: true
+
+      - name: Restore cargo-public-api
+        id: extractor
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-public-api
+          key: cargo-public-api-${{ env.CARGO_PUBLIC_API_VERSION }}-${{ runner.os }}
+
+      - name: Install pinned Bevy API extractor
+        if: steps.extractor.outputs.cache-hit != 'true'
+        run: cargo install cargo-public-api --version ${{ env.CARGO_PUBLIC_API_VERSION }} --locked
+
+      # The parse only changes with the pinned Bevy revision or the feature set
+      # the parser asks for, and the first run costs several minutes.
+      - name: Cache the parsed Bevy API
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pybevy-lint
+          key: bevy-api-${{ env.BEVY_REVISION }}-${{ hashFiles('crates/pybevy_lint/src/bevy_parser/parser.rs') }}
+
+      - name: Check the linter configuration against Bevy
+        run: cargo run --locked -p pybevy_lint -- --errors-only coverage --bevy-path .bevy
