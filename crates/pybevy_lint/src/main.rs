@@ -150,6 +150,10 @@ enum Command {
         /// Show only modules below this coverage threshold
         #[arg(long)]
         max_coverage: Option<f64>,
+
+        /// Output format: "table" or "json"
+        #[arg(long, default_value = "table")]
+        format: String,
     },
 
     /// Report static exercise coverage of the public stub API
@@ -331,14 +335,18 @@ fn run() -> Result<bool> {
             ref sort,
             min_coverage,
             max_coverage,
+            ref format,
         }) => run_coverage(
             &args,
             &config,
             bevy_path.clone(),
             modules.clone(),
-            sort,
-            min_coverage,
-            max_coverage,
+            CoverageOutput {
+                sort,
+                min_coverage,
+                max_coverage,
+                format,
+            },
         ),
 
         Some(Command::TestCoverage {
@@ -1219,14 +1227,20 @@ fn run_usage(
     Ok(false)
 }
 
+/// How the coverage report should be rendered.
+struct CoverageOutput<'a> {
+    sort: &'a str,
+    min_coverage: Option<f64>,
+    max_coverage: Option<f64>,
+    format: &'a str,
+}
+
 fn run_coverage(
     args: &Args,
     config: &pybevy_lint::Config,
     bevy_path: Option<PathBuf>,
     modules: Vec<String>,
-    sort: &str,
-    min_coverage: Option<f64>,
-    max_coverage: Option<f64>,
+    output: CoverageOutput<'_>,
 ) -> Result<bool> {
     let bevy_path = bevy_path
         .or_else(|| config.bevy.bevy_path())
@@ -1293,7 +1307,19 @@ fn run_coverage(
 
     let result = pybevy_lint::compare_with_bevy(&pybevy_classes, &bevy_crates, config);
 
-    print_coverage_table(&result.report, sort, min_coverage, max_coverage);
+    match output.format {
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&pybevy_lint::coverage_json::render(&result.report))?
+        ),
+        "table" => print_coverage_table(
+            &result.report,
+            output.sort,
+            output.min_coverage,
+            output.max_coverage,
+        ),
+        other => anyhow::bail!("unknown --format {other}; expected \"table\" or \"json\""),
+    }
 
     // A filtered run parses a subset of crates, which would make every entry for
     // an unparsed crate look stale. Only a full run can judge the config.
@@ -1310,25 +1336,37 @@ fn run_coverage(
         return Ok(false);
     }
     let diagnostics = pybevy_lint::config_audit::audit(config, &source, &pybevy_classes);
-    report_config_audit(args, &diagnostics)
+    report_config_audit(args, &diagnostics, output.format == "json")
 }
 
 /// Print configuration findings and report whether the run should fail.
+///
+/// `stdout_is_data` keeps the findings off stdout when the report itself is
+/// being written there: a consumer redirecting stdout to a file wants JSON, and
+/// a diagnostic appended after it makes the document unparseable.
 fn report_config_audit(
     args: &Args,
     diagnostics: &[pybevy_lint::output::Diagnostic],
+    stdout_is_data: bool,
 ) -> Result<bool> {
     let mut errors = 0;
     let mut warnings = 0;
+    let emit = |text: String| {
+        if stdout_is_data {
+            eprintln!("{text}");
+        } else {
+            println!("{text}");
+        }
+    };
     for diagnostic in diagnostics {
         match diagnostic.severity {
             DiagnosticSeverity::Error => {
                 errors += 1;
-                println!("{}", format_diagnostic(diagnostic));
+                emit(format_diagnostic(diagnostic));
             }
             DiagnosticSeverity::Warning if !args.errors_only => {
                 warnings += 1;
-                println!("{}", format_diagnostic(diagnostic));
+                emit(format_diagnostic(diagnostic));
             }
             _ => {}
         }
@@ -1714,6 +1752,7 @@ fn print_coverage_table(
         })
         .map(|(name, cov)| {
             // Get method coverage for this crate (only implemented types)
+            let totals = cov.implemented_totals();
             let (
                 impl_methods,
                 total_methods,
@@ -1722,26 +1761,14 @@ fn print_coverage_table(
                 missing_variants,
                 extra_variants,
                 extra_methods,
-            ) = cov.types.iter().filter(|t| t.is_implemented).fold(
-                (0, 0, 0, 0, 0, 0, 0),
-                |(m, t, sig, fields, vars, extra_vars, extra_meths), typ| {
-                    let type_sig_mismatches = typ
-                        .methods
-                        .iter()
-                        .filter(|method| method.is_implemented && !method.signature_matches)
-                        .count();
-                    let type_missing_fields = typ.bevy_field_count - typ.matched_field_count;
-                    let type_missing_variants = typ.bevy_variant_count - typ.matched_variant_count;
-                    (
-                        m + typ.matched_method_count,
-                        t + typ.bevy_method_count,
-                        sig + type_sig_mismatches,
-                        fields + type_missing_fields,
-                        vars + type_missing_variants,
-                        extra_vars + typ.extra_variant_count,
-                        extra_meths + typ.extra_method_count,
-                    )
-                },
+            ) = (
+                totals.matched_methods,
+                totals.bevy_methods,
+                totals.signature_mismatches,
+                totals.missing_fields(),
+                totals.missing_variants(),
+                totals.extra_variants,
+                totals.extra_methods,
             );
             let method_pct = if total_methods > 0 {
                 (impl_methods as f64 / total_methods as f64) * 100.0
