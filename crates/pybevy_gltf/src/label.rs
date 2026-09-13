@@ -19,6 +19,7 @@ pub enum PyGltfAssetLabel {
     Mesh {
         index: usize,
     },
+    #[pyo3(constructor = (*, mesh, primitive))]
     Primitive {
         mesh: usize,
         primitive: usize,
@@ -26,6 +27,7 @@ pub enum PyGltfAssetLabel {
     Texture {
         index: usize,
     },
+    #[pyo3(constructor = (*, index, is_scale_inverted))]
     Material {
         index: usize,
         is_scale_inverted: bool,

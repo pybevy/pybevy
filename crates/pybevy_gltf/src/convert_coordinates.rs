@@ -39,7 +39,7 @@ impl TryFrom<&PyGltfConvertCoordinates> for GltfConvertCoordinates {
 #[pymethods]
 impl PyGltfConvertCoordinates {
     #[new]
-    #[pyo3(signature = (rotate_scene_entity = false, rotate_meshes = false))]
+    #[pyo3(signature = (*, rotate_scene_entity = false, rotate_meshes = false))]
     pub fn new(rotate_scene_entity: bool, rotate_meshes: bool) -> Self {
         Self::from_owned(GltfConvertCoordinates {
             rotate_scene_entity,

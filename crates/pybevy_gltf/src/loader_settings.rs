@@ -62,6 +62,7 @@ impl PyGltfLoaderSettings {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         load_meshes = None,
         load_materials = None,
         load_cameras = true,
@@ -72,7 +73,7 @@ impl PyGltfLoaderSettings {
         override_sampler = false,
         validate = true,
         convert_coordinates = None,
-        skinned_mesh_bounds_policy = None,
+        skinned_mesh_bounds_policy = None
     ))]
     pub fn new(
         load_meshes: Option<PyRenderAssetUsages>,
