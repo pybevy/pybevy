@@ -225,13 +225,7 @@ fn validate_material_shader_import(
     }
 }
 
-// Shader params uniform buffer
-//
-// 64 × vec4 = 256 floats = 1024 bytes.
-// Python's @material decorator packs typed fields into this buffer and
-// generates a matching WGSL struct at the same binding.
-//
-// WGSL: @group(3) @binding(100) var<uniform> material: YourStruct;
+// @material packs fields here and generates the matching WGSL struct at @group(3) @binding(100).
 
 #[derive(ShaderType, Reflect, Clone, Debug)]
 pub struct ShaderParams {
@@ -302,7 +296,7 @@ pub struct ShaderMaterialExtension {
     #[sampler(108)]
     pub texture_3: Option<Handle<Image>>,
 
-    // Non-binding fields — used for pipeline specialization only.
+    // Non-binding fields - used for pipeline specialization only.
     // Fields without #[uniform]/#[texture]/#[sampler] are ignored by AsBindGroup.
     #[reflect(ignore)]
     pub fragment_shader_path: Option<String>,
@@ -330,7 +324,7 @@ pub struct ShaderMaterialExtension {
 
 impl MaterialExtension for ShaderMaterialExtension {
     fn fragment_shader() -> ShaderRef {
-        // Default PBR — overridden per-instance in specialize()
+        // Default PBR - overridden per-instance in specialize()
         ShaderRef::Default
     }
 
@@ -393,11 +387,7 @@ impl MaterialExtension for ShaderMaterialExtension {
 /// The complete material type: StandardMaterial + ShaderMaterialExtension.
 pub type ShaderMaterial = ExtendedMaterial<StandardMaterial, ShaderMaterialExtension>;
 
-// Shader sync system
-//
-// Runs in `Last` schedule — after all user Update systems, before Render
-// extraction. Scans all ShaderMaterial assets for shader paths and loads
-// them into the global registry so specialize() can find them.
+// Runs in `Last` (after Update, before extraction) so specialize() finds the loaded shaders.
 
 pub fn sync_shader_handles(
     materials: Res<Assets<ShaderMaterial>>,
