@@ -28,7 +28,7 @@ impl PyUiPosition {
     #[pyo3(signature = (anchor, x, y))]
     pub fn new(anchor: PyVec2, x: PyVal, y: PyVal) -> PyResult<Self> {
         Ok(PyUiPosition {
-            inner: UiPosition::new(anchor.try_into()?, x.try_into()?, y.try_into()?),
+            inner: UiPosition::new(anchor.try_into()?, x.into(), y.into()),
         })
     }
 

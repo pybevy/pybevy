@@ -54,7 +54,7 @@ impl PyOverflow {
     }
 
     #[new]
-    #[pyo3(signature = (x = PyOverflowAxis::Visible, y = PyOverflowAxis::Visible))]
+    #[pyo3(signature = (*, x = PyOverflowAxis::Visible, y = PyOverflowAxis::Visible))]
     pub fn py_new(x: PyOverflowAxis, y: PyOverflowAxis) -> Self {
         Overflow {
             x: x.into(),

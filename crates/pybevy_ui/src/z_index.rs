@@ -1,12 +1,14 @@
 use bevy::ui::{GlobalZIndex, ZIndex};
-use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pywrap(ZIndex, bridge)]
-#[pyclass(name = "ZIndex", module = "pybevy.ui", extends = PyComponent, eq, skip_from_py_object)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PyZIndex(pub(crate) ZIndex);
+#[pycomponent(ZIndex, bridge)]
+#[pyclass(name = "ZIndex", module = "pybevy.ui", extends = PyComponent, skip_from_py_object)]
+#[derive(Debug)]
+pub struct PyZIndex {
+    pub(crate) storage: ComponentStorage<ZIndex>,
+}
 
 #[pymethods]
 impl PyZIndex {
@@ -17,25 +19,31 @@ impl PyZIndex {
     }
 
     #[getter]
-    pub fn value(&self) -> i32 {
-        self.0.0
+    pub fn value(&self) -> PyResult<i32> {
+        Ok(self.as_ref()?.0)
     }
 
     #[setter]
     pub fn set_value(&mut self, value: i32) -> PyResult<()> {
-        self.0.0 = value;
+        self.as_mut()?.0 = value;
         Ok(())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!("ZIndex({})", self.0.0)
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("ZIndex({})", self.as_ref()?.0))
     }
 }
 
-#[pywrap(GlobalZIndex, bridge)]
-#[pyclass(name = "GlobalZIndex", module = "pybevy.ui", extends = PyComponent, eq, skip_from_py_object)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PyGlobalZIndex(pub(crate) GlobalZIndex);
+#[pycomponent(GlobalZIndex, bridge)]
+#[pyclass(name = "GlobalZIndex", module = "pybevy.ui", extends = PyComponent, skip_from_py_object)]
+#[derive(Debug)]
+pub struct PyGlobalZIndex {
+    pub(crate) storage: ComponentStorage<GlobalZIndex>,
+}
 
 #[pymethods]
 impl PyGlobalZIndex {
@@ -46,17 +54,21 @@ impl PyGlobalZIndex {
     }
 
     #[getter]
-    pub fn value(&self) -> i32 {
-        self.0.0
+    pub fn value(&self) -> PyResult<i32> {
+        Ok(self.as_ref()?.0)
     }
 
     #[setter]
     pub fn set_value(&mut self, value: i32) -> PyResult<()> {
-        self.0.0 = value;
+        self.as_mut()?.0 = value;
         Ok(())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!("GlobalZIndex({})", self.0.0)
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("GlobalZIndex({})", self.as_ref()?.0))
     }
 }

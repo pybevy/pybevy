@@ -19,7 +19,7 @@ impl PyAutoDirectionalNavigation {
 #[pymethods]
 impl PyAutoDirectionalNavigation {
     #[new]
-    #[pyo3(signature = (respect_tab_order = Self::default_respect_tab_order()))]
+    #[pyo3(signature = (*, respect_tab_order = Self::default_respect_tab_order()))]
     pub fn new(respect_tab_order: bool) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(AutoDirectionalNavigation { respect_tab_order }).into())
     }

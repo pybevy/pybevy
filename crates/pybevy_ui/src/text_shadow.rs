@@ -15,7 +15,7 @@ pub struct PyTextShadow {
 #[pymethods]
 impl PyTextShadow {
     #[new]
-    #[pyo3(signature = (offset = None, color = None))]
+    #[pyo3(signature = (*, offset = None, color = None))]
     pub fn new(
         offset: Option<PyVec2>,
         color: Option<PyColor>,

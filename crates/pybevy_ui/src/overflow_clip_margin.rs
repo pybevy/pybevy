@@ -30,7 +30,7 @@ impl From<PyOverflowClipMargin> for OverflowClipMargin {
 #[pymethods]
 impl PyOverflowClipMargin {
     #[new]
-    #[pyo3(signature = (visual_box = None, margin = 0.0))]
+    #[pyo3(signature = (*, visual_box = None, margin = 0.0))]
     pub fn new(visual_box: Option<PyVisualBox>, margin: f32) -> Self {
         let vb = visual_box.unwrap_or(PyVisualBox::PaddingBox);
         PyOverflowClipMargin {

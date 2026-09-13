@@ -1,7 +1,32 @@
-use bevy::ui::{Node, Val};
+use bevy::ui::{Node, UiRect, Val};
+
+fn validate_non_negative_rect(rect: UiRect, parameter: &str) -> PyResult<UiRect> {
+    for (side, value) in [
+        ("left", rect.left),
+        ("right", rect.right),
+        ("top", rect.top),
+        ("bottom", rect.bottom),
+    ] {
+        let magnitude = match value {
+            Val::Auto => continue,
+            Val::Px(v)
+            | Val::Percent(v)
+            | Val::Vw(v)
+            | Val::Vh(v)
+            | Val::VMin(v)
+            | Val::VMax(v) => v,
+        };
+        if magnitude < 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "{parameter}.{side} must be non-negative (got {magnitude})"
+            )));
+        }
+    }
+    Ok(rect)
+}
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
@@ -29,6 +54,7 @@ impl PyNode {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         display = PyDisplay::Flex,
         box_sizing = PyBoxSizing::BorderBox,
         position_type = PyPositionType::Relative,
@@ -70,7 +96,7 @@ impl PyNode {
         grid_auto_rows = Vec::new(),
         grid_auto_columns = Vec::new(),
         grid_row = PyGridPlacement::default(),
-        grid_column = PyGridPlacement::default(),
+        grid_column = PyGridPlacement::default()
     ))]
     pub fn new(
         display: PyDisplay,
@@ -145,8 +171,8 @@ impl PyNode {
             justify_content: justify_content.into(),
             direction: direction.into(),
             margin: margin.try_into()?,
-            padding: padding.try_into()?,
-            border: border.try_into()?,
+            padding: validate_non_negative_rect(padding.try_into()?, "padding")?,
+            border: validate_non_negative_rect(border.try_into()?, "border")?,
             border_radius: border_radius.into(),
             flex_direction: flex_direction.into(),
             flex_wrap: flex_wrap.into(),
@@ -438,7 +464,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_padding(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = value.try_into()?;
+        let value = validate_non_negative_rect(value.try_into()?, "padding")?;
         self.as_mut()?.padding = value;
         Ok(())
     }
@@ -450,7 +476,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_border(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = value.try_into()?;
+        let value = validate_non_negative_rect(value.try_into()?, "border")?;
         self.as_mut()?.border = value;
         Ok(())
     }
