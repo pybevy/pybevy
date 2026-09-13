@@ -6,7 +6,7 @@ use bevy::{
 };
 use pybevy_core::component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue};
 
-use crate::handlers::json_float::{float_to_json, nonfinite_float_from_json};
+use crate::handlers::json_float::{float_to_json, nonfinite_float_from_json, require_finite_float};
 
 pub(crate) fn descriptor_matches(layout: &ComponentLayout, descriptor: Layout) -> bool {
     layout.schema().wrapper_size.mem_layout() == descriptor
@@ -130,6 +130,7 @@ fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
         .as_f64()
         .or_else(|| nonfinite_float_from_json(value))
         .ok_or_else(|| "expected a number or non-finite float spelling".to_string())
+        .and_then(require_finite_float)
 }
 
 fn json_i64(value: &serde_json::Value) -> Result<i64, String> {
@@ -205,18 +206,11 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_float_values_accept_and_preserve_nonfinite_spellings() {
-        for (json, expected) in [
-            (serde_json::json!("NaN"), f64::NAN),
-            (serde_json::json!("Infinity"), f64::INFINITY),
-            (serde_json::json!("-Infinity"), f64::NEG_INFINITY),
-        ] {
-            let value = primitive_from_json(PrimitiveType::F64, &json).unwrap();
-            let PrimitiveValue::F64(value) = value else {
-                panic!("expected an f64 primitive");
-            };
-            assert_eq!(value.is_nan(), expected.is_nan());
-            assert_eq!(primitive_to_json(PrimitiveValue::F64(value)), json);
+    fn wrapper_float_values_reject_nonfinite_spellings() {
+        for spelling in ["NaN", "Infinity", "-Infinity"] {
+            let json = serde_json::json!(spelling);
+            assert!(primitive_from_json(PrimitiveType::F64, &json).is_err());
+            assert!(primitive_from_json(PrimitiveType::F32, &json).is_err());
         }
     }
 }

@@ -579,6 +579,40 @@ mod tests {
     }
 
     #[test]
+    fn the_grid_payload_grows_with_the_square_of_grid() {
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let image = RgbImage::from_fn(512, 512, |_, _| {
+            let mut next = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed >> 33) as u8
+            };
+            Rgb([next(), next(), next()])
+        });
+
+        let mut sizes = Vec::new();
+        for grid in [4u32, 8, 16] {
+            let mut options = options();
+            options.grid = grid;
+            let result = analyze_frame(&image, &options).unwrap();
+            assert_eq!(
+                result["cells"].as_array().unwrap().len(),
+                (grid * grid) as usize
+            );
+            sizes.push(serde_json::to_string(&result).unwrap().len());
+        }
+
+        assert!((3_000..6_000).contains(&sizes[0]), "grid 4: {}", sizes[0]);
+        assert!((12_000..20_000).contains(&sizes[1]), "grid 8: {}", sizes[1]);
+        assert!(
+            (45_000..72_000).contains(&sizes[2]),
+            "grid 16: {}",
+            sizes[2]
+        );
+    }
+
+    #[test]
     fn black_frame_has_documented_statistics_and_hints() {
         let image = RgbImage::from_pixel(2, 2, Rgb([0, 0, 0]));
         let result = analyze_frame(&image, &options()).unwrap();
@@ -660,6 +694,22 @@ mod tests {
         assert_eq!(result["region"], json!([2, 1, 1, 1]));
         assert_eq!(result["samples"][0]["rgb"], json!([1.0, 0.0, 0.0]));
         assert!((result["samples"][0]["luma"].as_f64().unwrap() - 0.2126).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sample_points_follow_the_resized_capture_size() {
+        let mut options = options();
+        options.sample_points = Some(vec![[5, 0]]);
+
+        let small = RgbImage::from_pixel(4, 4, Rgb([0, 0, 0]));
+        let error = analyze_frame(&small, &options).unwrap_err();
+        assert_eq!(
+            error.message,
+            "sample_points[0] must be inside the captured 4x4 image (got [5, 0])"
+        );
+
+        let large = RgbImage::from_pixel(8, 8, Rgb([0, 0, 0]));
+        assert!(analyze_frame(&large, &options).is_ok());
     }
 
     #[test]

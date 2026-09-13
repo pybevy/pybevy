@@ -46,9 +46,13 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
 
         // Reload info
         result.insert("reload_count".into(), serde_json::json!(snap.reload_count));
-        if let Some(ref mode) = snap.last_reload_mode {
-            result.insert("last_reload_mode".into(), serde_json::json!(mode));
-        }
+        result.insert(
+            "last_reload_mode".into(),
+            match snap.last_reload_mode {
+                Some(ref mode) => serde_json::json!(mode),
+                None => serde_json::Value::Null,
+            },
+        );
         if snap.reload_failed {
             result.insert("reload_failed".into(), serde_json::json!(true));
             if let Some(ref reason) = snap.reload_failure_reason {
@@ -90,26 +94,18 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
             result.insert("startup_profiles".into(), serde_json::json!(profiles));
         }
 
-        // Memory profiling
-        if snap.total_schedule_systems > 0 {
-            result.insert(
-                "total_schedule_systems".into(),
-                serde_json::json!(snap.total_schedule_systems),
-            );
-            // Live scene systems for the current generation. Reported alongside
-            // the total so a rising total across reloads reads as expected
-            // generation accumulation (inert prior-generation systems), not a leak.
-            result.insert(
-                "current_generation_systems".into(),
-                serde_json::json!(snap.current_generation_systems),
-            );
-        }
-        if snap.python_gc_objects > 0 {
-            result.insert(
-                "python_gc_objects".into(),
-                serde_json::json!(snap.python_gc_objects),
-            );
-        }
+        result.insert(
+            "total_schedule_systems".into(),
+            serde_json::json!(snap.total_schedule_systems),
+        );
+        result.insert(
+            "current_generation_systems".into(),
+            serde_json::json!(snap.current_generation_systems),
+        );
+        result.insert(
+            "python_gc_objects".into(),
+            serde_json::json!(snap.python_gc_objects),
+        );
         if snap.memory_growth_mb != 0.0 {
             result.insert(
                 "memory_growth_mb".into(),
@@ -125,26 +121,24 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         if snap.memory_warning {
             result.insert("memory_warning".into(), serde_json::json!(true));
         }
-        if !snap.reload_memory_snapshots.is_empty() {
-            let snapshots: Vec<_> = snap
-                .reload_memory_snapshots
-                .iter()
-                .map(|s| {
-                    serde_json::json!({
-                        "generation": s.generation,
-                        "rss_mb": format!("{:.1}", s.rss_mb),
-                        "delta_mb": format!("{:.1}", s.delta_mb),
-                        "gc_objects": s.gc_objects,
-                        "schedule_systems": s.schedule_systems,
-                        "current_generation_systems": s.current_generation_systems,
-                    })
+        let snapshots: Vec<_> = snap
+            .reload_memory_snapshots
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "generation": s.generation,
+                    "rss_mb": format!("{:.1}", s.rss_mb),
+                    "delta_mb": format!("{:.1}", s.delta_mb),
+                    "gc_objects": s.gc_objects,
+                    "schedule_systems": s.schedule_systems,
+                    "current_generation_systems": s.current_generation_systems,
                 })
-                .collect();
-            result.insert(
-                "reload_memory_snapshots".into(),
-                serde_json::json!(snapshots),
-            );
-        }
+            })
+            .collect();
+        result.insert(
+            "reload_memory_snapshots".into(),
+            serde_json::json!(snapshots),
+        );
 
         return Ok(serde_json::Value::Object(result));
     }
@@ -153,6 +147,15 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
     let mut result = serde_json::Map::new();
     result.insert("entity_count".into(), serde_json::json!(entity_count));
     result.insert("entity_count_scope".into(), serde_json::json!("all"));
+    result.insert("reload_count".into(), serde_json::json!(0));
+    result.insert("last_reload_mode".into(), serde_json::Value::Null);
+    result.insert("total_schedule_systems".into(), serde_json::json!(0));
+    result.insert("current_generation_systems".into(), serde_json::json!(0));
+    result.insert("python_gc_objects".into(), serde_json::json!(0));
+    result.insert(
+        "reload_memory_snapshots".into(),
+        serde_json::json!(Vec::<serde_json::Value>::new()),
+    );
 
     if let Some(time) = world.get_resource::<Time>() {
         let delta_secs = time.delta_secs_f64();
@@ -186,6 +189,22 @@ mod tests {
     }
 
     #[test]
+    fn the_reload_keys_are_present_before_the_overlay_populates() {
+        let mut world = World::new();
+        let result = get_performance(&mut world).unwrap();
+
+        assert_eq!(result["reload_count"], 0);
+        assert!(result["last_reload_mode"].is_null());
+        assert_eq!(result["total_schedule_systems"], 0);
+        assert_eq!(result["current_generation_systems"], 0);
+        assert_eq!(result["python_gc_objects"], 0);
+        assert_eq!(
+            result["reload_memory_snapshots"].as_array().map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn get_performance_with_entities() {
         let mut world = World::new();
         world.spawn_empty();
@@ -204,14 +223,17 @@ mod tests {
         // The 1 Hz overlay snapshot otherwise caches entity_count and masks
         // entities spawned between ticks.
         let mut world = World::new();
-        let mut snap = pybevy_core::DebugSnapshot::default();
-        snap.populated = true;
-        snap.fps_average = 60.0;
-        snap.fps_current = 59.5;
-        snap.entity_count = 42; // stale snapshot value; should be ignored
-        snap.memory_mb = 128.0;
-        snap.uptime_secs = 10.0;
-        snap.generation_uptime_secs = 4.0;
+        let snap = pybevy_core::DebugSnapshot {
+            populated: true,
+            fps_average: 60.0,
+            fps_current: 59.5,
+            // stale snapshot value; should be ignored
+            entity_count: 42,
+            memory_mb: 128.0,
+            uptime_secs: 10.0,
+            generation_uptime_secs: 4.0,
+            ..Default::default()
+        };
         world.insert_resource(snap);
 
         // World has 0 live entities. Even with a snapshot saying 42,
@@ -232,9 +254,12 @@ mod tests {
         // Spawning entities should be reflected in get_performance.entity_count
         // even when the overlay snapshot hasn't ticked since spawn.
         let mut world = World::new();
-        let mut snap = pybevy_core::DebugSnapshot::default();
-        snap.populated = true;
-        snap.entity_count = 0; // pre-spawn snapshot
+        let snap = pybevy_core::DebugSnapshot {
+            populated: true,
+            // pre-spawn snapshot
+            entity_count: 0,
+            ..Default::default()
+        };
         world.insert_resource(snap);
 
         for _ in 0..7 {
@@ -268,47 +293,48 @@ mod tests {
     #[test]
     fn get_performance_rich_snapshot_all_fields() {
         let mut world = World::new();
-        let mut snap = pybevy_core::DebugSnapshot::default();
-        snap.populated = true;
-        snap.fps_average = 60.0;
-        snap.fps_current = 59.0;
-        snap.uptime_secs = 100.0;
-        snap.generation_uptime_secs = 12.0;
-        snap.entity_count = 50;
-        snap.memory_mb = 256.0;
-        snap.total_memory_mb = 512.0;
-        snap.cpu_percent = 25.0;
-        snap.cpu_core_count = 8;
-        snap.gil_enabled = true;
-        snap.reload_count = 3;
-        snap.last_reload_mode = Some("full".to_string());
-        snap.reload_failed = true;
-        snap.reload_failure_reason = Some("syntax error".to_string());
-        snap.asset_counts = vec![("Mesh".to_string(), 5), ("Material".to_string(), 3)];
-        snap.update_profiles = vec![pybevy_core::SystemProfile {
-            name: "my_system".to_string(),
-            avg_ms: 1.5,
-            max_ms: 4.2,
-        }];
-        snap.startup_profiles = vec![pybevy_core::SystemProfile {
-            name: "setup".to_string(),
-            avg_ms: 10.0,
-            max_ms: 12.5,
-        }];
-        snap.total_schedule_systems = 12;
-        snap.current_generation_systems = 6;
-        snap.python_gc_objects = 5000;
-        snap.memory_growth_mb = 8.5;
-        snap.memory_peak_mb = 300.0;
-        snap.memory_warning = true;
-        snap.reload_memory_snapshots = vec![pybevy_core::ReloadMemorySnapshotInfo {
-            generation: 1,
-            rss_mb: 250.0,
-            delta_mb: 10.0,
-            gc_objects: 4000,
-            schedule_systems: 10,
+        let snap = pybevy_core::DebugSnapshot {
+            populated: true,
+            fps_average: 60.0,
+            fps_current: 59.0,
+            uptime_secs: 100.0,
+            generation_uptime_secs: 12.0,
+            entity_count: 50,
+            memory_mb: 256.0,
+            total_memory_mb: 512.0,
+            cpu_percent: 25.0,
+            cpu_core_count: 8,
+            gil_enabled: true,
+            reload_count: 3,
+            last_reload_mode: Some("full".to_string()),
+            reload_failed: true,
+            reload_failure_reason: Some("syntax error".to_string()),
+            asset_counts: vec![("Mesh".to_string(), 5), ("Material".to_string(), 3)],
+            update_profiles: vec![pybevy_core::SystemProfile {
+                name: "my_system".to_string(),
+                avg_ms: 1.5,
+                max_ms: 4.2,
+            }],
+            startup_profiles: vec![pybevy_core::SystemProfile {
+                name: "setup".to_string(),
+                avg_ms: 10.0,
+                max_ms: 12.5,
+            }],
+            total_schedule_systems: 12,
             current_generation_systems: 6,
-        }];
+            python_gc_objects: 5000,
+            memory_growth_mb: 8.5,
+            memory_peak_mb: 300.0,
+            memory_warning: true,
+            reload_memory_snapshots: vec![pybevy_core::ReloadMemorySnapshotInfo {
+                generation: 1,
+                rss_mb: 250.0,
+                delta_mb: 10.0,
+                gc_objects: 4000,
+                schedule_systems: 10,
+                current_generation_systems: 6,
+            }],
+        };
         world.insert_resource(snap);
 
         let result = get_performance(&mut world).unwrap();

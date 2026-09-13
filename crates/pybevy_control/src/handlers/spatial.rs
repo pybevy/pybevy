@@ -510,7 +510,9 @@ pub fn check_overlaps(
         include_siblings,
         max_float_gap,
         ground_y,
+        min_penetration,
     } = params;
+    let min_pen = min_penetration.unwrap_or(0.001);
     let target = resolve_entity(world, &entity_ref)?;
     if world
         .get::<GlobalTransform>(target)
@@ -555,17 +557,21 @@ pub fn check_overlaps(
 
         if aabbs_overlap(&target_aabb, &other_aabb) {
             let (depth, axis) = compute_penetration(&target_aabb, &other_aabb);
-            overlaps.push(serde_json::json!({
-                "entity": entity_label_with(world, *entity, &occurrences),
-                "penetration_depth": round6(depth),
-                "penetration_axis": axis,
-            }));
+            // Same threshold as check_all_overlaps, so the two tools agree about
+            // what an overlap is. A flush placement penetrates by 0.0.
+            if depth >= min_pen {
+                overlaps.push(serde_json::json!({
+                    "entity": entity_label_with(world, *entity, &occurrences),
+                    "penetration_depth": round6(depth),
+                    "penetration_axis": axis,
+                }));
+            }
         }
 
         // Track nearest surface below for grounded detection
         // Check if other_aabb has a surface below our AABB min-Y
         if other_aabb.max.y <= target_aabb.min.y + max_float_gap
-            && other_aabb.max.y >= target_aabb.min.y - 1.0
+            && other_aabb.max.y >= target_aabb.min.y - max_float_gap.max(1.0)
         {
             // Check X/Z overlap (must be somewhat underneath)
             if target_aabb.min.x <= other_aabb.max.x
@@ -597,6 +603,7 @@ pub fn check_overlaps(
         "entity": entity_label_with(world, target, &occurrences),
         "overlap_count": overlaps.len(),
         "overlaps": overlaps,
+        "min_penetration": min_pen,
         "grounded": grounded,
         "invalid_count": invalid_entities.len(),
         "invalid_entities": invalid_entities,
@@ -671,7 +678,9 @@ pub fn check_all_overlaps(
 
     let occurrences = NameOccurrences::collect(world);
     let mut overlaps = Vec::new();
+    let mut overlap_total = 0usize;
     let mut floating_entities = Vec::new();
+    let mut floating_total = 0usize;
 
     // Sweep-and-prune: O(n log n) average case
     for i in 0..aabbs.len() {
@@ -693,6 +702,9 @@ pub fn check_all_overlaps(
                     }
                 }
                 let (depth, axis) = compute_penetration(&aabbs[i], &aabbs[j]);
+                if depth >= min_pen {
+                    overlap_total += 1;
+                }
                 if depth >= min_pen && overlaps.len() < max_res {
                     overlaps.push(serde_json::json!({
                         "entity_a": entity_label_with(world, aabbs[i].entity, &occurrences),
@@ -725,35 +737,48 @@ pub fn check_all_overlaps(
             let gap = aabbs[i].min.y - gy;
             gap >= -0.001 && gap <= max_float_gap
         });
-        if !has_ground_contact && !on_ground_plane && !sunken && floating_entities.len() < 20 {
-            floating_entities.push(entity_label_with(world, aabbs[i].entity, &occurrences));
+        if !has_ground_contact && !on_ground_plane && !sunken {
+            floating_total += 1;
+            if floating_entities.len() < max_res {
+                floating_entities.push(entity_label_with(world, aabbs[i].entity, &occurrences));
+            }
         }
     }
 
+    // Counts are the scene's totals; each `*_truncated` flag says whether the
+    // list beside it was cut at max_results.
     let mut result = serde_json::json!({
         "total_entities_with_aabb": aabbs.len(),
-        "overlap_count": overlaps.len(),
-        "overlaps": overlaps,
-        "floating_count": floating_entities.len(),
-        "floating_entities": floating_entities,
+        "overlap_count": overlap_total,
+        "overlaps": overlaps.clone(),
+        "overlaps_truncated": overlaps.len() < overlap_total,
+        "floating_count": floating_total,
+        "floating_entities": floating_entities.clone(),
+        "floating_truncated": floating_entities.len() < floating_total,
         "invalid_count": invalid_entities.len(),
         "invalid_entities": invalid_entities,
+        "max_results": max_res,
     });
 
     // Ground penetration detection
     if let Some(gy) = ground_y {
         let mut sunken_entities = Vec::new();
+        let mut sunken_total = 0usize;
         for aabb in &aabbs {
             let penetration = gy - aabb.min.y;
             if penetration > 0.001 {
-                sunken_entities.push(serde_json::json!({
-                    "entity": entity_label_with(world, aabb.entity, &occurrences),
-                    "penetration_depth": round6(penetration),
-                    "world_aabb_min_y": round6(aabb.min.y),
-                }));
+                sunken_total += 1;
+                if sunken_entities.len() < max_res {
+                    sunken_entities.push(serde_json::json!({
+                        "entity": entity_label_with(world, aabb.entity, &occurrences),
+                        "penetration_depth": round6(penetration),
+                        "world_aabb_min_y": round6(aabb.min.y),
+                    }));
+                }
             }
         }
-        result["sunken_count"] = serde_json::json!(sunken_entities.len());
+        result["sunken_truncated"] = serde_json::json!(sunken_entities.len() < sunken_total);
+        result["sunken_count"] = serde_json::json!(sunken_total);
         result["sunken_entities"] = serde_json::json!(sunken_entities);
     }
 
@@ -1229,11 +1254,124 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
 
         assert_eq!(result["overlap_count"], 0);
+    }
+
+    /// The two tools disagreed about what an overlap is: check_all_overlaps has
+    /// a 0.001 threshold and check_overlaps had none, so every deliberate flush
+    /// placement came back as an overlap with depth 0.
+    #[test]
+    fn check_overlaps_ignores_a_flush_placement() {
+        let mut world = World::new();
+        let target = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+                GlobalTransform::from(Transform::from_xyz(3.0, 0.0, 0.0)),
+            ))
+            .id();
+        // Faces exactly flush: penetration is 0.0.
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+            GlobalTransform::from(Transform::from_xyz(4.0, 0.0, 0.0)),
+        ));
+        // A tenth of the threshold in: also not an overlap.
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+            GlobalTransform::from(Transform::from_xyz(1.9999, 0.0, 0.0)),
+        ));
+
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(target.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+                min_penetration: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["overlap_count"], 0, "{result}");
+        assert!(
+            (result["min_penetration"].as_f64().unwrap() - 0.001).abs() < 1e-9,
+            "{result}"
+        );
+    }
+
+    /// The threshold is a parameter, matching check_all_overlaps.
+    #[test]
+    fn check_overlaps_honours_an_explicit_min_penetration() {
+        let mut world = World::new();
+        let target = world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+                GlobalTransform::from(Transform::from_xyz(3.0, 0.0, 0.0)),
+            ))
+            .id();
+        world.spawn((
+            Aabb::from_min_max(Vec3::new(-0.5, -0.5, -0.5), Vec3::new(0.5, 0.5, 0.5)),
+            GlobalTransform::from(Transform::from_xyz(4.0, 0.0, 0.0)),
+        ));
+
+        let result = check_overlaps(
+            &mut world,
+            CheckOverlapsParams {
+                entity: EntityRef::Id(target.to_bits()),
+                include_siblings: true,
+                max_float_gap: 0.1,
+                ground_y: None,
+                min_penetration: Some(0.0),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result["overlap_count"], 1, "{result}");
+    }
+
+    /// A configured reach includes a surface 1.1 units below.
+    #[test]
+    fn check_overlaps_finds_a_surface_further_than_one_unit_below() {
+        fn grounded_at(gap: f32, max_float_gap: f32) -> serde_json::Value {
+            let mut world = World::new();
+            world.spawn((
+                Aabb::from_min_max(Vec3::new(-5.0, -0.1, -5.0), Vec3::new(5.0, 0.0, 5.0)),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ));
+            let target = world
+                .spawn((
+                    Aabb::from_min_max(Vec3::new(-0.3, -0.3, -0.3), Vec3::new(0.3, 0.3, 0.3)),
+                    GlobalTransform::from(Transform::from_xyz(0.0, 0.3 + gap, 0.0)),
+                ))
+                .id();
+
+            check_overlaps(
+                &mut world,
+                CheckOverlapsParams {
+                    entity: EntityRef::Id(target.to_bits()),
+                    include_siblings: true,
+                    max_float_gap,
+                    ground_y: None,
+                    min_penetration: None,
+                },
+            )
+            .unwrap()
+        }
+
+        let reachable = grounded_at(1.1, 5.0);
+        assert_eq!(reachable["grounded"], true, "{reachable}");
+        assert!(
+            (reachable["nearest_surface_below"]["gap"].as_f64().unwrap() - 1.1).abs() < 1e-5,
+            "{reachable}"
+        );
+
+        let out_of_reach = grounded_at(1.1, 0.1);
+        assert_eq!(out_of_reach["grounded"], false, "{out_of_reach}");
     }
 
     #[test]
@@ -1257,6 +1395,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1289,6 +1428,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1323,6 +1463,7 @@ mod tests {
                 include_siblings: false,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1397,6 +1538,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1413,6 +1555,7 @@ mod tests {
                 include_siblings: false,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1440,6 +1583,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1471,6 +1615,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1877,6 +2022,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: Some(0.0),
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1904,6 +2050,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: Some(0.0),
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -1930,6 +2077,7 @@ mod tests {
                 include_siblings: true,
                 max_float_gap: 0.1,
                 ground_y: None,
+                min_penetration: None,
             },
         )
         .unwrap();
@@ -2151,13 +2299,13 @@ mod tests {
     }
 
     #[test]
-    // 3.141593 (the expected output) is PI rounded to 6 dp — no const form, so approx_constant
+    // 3.141593 (the expected output) is PI rounded to 6 dp - no const form, so approx_constant
     // fires on the literal even though the input uses std::f32::consts::PI directly.
     #[allow(clippy::approx_constant)]
     fn round6_basic() {
         assert_eq!(super::round6(std::f32::consts::PI), 3.141593);
         assert_eq!(super::round6(0.0), 0.0);
-        assert_eq!(super::round6(-1.23456789), -1.234568);
+        assert_eq!(super::round6(-1.2345679), -1.234568);
     }
 
     #[test]

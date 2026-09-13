@@ -1,4 +1,13 @@
+use pybevy_core::public_error;
 use serde_json::{Number, Value};
+
+pub(crate) fn require_finite_float(value: f64) -> Result<f64, String> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(public_error::COMPONENT_FLOAT_NON_FINITE.to_string())
+    }
+}
 
 pub(crate) fn float_to_json(value: f64) -> Value {
     if value.is_nan() {

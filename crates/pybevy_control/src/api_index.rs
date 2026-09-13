@@ -764,7 +764,7 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
             i += 1;
             continue;
         }
-        // triple_count == 0 or 2 (single-line docstring like """text""") — not in docstring
+        // triple_count == 0 or 2 (single-line docstring like """text""") - not in docstring
 
         if !trimmed.is_empty() && line_indent == member_indent && class_name(lines[i]).is_some() {
             let end = lines
@@ -812,17 +812,15 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
         if let Some(rest) = trimmed.strip_prefix("def ") {
             // Handle multi-line signatures: collect continuation lines
             let mut full_sig = rest.to_string();
-            while !full_sig.contains(": ...") && !full_sig.ends_with(" ...") && i + 1 < lines.len()
-            {
-                // Signature complete if parens are balanced and ends with ':'
-                // (handles stubs where the body is a docstring, not '...')
+            while i + 1 < lines.len() {
                 let open_parens = full_sig.matches('(').count();
                 let close_parens = full_sig.matches(')').count();
-                if open_parens > 0
-                    && open_parens == close_parens
-                    && full_sig.trim_end().ends_with(':')
-                {
-                    break;
+                // Ellipsis defaults do not terminate an open parameter list.
+                if open_parens > 0 && open_parens == close_parens {
+                    let tail = full_sig.trim_end();
+                    if full_sig.contains(": ...") || tail.ends_with("...") || tail.ends_with(':') {
+                        break;
+                    }
                 }
                 i += 1;
                 let cont = lines[i].trim();
@@ -837,7 +835,7 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
                 .trim();
 
             if rest.starts_with("__init__(") {
-                // Constructor — extract params (skip self)
+                // Constructor - extract params (skip self)
                 constructor = Some(extract_constructor_display(sig));
             } else if next_is_static {
                 static_methods.push(format!("def {sig}"));
@@ -853,7 +851,7 @@ fn format_class_structured(raw: &str) -> serde_json::Value {
                     "readonly": true,
                 }));
             } else if next_is_setter {
-                // Property setter — mark existing property as read-write
+                // Property setter - mark existing property as read-write
                 let prop_name = rest.split('(').next().unwrap_or("").to_string();
                 if let Some(&idx) = property_names.get(&prop_name)
                     && let Some(obj) = properties[idx].as_object_mut()
@@ -1225,6 +1223,27 @@ class GameState(Resource): ...
 ";
         let (classes, _functions) = parse_stub_definitions(content);
         assert_eq!(classes, vec!["GameState", "Velocity"]);
+    }
+
+    #[test]
+    fn format_class_structured_keeps_a_multiline_constructor_whole() {
+        let source = r#"
+class DistanceFog:
+    def __init__(
+        self,
+        *,
+        color: Color = ...,
+        directional_light_color: Color = ...,
+        directional_light_exponent: float = 8.0,
+        falloff: FogFalloff = ...
+    ) -> None: ...
+"#;
+        let result = format_class_structured(source);
+        let ctor = result["constructor"].as_str().unwrap();
+        assert_eq!(
+            ctor,
+            "(*, color: Color = ..., directional_light_color: Color = ..., directional_light_exponent: float = 8.0, falloff: FogFalloff = ...)"
+        );
     }
 
     #[test]

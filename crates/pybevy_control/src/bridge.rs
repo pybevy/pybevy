@@ -17,8 +17,8 @@ use crate::handlers::{
         SharedScheduleRegistryResource, SharedScheduleState,
     },
     screenshot::{
-        ActiveTimeline, MAX_TIMELINE_CAPTURES, PendingTimelines, compute_schedule,
-        headless_frame_sequence, prepare_capture_visibility, setup_debug_camera,
+        ActiveTimeline, GizmoEnabledRestore, MAX_TIMELINE_CAPTURES, PendingTimelines,
+        compute_schedule, headless_frame_sequence, prepare_capture_visibility, setup_debug_camera,
     },
     turnaround::{
         ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
@@ -154,7 +154,7 @@ pub struct SetResourceParams {
 pub struct SeekTimeParams {
     /// Target elapsed time in seconds
     pub seconds: f64,
-    /// Pause after seeking (default true)
+    /// Pause after seeking (default true). `false` does not resume a paused scene.
     #[serde(default = "default_true")]
     pub pause: bool,
 }
@@ -186,13 +186,14 @@ pub struct CaptureScreenshotParams {
 pub struct CaptureStatsParams {
     /// Optional entity name or numeric ID to isolate, including its descendants.
     pub entity: Option<EntityRef>,
-    /// Divide the selected region into an NxN grid (default 1, max 16).
+    /// Divide the region into an NxN grid (default 1, max 16). Payload grows
+    /// quadratically: about 4 KB at 4 and 57 KB at 16.
     #[serde(default = "default_1")]
     #[schemars(range(min = 1, max = 16))]
     pub grid: u32,
     /// Optional [x, y, width, height] sub-rectangle in resized output pixels.
     pub region: Option<[i64; 4]>,
-    /// Optional output-pixel coordinates to sample (max 256).
+    /// Optional [x, y] points in resized-capture pixels. Max 256.
     #[schemars(extend("maxItems" = 256))]
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Frames to wait before capture (default 2).
@@ -288,8 +289,8 @@ pub struct CaptureDepthParams {
     pub position: Option<[f32; 3]>,
     /// Camera look-at [x, y, z]
     pub look_at: Option<[f32; 3]>,
-    /// Screen-space sample points [[x, y], ...], with coordinates in [0, 800).
-    /// Auto-generates a grid if omitted.
+    /// Ray-cast points on a fixed 800x800, ~60 degree frustum independent of
+    /// capture size and camera projection. Grid if omitted.
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Auto-generate NxN sample grid (default 8 if no sample_points)
     #[schemars(extend("default" = 8))]
@@ -387,6 +388,9 @@ pub struct CheckOverlapsParams {
     pub max_float_gap: f32,
     /// Ground plane Y coordinate for sunk-detection. When provided, entities whose world AABB min_y is below this value are flagged as sunken. Useful for detecting GLB models placed at origin that are half-buried below the ground plane.
     pub ground_y: Option<f32>,
+    /// Minimum overlap depth to report (default 0.001), the same threshold `check_all_overlaps` uses. Faces placed exactly flush penetrate by 0.0 and are a touch, not an overlap.
+    #[schemars(extend("default" = 0.001))]
+    pub min_penetration: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -395,7 +399,7 @@ pub struct CheckAllOverlapsParams {
     /// Minimum overlap depth to report (default 0.001)
     #[schemars(extend("default" = 0.001))]
     pub min_penetration: Option<f32>,
-    /// Max overlapping pairs to return (default 100)
+    /// Max entries in each returned list - overlapping pairs, floating entities and sunken entities (default 100). Every `*_count` is the scene's total whatever this is set to, and the matching `*_truncated` flag says whether the list beside it was cut.
     #[schemars(extend("default" = 100))]
     pub max_results: Option<usize>,
     /// Max gap between an entity bottom and a physical surface or ground_y to still count as grounded (default 0.1)
@@ -537,7 +541,7 @@ pub enum ControlOperation {
         #[schemars(schema_with = "json_object_array_schema")]
         operations: Vec<serde_json::Value>,
     },
-    /// Update asset properties (material color, mesh settings) live without code reload.
+    /// Update asset properties (material color, mesh settings) live without code reload. The entity only selects the asset through its handle, so every entity sharing that handle changes with it.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SetAsset(SetAssetParams),
 
@@ -743,8 +747,8 @@ pub struct PendingScreenshot {
     /// before its capture delay begins.
     pub required_render_epoch: Option<u64>,
     pub with_gizmos: bool,
-    /// Original gizmo state captured before Update draws for this request.
-    pub gizmo_restore: Option<bool>,
+    /// Original gizmo group states captured before Update draws for this request.
+    pub gizmo_restore: GizmoEnabledRestore,
     pub max_width: Option<u32>,
     pub debug_camera: Option<DebugCameraRequest>,
     pub hide_ui: bool,
@@ -848,7 +852,7 @@ pub fn push_pending_screenshot(
         frames_remaining: params.delay_frames,
         required_render_epoch: None,
         with_gizmos,
-        gizmo_restore: None,
+        gizmo_restore: GizmoEnabledRestore::new(),
         max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
         debug_camera,
         hide_ui: params.hide_ui,
@@ -887,7 +891,7 @@ pub fn push_pending_stats(
         frames_remaining: params.delay_frames,
         required_render_epoch: None,
         with_gizmos: params.gizmos,
-        gizmo_restore: None,
+        gizmo_restore: GizmoEnabledRestore::new(),
         max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
         debug_camera,
         hide_ui: params.hide_ui,
@@ -1126,7 +1130,7 @@ pub fn push_pending_depth(
             frames_remaining: df,
             required_render_epoch: None,
             with_gizmos: false,
-            gizmo_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
             max_width: mw,
             debug_camera: dc,
             hide_ui: hu,
@@ -1332,7 +1336,7 @@ pub fn control_poll_system(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{any::TypeId, sync::Once};
 
     use bevy::{
         ecs::entity::Entity,
@@ -1402,7 +1406,10 @@ mod tests {
         let (config, _) = store.config::<DefaultGizmoConfigGroup>();
         assert!(!config.enabled);
         let pending = world.resource::<PendingScreenshots>();
-        assert_eq!(pending.pending[0].gizmo_restore, Some(true));
+        assert_eq!(
+            pending.pending[0].gizmo_restore,
+            vec![(TypeId::of::<DefaultGizmoConfigGroup>(), true)]
+        );
     }
 
     #[test]
@@ -1705,7 +1712,7 @@ mod tests {
     #[test]
     fn push_pending_timeline_rejects_camera2d_position_override() {
         let mut world = World::new();
-        world.spawn(Camera2d::default());
+        world.spawn(Camera2d);
         let (tx, mut rx) = oneshot::channel();
         let mut params = timeline_params(6);
         params.position = Some([0.0, 0.0, 500.0]);
@@ -1869,8 +1876,7 @@ mod tests {
 
     #[test]
     fn max_requests_per_frame_is_reasonable() {
-        assert!(MAX_REQUESTS_PER_FRAME > 0);
-        assert!(MAX_REQUESTS_PER_FRAME <= 1000);
+        const _: () = assert!((MAX_REQUESTS_PER_FRAME > 0) && (MAX_REQUESTS_PER_FRAME <= 1000));
     }
 
     /// Regression test: multiple get_component requests processed in a single

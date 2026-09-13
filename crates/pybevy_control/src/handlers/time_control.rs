@@ -129,13 +129,17 @@ pub fn seek_time(
         .map_err(|error| ControlError::invalid_params(error.message()))?;
     let current = world.resource::<Time<Virtual>>().elapsed_secs_f64();
     if seconds < current {
-        // Reset virtual time by replacing the resource, preserving speed
+        // Replacing virtual time resets pause and speed, so preserve both.
         let old_speed = world.resource::<Time<Virtual>>().relative_speed();
+        let was_paused = world.resource::<Time<Virtual>>().is_paused();
         world.insert_resource(Time::<Virtual>::default());
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(old_speed);
         if seconds > 0.0 {
             time.advance_to(target);
+        }
+        if was_paused {
+            time.pause();
         }
     } else {
         let mut time = world.resource_mut::<Time<Virtual>>();
@@ -154,7 +158,6 @@ pub fn seek_time(
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.pause();
     }
-
     // Sync GlobalTransform for root entities so spatial queries work immediately
     propagate_transforms(world);
 
@@ -424,6 +427,65 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["paused"], true);
+    }
+
+    #[test]
+    fn seek_time_without_pause_does_not_resume_a_paused_scene() {
+        let mut world = world_with_virtual_time();
+        pause_time(&mut world).expect("pause");
+
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 20.0,
+                pause: false,
+            },
+        )
+        .expect("seek");
+
+        assert_eq!(result["elapsed_secs"], 20.0);
+        assert_eq!(result["paused"], true);
+        assert_eq!(resume_time(&mut world).expect("resume")["paused"], false);
+    }
+
+    #[test]
+    fn seeking_backwards_does_not_resume_a_paused_scene() {
+        let mut world = world_with_virtual_time();
+        seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 20.0,
+                pause: false,
+            },
+        )
+        .expect("seek forward");
+        pause_time(&mut world).expect("pause");
+
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 5.0,
+                pause: false,
+            },
+        )
+        .expect("seek backward");
+
+        assert_eq!(result["elapsed_secs"], 5.0);
+        assert_eq!(result["paused"], true);
+    }
+
+    #[test]
+    fn seek_time_without_pause_leaves_a_running_scene_running() {
+        let mut world = world_with_virtual_time();
+        let result = seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 20.0,
+                pause: false,
+            },
+        )
+        .expect("seek");
+        assert_eq!(result["paused"], false);
     }
 
     #[test]

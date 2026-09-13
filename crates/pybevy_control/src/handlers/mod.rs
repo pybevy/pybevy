@@ -65,7 +65,9 @@ pub fn dispatch(
         }
         ControlOperation::RemoveComponent(p) => {
             guard_structural_request(world, "remove_component")?;
-            runtime.remove_component(world, p)
+            let result = runtime.remove_component(world, p)?;
+            schedule::propagate_transforms(world);
+            Ok(result)
         }
         ControlOperation::SetResource(p) => {
             guard_structural_request(world, "set_resource")?;
