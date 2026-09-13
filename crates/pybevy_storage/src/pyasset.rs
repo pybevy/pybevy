@@ -196,6 +196,8 @@ impl<T: Asset> AssetResolver<T> {
             let asset = assets
                 .get(self.root.asset_id)
                 .ok_or(StorageError::AssetUnavailable)?;
+            // Cached for `resolve_read` only; every write path re-derives from
+            // `get_mut`, so this address is never written through.
             let ptr = asset as *const T as *mut T;
             self.root.cached_ptr.store(ptr, Ordering::Release);
             self.root.cached_epoch.store(epoch, Ordering::Release);
@@ -1102,6 +1104,7 @@ impl<T: Asset> AssetStorage<T> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::collections::BTreeMap;
 

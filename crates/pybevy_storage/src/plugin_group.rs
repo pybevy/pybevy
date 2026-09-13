@@ -75,6 +75,7 @@ impl<K, V> PluginGroupAddition<K, V> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

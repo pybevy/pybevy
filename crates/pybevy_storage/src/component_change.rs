@@ -106,6 +106,7 @@ impl ComponentWriteContext {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use bevy::ecs::{change_detection::DetectChangesMut, component::Component, world::World};
 

@@ -19,12 +19,17 @@
 //! on the one thread that runs the system.
 
 use std::{
+    cell::RefCell,
     fmt,
+    marker::PhantomData,
+    rc::Rc,
     sync::{
         Arc, Mutex, Weak,
-        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
 };
+
+use bevy::ecs::world::WorldId;
 
 use crate::{component_change::ComponentWriteContext, storage_error::StorageError};
 
@@ -37,6 +42,7 @@ thread_local! {
     /// on first use. Cheaper and more portable than `ThreadId` (which is opaque
     /// and not storable in an atomic).
     static THREAD_TOKEN: u64 = NEXT_THREAD_TOKEN.fetch_add(1, Ordering::Relaxed);
+    static WORLD_EXECUTIONS: RefCell<Vec<(WorldId, ValidityFlag)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[inline]
@@ -72,6 +78,8 @@ struct ValidityInner {
     mode: AtomicU8,
     /// Token of the thread that last activated this flag (0 while Invalid/unset).
     owner: AtomicU64,
+    suspensions: AtomicUsize,
+    owned_world: Option<WorldId>,
     has_invalidation_observers: AtomicBool,
     invalidation_observers: Mutex<Vec<Weak<dyn InvalidationObserver>>>,
 }
@@ -101,6 +109,8 @@ impl ValidityInner {
         Self {
             mode: AtomicU8::new(mode as u8),
             owner: AtomicU64::new(owner),
+            suspensions: AtomicUsize::new(0),
+            owned_world: None,
             has_invalidation_observers: AtomicBool::new(false),
             invalidation_observers: Mutex::new(Vec::new()),
         }
@@ -132,11 +142,7 @@ pub struct ValidityFlagWithMode {
 impl ValidityFlagWithMode {
     /// Check if reading is allowed
     pub fn check_read(&self) -> Result<(), StorageError> {
-        // Still valid (not invalidated by system exit) and on the owning thread?
-        if matches!(self.flag.get_mode(), AccessMode::Invalid) {
-            return Err(StorageError::InvalidAccess);
-        }
-        self.flag.check_thread()?;
+        self.flag.check_read()?;
         // Valid on this thread; now check our access mode allows reading.
         match self.access_mode {
             AccessMode::Read | AccessMode::Write => Ok(()),
@@ -148,11 +154,7 @@ impl ValidityFlagWithMode {
 
     /// Check if writing is allowed
     pub fn check_write(&self) -> Result<(), StorageError> {
-        // Still valid (not invalidated by system exit) and on the owning thread?
-        if matches!(self.flag.get_mode(), AccessMode::Invalid) {
-            return Err(StorageError::InvalidAccess);
-        }
-        self.flag.check_thread()?;
+        self.flag.check_read()?;
         // Valid on this thread; now check our access mode allows writing.
         match self.access_mode {
             AccessMode::Write => Ok(()),
@@ -199,6 +201,13 @@ impl ValidityFlag {
     /// Create a new validity flag for mutable (read+write) access, owned by the current thread
     pub fn new_write() -> Self {
         Self(Arc::new(ValidityInner::new(AccessMode::Write)))
+    }
+
+    /// Whole-World authority retained by a standalone owned World wrapper.
+    pub fn new_owned_world(world_id: WorldId) -> Self {
+        let mut inner = ValidityInner::new(AccessMode::Write);
+        inner.owned_world = Some(world_id);
+        Self(Arc::new(inner))
     }
 
     /// Create a wrapper that shares the same validity state but enforces a specific access mode
@@ -251,10 +260,33 @@ impl ValidityFlag {
     /// Acquire load of `mode` (in `get_mode`) observes the owner stored before
     /// the Release store of a valid mode in `set_mode`.
     fn check_thread(&self) -> Result<(), StorageError> {
-        if self.0.owner.load(Ordering::Relaxed) == current_thread_token() {
-            Ok(())
-        } else {
-            Err(StorageError::CrossThreadAccess)
+        if self.0.suspensions.load(Ordering::Acquire) != 0 {
+            return Err(StorageError::NestedExecution);
+        }
+        if self.0.owner.load(Ordering::Relaxed) != current_thread_token() {
+            return Err(StorageError::CrossThreadAccess);
+        }
+        if let Some(world_id) = self.0.owned_world
+            && WORLD_EXECUTIONS
+                .with(|executions| executions.borrow().iter().any(|(id, _)| *id == world_id))
+        {
+            return Err(StorageError::NestedExecution);
+        }
+        Ok(())
+    }
+
+    /// Reject access through this window until the returned guard is dropped.
+    /// Unlike invalidation, suspension does not release run-scoped bookkeeping.
+    pub fn suspend(&self) -> Result<ValiditySuspension, StorageError> {
+        self.check()?;
+        Ok(self.suspend_unchecked())
+    }
+
+    fn suspend_unchecked(&self) -> ValiditySuspension {
+        self.0.suspensions.fetch_add(1, Ordering::AcqRel);
+        ValiditySuspension {
+            flag: self.clone(),
+            _thread_bound: PhantomData,
         }
     }
 
@@ -349,6 +381,21 @@ impl Default for ValidityFlag {
 /// Python code panics or errors.
 pub struct ValidityGuard {
     flag: ValidityFlag,
+    world_id: Option<WorldId>,
+    _parents: Vec<ValiditySuspension>,
+}
+
+/// A same-thread guard that restores suspended access without reactivating an
+/// invalidated window or changing its read/write mode.
+pub struct ValiditySuspension {
+    flag: ValidityFlag,
+    _thread_bound: PhantomData<Rc<()>>,
+}
+
+impl Drop for ValiditySuspension {
+    fn drop(&mut self) {
+        self.flag.0.suspensions.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl ValidityGuard {
@@ -357,7 +404,32 @@ impl ValidityGuard {
     /// The flag is immediately set to valid (true).
     pub fn new(flag: ValidityFlag) -> Self {
         flag.set_valid();
-        Self { flag }
+        Self {
+            flag,
+            world_id: None,
+            _parents: Vec::new(),
+        }
+    }
+
+    /// Activate a callback's window and suspend ancestor callbacks on the same
+    /// World. Different Worlds retain independent access.
+    pub fn for_world(flag: ValidityFlag, world_id: WorldId) -> Self {
+        let parents = WORLD_EXECUTIONS.with(|executions| {
+            let mut executions = executions.borrow_mut();
+            let parents = executions
+                .iter()
+                .filter(|(id, _)| *id == world_id)
+                .map(|(_, parent)| parent.suspend_unchecked())
+                .collect();
+            executions.push((world_id, flag.clone()));
+            parents
+        });
+        flag.set_valid();
+        Self {
+            flag,
+            world_id: Some(world_id),
+            _parents: parents,
+        }
     }
 }
 
@@ -365,12 +437,103 @@ impl Drop for ValidityGuard {
     fn drop(&mut self) {
         // This runs even if the Python code panics!
         self.flag.set_invalid();
+        if self.world_id.is_some() {
+            WORLD_EXECUTIONS.with(|executions| {
+                executions
+                    .borrow_mut()
+                    .retain(|(_, flag)| !Arc::ptr_eq(&flag.0, &self.flag.0));
+            });
+        }
     }
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use bevy::ecs::world::World;
+
     use super::*;
+
+    #[test]
+    fn suspension_rejects_all_modes_and_preserves_read_authority() {
+        let flag = ValidityFlag::new_read();
+        let read = flag.with_access_mode(AccessMode::Read);
+        let write = flag.with_access_mode(AccessMode::Write);
+        {
+            let _suspension = flag.suspend().unwrap();
+            assert!(matches!(
+                flag.check_read(),
+                Err(StorageError::NestedExecution)
+            ));
+            assert!(matches!(
+                read.check_read(),
+                Err(StorageError::NestedExecution)
+            ));
+            assert!(matches!(
+                write.check_write(),
+                Err(StorageError::NestedExecution)
+            ));
+        }
+        assert!(flag.check_read().is_ok());
+        assert!(matches!(flag.check_write(), Err(StorageError::ReadOnly)));
+    }
+
+    #[test]
+    fn suspension_does_not_resurrect_invalidated_storage() {
+        let flag = ValidityFlag::new_write();
+        let suspension = flag.suspend().unwrap();
+        flag.set_invalid();
+        drop(suspension);
+        assert!(matches!(flag.check(), Err(StorageError::InvalidAccess)));
+    }
+
+    #[test]
+    fn nested_world_windows_restore_each_ancestor_independently() {
+        let world = World::new();
+        let outer = ValidityFlag::new();
+        let _outer_guard = ValidityGuard::for_world(outer.clone(), world.id());
+        let middle = ValidityFlag::new();
+        {
+            let _middle_guard = ValidityGuard::for_world(middle.clone(), world.id());
+            let inner = ValidityFlag::new();
+            {
+                let _inner_guard = ValidityGuard::for_world(inner.clone(), world.id());
+                assert!(inner.check().is_ok());
+                assert!(matches!(middle.check(), Err(StorageError::NestedExecution)));
+                assert!(matches!(outer.check(), Err(StorageError::NestedExecution)));
+            }
+            assert!(matches!(inner.check(), Err(StorageError::InvalidAccess)));
+            assert!(middle.check().is_ok());
+            assert!(matches!(outer.check(), Err(StorageError::NestedExecution)));
+        }
+        assert!(matches!(middle.check(), Err(StorageError::InvalidAccess)));
+        assert!(outer.check().is_ok());
+    }
+
+    #[test]
+    fn callbacks_on_different_worlds_keep_independent_authority() {
+        let first_world = World::new();
+        let second_world = World::new();
+        let first = ValidityFlag::new();
+        let second = ValidityFlag::new();
+        let _first_guard = ValidityGuard::for_world(first.clone(), first_world.id());
+        let _second_guard = ValidityGuard::for_world(second.clone(), second_world.id());
+        assert!(first.check_write().is_ok());
+        assert!(second.check_write().is_ok());
+    }
+
+    #[test]
+    fn owned_world_authority_is_suspended_during_its_callbacks() {
+        let world = World::new();
+        let owned = ValidityFlag::new_owned_world(world.id());
+        {
+            let callback = ValidityFlag::new();
+            let _guard = ValidityGuard::for_world(callback.clone(), world.id());
+            assert!(callback.check_write().is_ok());
+            assert!(matches!(owned.check(), Err(StorageError::NestedExecution)));
+        }
+        assert!(owned.check_write().is_ok());
+    }
 
     #[test]
     fn test_validity_flag_starts_invalid() {
@@ -466,6 +629,23 @@ mod tests {
         flag.set_invalid();
         assert!(read_mode.check_read().is_err());
         assert!(write_mode.check_read().is_err());
+    }
+
+    #[test]
+    fn with_mode_write_rejects_invalidated_flag() {
+        let flag = ValidityFlag::new_write();
+        let write_mode = flag.with_access_mode(AccessMode::Write);
+        assert!(write_mode.check_write().is_ok());
+
+        flag.set_invalid();
+        assert!(matches!(
+            write_mode.check_write(),
+            Err(StorageError::InvalidAccess)
+        ));
+        assert!(matches!(
+            write_mode.check_read(),
+            Err(StorageError::InvalidAccess)
+        ));
     }
 
     #[test]

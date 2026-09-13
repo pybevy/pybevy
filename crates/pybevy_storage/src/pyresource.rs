@@ -223,7 +223,10 @@ impl<T: Resource> ResourceStorage<T> {
     pub fn as_mut(&mut self) -> Result<&mut T, StorageError> {
         match &mut self.inner {
             ResourceStorageInner::Owned { data, .. } => Ok(&mut **data),
-            ResourceStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ResourceStorageInner::BorrowedRef(resource) => {
+                resource.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
             ResourceStorageInner::BorrowedMut(b) => b.get_mut(),
             ResourceStorageInner::Revalidating(r) => r.get_mut::<T>(),
         }
@@ -328,7 +331,10 @@ impl<T: Resource> ResourceStorage<T> {
                 // the caller guarantees that the projection remains stable.
                 Ok(unsafe { S::borrowed_mut(ptr, validity.clone()) })
             }
-            ResourceStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ResourceStorageInner::BorrowedRef(resource) => {
+                resource.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
             ResourceStorageInner::BorrowedMut(resource) => {
                 resource.validity().check_write()?;
                 let validity = resource.validity().clone();
@@ -385,6 +391,7 @@ impl<T: Resource + Clone> ResourceStorage<T> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use bevy::ecs::{
         change_detection::DetectChanges,
@@ -392,7 +399,9 @@ mod tests {
     };
 
     use super::*;
-    use crate::{AccessMode, FieldStorage, ValidityFlag, ValidityGuard};
+    use crate::{
+        AccessMode, FieldStorage, ValidityFlag, ValidityGuard, value_storage::ValueStorage,
+    };
 
     #[derive(Clone, Debug, PartialEq, Resource)]
     struct TestResource {
@@ -407,7 +416,7 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Resource)]
     struct ProjectedResource {
-        value: Box<String>,
+        value: String,
     }
 
     #[derive(Component)]
@@ -567,8 +576,6 @@ mod tests {
 
     #[test]
     fn test_borrow_field_from_owned() {
-        use crate::value_storage::ValueStorage;
-
         let storage = ResourceStorage::owned(NestedResource { x: 1.0, y: 2.0 });
         let field: ValueStorage<f32> = storage.borrow_field(|r| &r.x).unwrap();
 
@@ -578,8 +585,6 @@ mod tests {
 
     #[test]
     fn test_borrow_field_from_borrowed() {
-        use crate::value_storage::ValueStorage;
-
         let mut resource = NestedResource { x: 5.0, y: 6.0 };
         let validity = ValidityFlag::new_write();
 
@@ -594,8 +599,6 @@ mod tests {
 
     #[test]
     fn test_borrow_field_invalid_after_guard_dropped() {
-        use crate::value_storage::ValueStorage;
-
         let mut resource = NestedResource { x: 1.0, y: 2.0 };
         let flag = ValidityFlag::new();
 
@@ -616,11 +619,11 @@ mod tests {
     #[test]
     fn projected_mutation_reaches_non_inline_resource_value() {
         let mut storage = ResourceStorage::owned(ProjectedResource {
-            value: Box::new("before".to_string()),
+            value: "before".to_string(),
         });
 
         let mut projected: FieldStorage<String> =
-            unsafe { storage.borrow_projected_mut(|resource| resource.value.as_mut()) }.unwrap();
+            unsafe { storage.borrow_projected_mut(|resource| &mut resource.value) }.unwrap();
         projected.as_mut().unwrap().push_str(" after");
 
         assert_eq!(storage.as_ref().unwrap().value.as_str(), "before after");
@@ -634,7 +637,7 @@ mod tests {
     #[test]
     fn projected_read_from_mutable_resource_stays_read_only() {
         let mut resource = ProjectedResource {
-            value: Box::new("value".to_string()),
+            value: "value".to_string(),
         };
         let validity = ValidityFlag::new_write();
         let storage = unsafe {
@@ -642,7 +645,7 @@ mod tests {
         };
 
         let mut projected: FieldStorage<String> =
-            unsafe { storage.borrow_projected_ref(|resource| resource.value.as_ref()) }.unwrap();
+            unsafe { storage.borrow_projected_ref(|resource| &resource.value) }.unwrap();
 
         assert_eq!(projected.as_ref().unwrap().as_str(), "value");
         assert!(matches!(projected.as_mut(), Err(StorageError::ReadOnly)));
@@ -704,5 +707,39 @@ mod tests {
 
         assert_eq!(storage.as_ref().unwrap().value, 42);
         assert!(storage.as_mut().is_err());
+    }
+
+    #[test]
+    fn borrowed_resource_storage_resolves_write_mode() {
+        let mut resource = TestResource { value: 4 };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // SAFETY: `resource` outlives the borrowed storage for this test.
+        let mut storage =
+            unsafe { ResourceStorage::borrowed(&mut resource as *mut TestResource, validity) };
+
+        assert_eq!(storage.as_ref().unwrap().value, 4);
+        storage.as_mut().unwrap().value = 8;
+        assert_eq!(resource.value, 8);
+    }
+
+    #[test]
+    fn borrow_projected_mut_rejects_read_only_storage() {
+        let mut resource = TestResource { value: 3 };
+        let flag = ValidityFlag::new_read();
+        let validity = flag.clone().with_access_mode(AccessMode::Read);
+        // SAFETY: `resource` outlives the borrowed storage for this test.
+        let mut storage =
+            unsafe { ResourceStorage::borrowed(&mut resource as *mut TestResource, validity) };
+
+        // SAFETY: the projection only reads through the live borrowed resource.
+        let result: Result<ValueStorage<i32>, StorageError> =
+            unsafe { storage.borrow_projected_mut(|resource| &mut resource.value) };
+        assert!(matches!(result, Err(StorageError::ReadOnly)));
+        flag.set_invalid();
+        assert!(matches!(storage.as_mut(), Err(StorageError::InvalidAccess)));
+        // SAFETY: the expired projection must be rejected without dereferencing.
+        let result: Result<ValueStorage<i32>, StorageError> =
+            unsafe { storage.borrow_projected_mut(|resource| &mut resource.value) };
+        assert!(matches!(result, Err(StorageError::InvalidAccess)));
     }
 }
