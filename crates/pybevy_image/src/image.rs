@@ -32,7 +32,9 @@ use pyo3::{
     types::{PyBytes, PyList, PyTuple},
 };
 
-use crate::{image_format::PyImageFormat, loader_settings::PyImageSampler};
+use crate::{
+    encoding::unsupported_format, image_format::PyImageFormat, loader_settings::PyImageSampler,
+};
 
 struct ExtractedU8Data {
     bytes: Vec<u8>,
@@ -272,9 +274,7 @@ fn py_format_to_rust(format: PyImageFormat) -> PyResult<RustImageFormat> {
         PyImageFormat::Jpeg => RustImageFormat::Jpeg,
         // The `image` crate cannot encode KTX2.
         PyImageFormat::Ktx2 => {
-            return Err(PyValueError::new_err(
-                "KTX2 encoding is not supported; use Png, Jpeg, Bmp, Dds, OpenExr, Hdr, Qoi, Pnm, Tga, Tiff or WebP",
-            ));
+            return Err(PyValueError::new_err(unsupported_format("KTX2")));
         }
         PyImageFormat::Png => RustImageFormat::Png,
         PyImageFormat::Pnm => RustImageFormat::Pnm,
@@ -499,7 +499,10 @@ fn rgba16_from_8(pixels: &ExportPixels) -> Vec<u16> {
 
 fn export_dynamic_image(image: &Image, destination: PyImageFormat) -> PyResult<DynamicImage> {
     let source = image.texture_descriptor.format;
-    if matches!(destination, PyImageFormat::Dds | PyImageFormat::Ktx2) {
+    if destination == PyImageFormat::Ktx2 {
+        return Err(PyValueError::new_err(unsupported_format("KTX2")));
+    }
+    if destination == PyImageFormat::Dds {
         return Err(export_error(source, destination));
     }
     let (pixels, width, height) = export_pixels(image, destination)?;
@@ -712,6 +715,7 @@ impl ImagePixelContextMut {
 #[pyclass(name = "Image", module = "pybevy.image", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyImage {
+    // pub for the root pybevy crate, which reads it directly in save_image().
     pub storage: AssetStorage<Image>,
 }
 

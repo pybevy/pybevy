@@ -1,3 +1,5 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+pub mod encoding;
 pub mod image;
 pub mod image_address_mode;
 pub mod image_array_layout;

@@ -119,7 +119,7 @@ class SaveImageFormatSetting:
 class ImageSaverSettings:
     """Settings for AssetServer.save_image. Default format is SaveImageFormatSetting.FromExtension."""
 
-    def __init__(self, format: SaveImageFormatSetting = SaveImageFormatSetting.FromExtension()) -> None: ...
+    def __init__(self, *, format: SaveImageFormatSetting = SaveImageFormatSetting.FromExtension()) -> None: ...
     @property
     def format(self) -> SaveImageFormatSetting: ...
     @format.setter
@@ -256,11 +256,11 @@ class Image(Asset):
         from pybevy.color import Color
 
         # Create a basic texture
-        img = Image(Extent3d(256, 256, 1))
+        img = Image(Extent3d(width=256, height=256, depth_or_array_layers=1))
 
         # Create a filled texture
         img = Image.new_fill(
-            Extent3d(64, 64, 1),
+            Extent3d(width=64, height=64, depth_or_array_layers=1),
             [255, 0, 0, 255]  # Red RGBA pixel
         )
 
@@ -275,7 +275,7 @@ class Image(Asset):
     """
     def __init__(
         self,
-        size: Extent3d = Extent3d(1, 1, 1),
+        size: Extent3d = Extent3d(width=1, height=1, depth_or_array_layers=1),
         dimension: TextureDimension | None = None,
         data: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array | None = None,
         format: TextureFormat | None = None,
@@ -303,11 +303,11 @@ class Image(Asset):
             from pybevy.render import Extent3d
 
             # Create white 64x64 texture
-            img = Image(Extent3d(64, 64, 1))
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
 
             # Create with custom data
             pixels = [255, 0, 0, 255] * (64 * 64)  # Red texture
-            img = Image(Extent3d(64, 64, 1), data=pixels)
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1), data=pixels)
             ```
         """
 
@@ -449,7 +449,7 @@ class Image(Asset):
             from pybevy.image import Image
             from pybevy.render import Extent3d
 
-            img = Image(Extent3d(64, 64, 1))
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
             # 64 * 64 * 4 bytes (RGBA8)
             print(f"Data size: {img.data_len()} bytes")
             ```
@@ -493,7 +493,7 @@ class Image(Asset):
             >>> from pybevy.image import Image
             >>> from pybevy.image import ImageSampler
             >>> from pybevy.render import Extent3d
-            >>> img = Image(Extent3d(64, 64, 1))
+            >>> img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
             >>> img.sampler = ImageSampler.linear()  # Smooth filtering
             >>> img.sampler = ImageSampler.nearest()  # Pixel-perfect filtering
         """
@@ -509,15 +509,14 @@ class Image(Asset):
 
     @property
     def copy_on_resize(self) -> bool:
-        """Whether to copy data when resizing the image.
-
-        If true, pixel data is preserved when resizing.
-        If false, pixel data is discarded on resize.
+        """Copies overlapping texels from the previous GPU-only texture on
+        resize. CPU pixel-buffer resize ignores this flag; resize_in_place()
+        enables it for GPU-only images.
         """
 
     @copy_on_resize.setter
     def copy_on_resize(self, value: bool) -> None:
-        """Set whether to copy data when resizing."""
+        """Set whether the GPU texture is copied when this image is resized."""
 
     def data(self) -> ImageDataContext:
         """Get zero-copy read-only access to image pixel data via context manager.
@@ -532,7 +531,7 @@ class Image(Asset):
             ```python
             from pybevy.image import Image
             from pybevy.render import Extent3d
-            img = Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])
+            img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), [255, 0, 0, 255])
 
             with img.data() as pixels:
                 mean_value = pixels.mean()
@@ -559,7 +558,7 @@ class Image(Asset):
             ```python
             from pybevy.image import Image
             from pybevy.render import Extent3d
-            img = Image(Extent3d(64, 64, 1))
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
 
             with img.data_mut() as pixels:
                 pixels[:] = 255  # Fill entire image with white
@@ -593,7 +592,7 @@ class Image(Asset):
             from pybevy.render import Extent3d
             from pybevy.math import UVec3
 
-            img = Image(Extent3d(64, 64, 1))
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
             offset = img.pixel_data_offset(UVec3(10, 20, 0))
             if offset is not None:
                 # offset = (20 * 64 + 10) * 4 = 5160 for RGBA8
@@ -619,7 +618,7 @@ class Image(Asset):
             from pybevy.render import Extent3d
             from pybevy.math import UVec3
 
-            img = Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])  # Red
+            img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), [255, 0, 0, 255])  # Red
             pixel = img.pixel_bytes(UVec3(10, 20, 0))
             if pixel is not None:
                 r, g, b, a = pixel
@@ -654,7 +653,7 @@ class Image(Asset):
             from pybevy.render import Extent3d, TextureFormat
             from pybevy.math import UVec3
 
-            img = Image.new_fill(Extent3d(64, 64, 1), TextureFormat.Rgba8UnormSrgb, bytes([0, 0, 0, 255]))
+            img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), TextureFormat.Rgba8UnormSrgb, bytes([0, 0, 0, 255]))
 
             # Modify single pixel
             with img.pixel_bytes_mut(UVec3(10, 20, 0)) as pixel:
@@ -686,7 +685,7 @@ class Image(Asset):
             from pybevy.image import Image
             from pybevy.render import Extent3d
 
-            img = Image(Extent3d(64, 64, 1))
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
 
             # Get owned copy
             pixels = img.data_copy()
@@ -726,7 +725,7 @@ class Image(Asset):
             from pybevy.render import Extent3d
             import numpy as np
 
-            img = Image(Extent3d(64, 64, 1))
+            img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
 
             # Create new pixel data
             new_pixels = np.zeros(64 * 64 * 4, dtype=np.uint8)
@@ -823,9 +822,15 @@ class Image(Asset):
 
     # Resizing methods
     def resize(self, size: Extent3d) -> None:
-        """Resize the image to new dimensions.
+        """Resize the image by truncating or zero-padding its buffer.
 
-        Truncates or pads with default pixel values (discards pixel data).
+        The buffer is cut or extended in one dimension, so the bytes that
+        survive are re-laid-out at the new width and the picture is scrambled:
+        shrinking a 4x4 to 2x2 keeps the source's first row, not its top-left
+        corner. Nothing is scaled and nothing is resampled.
+
+        Use `resize_in_place` to keep the 2-D arrangement, and an image library
+        to scale the contents.
 
         Args:
             size: New dimensions for the image
@@ -903,6 +908,8 @@ class Image(Asset):
     ) -> bytes:
         """Encode the image to a byte buffer in the specified format.
 
+        Unsupported encoder errors list the formats enabled in this build.
+
         Args:
             format: Output image format (default: PNG)
             quality: JPEG quality (0-100), only used for JPEG format (default: 95)
@@ -977,9 +984,9 @@ class TextureAtlasLayout(Asset):
 
     def __init__(
         self,
-        size: UVec2 = ...,
         *,
-        textures: list[URect] | None = None,
+        size: UVec2 = ...,
+        textures: list[URect] | None = None
     ) -> None:
         """Create a new texture atlas layout.
 
@@ -1017,6 +1024,9 @@ class TextureAtlasLayout(Asset):
         Generates a layout where tiles are arranged in a regular grid pattern.
         Each cell is tile_size pixels, optionally separated by padding and
         starting from an offset position. Indexed left-to-right, top-to-bottom.
+
+        Bevy leaves offset out of the layout size it computes, so with a
+        non-zero offset the reported size stops short of the placed rects.
 
         Args:
             tile_size: Size of each tile in pixels.
@@ -1105,8 +1115,9 @@ class TextureAtlas:
     
     def __init__(
         self,
+        *,
         layout: Handle[TextureAtlasLayout] | None = None,
-        index: int = 0,
+        index: int = 0
     ) -> None:
         """Create a TextureAtlas reference.
 
@@ -1201,6 +1212,8 @@ class ImageSamplerDescriptor:
 
     def __init__(
         self,
+        *,
+        label: str | None = None,
         address_mode_u: ImageAddressMode = ...,
         address_mode_v: ImageAddressMode = ...,
         address_mode_w: ImageAddressMode = ...,
@@ -1211,8 +1224,7 @@ class ImageSamplerDescriptor:
         lod_max_clamp: float = 32.0,
         compare: ImageCompareFunction | None = None,
         anisotropy_clamp: int = 1,
-        border_color: ImageSamplerBorderColor | None = None,
-        label: str | None = None,
+        border_color: ImageSamplerBorderColor | None = None
     ) -> None:
         """Create a new image sampler descriptor with the specified settings.
 
@@ -1370,18 +1382,18 @@ class ImageArrayLayout:
     class RowCount(ImageArrayLayout):
         __match_args__: ClassVar[tuple[Literal["rows"]]]
         rows: int
-        def __init__(self, rows: int) -> None: ...
+        def __init__(self, *, rows: int) -> None: ...
 
     class RowHeight(ImageArrayLayout):
         __match_args__: ClassVar[tuple[Literal["pixels"]]]
         pixels: int
-        def __init__(self, pixels: int) -> None: ...
+        def __init__(self, *, pixels: int) -> None: ...
 
     class GridCount(ImageArrayLayout):
         __match_args__: ClassVar[tuple[Literal["columns"], Literal["rows"]]]
         columns: int
         rows: int
-        def __init__(self, columns: int, rows: int) -> None: ...
+        def __init__(self, *, columns: int, rows: int) -> None: ...
 
     class GridSize(ImageArrayLayout):
         __match_args__: ClassVar[
@@ -1389,7 +1401,7 @@ class ImageArrayLayout:
         ]
         tile_width_pixels: int
         tile_height_pixels: int
-        def __init__(self, tile_width_pixels: int, tile_height_pixels: int) -> None: ...
+        def __init__(self, *, tile_width_pixels: int, tile_height_pixels: int) -> None: ...
 
 class ImageLoaderSettings:
     """Settings for loading an Image using an ImageLoader.
@@ -1399,8 +1411,9 @@ class ImageLoaderSettings:
 
     def __init__(
         self,
+        *,
         is_srgb: bool = True,
-        sampler: ImageSampler | None = None,
+        sampler: ImageSampler | None = None
     ) -> None:
         """Create new image loader settings.
 

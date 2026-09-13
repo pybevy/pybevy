@@ -25,6 +25,8 @@ impl PyImageSamplerDescriptor {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
+        label = None,
         address_mode_u = PyImageAddressMode::ClampToEdge,
         address_mode_v = PyImageAddressMode::ClampToEdge,
         address_mode_w = PyImageAddressMode::ClampToEdge,
@@ -35,10 +37,10 @@ impl PyImageSamplerDescriptor {
         lod_max_clamp = 32.0,
         compare = None,
         anisotropy_clamp = 1,
-        border_color = None,
-        label = None,
+        border_color = None
     ))]
     pub fn new(
+        label: Option<String>,
         address_mode_u: PyImageAddressMode,
         address_mode_v: PyImageAddressMode,
         address_mode_w: PyImageAddressMode,
@@ -50,7 +52,6 @@ impl PyImageSamplerDescriptor {
         compare: Option<PyImageCompareFunction>,
         anisotropy_clamp: u16,
         border_color: Option<PyImageSamplerBorderColor>,
-        label: Option<String>,
     ) -> Self {
         ImageSamplerDescriptor {
             address_mode_u: address_mode_u.into(),

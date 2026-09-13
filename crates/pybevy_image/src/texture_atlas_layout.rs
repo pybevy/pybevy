@@ -16,7 +16,7 @@ pub struct PyTextureAtlasLayout {
 #[pymethods]
 impl PyTextureAtlasLayout {
     #[new]
-    #[pyo3(signature = (size = PyUVec2::ZERO, *, textures = None))]
+    #[pyo3(signature = (*, size = PyUVec2::ZERO, textures = None))]
     pub fn new(
         size: PyUVec2,
         textures: Option<Vec<PyURect>>,
