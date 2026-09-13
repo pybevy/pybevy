@@ -196,11 +196,13 @@ pub unsafe fn execute_buffer_assignment(
     } else {
         let mut vm = VM::new();
         // SAFETY: forwards the function's pointer and exclusivity contract.
-        unsafe { vm.execute_batch_multi(bytecode, &field_bases, &strides, count) };
+        // One unchunked pass, so the element index is already a stable seed.
+        unsafe { vm.execute_batch_multi(bytecode, &field_bases, &strides, count, None) };
     }
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::{bytecode::FieldId, expr::RustExpr, view_engine::compile_assignment};

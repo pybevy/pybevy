@@ -93,6 +93,35 @@ unsafe impl Send for BorrowedMutF32Slice {}
 unsafe impl Sync for BorrowedMutF32Slice {}
 
 // SAFETY: the pointer is read only after `BorrowProbe::check_read` succeeds on
+// the accessing thread. The referents are plain integers with no interior
+// mutability.
+/// A raw, read-only view of `len` contiguous `u16`s, gated by the owning
+/// storage's probe.
+#[derive(Debug, Clone, Copy)]
+pub struct BorrowedU16Slice {
+    ptr: *const u16,
+    len: usize,
+}
+
+/// A raw, read-only view of `len` contiguous `u32`s, gated by the owning
+/// storage's probe.
+#[derive(Debug, Clone, Copy)]
+pub struct BorrowedU32Slice {
+    ptr: *const u32,
+    len: usize,
+}
+
+// SAFETY: the pointer is only dereferenced behind a successful probe check on
+// the owning thread, the same contract as the u8 and f32 slices above.
+unsafe impl Send for BorrowedU16Slice {}
+// SAFETY: as above.
+unsafe impl Sync for BorrowedU16Slice {}
+// SAFETY: as above.
+unsafe impl Send for BorrowedU32Slice {}
+// SAFETY: as above.
+unsafe impl Sync for BorrowedU32Slice {}
+
+// SAFETY: the pointer is read only after `BorrowProbe::check_read` succeeds on
 // the accessing thread. The referent is plain `u8` with no interior mutability.
 unsafe impl Send for BorrowedU8Slice {}
 // SAFETY: see the `Send` impl; access is shared-immutable while the probe holds.
@@ -138,6 +167,18 @@ pub enum ArrayStorage {
     /// holding an exclusive write lease.
     BorrowedMutU8 {
         slice: BorrowedMutU8Slice,
+        probe: Arc<dyn BorrowProbe>,
+    },
+    /// A zero-copy read-only borrow of external `u16` data (a mesh index
+    /// buffer), guarded by a liveness probe.
+    BorrowedU16 {
+        slice: BorrowedU16Slice,
+        probe: Arc<dyn BorrowProbe>,
+    },
+    /// A zero-copy read-only borrow of external `u32` data (a mesh index
+    /// buffer), guarded by a liveness probe.
+    BorrowedU32 {
+        slice: BorrowedU32Slice,
         probe: Arc<dyn BorrowProbe>,
     },
 }
@@ -195,6 +236,26 @@ impl PartialEq for ArrayStorage {
                     probe: pb,
                 },
             ) => a.ptr == b.ptr && a.len == b.len && Arc::ptr_eq(pa, pb),
+            (
+                BorrowedU16 {
+                    slice: a,
+                    probe: pa,
+                },
+                BorrowedU16 {
+                    slice: b,
+                    probe: pb,
+                },
+            ) => a.ptr == b.ptr && a.len == b.len && Arc::ptr_eq(pa, pb),
+            (
+                BorrowedU32 {
+                    slice: a,
+                    probe: pa,
+                },
+                BorrowedU32 {
+                    slice: b,
+                    probe: pb,
+                },
+            ) => a.ptr == b.ptr && a.len == b.len && Arc::ptr_eq(pa, pb),
             _ => false,
         }
     }
@@ -218,6 +279,8 @@ impl ArrayStorage {
             ArrayStorage::BorrowedU8 { .. } | ArrayStorage::BorrowedMutU8 { .. } => {
                 ArrayDType::Uint8
             }
+            ArrayStorage::BorrowedU16 { .. } => ArrayDType::Uint16,
+            ArrayStorage::BorrowedU32 { .. } => ArrayDType::Uint32,
         }
     }
 
@@ -236,6 +299,8 @@ impl ArrayStorage {
             ArrayStorage::BorrowedMutF32 { slice, .. } => slice.len,
             ArrayStorage::BorrowedU8 { slice, .. } => slice.len,
             ArrayStorage::BorrowedMutU8 { slice, .. } => slice.len,
+            ArrayStorage::BorrowedU16 { slice, .. } => slice.len,
+            ArrayStorage::BorrowedU32 { slice, .. } => slice.len,
         }
     }
 
@@ -287,6 +352,40 @@ impl ArrayStorage {
         }
     }
 
+    /// Return the contiguous `u16`/`u32` backing slice for owned or borrowed
+    /// unsigned storage of that width.
+    ///
+    /// # Safety
+    /// As [`Self::as_u8_contiguous_unchecked`]: the caller must hold a
+    /// successful read claim for the whole use of the returned slice.
+    #[cfg(feature = "pyo3")]
+    pub(crate) unsafe fn as_u16_contiguous_unchecked(&self) -> Option<&[u16]> {
+        match self {
+            ArrayStorage::Uint16(values) => Some(values),
+            ArrayStorage::BorrowedU16 { slice, .. } => {
+                // SAFETY: the caller upholds the probe-validity contract above.
+                Some(unsafe { std::slice::from_raw_parts(slice.ptr, slice.len) })
+            }
+            _ => None,
+        }
+    }
+
+    /// See [`Self::as_u16_contiguous_unchecked`].
+    ///
+    /// # Safety
+    /// As that method, for `u32`.
+    #[cfg(feature = "pyo3")]
+    pub(crate) unsafe fn as_u32_contiguous_unchecked(&self) -> Option<&[u32]> {
+        match self {
+            ArrayStorage::Uint32(values) => Some(values),
+            ArrayStorage::BorrowedU32 { slice, .. } => {
+                // SAFETY: the caller upholds the probe-validity contract above.
+                Some(unsafe { std::slice::from_raw_parts(slice.ptr, slice.len) })
+            }
+            _ => None,
+        }
+    }
+
     /// Return the base pointer for writable, byte-addressable contiguous
     /// storage. Bit-packed boolean storage and read-only borrows have no such
     /// pointer.
@@ -309,7 +408,9 @@ impl ArrayStorage {
             ArrayStorage::BorrowedMutU8 { slice, .. } => Some(slice.ptr),
             ArrayStorage::Bool(_)
             | ArrayStorage::BorrowedF32 { .. }
-            | ArrayStorage::BorrowedU8 { .. } => None,
+            | ArrayStorage::BorrowedU8 { .. }
+            | ArrayStorage::BorrowedU16 { .. }
+            | ArrayStorage::BorrowedU32 { .. } => None,
         }
     }
 
@@ -370,6 +471,32 @@ impl ArrayStorage {
         }
     }
 
+    /// Wrap external `u16` data as a read-only borrowed storage guarded by
+    /// `probe`.
+    ///
+    /// # Safety
+    /// `ptr` must address `len` initialized contiguous `u16`s which remain
+    /// valid whenever `probe.check_read()` succeeds, with no mutable alias
+    /// during that operation window.
+    pub unsafe fn borrowed_u16(ptr: *const u16, len: usize, probe: Arc<dyn BorrowProbe>) -> Self {
+        ArrayStorage::BorrowedU16 {
+            slice: BorrowedU16Slice { ptr, len },
+            probe,
+        }
+    }
+
+    /// Wrap external `u32` data as a read-only borrowed storage guarded by
+    /// `probe`.
+    ///
+    /// # Safety
+    /// As [`Self::borrowed_u16`], for `u32`.
+    pub unsafe fn borrowed_u32(ptr: *const u32, len: usize, probe: Arc<dyn BorrowProbe>) -> Self {
+        ArrayStorage::BorrowedU32 {
+            slice: BorrowedU32Slice { ptr, len },
+            probe,
+        }
+    }
+
     /// Whether this storage aliases external data (vs. owning it).
     pub fn is_borrowed(&self) -> bool {
         matches!(
@@ -378,6 +505,8 @@ impl ArrayStorage {
                 | ArrayStorage::BorrowedMutF32 { .. }
                 | ArrayStorage::BorrowedU8 { .. }
                 | ArrayStorage::BorrowedMutU8 { .. }
+                | ArrayStorage::BorrowedU16 { .. }
+                | ArrayStorage::BorrowedU32 { .. }
         )
     }
 
@@ -385,7 +514,10 @@ impl ArrayStorage {
     pub fn is_read_only_borrow(&self) -> bool {
         matches!(
             self,
-            ArrayStorage::BorrowedF32 { .. } | ArrayStorage::BorrowedU8 { .. }
+            ArrayStorage::BorrowedF32 { .. }
+                | ArrayStorage::BorrowedU8 { .. }
+                | ArrayStorage::BorrowedU16 { .. }
+                | ArrayStorage::BorrowedU32 { .. }
         )
     }
 
@@ -400,7 +532,9 @@ impl ArrayStorage {
             ArrayStorage::BorrowedF32 { probe, .. }
             | ArrayStorage::BorrowedMutF32 { probe, .. }
             | ArrayStorage::BorrowedU8 { probe, .. }
-            | ArrayStorage::BorrowedMutU8 { probe, .. } => {
+            | ArrayStorage::BorrowedMutU8 { probe, .. }
+            | ArrayStorage::BorrowedU16 { probe, .. }
+            | ArrayStorage::BorrowedU32 { probe, .. } => {
                 probe.check_read().map_err(ArrayError::BorrowExpired)
             }
             _ => Ok(()),
@@ -416,9 +550,10 @@ impl ArrayStorage {
             | ArrayStorage::BorrowedMutU8 { probe, .. } => {
                 probe.check_write().map_err(ArrayError::BorrowExpired)
             }
-            ArrayStorage::BorrowedF32 { .. } | ArrayStorage::BorrowedU8 { .. } => {
-                Err(ArrayError::NotWritable)
-            }
+            ArrayStorage::BorrowedF32 { .. }
+            | ArrayStorage::BorrowedU8 { .. }
+            | ArrayStorage::BorrowedU16 { .. }
+            | ArrayStorage::BorrowedU32 { .. } => Err(ArrayError::NotWritable),
             _ => Ok(()),
         }
     }
@@ -507,6 +642,17 @@ impl ArrayStorage {
                 // SAFETY: as above; the exclusive lease also prevents aliases.
                 Scalar::I64(i64::from(unsafe { *slice.ptr.add(flat) }))
             }
+            ArrayStorage::BorrowedU16 { slice, .. } => {
+                assert!(flat < slice.len, "index out of bounds for borrowed storage");
+                // SAFETY: bounds are asserted and the caller checked the probe
+                // for this operation on the owning thread.
+                Scalar::I64(i64::from(unsafe { *slice.ptr.add(flat) }))
+            }
+            ArrayStorage::BorrowedU32 { slice, .. } => {
+                assert!(flat < slice.len, "index out of bounds for borrowed storage");
+                // SAFETY: as the u16 arm above.
+                Scalar::I64(i64::from(unsafe { *slice.ptr.add(flat) }))
+            }
         }
     }
 
@@ -584,6 +730,29 @@ impl ArrayStorage {
                     output.push(unsafe { *slice.ptr.add(offset) });
                 }
             }
+            ArrayStorage::BorrowedU16 { slice, .. } => {
+                for offset in offsets {
+                    assert!(
+                        offset < slice.len,
+                        "validated array offset is out of bounds"
+                    );
+                    // SAFETY: the caller holds the read guard whose probe check
+                    // covers this operation, and the offset is validated.
+                    let value = unsafe { *slice.ptr.add(offset) };
+                    output.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            ArrayStorage::BorrowedU32 { slice, .. } => {
+                for offset in offsets {
+                    assert!(
+                        offset < slice.len,
+                        "validated array offset is out of bounds"
+                    );
+                    // SAFETY: as the u16 arm above.
+                    let value = unsafe { *slice.ptr.add(offset) };
+                    output.extend_from_slice(&value.to_le_bytes());
+                }
+            }
         }
     }
 
@@ -613,7 +782,9 @@ impl ArrayStorage {
                 // the exclusive asset claim makes this the unique alias.
                 unsafe { *slice.ptr.add(flat) = value.to_f64() as f32 };
             }
-            ArrayStorage::BorrowedU8 { .. } => {
+            ArrayStorage::BorrowedU8 { .. }
+            | ArrayStorage::BorrowedU16 { .. }
+            | ArrayStorage::BorrowedU32 { .. } => {
                 unreachable!("write to a read-only borrowed array");
             }
             ArrayStorage::BorrowedMutU8 { slice, .. } => {

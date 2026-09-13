@@ -13,7 +13,7 @@ A high-performance bytecode virtual machine for executing lazy mathematical expr
 - **Bytecode Compilation**: Convert expression trees to linear bytecode with constant folding
 - **Type Support**: Multiple field types (f32, f64, i32, i64, u32, u64, bool) with f64 internal precision
 - **Rich Operations**: Arithmetic, trigonometric, comparison, logical, and random operations
-- **Deterministic Random**: Per-entity seeded randomness for reproducible simulations
+- **Deterministic Random**: Entity-seeded randomness, identical on every execution path, for reproducible simulations
 - **Reduction Mode**: Evaluate expressions without storing results (for filtering/aggregation)
 
 ## Architecture
@@ -72,7 +72,7 @@ let mut vm = VM::new();
 
 // field_ptrs: one pointer per field registered with the compiler,
 // pointing to the field's memory for this entity.
-// entity_index: the entity's index, used for deterministic random seeding.
+// entity_index: the row's random seed (see `view_engine::entity_random_seed`).
 let mut pos_x: f32 = 100.0;
 let mut vel_x: f32 = 5.0;
 let field_ptrs: &[*mut u8] = &[
@@ -142,6 +142,10 @@ StoreField(0)     // Store to pos.x
 ### Random
 - Random (deterministic per-entity [0.0, 1.0))
 - RandomRange (deterministic per-entity [min, max))
+
+The seed is the caller-supplied `entity_index`. The View engine derives it from
+the row's `Entity`, so batched, tick-filtered, and read-only evaluation agree,
+and the value survives the entity moving table or row.
 
 ## Optimizations
 

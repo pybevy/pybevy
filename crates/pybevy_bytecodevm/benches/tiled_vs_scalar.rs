@@ -77,7 +77,7 @@ fn make_data(n: usize) -> Vec<f32> {
 }
 
 /// Scalar baseline: production per-entity VM, but with a REUSED VM (best case for
-/// the scalar path — isolates the loop-flip/SIMD win, not allocation overhead).
+/// the scalar path - isolates the loop-flip/SIMD win, not allocation overhead).
 unsafe fn run_scalar(bc: &CompiledBytecode, buf: &mut [f32], n: usize) {
     let mut vm = VM::new();
     let base = buf.as_mut_ptr() as *mut u8;

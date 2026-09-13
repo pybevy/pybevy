@@ -172,6 +172,22 @@ fn cmp_u64_f64(integer: u64, float: f64) -> Option<Ordering> {
     }
 }
 
+/// Result of an op whose operands did not share a native lane. Constant-only
+/// inputs stay `Constant`, so a later operand can still specialize them.
+#[inline]
+fn numeric_result(constant: bool, value: f64) -> StackValue {
+    if constant {
+        StackValue::Constant(value)
+    } else {
+        StackValue::Float(value)
+    }
+}
+
+#[inline]
+fn is_constant(value: StackValue) -> bool {
+    matches!(value, StackValue::Constant(_))
+}
+
 macro_rules! integer_binary {
     ($a:expr, $b:expr, $method:ident, $float:expr) => {{
         let (a, b) = specialize_constants($a, $b);
@@ -182,7 +198,10 @@ macro_rules! integer_binary {
             (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.$method(b)),
             (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.$method(b)),
             (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.$method(b)),
-            (a, b) => StackValue::Float($float(a.as_float(), b.as_float())),
+            (a, b) => numeric_result(
+                is_constant(a) && is_constant(b),
+                $float(a.as_float(), b.as_float()),
+            ),
         }
     }};
 }
@@ -192,7 +211,10 @@ macro_rules! float_binary {
         let (a, b) = specialize_constants($a, $b);
         match (a, b) {
             (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32($f32(a, b)),
-            (a, b) => StackValue::Float($f64(a.as_float(), b.as_float())),
+            (a, b) => numeric_result(
+                is_constant(a) && is_constant(b),
+                $f64(a.as_float(), b.as_float()),
+            ),
         }
     }};
 }
@@ -201,7 +223,7 @@ macro_rules! float_unary {
     ($value:expr, $f32:expr, $f64:expr) => {{
         match $value {
             StackValue::F32(value) => StackValue::F32($f32(value)),
-            value => StackValue::Float($f64(value.as_float())),
+            value => numeric_result(is_constant(value), $f64(value.as_float())),
         }
     }};
 }
@@ -762,7 +784,7 @@ pub unsafe fn read_field_value(ptr: *const u8, field_type: FieldType) -> f64 {
                     0.0
                 }
             }
-            // Vec2/Vec3/Vec4 are composite signal types — the VM decomposes them to individual F32 sub-fields
+            // Vec2/Vec3/Vec4 are composite signal types - the VM decomposes them to individual F32 sub-fields
             // before execution, so these should never appear in read_field_value
             FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
                 unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
@@ -915,6 +937,7 @@ impl PooledVM {
 
     /// Check if this guard still holds a VM (for testing)
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn has_vm(&self) -> bool {
         self.vm.is_some()
     }
@@ -1034,7 +1057,7 @@ impl VM {
                     StackValue::U8(v) => StackValue::U8(v.wrapping_neg()),
                     StackValue::U32(v) => StackValue::U32(v.wrapping_neg()),
                     StackValue::U64(v) => StackValue::U64(v.wrapping_neg()),
-                    value => StackValue::Float(-value.as_float()),
+                    value => numeric_result(is_constant(value), -value.as_float()),
                 });
             }
 
@@ -1085,7 +1108,7 @@ impl VM {
                     StackValue::U8(v) => StackValue::U8(v),
                     StackValue::U32(v) => StackValue::U32(v),
                     StackValue::U64(v) => StackValue::U64(v),
-                    value => StackValue::Float(value.as_float().abs()),
+                    value => numeric_result(is_constant(value), value.as_float().abs()),
                 });
             }
             Op::Floor => {
@@ -1097,7 +1120,7 @@ impl VM {
                     | StackValue::U32(_)
                     | StackValue::U64(_) => x,
                     StackValue::F32(value) => StackValue::F32(value.floor()),
-                    value => StackValue::Float(value.as_float().floor()),
+                    value => numeric_result(is_constant(value), value.as_float().floor()),
                 });
             }
             Op::Ceil => {
@@ -1109,7 +1132,7 @@ impl VM {
                     | StackValue::U32(_)
                     | StackValue::U64(_) => x,
                     StackValue::F32(value) => StackValue::F32(value.ceil()),
-                    value => StackValue::Float(value.as_float().ceil()),
+                    value => numeric_result(is_constant(value), value.as_float().ceil()),
                 });
             }
             Op::Round => {
@@ -1121,7 +1144,7 @@ impl VM {
                     | StackValue::U32(_)
                     | StackValue::U64(_) => x,
                     StackValue::F32(value) => StackValue::F32(value.round_ties_even()),
-                    value => StackValue::Float(python_round(value.as_float())),
+                    value => numeric_result(is_constant(value), python_round(value.as_float())),
                 });
             }
             Op::Exp => {
@@ -1153,7 +1176,7 @@ impl VM {
                     StackValue::U32(v) => StackValue::U32(u32::from(v != 0)),
                     StackValue::U64(v) => StackValue::U64(u64::from(v != 0)),
                     StackValue::F32(value) => StackValue::F32(python_sign_f32(value)),
-                    value => StackValue::Float(python_sign(value.as_float())),
+                    value => numeric_result(is_constant(value), python_sign(value.as_float())),
                 });
             }
             Op::Fract => {
@@ -1173,8 +1196,9 @@ impl VM {
                         StackValue::F32(a + t * (b - a))
                     }
                     (a, b, t) => {
+                        let constant = is_constant(a) && is_constant(b) && is_constant(t);
                         let (a, b, t) = (a.as_float(), b.as_float(), t.as_float());
-                        StackValue::Float(a + t * (b - a))
+                        numeric_result(constant, a + t * (b - a))
                     }
                 });
             }
@@ -1193,7 +1217,10 @@ impl VM {
                     (StackValue::F32(a), StackValue::F32(b)) => {
                         StackValue::F32(python_minimum_f32(a, b))
                     }
-                    (a, b) => StackValue::Float(python_minimum(a.as_float(), b.as_float())),
+                    (a, b) => numeric_result(
+                        is_constant(a) && is_constant(b),
+                        python_minimum(a.as_float(), b.as_float()),
+                    ),
                 });
             }
             Op::Max => {
@@ -1209,7 +1236,10 @@ impl VM {
                     (StackValue::F32(a), StackValue::F32(b)) => {
                         StackValue::F32(python_maximum_f32(a, b))
                     }
-                    (a, b) => StackValue::Float(python_maximum(a.as_float(), b.as_float())),
+                    (a, b) => numeric_result(
+                        is_constant(a) && is_constant(b),
+                        python_maximum(a.as_float(), b.as_float()),
+                    ),
                 });
             }
             Op::Clamp => {
@@ -1238,15 +1268,14 @@ impl VM {
                     (StackValue::F32(value), StackValue::F32(min), StackValue::F32(max)) => {
                         StackValue::F32(python_clip_f32(value, min, max))
                     }
-                    (value, min, max) => StackValue::Float(python_clip(
-                        value.as_float(),
-                        min.as_float(),
-                        max.as_float(),
-                    )),
+                    (value, min, max) => numeric_result(
+                        is_constant(value) && is_constant(min) && is_constant(max),
+                        python_clip(value.as_float(), min.as_float(), max.as_float()),
+                    ),
                 });
             }
 
-            // Comparison (exact equality — consistent across all execution modes)
+            // Comparison (exact equality - consistent across all execution modes)
             Op::Eq => {
                 let b = self.stack.pop().expect("Stack underflow on Eq");
                 let a = self.stack.pop().expect("Stack underflow on Eq");
@@ -1449,211 +1478,13 @@ impl VM {
         }
     }
 
-    /// Try to execute using a fast path for common patterns.
-    /// Returns true if a fast path was used, false otherwise.
-    ///
-    /// Fast paths bypass the bytecode interpreter entirely for simple patterns:
-    /// - `field = field + const` (compound add)
-    /// - `field = field * const` (compound multiply)
-    /// - `field = const` (simple assignment)
-    ///
-    /// # Safety
-    ///
-    /// Same contract as [`Self::execute_batch`]: `base_ptr` must point to valid
-    /// component storage for `count` entities, `component_stride` must match the
-    /// actual component layout, all field offsets in bytecode must be valid within
-    /// the component, and no other code may mutate the same memory during execution.
-    #[inline]
-    unsafe fn try_fast_path(
-        &self,
-        bytecode: &CompiledBytecode,
-        base_ptr: *mut u8,
-        component_stride: usize,
-        count: usize,
-    ) -> bool {
-        // SAFETY: this block performs only the pointer arithmetic and typed
-        // loads/stores covered by this function's batch-storage contract.
-        unsafe {
-            let ops = &bytecode.bytecode;
-
-            // Pattern: field = field + const (4 ops: PushField, PushConst, Add, StoreField)
-            if ops.len() == 4 {
-                if let (
-                    Op::PushField(read_idx),
-                    Op::PushConst(const_idx),
-                    Op::Add,
-                    Op::StoreField(write_idx),
-                ) = (&ops[0], &ops[1], &ops[2], &ops[3])
-                    && read_idx == write_idx
-                {
-                    let field_id = &bytecode.field_map[*read_idx as usize];
-                    let constant = bytecode.constants[*const_idx as usize];
-
-                    if field_id.field_type == FieldType::F32 {
-                        // Fast path: field += const for f32
-                        let constant_f32 = constant as f32;
-                        let offset = field_id.offset;
-                        let chunks = count / 4;
-                        let remainder = count % 4;
-
-                        for chunk in 0..chunks {
-                            let base = chunk * 4;
-                            let p0 = base_ptr.add(base * component_stride + offset) as *mut f32;
-                            let p1 =
-                                base_ptr.add((base + 1) * component_stride + offset) as *mut f32;
-                            let p2 =
-                                base_ptr.add((base + 2) * component_stride + offset) as *mut f32;
-                            let p3 =
-                                base_ptr.add((base + 3) * component_stride + offset) as *mut f32;
-                            p0.write_unaligned(p0.read_unaligned() + constant_f32);
-                            p1.write_unaligned(p1.read_unaligned() + constant_f32);
-                            p2.write_unaligned(p2.read_unaligned() + constant_f32);
-                            p3.write_unaligned(p3.read_unaligned() + constant_f32);
-                        }
-                        for i in (chunks * 4)..(chunks * 4 + remainder) {
-                            let ptr = base_ptr.add(i * component_stride + offset) as *mut f32;
-                            ptr.write_unaligned(ptr.read_unaligned() + constant_f32);
-                        }
-                        return true;
-                    } else if field_id.field_type == FieldType::F64 {
-                        // Fast path: field += const for f64
-                        let offset = field_id.offset;
-                        for i in 0..count {
-                            let p = base_ptr.add(i * component_stride + offset) as *mut f64;
-                            p.write_unaligned(p.read_unaligned() + constant);
-                        }
-                        return true;
-                    }
-                }
-
-                // Pattern: field = field * const
-                if let (
-                    Op::PushField(read_idx),
-                    Op::PushConst(const_idx),
-                    Op::Mul,
-                    Op::StoreField(write_idx),
-                ) = (&ops[0], &ops[1], &ops[2], &ops[3])
-                    && read_idx == write_idx
-                {
-                    let field_id = &bytecode.field_map[*read_idx as usize];
-                    let constant = bytecode.constants[*const_idx as usize];
-
-                    if field_id.field_type == FieldType::F32 {
-                        // Fast path: field *= const for f32
-                        let constant_f32 = constant as f32;
-                        for i in 0..count {
-                            let ptr =
-                                base_ptr.add(i * component_stride + field_id.offset) as *mut f32;
-                            ptr.write_unaligned(ptr.read_unaligned() * constant_f32);
-                        }
-                        return true;
-                    } else if field_id.field_type == FieldType::F64 {
-                        // Fast path: field *= const for f64
-                        for i in 0..count {
-                            let p =
-                                base_ptr.add(i * component_stride + field_id.offset) as *mut f64;
-                            p.write_unaligned(p.read_unaligned() * constant);
-                        }
-                        return true;
-                    }
-                }
-            }
-
-            // Pattern: field = const (2 ops: PushConst, StoreField)
-            if ops.len() == 2
-                && let (Op::PushConst(const_idx), Op::StoreField(field_idx)) = (&ops[0], &ops[1])
-            {
-                let field_id = &bytecode.field_map[*field_idx as usize];
-                let constant = bytecode.constants[*const_idx as usize];
-
-                if field_id.field_type == FieldType::F32 {
-                    // Fast path: field = const for f32
-                    let constant_f32 = constant as f32;
-                    for i in 0..count {
-                        let ptr = base_ptr.add(i * component_stride + field_id.offset) as *mut f32;
-                        ptr.write_unaligned(constant_f32);
-                    }
-                    return true;
-                } else if field_id.field_type == FieldType::F64 {
-                    // Fast path: field = const for f64
-                    for i in 0..count {
-                        let p = base_ptr.add(i * component_stride + field_id.offset) as *mut f64;
-                        p.write_unaligned(constant);
-                    }
-                    return true;
-                }
-            }
-
-            false
-        }
-    }
-
-    /// Execute bytecode on a batch of entities using stride-based pointer arithmetic.
-    ///
-    /// This is the high-performance batch execution path that avoids per-entity:
-    /// - VM allocation (reuses single VM across all entities)
-    /// - Field pointer array allocation (computes pointers via stride)
-    /// - Closure dispatch overhead (single call processes all entities)
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure:
-    /// - `base_ptr` points to valid component storage for `count` entities
-    /// - `component_stride` matches the actual component layout
-    /// - All field offsets in bytecode are valid within the component
-    /// - No other code mutates the same memory during execution
-    #[inline]
-    pub unsafe fn execute_batch(
-        &mut self,
-        bytecode: &CompiledBytecode,
-        base_ptr: *mut u8,
-        component_stride: usize,
-        count: usize,
-    ) {
-        // SAFETY: every derived entity and field pointer stays within the
-        // caller-provided `count` by `component_stride` storage region.
-        unsafe {
-            // Try fast paths for common patterns (bypasses bytecode interpreter)
-            if self.try_fast_path(bytecode, base_ptr, component_stride, count) {
-                return;
-            }
-
-            // Fallback: Process each entity using bytecode interpretation
-            for entity_idx in 0..count {
-                self.stack.clear();
-                self.entity_index = entity_idx;
-
-                // Calculate base pointer for this entity
-                let entity_base = base_ptr.add(entity_idx * component_stride);
-
-                for op in &bytecode.bytecode {
-                    if self.dispatch_stack_op(op, bytecode) {
-                        continue;
-                    }
-                    match op {
-                        Op::PushField(field_idx) => {
-                            let field_id = &bytecode.field_map[*field_idx as usize];
-                            let ptr = entity_base.add(field_id.offset);
-                            let value = read_field_stack_value(ptr, field_id.field_type);
-                            self.stack.push(value);
-                        }
-                        Op::StoreField(field_idx) => {
-                            let field_id = &bytecode.field_map[*field_idx as usize];
-                            let value = self.stack.pop().expect("Stack underflow on StoreField");
-                            let ptr = entity_base.add(field_id.offset);
-                            write_field_stack_value(ptr, value, field_id.field_type);
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            }
-        }
-    }
-
     /// Execute bytecode in batch mode with multiple components.
     ///
     /// Each field can have a different base pointer and stride, allowing
     /// cross-component expressions like `pos.x = pos.x + vel.x`.
+    ///
+    /// `row_seeds` gives row `i` its `Op::Random` seed, which must come from
+    /// the row's stable identity. `None` falls back to the row index.
     ///
     /// # Safety
     /// - All pointers in field_bases must be valid for count * stride bytes
@@ -1665,6 +1496,7 @@ impl VM {
         field_bases: &[*mut u8],
         field_strides: &[usize],
         count: usize,
+        row_seeds: Option<&[usize]>,
     ) {
         // SAFETY: the caller provides one correctly typed base and stride for
         // every bytecode field, each spanning all `count` entities.
@@ -1674,7 +1506,10 @@ impl VM {
 
             for entity_idx in 0..count {
                 self.stack.clear();
-                self.entity_index = entity_idx;
+                self.entity_index = match row_seeds {
+                    Some(seeds) => seeds[entity_idx],
+                    None => entity_idx,
+                };
 
                 for op in &bytecode.bytecode {
                     if self.dispatch_stack_op(op, bytecode) {
@@ -1704,6 +1539,7 @@ impl VM {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -2541,7 +2377,7 @@ mod tests {
 
     #[test]
     fn test_execute_batch_f64_add_const() {
-        // Tests the f64 fast path: field += const
+        // field += const over a contiguous f64 run
         let mut compiler = Compiler::new();
 
         let field_id = FieldId {
@@ -2566,7 +2402,13 @@ mod tests {
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
         unsafe {
-            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f64>(), count);
+            vm.execute_batch_multi(
+                &bytecode,
+                &[base_ptr],
+                &[std::mem::size_of::<f64>()],
+                count,
+                None,
+            );
         }
 
         for (i, value) in values.iter().enumerate() {
@@ -2581,7 +2423,7 @@ mod tests {
 
     #[test]
     fn test_execute_batch_f64_mul_const() {
-        // Tests the f64 fast path: field *= const
+        // field *= const over a contiguous f64 run
         let mut compiler = Compiler::new();
 
         let field_id = FieldId {
@@ -2605,7 +2447,13 @@ mod tests {
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
         unsafe {
-            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f64>(), count);
+            vm.execute_batch_multi(
+                &bytecode,
+                &[base_ptr],
+                &[std::mem::size_of::<f64>()],
+                count,
+                None,
+            );
         }
 
         for (i, value) in values.iter().enumerate() {
@@ -2620,7 +2468,7 @@ mod tests {
 
     #[test]
     fn test_execute_batch_f64_set_const() {
-        // Tests the f64 fast path: field = const
+        // field = const over a contiguous f64 run
         let mut compiler = Compiler::new();
 
         let field_id = FieldId {
@@ -2642,7 +2490,13 @@ mod tests {
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
         unsafe {
-            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f64>(), count);
+            vm.execute_batch_multi(
+                &bytecode,
+                &[base_ptr],
+                &[std::mem::size_of::<f64>()],
+                count,
+                None,
+            );
         }
 
         for value in &values {
@@ -2652,7 +2506,7 @@ mod tests {
 
     #[test]
     fn test_execute_batch_f32_preserves_precision() {
-        // Verify f32 batch fast path still works correctly
+        // f32 rows widen to f64 and narrow on store
         let mut compiler = Compiler::new();
 
         let field_id = FieldId {
@@ -2677,7 +2531,13 @@ mod tests {
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
         unsafe {
-            vm.execute_batch(&bytecode, base_ptr, std::mem::size_of::<f32>(), count);
+            vm.execute_batch_multi(
+                &bytecode,
+                &[base_ptr],
+                &[std::mem::size_of::<f32>()],
+                count,
+                None,
+            );
         }
 
         for (i, value) in values.iter().enumerate() {
@@ -2729,7 +2589,7 @@ mod tests {
         let mut buf = vec![0u8; 32];
         // Find a 4-byte-aligned-but-not-8-byte-aligned address within buf
         let base = buf.as_mut_ptr() as usize;
-        let offset = if base % 8 == 0 { 4 } else { 0 };
+        let offset = if base.is_multiple_of(8) { 4 } else { 0 };
         let misaligned_ptr = unsafe { buf.as_mut_ptr().add(offset) };
         assert_eq!(
             misaligned_ptr as usize % 8,
@@ -2742,7 +2602,7 @@ mod tests {
             write_field_value(misaligned_ptr, 123.456, FieldType::F64);
         }
 
-        // Read it back — must not panic
+        // Read it back - must not panic
         let read_back = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::F64) };
         assert_eq!(read_back, 123.456);
 
@@ -2776,7 +2636,7 @@ mod tests {
     fn test_unaligned_i64_u64_field_access() {
         let mut buf = vec![0u8; 32];
         let base = buf.as_mut_ptr() as usize;
-        let offset = if base % 8 == 0 { 4 } else { 0 };
+        let offset = if base.is_multiple_of(8) { 4 } else { 0 };
         let misaligned_ptr = unsafe { buf.as_mut_ptr().add(offset) };
         assert_eq!(misaligned_ptr as usize % 8, 4);
 
@@ -2795,11 +2655,11 @@ mod tests {
         assert_eq!(v, 99.0);
     }
 
-    /// Regression test: the f32 batch fast paths (add/mul/assign) must handle
-    /// misaligned field addresses, since ECS column bytes have no alignment
-    /// guarantee for embedded fields.
+    /// Regression test: batch assignment must handle misaligned field
+    /// addresses, since ECS column bytes have no alignment guarantee for
+    /// embedded fields.
     #[test]
-    fn test_unaligned_f32_batch_fast_paths() {
+    fn test_unaligned_f32_batch_assignment() {
         let compile = |ops: &[Op], constant: f64| {
             let mut compiler = Compiler::new();
             let field_id = FieldId {
@@ -2814,14 +2674,13 @@ mod tests {
                     Op::PushField(_) => Op::PushField(field_idx),
                     Op::PushConst(_) => Op::PushConst(const_val),
                     Op::StoreField(_) => Op::StoreField(field_idx),
-                    other => other.clone(),
+                    other => *other,
                 });
             }
             compiler.finalize()
         };
 
-        // Odd stride keeps every entity's f32 misaligned; count > 4 exercises
-        // the unrolled add loop.
+        // Odd stride keeps every entity's f32 misaligned.
         let count = 10;
         let stride = 5;
         let mut buf = vec![0u8; count * stride + 1];
@@ -2841,7 +2700,7 @@ mod tests {
         // field = const
         let assign = compile(&[Op::PushConst(0), Op::StoreField(0)], 2.0);
         unsafe {
-            vm.execute_batch(&assign, base_ptr, stride, count);
+            vm.execute_batch_multi(&assign, &[base_ptr], &[stride], count, None);
         }
         assert!(read_all(&buf).iter().all(|v| *v == 2.0));
 
@@ -2856,7 +2715,7 @@ mod tests {
             1.5,
         );
         unsafe {
-            vm.execute_batch(&add, base_ptr, stride, count);
+            vm.execute_batch_multi(&add, &[base_ptr], &[stride], count, None);
         }
         assert!(read_all(&buf).iter().all(|v| *v == 3.5));
 
@@ -2871,7 +2730,7 @@ mod tests {
             2.0,
         );
         unsafe {
-            vm.execute_batch(&mul, base_ptr, stride, count);
+            vm.execute_batch_multi(&mul, &[base_ptr], &[stride], count, None);
         }
         assert!(read_all(&buf).iter().all(|v| *v == 7.0));
     }

@@ -295,7 +295,43 @@ fn integer_program_type(bytecode: &CompiledBytecode) -> Option<FieldType> {
             }),
         _ => true,
     });
-    constants_valid.then_some(lane_type)
+    (constants_valid && !has_constant_only_operation(bytecode)).then_some(lane_type)
+}
+
+/// Whether any operation consumes only constants.
+///
+/// Their result is not range-checked, so it can wrap a lane the operands fit
+/// (`2**62 + 2**62`). Such programs run on the scalar VM instead.
+fn has_constant_only_operation(bytecode: &CompiledBytecode) -> bool {
+    let mut constant: Vec<bool> = Vec::new();
+    for op in &bytecode.bytecode {
+        match op {
+            Op::PushField(_) | Op::PushInput(_) => constant.push(false),
+            Op::PushConst(_) => constant.push(true),
+            Op::StoreField(_) => {
+                constant.pop();
+            }
+            other => {
+                let arity = match other {
+                    Op::Add | Op::Sub | Op::Mul | Op::Min | Op::Max => 2,
+                    Op::Neg | Op::Abs | Op::Floor | Op::Ceil | Op::Round | Op::Sign => 1,
+                    Op::Clamp => 3,
+                    // Unreachable for a validated integer program; refuse
+                    // rather than mis-track the stack.
+                    _ => return true,
+                };
+                let mut all_constant = true;
+                for _ in 0..arity {
+                    all_constant &= constant.pop().unwrap_or(false);
+                }
+                if all_constant {
+                    return true;
+                }
+                constant.push(false);
+            }
+        }
+    }
+    false
 }
 
 /// Return `(maximum_depth, final_depth)` for a structurally valid program.
@@ -784,6 +820,8 @@ unsafe fn run_tiles_f32(
 /// `0..count`; destinations must not overlap sources except as an exact same-run
 /// in-place alias (see [`crate::columns::in_place_pair`]). Validity/aliasing is the
 /// adapter's obligation, checked before the call (see module and design docs).
+///
+/// A column shorter than `count` returns `UnsupportedOp` instead of overrunning.
 pub unsafe fn run_assignment(
     bytecode: &CompiledBytecode,
     srcs: &[ColumnRef<'_>],
@@ -791,7 +829,11 @@ pub unsafe fn run_assignment(
     count: usize,
     scratch: &mut TiledScratch,
 ) -> Result<(), UnsupportedOp> {
-    if !all_supported(bytecode) || !all_fields_float(bytecode) {
+    if !all_supported(bytecode)
+        || !all_fields_float(bytecode)
+        || !srcs.iter().all(|column| column.covers(count))
+        || !dests.iter().all(|column| column.covers(count))
+    {
         return Err(UnsupportedOp);
     }
     let (depth, _) = stack_layout(&bytecode.bytecode).expect("checked by all_supported");
@@ -806,6 +848,8 @@ pub unsafe fn run_assignment(
 /// `out`'s dtype narrows the result). `srcs` is indexed by input index. Returns
 /// `UnsupportedOp` if any op is outside the tiled map set.
 ///
+/// A column shorter than `count` returns `UnsupportedOp` instead of overrunning.
+///
 /// # Safety
 /// Every `srcs[i]` read by a `PushInput(i)` and `out` must be valid over `0..count`;
 /// `out` must not alias any source. Validity is the adapter's obligation.
@@ -818,6 +862,8 @@ pub unsafe fn run_map(
     scratch: &mut TiledScratch,
 ) -> Result<(), UnsupportedOp> {
     if !map_supported(ops)
+        || !srcs.iter().all(|column| column.covers(count))
+        || !out.covers(count)
         || ops.iter().any(|op| match op {
             Op::PushInput(index) => *index as usize >= srcs.len(),
             Op::PushConst(index) => *index as usize >= constants.len(),
@@ -903,6 +949,8 @@ pub fn lane_reduce_slice(op: ReduceOp, values: &[f64]) -> f64 {
 /// Reduce one floating-point column. f32 inputs widen to f64 before accumulation.
 /// Empty input returns the operation identity; callers reject empty min/max.
 ///
+/// A source shorter than `count` returns `UnsupportedOp` instead of overrunning.
+///
 /// # Safety
 /// `source` must be valid for reads over rows `0..count`.
 pub unsafe fn run_reduce(
@@ -910,7 +958,10 @@ pub unsafe fn run_reduce(
     source: &ColumnRef<'_>,
     count: usize,
     scratch: &mut TiledScratch,
-) -> f64 {
+) -> Result<f64, UnsupportedOp> {
+    if !source.covers(count) {
+        return Err(UnsupportedOp);
+    }
     let mut lanes = reduction_identity(op);
     let mut tile_start = 0usize;
     while tile_start < count {
@@ -923,7 +974,7 @@ pub unsafe fn run_reduce(
         feed_reduction_lanes(op, &mut lanes, tile);
         tile_start += len;
     }
-    finish_reduction_lanes(op, &lanes)
+    Ok(finish_reduction_lanes(op, &lanes))
 }
 
 /// Native-f32 MAP tile loop with no widening to f64.
@@ -1247,7 +1298,7 @@ pub unsafe fn execute_assignment_tiled_f32(
 }
 
 /// Parallel tiled executor: entity range split into `PCHUNK` tasks, each running
-/// the tiled (SIMD) loop with its own stack — i.e. SIMD × threads. Falls back to
+/// the tiled (SIMD) loop with its own stack - i.e. SIMD × threads. Falls back to
 /// serial when the `parallel` feature is off.
 ///
 /// # Safety
@@ -1364,6 +1415,7 @@ unsafe fn parallel_run(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::mem::size_of;
 
@@ -1404,7 +1456,8 @@ mod tests {
         let source = ColumnRef::from_f64_slice(&values);
         let mut scratch = TiledScratch::new();
         // SAFETY: `source` covers every row in `values`.
-        let actual = unsafe { run_reduce(ReduceOp::Sum, &source, values.len(), &mut scratch) };
+        let actual =
+            unsafe { run_reduce(ReduceOp::Sum, &source, values.len(), &mut scratch) }.unwrap();
         assert_eq!(actual, 14.0);
     }
 
@@ -1417,7 +1470,7 @@ mod tests {
             let source = ColumnRef::from_f64_slice(&values);
             for op in [ReduceOp::Sum, ReduceOp::Min, ReduceOp::Max] {
                 // SAFETY: `source` covers `0..len`.
-                let actual = unsafe { run_reduce(op, &source, len, &mut scratch) };
+                let actual = unsafe { run_reduce(op, &source, len, &mut scratch) }.unwrap();
                 let expected = lane_reduce_slice(op, &values);
                 assert_eq!(actual.to_bits(), expected.to_bits(), "op={op:?} len={len}");
             }
@@ -1437,7 +1490,7 @@ mod tests {
             let source = ColumnRef::from_f32_slice(&values);
             for op in [ReduceOp::Sum, ReduceOp::Min, ReduceOp::Max] {
                 // SAFETY: `source` covers `0..len`.
-                let actual = unsafe { run_reduce(op, &source, len, &mut scratch) };
+                let actual = unsafe { run_reduce(op, &source, len, &mut scratch) }.unwrap();
                 let expected = lane_reduce_slice(op, &widened);
                 assert_eq!(actual.to_bits(), expected.to_bits(), "op={op:?} len={len}");
             }
@@ -1452,9 +1505,11 @@ mod tests {
             values[position] = f64::NAN;
             let source = ColumnRef::from_f64_slice(&values);
             // SAFETY: `source` covers every row in `values`.
-            let minimum = unsafe { run_reduce(ReduceOp::Min, &source, values.len(), &mut scratch) };
+            let minimum =
+                unsafe { run_reduce(ReduceOp::Min, &source, values.len(), &mut scratch) }.unwrap();
             // SAFETY: `source` covers every row in `values`.
-            let maximum = unsafe { run_reduce(ReduceOp::Max, &source, values.len(), &mut scratch) };
+            let maximum =
+                unsafe { run_reduce(ReduceOp::Max, &source, values.len(), &mut scratch) }.unwrap();
             assert!(minimum.is_nan(), "position={position}");
             assert!(maximum.is_nan(), "position={position}");
         }
@@ -1613,6 +1668,93 @@ mod tests {
         let mut scratch = TiledScratch::new();
         let result =
             unsafe { run_map(&[Op::PushConst(0)], &[], &[], &destination, 1, &mut scratch) };
+        assert_eq!(result, Err(UnsupportedOp));
+    }
+
+    #[test]
+    fn reduce_source_shorter_than_count_is_rejected() {
+        let short = [1.0_f64, 2.0];
+        let source = ColumnRef::from_f64_slice(&short);
+        let mut scratch = TiledScratch::new();
+
+        // SAFETY: sound only because the length check rejects before any read.
+        let result = unsafe { run_reduce(ReduceOp::Sum, &source, 8, &mut scratch) };
+        assert_eq!(result, Err(UnsupportedOp));
+
+        // SAFETY: the source covers every requested row here.
+        let result = unsafe { run_reduce(ReduceOp::Sum, &source, 2, &mut scratch) };
+        assert_eq!(result, Ok(3.0));
+    }
+
+    #[test]
+    fn assignment_columns_shorter_than_count_are_rejected() {
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: ComponentId::new(0),
+            offset: 0,
+            field_type: FieldType::F64,
+        });
+        let one = compiler.add_constant(1.0);
+        compiler.emit(Op::PushField(field));
+        compiler.emit(Op::PushConst(one));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field));
+        let bytecode = compiler.finalize();
+
+        let short = [1.0_f64, 2.0];
+        let mut destination = [0.0_f64; 4];
+        let mut scratch = TiledScratch::new();
+
+        // SAFETY: sound only because the length check rejects before any read.
+        let result = unsafe {
+            run_assignment(
+                &bytecode,
+                &[ColumnRef::from_f64_slice(&short)],
+                &[ColumnMut::from_f64_slice(&mut destination)],
+                4,
+                &mut scratch,
+            )
+        };
+        assert_eq!(result, Err(UnsupportedOp));
+        assert_eq!(destination, [0.0; 4], "no row may be written on rejection");
+    }
+
+    #[test]
+    fn map_columns_shorter_than_count_are_rejected() {
+        let ops = [Op::PushInput(0)];
+        let mut scratch = TiledScratch::new();
+        let short_source = [1.0_f64, 2.0];
+        let mut output = [0.0_f64; 4];
+
+        // A source that cannot supply every row must not be read past its end.
+        // SAFETY: sound only because the length check rejects before any read,
+        // which is exactly what this asserts.
+        let result = unsafe {
+            run_map(
+                &ops,
+                &[],
+                &[ColumnRef::from_f64_slice(&short_source)],
+                &ColumnMut::from_f64_slice(&mut output),
+                4,
+                &mut scratch,
+            )
+        };
+        assert_eq!(result, Err(UnsupportedOp));
+
+        let source = [1.0_f64, 2.0, 3.0, 4.0];
+        let mut short_output = [0.0_f64; 2];
+        // The same holds for a destination that cannot receive every row.
+        // SAFETY: sound only because the length check rejects before any write.
+        let result = unsafe {
+            run_map(
+                &ops,
+                &[],
+                &[ColumnRef::from_f64_slice(&source)],
+                &ColumnMut::from_f64_slice(&mut short_output),
+                4,
+                &mut scratch,
+            )
+        };
         assert_eq!(result, Err(UnsupportedOp));
     }
 
@@ -2245,5 +2387,34 @@ mod tests {
             field_map: vec![field],
         };
         assert!(!supported_program(&missing_constant));
+    }
+
+    #[test]
+    fn tiled_f32_rejects_unsupported_programs() {
+        let unsupported = CompiledBytecode {
+            bytecode: vec![Op::Random, Op::StoreField(0)],
+            constants: vec![],
+            field_map: vec![],
+        };
+        let mut scratch = TiledScratch::new();
+        // SAFETY: no field is dereferenced because the program is rejected first.
+        let result =
+            unsafe { execute_assignment_tiled_f32(&unsupported, &[], &[], 0, &mut scratch) };
+        assert!(result.is_err());
+
+        let non_f32_field = CompiledBytecode {
+            bytecode: vec![Op::PushField(0), Op::StoreField(0)],
+            constants: vec![],
+            field_map: vec![FieldId {
+                component_id: ComponentId::new(0),
+                offset: 0,
+                field_type: FieldType::F64,
+            }],
+        };
+        let mut scratch = TiledScratch::new();
+        // SAFETY: no field is dereferenced because the fields are not f32.
+        let result =
+            unsafe { execute_assignment_tiled_f32(&non_f32_field, &[], &[], 0, &mut scratch) };
+        assert!(result.is_err());
     }
 }

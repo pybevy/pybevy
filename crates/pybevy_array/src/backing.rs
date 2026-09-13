@@ -121,6 +121,18 @@ impl ArrayReadGuard {
         // the returned slice. Its caller must finish before Python re-entry.
         unsafe { self.deref().as_u8_contiguous_unchecked() }
     }
+
+    #[cfg(feature = "pyo3")]
+    pub(crate) fn u16_contiguous(&self) -> Option<&[u16]> {
+        // SAFETY: as u8_contiguous above.
+        unsafe { self.deref().as_u16_contiguous_unchecked() }
+    }
+
+    #[cfg(feature = "pyo3")]
+    pub(crate) fn u32_contiguous(&self) -> Option<&[u32]> {
+        // SAFETY: as u8_contiguous above.
+        unsafe { self.deref().as_u32_contiguous_unchecked() }
+    }
 }
 
 impl fmt::Debug for ArrayReadGuard {

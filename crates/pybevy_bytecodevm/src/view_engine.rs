@@ -1,32 +1,26 @@
 //! Shared batch execution engine for the View API.
 //!
 //! Handles archetype iteration, field pointer resolution, and bytecode
-//! execution across entity batches. Python-agnostic — works only with
+//! execution across entity batches. Python-agnostic - works only with
 //! bevy_ecs types and the bytecodevm's CompiledBytecode/VM.
 
-use std::{
-    collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
-};
+use std::collections::{HashMap, HashSet};
 
 use bevy_ecs::{
     archetype::Archetypes,
     change_detection::Tick,
     component::{ComponentId, StorageType},
-    prelude::QueryBuilder,
-    storage::{Table, TableId},
-    world::{FilteredEntityMut, World, unsafe_world_cell::UnsafeWorldCell},
+    entity::Entity,
+    storage::{Table, TableId, TableRow},
+    world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
-use smallvec::SmallVec;
+use nonmax::NonMaxU32;
 
 use crate::{
     bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op, VM},
     expr::RustExpr,
     tiled::{TiledScratch, execute_assignment_tiled, supported_program},
 };
-
-/// Maximum field pointers to stack-allocate before heap fallback.
-type FieldPtrVec = SmallVec<[*mut u8; 8]>;
 
 /// Send+Sync wrapper for raw pointers in parallel execution.
 ///
@@ -64,6 +58,9 @@ pub struct TableBatch {
     pub table_id: TableId,
     /// Base pointer for each component's column data in this table.
     pub component_bases: HashMap<ComponentId, *mut u8>,
+    /// Row 0 of the table's entity slice, under the same liveness contract
+    /// as `component_bases`. Row `r` is `entities.add(r)`.
+    pub entities: *const Entity,
     /// First selected row in the table.
     pub start_row: usize,
     /// Number of entities in this contiguous selected range.
@@ -190,7 +187,8 @@ impl std::error::Error for ViewEngineError {}
 /// component's registered `Layout`.
 ///
 /// This is the safety gate for the raw-pointer arithmetic in
-/// `execute_on_ptr` / `build_entity_field_ptrs` / `execute_batch_assignment`,
+/// `execute_batch_assignment` / `execute_filtered_assignment` /
+/// `evaluate_batch_program`,
 /// which compute `base.add(field_id.offset)`. Without this check, a
 /// Python-constructed `Expr("field", [cid, name, offset, field_type])` with
 /// an arbitrary `offset` could read/write out of bounds of the component
@@ -457,9 +455,9 @@ pub fn matching_table_row_ranges_from_cell(
 
 /// Gather exact dense-table batches through access-bounded World-cell storage.
 ///
-/// Unlike [`gather_table_batches`], this strict core path rejects sparse-set
-/// data components and sparse Changed/Added tick sources rather than silently
-/// returning incomplete or incorrectly filtered results.
+/// Sparse-set data components and sparse Changed/Added tick sources are
+/// rejected rather than silently producing incomplete or incorrectly filtered
+/// results.
 ///
 /// # Safety
 ///
@@ -546,20 +544,24 @@ pub unsafe fn gather_table_batches_from_cell(
 
         let mut component_bases = HashMap::with_capacity(filter.component_ids.len());
         for &component_id in &filter.component_ids {
-            let column = table.get_column(component_id).ok_or(
-                ViewEngineError::SparseDataComponentUnsupported(component_id),
-            )?;
-            // SAFETY: the column belongs to this live table, the length is its
-            // exact row count, and the caller owns scheduler access to this
-            // declared component for the returned pointer's lifetime.
+            // Not `get_data_slice::<u8>`: that slice's provenance covers only
+            // its first `table_entity_count` bytes, not the rows read below.
+            // SAFETY: the range check above proves the table holds row 0, and
+            // the caller owns scheduler access to this declared component for
+            // the returned pointer's lifetime.
             let pointer =
-                unsafe { column.get_data_slice::<u8>(table_entity_count).as_ptr() as *mut u8 };
+                unsafe { table.get_component(component_id, TableRow::new(NonMaxU32::ZERO)) }
+                    .ok_or(ViewEngineError::SparseDataComponentUnsupported(
+                        component_id,
+                    ))?
+                    .as_ptr();
             component_bases.insert(component_id, pointer);
         }
 
         batches.push(TableBatch {
             table_id: row_range.table_id,
             component_bases,
+            entities: table.entities().as_ptr(),
             start_row: row_range.start_row,
             entity_count: row_range.entity_count,
             tick_mask,
@@ -568,147 +570,36 @@ pub unsafe fn gather_table_batches_from_cell(
     Ok(batches)
 }
 
-/// Gather all archetype table batches matching the filter criteria.
-///
-/// Returns mutable raw pointers into component columns, valid for both
-/// reads and writes. The caller must not modify World storage (spawn,
-/// despawn, add/remove components) while the returned pointers are live.
-/// Concurrent writes to the same field from multiple threads are the
-/// caller's responsibility to prevent (the batch execution functions
-/// handle this via disjoint entity ranges).
-pub fn gather_table_batches(
-    world: &mut World,
-    filter: &ViewFilter,
-    last_run: Tick,
-    this_run: Tick,
-) -> Vec<TableBatch> {
-    let has_tick_filters = !filter.changed_ids.is_empty() || !filter.added_ids.is_empty();
-
-    let storages = world.storages();
-    let tables = &storages.tables;
-
-    let mut batches = Vec::new();
-    for row_range in matching_table_row_ranges(world, filter) {
-        if let Some(table) = tables.get(row_range.table_id) {
-            let table_entity_count = table.entity_count() as usize;
-            if row_range.entity_count > 0
-                && row_range.start_row + row_range.entity_count <= table_entity_count
-            {
-                let tick_mask = if has_tick_filters {
-                    build_tick_mask_for_table(
-                        table,
-                        table_entity_count,
-                        row_range,
-                        &filter.changed_ids,
-                        &filter.added_ids,
-                        last_run,
-                        this_run,
-                    )
-                } else {
-                    None
-                };
-
-                // Skip entire table if tick mask filters out all entities
-                if let Some(ref mask) = tick_mask
-                    && !mask.iter().any(|&v| v)
-                {
-                    continue;
-                }
-
-                let mut component_bases: HashMap<ComponentId, *mut u8> = HashMap::new();
-                let mut all_found = true;
-                for &component_id in &filter.component_ids {
-                    if let Some(column) = table.get_column(component_id) {
-                        // SAFETY: the column belongs to `table` and the supplied
-                        // length is exactly the table's current entity count.
-                        let ptr = unsafe {
-                            let data_slice = column.get_data_slice::<u8>(table_entity_count);
-                            data_slice.as_ptr() as *mut u8
-                        };
-                        component_bases.insert(component_id, ptr);
-                    } else {
-                        all_found = false;
-                        break;
-                    }
-                }
-
-                if all_found {
-                    batches.push(TableBatch {
-                        table_id: row_range.table_id,
-                        component_bases,
-                        start_row: row_range.start_row,
-                        entity_count: row_range.entity_count,
-                        tick_mask,
-                    });
-                }
-            }
-        }
-    }
-    batches
+/// Seed `Op::Random` from entity identity, so the value survives the entity
+/// moving table or row and is the same on every execution path.
+#[inline]
+pub fn entity_random_seed(entity: Entity) -> usize {
+    // VM::random hashes only the low 32 bits, and a plain xor-fold would let
+    // (index 3, gen 2) collide with (index 1, gen 0).
+    let mut bits = entity.to_bits();
+    bits = (bits ^ (bits >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    bits = (bits ^ (bits >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    ((bits ^ (bits >> 31)) as u32) as usize
 }
 
-/// Build field pointers for a single entity from batch base pointers.
+/// Seed for one selected row of `batch`.
 ///
 /// # Safety
-///
-/// All base pointers in `component_bases` must be valid for the entity at `entity_idx`.
-pub unsafe fn build_entity_field_ptrs(
-    bytecode: &CompiledBytecode,
-    component_bases: &HashMap<ComponentId, *mut u8>,
-    field_strides: &[usize],
-    entity_idx: usize,
-) -> FieldPtrVec {
-    let mut ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
-    for (i, field_id) in bytecode.field_map.iter().enumerate() {
-        let base = component_bases[&field_id.component_id];
-        let stride = field_strides[i];
-        // SAFETY: the caller guarantees that each component base spans the
-        // requested entity, and compiled field offsets match its layout.
-        ptrs.push(unsafe { base.add(field_id.offset).add(entity_idx * stride) });
-    }
-    ptrs
+/// `table_row` must be one of this batch's selected rows, and the batch's
+/// `entities` pointer must still satisfy its liveness contract.
+#[inline]
+unsafe fn batch_row_seed(batch: &TableBatch, table_row: usize) -> usize {
+    // SAFETY: the caller guarantees `table_row` is inside the live entity slice.
+    entity_random_seed(unsafe { *batch.entities.add(table_row) })
 }
 
-/// Execute bytecode on a single entity's component data (write mode).
-///
-/// # Safety
-///
-/// `data_ptr` must be valid and point to the component's data with
-/// correct layout for all field offsets in the bytecode.
-pub unsafe fn execute_on_ptr(data_ptr: *mut u8, bytecode: &CompiledBytecode) {
-    // PERF: consider PooledVM::acquire() to reuse stack allocation
-    let mut vm = VM::new();
-    let mut field_ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
-    for field_id in &bytecode.field_map {
-        // SAFETY: the caller guarantees every compiled offset lies within the
-        // component allocation rooted at `data_ptr`.
-        field_ptrs.push(unsafe { data_ptr.add(field_id.offset) });
-    }
-    let entity_seed = data_ptr as usize;
-    // SAFETY: the derived pointers cover the primitive layouts described by
-    // `bytecode`, and the caller grants write access for this execution.
-    unsafe { vm.execute(bytecode, field_ptrs.as_slice(), entity_seed) };
-}
-
-/// Evaluate bytecode on a single entity's component data (read-only, returns scalar).
-///
-/// # Safety
-///
-/// `data_ptr` must be valid and point to the component's data with
-/// correct layout for all field offsets in the bytecode.
-pub unsafe fn evaluate_on_ptr(data_ptr: *const u8, bytecode: &CompiledBytecode) -> f64 {
-    // PERF: consider PooledVM::acquire() to reuse stack allocation
-    let mut vm = VM::new();
-    let mut field_ptrs: FieldPtrVec = SmallVec::with_capacity(bytecode.field_map.len());
-    for field_id in &bytecode.field_map {
-        // SAFETY: the caller guarantees every compiled offset lies within the
-        // read-only component allocation rooted at `data_ptr`.
-        field_ptrs.push(unsafe { data_ptr.add(field_id.offset) as *mut u8 });
-    }
-    let entity_seed = data_ptr as usize;
-    // SAFETY: the bytecode is reduction-only here; the derived pointers are
-    // valid for reads of their declared primitive layouts.
-    unsafe { vm.execute_and_reduce(bytecode, field_ptrs.as_slice(), entity_seed) }
+/// Whether a program's random values depend on the row seed.
+#[inline]
+fn program_uses_random(bytecode: &CompiledBytecode) -> bool {
+    bytecode
+        .bytecode
+        .iter()
+        .any(|op| matches!(op, Op::Random | Op::RandomRange))
 }
 
 /// Execute bytecode assignment across all entities in all batches (fast path).
@@ -744,7 +635,11 @@ pub unsafe fn execute_batch_assignment(
         field_bases: Vec<SendPtr>,
         field_strides: Vec<usize>,
         count: usize,
+        row_seeds: Option<Vec<usize>>,
     }
+
+    // Only a random-bearing program pays for the per-row entity lookup.
+    let needs_seeds = program_uses_random(bytecode);
 
     let chunks: Vec<ChunkInfo> = batches
         .iter()
@@ -776,10 +671,20 @@ pub unsafe fn execute_batch_assignment(
                             })
                         })
                         .collect();
+                    let row_seeds = needs_seeds.then(|| {
+                        (0..chunk_count)
+                            .map(|row| {
+                                // SAFETY: the row lies in this batch's selected
+                                // range, which the gather bounds-checked.
+                                unsafe { batch_row_seed(batch, batch.start_row + start + row) }
+                            })
+                            .collect()
+                    });
                     ChunkInfo {
                         field_bases,
                         field_strides: field_strides.clone(),
                         count: chunk_count,
+                        row_seeds,
                     }
                 })
         })
@@ -805,7 +710,13 @@ pub unsafe fn execute_batch_assignment(
             // SAFETY: chunk bases and strides were derived from live table
             // columns and span exactly `chunk.count` scheduler-disjoint rows.
             unsafe {
-                vm.execute_batch_multi(bytecode, &bases, &chunk.field_strides, chunk.count);
+                vm.execute_batch_multi(
+                    bytecode,
+                    &bases,
+                    &chunk.field_strides,
+                    chunk.count,
+                    chunk.row_seeds.as_deref(),
+                );
             }
         }
     };
@@ -863,6 +774,8 @@ pub unsafe fn execute_filtered_assignment(
         .map(|field_id| component_strides[&field_id.component_id])
         .collect();
 
+    let needs_seeds = program_uses_random(bytecode);
+
     struct EntityWork {
         field_ptrs: Vec<SendPtr>,
         entity_seed: usize,
@@ -896,9 +809,16 @@ pub unsafe fn execute_filtered_assignment(
                     })
                     .collect();
 
+                let entity_seed = if needs_seeds {
+                    // SAFETY: this local row is inside the gathered range.
+                    unsafe { batch_row_seed(batch, batch.start_row + entity_idx) }
+                } else {
+                    0
+                };
+
                 Some(EntityWork {
                     field_ptrs,
-                    entity_seed: entity_idx,
+                    entity_seed,
                 })
             })
         })
@@ -955,6 +875,8 @@ pub(crate) unsafe fn evaluate_batch_program(
         return Vec::new();
     }
 
+    let needs_seeds = program_uses_random(bytecode);
+
     struct EntityWork {
         field_ptrs: Vec<SendPtr>,
         entity_seed: usize,
@@ -985,25 +907,13 @@ pub(crate) unsafe fn evaluate_batch_program(
                     })
                     .collect();
 
-                // Preserve the existing pointer-derived random seed when a
-                // field is present. Constant-only programs instead use the
-                // actual table/range row, avoiding range-local seed resets.
-                let entity_seed = field_ptrs.first().map_or_else(
-                    || {
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                        if let Some((&component_id, &base)) = batch
-                            .component_bases
-                            .iter()
-                            .min_by_key(|(component_id, _)| component_id.index())
-                        {
-                            component_id.hash(&mut hasher);
-                            (base as usize).hash(&mut hasher);
-                        }
-                        table_row.hash(&mut hasher);
-                        hasher.finish() as usize
-                    },
-                    |pointer| pointer.0 as usize,
-                );
+                let entity_seed = if needs_seeds {
+                    // SAFETY: this row is inside the gathered range.
+                    unsafe { batch_row_seed(batch, table_row) }
+                } else {
+                    0
+                };
+
                 Some(EntityWork {
                     field_ptrs,
                     entity_seed,
@@ -1030,101 +940,6 @@ pub(crate) unsafe fn evaluate_batch_program(
     work_items.iter().map(evaluate).collect()
 }
 
-/// Mark destination component as changed on all matching entities.
-///
-/// Reuses the already-gathered batches (and their tick masks) to avoid
-/// re-iterating archetypes and recomputing tick filters.
-///
-/// Required after raw pointer writes that bypass Bevy's `DerefMut`.
-/// Without this, systems using `Changed<T>` won't see the updates.
-pub fn mark_component_changed(
-    world: &mut World,
-    batches: &[TableBatch],
-    dest_component_id: ComponentId,
-) {
-    let change_tick = world.change_tick();
-    let tables = &world.storages().tables;
-
-    for batch in batches {
-        let Some(table) = tables.get(batch.table_id) else {
-            continue;
-        };
-        let Some(column) = table.get_column(dest_component_id) else {
-            continue;
-        };
-
-        let table_entity_count = table.entity_count() as usize;
-        if batch.start_row + batch.entity_count > table_entity_count {
-            continue;
-        }
-        // SAFETY: the column belongs to this table and `table_entity_count` is
-        // its current row count. The batch range was bounds-checked above.
-        let changed_ticks = unsafe { column.get_changed_ticks_slice(table_entity_count) };
-
-        if let Some(ref mask) = batch.tick_mask {
-            for i in 0..batch.entity_count {
-                if mask[i] {
-                    // SAFETY: the full-table tick slice and batch range were
-                    // bounds-checked above.
-                    unsafe {
-                        *changed_ticks[batch.start_row + i].get() = change_tick;
-                    }
-                }
-            }
-        } else {
-            for tick in &changed_ticks[batch.start_row..batch.start_row + batch.entity_count] {
-                // SAFETY: the sliced ticks belong exactly to this batch's rows.
-                unsafe {
-                    *tick.get() = change_tick;
-                }
-            }
-        }
-    }
-}
-
-/// Key for bytecode cache: (component_id, field_offset, expression_hash).
-type CacheKey = (ComponentId, usize, u64);
-
-/// Frame-persistent cache for compiled bytecodes.
-///
-/// Store per-system (or thread-local) to avoid recompiling the same
-/// expression every frame. The cache is keyed by destination field +
-/// expression identity.
-#[derive(Clone, Default)]
-pub struct BytecodeCache {
-    cache: HashMap<CacheKey, CompiledBytecode>,
-}
-
-impl BytecodeCache {
-    pub fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
-        }
-    }
-
-    /// Hash a RustExpr for cache lookup.
-    pub fn expr_hash(expr: &RustExpr) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}", expr).hash(&mut hasher);
-        hasher.finish()
-    }
-
-    /// Get cached bytecode or compile and cache it.
-    pub fn get_or_compile(
-        &mut self,
-        dest_component_id: ComponentId,
-        dest_offset: usize,
-        dest_field_type: FieldType,
-        expr: &RustExpr,
-        expr_hash: u64,
-    ) -> &CompiledBytecode {
-        let key: CacheKey = (dest_component_id, dest_offset, expr_hash);
-        self.cache.entry(key).or_insert_with(|| {
-            compile_assignment(dest_component_id, dest_offset, dest_field_type, expr)
-        })
-    }
-}
-
 /// Compile a field assignment expression to bytecode.
 pub fn compile_assignment(
     dest_component_id: ComponentId,
@@ -1141,6 +956,9 @@ pub fn compile_assignment(
     };
     let dest_idx = compiler.add_field(dest);
     compiler.emit(Op::StoreField(dest_idx));
+    // Fold constant arithmetic, as `RustExpr::compile_assignment` does, so
+    // the folded value is range-checked and the program stays tiled-eligible.
+    compiler.optimize();
     compiler.finalize()
 }
 
@@ -1291,7 +1109,7 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
             compile_expr(t, c);
             c.emit(Op::Lerp);
         }
-        // Comparison/logical ops — compile to 1.0/0.0 result
+        // Comparison/logical ops - compile to 1.0/0.0 result
         RustExpr::Eq(a, b) => {
             compile_expr(a, c);
             compile_expr(b, c);
@@ -1353,139 +1171,15 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
     }
 }
 
-/// Execute a single-component assignment via Bevy's query system.
-///
-/// Optimized path for the common case where all bytecode fields reference
-/// the same component. Uses `QueryBuilder` + `par_iter_mut` for parallel
-/// execution with proper Bevy change detection.
-///
-/// Prefer this over `execute_batch_assignment` for single-component views —
-/// it avoids `gather_table_batches` overhead and parallelizes automatically.
-/// # Safety
-///
-/// Every field in `bytecode` must have been validated against the registered
-/// layout of `component_id`, all reads must name components declared by
-/// `filter`, and the sole store must target `component_id` with mutable access.
-pub unsafe fn execute_query_assignment(
-    world: &mut World,
-    component_id: ComponentId,
-    filter: &ViewFilter,
-    bytecode: &CompiledBytecode,
-) {
-    // Fail-safe: every field pointer below is resolved relative to the single
-    // target component, so bytecode referencing any other component would
-    // read/write the wrong offsets. Skip rather than corrupt.
-    if bytecode
-        .field_map
-        .iter()
-        .any(|field| field.component_id != component_id)
-    {
-        return;
-    }
-
-    let mut qb = QueryBuilder::<FilteredEntityMut>::new(world);
-    qb.mut_id(component_id);
-    for &id in &filter.with_ids {
-        qb.with_id(id);
-    }
-    for &id in &filter.without_ids {
-        qb.without_id(id);
-    }
-    // Data components that aren't the target still need read access
-    for &id in &filter.component_ids {
-        if id != component_id {
-            qb.ref_id(id);
-        }
-    }
-    let mut qs = qb.build();
-
-    qs.par_iter_mut(world).for_each(|mut em| {
-        if let Some(mut untyped) = em.get_mut_by_id(component_id) {
-            let ptr = untyped.as_mut().as_ptr();
-            // SAFETY: `untyped` keeps this component allocation mutably borrowed
-            // for the synchronous execution, and bytecode offsets were compiled
-            // for the same registered component layout.
-            unsafe { execute_on_ptr(ptr, bytecode) };
-        }
-    });
-}
-
-/// Cached view execution context.
-///
-/// Caches table batches and component strides across multiple assignments
-/// within the same frame. Create once per system execution, reuse for all
-/// View assignments.
-pub struct ViewExecutionContext {
-    pub batches: Vec<TableBatch>,
-    pub strides: HashMap<ComponentId, usize>,
-}
-
-impl ViewExecutionContext {
-    /// Create a new execution context by gathering batches and resolving strides.
-    ///
-    /// `last_run` and `this_run` are the system's change-detection ticks,
-    /// used to build per-entity tick masks for `Changed`/`Added` filters.
-    pub fn new(
-        world: &mut World,
-        filter: &ViewFilter,
-        last_run: Tick,
-        this_run: Tick,
-    ) -> Result<Self, ViewEngineError> {
-        let strides = resolve_component_strides(world, &filter.component_ids)?;
-        let batches = gather_table_batches(world, filter, last_run, this_run);
-        Ok(Self { batches, strides })
-    }
-
-    /// Execute a pre-compiled bytecode assignment using cached batches/strides.
-    ///
-    /// Automatically selects the filtered execution path when any batch has a
-    /// tick mask (from `Changed`/`Added` filters), or the fast batch path otherwise.
-    ///
-    /// # Safety
-    ///
-    /// World must not be structurally modified since this context was created.
-    pub unsafe fn execute(
-        &self,
-        world: &mut World,
-        bytecode: &CompiledBytecode,
-        dest_component_id: ComponentId,
-    ) {
-        let has_tick_masks = self.batches.iter().any(|b| b.tick_mask.is_some());
-        // SAFETY: the caller guarantees the cached batches still refer to the
-        // unchanged World layout for the duration of this synchronous call.
-        unsafe {
-            if has_tick_masks {
-                execute_filtered_assignment(
-                    &self.batches,
-                    bytecode,
-                    &self.strides,
-                    cfg!(feature = "parallel"),
-                );
-            } else {
-                execute_batch_assignment(
-                    &self.batches,
-                    bytecode,
-                    &self.strides,
-                    cfg!(feature = "parallel"),
-                );
-            }
-        }
-        mark_component_changed(world, &self.batches, dest_component_id);
-    }
-
-    pub fn entity_count(&self) -> usize {
-        self.batches.iter().map(|b| b.entity_count).sum()
-    }
-}
-
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
         mem::size_of,
     };
 
-    use bevy_ecs::{component::ComponentId, entity::Entity, prelude::Component};
+    use bevy_ecs::{component::ComponentId, prelude::Component};
 
     use super::*;
     use crate::bytecode::{Compiler, FieldId, FieldType, Op};
@@ -1507,6 +1201,16 @@ mod tests {
     #[derive(Component)]
     #[component(storage = "SparseSet")]
     struct SparseMarker;
+
+    /// Synthetic entity rows for batches built over test-owned memory. Leaked
+    /// so a batch literal can hold the pointer for the whole test.
+    fn test_entities(first: u64, count: usize) -> *const Entity {
+        // Entity bit patterns are non-zero, so number the rows from one.
+        let entities: Vec<Entity> = (first..first + count as u64)
+            .map(|index| Entity::from_bits(index + 1))
+            .collect();
+        Box::leak(entities.into_boxed_slice()).as_ptr()
+    }
 
     fn sparse_filter(component_id: ComponentId, marker_id: ComponentId, with: bool) -> ViewFilter {
         ViewFilter {
@@ -1555,74 +1259,6 @@ mod tests {
         compiler.finalize()
     }
 
-    /// Helper: compile expression that just reads field[0]
-    fn make_read_bytecode(component_id: ComponentId, offset: usize) -> CompiledBytecode {
-        let mut compiler = Compiler::new();
-        let field_id = FieldId {
-            component_id,
-            offset,
-            field_type: FieldType::F32,
-        };
-        let field_idx = compiler.add_field(field_id);
-        compiler.emit(Op::PushField(field_idx));
-        compiler.finalize()
-    }
-
-    #[test]
-    fn test_execute_on_ptr() {
-        let cid = ComponentId::new(0);
-        let bytecode = make_add_bytecode(cid, 0, 10.0);
-
-        let mut value = 5.0_f32;
-        let ptr = &mut value as *mut f32 as *mut u8;
-        unsafe { execute_on_ptr(ptr, &bytecode) };
-        assert_eq!(value, 15.0);
-    }
-
-    #[test]
-    fn test_evaluate_on_ptr() {
-        let cid = ComponentId::new(0);
-        let bytecode = make_read_bytecode(cid, 0);
-
-        let value = 42.0_f32;
-        let ptr = &value as *const f32 as *const u8;
-        let result = unsafe { evaluate_on_ptr(ptr, &bytecode) };
-        assert!((result - 42.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_execute_on_ptr_multiple_executions() {
-        let cid = ComponentId::new(0);
-        let bytecode = make_add_bytecode(cid, 0, 1.0);
-
-        let mut value = 0.0_f32;
-        let ptr = &mut value as *mut f32 as *mut u8;
-        for _ in 0..100 {
-            unsafe { execute_on_ptr(ptr, &bytecode) };
-        }
-        assert!((value - 100.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn test_build_entity_field_ptrs() {
-        let cid = ComponentId::new(0);
-        let bytecode = make_read_bytecode(cid, 4); // offset=4
-
-        let mut data = [0u8; 64];
-        let base = data.as_mut_ptr();
-
-        let mut component_bases = HashMap::new();
-        component_bases.insert(cid, base);
-
-        let field_strides = vec![16usize]; // stride=16 per entity
-
-        let ptrs =
-            unsafe { build_entity_field_ptrs(&bytecode, &component_bases, &field_strides, 2) };
-        // Expected: base + offset(4) + entity_idx(2) * stride(16) = base + 36
-        assert_eq!(ptrs.len(), 1);
-        assert_eq!(ptrs[0], unsafe { base.add(36) });
-    }
-
     #[test]
     fn test_resolve_component_strides_missing() {
         let world = World::new();
@@ -1650,6 +1286,7 @@ mod tests {
         let batches = vec![TableBatch {
             table_id: TableId::from_u32(0),
             component_bases,
+            entities: test_entities(0, 3),
             start_row: 0,
             entity_count: 3,
             tick_mask: None,
@@ -1683,7 +1320,17 @@ mod tests {
         };
         let bytecode = make_add_bytecode(cid, 0, 2.5);
         assert!(tiled_assignment_supported(&bytecode));
-        let batches = gather_table_batches(&mut world, &filter, Tick::new(0), Tick::new(1));
+        // SAFETY: the test owns `world` exclusively for the gather and the
+        // execution below, and no structural change happens in between.
+        let batches = unsafe {
+            gather_table_batches_from_cell(
+                world.as_unsafe_world_cell(),
+                &filter,
+                Tick::new(0),
+                Tick::new(1),
+            )
+        }
+        .unwrap();
         let strides = resolve_component_strides(&world, &filter.component_ids).unwrap();
         // SAFETY: batches point into live, exclusively-held table columns.
         unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
@@ -1728,6 +1375,7 @@ mod tests {
         let batches = [TableBatch {
             table_id: TableId::from_u32(0),
             component_bases: HashMap::from([(component_id, values.as_mut_ptr().cast::<u8>())]),
+            entities: test_entities(0, values.len()),
             start_row: 0,
             entity_count: values.len(),
             tick_mask: None,
@@ -1737,47 +1385,6 @@ mod tests {
         unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
 
         assert_eq!(values, [(1_u64 << 53) + 2, 0]);
-    }
-
-    #[test]
-    fn query_assignment_skips_bytecode_referencing_other_components() {
-        let mut world = World::new();
-        world.spawn(DenseValue(1.0));
-        world.spawn(DenseValue(2.0));
-        let component_id = world.components().component_id::<DenseValue>().unwrap();
-        let foreign = ComponentId::new(component_id.index() + 1000);
-
-        let filter = ViewFilter {
-            component_ids: HashSet::from([component_id]),
-            with_ids: Vec::new(),
-            without_ids: Vec::new(),
-            changed_ids: Vec::new(),
-            added_ids: Vec::new(),
-        };
-        // Reads the declared component but stores through a foreign field id;
-        // resolving that offset against DenseValue would write out of bounds.
-        let mut compiler = Compiler::new();
-        let read_idx = compiler.add_field(FieldId {
-            component_id,
-            offset: 0,
-            field_type: FieldType::F32,
-        });
-        let write_idx = compiler.add_field(FieldId {
-            component_id: foreign,
-            offset: 0,
-            field_type: FieldType::F32,
-        });
-        compiler.emit(Op::PushField(read_idx));
-        compiler.emit(Op::StoreField(write_idx));
-        let bytecode = compiler.finalize();
-
-        // SAFETY: the guard must reject this bytecode before any pointer use.
-        unsafe { execute_query_assignment(&mut world, component_id, &filter, &bytecode) };
-
-        let mut query = world.query::<&DenseValue>();
-        let mut values: Vec<f32> = query.iter(&world).map(|value| value.0).collect();
-        values.sort_by(f32::total_cmp);
-        assert_eq!(values, vec![1.0, 2.0]);
     }
 
     #[test]
@@ -1799,6 +1406,7 @@ mod tests {
         let batches = vec![TableBatch {
             table_id: TableId::from_u32(0),
             component_bases,
+            entities: test_entities(0, 4),
             start_row: 0,
             entity_count: 4,
             tick_mask: Some(vec![false, true, false, true]),
@@ -1893,12 +1501,29 @@ mod tests {
         let last_run = world.last_change_tick();
         world.increment_change_tick();
         let this_run = world.change_tick();
-        let context = ViewExecutionContext::new(&mut world, &filter, last_run, this_run).unwrap();
+        let strides = resolve_component_strides(&world, &filter.component_ids).unwrap();
+        // SAFETY: the test owns `world` exclusively for the gather and the
+        // execution below, and no structural change happens in between.
+        let batches = unsafe {
+            gather_table_batches_from_cell(
+                world.as_unsafe_world_cell(),
+                &filter,
+                last_run,
+                this_run,
+            )
+        }
+        .unwrap();
 
-        assert_eq!(context.entity_count(), 2);
-        // SAFETY: the context was gathered from this unchanged World and the
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.entity_count)
+                .sum::<usize>(),
+            2
+        );
+        // SAFETY: the batches were gathered from this unchanged World and the
         // bytecode only accesses the declared `DenseValue` component field.
-        unsafe { context.execute(&mut world, &bytecode, component_id) };
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
 
         assert_eq!(
             world.entity(plain_first).get::<DenseValue>().unwrap().0,
@@ -1916,18 +1541,6 @@ mod tests {
             world.entity(plain_last).get::<DenseValue>().unwrap().0,
             40.0
         );
-
-        let was_changed = |entity: Entity| {
-            world
-                .entity(entity)
-                .get_change_ticks_by_id(component_id)
-                .unwrap()
-                .is_changed(last_run, this_run)
-        };
-        assert!(!was_changed(plain_first));
-        assert!(was_changed(selected_first));
-        assert!(was_changed(selected_second));
-        assert!(!was_changed(plain_last));
     }
 
     #[test]
@@ -1943,120 +1556,279 @@ mod tests {
     }
 
     #[test]
-    fn test_bytecode_cache_new_is_empty() {
-        let cache = BytecodeCache::new();
-        assert_eq!(cache.cache.len(), 0);
-    }
-
-    #[test]
-    fn test_bytecode_cache_get_or_compile_caches() {
-        let mut cache = BytecodeCache::new();
+    fn random_is_identical_on_every_execution_path() {
         let cid = ComponentId::new(0);
+        let table_id = TableId::from_u32(3);
+        let strides = HashMap::from([(cid, size_of::<f64>())]);
 
-        let expr = RustExpr::Add(
-            Box::new(RustExpr::Field {
-                component_id: cid,
-                offset: 0,
-                field_type: FieldType::F32,
-            }),
-            Box::new(RustExpr::Const(10.0)),
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::F64,
+        });
+        compiler.emit(Op::Random);
+        compiler.emit(Op::StoreField(field));
+        let assignment = compiler.finalize();
+
+        let mut read_only = Compiler::new();
+        read_only.emit(Op::Random);
+        let read_only = read_only.finalize();
+
+        // More than one 32768-row chunk, so a chunk-local seed would restart.
+        let count = 32_770;
+
+        let mut batched = vec![0.0_f64; count];
+        let batches = [TableBatch {
+            table_id,
+            component_bases: HashMap::from([(cid, batched.as_mut_ptr().cast::<u8>())]),
+            entities: test_entities(0, count),
+            start_row: 0,
+            entity_count: count,
+            tick_mask: None,
+        }];
+        // SAFETY: the batch describes one live, exclusively held f64 run.
+        unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) };
+
+        let mut filtered = vec![0.0_f64; count];
+        let batches = [TableBatch {
+            table_id,
+            component_bases: HashMap::from([(cid, filtered.as_mut_ptr().cast::<u8>())]),
+            entities: test_entities(0, count),
+            start_row: 0,
+            entity_count: count,
+            tick_mask: Some(vec![true; count]),
+        }];
+        // SAFETY: as above; the mask selects every row of the same run.
+        unsafe { execute_filtered_assignment(&batches, &assignment, &strides, false) };
+
+        let batches = [TableBatch {
+            table_id,
+            component_bases: HashMap::new(),
+            entities: test_entities(0, count),
+            start_row: 0,
+            entity_count: count,
+            tick_mask: None,
+        }];
+        // SAFETY: the read-only program declares no fields, so no pointer is
+        // dereferenced for these rows.
+        let evaluated = unsafe { evaluate_batch_program(&batches, &read_only, &strides, false) };
+
+        assert_eq!(batched, filtered);
+        assert_eq!(batched, evaluated);
+        assert_ne!(
+            batched[0], batched[32_768],
+            "the seed must not restart at the chunk boundary"
         );
-        let hash = BytecodeCache::expr_hash(&expr);
-
-        // First call compiles
-        let bc1 = cache
-            .get_or_compile(cid, 0, FieldType::F32, &expr, hash)
-            .clone();
-        assert_eq!(cache.cache.len(), 1);
-
-        // Second call returns cached (same bytecode length)
-        let bc2 = cache
-            .get_or_compile(cid, 0, FieldType::F32, &expr, hash)
-            .clone();
-        assert_eq!(cache.cache.len(), 1);
-        assert_eq!(bc1.bytecode.len(), bc2.bytecode.len());
     }
 
     #[test]
-    fn test_bytecode_cache_different_dest_different_entry() {
-        let mut cache = BytecodeCache::new();
+    fn random_follows_the_entity_not_its_table_row() {
         let cid = ComponentId::new(0);
+        let strides = HashMap::from([(cid, size_of::<f64>())]);
 
-        let expr = RustExpr::Const(1.0);
-        let hash = BytecodeCache::expr_hash(&expr);
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::F64,
+        });
+        compiler.emit(Op::Random);
+        compiler.emit(Op::StoreField(field));
+        let assignment = compiler.finalize();
 
-        cache.get_or_compile(cid, 0, FieldType::F32, &expr, hash);
-        cache.get_or_compile(cid, 4, FieldType::F32, &expr, hash);
+        let run = |table_id: TableId, first_entity: u64| {
+            let mut values = vec![0.0_f64; 8];
+            let batches = [TableBatch {
+                table_id,
+                component_bases: HashMap::from([(cid, values.as_mut_ptr().cast::<u8>())]),
+                entities: test_entities(first_entity, values.len()),
+                start_row: 0,
+                entity_count: values.len(),
+                tick_mask: None,
+            }];
+            // SAFETY: the batch describes one live, exclusively held f64 run.
+            unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) };
+            values
+        };
 
-        // Different dest_offset → different cache entries
-        assert_eq!(cache.cache.len(), 2);
-    }
-
-    #[test]
-    fn test_bytecode_cache_different_expr_different_entry() {
-        let mut cache = BytecodeCache::new();
-        let cid = ComponentId::new(0);
-
-        let expr_a = RustExpr::Const(1.0);
-        let expr_b = RustExpr::Const(2.0);
-        let hash_a = BytecodeCache::expr_hash(&expr_a);
-        let hash_b = BytecodeCache::expr_hash(&expr_b);
-
-        cache.get_or_compile(cid, 0, FieldType::F32, &expr_a, hash_a);
-        cache.get_or_compile(cid, 0, FieldType::F32, &expr_b, hash_b);
-
-        assert_eq!(cache.cache.len(), 2);
-    }
-
-    #[test]
-    fn test_bytecode_cache_expr_hash_deterministic() {
-        let cid = ComponentId::new(0);
-        let expr = RustExpr::Add(
-            Box::new(RustExpr::Field {
-                component_id: cid,
-                offset: 0,
-                field_type: FieldType::F32,
-            }),
-            Box::new(RustExpr::Const(5.0)),
+        // The same entities keep their values after moving to another table.
+        assert_eq!(
+            run(TableId::from_u32(0), 0),
+            run(TableId::from_u32(7), 0),
+            "random must not depend on the table an entity happens to sit in"
         );
-        let h1 = BytecodeCache::expr_hash(&expr);
-        let h2 = BytecodeCache::expr_hash(&expr);
-        assert_eq!(h1, h2);
+        // Different entities at the same rows get different values.
+        assert_ne!(run(TableId::from_u32(0), 0), run(TableId::from_u32(0), 100));
+    }
+
+    /// Run one integer program through the batched (tiled-eligible) path and
+    /// the tick-filtered (scalar VM) path, and return both results.
+    fn both_paths_i64(bytecode: &CompiledBytecode, cid: ComponentId, start: i64) -> (i64, i64) {
+        let strides = HashMap::from([(cid, size_of::<i64>())]);
+        let run = |mask: Option<Vec<bool>>| {
+            let mut value = [start];
+            let batches = [TableBatch {
+                table_id: TableId::from_u32(0),
+                component_bases: HashMap::from([(cid, value.as_mut_ptr().cast::<u8>())]),
+                entities: test_entities(0, 1),
+                start_row: 0,
+                entity_count: 1,
+                tick_mask: mask,
+            }];
+            // SAFETY: the batch describes one live, exclusively held i64.
+            unsafe {
+                if batches[0].tick_mask.is_some() {
+                    execute_filtered_assignment(&batches, bytecode, &strides, false);
+                } else {
+                    execute_batch_assignment(&batches, bytecode, &strides, false);
+                }
+            }
+            value[0]
+        };
+        (run(None), run(Some(vec![true])))
+    }
+
+    /// `field = field + (lhs OP rhs)` over one i64 field.
+    fn constant_subexpression_program(
+        cid: ComponentId,
+        lhs: f64,
+        rhs: f64,
+        op: Op,
+    ) -> (CompiledBytecode, ComponentId) {
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::I64,
+        });
+        let lhs = compiler.add_constant(lhs);
+        let rhs = compiler.add_constant(rhs);
+        compiler.emit(Op::PushField(field));
+        compiler.emit(Op::PushConst(lhs));
+        compiler.emit(Op::PushConst(rhs));
+        compiler.emit(op);
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field));
+        (compiler.finalize(), cid)
     }
 
     #[test]
-    fn test_bytecode_cache_expr_hash_different_exprs() {
-        let expr_a = RustExpr::Const(1.0);
-        let expr_b = RustExpr::Const(2.0);
-        let h_a = BytecodeCache::expr_hash(&expr_a);
-        let h_b = BytecodeCache::expr_hash(&expr_b);
-        assert_ne!(h_a, h_b);
+    fn partially_folded_constants_agree_on_both_paths() {
+        // Every surviving constant fits an i64 lane; their sum does not.
+        let cid = ComponentId::new(0);
+        let k = 2_f64.powi(62);
+        let field = RustExpr::Field {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::I64,
+        };
+        let expression = RustExpr::Add(
+            Box::new(field),
+            Box::new(RustExpr::Add(
+                Box::new(RustExpr::Sub(
+                    Box::new(RustExpr::Const(2.0 * k)),
+                    Box::new(RustExpr::Const(k)),
+                )),
+                Box::new(RustExpr::Min(
+                    Box::new(RustExpr::Const(k)),
+                    Box::new(RustExpr::Const(k)),
+                )),
+            )),
+        );
+        let bytecode = compile_assignment(cid, 0, FieldType::I64, &expression);
+        let (batched, filtered) = both_paths_i64(&bytecode, cid, 1);
+        assert_eq!(batched, filtered);
     }
 
     #[test]
-    fn test_bytecode_cache_compiled_bytecode_executes_correctly() {
-        let mut cache = BytecodeCache::new();
+    fn constant_subexpressions_stay_exact_on_both_paths() {
         let cid = ComponentId::new(0);
 
-        // field[0] + 10.0 → field[0]
-        let expr = RustExpr::Add(
-            Box::new(RustExpr::Field {
-                component_id: cid,
-                offset: 0,
-                field_type: FieldType::F32,
-            }),
-            Box::new(RustExpr::Const(10.0)),
-        );
-        let hash = BytecodeCache::expr_hash(&expr);
-        let bytecode = cache
-            .get_or_compile(cid, 0, FieldType::F32, &expr, hash)
-            .clone();
+        // Above 2^53 a constant that degraded to f64 would lose the low bit.
+        let (bytecode, _) = constant_subexpression_program(cid, 1.0, 1.0, Op::Min);
+        let (batched, filtered) = both_paths_i64(&bytecode, cid, (1_i64 << 60) + 1);
+        assert_eq!(batched, filtered);
+        assert_eq!(batched, (1_i64 << 60) + 2);
 
-        // Execute on actual data
-        let mut value = 5.0_f32;
-        let ptr = &mut value as *mut f32 as *mut u8;
-        unsafe { execute_on_ptr(ptr, &bytecode) };
-        assert_eq!(value, 15.0);
+        // Every constant-folding op keeps its result exact the same way.
+        for op in [Op::Add, Op::Sub, Op::Mul, Op::Min, Op::Max] {
+            let (bytecode, _) = constant_subexpression_program(cid, 6.0, 2.0, op);
+            let (batched, filtered) = both_paths_i64(&bytecode, cid, (1_i64 << 60) + 1);
+            assert_eq!(batched, filtered, "op={op:?}");
+        }
+    }
+
+    #[test]
+    fn out_of_lane_constant_arithmetic_agrees_on_both_paths() {
+        // 200 and 100 each fit a u8 lane but their sum does not.
+        let cid = ComponentId::new(0);
+        let mut compiler = Compiler::new();
+        let field = compiler.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::U8,
+        });
+        let big = compiler.add_constant(200.0);
+        let small = compiler.add_constant(100.0);
+        compiler.emit(Op::PushField(field));
+        compiler.emit(Op::PushConst(big));
+        compiler.emit(Op::PushConst(small));
+        compiler.emit(Op::Add);
+        compiler.emit(Op::Add);
+        compiler.emit(Op::StoreField(field));
+        let mut bytecode = compiler.finalize();
+        assert_eq!(bytecode.bytecode.len(), 6, "unfolded program under test");
+
+        let strides = HashMap::from([(cid, size_of::<u8>())]);
+        let run = |bytecode: &CompiledBytecode, mask: Option<Vec<bool>>| {
+            let mut value = [250_u8];
+            let batches = [TableBatch {
+                table_id: TableId::from_u32(0),
+                component_bases: HashMap::from([(cid, value.as_mut_ptr())]),
+                entities: test_entities(0, 1),
+                start_row: 0,
+                entity_count: 1,
+                tick_mask: mask,
+            }];
+            // SAFETY: the batch describes one live, exclusively held u8.
+            unsafe {
+                if batches[0].tick_mask.is_some() {
+                    execute_filtered_assignment(&batches, bytecode, &strides, false);
+                } else {
+                    execute_batch_assignment(&batches, bytecode, &strides, false);
+                }
+            }
+            value[0]
+        };
+
+        // Unfolded, the constant-only Add is declined.
+        assert!(
+            !tiled_assignment_supported(&bytecode),
+            "a constant-only operation must not reach the integer lanes"
+        );
+        assert_eq!(run(&bytecode, None), run(&bytecode, Some(vec![true])));
+
+        // Folded, 300 fails the u8 range check instead.
+        let mut folded = Compiler::new();
+        let field = folded.add_field(FieldId {
+            component_id: cid,
+            offset: 0,
+            field_type: FieldType::U8,
+        });
+        let big = folded.add_constant(200.0);
+        let small = folded.add_constant(100.0);
+        folded.emit(Op::PushField(field));
+        folded.emit(Op::PushConst(big));
+        folded.emit(Op::PushConst(small));
+        folded.emit(Op::Add);
+        folded.emit(Op::Add);
+        folded.emit(Op::StoreField(field));
+        folded.optimize();
+        bytecode = folded.finalize();
+        assert_eq!(bytecode.bytecode.len(), 4, "the constant pair folded");
+        assert!(!tiled_assignment_supported(&bytecode));
+        assert_eq!(run(&bytecode, None), run(&bytecode, Some(vec![true])));
     }
 
     #[test]
@@ -2077,7 +1849,9 @@ mod tests {
 
         let mut value = 7.0_f32;
         let ptr = &mut value as *mut f32 as *mut u8;
-        unsafe { execute_on_ptr(ptr, &bytecode) };
+        let mut vm = VM::new();
+        // SAFETY: the program's only field is this live, exclusively held f32.
+        unsafe { vm.execute(&bytecode, &[ptr], 0) };
         assert_eq!(value, 10.0);
     }
 
@@ -2085,7 +1859,7 @@ mod tests {
     fn offset_validator_accepts_field_within_layout() {
         let mut world = World::new();
         let cid = world.register_component::<Probe>();
-        // Probe is 12 bytes; an F32 at offset 8 spans [8, 12) — the last valid slot.
+        // Probe is 12 bytes; an F32 at offset 8 spans [8, 12) - the last valid slot.
         let bytecode = make_typed_read_bytecode(cid, 8, FieldType::F32);
         assert!(validate_bytecode_offsets(&world, &bytecode).is_ok());
     }
@@ -2192,7 +1966,7 @@ mod tests {
 
     #[test]
     fn component_validator_accepts_empty_field_map() {
-        // A constant-only expression references no fields — nothing to reject.
+        // A constant-only expression references no fields - nothing to reject.
         let allowed: HashSet<ComponentId> = HashSet::new();
         let bytecode = CompiledBytecode {
             bytecode: vec![],
@@ -2233,7 +2007,7 @@ mod tests {
     #[test]
     fn field_type_validator_rejects_bool_over_f32_field() {
         // The sharp case: a real f32 field read as Bool. At execution that reads a
-        // non-0/1 byte as `bool` — an invalid bit pattern and instant UB.
+        // non-0/1 byte as `bool` - an invalid bit pattern and instant UB.
         let cid = ComponentId::new(3);
         let allowed = allowed_fields_for(cid, &[(0, FieldType::F32)]);
         let bytecode = make_typed_read_bytecode(cid, 0, FieldType::Bool);
