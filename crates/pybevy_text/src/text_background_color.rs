@@ -1,5 +1,5 @@
 use bevy::{color::Color, text::TextBackgroundColor};
-use pybevy_color::color::PyColor;
+use pybevy_color::color::{IntoColorValue, PyColor};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -12,7 +12,7 @@ pub struct PyTextBackgroundColor {
 }
 
 impl PyTextBackgroundColor {
-    fn default_color() -> PyColor {
+    fn default_color() -> IntoColorValue {
         TextBackgroundColor::default().0.into()
     }
 
@@ -25,8 +25,8 @@ impl PyTextBackgroundColor {
 impl PyTextBackgroundColor {
     #[new]
     #[pyo3(signature = (color = Self::default_color()))]
-    pub fn new(color: PyColor) -> PyResult<PyClassInitializer<Self>> {
-        Ok(Self::from_owned(TextBackgroundColor(color.try_into()?)).into())
+    pub fn new(color: IntoColorValue) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(TextBackgroundColor(color.0)).into())
     }
 
     #[getter]

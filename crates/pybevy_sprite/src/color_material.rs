@@ -1,17 +1,36 @@
 use bevy::{color::Color, math::Affine2, sprite_render::ColorMaterial};
-use pybevy_color::color::PyColor;
-use pybevy_core::{AssetStorage, PyAsset, PyHandle, ValueStorage, extract_handle_from_any};
+use pybevy_color::color::{PyColor, extract_color_from_any};
+use pybevy_core::{
+    AssetInputConverter, AssetStorage, PyAsset, PyHandle, ValueStorage, extract_handle_from_any,
+};
 use pybevy_macros::pyasset;
 use pybevy_math::affine2::PyAffine2;
 use pyo3::prelude::*;
 
 use crate::alpha_mode_2d::PyAlphaMode2d;
 
-#[pyasset(ColorMaterial, bridge)]
+#[pyasset(ColorMaterial, bridge, input_converter)]
 #[pyclass(name = "ColorMaterial", module = "pybevy.sprite", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyColorMaterial {
     pub(crate) storage: AssetStorage<ColorMaterial>,
+}
+
+impl AssetInputConverter for PyColorMaterial {
+    fn try_convert_input<'py>(
+        asset: &Bound<'py, PyAny>,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if !asset.is_instance_of::<PyColor>() {
+            return Ok(None);
+        }
+        let color = extract_color_from_any(asset)?;
+        Ok(Some(
+            Py::new(py, Self::from_owned(ColorMaterial::from(color)))?
+                .into_bound(py)
+                .into_any(),
+        ))
+    }
 }
 
 #[pymethods]

@@ -9,12 +9,12 @@ use bevy::{
 use pybevy_core::{
     BorrowableStorage, ComponentStorage, PyMaterializable, ResourceStorage, StorageMut, StorageRef,
     ValueStorage,
-    public_error::{COLOR_INTERPOLATION_MISMATCH, enum_variant_changed},
+    public_error::{COLOR_INPUT_TYPES, COLOR_INTERPOLATION_MISMATCH, enum_variant_changed},
 };
 use pybevy_macros::pyenum;
 use pyo3::{
     Borrowed,
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
 };
 
@@ -69,6 +69,58 @@ impl<'py> IntoPyObject<'py> for OwnedColorValue {
     fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
         Ok(PyColor::from_color(self.0, py)?.into_bound(py))
     }
+}
+
+/// Accepted inputs at Bevy's `Into<Color>` boundaries.
+#[derive(Debug, Clone, Copy)]
+pub struct IntoColorValue(pub Color);
+
+impl From<Color> for IntoColorValue {
+    fn from(color: Color) -> Self {
+        Self(color)
+    }
+}
+
+impl FromPyObject<'_, '_> for IntoColorValue {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        Ok(Self(extract_color_from_any(&obj)?))
+    }
+}
+
+impl<'py> IntoPyObject<'py> for IntoColorValue {
+    type Target = PyColor;
+    type Output = Bound<'py, PyColor>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        OwnedColorValue(self.0).into_pyobject(py)
+    }
+}
+
+pub fn extract_color_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Color> {
+    if let Ok(color) = obj.extract::<PyRef<'_, PyColor>>() {
+        return Color::try_from(&*color);
+    }
+    macro_rules! extract_space {
+        ($wrapper:ty, $native:ty) => {
+            if let Ok(color) = obj.extract::<PyRef<'_, $wrapper>>() {
+                return Ok(Color::from(<$native>::try_from(&*color)?));
+            }
+        };
+    }
+    extract_space!(PySrgba, Srgba);
+    extract_space!(PyLinearRgba, LinearRgba);
+    extract_space!(PyHsla, Hsla);
+    extract_space!(PyHsva, Hsva);
+    extract_space!(PyHwba, Hwba);
+    extract_space!(PyLaba, Laba);
+    extract_space!(PyLcha, Lcha);
+    extract_space!(PyOklaba, Oklaba);
+    extract_space!(PyOklcha, Oklcha);
+    extract_space!(PyXyza, Xyza);
+    Err(PyTypeError::new_err(COLOR_INPUT_TYPES))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
