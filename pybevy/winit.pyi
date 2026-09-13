@@ -50,6 +50,7 @@ class UpdateMode:
 
         def __init__(
             self,
+            *,
             wait: float,
             react_to_device_events: bool,
             react_to_user_events: bool,
@@ -100,8 +101,9 @@ class WinitSettings:
 
     def __init__(
         self,
+        *,
         focused_mode: UpdateMode | None = None,
-        unfocused_mode: UpdateMode | None = None,
+        unfocused_mode: UpdateMode | None = None
     ) -> None:
         """Create WinitSettings with custom update modes.
 

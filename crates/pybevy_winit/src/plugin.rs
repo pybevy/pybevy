@@ -1,4 +1,7 @@
-use bevy::app::App;
+use bevy::{
+    app::App,
+    winit::{WinitPlugin, WinitSettings},
+};
 use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
@@ -32,9 +35,9 @@ impl PluginBuild for PyWinitPlugin {
     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         let config: PyRef<'_, PyWinitPlugin> = py_plugin.extract()?;
         if let Some(ref settings) = config.settings {
-            app.insert_resource(bevy::winit::WinitSettings::from(settings.clone()));
+            app.insert_resource(WinitSettings::from(settings.clone()));
         }
-        app.add_plugins(bevy::winit::WinitPlugin::default());
+        app.add_plugins(WinitPlugin::default());
         Ok(())
     }
 }

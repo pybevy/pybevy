@@ -14,7 +14,7 @@ pub struct PyWinitSettings(pub(crate) WinitSettings);
 #[pymethods]
 impl PyWinitSettings {
     #[new]
-    #[pyo3(signature = (focused_mode = None, unfocused_mode = None))]
+    #[pyo3(signature = (*, focused_mode = None, unfocused_mode = None))]
     pub fn new(
         focused_mode: Option<PyUpdateMode>,
         unfocused_mode: Option<PyUpdateMode>,
