@@ -98,7 +98,11 @@ pub enum PyGizmoLineJoint {
 pub enum PyGizmoLineStyle {
     Solid(),
     Dotted(),
-    Dashed { gap_scale: f32, line_scale: f32 },
+    #[pyo3(constructor = (*, gap_scale, line_scale))]
+    Dashed {
+        gap_scale: f32,
+        line_scale: f32,
+    },
 }
 
 impl Eq for PyGizmoLineStyle {}
@@ -192,10 +196,11 @@ impl Default for PyGizmoLineConfig {
 impl PyGizmoLineConfig {
     #[new]
     #[pyo3(signature = (
+        *,
         width = 2.0,
         perspective = false,
         style = PyGizmoLineStyle::Solid(),
-        joints = PyGizmoLineJoint::None(),
+        joints = PyGizmoLineJoint::None()
     ))]
     pub fn new(
         width: f32,
@@ -267,10 +272,11 @@ pub struct PyGizmoConfig {
 impl PyGizmoConfig {
     #[new]
     #[pyo3(signature = (
+        *,
         enabled = true,
         line = PyGizmoLineConfig::default(),
         depth_bias = 0.0,
-        render_layers = None,
+        render_layers = None
     ))]
     pub fn new(
         enabled: bool,
@@ -415,7 +421,7 @@ impl PyGizmoConfigStore {
                 DEFAULT_GIZMO_CONFIG_MISSING.to_owned(),
             ),
         };
-        let mut store = self.as_mut()?;
+        let store = self.as_mut()?;
         if project(store).is_none() {
             return Err(PyRuntimeError::new_err(missing_error));
         }
