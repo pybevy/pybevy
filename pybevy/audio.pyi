@@ -101,9 +101,9 @@ class PlaybackSettings(Component):
         paused: bool = False,
         muted: bool = False,
         spatial: bool = False,
-        start_position: timedelta | None = None,
-        duration: timedelta | None = None,
         spatial_scale: SpatialScale | None = None,
+        start_position: timedelta | None = None,
+        duration: timedelta | None = None
     ) -> None:
         """Create playback settings with optional customization.
 
@@ -254,7 +254,7 @@ class SpatialListener(Component):
         gap: float = 4.0,
         *,
         left_ear_offset: Vec3 | None = None,
-        right_ear_offset: Vec3 | None = None,
+        right_ear_offset: Vec3 | None = None
     ) -> None:
         """Create a new SpatialListener.
 
@@ -282,7 +282,8 @@ class AudioSource(Asset):
     """Audio data asset loaded from file.
 
     Load via asset_server.load_audio("path/to/audio.ogg").
-    Supports wav, ogg, flac, and mp3 formats.
+    Supports wav and ogg. A file in any other container loads as bytes and then
+    panics Bevy's playback system with `UnrecognizedFormat`.
     """
 
     @property
