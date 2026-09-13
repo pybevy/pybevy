@@ -223,7 +223,12 @@ fn ray_aabb_intersection(ray: &Ray3d, aabb: &super::spatial::WorldAabb) -> Optio
 
 #[cfg(test)]
 mod tests {
-    use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
+    use bevy::{
+        camera::{PerspectiveProjection, Projection, primitives::Aabb},
+        ecs::entity::Entity,
+        math::Vec3A,
+        transform::components::Transform,
+    };
 
     use super::{super::spatial::WorldAabb, *};
 
@@ -394,6 +399,34 @@ mod tests {
         // The center point (400,400) maps to (0,0) in normalized coords on an 800-pixel grid,
         // which shoots straight forward and should hit the cube at origin.
         assert!(result["hit_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn compute_depth_samples_ignore_the_cameras_projection() {
+        fn distance_with(fov: f32) -> f64 {
+            let mut world = World::new();
+            world.spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                GlobalTransform::default(),
+                Name::new("Cube"),
+            ));
+            world.spawn((
+                Camera::default(),
+                Projection::Perspective(PerspectiveProjection {
+                    fov,
+                    ..PerspectiveProjection::default()
+                }),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 10.0)),
+            ));
+
+            let result =
+                compute_depth_samples(&mut world, &None, &None, &Some(vec![[440_i64, 400]]), &None)
+                    .unwrap();
+            result["samples"][0]["distance"].as_f64().unwrap()
+        }
+
+        let narrow = distance_with(0.2);
+        assert_eq!(narrow, distance_with(2.0));
     }
 
     #[test]

@@ -17,16 +17,17 @@ use bevy::{
     reflect::{ReflectRef, TypeInfo},
 };
 use pybevy_core::{
-    ResourceBridge,
+    ResourceBridge, public_error,
     registry::global_registry::{all_component_bridges, all_resource_bridges},
     source_location::SourceLocation,
 };
 use pybevy_ecs::shared::system_runtime::{HotReloadGeneration, ReloadGenerationSet};
+use pybevy_transform::global_transform::PyGlobalTransform;
 #[cfg(test)]
 use pyo3::ffi;
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyType},
+    types::{PyDict, PyFloat, PyInt, PyType},
 };
 
 use crate::{
@@ -94,30 +95,14 @@ fn extract_custom_component_fields(
     let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
     let bound = py_obj.bind(py);
 
-    let mut map = serde_json::Map::new();
-
     // Try dataclass fields first
-    let fields_result = py
-        .import("dataclasses")
-        .and_then(|dc| dc.getattr("fields"))
-        .and_then(|f| f.call1((bound,)));
-    if let Ok(fields) = fields_result
-        && let Ok(iter) = fields.try_iter()
+    if let Some(fields) = dataclass_fields_to_json(py, bound)
+        && !fields.is_empty()
     {
-        for field in iter.flatten() {
-            let name_value = field
-                .getattr("name")
-                .and_then(|n| n.extract::<String>())
-                .ok()
-                .and_then(|name| bound.getattr(name.as_str()).ok().map(|value| (name, value)));
-            if let Some((name, value)) = name_value {
-                map.insert(name, py_value_to_json(&value));
-            }
-        }
-        if !map.is_empty() {
-            return Some(map);
-        }
+        return Some(fields);
     }
+
+    let mut map = serde_json::Map::new();
 
     // Fallback: try __dict__
     if let Ok(dict) = bound.getattr("__dict__") {
@@ -136,13 +121,79 @@ fn extract_custom_component_fields(
     if map.is_empty() { None } else { Some(map) }
 }
 
-/// Convert a Python value to a JSON value, recursing into nested PyO3 structs.
-///
-/// - For int/float/bool/str/None → direct JSON conversion
-/// - For objects with getset_descriptor attributes (nested PyO3 structs) → recurse
-/// - For list/tuple → recurse on elements
-/// - Fallback → repr() string
+/// Extract the fields of a dataclass instance as JSON.
+/// Returns `None` when the value is not a dataclass instance.
+fn dataclass_fields_to_json(
+    py: Python<'_>,
+    value: &Bound<'_, PyAny>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut context = SerializationContext {
+        active: vec![value.as_ptr() as usize],
+    };
+    dataclass_fields_to_json_inner(py, value, &mut context)
+}
+
+fn dataclass_fields_to_json_inner(
+    py: Python<'_>,
+    value: &Bound<'_, PyAny>,
+    context: &mut SerializationContext,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if value.is_instance_of::<PyType>() || !value.hasattr("__dataclass_fields__").unwrap_or(false) {
+        return None;
+    }
+    let fields = py
+        .import("dataclasses")
+        .and_then(|dataclasses| dataclasses.getattr("fields"))
+        .and_then(|fields| fields.call1((value,)))
+        .ok()?;
+    let mut map = serde_json::Map::new();
+    for field in fields.try_iter().ok()?.flatten() {
+        let name_value = field
+            .getattr("name")
+            .and_then(|name| name.extract::<String>())
+            .ok()
+            .and_then(|name| value.getattr(name.as_str()).ok().map(|value| (name, value)));
+        if let Some((name, value)) = name_value {
+            map.insert(name, py_value_to_json_inner(&value, context));
+        }
+    }
+    Some(map)
+}
+
+const SERIALIZATION_MAX_DEPTH: usize = 64;
+
+#[derive(Default)]
+struct SerializationContext {
+    // Ancestor Bounds keep these addresses alive during the traversal.
+    active: Vec<usize>,
+}
+
+/// Convert Python values to JSON with bounded nesting and ancestor-cycle detection.
 pub(crate) fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
+    py_value_to_json_inner(value, &mut SerializationContext::default())
+}
+
+fn py_value_to_json_inner(
+    value: &Bound<'_, PyAny>,
+    context: &mut SerializationContext,
+) -> serde_json::Value {
+    let address = value.as_ptr() as usize;
+    if context.active.contains(&address) {
+        return serde_json::json!({"serialization_error": public_error::CONTROL_SERIALIZATION_CYCLE});
+    }
+    if context.active.len() >= SERIALIZATION_MAX_DEPTH {
+        return serde_json::json!({"serialization_error": public_error::CONTROL_SERIALIZATION_DEPTH});
+    }
+    context.active.push(address);
+    let result = serialize_python_value(value, context);
+    context.active.pop();
+    result
+}
+
+fn serialize_python_value(
+    value: &Bound<'_, PyAny>,
+    context: &mut SerializationContext,
+) -> serde_json::Value {
     // None
     if value.is_none() {
         return serde_json::Value::Null;
@@ -176,18 +227,44 @@ pub(crate) fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
         return val;
     }
     if pyo3_complex_enum_variant_name(&value.get_type()).is_some() {
-        return serde_json::Value::Object(extract_bridge_fields_inner(value));
+        return serde_json::Value::Object(extract_bridge_fields_with_context(value, context));
     }
-    // list/tuple → recurse on elements
+    // Preserve mapping entries before generic iteration can discard their values.
+    if let Ok(dict) = value.cast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        let mut pairs = Vec::with_capacity(dict.len());
+        let mut object_keys = true;
+        for (key, item) in dict.iter() {
+            let item = py_value_to_json_inner(&item, context);
+            pairs.push(serde_json::Value::Array(vec![
+                py_value_to_json_inner(&key, context),
+                item.clone(),
+            ]));
+            if let Some(key) = json_object_key(&key).filter(|key| !map.contains_key(key)) {
+                map.insert(key, item);
+            } else {
+                object_keys = false;
+            }
+        }
+        return if object_keys {
+            serde_json::Value::Object(map)
+        } else {
+            serde_json::Value::Array(pairs)
+        };
+    }
+    if let Some(fields) = dataclass_fields_to_json_inner(value.py(), value, context) {
+        return serde_json::Value::Object(fields);
+    }
+    // Serialize iterable elements.
     if let Ok(iter) = value.try_iter() {
         let elements: Vec<serde_json::Value> = iter
             .filter_map(|item| item.ok())
-            .map(|item| py_value_to_json(&item))
+            .map(|item| py_value_to_json_inner(&item, context))
             .collect();
         return serde_json::Value::Array(elements);
     }
     // Check if this is a nested PyO3 struct (has getset_descriptor attributes)
-    let nested_fields = extract_bridge_fields_inner(value);
+    let nested_fields = extract_bridge_fields_with_context(value, context);
     if !nested_fields.is_empty() {
         if nested_fields.len() == 1
             && let Some(inner) = nested_fields.get("value")
@@ -201,6 +278,18 @@ pub(crate) fn py_value_to_json(value: &Bound<'_, PyAny>) -> serde_json::Value {
         .repr()
         .map(|r| serde_json::Value::String(r.to_string()))
         .unwrap_or_else(|_| serde_json::Value::String("<opaque>".to_string()))
+}
+
+/// JSON object key for a Python mapping key. `str` passes through, `int`,
+/// `bool` and `float` use their Python `str()`, anything else has no key form.
+fn json_object_key(key: &Bound<'_, PyAny>) -> Option<String> {
+    if let Ok(s) = key.extract::<String>() {
+        return Some(s);
+    }
+    if key.is_instance_of::<PyInt>() || key.is_instance_of::<PyFloat>() {
+        return key.str().ok().map(|s| s.to_string());
+    }
+    None
 }
 
 fn val_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
@@ -292,6 +381,16 @@ fn vector_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
 fn extract_bridge_fields_inner(
     bound: &Bound<'_, PyAny>,
 ) -> serde_json::Map<String, serde_json::Value> {
+    let mut context = SerializationContext {
+        active: vec![bound.as_ptr() as usize],
+    };
+    extract_bridge_fields_with_context(bound, &mut context)
+}
+
+fn extract_bridge_fields_with_context(
+    bound: &Bound<'_, PyAny>,
+    context: &mut SerializationContext,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     let py_type = bound.get_type();
 
@@ -317,7 +416,7 @@ fn extract_bridge_fields_inner(
             }
             // Get the actual value from the instance and convert recursively
             if let Ok(value) = bound.getattr(name.as_str()) {
-                map.insert(name, py_value_to_json(&value));
+                map.insert(name, py_value_to_json_inner(&value, context));
             }
         }
     }
@@ -339,7 +438,7 @@ fn extract_bridge_fields_inner(
     {
         let elements: Vec<serde_json::Value> = items
             .filter_map(|item| item.ok())
-            .map(|item| py_value_to_json(&item))
+            .map(|item| py_value_to_json_inner(&item, context))
             .collect();
         map.insert("items".to_string(), serde_json::Value::Array(elements));
         return map;
@@ -499,6 +598,10 @@ fn extract_bridge_fields(
     bound: &Bound<'_, PyAny>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut fields = extract_bridge_fields_inner(bound);
+    if bound.is_instance_of::<PyGlobalTransform>() {
+        fields.retain(|name, _| matches!(name.as_str(), "translation" | "rotation" | "scale"));
+        return fields;
+    }
     let Ok(owned) = bound.call_method0("__copy__") else {
         if fields.contains_key("variant") {
             fields.retain(|name, _| name == "variant");
@@ -1080,30 +1183,14 @@ fn extract_custom_resource_fields(
         return Some(map);
     }
 
-    let mut map = serde_json::Map::new();
-
     // Try dataclass fields first
-    let fields_result = py
-        .import("dataclasses")
-        .and_then(|dc| dc.getattr("fields"))
-        .and_then(|f| f.call1((bound,)));
-    if let Ok(fields) = fields_result
-        && let Ok(iter) = fields.try_iter()
+    if let Some(fields) = dataclass_fields_to_json(py, bound)
+        && !fields.is_empty()
     {
-        for field in iter.flatten() {
-            let name_value = field
-                .getattr("name")
-                .and_then(|n| n.extract::<String>())
-                .ok()
-                .and_then(|name| bound.getattr(name.as_str()).ok().map(|value| (name, value)));
-            if let Some((name, value)) = name_value {
-                map.insert(name, py_value_to_json(&value));
-            }
-        }
-        if !map.is_empty() {
-            return Some(map);
-        }
+        return Some(fields);
     }
+
+    let mut map = serde_json::Map::new();
 
     // Fallback: try __dict__
     if let Ok(dict) = bound.getattr("__dict__") {
@@ -1763,6 +1850,8 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         representative_id: Option<u64>,
         // True only if every entity in the group has a Name equal to the label.
         all_names_match: bool,
+        // The first member's real Name, for the singleton case below.
+        first_name: Option<String>,
     }
 
     let mut groups: HashMap<String, GroupInfo> = HashMap::new();
@@ -1774,12 +1863,14 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         source: &'static str,
         entity: Entity,
         name_matches_label: bool,
+        first_name: Option<String>,
     ) {
         let entry = groups.entry(label).or_insert(GroupInfo {
             count: 0,
             source,
             representative_id: Some(entity.to_bits()),
             all_names_match: name_matches_label,
+            first_name,
         });
         entry.count += 1;
         if !name_matches_label {
@@ -1789,7 +1880,14 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
 
     for entity in &entity_list {
         let Ok(entity_ref) = world.get_entity(*entity) else {
-            add(&mut groups, "other".to_string(), "fallback", *entity, false);
+            add(
+                &mut groups,
+                "other".to_string(),
+                "fallback",
+                *entity,
+                false,
+                None,
+            );
             continue;
         };
 
@@ -1802,6 +1900,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
                 "custom_component",
                 *entity,
                 false,
+                None,
             );
             continue;
         }
@@ -1811,7 +1910,14 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
             let name_str = name.as_str();
             let label = strip_numeric_suffix(name_str);
             let name_matches_label = label == name_str;
-            add(&mut groups, label, "name", *entity, name_matches_label);
+            add(
+                &mut groups,
+                label,
+                "name",
+                *entity,
+                name_matches_label,
+                Some(name_str.to_string()),
+            );
             continue;
         }
 
@@ -1831,6 +1937,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
                     "component",
                     *entity,
                     false,
+                    None,
                 );
                 found = true;
                 break;
@@ -1838,12 +1945,30 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         }
 
         if !found {
-            add(&mut groups, "other".to_string(), "fallback", *entity, false);
+            add(
+                &mut groups,
+                "other".to_string(),
+                "fallback",
+                *entity,
+                false,
+                None,
+            );
         }
     }
 
-    // Sort by count descending, then label ascending.
-    let mut group_list: Vec<(String, GroupInfo)> = groups.into_iter().collect();
+    // A group of one is not a prefix: the stripped label resolves nowhere.
+    fn reported_label(label: String, info: &GroupInfo) -> String {
+        match (&info.first_name, info.count, info.all_names_match) {
+            (Some(name), 1, false) => name.clone(),
+            _ => label,
+        }
+    }
+
+    // Sort by count descending, then reported label ascending.
+    let mut group_list: Vec<(String, GroupInfo)> = groups
+        .into_iter()
+        .map(|(label, info)| (reported_label(label, &info), info))
+        .collect();
     group_list.sort_by(|a, b| b.1.count.cmp(&a.1.count).then_with(|| a.0.cmp(&b.0)));
 
     let groups_json: Vec<serde_json::Value> = group_list
@@ -1908,6 +2033,7 @@ mod tests {
     use std::{
         ptr,
         sync::{Arc, Once, atomic::AtomicU32},
+        thread,
     };
 
     use bevy::{
@@ -1923,7 +2049,7 @@ mod tests {
         prelude::{GlobalTransform, Transform},
     };
     use pybevy_color::color::PyColor;
-    use pyo3::types::{PyDict, PyList};
+    use pyo3::types::{PyDict, PyList, PyTuple};
 
     // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
     extern crate pybevy_transform;
@@ -2049,7 +2175,7 @@ mod tests {
         let parent = world.spawn(Name::new("Parent")).id();
         let child = world.spawn((Name::new("Lamp"), ChildOf(parent))).id();
         let _ = child;
-        // Root entity spawned after child — should still be preferred
+        // Root entity spawned after child - should still be preferred
         let root = world.spawn(Name::new("Lamp")).id();
 
         let result = resolve_entity(&mut world, &EntityRef::Name("Lamp".into()));
@@ -2266,6 +2392,50 @@ mod tests {
         assert_eq!(cube_group["count"], 2);
         let sphere_group = groups.iter().find(|g| g["label"] == "Sphere").unwrap();
         assert_eq!(sphere_group["count"], 1);
+    }
+
+    /// A group of one is not a prefix: report the entity's real Name.
+    #[test]
+    fn scene_summary_reports_the_real_name_for_a_group_of_one() {
+        let mut world = World::new();
+        for name in ["cube_rot45", "gamma42", "a_12", "n_1_2", "x9", "aZ"] {
+            world.spawn(Name::new(name));
+        }
+        let result = scene_summary(&mut world).unwrap();
+        let labels: Vec<&str> = result["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| {
+                assert_eq!(group["count"], 1);
+                assert_eq!(group["source"], "name");
+                group["label"].as_str().unwrap()
+            })
+            .collect();
+        // Ascending by the reported name, not by the stripped grouping key.
+        assert_eq!(
+            labels,
+            ["aZ", "a_12", "cube_rot45", "gamma42", "n_1_2", "x9"]
+        );
+        assert_eq!(
+            result["summary"],
+            "6 entities: 1 aZ, 1 a_12, 1 cube_rot45, 1 gamma42, 1 n_1_2, 1 x9"
+        );
+    }
+
+    /// Multiple numbered Names form a prefix group.
+    #[test]
+    fn scene_summary_still_groups_several_numbered_names() {
+        let mut world = World::new();
+        world.spawn(Name::new("enemy1"));
+        world.spawn(Name::new("enemy2"));
+        world.spawn(Name::new("enemy3"));
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        let group = groups.iter().find(|g| g["label"] == "enemy").unwrap();
+        assert_eq!(group["count"], 3);
+        assert_eq!(group["source"], "name_prefix");
+        assert!(!group["representative_id"].is_null());
     }
 
     #[test]
@@ -2807,7 +2977,7 @@ mod tests {
             let none = py.None().into_bound(py);
             assert_eq!(py_value_to_json(&none), serde_json::Value::Null);
 
-            // bool — into_pyobject returns Borrowed for bool, use .to_owned()
+            // bool - into_pyobject returns Borrowed for bool, use .to_owned()
             let b = true.into_pyobject(py).unwrap().to_owned().into_any();
             assert_eq!(py_value_to_json(&b), serde_json::Value::Bool(true));
 
@@ -2851,6 +3021,124 @@ mod tests {
             assert_eq!(arr[0], serde_json::json!(1));
             assert_eq!(arr[1], serde_json::json!(2));
             assert_eq!(arr[2], serde_json::json!(3));
+        });
+    }
+
+    #[test]
+    fn serialization_is_bounded_on_a_two_mebibyte_stack() {
+        setup();
+        thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                Python::attach(|py| {
+                    let globals = PyDict::new(py);
+                    py.run(
+                        ffi::c_str!(
+                            "from dataclasses import dataclass\n@dataclass\nclass Payload:\n    child: object\nvalue = 'leaf'\nfor _ in range(512):\n    value = Payload(value)\n"
+                        ),
+                        Some(&globals),
+                        None,
+                    )
+                    .unwrap();
+                    let value = globals.get_item("value").unwrap().unwrap();
+                    let result = py_value_to_json(&value);
+                    let mut child = &result;
+                    for _ in 0..64 {
+                        child = child.get("child").unwrap();
+                    }
+                    assert_eq!(
+                        child,
+                        &serde_json::json!({
+                            "serialization_error": "Python value exceeds the serialization depth limit"
+                        })
+                    );
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn py_value_to_json_dict_keeps_values() {
+        setup();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("a", 1i64).unwrap();
+            dict.set_item("b", 2i64).unwrap();
+
+            let result = py_value_to_json(dict.as_any());
+
+            assert_eq!(result, serde_json::json!({"a": 1, "b": 2}));
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_dict_stringifies_numeric_keys() {
+        setup();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item(1i64, "one").unwrap();
+
+            let result = py_value_to_json(dict.as_any());
+
+            assert_eq!(result, serde_json::json!({"1": "one"}));
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_dict_unkeyable_falls_back_to_pairs() {
+        setup();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            let key = PyTuple::new(py, [1i64, 2]).unwrap();
+            dict.set_item(key, 3i64).unwrap();
+
+            let result = py_value_to_json(dict.as_any());
+
+            assert_eq!(result, serde_json::json!([[[1, 2], 3]]));
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_dataclass_is_structured() {
+        setup();
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "import dataclasses\n@dataclasses.dataclass\nclass _Stats:\n    hp: int = 100\n    mp: int = 50\ninst = _Stats()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+
+            let result = py_value_to_json(&inst);
+
+            assert_eq!(result, serde_json::json!({"hp": 100, "mp": 50}));
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_opaque_object_keeps_repr() {
+        setup();
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "class _Opaque:\n    def __repr__(self):\n        return 'opaque value'\ninst = _Opaque()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let inst = globals.get_item("inst").unwrap().unwrap();
+
+            let result = py_value_to_json(&inst);
+
+            assert_eq!(result, serde_json::json!({"repr": "opaque value"}));
         });
     }
 
@@ -2994,10 +3282,8 @@ mod tests {
         // A plain Python class with no getset_descriptors should return false
         Python::attach(|py| {
             // Create a minimal Python class with no properties
-            let empty_class = py
-                .run(ffi::c_str!("class _Empty: pass"), None, None)
+            py.run(ffi::c_str!("class _Empty: pass"), None, None)
                 .unwrap();
-            let _ = empty_class;
             let cls = py.eval(ffi::c_str!("_Empty"), None, None).unwrap();
             let py_type = cls.cast::<PyType>().unwrap();
             assert!(
@@ -3167,7 +3453,7 @@ mod tests {
     #[test]
     fn extract_bridge_fields_inner_fallback_msaa_sample4() {
         setup();
-        // Regression for #291: PyMsaa's __repr__ is "Msaa.Sample4" (PascalCase
+        // Regression: PyMsaa's __repr__ is "Msaa.Sample4" (PascalCase
         // variant with digits after the dot). Before the parser was relaxed
         // to accept any Python identifier after the dot, this fell through to
         // the {"repr": ...} branch instead of yielding {"variant": "Sample4"}.

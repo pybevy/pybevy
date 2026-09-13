@@ -288,10 +288,12 @@ fn is_time_control_tool(name: &str) -> bool {
     )
 }
 
-/// Returns true if the tool could modify transforms (and thus require
-/// GlobalTransform propagation within the same frame).
+/// Transform mutations require propagation; despawning a parent also despawns its children.
 fn is_transform_mutation_tool(name: &str) -> bool {
-    matches!(name, "set_component" | "spawn_entity" | "batch")
+    matches!(
+        name,
+        "set_component" | "remove_component" | "spawn_entity" | "batch"
+    )
 }
 
 fn is_render_mutation_tool(name: &str) -> bool {
@@ -311,7 +313,7 @@ fn is_render_mutation_tool(name: &str) -> bool {
 /// Propagate transforms through the full hierarchy after mutations.
 /// Updates GlobalTransform for root entities first, then recursively for children.
 /// This ensures spatial queries see up-to-date world positions within the same frame.
-fn propagate_transforms(world: &mut World) {
+pub(crate) fn propagate_transforms(world: &mut World) {
     // Update root entities (no ChildOf)
     let mut root_query = world.query_filtered::<(Entity, &Transform), Without<ChildOf>>();
     let roots: Vec<(Entity, GlobalTransform)> = root_query
@@ -482,7 +484,7 @@ fn resolve_at_frame(action: &ScheduleAction) -> Option<u64> {
     action.at_frame.and_then(|frame| u64::try_from(frame).ok())
 }
 
-/// Returns true when virtual time cannot advance — either it is paused, or its
+/// Returns true when virtual time cannot advance - either it is paused, or its
 /// relative speed is zero. Either condition means an action gated on `at`
 /// (virtual seconds) can never become ready.
 fn virtual_time_is_stalled(world: &World) -> bool {
@@ -754,7 +756,7 @@ fn process_single_schedule(
                 if !ready {
                     // Detect self-deadlock: if the next action gates on virtual
                     // time but a previous action paused (or zero-scaled) virtual
-                    // time, virtual seconds will never advance — including any
+                    // time, virtual seconds will never advance - including any
                     // later resume_time, since it too sits behind an `at` that
                     // can never fire. Abort immediately rather than waiting for
                     // the engine's 120 s timeout.
@@ -764,7 +766,7 @@ fn process_single_schedule(
                         let action_tool = action.tool.clone();
                         let error_msg = format!(
                             "Schedule self-deadlocked: virtual time is paused (or set to 0x \
-                             scale), so action[{}] tool='{}' at={}s can never fire — virtual \
+                             scale), so action[{}] tool='{}' at={}s can never fire - virtual \
                              seconds do not advance while paused. Use 'at_frame' for actions \
                              that should run after pause_time/set_time_scale(0), or call \
                              resume_time from outside the schedule.",
@@ -844,7 +846,7 @@ fn process_single_schedule(
                         }
                     }
                 } else {
-                    // Sync tool — execute immediately via dispatch
+                    // Sync tool - execute immediately via dispatch
                     match tool_to_operation(&tool_name, &tool_args) {
                         Ok(op) => {
                             let result = handlers::dispatch(world, op, runtime);
@@ -1588,7 +1590,7 @@ mod tests {
 
     #[test]
     fn test_action_result_at_frame_round_trip() {
-        // Bug #301: at_frame must surface in the response.
+        // at_frame must surface in the response.
         let action = ScheduleAction {
             tool: "pause_time".to_string(),
             args: serde_json::Value::Null,
@@ -1818,7 +1820,7 @@ mod tests {
 
     /// Verifies that the registry and ActiveSchedule share the same Arc,
     /// so updates from the schedule state machine are visible via registry.get().
-    /// This was bug #3: the registry previously stored a separate copy.
+    /// The registry previously stored a separate copy.
     #[test]
     fn test_registry_shares_arc_with_schedule() {
         let registry = SharedScheduleRegistry::default();
@@ -1980,6 +1982,7 @@ mod tests {
         assert!(is_transform_mutation_tool("set_component"));
         assert!(is_transform_mutation_tool("spawn_entity"));
         assert!(is_transform_mutation_tool("batch"));
+        assert!(is_transform_mutation_tool("remove_component"));
         assert!(!is_transform_mutation_tool("pause_time"));
         assert!(!is_transform_mutation_tool("query_entities"));
         assert!(!is_transform_mutation_tool("capture_screenshot"));
@@ -2666,6 +2669,37 @@ mod tests {
     }
 
     #[test]
+    fn propagate_transforms_follows_a_detach() {
+        let mut world = World::new();
+        let parent = world
+            .spawn((
+                Transform::from_xyz(100.0, 0.0, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let child = world
+            .spawn((
+                Transform::from_xyz(40.0, 0.0, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id();
+        world.entity_mut(parent).add_children(&[child]);
+        propagate_transforms(&mut world);
+        assert_eq!(
+            world.get::<GlobalTransform>(child).unwrap().translation().x,
+            140.0
+        );
+
+        world.entity_mut(child).remove::<ChildOf>();
+        propagate_transforms(&mut world);
+
+        assert_eq!(
+            world.get::<GlobalTransform>(child).unwrap().translation().x,
+            40.0
+        );
+    }
+
+    #[test]
     fn virtual_time_is_stalled_detects_paused() {
         let mut world = World::new();
         let mut time = Time::<Virtual>::default();
@@ -2692,8 +2726,8 @@ mod tests {
     /// Drives the WaitingForTime branch directly via a stripped-down clone of
     /// the deadlock-detection logic. We avoid invoking process_single_schedule
     /// here because that requires a full ControlRuntime impl; the salient
-    /// behaviour — abort with a clear error when virtual time is paused and
-    /// the next action gates on a future virtual-time target — is exercised
+    /// behaviour - abort with a clear error when virtual time is paused and
+    /// the next action gates on a future virtual-time target - is exercised
     /// end-to-end by the Python integration tests under tests/mcp/.
     #[test]
     fn schedule_deadlock_guard_aborts_when_virtual_time_paused() {

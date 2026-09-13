@@ -7,9 +7,12 @@ use pybevy_core::{PendingReloadRequest, ReloadRequestMode, ReloadResult};
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
-use crate::bridge::{
-    CaptureResponseKind, ControlError, DebugCameraRequest, PendingReloadResponses,
-    PendingScreenshots, ReloadMode,
+use crate::{
+    bridge::{
+        CaptureResponseKind, ControlError, DebugCameraRequest, PendingReloadResponses,
+        PendingScreenshots, ReloadMode,
+    },
+    handlers::screenshot::GizmoEnabledRestore,
 };
 
 /// A pending reload-and-capture request.
@@ -242,7 +245,7 @@ pub fn process_pending_reloads(world: &mut World) {
             reload.frames_remaining = POST_FETCH_GRACE_FRAMES;
             still_waiting.push(reload);
         } else {
-            // Reload has had time to execute — build response with error/escalation info
+            // Reload has had time to execute - build response with error/escalation info
             let time = world.resource::<Time<Virtual>>();
             let mut response = serde_json::json!({
                 "status": "reload_completed",
@@ -320,7 +323,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
             rac.reload_frames_remaining = POST_FETCH_GRACE_FRAMES;
             still_waiting.push(rac);
         } else {
-            // Reload has completed — check for errors
+            // Reload has completed - check for errors
             let time = world.resource::<Time<Virtual>>();
             let mut reload_response = serde_json::json!({
                 "mode": rac.mode,
@@ -366,7 +369,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
             }
 
             if has_error {
-                // Error during reload — respond immediately without screenshot
+                // Error during reload - respond immediately without screenshot
                 let entity_count =
                     crate::handlers::entity_count::scene_entity_count(world) as usize;
                 let response = serde_json::json!({
@@ -377,7 +380,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                 });
                 let _ = rac.response_tx.send(Ok(response));
             } else {
-                // Success — queue screenshot with extra reload data
+                // Success - queue screenshot with extra reload data
                 let entity_count =
                     crate::handlers::entity_count::scene_entity_count(world) as usize;
 
@@ -391,7 +394,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                     frames_remaining: rac.screenshot_delay_frames,
                     required_render_epoch: None,
                     with_gizmos: false,
-                    gizmo_restore: None,
+                    gizmo_restore: GizmoEnabledRestore::new(),
                     max_width: rac
                         .max_width
                         .or(Some(crate::bridge::DEFAULT_SCREENSHOT_MAX_WIDTH)),

@@ -6,7 +6,7 @@
 //! `get_performance.entity_count`, `get_scene_summary`,
 //! `scene://entities`, `query_entities` and `reload_and_capture` in agreement on
 //! a single canonical value, and stops a new endpoint from re-deriving the query
-//! and drifting — as `reload_and_capture` once did by reporting the raw
+//! and drifting - as `reload_and_capture` once did by reporting the raw
 //! `world.entities().len()` (which over-counts by the resource-backing entities).
 
 use bevy::ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World};
@@ -54,7 +54,7 @@ mod tests {
     fn excludes_resource_backing_entities() {
         // Resources are entity-backed in Bevy; inserting one must not inflate the
         // scene entity count. `world.entities().len()` (the raw total) would grow
-        // here — the canonical count must not.
+        // here - the canonical count must not.
         let mut world = World::new();
         world.spawn_empty();
         world.spawn_empty();

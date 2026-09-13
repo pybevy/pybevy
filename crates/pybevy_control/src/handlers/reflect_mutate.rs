@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, ops::Range, sync::OnceLock};
 
 use bevy::{
     ecs::{
@@ -11,25 +11,26 @@ use bevy::{
         PartialReflect, ReflectMut, ReflectRef, TypeInfo, TypeRegistry,
         enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo, VariantType},
         list::DynamicList,
-        structs::{DynamicStruct, StructInfo},
+        structs::{DynamicStruct, Struct, StructInfo},
         tuple::DynamicTuple,
         tuple_struct::DynamicTupleStruct,
     },
 };
+use pybevy_core::{ReflectTypeRegistration, inventory};
 use serde_json::{Map, Value};
 
-use super::json_float::{float_to_json, nonfinite_float_from_json};
+use super::json_float::{float_to_json, nonfinite_float_from_json, require_finite_float};
 
 /// Errors from reflection-based mutation
 #[derive(Debug)]
 pub enum ReflectError {
-    /// TypeId not in AppTypeRegistry — fall back to Python
+    /// TypeId not in AppTypeRegistry - fall back to Python
     NotRegistered,
-    /// Type registered but lacks ReflectComponent data — fall back to Python
+    /// Type registered but lacks ReflectComponent data - fall back to Python
     NoReflectComponent,
-    /// Can't create default for spawn — fall back to Python
+    /// Can't create default for spawn - fall back to Python
     NoReflectDefault,
-    /// Type is not a struct — fall back to Python
+    /// Type is not a struct - fall back to Python
     NotAStruct,
     /// Entity doesn't have this component
     ComponentNotOnEntity,
@@ -45,7 +46,7 @@ pub fn reflect_set_component(
     type_id: TypeId,
     fields: &Map<String, Value>,
 ) -> Result<Map<String, Value>, ReflectError> {
-    // Clone AppTypeRegistry Arc — cheap, avoids borrow conflict with entity_mut later
+    // Clone AppTypeRegistry Arc - cheap, avoids borrow conflict with entity_mut later
     let registry_arc = world
         .get_resource::<AppTypeRegistry>()
         .ok_or(ReflectError::NotRegistered)?
@@ -123,12 +124,18 @@ pub fn reflect_set_component(
     let entity_ref = world
         .get_entity(entity)
         .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+    // Concrete validation prevents invalid dynamic payloads reaching infallible apply.
     let mut candidate = reflect_component
         .reflect(entity_ref)
         .ok_or(ReflectError::ComponentNotOnEntity)?
-        .to_dynamic();
+        .reflect_clone()
+        .map_err(|error| {
+            ReflectError::FieldError(format!(
+                "component cannot be cloned for an atomic update: {error}"
+            ))
+        })?;
 
-    // Apply every field to a detached candidate. `try_apply` may leave its target
+    // Apply every field to the detached candidate. `try_apply` may leave its target
     // partially modified on error, so it must not operate on the live component.
     let mut updated_names = Vec::with_capacity(converted.len());
     match candidate.reflect_mut() {
@@ -155,7 +162,7 @@ pub fn reflect_set_component(
     let entity_mut = world
         .get_entity_mut(entity)
         .map_err(|_| ReflectError::ComponentNotOnEntity)?;
-    reflect_component.apply(entity_mut, candidate.as_ref());
+    reflect_component.apply(entity_mut, candidate.as_partial_reflect());
 
     let entity_ref = world
         .get_entity(entity)
@@ -166,11 +173,12 @@ pub fn reflect_set_component(
     let ReflectRef::Struct(fields) = reflected.reflect_ref() else {
         return Err(ReflectError::NotAStruct);
     };
+    // Echo the spelling the python adapter accepts so the response replays unchanged.
     let updated = updated_names
         .into_iter()
         .map(|name| {
             let value = fields.field(&name).map_or(Value::Null, reflect_to_json);
-            (name, value)
+            (python_field_name(&name), value)
         })
         .collect();
 
@@ -233,10 +241,23 @@ pub fn reflect_read_fields<'a>(
         _ => return out,
     };
     for name in names {
-        let value = fields.field(name).map_or(Value::Null, reflect_to_json);
-        out.insert(name.clone(), value);
+        let bevy_name = bevy_field_name(fields, name);
+        let value = fields.field(bevy_name).map_or(Value::Null, reflect_to_json);
+        out.insert(python_field_name(bevy_name), value);
     }
     out
+}
+
+/// Resolve a caller's field key against a live struct, accepting the trailing
+/// underscore that a Python keyword field carries.
+fn bevy_field_name<'a>(fields: &dyn Struct, name: &'a str) -> &'a str {
+    if fields.field(name).is_some() {
+        return name;
+    }
+    match name.strip_suffix('_') {
+        Some(stripped) if fields.field(stripped).is_some() => stripped,
+        _ => name,
+    }
 }
 
 /// Convert a reflected value to a JSON value for post-write read-back.
@@ -286,6 +307,13 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
     if let Some(v) = value.try_downcast_ref::<String>() {
         return Value::String(v.clone());
     }
+    // Serialize opaque f32 ranges as [start, end].
+    if let Some(range) = value.try_downcast_ref::<Range<f32>>() {
+        return Value::Array(vec![
+            float_to_json(f64::from(range.start)),
+            float_to_json(f64::from(range.end)),
+        ]);
+    }
 
     match value.reflect_ref() {
         ReflectRef::Struct(s) => {
@@ -301,7 +329,7 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
             }
             let mut map = Map::new();
             for i in 0..s.field_len() {
-                let name = s.name_at(i).unwrap_or("").to_string();
+                let name = python_field_name(s.name_at(i).unwrap_or(""));
                 let v = s.field_at(i).map(reflect_to_json).unwrap_or(Value::Null);
                 map.insert(name, v);
             }
@@ -360,7 +388,7 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
                 VariantType::Struct => {
                     let mut map = Map::new();
                     for i in 0..e.field_len() {
-                        let name = e.name_at(i).unwrap_or("").to_string();
+                        let name = python_field_name(e.name_at(i).unwrap_or(""));
                         let v = e.field_at(i).map(reflect_to_json).unwrap_or(Value::Null);
                         map.insert(name, v);
                     }
@@ -519,6 +547,40 @@ fn resolve_field_name(field_name: &str, parent_info: &StructInfo) -> Option<Stri
     None
 }
 
+/// Python cannot name an attribute after a keyword, so wrappers expose such a
+/// field with a trailing underscore. Inverts `resolve_field_name`.
+fn python_field_name(bevy_name: &str) -> String {
+    if PYTHON_KEYWORDS.contains(&bevy_name) {
+        format!("{bevy_name}_")
+    } else {
+        bevy_name.to_string()
+    }
+}
+
+const PYTHON_KEYWORDS: &[&str] = &[
+    "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
+    "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda",
+    "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+];
+
+pub(crate) fn compiled_enum_variant_info(
+    owner: &str,
+    variant: &str,
+) -> Option<&'static VariantInfo> {
+    static REGISTRY: OnceLock<TypeRegistry> = OnceLock::new();
+    let registry = REGISTRY.get_or_init(|| {
+        let mut registry = TypeRegistry::default();
+        for registration in inventory::iter::<ReflectTypeRegistration> {
+            (registration.register)(&mut registry);
+        }
+        registry
+    });
+    let TypeInfo::Enum(info) = registry.get_with_short_type_path(owner)?.type_info() else {
+        return None;
+    };
+    info.variant(variant)
+}
+
 /// Convert a named field's JSON value to a reflected value using the parent struct's type info.
 /// Handles Python reserved word aliasing via `resolve_field_name`.
 fn json_field_to_reflect(
@@ -569,12 +631,14 @@ fn json_to_reflect(
             if target_type_id == TypeId::of::<f32>()
                 && let Some(value) = nonfinite_float_from_json(value)
             {
-                return Ok(Box::new(value as f32));
+                return require_finite_float(value)
+                    .map(|value| Box::new(value as f32) as Box<dyn PartialReflect>);
             }
             if target_type_id == TypeId::of::<f64>()
                 && let Some(value) = nonfinite_float_from_json(value)
             {
-                return Ok(Box::new(value));
+                return require_finite_float(value)
+                    .map(|value| Box::new(value) as Box<dyn PartialReflect>);
             }
             if let Some(TypeInfo::Enum(enum_info)) = target_type_info {
                 let variant = enum_info.variant(s).ok_or_else(|| {
@@ -679,7 +743,7 @@ fn convert_option(
         return Ok(Box::new(dynamic));
     }
 
-    // Some variant — extract inner type from the Some variant's first field
+    // Some variant - extract inner type from the Some variant's first field
     let some_variant = enum_info
         .variant("Some")
         .ok_or("Option enum missing 'Some' variant")?;
@@ -875,6 +939,10 @@ fn tagged_enum_payload(
     }
 }
 
+fn enum_variant_missing_field(variant: &str, field: &str) -> String {
+    format!("variant '{variant}' requires field '{field}'")
+}
+
 /// Convert a named variant + JSON value into a DynamicEnum.
 fn convert_enum_variant(
     variant_name: &str,
@@ -899,6 +967,11 @@ fn convert_enum_variant(
             let mut dynamic = DynamicStruct::default();
             match variant_value {
                 Value::Object(fields) => {
+                    for field in struct_info.iter() {
+                        if !fields.contains_key(field.name()) {
+                            return Err(enum_variant_missing_field(variant_name, field.name()));
+                        }
+                    }
                     for (key, val) in fields {
                         let field_info = struct_info.field(key).ok_or_else(|| {
                             format!("unknown field '{key}' on variant '{variant_name}'")
@@ -911,7 +984,9 @@ fn convert_enum_variant(
                     }
                 }
                 Value::Null => {
-                    // Null = use defaults (no fields set)
+                    if let Some(field) = struct_info.iter().next() {
+                        return Err(enum_variant_missing_field(variant_name, field.name()));
+                    }
                 }
                 _ => {
                     return Err(format!(
@@ -994,14 +1069,16 @@ fn convert_number(
     target_type_info: Option<&'static TypeInfo>,
 ) -> Result<Box<dyn PartialReflect>, String> {
     if target_type_id == TypeId::of::<f32>() {
-        Ok(Box::new(
-            n.as_f64()
-                .ok_or_else(|| format!("expected number for f32, got {n}"))? as f32,
-        ))
+        let value = n
+            .as_f64()
+            .ok_or_else(|| format!("expected number for f32, got {n}"))? as f32;
+        require_finite_float(f64::from(value))?;
+        Ok(Box::new(value))
     } else if target_type_id == TypeId::of::<f64>() {
-        Ok(Box::new(n.as_f64().ok_or_else(|| {
-            format!("expected number for f64, got {n}")
-        })?))
+        let value = n
+            .as_f64()
+            .ok_or_else(|| format!("expected number for f64, got {n}"))?;
+        Ok(Box::new(require_finite_float(value)?))
     } else if target_type_id == TypeId::of::<i32>() {
         Ok(Box::new(
             n.as_i64()
@@ -1078,6 +1155,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reflect_to_json_renders_a_range_as_a_start_end_pair() {
+        let range: Range<f32> = 0.25..0.75;
+        assert_eq!(reflect_to_json(&range), serde_json::json!([0.25, 0.75]));
+    }
+
+    #[test]
     fn non_numeric_target_rejects_number_without_fallback() {
         let error = convert_number(
             &serde_json::Number::from(10),
@@ -1119,7 +1202,7 @@ mod tests {
     fn setup_world_with_transform() -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        // MinimalPlugins doesn't register Transform — we need to do it explicitly
+        // MinimalPlugins doesn't register Transform - we need to do it explicitly
         // so the AppTypeRegistry knows about Transform, ReflectComponent, ReflectDefault
         app.register_type::<Transform>();
         app.update();
@@ -1190,25 +1273,16 @@ mod tests {
     }
 
     #[test]
-    fn reflected_nonfinite_floats_round_trip_as_distinct_strings() {
+    fn reflected_nonfinite_floats_leave_translation_unchanged() {
         let (mut app, entity) = setup_world_with_transform();
         let world = app.world_mut();
+        let before = world.get::<Transform>(entity).unwrap().translation;
         let fields = Map::from_iter([(
             "translation".to_string(),
             serde_json::json!(["NaN", "Infinity", "-Infinity"]),
         )]);
-
-        let updated =
-            reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields).unwrap();
-
-        assert_eq!(
-            updated["translation"],
-            serde_json::json!(["NaN", "Infinity", "-Infinity"])
-        );
-        let translation = world.get::<Transform>(entity).unwrap().translation;
-        assert!(translation.x.is_nan());
-        assert_eq!(translation.y, f32::INFINITY);
-        assert_eq!(translation.z, f32::NEG_INFINITY);
+        assert!(reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields).is_err());
+        assert_eq!(world.get::<Transform>(entity).unwrap().translation, before);
     }
 
     #[test]
@@ -1530,6 +1604,42 @@ mod tests {
         assert_eq!(payload.required, 11);
     }
 
+    #[derive(Component, Reflect, Clone)]
+    #[reflect(Component)]
+    enum TestNamedEnumComponent {
+        First { start: i32, end: i32 },
+        Second { required: i32 },
+    }
+
+    #[test]
+    fn reflect_set_named_enum_rejects_missing_fields_before_application() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestNamedEnumComponent>();
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TestNamedEnumComponent::Second { required: 7 })
+            .id();
+        let fields = Map::from_iter([
+            ("variant".to_string(), serde_json::json!("First")),
+            ("start".to_string(), serde_json::json!(42)),
+        ]);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestNamedEnumComponent>(),
+            &fields,
+        );
+        let Err(ReflectError::FieldError(error)) = result else {
+            panic!("incomplete named payload was accepted");
+        };
+        assert_eq!(error, "variant: variant 'First' requires field 'end'");
+        assert!(matches!(
+            world.get::<TestNamedEnumComponent>(entity),
+            Some(TestNamedEnumComponent::Second { required: 7 })
+        ));
+    }
+
     #[test]
     fn reflect_spawn_non_struct_no_fields_succeeds() {
         // Enum with Default + ReflectComponent can spawn with empty fields
@@ -1568,6 +1678,67 @@ mod tests {
             world.get::<TestEnumComponent>(entity),
             Some(TestEnumComponent::VariantB)
         ));
+    }
+
+    #[derive(Clone, Reflect)]
+    #[reflect(Clone)]
+    struct RequiredOptionalPayload {
+        x: f32,
+        y: f32,
+    }
+
+    #[derive(Clone, Component, Reflect)]
+    #[reflect(Component, Clone)]
+    struct OptionalStructComponent {
+        count: i32,
+        value: Option<RequiredOptionalPayload>,
+    }
+
+    #[test]
+    fn incomplete_optional_struct_preserves_concrete_component() {
+        let mut app = App::new();
+        app.register_type::<OptionalStructComponent>();
+        let world = app.world_mut();
+        let entity = world
+            .spawn(OptionalStructComponent {
+                count: 3,
+                value: None,
+            })
+            .id();
+        let fields = Map::from_iter([
+            ("count".into(), serde_json::json!(7)),
+            ("value".into(), serde_json::json!({"x": 2.0})),
+        ]);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<OptionalStructComponent>(),
+            &fields,
+        );
+        assert!(
+            matches!(result, Err(ReflectError::FieldError(_))),
+            "{result:?}"
+        );
+        let component = world.get::<OptionalStructComponent>(entity).unwrap();
+        assert_eq!(component.count, 3);
+        assert!(component.value.is_none());
+        let accepted = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<OptionalStructComponent>(),
+            &Map::from_iter([("value".into(), serde_json::json!({"x": 2.0, "y": 4.0}))]),
+        );
+        assert_eq!(
+            accepted.unwrap(),
+            Map::from_iter([("value".into(), serde_json::json!({"x": 2.0, "y": 4.0}))])
+        );
+        let value = world
+            .get::<OptionalStructComponent>(entity)
+            .unwrap()
+            .value
+            .as_ref()
+            .unwrap();
+        assert_eq!((value.x, value.y), (2.0, 4.0));
     }
 
     /// A component with an Option<Vec3> field for testing Option unwrapping.
@@ -1867,6 +2038,73 @@ mod tests {
     struct GlobalFieldComponent {
         global: f32,
         other: f32,
+    }
+
+    #[test]
+    fn python_field_name_aliases_a_reserved_word() {
+        assert_eq!(super::python_field_name("global"), "global_");
+        assert_eq!(super::python_field_name("other"), "other");
+    }
+
+    #[test]
+    fn reflect_to_json_reports_a_reserved_field_under_its_python_alias() {
+        let component = GlobalFieldComponent {
+            global: 0.5,
+            other: 1.5,
+        };
+        assert_eq!(
+            reflect_to_json(&component),
+            serde_json::json!({"global_": 0.5, "other": 1.5})
+        );
+    }
+
+    #[derive(Reflect)]
+    enum GlobalVariantEnum {
+        Section { global: f32 },
+    }
+
+    #[test]
+    fn reflect_to_json_aliases_a_struct_variant_field() {
+        let value = GlobalVariantEnum::Section { global: 0.5 };
+        assert_eq!(
+            reflect_to_json(&value),
+            serde_json::json!({"Section": {"global_": 0.5}})
+        );
+    }
+
+    #[test]
+    fn reflect_read_fields_resolves_a_reserved_word_alias() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<GlobalFieldComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(GlobalFieldComponent {
+                global: 0.5,
+                other: 1.5,
+            })
+            .id();
+        let type_id = TypeId::of::<GlobalFieldComponent>();
+
+        let requested = ["global_".to_string(), "other".to_string()];
+        assert_eq!(
+            Value::Object(reflect_read_fields(world, entity, type_id, &requested)),
+            serde_json::json!({"global_": 0.5, "other": 1.5})
+        );
+
+        let bevy_spelling = ["global".to_string()];
+        assert_eq!(
+            Value::Object(reflect_read_fields(world, entity, type_id, &bevy_spelling)),
+            serde_json::json!({"global_": 0.5})
+        );
+
+        let unknown = ["missing".to_string()];
+        assert_eq!(
+            Value::Object(reflect_read_fields(world, entity, type_id, &unknown)),
+            serde_json::json!({"missing": null})
+        );
     }
 
     #[test]

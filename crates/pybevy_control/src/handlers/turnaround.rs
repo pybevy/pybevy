@@ -217,7 +217,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
                 }
                 continue;
             }
-            // Capture was collected (handled by observer) — continue to next viewpoint
+            // Capture was collected (handled by observer) - continue to next viewpoint
             turnaround.stall_frames = 0;
             turnaround.view_staged = false;
         }
@@ -894,7 +894,7 @@ mod tests {
     #[test]
     fn process_turnaround_rejects_camera2d_scene() {
         let mut world = World::new();
-        let camera = world.spawn(Camera2d::default()).id();
+        let camera = world.spawn(Camera2d).id();
         let (tx, mut rx) = oneshot::channel();
         let mut turnaround = make_turnaround(make_viewpoints(1), Vec::new(), 1, None);
         turnaround.response_tx = Some(tx);

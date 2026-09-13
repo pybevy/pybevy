@@ -2,6 +2,7 @@ use std::{
     any::TypeId,
     collections::{HashMap, HashSet, VecDeque},
     io::Cursor,
+    mem,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -12,7 +13,7 @@ use base64::Engine;
 use bevy::{
     camera::visibility::{RenderLayers, VisibilityClass},
     ecs::world::World,
-    gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore},
+    gizmos::config::GizmoConfigStore,
     light::cluster::ClusterVisibilityClass,
     prelude::*,
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
@@ -36,6 +37,12 @@ use crate::{
 };
 
 const ENTITY_CAPTURE_LAYER: usize = 63;
+
+/// Original `enabled` state of every gizmo config group a capture turned off.
+pub type GizmoEnabledRestore = Vec<(TypeId, bool)>;
+
+/// Wait for visibility to reflect the isolated render layers before capture.
+const ENTITY_ISOLATION_SETTLE_FRAMES: u32 = 4;
 
 #[derive(Resource)]
 pub struct EntityCaptureIsolationActive;
@@ -228,8 +235,8 @@ pub struct ScreenshotResponder {
     pub debug_cleanup: Option<DebugCameraCleanup>,
     pub ui_restore: Option<Vec<(Entity, Visibility)>>,
     pub entity_isolation: Option<EntityCaptureIsolation>,
-    /// If gizmos were toggled for this screenshot, the original enabled state to restore.
-    pub gizmo_restore: Option<bool>,
+    /// If gizmos were toggled for this screenshot, the group states to restore.
+    pub gizmo_restore: GizmoEnabledRestore,
     /// Extra JSON fields to merge into the screenshot response.
     pub extra_response: Option<serde_json::Value>,
     pub response_kind: CaptureResponseKind,
@@ -252,7 +259,7 @@ struct StagedScreenshot {
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     frames_remaining: u32,
     with_gizmos: bool,
-    gizmo_restore: Option<bool>,
+    gizmo_restore: GizmoEnabledRestore,
     max_width: Option<u32>,
     debug_cleanup: Option<DebugCameraCleanup>,
     ui_restore: Option<Vec<(Entity, Visibility)>>,
@@ -286,7 +293,7 @@ pub struct ActiveTimeline {
     pub hide_ui: bool,
     pub with_gizmos: bool,
     pub ui_restore: Option<Vec<(Entity, Visibility)>>,
-    pub gizmo_restore: Option<bool>,
+    pub gizmo_restore: GizmoEnabledRestore,
     /// Last headless readback sequence observed by this timeline.
     pub headless_sequence: Option<u64>,
     /// Frames spent waiting on spawned captures after the schedule drained.
@@ -402,9 +409,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                 Ok(cleanup) => cleanup,
                 Err(error) => {
                     let _ = screenshot.response_tx.send(Err(error));
-                    if let Some(was_enabled) = screenshot.gizmo_restore {
-                        set_gizmos_enabled(world, was_enabled);
-                    }
+                    restore_gizmos_enabled(world, screenshot.gizmo_restore);
                     continue;
                 }
             }
@@ -413,17 +418,15 @@ pub fn process_pending_screenshots(world: &mut World) {
             None
         };
 
-        let entity_isolation = if let Some(entity_ref) = screenshot.entity.as_ref() {
-            match begin_entity_capture_isolation(world, entity_ref, screenshot.with_gizmos) {
+        let entity_isolation = if let Some(entity_ref) = screenshot.entity.take() {
+            match begin_entity_capture_isolation(world, &entity_ref, screenshot.with_gizmos) {
                 Ok(isolation) => Some(isolation),
                 Err(error) => {
                     let _ = screenshot.response_tx.send(Err(error));
                     if let Some(cleanup) = debug_cleanup {
                         cleanup_debug_camera_world(cleanup, world);
                     }
-                    if let Some(was_enabled) = screenshot.gizmo_restore {
-                        set_gizmos_enabled(world, was_enabled);
-                    }
+                    restore_gizmos_enabled(world, screenshot.gizmo_restore);
                     continue;
                 }
             }
@@ -444,7 +447,11 @@ pub fn process_pending_screenshots(world: &mut World) {
             let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
             staged.pending.push(StagedScreenshot {
                 response_tx: screenshot.response_tx,
-                frames_remaining: if entity_isolation.is_some() { 4 } else { 2 },
+                frames_remaining: if entity_isolation.is_some() {
+                    ENTITY_ISOLATION_SETTLE_FRAMES
+                } else {
+                    2
+                },
                 with_gizmos: screenshot.with_gizmos,
                 gizmo_restore: screenshot.gizmo_restore,
                 max_width: screenshot.max_width,
@@ -457,19 +464,19 @@ pub fn process_pending_screenshots(world: &mut World) {
                 frames_waited: 0,
             });
         } else {
-            // Normal path: spawn Screenshot entity immediately
             let has_window = world
                 .query_filtered::<Entity, With<PrimaryWindow>>()
                 .iter(world)
                 .next()
                 .is_some();
 
-            if has_window {
-                let gizmo_restore = screenshot.gizmo_restore.take().or_else(|| {
-                    (!screenshot.with_gizmos)
-                        .then(|| set_gizmos_enabled(world, false))
-                        .flatten()
-                });
+            // An isolated capture always stages: capturing in this same run
+            // would grab a frame laid out before the isolation.
+            if has_window && entity_isolation.is_none() {
+                let mut gizmo_restore = mem::take(&mut screenshot.gizmo_restore);
+                if gizmo_restore.is_empty() && !screenshot.with_gizmos {
+                    gizmo_restore = set_gizmos_enabled(world, false);
+                }
 
                 let entity = world.spawn(Screenshot::primary_window()).id();
 
@@ -494,7 +501,11 @@ pub fn process_pending_screenshots(world: &mut World) {
                 let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
                 staged.pending.push(StagedScreenshot {
                     response_tx: screenshot.response_tx,
-                    frames_remaining: if entity_isolation.is_some() { 4 } else { 2 },
+                    frames_remaining: if entity_isolation.is_some() {
+                        ENTITY_ISOLATION_SETTLE_FRAMES
+                    } else {
+                        2
+                    },
                     with_gizmos: screenshot.with_gizmos,
                     gizmo_restore: screenshot.gizmo_restore,
                     max_width: screenshot.max_width,
@@ -519,7 +530,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                 s.frames_remaining -= 1;
                 still_waiting.push(s);
             } else {
-                // Debug camera has rendered — capture now
+                // Debug camera has rendered - capture now
                 let has_window = world
                     .query_filtered::<Entity, With<PrimaryWindow>>()
                     .iter(world)
@@ -541,11 +552,10 @@ pub fn process_pending_screenshots(world: &mut World) {
                 }
 
                 if has_window {
-                    let gizmo_restore = s.gizmo_restore.take().or_else(|| {
-                        (!s.with_gizmos)
-                            .then(|| set_gizmos_enabled(world, false))
-                            .flatten()
-                    });
+                    let mut gizmo_restore = mem::take(&mut s.gizmo_restore);
+                    if gizmo_restore.is_empty() && !s.with_gizmos {
+                        gizmo_restore = set_gizmos_enabled(world, false);
+                    }
 
                     let entity = world.spawn(Screenshot::primary_window()).id();
 
@@ -580,9 +590,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                     if let Some(isolation) = s.entity_isolation {
                         isolation.restore_world(world);
                     }
-                    if let Some(was_enabled) = s.gizmo_restore {
-                        set_gizmos_enabled(world, was_enabled);
-                    }
+                    restore_gizmos_enabled(world, s.gizmo_restore);
                 }
             }
         }
@@ -612,9 +620,7 @@ fn fail_staged_screenshot(world: &mut World, staged: StagedScreenshot, message: 
     if let Some(isolation) = staged.entity_isolation {
         isolation.restore_world(world);
     }
-    if let Some(was_enabled) = staged.gizmo_restore {
-        set_gizmos_enabled(world, was_enabled);
-    }
+    restore_gizmos_enabled(world, staged.gizmo_restore);
 }
 
 /// Fail responders whose capture readback never arrived, restoring the
@@ -654,9 +660,7 @@ fn expire_stuck_screenshot_responders(world: &mut World) {
         if let Some(restore) = responder.ui_restore {
             restore_ui_nodes(world, restore);
         }
-        if let Some(was_enabled) = responder.gizmo_restore {
-            set_gizmos_enabled(world, was_enabled);
-        }
+        restore_gizmos_enabled(world, responder.gizmo_restore);
         if let Some(isolation) = responder.entity_isolation {
             isolation.restore_world(world);
         }
@@ -685,9 +689,7 @@ fn fail_timeline(
     if let Some(restore) = timeline.ui_restore.take() {
         restore_ui_nodes(world, restore);
     }
-    if let Some(was_enabled) = timeline.gizmo_restore.take() {
-        set_gizmos_enabled(world, was_enabled);
-    }
+    restore_gizmos_enabled(world, mem::take(&mut timeline.gizmo_restore));
     if let Some(tx) = timeline.response_tx.take() {
         let _ = tx.send(Err(ControlError::internal(message)));
     }
@@ -712,6 +714,30 @@ pub fn process_pending_timelines(world: &mut World) {
     let current_headless_sequence = (!has_window)
         .then(|| headless_frame_sequence(world))
         .flatten();
+
+    // Suppress the overlay before the schedule is walked: the frame the first
+    // tile reads from is already composed, so this must land a frame earlier.
+    let pending_visibility: Vec<u64> = timelines
+        .active
+        .iter()
+        .filter(|(_, timeline)| !timeline.overlay_suppressed)
+        .map(|(&id, _)| id)
+        .collect();
+    for id in pending_visibility {
+        let Some((hide_ui, with_gizmos)) = timelines
+            .active
+            .get(&id)
+            .map(|timeline| (timeline.hide_ui, timeline.with_gizmos))
+        else {
+            continue;
+        };
+        let (ui_restore, gizmo_restore) = prepare_capture_visibility(world, hide_ui, with_gizmos);
+        if let Some(timeline) = timelines.active.get_mut(&id) {
+            timeline.overlay_suppressed = true;
+            timeline.ui_restore = ui_restore;
+            timeline.gizmo_restore = gizmo_restore;
+        }
+    }
 
     // Collect timeline IDs that need a capture this frame
     let mut captures_to_spawn: Vec<(u64, u32)> = Vec::new();
@@ -778,24 +804,6 @@ pub fn process_pending_timelines(world: &mut World) {
         }
     }
 
-    // Apply capture visibility for the duration of each timeline when its
-    // first capture becomes ready. Restore it after the contact sheet is
-    // complete.
-    for (id, _) in &captures_to_spawn {
-        let capture_options = timelines.active.get(id).and_then(|timeline| {
-            (!timeline.overlay_suppressed).then_some((timeline.hide_ui, timeline.with_gizmos))
-        });
-        if let Some((hide_ui, with_gizmos)) = capture_options {
-            let (ui_restore, gizmo_restore) =
-                prepare_capture_visibility(world, hide_ui, with_gizmos);
-            if let Some(timeline) = timelines.active.get_mut(id) {
-                timeline.overlay_suppressed = true;
-                timeline.ui_restore = ui_restore;
-                timeline.gizmo_restore = gizmo_restore;
-            }
-        }
-    }
-
     world.insert_resource(timelines);
 
     if has_window {
@@ -850,9 +858,7 @@ pub fn process_pending_timelines(world: &mut World) {
                                 if let Some(restore) = timeline.ui_restore.take() {
                                     ui_restores.push(restore);
                                 }
-                                if let Some(was_enabled) = timeline.gizmo_restore.take() {
-                                    gizmo_restores.push(was_enabled);
-                                }
+                                gizmo_restores.push(mem::take(&mut timeline.gizmo_restore));
                             }
                         }
                     }
@@ -866,24 +872,48 @@ pub fn process_pending_timelines(world: &mut World) {
                 for restore in ui_restores {
                     restore_ui_nodes(world, restore);
                 }
-                for was_enabled in gizmo_restores {
-                    set_gizmos_enabled(world, was_enabled);
+                for restore in gizmo_restores {
+                    restore_gizmos_enabled(world, restore);
                 }
             }
         }
     }
 }
 
-/// Set gizmo visibility for the default gizmo group, returning the original enabled state.
-fn set_gizmos_enabled(world: &mut World, enabled: bool) -> Option<bool> {
-    let mut store = world.get_resource_mut::<GizmoConfigStore>()?;
-    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-    let was_enabled = config.enabled;
-    if was_enabled != enabled {
+/// Set gizmo visibility for every registered gizmo config group, returning the
+/// original enabled state of each group that changed. Component-driven markers
+/// (`ShowAabbGizmo`, `ShowLightGizmo`) draw through their own groups, so hiding
+/// only the default group would leave them in the capture.
+fn set_gizmos_enabled(world: &mut World, enabled: bool) -> GizmoEnabledRestore {
+    let mut restore = GizmoEnabledRestore::new();
+    let Some(mut store) = world.get_resource_mut::<GizmoConfigStore>() else {
+        return restore;
+    };
+    for (group, config, _) in store.iter_mut() {
+        if config.enabled == enabled {
+            continue;
+        }
+        restore.push((*group, config.enabled));
         config.enabled = enabled;
-        Some(was_enabled)
-    } else {
-        None
+    }
+    restore
+}
+
+/// Replay the group states recorded by `set_gizmos_enabled`.
+fn restore_gizmo_configs(store: &mut GizmoConfigStore, restore: GizmoEnabledRestore) {
+    for (group, was_enabled) in restore {
+        if let Some((config, _)) = store.get_config_mut_dyn(&group) {
+            config.enabled = was_enabled;
+        }
+    }
+}
+
+fn restore_gizmos_enabled(world: &mut World, restore: GizmoEnabledRestore) {
+    if restore.is_empty() {
+        return;
+    }
+    if let Some(mut store) = world.get_resource_mut::<GizmoConfigStore>() {
+        restore_gizmo_configs(&mut store, restore);
     }
 }
 
@@ -892,7 +922,7 @@ pub(crate) fn prepare_pending_screenshot_gizmos(
     world: &mut World,
     screenshot: &mut PendingScreenshot,
 ) {
-    if !screenshot.with_gizmos && screenshot.gizmo_restore.is_none() {
+    if !screenshot.with_gizmos && screenshot.gizmo_restore.is_empty() {
         screenshot.gizmo_restore = set_gizmos_enabled(world, false);
     }
 }
@@ -973,12 +1003,14 @@ pub(crate) fn prepare_capture_visibility(
     world: &mut World,
     hide_ui: bool,
     with_gizmos: bool,
-) -> (Option<Vec<(Entity, Visibility)>>, Option<bool>) {
+) -> (Option<Vec<(Entity, Visibility)>>, GizmoEnabledRestore) {
     suppress_internal_overlay(world);
     let ui_restore = hide_ui.then(|| hide_ui_nodes(world, None));
-    let gizmo_restore = (!with_gizmos)
-        .then(|| set_gizmos_enabled(world, false))
-        .flatten();
+    let gizmo_restore = if with_gizmos {
+        GizmoEnabledRestore::new()
+    } else {
+        set_gizmos_enabled(world, false)
+    };
     (ui_restore, gizmo_restore)
 }
 
@@ -992,7 +1024,7 @@ pub(crate) fn release_internal_overlay(world: &mut World) {
 /// Set up a debug camera for a screenshot.
 ///
 /// Reuses an existing Camera3d when possible to avoid a crash in
-/// `prepare_lights` — a newly spawned Camera3d won't have cascade shadow
+/// `prepare_lights` - a newly spawned Camera3d won't have cascade shadow
 /// data populated by `build_directional_light_cascades` (runs in PostUpdate,
 /// before Last where we spawn), causing an `unwrap()` panic on the cascade
 /// lookup.  Reusing an existing camera preserves the cascade data.
@@ -1047,7 +1079,7 @@ pub(crate) fn setup_debug_camera_with_up(
         // Move camera to debug position and ensure it is active.
         // Set both Transform and GlobalTransform so that view uniforms
         // (view.world_position) are correct even before propagate_transforms
-        // runs in the next PostUpdate — this function runs in Last.
+        // runs in the next PostUpdate - this function runs in Last.
         if let Some(mut t) = world.get_mut::<Transform>(reuse) {
             *t = target_transform;
         }
@@ -1090,7 +1122,7 @@ pub(crate) fn setup_debug_camera_with_up(
             ));
         }
 
-        // No Camera3d exists — spawn a new one.
+        // No Camera3d exists - spawn a new one.
         // Cascade crash is unlikely here since the scene probably has no directional lights.
         let original_cameras = all_cameras.clone();
         for (entity, _) in &all_cameras {
@@ -1238,11 +1270,11 @@ pub fn screenshot_captured_observer(
                     }
                 }
 
-                if let Some(was_enabled) = timeline.gizmo_restore.take()
+                let gizmo_restore = mem::take(&mut timeline.gizmo_restore);
+                if !gizmo_restore.is_empty()
                     && let Some(store) = gizmo_store.as_deref_mut()
                 {
-                    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-                    config.enabled = was_enabled;
+                    restore_gizmo_configs(store, gizmo_restore);
                 }
 
                 // Clean up debug camera if present
@@ -1292,11 +1324,10 @@ pub fn screenshot_captured_observer(
     }
 
     // Restore gizmo visibility
-    if let Some(was_enabled) = responder.gizmo_restore
+    if !responder.gizmo_restore.is_empty()
         && let Some(mut store) = gizmo_store
     {
-        let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-        config.enabled = was_enabled;
+        restore_gizmo_configs(&mut store, responder.gizmo_restore);
     }
 
     if let Some(isolation) = responder.entity_isolation {
@@ -1615,7 +1646,9 @@ fn capture_headless_frame(
 mod tests {
     use bevy::{
         asset::RenderAssetUsages,
+        gizmos::config::DefaultGizmoConfigGroup,
         image::Image,
+        light::gizmos::LightGizmoConfigGroup,
         render::{
             render_resource::{Extent3d, TextureDimension, TextureFormat},
             view::window::screenshot::Screenshot,
@@ -1754,7 +1787,7 @@ mod tests {
     #[test]
     fn setup_debug_camera_rejects_camera2d_only_scene() {
         let mut world = World::new();
-        let camera = world.spawn(Camera2d::default()).id();
+        let camera = world.spawn(Camera2d).id();
         let req = DebugCameraRequest {
             position: [0.0, 0.0, 500.0],
             look_at: [0.0, 0.0, 0.0],
@@ -1775,7 +1808,7 @@ mod tests {
     #[test]
     fn rejected_camera2d_override_restores_capture_state() {
         let mut world = world_with_gizmos();
-        let camera = world.spawn(Camera2d::default()).id();
+        let camera = world.spawn(Camera2d).id();
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let (response_tx, mut response_rx) = oneshot::channel();
         world.insert_resource(PendingScreenshots {
@@ -1784,7 +1817,7 @@ mod tests {
                 frames_remaining: 0,
                 required_render_epoch: None,
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_camera: Some(DebugCameraRequest {
                     position: [0.0, 0.0, 500.0],
@@ -1896,7 +1929,7 @@ mod tests {
                 response_tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_cleanup: Some(cleanup),
                 ui_restore: None,
@@ -1997,6 +2030,10 @@ mod tests {
         config.enabled
     }
 
+    fn default_group_restore(was_enabled: bool) -> GizmoEnabledRestore {
+        vec![(TypeId::of::<DefaultGizmoConfigGroup>(), was_enabled)]
+    }
+
     #[test]
     fn set_gizmos_enabled_disables_when_enabled() {
         let mut world = world_with_gizmos();
@@ -2004,7 +2041,7 @@ mod tests {
 
         let restore = set_gizmos_enabled(&mut world, false);
         assert!(!gizmos_enabled(&world));
-        assert_eq!(restore, Some(true));
+        assert_eq!(restore, default_group_restore(true));
     }
 
     #[test]
@@ -2013,14 +2050,14 @@ mod tests {
         // Gizmos default to enabled; setting true should be a no-op
         let restore = set_gizmos_enabled(&mut world, true);
         assert!(gizmos_enabled(&world));
-        assert_eq!(restore, None);
+        assert!(restore.is_empty());
     }
 
     #[test]
-    fn set_gizmos_enabled_returns_none_without_resource() {
+    fn set_gizmos_enabled_returns_nothing_without_resource() {
         let mut world = World::new();
         let restore = set_gizmos_enabled(&mut world, false);
-        assert_eq!(restore, None);
+        assert!(restore.is_empty());
     }
 
     #[test]
@@ -2033,9 +2070,7 @@ mod tests {
         assert!(!gizmos_enabled(&world));
 
         // Restore original state
-        if let Some(was_enabled) = restore {
-            set_gizmos_enabled(&mut world, was_enabled);
-        }
+        restore_gizmos_enabled(&mut world, restore);
         assert!(gizmos_enabled(&world));
     }
 
@@ -2044,11 +2079,33 @@ mod tests {
         let mut world = world_with_gizmos();
 
         let first = set_gizmos_enabled(&mut world, false);
-        assert_eq!(first, Some(true));
+        assert_eq!(first, default_group_restore(true));
 
-        // Already disabled — should be a no-op
         let second = set_gizmos_enabled(&mut world, false);
-        assert_eq!(second, None);
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn set_gizmos_enabled_covers_every_registered_group() {
+        let mut world = world_with_gizmos();
+        world
+            .resource_mut::<GizmoConfigStore>()
+            .insert(GizmoConfig::default(), LightGizmoConfigGroup::default());
+
+        let restore = set_gizmos_enabled(&mut world, false);
+
+        {
+            let store = world.resource::<GizmoConfigStore>();
+            assert!(!store.config::<DefaultGizmoConfigGroup>().0.enabled);
+            assert!(!store.config::<LightGizmoConfigGroup>().0.enabled);
+        }
+        assert_eq!(restore.len(), 2);
+
+        restore_gizmos_enabled(&mut world, restore);
+
+        let store = world.resource::<GizmoConfigStore>();
+        assert!(store.config::<DefaultGizmoConfigGroup>().0.enabled);
+        assert!(store.config::<LightGizmoConfigGroup>().0.enabled);
     }
 
     /// Set up a World with gizmos + PendingScreenshots + a PrimaryWindow entity.
@@ -2068,7 +2125,7 @@ mod tests {
                 frames_remaining: 0,
                 required_render_epoch: None,
                 with_gizmos,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
@@ -2114,6 +2171,41 @@ mod tests {
     }
 
     #[test]
+    fn windowed_entity_capture_stages_before_spawning_the_screenshot() {
+        let mut world = world_with_gizmos();
+        world.spawn(PrimaryWindow);
+        world.spawn(Name::new("Target"));
+        let (tx, _rx) = oneshot::channel();
+        world.insert_resource(PendingScreenshots {
+            pending: vec![PendingScreenshot {
+                response_tx: tx,
+                frames_remaining: 0,
+                required_render_epoch: None,
+                with_gizmos: false,
+                gizmo_restore: GizmoEnabledRestore::new(),
+                max_width: None,
+                debug_camera: None,
+                hide_ui: false,
+                entity: Some(EntityRef::Name("Target".to_string())),
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+
+        let mut query = world.query::<&Screenshot>();
+        assert_eq!(query.iter(&world).count(), 0);
+        let staged = world.resource::<StagedScreenshots>();
+        assert_eq!(staged.pending.len(), 1);
+        assert!(staged.pending[0].entity_isolation.is_some());
+        assert_eq!(
+            staged.pending[0].frames_remaining,
+            ENTITY_ISOLATION_SETTLE_FRAMES - 1
+        );
+    }
+
+    #[test]
     fn process_screenshot_stores_gizmo_restore_in_responder() {
         let (mut world, _rx) = world_with_pending_screenshot(false);
 
@@ -2123,7 +2215,7 @@ mod tests {
         assert_eq!(responders.map.len(), 1);
         let responder = responders.map.values().next().unwrap();
         // Should store the original enabled state for restoration
-        assert_eq!(responder.gizmo_restore, Some(true));
+        assert_eq!(responder.gizmo_restore, default_group_restore(true));
     }
 
     #[test]
@@ -2135,7 +2227,7 @@ mod tests {
         let responders = world.resource::<PendingScreenshotResponders>();
         let responder = responders.map.values().next().unwrap();
         // Gizmo screenshot should not need restoration
-        assert_eq!(responder.gizmo_restore, None);
+        assert!(responder.gizmo_restore.is_empty());
     }
 
     #[test]
@@ -2148,7 +2240,7 @@ mod tests {
                 frames_remaining: 2,
                 required_render_epoch: None,
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
@@ -2170,7 +2262,10 @@ mod tests {
         let pending = world.resource::<PendingScreenshots>();
         assert_eq!(pending.pending.len(), 1);
         assert_eq!(pending.pending[0].frames_remaining, 1);
-        assert_eq!(pending.pending[0].gizmo_restore, Some(true));
+        assert_eq!(
+            pending.pending[0].gizmo_restore,
+            default_group_restore(true)
+        );
     }
 
     #[test]
@@ -2186,7 +2281,7 @@ mod tests {
                 frames_remaining: 2,
                 required_render_epoch: Some(required_render_epoch),
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_camera: None,
                 hide_ui: false,
@@ -2221,7 +2316,7 @@ mod tests {
                 frames_remaining: 0,
                 required_render_epoch: None,
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_camera: None,
                 hide_ui: true,
@@ -2254,7 +2349,7 @@ mod tests {
                 frames_remaining: 0,
                 required_render_epoch: None,
                 with_gizmos: true,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: Some(512),
                 debug_camera: Some(DebugCameraRequest {
                     position: [10.0, 5.0, 0.0],
@@ -2302,7 +2397,7 @@ mod tests {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false, // Normal screenshot via debug camera
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_cleanup: Some(cleanup),
                 ui_restore: None,
@@ -2375,7 +2470,7 @@ mod tests {
             hide_ui: true,
             with_gizmos: false,
             ui_restore: None,
-            gizmo_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -2384,7 +2479,7 @@ mod tests {
         assert!(result.is_ok());
         let val = result.unwrap();
         assert!(val.get("image").is_some());
-        assert!(val["image"].as_str().unwrap().len() > 0);
+        assert!(!val["image"].as_str().unwrap().is_empty());
         assert!(val.get("width").is_some());
         assert!(val.get("height").is_some());
         assert_eq!(val["format"], "png");
@@ -2410,7 +2505,7 @@ mod tests {
             hide_ui: true,
             with_gizmos: false,
             ui_restore: None,
-            gizmo_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -2438,7 +2533,7 @@ mod tests {
             hide_ui: true,
             with_gizmos: false,
             ui_restore: None,
-            gizmo_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -2464,7 +2559,7 @@ mod tests {
             hide_ui: true,
             with_gizmos: false,
             ui_restore: None,
-            gizmo_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -2673,6 +2768,60 @@ mod tests {
         assert_eq!(world.resource::<OverlaySuppression>().0, 0);
     }
 
+    /// The overlay is hidden on the first frame the timeline is seen, before
+    /// any capture spawns.
+    #[test]
+    fn timeline_suppresses_the_overlay_before_the_first_capture() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 255, 255, 255], 1, 1)),
+            sequence: 1,
+        });
+        let overlay = world.spawn((Visibility::Visible, InternalOverlayUi)).id();
+
+        let (tx, _rx) = oneshot::channel();
+        let mut pending = PendingTimelines::default();
+        pending.active.insert(
+            0,
+            ActiveTimeline {
+                response_tx: Some(tx),
+                max_width: None,
+                columns: 2,
+                debug_cleanup: None,
+                // Nothing captures on this frame: the front of the schedule
+                // only counts down.
+                schedule: VecDeque::from([3, 5]),
+                total_captures: 2,
+                next_capture_index: 0,
+                collected: vec![],
+                overlay_suppressed: false,
+                hide_ui: true,
+                with_gizmos: false,
+                ui_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
+                headless_sequence: None,
+                stall_frames: 0,
+            },
+        );
+        world.insert_resource(pending);
+
+        process_pending_timelines(&mut world);
+
+        assert_eq!(
+            *world.get::<Visibility>(overlay).unwrap(),
+            Visibility::Hidden,
+            "the overlay must already be hidden on the frame before the first capture"
+        );
+        assert!(
+            world
+                .resource::<PendingTimelines>()
+                .active
+                .get(&0)
+                .is_some_and(|timeline| timeline.overlay_suppressed),
+            "suppression must be recorded so it is released once"
+        );
+    }
+
     /// Timeline captures hold visibility suppression for the contact sheet.
     #[test]
     fn timeline_capture_applies_capture_visibility() {
@@ -2701,7 +2850,7 @@ mod tests {
                 hide_ui: true,
                 with_gizmos: false,
                 ui_restore: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -2737,7 +2886,7 @@ mod tests {
         );
         assert_eq!(
             world.resource::<PendingTimelines>().active[&0].gizmo_restore,
-            Some(true)
+            default_group_restore(true)
         );
 
         // A second tick of the same timeline must not double-count
@@ -2774,7 +2923,7 @@ mod tests {
                 debug_cleanup: None,
                 ui_restore: Some(vec![(ui, Visibility::Visible)]),
                 entity_isolation: None,
-                gizmo_restore: Some(true),
+                gizmo_restore: default_group_restore(true),
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 frames_waited: MAX_CAPTURE_WAIT_FRAMES,
@@ -2818,7 +2967,7 @@ mod tests {
                 debug_cleanup: None,
                 ui_restore: None,
                 entity_isolation: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 frames_waited: 0,
@@ -2849,7 +2998,7 @@ mod tests {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_cleanup: None,
                 ui_restore: None,
@@ -2884,7 +3033,7 @@ mod tests {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 max_width: None,
                 debug_cleanup: None,
                 ui_restore: None,
@@ -2926,7 +3075,7 @@ mod tests {
                 hide_ui: true,
                 with_gizmos: false,
                 ui_restore: Some(vec![(ui, Visibility::Visible)]),
-                gizmo_restore: Some(true),
+                gizmo_restore: default_group_restore(true),
                 headless_sequence: None,
                 stall_frames: MAX_CAPTURE_WAIT_FRAMES,
             },
@@ -2969,7 +3118,7 @@ mod tests {
                 hide_ui: false,
                 with_gizmos: true,
                 ui_restore: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -3021,7 +3170,7 @@ mod tests {
                 hide_ui: true,
                 with_gizmos: false,
                 ui_restore: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -3064,7 +3213,7 @@ mod tests {
         assert_eq!(result["height"], 80);
         assert_eq!(result["format"], "png");
         assert_eq!(result["encoding"], "base64");
-        assert!(result["image"].as_str().unwrap().len() > 0);
+        assert!(!result["image"].as_str().unwrap().is_empty());
     }
 
     #[test]
@@ -3219,7 +3368,7 @@ mod tests {
                 hide_ui: true,
                 with_gizmos: false,
                 ui_restore: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -3264,7 +3413,7 @@ mod tests {
                 hide_ui: true,
                 with_gizmos: false,
                 ui_restore: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -3307,7 +3456,7 @@ mod tests {
                 hide_ui: false,
                 with_gizmos: true,
                 ui_restore: None,
-                gizmo_restore: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: Some(5),
                 stall_frames: 0,
             },
@@ -3321,10 +3470,11 @@ mod tests {
         assert_eq!(timeline.next_capture_index, 0);
         assert!(rx.try_recv().is_err());
 
-        let mut frame = world.resource_mut::<HeadlessFrameBuffer>();
-        frame.latest = Some((vec![0, 255, 0, 255], 1, 1));
-        frame.sequence = 6;
-        drop(frame);
+        {
+            let mut frame = world.resource_mut::<HeadlessFrameBuffer>();
+            frame.latest = Some((vec![0, 255, 0, 255], 1, 1));
+            frame.sequence = 6;
+        }
 
         process_pending_timelines(&mut world);
 

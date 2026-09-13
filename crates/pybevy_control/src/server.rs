@@ -1096,6 +1096,7 @@ struct CheckOverlapsBody {
     #[serde(default = "default_max_float_gap")]
     max_float_gap: f32,
     ground_y: Option<f32>,
+    min_penetration: Option<f32>,
 }
 
 async fn check_overlaps(
@@ -1113,6 +1114,7 @@ async fn check_overlaps(
             include_siblings: body.include_siblings,
             max_float_gap: body.max_float_gap,
             ground_y: body.ground_y,
+            min_penetration: body.min_penetration,
         }),
     )
     .await
