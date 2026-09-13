@@ -1,5 +1,5 @@
 use bevy::{camera::Camera, math::Vec3};
-use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
+use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     mat4::PyMat4, ray::PyRay3d, rect::PyRect, urect::PyURect, uvec2::PyUVec2, vec2::PyVec2,
@@ -23,20 +23,20 @@ pub struct PyCamera {
 impl PyCamera {
     #[new]
     #[pyo3(signature = (
-        is_active = true,
         *,
+        viewport = None,
         order = 0,
+        is_active = true,
         msaa_writeback = PyMsaaWriteback::Auto,
         clear_color = None,
-        viewport = None,
-        sub_camera_view = None,
+        sub_camera_view = None
     ))]
     pub fn new(
-        is_active: bool,
+        viewport: Option<&PyViewport>,
         order: isize,
+        is_active: bool,
         msaa_writeback: PyMsaaWriteback,
         clear_color: Option<PyClearColorConfig>,
-        viewport: Option<&PyViewport>,
         sub_camera_view: Option<PySubCameraView>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut camera = Camera {
@@ -214,7 +214,7 @@ impl PyCamera {
         camera
             .viewport_to_world_2d(&transform, viewport_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
     }
 
     pub fn world_to_viewport(
@@ -229,7 +229,7 @@ impl PyCamera {
         camera
             .world_to_viewport(&transform, world_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
     }
 
     pub fn viewport_to_world(
@@ -244,7 +244,7 @@ impl PyCamera {
         camera
             .viewport_to_world(&transform, viewport_pos)
             .map(|ray| ray.into())
-            .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
     }
 
     pub fn world_to_viewport_with_depth(
@@ -259,7 +259,7 @@ impl PyCamera {
         camera
             .world_to_viewport_with_depth(&transform, world_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
     }
 
     pub fn clip_from_view(&self) -> PyResult<PyMat4> {
@@ -299,7 +299,7 @@ impl PyCamera {
         camera
             .viewport_to_ndc(viewport_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(format!("Viewport conversion failed: {:?}", e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
     }
 
     pub fn depth_ndc_to_view_z(&self, ndc_depth: f32) -> PyResult<f32> {

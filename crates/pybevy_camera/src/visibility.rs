@@ -44,7 +44,7 @@ impl PyVisibility {
     #[staticmethod]
     pub fn batch(py: Python, visibility: Py<PyAny>) -> PyResult<Py<PyAny>> {
         // Accept real NumPy, the bounded `pybevy.array` array (via `__array__`),
-        // and (nested) lists of truthy values, matching every other from_numpy.
+        // and (nested) lists of truthy values, matching every other batch.
         let array = py.import("numpy")?.call_method1("asarray", (visibility,))?;
         let batch = PyVisibilityBatch::new(array.unbind());
         Ok(Py::new(py, batch)?.into_any())

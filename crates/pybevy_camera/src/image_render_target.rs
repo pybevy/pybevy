@@ -29,7 +29,7 @@ impl From<PyImageRenderTarget> for ImageRenderTarget {
 #[pymethods]
 impl PyImageRenderTarget {
     #[new]
-    #[pyo3(signature = (handle, scale_factor = 1.0))]
+    #[pyo3(signature = (*, handle, scale_factor = 1.0))]
     pub fn new(handle: &Bound<'_, PyAny>, scale_factor: f32) -> PyResult<Self> {
         let handle = extract_handle_from_any(handle)?;
         Ok(Self {

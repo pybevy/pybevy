@@ -1,7 +1,7 @@
 use bevy::camera::visibility::CubemapVisibleEntities;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::visible_mesh_entities::PyVisibleMeshEntities;
 
@@ -25,8 +25,6 @@ impl PyCubemapVisibleEntities {
     }
 
     pub fn get(&self, py: Python<'_>, i: usize) -> PyResult<Py<PyVisibleMeshEntities>> {
-        use pyo3::exceptions::PyIndexError;
-
         if i >= 6 {
             return Err(PyIndexError::new_err("Cubemap face index must be 0-5"));
         }

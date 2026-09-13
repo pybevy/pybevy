@@ -44,7 +44,7 @@ impl PyNormalizedRenderTarget {
     fn __repr__(&self) -> String {
         match self {
             Self::Window { value } => {
-                let value: PyNormalizedWindowRef = (*value);
+                let value: PyNormalizedWindowRef = *value;
                 format!("NormalizedRenderTarget.Window({value:?})")
             }
             Self::Image { value } => {
@@ -52,7 +52,7 @@ impl PyNormalizedRenderTarget {
                 format!("NormalizedRenderTarget.Image({value:?})")
             }
             Self::TextureView { value } => {
-                let value: PyManualTextureViewHandle = (*value);
+                let value: PyManualTextureViewHandle = *value;
                 format!("NormalizedRenderTarget.TextureView({value:?})")
             }
             Self::None { width, height } => {

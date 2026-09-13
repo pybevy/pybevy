@@ -5,7 +5,7 @@ use pybevy_math::{
     affine3a::PyAffine3A,
     primitives::{half_space::PyHalfSpace, view_frustum::PyViewFrustum},
 };
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::sphere::PySphere;
 
@@ -52,8 +52,6 @@ impl PyFrustum {
 
     #[setter]
     pub fn set_half_spaces(&mut self, half_spaces: Vec<PyHalfSpace>) -> PyResult<()> {
-        use pyo3::exceptions::PyValueError;
-
         if half_spaces.len() != 6 {
             return Err(PyValueError::new_err(
                 "Frustum requires exactly 6 half-spaces",

@@ -20,7 +20,7 @@ impl PyExposure {
 #[pymethods]
 impl PyExposure {
     #[new]
-    #[pyo3(signature = (ev100 = Exposure::EV100_BLENDER))]
+    #[pyo3(signature = (*, ev100 = Exposure::EV100_BLENDER))]
     pub fn new(ev100: f32) -> PyClassInitializer<Self> {
         Self::from_owned(Exposure { ev100 }).into()
     }

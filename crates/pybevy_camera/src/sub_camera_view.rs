@@ -70,7 +70,7 @@ impl PySubCameraView {
 #[pymethods]
 impl PySubCameraView {
     #[new]
-    #[pyo3(signature = (full_size=None, offset=None, size=None))]
+    #[pyo3(signature = (*, full_size=None, offset=None, size=None))]
     pub fn new(
         full_size: Option<PyUVec2>,
         offset: Option<PyVec2>,

@@ -47,33 +47,33 @@ class ScalingMode:
         __match_args__: ClassVar[tuple[Literal["width"], Literal["height"]]]
         width: float
         height: float
-        def __init__(self, width: float, height: float) -> None: ...
+        def __init__(self, *, width: float, height: float) -> None: ...
 
     class AutoMin(ScalingMode):
         """Preserve aspect ratio with minimum axis sizes."""
         __match_args__: ClassVar[tuple[Literal["min_width"], Literal["min_height"]]]
         min_width: float
         min_height: float
-        def __init__(self, min_width: float, min_height: float) -> None: ...
+        def __init__(self, *, min_width: float, min_height: float) -> None: ...
 
     class AutoMax(ScalingMode):
         """Preserve aspect ratio with maximum axis sizes."""
         __match_args__: ClassVar[tuple[Literal["max_width"], Literal["max_height"]]]
         max_width: float
         max_height: float
-        def __init__(self, max_width: float, max_height: float) -> None: ...
+        def __init__(self, *, max_width: float, max_height: float) -> None: ...
 
     class FixedVertical(ScalingMode):
         """Keep projection height constant and adjust width."""
         __match_args__: ClassVar[tuple[Literal["viewport_height"]]]
         viewport_height: float
-        def __init__(self, viewport_height: float) -> None: ...
+        def __init__(self, *, viewport_height: float) -> None: ...
 
     class FixedHorizontal(ScalingMode):
         """Keep projection width constant and adjust height."""
         __match_args__: ClassVar[tuple[Literal["viewport_width"]]]
         viewport_width: float
-        def __init__(self, viewport_width: float) -> None: ...
+        def __init__(self, *, viewport_width: float) -> None: ...
 
 class OrthographicProjection:
     """Orthographic camera projection for isometric and 2D games."""
@@ -87,12 +87,13 @@ class OrthographicProjection:
 
     def __init__(
         self,
+        *,
         near: float = 0.0,
         far: float = 1000.0,
         viewport_origin: Vec2 = ...,
         scaling_mode: ScalingMode = ...,
         scale: float = 1.0,
-        area: Rect = ...,
+        area: Rect = ...
     ) -> None: ...
 
     @staticmethod
@@ -134,6 +135,9 @@ class OrthographicProjection:
 
     def compute_frustum(self, camera_transform: GlobalTransform) -> Frustum:
         """Compute camera frustum from this projection and transform.
+
+        Bevy fills the near half-space with the forward-Z formula, so under
+        reverse-Z that slot mirrors the true near boundary.
 
         Args:
             camera_transform: The camera's global transform
@@ -189,8 +193,9 @@ class Camera3d(Component):
 
     def __init__(
         self,
+        *,
         depth_load_op: Camera3dDepthLoadOp = ...,
-        depth_texture_usages: Camera3dDepthTextureUsage = ...,
+        depth_texture_usages: Camera3dDepthTextureUsage = ...
     ) -> None: ...
     def __copy__(self) -> Camera3d: ...
     def __deepcopy__(self, memo: dict[int, object]) -> Camera3d: ...
@@ -216,7 +221,7 @@ class RenderTarget(Component):
     class None_(RenderTarget):
         __match_args__: ClassVar[tuple[Literal["size"]]]
         size: UVec2
-        def __init__(self, size: UVec2) -> None: ...
+        def __init__(self, *, size: UVec2) -> None: ...
 
     def as_image(self) -> Handle[ImageAsset] | None:
         """Get the image handle if this is an image render target.
@@ -278,9 +283,10 @@ class Viewport:
 
     def __init__(
         self,
+        *,
         physical_position: UVec2 = ...,
         physical_size: UVec2 = ...,
-        depth: tuple[float, float] = (0.0, 1.0),
+        depth: tuple[float, float] = (0.0, 1.0)
     ) -> None:
         """Create a new Viewport.
 
@@ -408,13 +414,13 @@ class Camera(Component):
 
     def __init__(
         self,
-        is_active: bool = True,
         *,
+        viewport: Viewport | None = None,
         order: int = 0,
+        is_active: bool = True,
         msaa_writeback: MsaaWriteback = ...,
         clear_color: ClearColorConfig | None = None,
-        viewport: Viewport | None = None,
-        sub_camera_view: SubCameraView | None = None,
+        sub_camera_view: SubCameraView | None = None
     ) -> None:
         """Create a new Camera with optional configuration.
 
@@ -748,9 +754,10 @@ class VisibilityRange(Component):
 
     def __init__(
         self,
+        *,
         start_margin: Range | None = None,
         end_margin: Range | None = None,
-        use_aabb: bool = False,
+        use_aabb: bool = False
     ) -> None: ...
     @staticmethod
     def abrupt(start: float, end: float) -> VisibilityRange:
@@ -830,7 +837,10 @@ class Sphere:
     def radius(self, value: float) -> None: ...
 
     def __init__(
-        self, center: Vec3A | None = None, radius: float = 0.0
+        self,
+        *,
+        center: Vec3A = Vec3A.ZERO,
+        radius: float = 0.0
     ) -> None: ...
 
 class Aabb(Component):
@@ -849,7 +859,10 @@ class Aabb(Component):
     def half_extents(self, value: Vec3A) -> None: ...
 
     def __init__(
-        self, center: Vec3A | None = None, half_extents: Vec3A | None = None
+        self,
+        *,
+        center: Vec3A = Vec3A.ZERO,
+        half_extents: Vec3A = Vec3A.ZERO
     ) -> None: ...
 
     @staticmethod
@@ -896,6 +909,10 @@ class Frustum(Component):
 
     Frustums are typically an apex-truncated square pyramid (a pyramid without the top) or a cuboid.
     Used for frustum culling to determine which entities should be rendered.
+
+    Under Bevy's reverse-Z projections the near half-space computed by
+    ``compute_frustum`` is the mirror of the true near boundary, so culling is
+    conservative and ``corners()`` reports a near face behind the camera.
     """
 
     value: ViewFrustum
@@ -961,9 +978,10 @@ class SubCameraView:
 
     def __init__(
         self,
+        *,
         full_size: UVec2 | None = None,
         offset: Vec2 | None = None,
-        size: UVec2 | None = None,
+        size: UVec2 | None = None
     ) -> None: ...
 
     @property
@@ -993,10 +1011,11 @@ class PhysicalCameraParameters:
 
     def __init__(
         self,
+        *,
         aperture_f_stops: float = 1.0,
         shutter_speed_s: float = 1.0 / 125.0,
         sensitivity_iso: float = 100.0,
-        sensor_height: float = 0.01866,
+        sensor_height: float = 0.01866
     ) -> None: ...
 
     @property
@@ -1233,7 +1252,7 @@ class Exposure(Component):
     EV100_BLENDER: ClassVar[float]
     """EV100 constant matching Blender's default (9.7)"""
 
-    def __init__(self, ev100: float = 9.7) -> None:
+    def __init__(self, *, ev100: float = 9.7) -> None:
         """Create a new Exposure component.
 
         Args:
@@ -1305,14 +1324,25 @@ class PerspectiveProjection:
     near: float
     far: float
     near_clip_plane: Vec4
-    """Custom near clipping plane (normal + distance), for mirror/reflection effects."""
+    """Oblique near clipping plane (normal + distance), for mirrors and portals.
+
+    Independent of `near`, which sets the ordinary near plane: this one replaces
+    it with a tilted plane so a mirror can clip everything in front of its
+    surface. `get_clip_from_view()` applies it.
+
+    A plane whose normal is exactly `(0, 0, -1)` means "no oblique plane" and is
+    skipped whatever its distance, so the default `Vec4(0, 0, -1, -0.1)` and, for
+    instance, `Vec4(0, 0, -1, -99)` both leave the projection alone. Tilt the
+    normal to make it take effect.
+    """
 
     def __init__(
         self,
+        *,
         fov: float = 0.7853982,
         aspect_ratio: float = 1.0,
         near: float = 0.1,
-        far: float = 1000.0,
+        far: float = 1000.0
     ) -> None: ...
 
     def get_clip_from_view(self) -> Mat4:
@@ -1346,6 +1376,9 @@ class PerspectiveProjection:
 
     def compute_frustum(self, camera_transform: GlobalTransform) -> Frustum:
         """Compute camera frustum from this projection and transform.
+
+        Bevy fills the near half-space with the forward-Z formula, so under
+        reverse-Z that slot mirrors the true near boundary.
 
         Args:
             camera_transform: The camera's global transform
@@ -1559,10 +1592,9 @@ class CameraMainTextureUsages(Component):
         """
 
 class MainPassResolutionOverride(Component):
-    """Overrides the resolution of the main camera pass.
-
-    When set on a camera entity, this will force the camera to render
-    at the specified resolution, regardless of the window or viewport size.
+    """Render-world-only component, read while preparing view uniforms;
+    main-world insertion is not extracted. The override uses physical pixels,
+    must be smaller than the viewport, and excludes post processing.
     """
 
     def __init__(self, value: UVec2) -> None:
@@ -1700,7 +1732,7 @@ class VisibilityClass(Component):
 
 
 class ImageRenderTarget:
-    def __init__(self, handle: Handle[ImageAsset], scale_factor: float = 1.0) -> None: ...
+    def __init__(self, *, handle: Handle[ImageAsset], scale_factor: float = 1.0) -> None: ...
     @property
     def handle(self) -> Handle[ImageAsset]: ...
     @property
@@ -1754,5 +1786,9 @@ class MotionVectorPrepass(Component):
     def __init__(self) -> None: ...
 
 class DeferredPrepass(Component):
-    """If added to Camera3d, deferred materials are rendered to the deferred gbuffer texture."""
+    """If added to Camera3d, deferred materials are rendered to the deferred gbuffer texture.
+    Deferred cameras also require Msaa.Off and DepthPrepass. With DepthPrepass
+    but no DeferredPrepass, forced-deferred meshes can panic in Bevy's prepass
+    queue and prevent frame readback.
+    """
     def __init__(self) -> None: ...
