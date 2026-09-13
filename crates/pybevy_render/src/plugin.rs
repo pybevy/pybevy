@@ -16,7 +16,7 @@ pub struct PyRenderPlugin {
 #[pymethods]
 impl PyRenderPlugin {
     #[new]
-    #[pyo3(signature = (power_preference = None, synchronous_pipeline_compilation = None))]
+    #[pyo3(signature = (*, power_preference = None, synchronous_pipeline_compilation = None))]
     pub fn new(
         power_preference: Option<PyPowerPreference>,
         synchronous_pipeline_compilation: Option<bool>,

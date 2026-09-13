@@ -8,7 +8,7 @@ from pybevy.pbr import StandardMaterial as StandardMaterial
 class Extent3d:
     """3D texture extent (width, height, depth_or_array_layers)."""
 
-    def __init__(self, width: int, height: int, depth_or_array_layers: int) -> None: ...
+    def __init__(self, *, width: int, height: int, depth_or_array_layers: int) -> None: ...
     @property
     def width(self) -> int:
         """Width of the texture."""
@@ -217,8 +217,9 @@ class RenderPlugin(Plugin):
 
     def __init__(
         self,
+        *,
         power_preference: PowerPreference | None = None,
-        synchronous_pipeline_compilation: bool | None = None,
+        synchronous_pipeline_compilation: bool | None = None
     ) -> None:
         """Create a RenderPlugin with optional configuration.
 
@@ -246,11 +247,12 @@ class ColorGradingSection:
 
     def __init__(
         self,
+        *,
         saturation: float = 1.0,
         contrast: float = 1.0,
         gamma: float = 1.0,
         gain: float = 1.0,
-        lift: float = 0.0,
+        lift: float = 0.0
     ) -> None: ...
 
     @property
@@ -290,12 +292,13 @@ class ColorGradingGlobal:
 
     def __init__(
         self,
+        *,
         exposure: float = 0.0,
         temperature: float = 0.0,
         tint: float = 0.0,
         hue: float = 0.0,
         post_saturation: float = 1.0,
-        midtones_range: tuple[float, float] = (0.2, 0.7),
+        midtones_range: tuple[float, float] = (0.2, 0.7)
     ) -> None: ...
 
     @property
@@ -350,10 +353,11 @@ class ColorGrading(Component):
 
     def __init__(
         self,
+        *,
         global_: ColorGradingGlobal = ...,
         shadows: ColorGradingSection = ...,
         midtones: ColorGradingSection = ...,
-        highlights: ColorGradingSection = ...,
+        highlights: ColorGradingSection = ...
     ) -> None: ...
 
     @property
@@ -455,7 +459,7 @@ class TemporalJitter(Component):
         >>> commands.spawn(Camera3d(), Camera(), jitter)
     """
 
-    def __init__(self, offset: Vec2 = Vec2.ZERO) -> None:
+    def __init__(self, *, offset: Vec2 = Vec2.ZERO) -> None:
         """Create a new TemporalJitter component.
 
         Args:

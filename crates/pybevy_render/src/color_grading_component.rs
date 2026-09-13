@@ -15,6 +15,7 @@ pub struct PyColorGrading {
 impl PyColorGrading {
     #[new]
     #[pyo3(signature = (
+        *,
         global_ = PyColorGradingGlobal::default(),
         shadows = PyColorGradingSection::default(),
         midtones = PyColorGradingSection::default(),
