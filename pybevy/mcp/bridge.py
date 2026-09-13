@@ -113,6 +113,7 @@ LOAD_SCENE_TOOL: JsonDict = {
 }
 
 _MAX_CAPTURED_OUTPUT_LINES = 100
+_STARTUP_TIMEOUT = 60.0
 
 
 GET_LOGS_TOOL: JsonDict = {
@@ -183,6 +184,7 @@ class McpBridge:
         self._output_lines: list[tuple[str, str]] = []
         self._output_repeat_counts: list[int] = []
         self._output_lock = threading.Lock()
+        self._control_listening = False
         self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._reaper_thread: threading.Thread | None = None
@@ -222,10 +224,16 @@ class McpBridge:
 
     def run(self) -> None:
         """Main loop: read stdin, dispatch, write stdout."""
-        if self._scene_path:
-            self._start_subprocess(self._scene_path)
-
         try:
+            if self._scene_path:
+                self._start_subprocess(self._scene_path)
+                startup_error, lookup_error = self._wait_for_startup()
+                bind_failure = self._control_bind_failure()
+                if lookup_error or bind_failure:
+                    _log(f"[MCP Bridge] Scene startup failed: {lookup_error or bind_failure}")
+                    self._stop_subprocess()
+                elif startup_error:
+                    _log(f"[MCP Bridge] Scene system failed during initial load: {startup_error}")
             for line in sys.stdin:
                 line = line.strip()
                 if not line:
@@ -929,7 +937,7 @@ class McpBridge:
         self._scene_display_path = display_path
         self._start_subprocess(path)
 
-        time.sleep(2.0)
+        startup_error, startup_lookup_error = self._wait_for_startup()
 
         proc = self._subprocess
         if proc is not None and proc.poll() is not None:
@@ -966,6 +974,14 @@ class McpBridge:
                 error_msg += f"\n\nSubprocess output:\n{bind_failure}"
             return self._error(req_id, -32603, error_msg)
 
+        if startup_lookup_error:
+            process_output = self._get_recent_process_output()
+            self._stop_subprocess()
+            error_msg = f"Scene startup did not complete: {startup_lookup_error}"
+            if process_output:
+                error_msg += f"\n\nSubprocess output:\n{process_output}"
+            return self._error(req_id, -32603, error_msg)
+
         status_parts = [
             f"Scene loaded: {display_path}",
             "PyBevy app starting with hot-reload enabled.",
@@ -979,7 +995,6 @@ class McpBridge:
                 f"\nWARNING: Python errors detected during startup:\n{stderr_errors}"
             )
 
-        startup_error, _ = self._get_last_system_error()
         if startup_error:
             self._pending_notifications.append(
                 {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
@@ -1149,10 +1164,10 @@ class McpBridge:
 
         return self._success(req_id, {"content": [{"type": "text", "text": output}]})
 
-    def _get_last_system_error(self) -> tuple[str, str | None]:
+    def _get_last_system_error(self, timeout: float = 2.0) -> tuple[str, str | None]:
         """Read the engine's live LastSystemError slot for error-only logs."""
         try:
-            payload = _control_last_error(self._engine_port, 2.0)
+            payload = _control_last_error(self._engine_port, timeout)
         except Exception as lookup_exception:
             return "", str(lookup_exception)
 
@@ -1206,6 +1221,37 @@ class McpBridge:
                     return line
         return None
 
+    def _wait_for_startup(self) -> tuple[str, str | None]:
+        deadline = time.monotonic() + _STARTUP_TIMEOUT
+        lookup_error = "the scene control listener did not start"
+        frame_seen = False
+        while True:
+            proc = self._subprocess
+            if proc is None:
+                return "", "the scene subprocess was not started"
+            if proc.poll() is not None:
+                for reader in (self._stdout_thread, self._stderr_thread):
+                    if reader is not None:
+                        reader.join(timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+                return "", None
+            if self._control_bind_failure():
+                return "", None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "", f"timed out after {_STARTUP_TIMEOUT:g}s: {lookup_error}"
+            with self._output_lock:
+                listening = self._control_listening
+            if listening:
+                # The next First request observes errors published in Last.
+                error, failure = self._get_last_system_error(timeout=min(0.25, remaining))
+                if failure is None:
+                    if frame_seen or error:
+                        return error, None
+                    frame_seen = True
+                    continue
+                lookup_error = failure
+            time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
+
     def _start_subprocess(self, path: str) -> None:
         port = find_free_port()
         self._subprocess_port = port
@@ -1219,6 +1265,7 @@ class McpBridge:
         _log(f"[MCP Bridge] Control port: {port}")
 
         with self._output_lock:
+            self._control_listening = False
             self._stderr_lines.clear()
             self._stderr_repeat_counts.clear()
             self._output_lines.clear()
@@ -1253,7 +1300,6 @@ class McpBridge:
 
         _log(f"[MCP Bridge] Started subprocess for {path} (pid={self._subprocess.pid})")
 
-        time.sleep(1.0)
         if self._subprocess.poll() is not None:
             exit_code = self._subprocess.returncode
             stderr_output = self._check_stderr_for_errors()
@@ -1278,6 +1324,7 @@ class McpBridge:
             self._subprocess = None
             self._subprocess_port = None
             with self._output_lock:
+                self._control_listening = False
                 self._stderr_lines.clear()
                 self._stderr_repeat_counts.clear()
                 self._output_lines.clear()
@@ -1334,6 +1381,10 @@ class McpBridge:
             self._append_process_output_locked(stream, line)
 
     def _append_process_output_locked(self, stream: str, line: str) -> None:
+        if stream == "stderr" and line == (
+            f"[Control] Server listening on http://127.0.0.1:{self._subprocess_port}"
+        ):
+            self._control_listening = True
         self._append_captured_line_locked(
             self._output_lines,
             self._output_repeat_counts,
