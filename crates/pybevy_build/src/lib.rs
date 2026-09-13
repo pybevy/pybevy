@@ -4,9 +4,7 @@
 //! [`copy_python_to_out_dir`] from your `build.rs`:
 //!
 //! ```rust,no_run
-//! fn main() {
-//!     pybevy_build::copy_python_to_out_dir();
-//! }
+//! pybevy_build::copy_python_to_out_dir();
 //! ```
 //!
 //! This locates pybevy's Python source tree via `cargo_metadata` and copies
