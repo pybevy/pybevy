@@ -84,6 +84,10 @@ def iter_descendants(entity: Entity, children_query: Query[Children]):
         yield from iter_descendants(child, children_query)
 ```
 
+Read the graph asset handle through `graph_component.handle`; keyword construction
+is `AnimationGraphHandle(handle=graph_handle)`. The old `.value` and `value=`
+spellings are not supported.
+
 **Critical gotcha:** `AnimationGraphHandle` must be inserted on the **same entity** as the `AnimationPlayer` (a child inside the scene hierarchy), not on the `WorldAssetRoot` entity. If placed on the wrong entity, nothing happens and there's no error.
 
 ## Animation Clip Naming

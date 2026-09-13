@@ -337,9 +337,9 @@ class AnimationGraphHandle(Component):
     Used to attach an animation graph to an entity with AnimationPlayer.
     """
 
-    def __init__(self, value: Handle[AnimationGraph]) -> None: ...
+    def __init__(self, handle: Handle[AnimationGraph]) -> None: ...
     @property
-    def value(self) -> Handle[AnimationGraph]:
+    def handle(self) -> Handle[AnimationGraph]:
         """Get the underlying asset handle."""
 
 class AnimationTargetId(Component):
