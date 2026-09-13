@@ -299,7 +299,7 @@ class DistanceFog(Component):
     def directional_light_exponent(self, value: float) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         directional_light_exponent: np.typing.ArrayLike | None = None,
         color: np.typing.ArrayLike | None = None,
@@ -366,7 +366,7 @@ class ScreenSpaceAmbientOcclusion(Component):
     def constant_object_thickness(self, value: float) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         constant_object_thickness: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
@@ -429,7 +429,7 @@ class WireframeColor(Component):
     def color(self, value: Color) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         color: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
@@ -624,7 +624,7 @@ class ScreenSpaceReflections(Component):
     def use_secant(self, value: bool) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         thickness: np.typing.ArrayLike | None = None,
         linear_steps: np.typing.ArrayLike | None = None,
@@ -659,7 +659,7 @@ class ContactShadows(Component):
     def length(self, value: float) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         linear_steps: np.typing.ArrayLike | None = None,
         thickness: np.typing.ArrayLike | None = None,
@@ -702,7 +702,7 @@ class Lightmap(Component):
     def bicubic_sampling(self, value: bool) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *, bicubic_sampling: np.typing.ArrayLike | None = None
     ) -> Batchable: ...
 
@@ -838,7 +838,7 @@ class AtmosphereSettings(Component):
     def rendering_method(self, value: AtmosphereMode) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         transmittance_lut_samples: np.typing.ArrayLike | None = None,
         multiscattering_lut_dirs: np.typing.ArrayLike | None = None,

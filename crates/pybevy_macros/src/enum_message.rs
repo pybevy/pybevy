@@ -19,8 +19,18 @@ pub(crate) fn expand(
     message_type: &syn::Type,
     writable: bool,
     generate_bridge: bool,
+    no_eq: bool,
+    no_debug: bool,
 ) -> TokenStream {
-    match try_expand(input, spec, message_type, writable, generate_bridge) {
+    match try_expand(
+        input,
+        spec,
+        message_type,
+        writable,
+        generate_bridge,
+        no_eq,
+        no_debug,
+    ) {
         Ok(tokens) => tokens,
         Err(error) => error.to_compile_error(),
     }
@@ -32,6 +42,8 @@ fn try_expand(
     message_type: &syn::Type,
     writable: bool,
     generate_bridge: bool,
+    no_eq: bool,
+    no_debug: bool,
 ) -> syn::Result<TokenStream> {
     let class = python_class_name(input)?;
     let py_type = spec.wrapper_name;
@@ -108,26 +120,21 @@ fn try_expand(
             quote! { #inner_type::#rust_name { .. } }
         };
         let signature = constructor_signature(fields);
-        let match_args_types = fields
-            .iter()
-            .filter(|field| !field.keyword_only)
-            .map(|_| quote! { &'static str })
-            .collect::<Vec<_>>();
-        let match_args_values = fields
-            .iter()
-            .filter(|field| !field.keyword_only)
-            .map(|field| field.python_name.as_str())
-            .collect::<Vec<_>>();
+        // The matching contract is independent of constructor parameter
+        // kinds: every payload field participates in declaration order.
+        let match_args_values = variant.match_args();
         let match_args = if match_args_values.is_empty() {
             quote! {
                 #[classattr]
                 const __match_args__: () = ();
             }
         } else {
+            let match_args_types = match_args_values.iter().map(|_| quote! { &'static str });
+            let values = match_args_values.iter().copied();
             quote! {
                 #[classattr]
                 fn __match_args__() -> (#(#match_args_types,)*) {
-                    (#(#match_args_values,)*)
+                    (#(#values,)*)
                 }
             }
         };
@@ -233,17 +240,30 @@ fn try_expand(
         quote! { <#inner_type as From<&#message_type>>::from(event) }
     };
 
+    let mut class_attrs: Vec<proc_macro2::TokenStream> = vec![
+        quote! { extends = pybevy_core::PyMessage },
+        quote! { subclass },
+        quote! { frozen },
+    ];
+    if !no_eq {
+        class_attrs.push(quote! { eq });
+    }
+    class_attrs.push(quote! { skip_from_py_object });
+    let mut derives = Vec::new();
+    if !no_debug {
+        derives.push(quote! { Debug });
+    }
+    if !no_eq {
+        derives.push(quote! { PartialEq });
+    }
+
     Ok(quote! {
         #[pyo3::pyclass(
             name = #python_name,
             module = #module,
-            extends = pybevy_core::PyMessage,
-            subclass,
-            frozen,
-            eq,
-            skip_from_py_object
+            #(#class_attrs,)*
         )]
-        #[derive(Debug, Clone, PartialEq)]
+        #[derive(#(#derives,)* Clone)]
         pub struct #py_type {
             inner: #inner_type,
         }

@@ -34,6 +34,10 @@ pub(crate) struct BevyEnumArgs {
     no_bridge: bool,
     /// Typed, loss-explicit storage mirror for a message enum.
     mirror: Option<Type>,
+    /// Skip the PartialEq derive (native types without PartialEq).
+    no_eq: bool,
+    /// Skip the Debug derive (native types without Debug).
+    no_debug: bool,
 }
 
 impl Parse for BevyEnumArgs {
@@ -51,6 +55,8 @@ impl Parse for BevyEnumArgs {
         let mut writable = false;
         let mut no_bridge = false;
         let mut mirror = None;
+        let mut no_eq = false;
+        let mut no_debug = false;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let option: Ident = input.parse()?;
@@ -65,6 +71,8 @@ impl Parse for BevyEnumArgs {
                 "message" => message = true,
                 "writable" => writable = true,
                 "no_bridge" => no_bridge = true,
+                "no_eq" => no_eq = true,
+                "no_debug" => no_debug = true,
                 "mirror" => {
                     input.parse::<Token![=]>()?;
                     mirror = Some(input.parse()?);
@@ -73,7 +81,7 @@ impl Parse for BevyEnumArgs {
                     return Err(syn::Error::new_spanned(
                         option,
                         format!(
-                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, component, resource, or mirror = Type",
+                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, no_eq, no_debug, component, resource, or mirror = Type",
                             other
                         ),
                     ));
@@ -136,6 +144,8 @@ impl Parse for BevyEnumArgs {
         }
 
         Ok(BevyEnumArgs {
+            no_eq,
+            no_debug,
             bevy_type,
             empty_tuple,
             unit_parens,
@@ -234,6 +244,8 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             bevy_type,
             args.writable,
             !args.no_bridge,
+            args.no_eq,
+            args.no_debug,
         )
         .into();
     }
@@ -510,7 +522,7 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             field.attrs.retain(|attr| {
                 !matches!(
                     attr.path().get_ident().map(ToString::to_string).as_deref(),
-                    Some("py_field" | "py_default" | "py_kw_only" | "py_type")
+                    Some("py_field" | "py_default" | "py_type")
                         | Some("py_try_into" | "py_materialize" | "py_borrow")
                 )
             });

@@ -24,6 +24,19 @@ pub(crate) struct VariantSpec<'a> {
     pub(crate) unsupported: bool,
 }
 
+impl<'a> VariantSpec<'a> {
+    /// Payload names in declaration order, independent of constructor kinds.
+    pub(crate) fn match_args(&self) -> Vec<&str> {
+        match &self.shape {
+            VariantShape::Unit | VariantShape::EmptyTuple => Vec::new(),
+            VariantShape::Tuple(fields) | VariantShape::Struct(fields) => fields
+                .iter()
+                .map(|field| field.python_name.as_str())
+                .collect(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BevyVariantShape {
     Unit,
@@ -53,6 +66,7 @@ pub(crate) struct FieldSpec<'a> {
     /// Returned wrapped values require exact nested-variant materialization.
     pub(crate) materialize: bool,
     pub(crate) default: Option<TokenStream>,
+    /// Constructor kind derived from Bevy shape, independent of matching.
     pub(crate) keyword_only: bool,
     /// Generate a Python setter for a struct-backed mutable storage base.
     pub(crate) writable: bool,
@@ -76,30 +90,53 @@ impl<'a> EnumSpec<'a> {
             .map(|variant| {
                 let python_name = pyo3_variant_name(&variant.attrs)
                     .unwrap_or_else(|| normalized_ident(&variant.ident));
-                let (shape, default_bevy_shape) = match &variant.fields {
-                    Fields::Unit => (VariantShape::Unit, BevyVariantShape::Unit),
-                    Fields::Unnamed(fields) if fields.unnamed.is_empty() => {
+                // Resolve tuple adapters before assigning constructor kinds.
+                let bevy_shape = explicit_bevy_shape(&variant.attrs)?;
+                let (shape, resolved_bevy_shape) = match (&variant.fields, bevy_shape) {
+                    (Fields::Unit, _) => (VariantShape::Unit, BevyVariantShape::Unit),
+                    (Fields::Unnamed(fields), _) if fields.unnamed.is_empty() => {
                         (VariantShape::EmptyTuple, BevyVariantShape::Unit)
                     }
-                    Fields::Unnamed(fields) => (
+                    (Fields::Unnamed(fields), None) => (
                         VariantShape::Tuple(parse_fields(
                             fields.unnamed.iter(),
                             false,
                             fields.unnamed.len(),
+                            false,
                         )?),
                         BevyVariantShape::Tuple,
                     ),
-                    Fields::Named(fields) => (
+                    (Fields::Unnamed(fields), Some(override_shape)) => (
+                        VariantShape::Tuple(parse_fields(
+                            fields.unnamed.iter(),
+                            false,
+                            fields.unnamed.len(),
+                            override_shape == BevyVariantShape::Struct,
+                        )?),
+                        override_shape,
+                    ),
+                    (Fields::Named(fields), None) => (
                         VariantShape::Struct(parse_fields(
                             fields.named.iter(),
                             true,
                             fields.named.len(),
+                            true,
                         )?),
                         BevyVariantShape::Struct,
                     ),
+                    (Fields::Named(fields), Some(override_shape)) => (
+                        VariantShape::Struct(parse_fields(
+                            fields.named.iter(),
+                            true,
+                            fields.named.len(),
+                            override_shape == BevyVariantShape::Struct,
+                        )?),
+                        override_shape,
+                    ),
                 };
-                let bevy_shape = explicit_bevy_shape(&variant.attrs)?.unwrap_or(default_bevy_shape);
+                let bevy_shape = resolved_bevy_shape;
                 let unsupported = unique_marker(&variant.attrs, "py_unsupported")?;
+                reject_retired_markers(&variant.attrs)?;
 
                 if bevy_shape == BevyVariantShape::Tuple
                     && !matches!(shape, VariantShape::Tuple(_) | VariantShape::Struct(_))
@@ -201,11 +238,11 @@ fn parse_fields<'a>(
     fields: impl Iterator<Item = &'a Field>,
     named: bool,
     field_count: usize,
+    keyword_only: bool,
 ) -> syn::Result<Vec<FieldSpec<'a>>> {
     let mut specs = Vec::with_capacity(field_count);
     let mut python_names = HashSet::with_capacity(field_count);
     let mut saw_positional_default = false;
-    let mut saw_keyword_only = false;
 
     for (declaration_index, field) in fields.enumerate() {
         let explicit_name = unique_field_name(&field.attrs)?;
@@ -239,8 +276,8 @@ fn parse_fields<'a>(
                 "#[py_try_into] and #[py_materialize] require #[py_type(PyWrapper)]",
             ));
         }
-        let keyword_only = unique_keyword_only(&field.attrs)?;
         let writable = unique_marker(&field.attrs, "py_set")?;
+        reject_retired_markers(&field.attrs)?;
         let borrowed = unique_marker(&field.attrs, "py_borrow")?;
         if borrowed && python_type.is_none() {
             return Err(syn::Error::new_spanned(
@@ -248,19 +285,11 @@ fn parse_fields<'a>(
                 "#[py_borrow] requires #[py_type(PyWrapper)]",
             ));
         }
-        if saw_keyword_only && !keyword_only {
-            return Err(syn::Error::new_spanned(
-                field,
-                "positional enum fields cannot follow a keyword-only field",
-            ));
-        }
-        saw_keyword_only |= keyword_only;
-
         if !keyword_only {
             if saw_positional_default && default.is_none() {
                 return Err(syn::Error::new_spanned(
                     field,
-                    "required positional enum fields cannot follow defaulted fields; mark the field #[py_kw_only]",
+                    "required positional enum fields cannot follow defaulted fields; declare a default or reorder the fields",
                 ));
             }
             saw_positional_default |= default.is_some();
@@ -373,23 +402,14 @@ fn unique_default(attrs: &[Attribute]) -> syn::Result<Option<TokenStream>> {
     }
 }
 
-fn unique_keyword_only(attrs: &[Attribute]) -> syn::Result<bool> {
-    let attrs = attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("py_kw_only"))
-        .collect::<Vec<_>>();
-    match attrs.as_slice() {
-        [] => Ok(false),
-        [attr] if matches!(attr.meta, Meta::Path(_)) => Ok(true),
-        [attr] => Err(syn::Error::new_spanned(
+fn reject_retired_markers(attrs: &[Attribute]) -> syn::Result<()> {
+    if let Some(attr) = attrs.iter().find(|attr| attr.path().is_ident("py_kw_only")) {
+        return Err(syn::Error::new_spanned(
             attr,
-            "#[py_kw_only] does not take arguments",
-        )),
-        _ => Err(syn::Error::new_spanned(
-            attrs[0],
-            "enum fields may declare #[py_kw_only] only once",
-        )),
+            "#[py_kw_only] is retired; constructor kinds derive from the resolved Bevy variant shape (named fields bind keyword-only, tuple payloads stay positional)",
+        ));
     }
+    Ok(())
 }
 
 fn normalized_ident(ident: &Ident) -> String {

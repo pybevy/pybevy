@@ -28,7 +28,7 @@ def _spawn_batch_positions(entity_count: int) -> None:
     positions = np.random.rand(entity_count, 3).astype(np.float32) * 100
 
     def setup(world: World) -> None:
-        batch = Transform.from_numpy(translation=positions)
+        batch = Transform.batch(translation=positions)
         world.commands().spawn_batch(batch, Marker())
 
     _run_batch(setup)
@@ -52,7 +52,7 @@ def _spawn_batch_full(entity_count: int) -> None:
     scales = np.ones((entity_count, 3), dtype=np.float32)
 
     def setup(world: World) -> None:
-        batch = Transform.from_numpy(
+        batch = Transform.batch(
             translation=positions, rotation=rotations, scale=scales
         )
         world.commands().spawn_batch(batch)
@@ -65,8 +65,8 @@ def _spawn_batch_with_visibility(entity_count: int) -> None:
     visibility = np.random.choice([True, False], size=entity_count)
 
     def setup(world: World) -> None:
-        t_batch = Transform.from_numpy(translation=positions)
-        v_batch = Visibility.from_numpy(visibility)
+        t_batch = Transform.batch(translation=positions)
+        v_batch = Visibility.batch(visibility)
         world.commands().spawn_batch(t_batch, v_batch, Marker())
 
     _run_batch(setup)
@@ -76,7 +76,7 @@ def _spawn_batch_with_uniforms(entity_count: int) -> None:
     positions = np.random.rand(entity_count, 3).astype(np.float32) * 100
 
     def setup(world: World) -> None:
-        t_batch = Transform.from_numpy(translation=positions)
+        t_batch = Transform.batch(translation=positions)
         world.commands().spawn_batch(
             t_batch,
             Visibility.Visible,
@@ -155,7 +155,7 @@ def _spawn_batch_commands(entity_count: int) -> None:
     positions = np.random.rand(entity_count, 3).astype(np.float32) * 100
 
     def setup(commands: Commands) -> None:
-        batch = Transform.from_numpy(translation=positions)
+        batch = Transform.batch(translation=positions)
         commands.spawn_batch(batch, Marker())
 
     _run_batch(setup)

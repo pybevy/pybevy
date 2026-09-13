@@ -86,7 +86,7 @@ class Bloom(Component):
     def scale(self, value: Vec2) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         low_frequency_boost: np.typing.ArrayLike | None = None,
@@ -145,7 +145,7 @@ class Vignette(Component):
     def color(self, value: Color) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         radius: np.typing.ArrayLike | None = None,
@@ -192,7 +192,7 @@ class LensDistortion(Component):
     def edge_curvature(self, value: float) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         scale: np.typing.ArrayLike | None = None,

@@ -19,7 +19,7 @@ use crate::util::find_storage_field_type;
 /// library's blanket `impl<T, U: Into<T>> TryFrom<U> for T` makes a generated
 /// `TryFrom` a coherence error on those types. `From` and `TryFrom` stay with
 /// the author because the choice is semantic, not mechanical. See
-/// `docs/PLAN-pyvalue-macro.md`.
+/// `docs/macro-patterns.md` (the pyvalue section).
 ///
 /// `to_bevy()` is fallible on purpose: `ValueStorage::get` fails when a borrowed
 /// value's validity flag has been cleared, and substituting a default there

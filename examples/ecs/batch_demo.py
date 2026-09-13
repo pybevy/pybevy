@@ -49,12 +49,12 @@ def setup(
 
     s = 0.01
     commands.spawn_batch(
-        Transform.from_numpy(
+        Transform.batch(
             translation=pos,
             scale=np.full((N, 3), s, dtype=np.float32),
         ),
-        Orbit.from_numpy(radius=radii, speed=speeds, phase=phases, y_speed=y_speeds),
-        Mesh3d(meshes.add(Sphere(1.0))),
+        Orbit.batch(radius=radii, speed=speeds, phase=phases, y_speed=y_speeds),
+        Mesh3d(meshes.add(Sphere(radius=1.0))),
         MeshMaterial3d(materials.add(StandardMaterial(
             emissive=LinearRgba.rgb(2.0, 0.6, 3.0),
             base_color=Color.srgb(0.8, 0.2, 1.0),

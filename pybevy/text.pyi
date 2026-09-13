@@ -526,7 +526,7 @@ class TextColor(Component):
         """Create a text color component."""
 
     @staticmethod
-    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+    def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -911,7 +911,7 @@ class TextBackgroundColor(Component):
         """
 
     @staticmethod
-    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+    def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -928,7 +928,7 @@ class StrikethroughColor(Component):
 
     def __init__(self, color: Color = ...) -> None: ...
     @staticmethod
-    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+    def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
 class Underline(Component):
     """Marker component for underline text decoration."""
@@ -943,7 +943,7 @@ class UnderlineColor(Component):
 
     def __init__(self, color: Color = ...) -> None: ...
     @staticmethod
-    def from_numpy(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+    def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
 class LetterSpacing(Component):
     """Spacing between characters. Construct via :meth:`px` or :meth:`rem`.

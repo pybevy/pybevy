@@ -642,7 +642,7 @@ class Window(Component):
         """
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         decorations: np.typing.ArrayLike | None = None,
         resizable: np.typing.ArrayLike | None = None,

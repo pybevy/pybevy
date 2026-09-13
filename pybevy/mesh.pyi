@@ -361,7 +361,7 @@ class MeshTag(Component):
     @value.setter
     def value(self, value: int) -> None: ...
     @staticmethod
-    def from_numpy(*, value: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+    def batch(*, value: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
     def __eq__(self, other: MeshTag) -> bool: ...  # type: ignore[override]
 
 class MorphWeights(Component):

@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Fields, Ident, ItemStruct, Path, Token, Type,
+    Expr, Fields, Ident, ItemStruct, Path, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -14,6 +14,14 @@ use crate::{
 #[derive(Clone)]
 enum BatchFieldConstraint {
     Finite,
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        message: Path,
+    },
+    NonNegative {
+        message: Path,
+    },
 }
 
 impl Parse for BatchFieldConstraint {
@@ -21,9 +29,30 @@ impl Parse for BatchFieldConstraint {
         let ident: Ident = input.parse()?;
         match ident.to_string().as_str() {
             "finite" => Ok(Self::Finite),
+            "range" => {
+                let content;
+                syn::parenthesized!(content in input);
+                let start = Box::new(content.parse()?);
+                content.parse::<Token![,]>()?;
+                let end = Box::new(content.parse()?);
+                content.parse::<Token![,]>()?;
+                let message = content.parse()?;
+                Ok(Self::Range {
+                    start,
+                    end,
+                    message,
+                })
+            }
+            "non_negative" => {
+                let content;
+                syn::parenthesized!(content in input);
+                Ok(Self::NonNegative {
+                    message: content.parse()?,
+                })
+            }
             _ => Err(syn::Error::new_spanned(
                 ident,
-                "unknown batch field constraint, expected: finite",
+                "unknown batch field constraint, expected: finite, range, non_negative",
             )),
         }
     }
@@ -32,6 +61,16 @@ impl Parse for BatchFieldConstraint {
 impl BatchFieldConstraint {
     fn tokens(&self) -> proc_macro2::TokenStream {
         match self {
+            Self::Range {
+                start,
+                end,
+                message,
+            } => {
+                quote! { pybevy_core::batch_columns::BatchValueConstraint::Range { start: #start, end: #end, message: #message } }
+            }
+            Self::NonNegative { message } => {
+                quote! { pybevy_core::batch_columns::BatchValueConstraint::NonNegative { message: #message } }
+            }
             Self::Finite => {
                 quote! { pybevy_core::batch_columns::BatchValueConstraint::Finite }
             }
@@ -47,9 +86,9 @@ pub(crate) struct BridgeField {
     pub(crate) rust_accessor: proc_macro2::TokenStream,
     /// Token stream for offset_of!: `intensity` or `0` or `0.x`
     pub(crate) offset_path: proc_macro2::TokenStream,
-    /// Python-visible name used for from_numpy kwargs and View field names
+    /// Python-visible name used for batch kwargs and View field names
     pub(crate) python_name: Ident,
-    /// Value-domain constraints applied by from_numpy after normalization.
+    /// Value-domain constraints applied by batch after normalization.
     constraints: Vec<BatchFieldConstraint>,
 }
 
@@ -220,6 +259,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         view_only_fields: Option<Vec<ViewOnlyField>>,
         materialize: Option<Path>,
         clone_with: Option<Path>,
+        batch_validate: Option<Path>,
     }
 
     impl Parse for ComponentStorageArgs {
@@ -236,6 +276,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut view_only_fields = None;
             let mut materialize = None;
             let mut clone_with = None;
+            let mut batch_validate = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -253,6 +294,10 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         bridge = true;
                         input.parse::<Token![=]>()?;
                         materialize = Some(input.parse()?);
+                    }
+                    "batch_validate" => {
+                        input.parse::<Token![=]>()?;
+                        batch_validate = Some(input.parse()?);
                     }
                     "clone_with" => {
                         bridge = true;
@@ -288,7 +333,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, view_fields, batch_only_fields, view_only_fields",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, batch_validate, view_fields, batch_only_fields, view_only_fields",
                                 other
                             ),
                         ));
@@ -309,6 +354,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 view_only_fields,
                 materialize,
                 clone_with,
+                batch_validate,
             })
         }
     }
@@ -355,6 +401,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.view_only_fields.as_ref(),
             args.materialize.as_ref(),
             args.clone_with.as_ref(),
+            args.batch_validate.as_ref(),
             true, // emit inventory registration
         )
     } else {
@@ -496,6 +543,7 @@ fn generate_bridge_tokens(
     view_only_fields: Option<&Vec<ViewOnlyField>>,
     materialize: Option<&Path>,
     clone_with: Option<&Path>,
+    batch_validate: Option<&Path>,
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
@@ -894,6 +942,10 @@ fn generate_bridge_tokens(
         }
     };
 
+    let batch_validation = batch_validate.map(|validate| {
+        quote! { #validate(py, &batch)?; }
+    });
+
     // Generate batch-related functions when view_fields or batch_only_fields is present.
     // Batch code uses the union of view_fields + batch_only_fields (NOT view_only_fields).
     let all_batch_fields: Option<Vec<BridgeField>> = match (view_fields, batch_only_fields) {
@@ -915,7 +967,7 @@ fn generate_bridge_tokens(
         let insert_fn_name = quote::format_ident!("{}_batch_insert", snake_name);
         let prepare_fn_name = quote::format_ident!("{}_batch_prepare", snake_name);
         let register_fn_name = quote::format_ident!("register_{}_batch", snake_name);
-        let from_numpy_fn_name = quote::format_ident!("{}_from_numpy", snake_name);
+        let batch_fn_name = quote::format_ident!("{}_batch", snake_name);
 
         // Generate field_meta entries using type-inference trick
         let field_meta_entries: Vec<_> = fields
@@ -961,7 +1013,7 @@ fn generate_bridge_tokens(
             })
             .collect();
 
-        // Generate validation for from_numpy helper
+        // Generate validation for batch helper
         let field_validations: Vec<_> = fields.iter().map(|field| {
             let accessor = &field.rust_accessor;
             let name_str = field.python_name.to_string();
@@ -1065,7 +1117,7 @@ fn generate_bridge_tokens(
                 });
             }
 
-            pub fn #from_numpy_fn_name<'py>(
+            pub fn #batch_fn_name<'py>(
                 py: pyo3::Python<'py>,
                 kwargs: &pyo3::Bound<'py, pyo3::types::PyDict>,
             ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
@@ -1105,6 +1157,7 @@ fn generate_bridge_tokens(
                     component_name: #component_name.to_string(),
                 };
 
+                #batch_validation
                 pyo3::Py::new(py, batch).map(|p| p.into_any())
             }
         }
@@ -1112,10 +1165,10 @@ fn generate_bridge_tokens(
         quote! {}
     };
 
-    // Generate #[pymethods] block with from_numpy staticmethod when batch fields exist
-    let from_numpy_pymethods = if let (Some(fields), false) = (&all_batch_fields, no_insert) {
+    // Generate #[pymethods] block with batch staticmethod when batch fields exist
+    let batch_pymethods = if let (Some(fields), false) = (&all_batch_fields, no_insert) {
         let snake_name = to_snake_case(&bridge_name_str);
-        let from_numpy_fn_name = quote::format_ident!("{}_from_numpy", snake_name);
+        let batch_fn_name = quote::format_ident!("{}_batch", snake_name);
         let parameters = fields.iter().map(|field| {
             let name = &field.python_name;
             quote! { #name: Option<&pyo3::Bound<pyo3::PyAny>> }
@@ -1137,10 +1190,10 @@ fn generate_bridge_tokens(
         quote! {
             #[pyo3::pymethods]
             impl #py_type {
-                /// Create a batch of components from numpy arrays for efficient bulk spawning.
+                /// Create a batch of components from array columns for efficient bulk spawning.
                 #[staticmethod]
                 #[pyo3(signature = (*, #(#signature_defaults),*))]
-                pub fn from_numpy(
+                pub fn batch(
                     py: pyo3::Python,
                     #(#parameters),*
                 ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
@@ -1148,7 +1201,7 @@ fn generate_bridge_tokens(
 
                     let kwargs = pyo3::types::PyDict::new(py);
                     #(#dictionary_entries)*
-                    #from_numpy_fn_name(py, &kwargs)
+                    #batch_fn_name(py, &kwargs)
                 }
             }
         }
@@ -1186,7 +1239,7 @@ fn generate_bridge_tokens(
     quote! {
         #expanded
         #batch_impl
-        #from_numpy_pymethods
+        #batch_pymethods
         #inventory_submit
     }
 }

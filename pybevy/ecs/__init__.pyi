@@ -26,10 +26,10 @@ _WorldQueryT = TypeVar("_WorldQueryT", bound=Query[Any, *tuple[Any, ...]])
 
 @runtime_checkable
 class Batchable(Protocol):
-    """Protocol for batch component data returned by from_numpy() methods.
+    """Protocol for batch component data returned by batch() methods.
 
     Returned by built-in components (Transform, Visibility, etc.) and
-    @component-decorated classes' from_numpy() (wrapper-storage only).
+    @component-decorated classes' batch() (wrapper-storage only).
     Users should not implement this protocol directly.
     """
 
@@ -540,7 +540,7 @@ class Component:
     """
 
     @staticmethod
-    def from_numpy(**kwargs: object) -> Batchable:
+    def batch(**kwargs: object) -> Batchable:
         """Create a batch of components from numpy arrays for spawn_batch().
 
         Added by the @component decorator. Calling it on a storage="python"
