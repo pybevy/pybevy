@@ -3,7 +3,10 @@
 //! This module provides a unified storage mechanism for all PyBevy resource types,
 //! enabling zero-copy access to Bevy resources through borrowed references.
 
-use bevy::ecs::{component::ComponentId, entity::Entity, prelude::Resource, world::World};
+use bevy::ecs::{
+    component::ComponentId, entity::Entity, prelude::Resource,
+    world::unsafe_world_cell::UnsafeWorldCell,
+};
 
 use crate::{
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
@@ -169,10 +172,11 @@ impl<T: Resource> ResourceStorage<T> {
     /// Build storage for long-lived World entity access without caching a pointer.
     ///
     /// # Safety
-    /// `world_ptr` must remain live while `validity` permits access, and
-    /// `(entity, component_id)` must identify a value of `T`.
+    /// `world` must remain live while `validity` permits access, and
+    /// `(entity, component_id)` must identify a value of `T`. The cell must permit
+    /// component access matching the validity mode, with no competing references.
     pub unsafe fn revalidating(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         validity: ValidityFlagWithMode,
@@ -180,7 +184,7 @@ impl<T: Resource> ResourceStorage<T> {
         Self {
             // SAFETY: forwards this constructor's world identity and validity contract.
             inner: ResourceStorageInner::Revalidating(Box::new(unsafe {
-                RevalidatingField::new(world_ptr, entity, component_id, 0, validity)
+                RevalidatingField::new(world, entity, component_id, 0, validity)
             })),
         }
     }
@@ -396,6 +400,7 @@ mod tests {
     use bevy::ecs::{
         change_detection::DetectChanges,
         prelude::{Component, Resource},
+        world::World,
     };
 
     use super::*;
@@ -658,9 +663,9 @@ mod tests {
         let component_id = world.components().component_id::<TestResource>().unwrap();
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
-        let world_ptr = &mut world as *mut World;
+        let cell = world.as_unsafe_world_cell();
         let mut storage = unsafe {
-            ResourceStorage::<TestResource>::revalidating(world_ptr, entity, component_id, validity)
+            ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
         };
 
         world.entity_mut(entity).insert(Relocator);
@@ -678,9 +683,9 @@ mod tests {
         let component_id = world.components().component_id::<TestResource>().unwrap();
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
-        let world_ptr = &mut world as *mut World;
+        let cell = world.as_unsafe_world_cell();
         let mut storage = unsafe {
-            ResourceStorage::<TestResource>::revalidating(world_ptr, entity, component_id, validity)
+            ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
         };
 
         storage.as_mut().unwrap().value = 99;
@@ -700,9 +705,9 @@ mod tests {
         let component_id = world.components().component_id::<TestResource>().unwrap();
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
-        let world_ptr = &mut world as *mut World;
+        let cell = world.as_unsafe_world_cell();
         let mut storage = unsafe {
-            ResourceStorage::<TestResource>::revalidating(world_ptr, entity, component_id, validity)
+            ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
         };
 
         assert_eq!(storage.as_ref().unwrap().value, 42);

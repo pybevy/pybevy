@@ -11,7 +11,9 @@
 //! their borrowed variants, so the `Send`/`Sync` and `borrow_field` logic lives
 //! here once rather than being duplicated per storage type.
 
-use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+use bevy::ecs::{
+    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
+};
 
 use crate::{
     component_change::ComponentWriteContext,
@@ -307,18 +309,17 @@ impl<T> BorrowedMut<T> {
 /// field's byte offset. `None` if the entity was despawned or the component removed.
 ///
 /// # Safety
-/// `world_ptr` must be valid and free of a competing mutable borrow for the call.
+/// `world` must remain live and permit reading the identified component.
 #[inline]
 pub(crate) unsafe fn revalidate_field_ptr(
-    world_ptr: *mut World,
+    world: UnsafeWorldCell<'_>,
     entity: Entity,
     component_id: ComponentId,
     offset: usize,
 ) -> Option<*mut u8> {
-    // SAFETY: caller guarantees `world_ptr` is valid for a shared borrow here
-    let world = unsafe { &*world_ptr };
     let entity_ref = world.get_entity(entity).ok()?;
-    let base = entity_ref.get_by_id(component_id).ok()?.as_ptr();
+    // SAFETY: the caller permits reading this exact component while the cell is live.
+    let base = unsafe { entity_ref.get_by_id(component_id) }?.as_ptr();
     // SAFETY: `offset` is within the component's layout per the caller's contract
     Some(unsafe { base.add(offset) })
 }
@@ -326,17 +327,17 @@ pub(crate) unsafe fn revalidate_field_ptr(
 /// Re-derive the address of a writable component field and mark the component changed.
 ///
 /// # Safety
-/// `world_ptr` must be valid and have exclusive access for the call.
+/// `world` must remain live and permit exclusive access to the identified component.
 #[inline]
 pub(crate) unsafe fn revalidate_field_ptr_mut(
-    world_ptr: *mut World,
+    world: UnsafeWorldCell<'_>,
     entity: Entity,
     component_id: ComponentId,
     offset: usize,
 ) -> Option<*mut u8> {
-    // SAFETY: caller guarantees exclusive access to the live World.
-    let world = unsafe { &mut *world_ptr };
-    let value = world.get_mut_by_id(entity, component_id)?;
+    let entity_ref = world.get_entity(entity).ok()?;
+    // SAFETY: the caller permits mutable access to this exact component.
+    let value = unsafe { entity_ref.get_mut_by_id(component_id) }.ok()?;
     // `into_inner` marks the component changed, matching Bevy's typed `Mut<T>`.
     let base = value.into_inner().as_ptr();
     // SAFETY: `offset` is within the component's layout per the caller's contract.
@@ -345,8 +346,8 @@ pub(crate) unsafe fn revalidate_field_ptr_mut(
 
 /// ECS identity of a component field, re-resolved on each access instead of cached.
 ///
-/// Shared by every storage type's `Revalidating` variant. Because it holds no pointer,
-/// a structural mutation that relocates the component does not dangle it; access after
+/// Shared by every storage type's `Revalidating` variant. It caches no field pointer, so
+/// structural mutations that relocate the component do not dangle it; access after
 /// the entity is despawned errors with [`StorageError::EntityUnavailable`]. `offset` is
 /// the field's byte offset within its component (0 for a whole-component handle).
 ///
@@ -354,7 +355,7 @@ pub(crate) unsafe fn revalidate_field_ptr_mut(
 /// `pub` `Revalidating` variant; all fields stay private.
 #[derive(Debug, Clone)]
 pub struct RevalidatingField {
-    world_ptr: *mut World,
+    world: UnsafeWorldCell<'static>,
     entity: Entity,
     component_id: ComponentId,
     offset: usize,
@@ -363,7 +364,7 @@ pub struct RevalidatingField {
     validity: ValidityFlagWithMode,
 }
 
-// SAFETY: the `*mut World` is just an address; it is only dereferenced through a fresh
+// SAFETY: the cell is only used for the identified component through a fresh
 // re-resolve gated by `validity` (Arc<AtomicU8>, itself Send + Sync), which is
 // invalidated when the owning system exits. The other fields are plain Copy data.
 unsafe impl Send for RevalidatingField {}
@@ -372,19 +373,23 @@ unsafe impl Sync for RevalidatingField {}
 
 impl RevalidatingField {
     /// # Safety
-    /// - `world_ptr` must be valid while `validity` is non-Invalid.
+    /// - `world` must remain live while `validity` is non-Invalid.
+    /// - The cell must permit component access matching the validity mode.
     /// - `(entity, component_id, offset)` must identify a live field of the type the
     ///   caller will read/write through this handle.
     #[inline]
     pub(crate) unsafe fn new(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
         validity: ValidityFlagWithMode,
     ) -> Self {
+        // SAFETY: the caller fences this cell with the handle's validity flag.
+        let world =
+            unsafe { std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world) };
         Self {
-            world_ptr,
+            world,
             entity,
             component_id,
             offset,
@@ -399,7 +404,7 @@ impl RevalidatingField {
 
     pub(crate) fn clone_as_ref(&self) -> Self {
         Self {
-            world_ptr: self.world_ptr,
+            world: self.world,
             entity: self.entity,
             component_id: self.component_id,
             offset: self.offset,
@@ -410,7 +415,7 @@ impl RevalidatingField {
     #[inline]
     fn resolve(&self) -> Result<*mut u8, StorageError> {
         // SAFETY: forwarded from this handle's construction contract
-        unsafe { revalidate_field_ptr(self.world_ptr, self.entity, self.component_id, self.offset) }
+        unsafe { revalidate_field_ptr(self.world, self.entity, self.component_id, self.offset) }
             .ok_or(StorageError::EntityUnavailable)
     }
 
@@ -418,10 +423,8 @@ impl RevalidatingField {
     fn resolve_mut(&mut self) -> Result<*mut u8, StorageError> {
         // SAFETY: forwarded from this handle's construction contract; `&mut self`
         // represents the handle's exclusive write access.
-        unsafe {
-            revalidate_field_ptr_mut(self.world_ptr, self.entity, self.component_id, self.offset)
-        }
-        .ok_or(StorageError::EntityUnavailable)
+        unsafe { revalidate_field_ptr_mut(self.world, self.entity, self.component_id, self.offset) }
+            .ok_or(StorageError::EntityUnavailable)
     }
 
     /// Read the field as `&T`, checking validity. `T` must be the field's type.
@@ -466,7 +469,7 @@ impl RevalidatingField {
         // re-resolved per access exactly like this handle
         Ok(unsafe {
             S::revalidating_field(
-                self.world_ptr,
+                self.world,
                 self.entity,
                 self.component_id,
                 child_offset,
@@ -495,7 +498,7 @@ impl RevalidatingField {
                 // SAFETY: the contained field lives at `child_offset` within the component
                 Ok(Some(unsafe {
                     S::revalidating_field(
-                        self.world_ptr,
+                        self.world,
                         self.entity,
                         self.component_id,
                         child_offset,

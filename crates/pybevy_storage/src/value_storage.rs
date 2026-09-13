@@ -8,7 +8,9 @@
 //! - ValueStorage stores Copy types directly (Owned(T))
 //! - ComponentStorage stores larger types in Box (Owned(Box<T>))
 
-use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+use bevy::ecs::{
+    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
+};
 
 use crate::{
     ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, WriteField, WriteVariant,
@@ -143,14 +145,14 @@ impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
     }
 
     unsafe fn revalidating_field(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
         validity: ValidityFlagWithMode,
     ) -> Self {
         // SAFETY: forwards this constructor's contract unchanged
-        unsafe { Self::revalidating(world_ptr, entity, component_id, offset, validity) }
+        unsafe { Self::revalidating(world, entity, component_id, offset, validity) }
     }
 
     fn revalidating_source(source: RevalidatingSource<T>) -> Self
@@ -213,17 +215,18 @@ impl<T: Copy> ValueStorage<T> {
     /// Create a re-resolving field handle for a field of a wrapper component.
     ///
     /// Unlike `borrowed`, this caches no pointer: each access re-derives the field's
-    /// current address from `(world_ptr, entity, component_id, offset)`, so it stays
+    /// current address from `(world, entity, component_id, offset)`, so it stays
     /// valid across structural mutations that move the component, and errors once the
     /// entity is despawned. Used for Vec3/Vec2 fields escaped from a `world.get`/
     /// `world.get_mut` proxy, where a cached borrow would dangle.
     ///
     /// # Safety
-    /// - `world_ptr` must be valid while `validity` is active.
+    /// - `world` must remain live while `validity` is active.
+    /// - The cell must permit component access matching the validity mode.
     /// - `entity`, `component_id` and `offset` must identify a field of type `T` at
     ///   `offset` bytes into that component's storage.
     pub unsafe fn revalidating(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -232,7 +235,7 @@ impl<T: Copy> ValueStorage<T> {
         Self {
             // SAFETY: forwards this constructor's contract unchanged
             inner: ValueStorageInner::Revalidating(Box::new(unsafe {
-                RevalidatingField::new(world_ptr, entity, component_id, offset, validity)
+                RevalidatingField::new(world, entity, component_id, offset, validity)
             })),
         }
     }
@@ -430,6 +433,8 @@ impl<T: Copy> ValueStorage<T> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use bevy::ecs::world::World;
+
     use super::*;
     use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
 
@@ -653,12 +658,12 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         // Handle to v[1]: offset = one f32 = 4 bytes.
         let mut storage: ValueStorage<f32> =
-            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 4, validity) };
+            unsafe { ValueStorage::revalidating(cell, e, cid, 4, validity) };
 
         assert_eq!(storage.get().unwrap(), 2.0);
         *storage.as_mut().unwrap() = 9.0;
@@ -671,11 +676,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage: ValueStorage<f32> =
-            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 0, validity) };
+            unsafe { ValueStorage::revalidating(cell, e, cid, 0, validity) };
 
         // Insert a second component: moves the entity to a new archetype/table, which
         // would dangle a cached pointer.
@@ -691,11 +696,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage: ValueStorage<f32> =
-            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 0, validity) };
+            unsafe { ValueStorage::revalidating(cell, e, cid, 0, validity) };
 
         assert!(storage.as_ref().is_ok());
         world.despawn(e);
@@ -709,11 +714,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let mut storage: ValueStorage<f32> =
-            unsafe { ValueStorage::revalidating(world_ptr, e, cid, 0, validity) };
+            unsafe { ValueStorage::revalidating(cell, e, cid, 0, validity) };
 
         assert!(storage.as_ref().is_ok());
         assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));

@@ -46,6 +46,7 @@ pub(crate) mod system_interpreter;
 pub mod variant_hint;
 pub mod view;
 pub mod world;
+pub(crate) mod world_gc;
 
 pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register ChildOf bridge from pybevy_core

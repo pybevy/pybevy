@@ -1,6 +1,9 @@
+use std::fmt;
+
 use bevy::ecs::entity::Entity;
 use pybevy_core::{ensure_no_live_asset_access, extract_entity_from_any};
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::PyTuple,
@@ -16,47 +19,55 @@ use crate::ecs::observer_registry::ObserverRegistry;
 /// Represents a handle to perform deferred operations on an entity.
 /// Operations are queued and applied later when the Commands are flushed.
 #[pyclass(name = "EntityCommands", module = "pybevy.ecs", skip_from_py_object)]
-#[derive(Debug, Clone)]
 pub struct PyEntityCommands {
     pub(crate) id: Entity,
-    // Store commands pointer - only valid during command queue operations
-    // This will be None for simple entity ID returns
-    commands_ptr: Option<usize>,
-    // Store world pointer - used when spawned from World directly
-    // This allows immediate operations like observe() to work
-    world_ptr: Option<usize>,
+    commands: Option<PyCommands>,
     // Runtime validity check - prevents use after system execution
     // This is cloned from the parent PyCommands/PyWorld
     validity: Option<ValidityFlag>,
 }
 
-// SAFETY: PyEntityCommands is Send because:
-// - Entity is Copy + Send
-// - The raw pointer is stored as usize (just an address)
-// - Access through get_commands() requires the PyCommands instance to still be valid
-unsafe impl Send for PyEntityCommands {}
+impl Clone for PyEntityCommands {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            commands: self
+                .commands
+                .as_ref()
+                .map(|commands| Python::attach(|py| commands.clone_for_handle(py))),
+            validity: self.validity.clone(),
+        }
+    }
+}
 
-// SAFETY: PyEntityCommands is Sync because:
-// - All fields are either Copy or contain addresses
-// - Actual access to commands is controlled by the PyCommands validity checking
-unsafe impl Sync for PyEntityCommands {}
+impl fmt::Debug for PyEntityCommands {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PyEntityCommands")
+            .field("id", &self.id)
+            .finish()
+    }
+}
 
 impl PyEntityCommands {
-    pub(crate) fn with_commands(entity: Entity, commands: &PyCommands) -> Self {
+    pub(crate) fn with_commands(entity: Entity, commands: &PyCommands, py: Python<'_>) -> Self {
         Self {
             id: entity,
-            commands_ptr: Some(commands as *const PyCommands as usize),
-            world_ptr: None,
+            commands: Some(commands.clone_for_handle(py)),
             validity: Some(commands.validity()),
         }
     }
 
-    pub(crate) fn with_world(entity: Entity, world: &super::world::PyWorld) -> Self {
+    pub(crate) fn with_world(entity: Entity, world: PyRef<'_, super::world::PyWorld>) -> Self {
+        let world_ptr = world.world_ptr();
+        let validity = world.validity().unwrap_or_default();
+        let owner = world.into();
+        // SAFETY: the retained owner keeps the World allocated; validity gates access.
+        let commands = unsafe { PyCommands::from_world(world_ptr, owner, validity.clone()) };
         Self {
             id: entity,
-            commands_ptr: None,
-            world_ptr: Some(world as *const super::world::PyWorld as usize),
-            validity: world.validity(),
+            commands: Some(commands),
+            validity: Some(validity),
         }
     }
 
@@ -71,64 +82,19 @@ impl PyEntityCommands {
 
     fn get_commands(&self) -> PyResult<Option<&PyCommands>> {
         self.check_valid()?;
-        Ok(self
-            .commands_ptr
-            .map(|ptr| unsafe { &*(ptr as *const PyCommands) }))
-    }
-
-    fn get_world(&self) -> PyResult<Option<&super::world::PyWorld>> {
-        self.check_valid()?;
-        Ok(self
-            .world_ptr
-            .map(|ptr| unsafe { &*(ptr as *const super::world::PyWorld) }))
-    }
-
-    /// Create temporary PyCommands from the world pointer for entity operations.
-    /// Returns None if no world pointer is available.
-    fn temp_commands_from_world(&self) -> PyResult<Option<PyCommands>> {
-        if let Some(world) = self.get_world()? {
-            let world_ptr = world.world_ptr();
-            let validity = world.validity().unwrap_or_else(ValidityFlag::new);
-            // SAFETY: We're creating a temporary PyCommands that wraps the World pointer.
-            // The world pointer is valid because we just checked validity via get_world().
-            let temp_commands = unsafe { PyCommands::from_world_temporary(world_ptr, validity) };
-            Ok(Some(temp_commands))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Get a PyCommands reference, either from stored commands or by creating
-    /// temporary commands from the world pointer. Returns the commands and
-    /// whether they are temporary (and thus must not be referenced after this call).
-    fn get_commands_or_world(&self) -> PyResult<Option<CommandsSource<'_>>> {
-        if let Some(commands) = self.get_commands()? {
-            Ok(Some(CommandsSource::Commands(commands)))
-        } else if let Some(temp) = self.temp_commands_from_world()? {
-            Ok(Some(CommandsSource::TempFromWorld(temp)))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-/// Either a borrowed reference to stored PyCommands or a temporary one created from World.
-enum CommandsSource<'a> {
-    Commands(&'a PyCommands),
-    TempFromWorld(PyCommands),
-}
-
-impl<'a> CommandsSource<'a> {
-    fn as_ref(&self) -> &PyCommands {
-        match self {
-            CommandsSource::Commands(c) => c,
-            CommandsSource::TempFromWorld(c) => c,
-        }
+        Ok(self.commands.as_ref())
     }
 }
 
 #[pymethods]
 impl PyEntityCommands {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(commands) = &self.commands {
+            commands.traverse_owner(visit)?;
+        }
+        Ok(())
+    }
+
     /// Get the entity ID
     pub fn id(&self) -> PyEntity {
         PyEntity(self.id)
@@ -141,12 +107,9 @@ impl PyEntityCommands {
         py: Python,
         components: &Bound<'_, PyTuple>,
     ) -> PyResult<PyEntityCommands> {
-        if let Some(source) = self.get_commands_or_world()? {
+        if let Some(source) = self.get_commands()? {
             crate::ecs::commands::insert_components_to_entity_helper(
-                source.as_ref(),
-                py,
-                self.id,
-                components,
+                source, py, self.id, components,
             )?;
             Ok(self.clone())
         } else {
@@ -163,12 +126,9 @@ impl PyEntityCommands {
         py: Python,
         components: &Bound<'_, PyTuple>,
     ) -> PyResult<PyEntityCommands> {
-        if let Some(source) = self.get_commands_or_world()? {
+        if let Some(source) = self.get_commands()? {
             crate::ecs::commands::remove_components_from_entity_helper(
-                source.as_ref(),
-                py,
-                self.id,
-                components,
+                source, py, self.id, components,
             )?;
             Ok(self.clone())
         } else {
@@ -180,8 +140,8 @@ impl PyEntityCommands {
 
     /// Trigger an event for this entity.
     pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
-        if let Some(source) = self.get_commands_or_world()? {
-            crate::ecs::commands::trigger_event_helper(source.as_ref(), py, event, Some(self.id))?;
+        if let Some(source) = self.get_commands()? {
+            crate::ecs::commands::trigger_event_helper(source, py, event, Some(self.id))?;
             Ok(self.clone())
         } else {
             Err(PyValueError::new_err(
@@ -192,8 +152,8 @@ impl PyEntityCommands {
 
     /// Despawn this entity
     pub fn despawn(&self) -> PyResult<()> {
-        if let Some(source) = self.get_commands_or_world()? {
-            source.as_ref().despawn_entity(&PyEntity(self.id))
+        if let Some(source) = self.get_commands()? {
+            source.despawn_entity(&PyEntity(self.id))
         } else {
             Err(PyValueError::new_err(
                 "Cannot despawn: EntityCommands not associated with a Commands or World object.",
@@ -204,8 +164,8 @@ impl PyEntityCommands {
     /// Add a child entity to this entity
     pub fn add_child(&self, child: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
         let child = extract_entity_from_any(child)?;
-        if let Some(source) = self.get_commands_or_world()? {
-            crate::ecs::commands::add_child_helper(source.as_ref(), self.id, child.0)?;
+        if let Some(source) = self.get_commands()? {
+            crate::ecs::commands::add_child_helper(source, self.id, child.0)?;
             Ok(self.clone())
         } else {
             Err(PyValueError::new_err(
@@ -217,8 +177,8 @@ impl PyEntityCommands {
     /// Set the parent of this entity
     pub fn set_parent(&self, parent: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
         let parent = extract_entity_from_any(parent)?;
-        if let Some(source) = self.get_commands_or_world()? {
-            crate::ecs::commands::set_parent_helper(source.as_ref(), self.id, parent.0)?;
+        if let Some(source) = self.get_commands()? {
+            crate::ecs::commands::set_parent_helper(source, self.id, parent.0)?;
             Ok(self.clone())
         } else {
             Err(PyValueError::new_err(
@@ -229,8 +189,8 @@ impl PyEntityCommands {
 
     /// Remove the parent relationship from this entity
     pub fn remove_parent(&self) -> PyResult<PyEntityCommands> {
-        if let Some(source) = self.get_commands_or_world()? {
-            crate::ecs::commands::remove_parent_helper(source.as_ref(), self.id)?;
+        if let Some(source) = self.get_commands()? {
+            crate::ecs::commands::remove_parent_helper(source, self.id)?;
             Ok(self.clone())
         } else {
             Err(PyValueError::new_err(
@@ -245,7 +205,7 @@ impl PyEntityCommands {
         &self,
         children: &Bound<'_, pyo3::types::PyTuple>,
     ) -> PyResult<PyEntityCommands> {
-        if let Some(source) = self.get_commands_or_world()? {
+        if let Some(source) = self.get_commands()? {
             let child_ids: Vec<Entity> = children
                 .iter()
                 .map(|item| {
@@ -255,7 +215,7 @@ impl PyEntityCommands {
                 })
                 .collect::<PyResult<Vec<_>>>()?;
 
-            crate::ecs::commands::remove_children_helper(source.as_ref(), self.id, &child_ids)?;
+            crate::ecs::commands::remove_children_helper(source, self.id, &child_ids)?;
             Ok(self.clone())
         } else {
             Err(PyValueError::new_err(
@@ -266,8 +226,8 @@ impl PyEntityCommands {
 
     /// Remove all children from this entity
     pub fn clear_children(&self) -> PyResult<PyEntityCommands> {
-        if let Some(source) = self.get_commands_or_world()? {
-            crate::ecs::commands::clear_children_helper(source.as_ref(), self.id)?;
+        if let Some(source) = self.get_commands()? {
+            crate::ecs::commands::clear_children_helper(source, self.id)?;
             Ok(self.clone())
         } else {
             Err(PyValueError::new_err(
@@ -284,14 +244,8 @@ impl PyEntityCommands {
             return Err(PyValueError::new_err("Parameter must be callable"));
         }
 
-        // Anchor the spawner to whichever backing this handle owns. Routing a
-        // World-backed handle through a temporary PyCommands would hand the
-        // spawner a pointer to a stack local fenced by the World's much
-        // longer-lived validity flag.
         let spawner = if let Some(commands) = self.get_commands()? {
-            PyRelatedSpawnerCommands::with_commands(self.id, commands)
-        } else if let Some(world) = self.get_world()? {
-            PyRelatedSpawnerCommands::with_world(self.id, world)
+            PyRelatedSpawnerCommands::with_commands(self.id, commands, py)
         } else {
             return Err(PyValueError::new_err(
                 "Cannot spawn children: EntityCommands not associated with a Commands or World object.",
@@ -317,19 +271,14 @@ impl PyEntityCommands {
     /// ```
     pub fn observe(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
         // Try to get world access from either Commands or World
-        let mut world_guard;
-        let world_mut = if let Some(commands) = self.get_commands()? {
+        let mut world_guard = if let Some(commands) = self.get_commands()? {
             // Via Commands (immediate mode only)
             commands.try_world_mut()?
-        } else if let Some(world) = self.get_world()? {
-            // Via World (direct access)
-            world_guard = world.world_mut()?;
-            Some(&mut *world_guard)
         } else {
             None
         };
 
-        if let Some(world) = world_mut {
+        if let Some(world) = world_guard.as_deref_mut() {
             // Immediate registration - we have World access
             ensure_no_live_asset_access(world, "entity.observe()")
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -370,79 +319,24 @@ impl PyEntityCommands {
     }
 }
 
-/// Helper for spawning entities that are related to a target entity (e.g., children)
-///
-/// Mirrors [`PyEntityCommands`]: exactly one of `commands_ptr` / `world_ptr` is
-/// set, and both address a live Python object whose lifetime the shared
-/// `validity` flag fences. A World-backed spawner rebuilds its temporary
-/// `PyCommands` per operation rather than storing a pointer to one.
+/// Helper for spawning entities related to a target entity.
 #[pyclass(name = "RelatedSpawnerCommands", module = "pybevy.ecs")]
 pub struct PyRelatedSpawnerCommands {
     target: Entity,
-    commands_ptr: Option<usize>,
-    world_ptr: Option<usize>,
-    // Runtime validity check - prevents use after system execution
-    validity: ValidityFlag,
+    commands: PyCommands,
 }
 
-// SAFETY: PyRelatedSpawnerCommands is Send because:
-// - Entity is Copy + Send
-// - The raw pointer is stored as usize (just an address)
-// - ValidityFlag is Arc<AtomicBool> which is Send + Sync
-// - Access through get_commands() requires validity check
-unsafe impl Send for PyRelatedSpawnerCommands {}
-
-// SAFETY: PyRelatedSpawnerCommands is Sync because:
-// - All fields are either Copy or thread-safe (ValidityFlag)
-// - Actual access to commands is controlled by validity checking
-unsafe impl Sync for PyRelatedSpawnerCommands {}
-
 impl PyRelatedSpawnerCommands {
-    fn with_commands(target: Entity, commands: &PyCommands) -> Self {
+    fn with_commands(target: Entity, commands: &PyCommands, py: Python<'_>) -> Self {
         Self {
             target,
-            commands_ptr: Some(commands as *const PyCommands as usize),
-            world_ptr: None,
-            validity: commands.validity(),
+            commands: commands.clone_for_handle(py),
         }
     }
 
-    fn with_world(target: Entity, world: &super::world::PyWorld) -> Self {
-        Self {
-            target,
-            commands_ptr: None,
-            world_ptr: Some(world as *const super::world::PyWorld as usize),
-            validity: world.validity().unwrap_or_default(),
-        }
-    }
-
-    fn commands_source(&self) -> PyResult<CommandsSource<'_>> {
-        self.validity.check()?;
-        if let Some(ptr) = self.commands_ptr {
-            return Ok(CommandsSource::Commands(unsafe {
-                &*(ptr as *const PyCommands)
-            }));
-        }
-        let Some(ptr) = self.world_ptr else {
-            return Err(PyValueError::new_err(
-                "RelatedSpawnerCommands not properly initialized",
-            ));
-        };
-        let world = unsafe { &*(ptr as *const super::world::PyWorld) };
-        let world_ptr = world.world_ptr();
-        let validity = world.validity().unwrap_or_else(ValidityFlag::new);
-        // SAFETY: the World pointer stays valid while `validity` is active, and
-        // the temporary never outlives this call.
-        let temp = unsafe { PyCommands::from_world_temporary(world_ptr, validity) };
-        Ok(CommandsSource::TempFromWorld(temp))
-    }
-
-    /// Re-anchor a handle produced by a temporary adapter back onto this
-    /// spawner's own backing, so it never retains the temporary's address.
-    fn reanchor(&self, entity_cmd: &mut PyEntityCommands) {
-        entity_cmd.commands_ptr = self.commands_ptr;
-        entity_cmd.world_ptr = self.world_ptr;
-        entity_cmd.validity = Some(self.validity.clone());
+    fn commands_source(&self) -> PyResult<&PyCommands> {
+        self.commands.validity().check()?;
+        Ok(&self.commands)
     }
 
     /// Create a ChildOf component for the target entity
@@ -457,27 +351,23 @@ impl PyRelatedSpawnerCommands {
     #[new]
     pub fn new(py: Python, commands: Py<PyCommands>, target: PyEntity) -> PyResult<Self> {
         let commands_ref = commands.bind(py).borrow();
-        let commands_ptr = &*commands_ref as *const PyCommands as usize;
-        let validity = commands_ref.validity();
-        Ok(Self {
-            target: target.0,
-            commands_ptr: Some(commands_ptr),
-            world_ptr: None,
-            validity,
-        })
+        Ok(Self::with_commands(target.0, &commands_ref, py))
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.commands.traverse_owner(visit)
     }
 
     /// Spawn an empty entity as a child
     pub fn spawn_empty(&self, py: Python) -> PyResult<PyEntityCommands> {
         let source = self.commands_source()?;
-        let mut entity_cmd = source.as_ref().spawn_empty(py)?;
+        let entity_cmd = source.spawn_empty(py)?;
 
         // Insert ChildOf component to establish parent-child relationship
         let child_of = Self::create_child_of_component(py, self.target)?;
         let child_of_tuple = PyTuple::new(py, vec![child_of])?;
         entity_cmd.insert(py, &child_of_tuple)?;
 
-        self.reanchor(&mut entity_cmd);
         Ok(entity_cmd)
     }
 
@@ -485,14 +375,13 @@ impl PyRelatedSpawnerCommands {
     #[pyo3(signature = (*components))]
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
         let source = self.commands_source()?;
-        let mut entity_cmd = source.as_ref().spawn(py, components)?;
+        let entity_cmd = source.spawn(py, components)?;
 
         // Insert ChildOf component to establish parent-child relationship
         let child_of = Self::create_child_of_component(py, self.target)?;
         let child_of_tuple = PyTuple::new(py, vec![child_of])?;
         entity_cmd.insert(py, &child_of_tuple)?;
 
-        self.reanchor(&mut entity_cmd);
         Ok(entity_cmd)
     }
 

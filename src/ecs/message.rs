@@ -261,8 +261,8 @@ impl PyMessageWriter {
                     )));
                 }
 
-                let world = self.native_world()?.world_mut()?;
-                let event_id = bridge.write_message(py, world, bound_message)?;
+                let mut world = self.native_world()?.world_mut()?;
+                let event_id = bridge.write_message(py, &mut world, bound_message)?;
                 self.record_trace_op(trace_operation);
                 Ok(PyMessageId::from_boxed(event_id))
             }

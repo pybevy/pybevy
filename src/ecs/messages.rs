@@ -33,8 +33,8 @@ use crate::{
         PyAssetLoadFailedEvent, materialize_asset_load_failed_record,
     },
     ecs::{
-        dynamic_system::lock_or_recover, helpers::validity_guard::ValidityFlag,
-        resource::PyResource,
+        deferred_drop::WorldMutGuard, dynamic_system::lock_or_recover,
+        helpers::validity_guard::ValidityFlag, resource::PyResource, world_gc::WorldGcState,
     },
 };
 
@@ -53,6 +53,7 @@ pub(crate) type CursorStorage = Arc<Mutex<Option<Box<dyn Any + Send + Sync>>>>;
 pub(crate) struct MessageWorld {
     cell: UnsafeWorldCell<'static>,
     validity: ValidityFlag,
+    gc_state: Option<WorldGcState>,
 }
 
 // SAFETY: mirrors PyQueryIter's discipline. The cell is only touched while the
@@ -68,7 +69,11 @@ impl MessageWorld {
         // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the
         // cell is only touched while `validity` is active.
         let cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(cell) };
-        Self { cell, validity }
+        Self {
+            cell,
+            validity,
+            gc_state: WorldGcState::for_world(cell.id()),
+        }
     }
 
     /// Momentary `&mut World` for the message macros/bridges (they take `&mut World`
@@ -78,11 +83,11 @@ impl MessageWorld {
     /// reader resource ids and writes for writer ids; the executor prevents a
     /// conflicting system running concurrently, so the actual message access is
     /// unique. Same residual-pointer class as `query_runtime::world_ptr`.
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn world_mut(&self) -> PyResult<&mut World> {
+    pub(crate) fn world_mut(&self) -> PyResult<WorldMutGuard<'_>> {
         self.validity.check()?;
-        // SAFETY: momentary derivation; see method docs.
-        Ok(unsafe { self.cell.world_mut() })
+        let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
+        // SAFETY: traversal is suspended; see the validity/access contract above.
+        Ok(WorldMutGuard::with_gc(unsafe { self.cell.world_mut() }, gc))
     }
 }
 
@@ -144,7 +149,7 @@ impl PyMessages {
             keyboard_input::PyKeyboardInput, keyboard_input_ext::PyKeyboardInputExt,
         };
 
-        let world = self.world.world_mut()?;
+        let mut world = self.world.world_mut()?;
         let mut guard = self.lock_cursor();
         let cursor_state = match guard.as_mut() {
             Some(g) => &mut **g,
@@ -156,13 +161,13 @@ impl PyMessages {
 
         match &self.message_type {
             MessageType::KeyboardInput => {
-                self.iter_messages::<KeyboardInput, _>(py, world, cursor_state, |msg, py| {
+                self.iter_messages::<KeyboardInput, _>(py, &mut world, cursor_state, |msg, py| {
                     Ok(Py::new(py, PyKeyboardInput::from_bevy(msg)?)?.into_any())
                 })
             }
             MessageType::WindowEvent => {
                 use pybevy_window::window_event::PyWindowEvent;
-                self.iter_messages::<WindowEvent, _>(py, world, cursor_state, |msg, py| {
+                self.iter_messages::<WindowEvent, _>(py, &mut world, cursor_state, |msg, py| {
                     Ok(PyWindowEvent::from_bevy(py, msg)?
                         .into_pyobject(py)?
                         .into_any()
@@ -173,7 +178,7 @@ impl PyMessages {
                 use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;
                 self.iter_messages::<WorldInstanceReadyMessage, _>(
                     py,
-                    world,
+                    &mut world,
                     cursor_state,
                     |msg, py| {
                         Ok(
@@ -189,7 +194,7 @@ impl PyMessages {
                 let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
                 bridge
-                    .read_events(world, cursor_state)
+                    .read_events(&world, cursor_state)
                     .into_iter()
                     .map(|event| materialize_asset_event_record(py, event))
                     .collect()
@@ -198,7 +203,7 @@ impl PyMessages {
                 let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
                 bridge
-                    .read_load_failed_events(world, cursor_state)
+                    .read_load_failed_events(&world, cursor_state)
                     .into_iter()
                     .map(|event| materialize_asset_load_failed_record(py, event))
                     .collect()
@@ -212,7 +217,7 @@ impl PyMessages {
                     global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
                         PyTypeError::new_err("Message type not registered in global registry")
                     })?;
-                bridge.iter_to_python_with_cursor(py, world, cursor_state)
+                bridge.iter_to_python_with_cursor(py, &mut world, cursor_state)
             }
         }
     }
@@ -221,7 +226,7 @@ impl PyMessages {
     where
         F: FnOnce(&mut dyn ErasedMessages) -> R,
     {
-        let world = self.world.world_mut()?;
+        let mut world = self.world.world_mut()?;
 
         // clear/is_empty/len back these arms; a missing buffer reads as empty
         // (EmptyMessages) rather than inserting a resource, which would be a
@@ -351,14 +356,14 @@ impl PyMessages {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
             return {
-                let _: () = bridge.clear_events(self.world.world_mut()?);
+                let _: () = bridge.clear_events(&mut *self.world.world_mut()?);
                 Ok(())
             };
         }
         if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-            bridge.clear_load_failed_events(self.world.world_mut()?);
+            bridge.clear_load_failed_events(&mut *self.world.world_mut()?);
             return Ok(());
         }
         if let MessageType::Dynamic(type_ptr) = &self.message_type {
@@ -366,8 +371,8 @@ impl PyMessages {
                 global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
                     PyTypeError::new_err("Message type not registered in global registry")
                 })?;
-            let world = self.world.world_mut()?;
-            return bridge.clear(world);
+            let mut world = self.world.world_mut()?;
+            return bridge.clear(&mut world);
         }
         self.with_messages(|messages| messages.clear())
     }
@@ -376,20 +381,20 @@ impl PyMessages {
         if let MessageType::AssetEvent(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-            return Ok(bridge.events_is_empty(self.world.world_mut()?));
+            return Ok(bridge.events_is_empty(&*self.world.world_mut()?));
         }
         if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-            return Ok(bridge.load_failed_events_is_empty(self.world.world_mut()?));
+            return Ok(bridge.load_failed_events_is_empty(&*self.world.world_mut()?));
         }
         if let MessageType::Dynamic(type_ptr) = &self.message_type {
             let bridge =
                 global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
                     PyTypeError::new_err("Message type not registered in global registry")
                 })?;
-            let world = self.world.world_mut()?;
-            return bridge.is_empty(world);
+            let mut world = self.world.world_mut()?;
+            return bridge.is_empty(&mut world);
         }
         self.with_messages(|messages| messages.is_empty())
     }
@@ -398,20 +403,20 @@ impl PyMessages {
         if let MessageType::AssetEvent(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-            return Ok(bridge.event_count(self.world.world_mut()?));
+            return Ok(bridge.event_count(&*self.world.world_mut()?));
         }
         if let MessageType::AssetLoadFailed(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-            return Ok(bridge.load_failed_event_count(self.world.world_mut()?));
+            return Ok(bridge.load_failed_event_count(&*self.world.world_mut()?));
         }
         if let MessageType::Dynamic(type_ptr) = &self.message_type {
             let bridge =
                 global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
                     PyTypeError::new_err("Message type not registered in global registry")
                 })?;
-            let world = self.world.world_mut()?;
-            return bridge.len(world);
+            let mut world = self.world.world_mut()?;
+            return bridge.len(&mut world);
         }
         self.with_messages(|messages| messages.len())
     }

@@ -92,37 +92,53 @@ pub use scene_module::ActiveSceneModule;
 /// dereference and presence check live in one place.
 ///
 /// # Safety
-/// `world_ptr` must be valid for a shared borrow and free of a competing mutable borrow
-/// for this call, and must stay valid while `validity` is active.
+/// `world_ptr` must permit exclusive World access for this call and stay valid
+/// while `validity` is active. The mode must authorize access to this component.
 pub unsafe fn resolve_revalidating_component<B: Component>(
     entity_id: Entity,
     world_ptr: *mut World,
     validity: ValidityFlagWithMode,
 ) -> Option<ComponentStorage<B>> {
     // SAFETY: forwarded from this function's contract.
-    let world = unsafe { &*world_ptr };
+    let world = unsafe { &mut *world_ptr };
     let component_id = world.component_id::<B>()?;
     let entity_ref = world.get_entity(entity_id).ok()?;
     entity_ref.get_by_id(component_id).ok()?;
     // SAFETY: identity verified above; the handle re-resolves the address per access.
-    Some(unsafe { ComponentStorage::revalidating(world_ptr, entity_id, component_id, validity) })
+    Some(unsafe {
+        ComponentStorage::revalidating(
+            world.as_unsafe_world_cell(),
+            entity_id,
+            component_id,
+            validity,
+        )
+    })
 }
 
 /// Build revalidating storage for a native resource reached through its entity.
 ///
 /// # Safety
-/// `world_ptr` must remain valid while `validity` permits access and must not be
-/// dereferenced in a way that conflicts with the declared access mode.
+/// `world_ptr` must permit exclusive World access for this call and stay valid
+/// while `validity` is active. The mode must authorize access to this resource.
 pub unsafe fn resolve_revalidating_resource<B: Resource>(
     entity_id: Entity,
     world_ptr: *mut World,
     validity: ValidityFlagWithMode,
 ) -> Option<ResourceStorage<B>> {
-    let world = unsafe { &*world_ptr };
+    // SAFETY: the caller grants exclusive World access during handle construction.
+    let world = unsafe { &mut *world_ptr };
     let component_id = world.components().component_id::<B>()?;
     let entity_ref = world.get_entity(entity_id).ok()?;
     entity_ref.get_by_id(component_id).ok()?;
-    Some(unsafe { ResourceStorage::revalidating(world_ptr, entity_id, component_id, validity) })
+    // SAFETY: verified identity; the cell is fenced by the supplied validity flag.
+    Some(unsafe {
+        ResourceStorage::revalidating(
+            world.as_unsafe_world_cell(),
+            entity_id,
+            component_id,
+            validity,
+        )
+    })
 }
 
 /// Resolve an [`EntityRef`] from a raw world pointer, or `None` if the entity is gone.

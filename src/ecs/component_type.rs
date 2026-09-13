@@ -29,6 +29,7 @@ use crate::ecs::{
     helpers::type_utils::get_python_type_name,
     resource::{PyRes, PyResMut, PyResource},
     resource_type::register_custom_resource,
+    world_gc::WorldGcState,
 };
 
 /// All components use dynamic dispatch via feature crate bridges or custom Python components.
@@ -613,6 +614,16 @@ pub(crate) fn register_prepared_custom_component(
     // cannot be constructed through control APIs, while the neutral registry
     // may retain their old aliases temporarily for rollback safety. Reused and
     // aliased classes therefore need to repopulate the metadata too.
+    let retained_type = if WorldGcState::for_world(world.id()).is_some() {
+        Python::attach(|py| {
+            prepared
+                .retained_type
+                .as_ref()
+                .map(|class| Arc::new(class.clone_ref(py)))
+        })
+    } else {
+        prepared.retained_type.clone()
+    };
     let mut retired_entries = Vec::new();
     {
         let mut info = world.resource_mut::<pybevy_core::CustomComponentInfo>();
@@ -628,7 +639,7 @@ pub(crate) fn register_prepared_custom_component(
             outcome.id(),
             pybevy_core::CustomComponentEntry {
                 type_ptr,
-                retained_type: prepared.retained_type.clone(),
+                retained_type,
                 name: prepared.name.clone(),
                 is_pyobject_storage: matches!(
                     prepared.storage_type,

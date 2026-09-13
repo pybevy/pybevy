@@ -21,6 +21,8 @@ use std::{
 
 use pyo3::{Py, types::PyAny};
 
+use super::world_gc::WorldGcGuard;
+
 thread_local! {
     static DEFERRED_PY_DROPS: RefCell<Vec<Py<PyAny>>> = const { RefCell::new(Vec::new()) };
 }
@@ -87,6 +89,7 @@ impl Drop for MutationFlushGuard {
 pub(crate) struct WorldMutGuard<'a> {
     world: &'a mut bevy::ecs::world::World,
     _flush: MutationFlushGuard,
+    _gc: Option<WorldGcGuard>,
 }
 
 impl<'a> WorldMutGuard<'a> {
@@ -97,7 +100,17 @@ impl<'a> WorldMutGuard<'a> {
         Self {
             world,
             _flush: MutationFlushGuard,
+            _gc: None,
         }
+    }
+
+    pub(crate) fn with_gc(
+        world: &'a mut bevy::ecs::world::World,
+        gc: Option<WorldGcGuard>,
+    ) -> Self {
+        let mut guard = Self::new(world);
+        guard._gc = gc;
+        guard
     }
 }
 

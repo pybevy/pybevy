@@ -44,6 +44,7 @@ use super::{
     resource::hierarchy_contains_resource_entity,
     resource_type::PyResourceType,
     world::PyWorld,
+    world_gc::WorldGcState,
 };
 use crate::ecs::{
     batch_spawn::{SpawnBatchCommand, prepare_iter_batch},
@@ -264,6 +265,7 @@ pub struct PyCommands {
     validity: ValidityFlag,
     error_sink: Option<CommandErrorSink>,
     parity_trace: Option<ParityRunHandle>,
+    gc_state: Option<WorldGcState>,
 }
 
 // SAFETY: PyCommands is Send because:
@@ -280,6 +282,23 @@ unsafe impl Send for PyCommands {}
 unsafe impl Sync for PyCommands {}
 
 impl PyCommands {
+    pub(crate) fn clone_for_handle(&self, py: Python<'_>) -> Self {
+        Self {
+            commands_ptr: self.commands_ptr,
+            is_world: self.is_world,
+            is_queue: self.is_queue,
+            _world_ref: self._world_ref.as_ref().map(|world| world.clone_ref(py)),
+            validity: self.validity.clone(),
+            error_sink: self.error_sink.clone(),
+            parity_trace: self.parity_trace.clone(),
+            gc_state: self.gc_state.clone(),
+        }
+    }
+
+    pub(crate) fn traverse_owner(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self._world_ref)
+    }
+
     /// Create a new PyCommands wrapper around a mutable Commands reference.
     ///
     /// # Safety
@@ -299,6 +318,7 @@ impl PyCommands {
             validity,
             error_sink: Some(error_sink),
             parity_trace,
+            gc_state: None,
         }
     }
 
@@ -311,6 +331,7 @@ impl PyCommands {
         world_ref: Py<PyWorld>,
         validity: ValidityFlag,
     ) -> Self {
+        let gc_state = Python::attach(|py| world_ref.borrow(py).gc_state());
         Self {
             commands_ptr: world_ptr as *mut (),
             is_world: true,
@@ -319,6 +340,7 @@ impl PyCommands {
             validity,
             error_sink: None,
             parity_trace: None,
+            gc_state,
         }
     }
 
@@ -331,6 +353,8 @@ impl PyCommands {
         world_ptr: *mut World,
         validity: ValidityFlag,
     ) -> Self {
+        // SAFETY: the caller supplies a live World and exclusive access to its metadata.
+        let gc_state = WorldGcState::for_world(unsafe { (&*world_ptr).id() });
         Self {
             commands_ptr: world_ptr as *mut (),
             is_world: true,
@@ -339,6 +363,7 @@ impl PyCommands {
             validity,
             error_sink: None,
             parity_trace: None,
+            gc_state,
         }
     }
 
@@ -359,6 +384,7 @@ impl PyCommands {
             validity,
             error_sink,
             parity_trace: None,
+            gc_state: None,
         }
     }
 
@@ -399,10 +425,10 @@ impl PyCommands {
                 "Cannot get World from Commands-backed PyCommands",
             ));
         }
-        // SAFETY: the wrapper holds a live World pointer for its validity window.
-        Ok(crate::ecs::deferred_drop::WorldMutGuard::new(unsafe {
-            &mut *(self.commands_ptr as *mut World)
-        }))
+        let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
+        // SAFETY: validity and the GC gate protect the live World mutation window.
+        let world = unsafe { &mut *(self.commands_ptr as *mut World) };
+        Ok(crate::ecs::deferred_drop::WorldMutGuard::with_gc(world, gc))
     }
 
     pub(crate) fn check_native_asset_access(&self, operation: &str) -> PyResult<()> {
@@ -415,13 +441,12 @@ impl PyCommands {
     }
 
     /// Get world access if this is world-backed, otherwise return None.
-    /// The momentary borrow ends with this call; a caller mutating through it
-    /// wraps its own window.
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn try_world_mut(&self) -> PyResult<Option<&mut World>> {
+    pub(crate) fn try_world_mut(
+        &self,
+    ) -> PyResult<Option<crate::ecs::deferred_drop::WorldMutGuard<'_>>> {
         self.validity.check()?;
         if self.is_world {
-            Ok(Some(unsafe { &mut *(self.commands_ptr as *mut World) }))
+            self.world_mut().map(Some)
         } else {
             Ok(None)
         }
@@ -1197,7 +1222,7 @@ pub(crate) fn remove_components_from_entity_helper(
 #[pymethods]
 impl PyCommands {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self._world_ref)
+        self.traverse_owner(visit)
     }
 
     pub fn spawn_empty(&self, _py: Python<'_>) -> PyResult<PyEntityCommands> {
@@ -1210,7 +1235,7 @@ impl PyCommands {
         )?;
         self.trace_spawn(entity);
 
-        Ok(PyEntityCommands::with_commands(entity, self))
+        Ok(PyEntityCommands::with_commands(entity, self, _py))
     }
 
     #[pyo3(signature = (*components))]
@@ -1230,7 +1255,7 @@ impl PyCommands {
 
         insert_components_to_entity_helper(self, py, entity_id, &components_to_insert)?;
 
-        Ok(PyEntityCommands::with_commands(entity_id, self))
+        Ok(PyEntityCommands::with_commands(entity_id, self, py))
     }
 
     #[pyo3(signature = (*components, count=None))]
@@ -1326,7 +1351,7 @@ impl PyCommands {
         Ok(())
     }
 
-    pub fn entity(&self, entity: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+    pub fn entity(&self, py: Python<'_>, entity: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
         let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
         if self.is_world {
@@ -1336,10 +1361,14 @@ impl PyCommands {
             }
         }
         // Note: For Commands backend, we can't check existence (deferred operations)
-        Ok(PyEntityCommands::with_commands(entity.0, self))
+        Ok(PyEntityCommands::with_commands(entity.0, self, py))
     }
 
-    pub fn get_entity(&self, entity: &Bound<'_, PyAny>) -> PyResult<Option<PyEntityCommands>> {
+    pub fn get_entity(
+        &self,
+        py: Python<'_>,
+        entity: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<PyEntityCommands>> {
         let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
         if self.is_world {
@@ -1348,7 +1377,7 @@ impl PyCommands {
                 return Ok(None);
             }
         }
-        Ok(Some(PyEntityCommands::with_commands(entity.0, self)))
+        Ok(Some(PyEntityCommands::with_commands(entity.0, self, py)))
     }
 
     pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<()> {

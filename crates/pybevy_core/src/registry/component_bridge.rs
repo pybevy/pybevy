@@ -127,8 +127,9 @@ pub trait ComponentBridge: Send + Sync + 'static {
     ///
     /// # Safety
     ///
-    /// `world_ptr` must be valid while `validity` is non-Invalid, and must not have a
-    /// competing mutable borrow for the duration of this call.
+    /// `world_ptr` must permit exclusive World access during handle construction
+    /// and remain live while `validity` is non-Invalid. Owned Python Worlds must
+    /// suspend GC traversal during this call; subsequent access is component-scoped.
     unsafe fn extract_from_entity_ref(
         &self,
         entity_id: Entity,
@@ -145,8 +146,8 @@ pub trait ComponentBridge: Send + Sync + 'static {
     ///
     /// # Safety
     ///
-    /// `world_ptr` must be valid while `validity` is non-Invalid, and must not have a
-    /// competing mutable borrow for the duration of this call.
+    /// The construction requirements of `extract_from_entity_ref` apply, and
+    /// `validity` must authorize writing the identified component.
     unsafe fn extract_from_entity_mut(
         &self,
         entity_id: Entity,
