@@ -49,21 +49,22 @@ impl PyTextFont {
 impl PyTextFont {
     #[new]
     #[pyo3(signature = (
+        *,
         font = None,
         font_size = None,
-        font_smoothing = Self::default_font_smoothing(),
         weight = Self::default_weight(),
         width = Self::default_width(),
         style = Self::default_style(),
+        font_smoothing = Self::default_font_smoothing(),
         font_features = Self::default_font_features()
     ))]
     pub fn new(
         font: Option<&Bound<'_, PyAny>>,
         font_size: Option<&Bound<'_, PyAny>>,
-        font_smoothing: PyFontSmoothing,
         weight: PyFontWeight,
         width: PyFontWidth,
         style: PyFontStyle,
+        font_smoothing: PyFontSmoothing,
         font_features: PyFontFeatures,
     ) -> PyResult<PyClassInitializer<Self>> {
         let font = match font {

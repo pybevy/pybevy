@@ -76,10 +76,12 @@ pub enum PyTextEdit {
     ShiftClickExtension {
         value: (f32, f32),
     },
+    #[pyo3(constructor = (*, value, cursor))]
     ImeSetCompose {
         value: String,
         cursor: Option<(usize, usize)>,
     },
+    #[pyo3(constructor = (*, value))]
     ImeCommit {
         value: String,
     },
