@@ -240,6 +240,86 @@ pub const CONDITION_OPAQUE_QUERY: &str =
 pub const CONDITION_MUTABLE_VIEW: &str = "View with a Mut component (mutable component access)";
 pub const CONDITION_OPAQUE_VIEW: &str = "View with opaque Python component access";
 
+/// The spelling a rejected system parameter annotation was written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemParamWrapper {
+    Bare,
+    Mut,
+    Res,
+    ResMut,
+}
+
+impl SystemParamWrapper {
+    fn written(self, type_name: &str) -> String {
+        match self {
+            SystemParamWrapper::Bare => type_name.to_string(),
+            SystemParamWrapper::Mut => format!("Mut[{type_name}]"),
+            SystemParamWrapper::Res => format!("Res[{type_name}]"),
+            SystemParamWrapper::ResMut => format!("ResMut[{type_name}]"),
+        }
+    }
+}
+
+/// Interpreter-neutral reason a system parameter annotation cannot be lowered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemParamRejection {
+    MissingAnnotation,
+    BareResource,
+    MessageType,
+    NativeMessageType,
+    ComponentType,
+    AssetType,
+    NakedMut,
+    NakedMutAssets,
+    Unsupported,
+}
+
+/// Valid system parameter spellings, listed when nothing else fits.
+const SYSTEM_PARAM_KINDS: &str = "Commands, World, Gizmos, Query[...], Single[...], View[...], \
+     Res[...], ResMut[...], Res[Assets[...]], MessageReader[...], MessageWriter[...], \
+     MessageMutator[...], Local[...], In[...], and On[...]";
+
+/// The user-facing rejection message for one system parameter, identical on
+/// both backends. `type_name` is the public annotation spelling where known,
+/// otherwise the annotation's repr.
+pub fn system_param_rejection_message(
+    system: &str,
+    param: &str,
+    wrapper: SystemParamWrapper,
+    type_name: &str,
+    kind: SystemParamRejection,
+) -> String {
+    let prefix = format!("System function `{system}` parameter `{param}`");
+    let written = wrapper.written(type_name);
+    match kind {
+        SystemParamRejection::MissingAnnotation => format!("{prefix} has no type annotation"),
+        SystemParamRejection::BareResource => format!(
+            "{prefix} must use Res[{type_name}] for read-only or ResMut[{type_name}] for mutable access"
+        ),
+        SystemParamRejection::MessageType => format!(
+            "{prefix} is `{written}`, but `{type_name}` is a message type. Use MessageReader[{type_name}] to read messages, MessageWriter[{type_name}] to send them, or MessageMutator[{type_name}] to modify them in place"
+        ),
+        SystemParamRejection::NativeMessageType => format!(
+            "{prefix} is `{written}`, but `{type_name}` is a native message type. Use MessageReader[{type_name}] to read messages or MessageWriter[{type_name}] to send them. MessageMutator only supports custom Python messages"
+        ),
+        SystemParamRejection::ComponentType => format!(
+            "{prefix} is `{written}`, but `{type_name}` is a component type. Use Query[{type_name}] for read-only access, Query[Mut[{type_name}]] for mutable access, or Single[{type_name}] when exactly one entity matches"
+        ),
+        SystemParamRejection::AssetType => format!(
+            "{prefix} is `{written}`, but `{type_name}` is an asset type. Use Res[Assets[{type_name}]] for read-only access or ResMut[Assets[{type_name}]] for mutable access"
+        ),
+        SystemParamRejection::NakedMut => format!(
+            "{prefix} is `{written}`, but Mut[...] is only valid inside Query, Single, or View. Use Query[Mut[{type_name}]], Single[Mut[{type_name}]], or View[Mut[{type_name}]]"
+        ),
+        SystemParamRejection::NakedMutAssets => format!(
+            "{prefix} is `{written}`, but Mut[...] is only valid inside Query, Single, or View. Use Res[{type_name}] for read-only access or ResMut[{type_name}] for mutable access"
+        ),
+        SystemParamRejection::Unsupported => format!(
+            "{prefix} has an unsupported system parameter `{written}`. Valid system parameters are {SYSTEM_PARAM_KINDS}"
+        ),
+    }
+}
+
 pub fn active_asset_access(
     operation: &str,
     asset_name: &str,
@@ -742,6 +822,12 @@ pub const CASCADE_MINIMUM_DISTANCE: &str = "minimum_distance must be non-negativ
 pub const CONTROL_SERIALIZATION_CYCLE: &str = "cyclic Python value";
 pub const CONTROL_SERIALIZATION_DEPTH: &str = "Python value exceeds the serialization depth limit";
 
+pub fn image_extension_unknown(extension: impl Display) -> String {
+    format!(
+        "cannot infer an image format from the extension '.{extension}'; pass format= explicitly, for example format=ImageFormat.Png"
+    )
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -971,5 +1057,109 @@ mod tests {
             "Invalid asset type. Expected a subclass of `Asset`, but got `<class 'bool'>`"
         );
         assert_eq!(entity_does_not_exist(7), "Entity 7 does not exist");
+    }
+
+    const REJECTION_KINDS: [SystemParamRejection; 9] = [
+        SystemParamRejection::MissingAnnotation,
+        SystemParamRejection::BareResource,
+        SystemParamRejection::MessageType,
+        SystemParamRejection::NativeMessageType,
+        SystemParamRejection::ComponentType,
+        SystemParamRejection::AssetType,
+        SystemParamRejection::NakedMut,
+        SystemParamRejection::NakedMutAssets,
+        SystemParamRejection::Unsupported,
+    ];
+
+    const WRAPPERS: [SystemParamWrapper; 4] = [
+        SystemParamWrapper::Bare,
+        SystemParamWrapper::Mut,
+        SystemParamWrapper::Res,
+        SystemParamWrapper::ResMut,
+    ];
+
+    fn rejection(wrapper: SystemParamWrapper, kind: SystemParamRejection) -> String {
+        system_param_rejection_message("fly", "clicks", wrapper, "Ping", kind)
+    }
+
+    #[test]
+    fn every_rejection_kind_names_the_system_and_parameter_and_is_distinct() {
+        let mut rendered: Vec<String> = REJECTION_KINDS
+            .iter()
+            .map(|kind| rejection(SystemParamWrapper::Bare, *kind))
+            .collect();
+        for message in &rendered {
+            assert!(
+                message.starts_with("System function `fly` parameter `clicks`"),
+                "{message}"
+            );
+        }
+        rendered.sort();
+        let count = rendered.len();
+        rendered.dedup();
+        assert_eq!(rendered.len(), count);
+    }
+
+    #[test]
+    fn wrapper_spelling_reaches_the_remedy_kinds_only() {
+        for kind in [
+            SystemParamRejection::MessageType,
+            SystemParamRejection::NativeMessageType,
+            SystemParamRejection::ComponentType,
+            SystemParamRejection::AssetType,
+            SystemParamRejection::NakedMut,
+            SystemParamRejection::NakedMutAssets,
+            SystemParamRejection::Unsupported,
+        ] {
+            assert!(rejection(SystemParamWrapper::Res, kind).contains("`Res[Ping]`"));
+            assert!(rejection(SystemParamWrapper::ResMut, kind).contains("`ResMut[Ping]`"));
+            assert!(rejection(SystemParamWrapper::Mut, kind).contains("`Mut[Ping]`"));
+            assert!(rejection(SystemParamWrapper::Bare, kind).contains("`Ping`"));
+        }
+    }
+
+    #[test]
+    fn annotation_free_kinds_ignore_the_wrapper_spelling() {
+        for kind in [
+            SystemParamRejection::MissingAnnotation,
+            SystemParamRejection::BareResource,
+        ] {
+            let baseline = rejection(SystemParamWrapper::Bare, kind);
+            for wrapper in WRAPPERS {
+                assert_eq!(rejection(wrapper, kind), baseline);
+            }
+        }
+    }
+
+    #[test]
+    fn each_remedy_names_its_own_valid_spellings() {
+        let message = rejection(SystemParamWrapper::Bare, SystemParamRejection::MessageType);
+        assert!(message.contains("MessageReader[Ping]"));
+        assert!(message.contains("MessageWriter[Ping]"));
+        assert!(message.contains("MessageMutator[Ping]"));
+
+        let component = rejection(
+            SystemParamWrapper::Bare,
+            SystemParamRejection::ComponentType,
+        );
+        assert!(component.contains("Query[Ping]"));
+        assert!(component.contains("Query[Mut[Ping]]"));
+        assert!(component.contains("Single[Ping]"));
+
+        let asset = rejection(SystemParamWrapper::Bare, SystemParamRejection::AssetType);
+        assert!(asset.contains("Res[Assets[Ping]]"));
+        assert!(asset.contains("ResMut[Assets[Ping]]"));
+
+        let naked = rejection(SystemParamWrapper::Mut, SystemParamRejection::NakedMut);
+        assert!(naked.contains("Query[Mut[Ping]]"));
+        assert!(naked.contains("Single[Mut[Ping]]"));
+        assert!(naked.contains("View[Mut[Ping]]"));
+
+        let resource = rejection(SystemParamWrapper::Bare, SystemParamRejection::BareResource);
+        assert!(resource.contains("Res[Ping]"));
+        assert!(resource.contains("ResMut[Ping]"));
+
+        let unsupported = rejection(SystemParamWrapper::Bare, SystemParamRejection::Unsupported);
+        assert!(unsupported.contains(SYSTEM_PARAM_KINDS));
     }
 }

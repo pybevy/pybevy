@@ -4,9 +4,10 @@ use std::{
 };
 
 use pybevy_core::{
-    LogicalTypeId,
+    LogicalTypeId, PyAsset, PyComponent, PyMessage,
     public_error::{
-        pipe_input_must_be_first, pipe_target_requires_input, system_annotations_unresolved,
+        SystemParamRejection, SystemParamWrapper, pipe_input_must_be_first,
+        pipe_target_requires_input, system_annotations_unresolved, system_param_rejection_message,
     },
 };
 use pybevy_gizmos::gizmos::PyGizmos;
@@ -31,7 +32,7 @@ use crate::{
     assets::asset_type::PyAssetTypeParam,
     ecs::{
         component_type::PyComponentType,
-        messages::MessageType,
+        messages::{MessageType, PyMessageType},
         observer::EventType,
         query::query_param::PyQueryParam,
         resource_type::reject_state_type_as_resource,
@@ -69,6 +70,93 @@ impl Clone for SystemFunction {
             func: self.func.clone_ref(py),
             params: self.params.clone(),
         })
+    }
+}
+
+/// The annotated class, or `None` for a generic alias or any other non-class
+/// object. Aliases are excluded up front: older CPython calls `list[int]` a type.
+fn annotation_class<'py>(annotation: &Bound<'py, PyAny>) -> Option<Bound<'py, PyType>> {
+    if annotation.hasattr("__origin__").unwrap_or(false) {
+        return None;
+    }
+    annotation.cast::<PyType>().ok().cloned()
+}
+
+/// The public annotation spelling, otherwise the annotation's repr.
+fn annotation_type_name(annotation: &Bound<'_, PyAny>) -> String {
+    if let Ok(asset) = annotation.extract::<PyRef<'_, PyAssetTypeParam>>() {
+        let py = annotation.py();
+        let class = asset
+            .wrapper_class(py)
+            .or_else(|| asset.asset_type_class().ok().map(Py::into_any));
+        if let Some(class) = class {
+            return format!("Assets[{}]", annotation_type_name(class.bind(py)));
+        }
+    }
+    annotation_class(annotation)
+        .and_then(|class| class.getattr("__name__").ok())
+        .and_then(|name| name.extract::<String>().ok())
+        .unwrap_or_else(|| format!("{annotation:?}"))
+}
+
+/// Why an annotation that matched no parameter kind cannot be lowered. The
+/// base-class tests also catch user `@component` and `@message` classes.
+fn classify_system_param(
+    wrapper: SystemParamWrapper,
+    annotation: &Bound<'_, PyAny>,
+) -> PyResult<SystemParamRejection> {
+    if wrapper == SystemParamWrapper::Mut {
+        if annotation.is_instance_of::<PyAssetTypeParam>() {
+            return Ok(SystemParamRejection::NakedMutAssets);
+        }
+        return Ok(SystemParamRejection::NakedMut);
+    }
+    let Some(class) = annotation_class(annotation) else {
+        return Ok(SystemParamRejection::Unsupported);
+    };
+    if class.is_subclass_of::<PyMessage>()? {
+        if matches!(
+            PyMessageType::from_message_type(&class),
+            Ok(PyMessageType(MessageType::Custom(_)))
+        ) {
+            Ok(SystemParamRejection::MessageType)
+        } else {
+            Ok(SystemParamRejection::NativeMessageType)
+        }
+    } else if class.is_subclass_of::<PyComponent>()? {
+        Ok(SystemParamRejection::ComponentType)
+    } else if class.is_subclass_of::<PyAsset>()? {
+        Ok(SystemParamRejection::AssetType)
+    } else {
+        Ok(SystemParamRejection::Unsupported)
+    }
+}
+
+fn system_param_error(
+    system: &str,
+    field_name: &str,
+    wrapper: SystemParamWrapper,
+    annotation: &Bound<'_, PyAny>,
+    kind: SystemParamRejection,
+) -> PyErr {
+    PyTypeError::new_err(system_param_rejection_message(
+        system,
+        field_name,
+        wrapper,
+        &annotation_type_name(annotation),
+        kind,
+    ))
+}
+
+/// `Mut[T]`, `Res[T]` and `ResMut[T]` nest their argument as `((T,),)` once
+/// `typing.get_type_hints` has re-evaluated the alias.
+fn unwrap_type_argument<'py>(alias: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    let args = alias.getattr("__args__")?;
+    let first = args.cast::<PyTuple>()?.get_item(0)?;
+    if first.is_instance_of::<PyTuple>() {
+        first.cast::<PyTuple>()?.get_item(0)
+    } else {
+        Ok(first)
     }
 }
 
@@ -223,6 +311,10 @@ impl SystemFunction {
         let values = params.getattr("values")?;
         let params = values.call0()?;
 
+        // No annotation falls back to `inspect.Parameter.empty`; `x: None` resolves to `NoneType`.
+        let empty_annotation = sig_module.getattr("Parameter")?.getattr("empty")?;
+        let none_type = py.None().bind(py).get_type();
+
         let mut result = SmallVec::new();
 
         for param in params.try_iter()? {
@@ -234,62 +326,63 @@ impl SystemFunction {
                 .get_item(&field_name)
                 .or_else(|_| param.getattr("annotation"))?;
 
+            if raw_annotation.is(&empty_annotation)
+                || raw_annotation.is(&none_type)
+                || raw_annotation.is_none()
+            {
+                return Err(system_param_error(
+                    &name,
+                    &field_name,
+                    SystemParamWrapper::Bare,
+                    &raw_annotation,
+                    SystemParamRejection::MissingAnnotation,
+                ));
+            }
+
             // Check if the raw annotation is a generic alias (e.g., Mut[Time], Res[Time], ResMut[Time])
             // by checking if it has __origin__ attribute
-            let (is_mutable, annotation, is_wrapped_resource) =
-                if let Ok(origin) = raw_annotation.getattr("__origin__") {
-                    // This is a generic type like Mut[Time], Res[Time], ResMut[Time], Assets[Mesh], etc.
-                    if origin.is(PyMut::type_object(py)) {
-                        // Mut[T] - extract the inner type from __args__
-                        let args = raw_annotation.getattr("__args__")?;
-                        let inner = args.get_item(0)?;
-                        (true, inner, false)
-                    } else if origin.is(PyRes::type_object(py)) {
-                        // Res[T] - extract the inner type, mark as read-only
-                        // Note: typing.get_type_hints() creates nested tuples: ((<class T>,),)
-                        // So we need to extract twice: first gets (<class T>,), second gets <class T>
-                        let args = raw_annotation.getattr("__args__")?;
-                        let args_tuple = args.cast::<PyTuple>()?;
-                        let first_elem = args_tuple.get_item(0)?;
-                        // Check if it's a nested tuple (from typing.get_type_hints)
-                        let inner = if first_elem.is_instance_of::<PyTuple>() {
-                            first_elem.cast::<PyTuple>()?.get_item(0)?
-                        } else {
-                            first_elem
-                        };
-                        (false, inner.clone(), true)
-                    } else if origin.is(PyResMut::type_object(py)) {
-                        // ResMut[T] - extract the inner type, mark as mutable
-                        // Note: typing.get_type_hints() creates nested tuples: ((<class T>,),)
-                        let args = raw_annotation.getattr("__args__")?;
-                        let args_tuple = args.cast::<PyTuple>()?;
-                        let first_elem = args_tuple.get_item(0)?;
-                        // Check if it's a nested tuple (from typing.get_type_hints)
-                        let inner = if first_elem.is_instance_of::<PyTuple>() {
-                            first_elem.cast::<PyTuple>()?.get_item(0)?
-                        } else {
-                            first_elem
-                        };
-                        (true, inner.clone(), true)
-                    } else {
-                        // Other generic type (not Mut/Res/ResMut) - use as-is
-                        (false, raw_annotation.clone(), false)
-                    }
+            let (wrapper, annotation) = if let Ok(origin) = raw_annotation.getattr("__origin__") {
+                // This is a generic type like Mut[Time], Res[Time], ResMut[Time], Assets[Mesh], etc.
+                if origin.is(PyMut::type_object(py)) {
+                    (
+                        SystemParamWrapper::Mut,
+                        unwrap_type_argument(&raw_annotation)?,
+                    )
+                } else if origin.is(PyRes::type_object(py)) {
+                    (
+                        SystemParamWrapper::Res,
+                        unwrap_type_argument(&raw_annotation)?,
+                    )
+                } else if origin.is(PyResMut::type_object(py)) {
+                    (
+                        SystemParamWrapper::ResMut,
+                        unwrap_type_argument(&raw_annotation)?,
+                    )
                 } else {
-                    // Direct type annotation - immutable
-                    (false, raw_annotation.clone(), false)
-                };
-
-            // Now check if we need to resolve this further with get_type_hints
-            // for things like forward references
-            let annotation = if annotation.is_none() {
-                return Err(PyTypeError::new_err(format!(
-                    "System function `{}` parameter `{}` has no type annotation",
-                    name, field_name
-                )));
+                    // Other generic type (not Mut/Res/ResMut) - use as-is
+                    (SystemParamWrapper::Bare, raw_annotation.clone())
+                }
             } else {
-                annotation
+                // Direct type annotation - immutable
+                (SystemParamWrapper::Bare, raw_annotation.clone())
             };
+            if wrapper == SystemParamWrapper::Mut {
+                return Err(system_param_error(
+                    &name,
+                    &field_name,
+                    wrapper,
+                    &annotation,
+                    classify_system_param(wrapper, &annotation)?,
+                ));
+            }
+            let is_mutable = matches!(
+                wrapper,
+                SystemParamWrapper::Mut | SystemParamWrapper::ResMut
+            );
+            let is_wrapped_resource = matches!(
+                wrapper,
+                SystemParamWrapper::Res | SystemParamWrapper::ResMut
+            );
 
             if is_wrapped_resource && let Ok(type_obj) = annotation.cast::<PyType>() {
                 reject_state_type_as_resource(type_obj)?;
@@ -330,8 +423,11 @@ impl SystemFunction {
                 }
             } else if annotation.hasattr("__origin__")? {
                 // Check if it's a View generic alias by checking __origin__.__name__
-                let origin = annotation.getattr("__origin__")?;
-                let origin_name = origin.getattr("__name__")?.extract::<String>()?;
+                let origin_name = annotation
+                    .getattr("__origin__")
+                    .and_then(|origin| origin.getattr("__name__"))
+                    .and_then(|origin_name| origin_name.extract::<String>())
+                    .unwrap_or_default();
                 if origin_name == "View" {
                     // This shouldn't happen anymore since __class_getitem__ returns PyViewParam
                     return Err(PyTypeError::new_err(format!(
@@ -339,10 +435,13 @@ impl SystemFunction {
                         name,
                     )));
                 } else {
-                    return Err(PyTypeError::new_err(format!(
-                        "System function `{}` has an unsupported system parameter `{:?}`",
-                        name, annotation,
-                    )));
+                    return Err(system_param_error(
+                        &name,
+                        &field_name,
+                        wrapper,
+                        &annotation,
+                        classify_system_param(wrapper, &annotation)?,
+                    ));
                 }
             } else if annotation.is_instance_of::<PyLocal>() {
                 SystemParamType::Local(annotation.clone().unbind())
@@ -411,20 +510,22 @@ impl SystemFunction {
                     }
                 } else {
                     // Bare resources are not allowed - must use Res[T] or ResMut[T]
-                    let type_name = annotation
-                        .cast::<PyType>()?
-                        .getattr("__name__")?
-                        .extract::<String>()?;
-                    return Err(PyTypeError::new_err(format!(
-                        "System function `{}` parameter `{}` must use Res[{}] for read-only or ResMut[{}] for mutable access",
-                        name, field_name, type_name, type_name
-                    )));
+                    return Err(system_param_error(
+                        &name,
+                        &field_name,
+                        wrapper,
+                        &annotation,
+                        SystemParamRejection::BareResource,
+                    ));
                 }
             } else {
-                return Err(PyTypeError::new_err(format!(
-                    "System function `{}` has an unsupported system parameter `{:?}`",
-                    name, annotation,
-                )));
+                return Err(system_param_error(
+                    &name,
+                    &field_name,
+                    wrapper,
+                    &annotation,
+                    classify_system_param(wrapper, &annotation)?,
+                ));
             };
 
             result.push(SystemParam {
