@@ -256,5 +256,24 @@ jobs:
           path: ~/.cache/pybevy-lint
           key: bevy-api-${{ env.BEVY_REVISION }}-${{ hashFiles('crates/pybevy_lint/src/bevy_parser/parser.rs') }}
 
-      - name: Check the linter configuration against Bevy
-        run: cargo run --locked -p pybevy_lint -- --errors-only coverage --bevy-path .bevy
+      - name: Check the linter configuration and record coverage
+        run: |
+          cargo run --locked -p pybevy_lint -- --errors-only \
+            coverage --format json --bevy-path .bevy > api-coverage.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("api-coverage.json"))
+          print(f"schema {report['schema_version']}, bevy {report['provenance']['bevy_tag']}")
+          for name in ("types", "methods", "fields", "variants"):
+              ratio = report["totals"][name]
+              print(f"{name:9} {ratio['matched']:>5}/{ratio['total']:<5} {ratio['percent']:>6.2f}%")
+          PY
+
+      # Written before the audit runs, so it survives a stale configuration.
+      - name: Upload the API coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage
+          path: api-coverage.json
+          if-no-files-found: error

@@ -3,6 +3,7 @@ pub mod bevy_parser;
 pub mod comparison;
 pub mod config;
 pub mod config_audit;
+pub mod coverage_json;
 pub mod mappings;
 pub mod model;
 pub mod output;
