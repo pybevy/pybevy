@@ -122,7 +122,7 @@ def adjust_roughness(
         1.0, max(0.0, material.perceptual_roughness + delta)
     )
     for text in text_query:
-        text.content = CONTROLS_TEXT.format(material.perceptual_roughness)
+        text.text = CONTROLS_TEXT.format(material.perceptual_roughness)
 
 
 def toggle_gizmos(
