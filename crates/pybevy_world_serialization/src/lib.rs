@@ -12,7 +12,7 @@ use bevy::{
     app::App,
     ecs::message::{Message, Messages},
     prelude::*,
-    world_serialization::WorldInstanceReady,
+    world_serialization::{WorldInstanceReady, WorldSerializationPlugin},
 };
 use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::pyplugin;
@@ -56,7 +56,7 @@ impl PyWorldSerializationPlugin {
 
 impl PluginBuild for PyWorldSerializationPlugin {
     fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
-        app.add_plugins(bevy::world_serialization::WorldSerializationPlugin);
+        app.add_plugins(WorldSerializationPlugin);
         let registry = app.world().resource::<AppTypeRegistry>().clone();
         custom_component::register_custom_component_reflection(&mut registry.write());
         app.add_observer(world_instance_ready_bridge);

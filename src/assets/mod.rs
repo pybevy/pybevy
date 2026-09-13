@@ -3,6 +3,7 @@ pub mod asset_load_failed_event;
 pub mod asset_server;
 pub mod asset_server_mode;
 pub mod asset_type;
+#[allow(clippy::module_inception)]
 pub mod assets;
 pub mod dependency_load_state;
 pub mod load_state;

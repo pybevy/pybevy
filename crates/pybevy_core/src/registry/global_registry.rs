@@ -640,13 +640,134 @@ pub fn run_system_once(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use std::ptr;
+    use std::{
+        any::{Any, TypeId},
+        ptr,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+
+    use bevy::{
+        asset::{AssetPath, AssetServer, UntypedAssetId, UntypedHandle},
+        ecs::{
+            component::ComponentId,
+            entity::Entity,
+            world::{EntityRef, EntityWorldMut, World, unsafe_world_cell::UnsafeWorldCell},
+        },
+    };
+    use pyo3::{
+        ffi::PyTypeObject,
+        prelude::*,
+        types::{PyDict, PyInt, PySet, PyType},
+    };
 
     use super::*;
+    use crate::{
+        AssetBorrowCounter, AssetEventRecord, AssetLoadFailedRecord, ExtractFn,
+        FilteredEntityAccess, PreparedBatchComponent, ValidityFlagWithMode,
+    };
 
-    // Note: Can't easily test registration without a real ComponentBridge impl
-    // These are basic sanity tests
+    struct FakeComponent;
+
+    struct FakeBridge {
+        type_id: TypeId,
+        ptr: usize,
+        name: &'static str,
+    }
+
+    fn fake_extract(
+        _entity: &mut FilteredEntityAccess,
+        _component_id: ComponentId,
+        _validity: ValidityFlagWithMode,
+        _py: Python,
+    ) -> PyResult<Py<PyAny>> {
+        unreachable!("fake bridge extract must never run")
+    }
+
+    impl ComponentBridge for FakeBridge {
+        fn bevy_type_id(&self) -> TypeId {
+            self.type_id
+        }
+
+        fn py_type_ptr(&self) -> *const PyTypeObject {
+            self.ptr as *const PyTypeObject
+        }
+
+        fn py_type<'py>(&self, _py: Python<'py>) -> Bound<'py, PyType> {
+            unreachable!()
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn can_insert(&self) -> bool {
+            false
+        }
+
+        fn register(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+
+        fn extract(
+            &self,
+            _entity: &mut FilteredEntityAccess,
+            _component_id: ComponentId,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        fn extract_fn(&self) -> ExtractFn {
+            fake_extract
+        }
+
+        fn insert(
+            &self,
+            _world: &mut World,
+            _entity: Entity,
+            _component: &Bound<PyAny>,
+        ) -> PyResult<()> {
+            unreachable!()
+        }
+
+        fn insert_into_entity(
+            &self,
+            _entity: &mut EntityWorldMut,
+            _component: &Bound<PyAny>,
+        ) -> PyResult<()> {
+            unreachable!()
+        }
+
+        fn entity_contains(&self, _entity: &EntityRef) -> bool {
+            false
+        }
+
+        unsafe fn extract_from_entity_ref(
+            &self,
+            _entity: Entity,
+            _world: *mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        unsafe fn extract_from_entity_mut(
+            &self,
+            _entity: Entity,
+            _world: *mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+    }
 
     #[test]
     fn test_empty_registry() {
@@ -657,5 +778,866 @@ mod tests {
     #[test]
     fn test_null_pointer_not_found() {
         assert!(!contains_py_type(ptr::null()));
+    }
+
+    #[test]
+    fn component_registry_registration_lookup_and_alias() {
+        let canonical = 0x1001_usize;
+        let alias = 0x1002_usize;
+        let unknown = 0x9999_usize;
+        let null: *const PyTypeObject = ptr::null();
+
+        // A bridge without a real Python type is ignored.
+        register_component_bridge_arc(Arc::new(FakeBridge {
+            type_id: TypeId::of::<FakeComponent>(),
+            ptr: 0,
+            name: "Null",
+        }));
+        assert!(get_bridge_by_py_type(null).is_none());
+
+        // Canonical registration is retrievable by pointer and by TypeId.
+        register_component_bridge(FakeBridge {
+            type_id: TypeId::of::<FakeComponent>(),
+            ptr: canonical,
+            name: "Fake",
+        });
+        assert!(contains_py_type(canonical as *const PyTypeObject));
+        assert_eq!(
+            get_bridge_by_py_type(canonical as *const PyTypeObject)
+                .unwrap()
+                .name(),
+            "Fake"
+        );
+        assert_eq!(
+            get_type_id_by_py_type(canonical as *const PyTypeObject),
+            Some(TypeId::of::<FakeComponent>())
+        );
+
+        // Unknown pointers are absent.
+        assert!(get_bridge_by_py_type(unknown as *const PyTypeObject).is_none());
+        assert!(!contains_py_type(unknown as *const PyTypeObject));
+
+        // Alias registration rejects null and unregistered canonicals, then links.
+        assert!(!register_component_bridge_alias(
+            null,
+            canonical as *const PyTypeObject
+        ));
+        assert!(!register_component_bridge_alias(
+            alias as *const PyTypeObject,
+            null
+        ));
+        assert!(!register_component_bridge_alias(
+            alias as *const PyTypeObject,
+            unknown as *const PyTypeObject
+        ));
+        assert!(register_component_bridge_alias(
+            alias as *const PyTypeObject,
+            canonical as *const PyTypeObject
+        ));
+        assert_eq!(
+            get_bridge_by_py_type(alias as *const PyTypeObject)
+                .unwrap()
+                .name(),
+            "Fake"
+        );
+
+        let names: Vec<_> = all_component_bridges()
+            .into_iter()
+            .map(|bridge| bridge.name())
+            .collect();
+        assert!(names.contains(&"Fake"));
+    }
+
+    #[test]
+    fn type_id_registry_round_trips() {
+        Python::initialize();
+        register_type_id::<PyInt, u32>();
+        let ptr = Python::attach(|py| py.get_type::<PyInt>().as_type_ptr());
+        assert_eq!(get_type_id_by_py_type(ptr), Some(TypeId::of::<u32>()));
+    }
+
+    struct FakeResource {
+        type_id: TypeId,
+        ptr: usize,
+        name: &'static str,
+    }
+
+    impl ResourceBridge for FakeResource {
+        fn bevy_type_id(&self) -> TypeId {
+            self.type_id
+        }
+
+        fn py_type_ptr(&self) -> *const PyTypeObject {
+            self.ptr as *const PyTypeObject
+        }
+
+        fn py_type<'py>(&self, _py: Python<'py>) -> Bound<'py, PyType> {
+            unreachable!()
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn is_mutable(&self) -> bool {
+            false
+        }
+
+        fn preserve_on_reload(&self) -> bool {
+            false
+        }
+
+        fn extract(
+            &self,
+            _entity: &mut FilteredEntityAccess,
+            _component_id: ComponentId,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        fn entity_contains(&self, _entity: &EntityRef) -> bool {
+            false
+        }
+
+        unsafe fn extract_from_entity_ref(
+            &self,
+            _entity: Entity,
+            _world: *mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        unsafe fn extract_from_entity_mut(
+            &self,
+            _entity: Entity,
+            _world: *mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        fn get(
+            &self,
+            _world: &World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        fn get_mut(
+            &self,
+            _world: &mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        unsafe fn get_from_cell(
+            &self,
+            _cell: UnsafeWorldCell<'_>,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        unsafe fn get_mut_from_cell(
+            &self,
+            _cell: UnsafeWorldCell<'_>,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        fn insert(&self, _world: &mut World, _resource: &Bound<PyAny>) -> PyResult<()> {
+            unreachable!()
+        }
+
+        fn remove(&self, _world: &mut World) {}
+
+        fn contains_in_world(&self, _world: &World) -> bool {
+            false
+        }
+
+        fn resource_id(&self, _world: &World) -> Option<ComponentId> {
+            None
+        }
+
+        fn register_resource_id(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+
+        fn reset_to_default(&self, _world: &mut World) -> bool {
+            false
+        }
+    }
+
+    struct FakeMessage {
+        type_id: TypeId,
+        ptr: usize,
+        name: &'static str,
+    }
+
+    impl MessageBridge for FakeMessage {
+        fn bevy_type_id(&self) -> TypeId {
+            self.type_id
+        }
+
+        fn py_type_ptr(&self) -> *const PyTypeObject {
+            self.ptr as *const PyTypeObject
+        }
+
+        fn py_type<'py>(&self, _py: Python<'py>) -> Bound<'py, PyType> {
+            unreachable!()
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn iter_to_python(&self, _py: Python, _world: &mut World) -> PyResult<Vec<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        fn clear(&self, _world: &mut World) -> PyResult<()> {
+            unreachable!()
+        }
+
+        fn is_empty(&self, _world: &mut World) -> PyResult<bool> {
+            unreachable!()
+        }
+
+        fn len(&self, _world: &mut World) -> PyResult<usize> {
+            unreachable!()
+        }
+
+        fn resource_id(&self, _world: &World) -> Option<ComponentId> {
+            None
+        }
+
+        fn register_resource_id(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+    }
+
+    struct FakeBatch;
+
+    impl BatchComponent for FakeBatch {
+        fn name(&self) -> &'static str {
+            "FakeBatch"
+        }
+
+        fn component_type_ptr(&self, _py: Python, _batch: &Bound<PyAny>) -> PyResult<usize> {
+            unreachable!()
+        }
+
+        fn count(&self, _py: Python, _batch: &Bound<PyAny>) -> PyResult<usize> {
+            unreachable!()
+        }
+
+        fn prepare(
+            &self,
+            _py: Python,
+            _batch: &Bound<PyAny>,
+        ) -> PyResult<Box<dyn PreparedBatchComponent>> {
+            unreachable!()
+        }
+
+        fn insert_bulk(
+            &self,
+            _py: Python,
+            _batch: &Bound<PyAny>,
+            _entities: &[Entity],
+            _world: &mut World,
+        ) -> PyResult<()> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn resource_registry_registration_lookup_and_alias() {
+        let canonical = 0x2001_usize;
+        let alias = 0x2002_usize;
+        let canonical_ptr = canonical as *const PyTypeObject;
+
+        register_resource_bridge_arc(Arc::new(FakeResource {
+            type_id: TypeId::of::<FakeResource>(),
+            ptr: 0,
+            name: "RNull",
+        }));
+        assert!(get_resource_bridge_by_py_type(ptr::null()).is_none());
+
+        register_resource_bridge(FakeResource {
+            type_id: TypeId::of::<FakeResource>(),
+            ptr: canonical,
+            name: "FakeResource",
+        });
+        assert!(contains_resource_py_type(canonical_ptr));
+        assert_eq!(
+            get_resource_bridge_by_py_type(canonical_ptr)
+                .unwrap()
+                .name(),
+            "FakeResource"
+        );
+
+        assert!(!register_resource_bridge_alias(ptr::null(), canonical_ptr));
+        assert!(!register_resource_bridge_alias(
+            alias as *const PyTypeObject,
+            0x2999 as *const PyTypeObject
+        ));
+        assert!(register_resource_bridge_alias(
+            alias as *const PyTypeObject,
+            canonical_ptr
+        ));
+        assert_eq!(
+            get_resource_bridge_by_py_type(alias as *const PyTypeObject)
+                .unwrap()
+                .name(),
+            "FakeResource"
+        );
+
+        let names: Vec<_> = all_resource_bridges()
+            .into_iter()
+            .map(|bridge| bridge.name())
+            .collect();
+        assert!(names.contains(&"FakeResource"));
+    }
+
+    #[test]
+    fn message_registry_registration_lookup() {
+        let value = 0x3001_usize;
+        let ptr = value as *const PyTypeObject;
+
+        register_message_bridge_arc(Arc::new(FakeMessage {
+            type_id: TypeId::of::<FakeMessage>(),
+            ptr: 0,
+            name: "MNull",
+        }));
+        assert!(get_message_bridge_by_py_type(ptr::null()).is_none());
+
+        register_message_bridge(FakeMessage {
+            type_id: TypeId::of::<FakeMessage>(),
+            ptr: value,
+            name: "FakeMessage",
+        });
+        assert!(contains_message_py_type(ptr));
+        assert_eq!(
+            get_message_bridge_by_type_id(TypeId::of::<FakeMessage>())
+                .unwrap()
+                .name(),
+            "FakeMessage"
+        );
+
+        let names: Vec<_> = all_message_bridges()
+            .into_iter()
+            .map(|bridge| bridge.name())
+            .collect();
+        assert!(names.contains(&"FakeMessage"));
+    }
+
+    #[test]
+    fn batch_registry_registration_lookup() {
+        let value = 0x4001_usize;
+        let ptr = value as *const PyTypeObject;
+
+        register_batch_bridge(ptr, Arc::new(FakeBatch));
+        assert_eq!(
+            get_batch_bridge_by_py_type(ptr).unwrap().name(),
+            "FakeBatch"
+        );
+        assert!(get_batch_bridge_by_py_type(0x4999 as *const PyTypeObject).is_none());
+    }
+
+    struct FakeAsset {
+        type_id: TypeId,
+        ptr: usize,
+        name: &'static str,
+    }
+
+    impl AssetBridge for FakeAsset {
+        fn bevy_type_id(&self) -> TypeId {
+            self.type_id
+        }
+
+        fn py_type_ptr(&self) -> *const PyTypeObject {
+            self.ptr as *const PyTypeObject
+        }
+
+        fn py_type<'py>(&self, _py: Python<'py>) -> Bound<'py, PyType> {
+            unreachable!()
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn resource_id(&self, _world: &World) -> Option<ComponentId> {
+            None
+        }
+
+        fn register_resource_id(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+
+        fn register_event_resource_id(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+
+        fn read_events(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Vec<AssetEventRecord> {
+            Vec::new()
+        }
+
+        fn clear_events(&self, _world: &mut World) {}
+
+        fn events_is_empty(&self, _world: &World) -> bool {
+            true
+        }
+
+        fn event_count(&self, _world: &World) -> usize {
+            0
+        }
+
+        fn register_load_failed_resource_id(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+
+        fn read_load_failed_events(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Vec<AssetLoadFailedRecord> {
+            Vec::new()
+        }
+
+        fn clear_load_failed_events(&self, _world: &mut World) {}
+
+        fn load_failed_events_is_empty(&self, _world: &World) -> bool {
+            true
+        }
+
+        fn load_failed_event_count(&self, _world: &World) -> usize {
+            0
+        }
+
+        fn get(
+            &self,
+            _world: &World,
+            _id: UntypedAssetId,
+            _validity: ValidityFlagWithMode,
+            _borrow_counter: AssetBorrowCounter,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        fn get_mut(
+            &self,
+            _world: UnsafeWorldCell<'_>,
+            _id: UntypedAssetId,
+            _validity: ValidityFlagWithMode,
+            _borrow_counter: AssetBorrowCounter,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        fn add(
+            &self,
+            _world: &mut World,
+            _asset: &Bound<PyAny>,
+            _py: Python,
+        ) -> PyResult<UntypedHandle> {
+            unreachable!()
+        }
+
+        fn remove(&self, _world: &mut World, _id: UntypedAssetId) -> PyResult<bool> {
+            unreachable!()
+        }
+
+        fn remove_and_return(
+            &self,
+            _world: &mut World,
+            _id: UntypedAssetId,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!()
+        }
+
+        fn len(&self, _world: &World) -> PyResult<usize> {
+            unreachable!()
+        }
+
+        fn contains(&self, _world: &World, _id: UntypedAssetId) -> PyResult<bool> {
+            unreachable!()
+        }
+
+        fn iter_pairs(
+            &self,
+            _world: &World,
+            _validity: ValidityFlagWithMode,
+            _borrow_counter: AssetBorrowCounter,
+            _py: Python,
+        ) -> PyResult<Vec<(UntypedAssetId, Py<PyAny>)>> {
+            unreachable!()
+        }
+
+        fn load(&self, _server: &AssetServer, _path: AssetPath<'_>) -> UntypedHandle {
+            unreachable!()
+        }
+
+        fn get_handle(&self, _server: &AssetServer, _path: AssetPath<'_>) -> Option<UntypedHandle> {
+            None
+        }
+
+        fn clear_programmatic(&self, _world: &mut World, _verbose: bool) {}
+    }
+
+    #[test]
+    fn asset_registry_registration_lookup() {
+        let value = 0x5001_usize;
+        let ptr = value as *const PyTypeObject;
+
+        register_asset_bridge_arc(Arc::new(FakeAsset {
+            type_id: TypeId::of::<FakeAsset>(),
+            ptr: 0,
+            name: "ANull",
+        }));
+        assert!(get_asset_bridge_by_py_type(ptr::null()).is_none());
+
+        register_asset_bridge(FakeAsset {
+            type_id: TypeId::of::<FakeAsset>(),
+            ptr: value,
+            name: "FakeAsset",
+        });
+        assert!(contains_asset_py_type(ptr));
+        assert_eq!(
+            get_asset_bridge_by_py_type(ptr).unwrap().name(),
+            "FakeAsset"
+        );
+        assert_eq!(
+            get_asset_bridge_by_type_id(TypeId::of::<FakeAsset>())
+                .unwrap()
+                .name(),
+            "FakeAsset"
+        );
+        assert_eq!(
+            get_asset_bridge_by_name("FakeAsset").unwrap().name(),
+            "FakeAsset"
+        );
+        assert!(get_asset_bridge_by_name("MissingAsset").is_none());
+    }
+
+    static MESSAGE_WRITE_CALLED: AtomicBool = AtomicBool::new(false);
+    static RUN_SYSTEM_ONCE_CALLED: AtomicBool = AtomicBool::new(false);
+
+    #[test]
+    fn registered_message_write_and_system_once_fns_are_invoked() {
+        Python::initialize();
+        register_message_write_fn(|_world, _py, _message| {
+            MESSAGE_WRITE_CALLED.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        register_run_system_once_fn(|_world, _py, _function| {
+            RUN_SYSTEM_ONCE_CALLED.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+
+        Python::attach(|py| {
+            let mut world = World::new();
+            let payload = py.None();
+            write_python_message(&mut world, py, payload.bind(py)).unwrap();
+            run_system_once(&mut world, py, payload.bind(py)).unwrap();
+        });
+
+        assert!(MESSAGE_WRITE_CALLED.load(Ordering::SeqCst));
+        assert!(RUN_SYSTEM_ONCE_CALLED.load(Ordering::SeqCst));
+    }
+
+    fn fake_batch_insert(
+        _py: Python<'_>,
+        _batch: &PyRustComponentBatch,
+        _entities: &[Entity],
+        _world: &mut World,
+    ) -> PyResult<()> {
+        Ok(())
+    }
+
+    fn fake_batch_prepare(
+        _py: Python<'_>,
+        _batch: &PyRustComponentBatch,
+    ) -> PyResult<Box<dyn PreparedBatchComponent>> {
+        unreachable!()
+    }
+
+    #[test]
+    fn component_batch_meta_round_trips() {
+        static META: ComponentBatchMeta = ComponentBatchMeta {
+            component_name: "FakeBatchComponent",
+            fields: &[],
+            insert_fn: fake_batch_insert,
+            prepare_fn: fake_batch_prepare,
+        };
+
+        register_component_batch_meta(0x6001, &META);
+        assert_eq!(
+            get_component_batch_meta(0x6001).unwrap().component_name,
+            "FakeBatchComponent"
+        );
+        assert!(get_component_batch_meta(0x6999).is_none());
+    }
+
+    // Routing-batch dummies: distinct types so key->value identity is checked
+    // against a second registered type, never against the key's own value.
+    struct RoutingCompA;
+    struct RoutingCompB;
+    struct RoutingCompOld;
+    struct RoutingCompNew;
+    struct RoutingAssetA;
+    struct RoutingAssetB;
+    struct RoutingBridgeWins;
+    struct RoutingTypeIdFallback;
+    struct RoutingTypeIdFallbackTwo;
+
+    fn routing_component_bridge(type_id: TypeId, ptr: usize, name: &'static str) -> FakeBridge {
+        FakeBridge { type_id, ptr, name }
+    }
+
+    #[test]
+    fn two_distinct_component_types_keep_separate_keys() {
+        let a_ptr: *const PyTypeObject = 0x8101_usize as *const PyTypeObject;
+        let b_ptr: *const PyTypeObject = 0x8102_usize as *const PyTypeObject;
+
+        register_component_bridge(routing_component_bridge(
+            TypeId::of::<RoutingCompA>(),
+            0x8101,
+            "RoutingComponentA",
+        ));
+        register_component_bridge(routing_component_bridge(
+            TypeId::of::<RoutingCompB>(),
+            0x8102,
+            "RoutingComponentB",
+        ));
+
+        assert_eq!(
+            get_bridge_by_py_type(a_ptr).unwrap().name(),
+            "RoutingComponentA"
+        );
+        assert_eq!(
+            get_bridge_by_py_type(b_ptr).unwrap().name(),
+            "RoutingComponentB"
+        );
+        assert!(contains_py_type(a_ptr));
+        assert!(contains_py_type(b_ptr));
+        assert!(!contains_py_type(0x8199 as *const PyTypeObject));
+        assert!(get_bridge_by_py_type(0x8199 as *const PyTypeObject).is_none());
+
+        assert_eq!(
+            get_type_id_by_py_type(a_ptr),
+            Some(TypeId::of::<RoutingCompA>())
+        );
+        assert_eq!(
+            get_type_id_by_py_type(b_ptr),
+            Some(TypeId::of::<RoutingCompB>())
+        );
+
+        let names: Vec<&str> = all_component_bridges()
+            .iter()
+            .map(|bridge| bridge.name())
+            .collect();
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| **name == "RoutingComponentA")
+                .count(),
+            1
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| **name == "RoutingComponentB")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn alias_registration_deduplicates_and_retargets() {
+        let canonical: *const PyTypeObject = 0x8201_usize as *const PyTypeObject;
+        let alias: *const PyTypeObject = 0x8202_usize as *const PyTypeObject;
+        let other: *const PyTypeObject = 0x8203_usize as *const PyTypeObject;
+
+        register_component_bridge(routing_component_bridge(
+            TypeId::of::<RoutingCompA>(),
+            0x8201,
+            "RoutingAliasCanonical",
+        ));
+        let before: Vec<&str> = all_component_bridges()
+            .iter()
+            .map(|bridge| bridge.name())
+            .collect();
+        assert_eq!(
+            before
+                .iter()
+                .filter(|name| **name == "RoutingAliasCanonical")
+                .count(),
+            1
+        );
+
+        assert!(register_component_bridge_alias(alias, canonical));
+        let by_alias = get_bridge_by_py_type(alias).unwrap();
+        let by_canonical = get_bridge_by_py_type(canonical).unwrap();
+        assert!(Arc::ptr_eq(&by_alias, &by_canonical));
+        let after: Vec<&str> = all_component_bridges()
+            .iter()
+            .map(|bridge| bridge.name())
+            .collect();
+        assert_eq!(
+            after
+                .iter()
+                .filter(|name| **name == "RoutingAliasCanonical")
+                .count(),
+            1,
+            "an alias shares its canonical bridge and adds no new enumeration entry"
+        );
+
+        register_component_bridge(routing_component_bridge(
+            TypeId::of::<RoutingCompB>(),
+            0x8203,
+            "RoutingAliasSecondCanonical",
+        ));
+        assert!(register_component_bridge_alias(alias, other));
+        assert_eq!(
+            get_bridge_by_py_type(alias).unwrap().name(),
+            "RoutingAliasSecondCanonical",
+            "re-aliasing retargets the alias at the new canonical bridge"
+        );
+    }
+
+    #[test]
+    fn component_reregistration_replaces_the_stored_bridge() {
+        let ptr: *const PyTypeObject = 0x8301_usize as *const PyTypeObject;
+
+        register_component_bridge(routing_component_bridge(
+            TypeId::of::<RoutingCompOld>(),
+            0x8301,
+            "RoutingReplacedOld",
+        ));
+        assert_eq!(
+            get_bridge_by_py_type(ptr).unwrap().name(),
+            "RoutingReplacedOld"
+        );
+
+        register_component_bridge(routing_component_bridge(
+            TypeId::of::<RoutingCompNew>(),
+            0x8301,
+            "RoutingReplacedNew",
+        ));
+        assert_eq!(
+            get_bridge_by_py_type(ptr).unwrap().name(),
+            "RoutingReplacedNew",
+            "a re-registration under the same pointer stores the new bridge"
+        );
+        assert_eq!(
+            get_type_id_by_py_type(ptr),
+            Some(TypeId::of::<RoutingCompNew>())
+        );
+    }
+
+    #[test]
+    fn type_id_lookup_prefers_bridges_then_falls_back_to_typeid_registry() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict_ptr = py.get_type::<PyDict>().as_type_ptr();
+            let set_ptr = py.get_type::<PySet>().as_type_ptr();
+
+            register_component_bridge(routing_component_bridge(
+                TypeId::of::<RoutingBridgeWins>(),
+                dict_ptr as usize,
+                "RoutingBridgeWins",
+            ));
+            register_type_id::<PyDict, RoutingTypeIdFallback>();
+            assert_eq!(
+                get_type_id_by_py_type(dict_ptr),
+                Some(TypeId::of::<RoutingBridgeWins>()),
+                "a bridge-registered type answers from the bridge registry, not the TypeId registry"
+            );
+
+            register_type_id::<PySet, RoutingTypeIdFallbackTwo>();
+            assert!(get_bridge_by_py_type(set_ptr).is_none());
+            assert_eq!(
+                get_type_id_by_py_type(set_ptr),
+                Some(TypeId::of::<RoutingTypeIdFallbackTwo>()),
+                "a type known only to the TypeId registry resolves through the fallback"
+            );
+
+            register_type_id::<PySet, RoutingBridgeWins>();
+            assert_eq!(
+                get_type_id_by_py_type(set_ptr),
+                Some(TypeId::of::<RoutingBridgeWins>()),
+                "re-registering a TypeId entry replaces the stored TypeId"
+            );
+
+            assert!(get_type_id_by_py_type(ptr::null()).is_none());
+        });
+    }
+
+    #[test]
+    fn two_distinct_asset_types_keep_separate_name_and_typeid_keys() {
+        let a_ptr: *const PyTypeObject = 0x8501_usize as *const PyTypeObject;
+        let b_ptr: *const PyTypeObject = 0x8502_usize as *const PyTypeObject;
+
+        register_asset_bridge(FakeAsset {
+            type_id: TypeId::of::<RoutingAssetA>(),
+            ptr: 0x8501,
+            name: "RoutingAssetA",
+        });
+        register_asset_bridge(FakeAsset {
+            type_id: TypeId::of::<RoutingAssetB>(),
+            ptr: 0x8502,
+            name: "RoutingAssetB",
+        });
+
+        assert_eq!(
+            get_asset_bridge_by_py_type(a_ptr).unwrap().name(),
+            "RoutingAssetA"
+        );
+        assert_eq!(
+            get_asset_bridge_by_py_type(b_ptr).unwrap().name(),
+            "RoutingAssetB"
+        );
+        assert_eq!(
+            get_asset_bridge_by_name("RoutingAssetA").unwrap().name(),
+            "RoutingAssetA"
+        );
+        assert_eq!(
+            get_asset_bridge_by_name("RoutingAssetB").unwrap().name(),
+            "RoutingAssetB"
+        );
+        assert!(get_asset_bridge_by_name("RoutingAssetMissing").is_none());
+        assert_eq!(
+            get_asset_bridge_by_type_id(TypeId::of::<RoutingAssetA>())
+                .unwrap()
+                .name(),
+            "RoutingAssetA"
+        );
+        assert_eq!(
+            get_asset_bridge_by_type_id(TypeId::of::<RoutingAssetB>())
+                .unwrap()
+                .name(),
+            "RoutingAssetB"
+        );
+        assert!(get_asset_bridge_by_type_id(TypeId::of::<RoutingCompA>()).is_none());
     }
 }

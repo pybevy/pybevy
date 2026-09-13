@@ -48,6 +48,7 @@ pub fn ensure_no_live_asset_access(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::any::TypeId;
 
@@ -98,5 +99,104 @@ mod tests {
         assert!(ensure_no_live_asset_access(&world, "world.spawn()").is_ok());
 
         unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[derive(Asset, TypePath)]
+    struct AlphaAsset;
+
+    #[derive(Asset, TypePath)]
+    struct BetaAsset;
+
+    /// Bevy's fixed, type-independent `AssetId::DEFAULT_UUID`, pinned for exact-message asserts.
+    const DEFAULT_ID_DISPLAY: &str = "asset UUID 97128bb1-2588-480b-bdc6-87b4adbec477";
+
+    #[test]
+    fn barrier_reports_the_first_live_scope_by_name_and_falls_back_on_release() {
+        let mut world = World::new();
+        ensure_asset_access_registry(&mut world);
+        let registry = world.resource::<AssetAccessRegistry>();
+        let alpha_scope = registry.new_scope(
+            TypeId::of::<AlphaAsset>(),
+            "Alpha",
+            ValidityFlag::new_write(),
+            "origin-alpha",
+        );
+        let beta_scope = registry.new_scope(
+            TypeId::of::<BetaAsset>(),
+            "Beta",
+            ValidityFlag::new_write(),
+            "origin-beta",
+        );
+
+        assert!(ensure_no_live_asset_access(&world, "app.update()").is_ok());
+
+        let world_cell = world.as_unsafe_world_cell_readonly();
+        let alpha_ptr = Box::into_raw(Box::new(AlphaAsset));
+        let alpha_id = Handle::<AlphaAsset>::default().id().untyped();
+        let alpha_storage = unsafe {
+            // SAFETY: alpha_ptr owns a live Box allocation valid until the final drop below.
+            crate::AssetStorage::borrowed_readonly_tracked(
+                alpha_ptr,
+                world_cell,
+                alpha_id,
+                ValidityFlag::new_read().with_access_mode(crate::AccessMode::Read),
+                AssetBorrowCounter::from_scope(alpha_scope),
+            )
+        }
+        .expect("live tracked asset scope");
+        assert_eq!(
+            ensure_no_live_asset_access(&world, "app.update()")
+                .unwrap_err()
+                .to_string(),
+            "Cannot call app.update() while a borrowed Alpha asset from origin-alpha is live ("
+                .to_string()
+                + DEFAULT_ID_DISPLAY
+                + "). Drop the asset wrapper or close its view first."
+        );
+
+        let beta_ptr = Box::into_raw(Box::new(BetaAsset));
+        let beta_id = Handle::<BetaAsset>::default().id().untyped();
+        let beta_storage = unsafe {
+            // SAFETY: beta_ptr owns a live Box allocation valid until the final drop below.
+            crate::AssetStorage::borrowed_readonly_tracked(
+                beta_ptr,
+                world_cell,
+                beta_id,
+                ValidityFlag::new_read().with_access_mode(crate::AccessMode::Read),
+                AssetBorrowCounter::from_scope(beta_scope),
+            )
+        }
+        .expect("live tracked asset scope");
+        // Both live: the alphabetically first asset name is still reported.
+        assert_eq!(
+            ensure_no_live_asset_access(&world, "app.update()")
+                .unwrap_err()
+                .to_string(),
+            "Cannot call app.update() while a borrowed Alpha asset from origin-alpha is live ("
+                .to_string()
+                + DEFAULT_ID_DISPLAY
+                + "). Drop the asset wrapper or close its view first."
+        );
+
+        drop(alpha_storage);
+        // Releasing the first live scope falls back to the remaining one.
+        assert_eq!(
+            ensure_no_live_asset_access(&world, "app.update()")
+                .unwrap_err()
+                .to_string(),
+            "Cannot call app.update() while a borrowed Beta asset from origin-beta is live ("
+                .to_string()
+                + DEFAULT_ID_DISPLAY
+                + "). Drop the asset wrapper or close its view first."
+        );
+
+        drop(beta_storage);
+        assert!(ensure_no_live_asset_access(&world, "app.update()").is_ok());
+
+        unsafe {
+            // SAFETY: both pointers were created by Box::into_raw in this test and are un-freed.
+            drop(Box::from_raw(alpha_ptr));
+            drop(Box::from_raw(beta_ptr));
+        }
     }
 }

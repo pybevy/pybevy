@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
     collections::HashSet,
+    hash::{DefaultHasher, Hash, Hasher},
     sync::{Arc, Mutex},
 };
 
@@ -425,10 +426,8 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     }
 
     fn defs_fingerprint(&self, defs: &PendingDefinitions) -> DefsFingerprint {
-        use std::hash::{Hash, Hasher};
-
         Python::attach(|py| {
-            let mut startup_hasher = std::hash::DefaultHasher::new();
+            let mut startup_hasher = DefaultHasher::new();
             let mut has_startup = false;
             for (stage, systems) in &defs.systems {
                 if !stage.is_startup() || systems.is_empty() {
@@ -466,10 +465,10 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                     .unwrap_or_else(|_| "State[<unknown>]".to_string())
             }));
             resource_names.sort();
-            let mut resources_hasher = std::hash::DefaultHasher::new();
+            let mut resources_hasher = DefaultHasher::new();
             resource_names.hash(&mut resources_hasher);
 
-            let mut observer_hasher = std::hash::DefaultHasher::new();
+            let mut observer_hasher = DefaultHasher::new();
             for observer in &defs.observers {
                 hash_system_code(py, observer.bind(py), &mut observer_hasher);
             }
@@ -822,11 +821,8 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         world: &mut World,
         defs: &PendingDefinitions,
     ) -> Result<(), ReloadError> {
-        if defs.observers.is_empty() {
-            return Ok(());
-        }
         Python::attach(|py| -> PyResult<()> {
-            // Clear old observers and despawn their entities
+            // Runtime observers are absent from definitions but must retire on full reload.
             let old_entries = world
                 .get_resource_mut::<ObserverRegistry>()
                 .map(|mut registry| registry.clear_all());
@@ -863,22 +859,23 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         generation: u32,
         handles: Vec<DynamicSystemHandle>,
     ) {
-        if let Some(mut registry) = world.get_resource_mut::<DynamicSystemRegistry>() {
-            for handle in handles {
-                registry.register(generation, handle);
+        let keep_after = generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
+        let retired_generations = match world.get_resource_mut::<DynamicSystemRegistry>() {
+            Some(mut registry) => {
+                for handle in handles {
+                    registry.register(generation, handle);
+                }
+                registry.cleanup_old_generations(keep_after, retire_main_handle)
             }
-            let keep_after = generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
-            let retired_generations =
-                registry.cleanup_old_generations(keep_after, retire_main_handle);
-            drop(registry);
-            super::systems::queue_schedule_compaction(world, retired_generations);
+            None => return,
+        };
+        super::systems::queue_schedule_compaction(world, retired_generations);
 
-            if is_verbose() {
-                eprintln!(
-                    "   → Registered system handles for gen {} and gutted systems older than gen {}",
-                    generation, keep_after
-                );
-            }
+        if is_verbose() {
+            eprintln!(
+                "   → Registered system handles for gen {} and gutted systems older than gen {}",
+                generation, keep_after
+            );
         }
     }
 

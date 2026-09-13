@@ -15,6 +15,7 @@ use bevy::{
     prelude::World,
     reflect::{FromReflect, PartialReflect, Reflect, TypeRegistry},
 };
+
 use pybevy_core::{
     component_layout::PrimitiveValue, component_wrapper::insert_wrapper_bytes,
     custom_component::CustomComponentRegistry,
@@ -105,9 +106,7 @@ pub(crate) fn register_custom_component_reflection(registry: &mut TypeRegistry) 
     {
         registry.register::<ReflectedPythonComponents>();
     }
-    // Type presence alone does not prove that our custom materializer is still
-    // installed: ordinary registration supplies the derived component functions.
-    // Replacing the type data is cheap and keeps every live-world entry point safe.
+    // Re-register unconditionally: type presence does not prove the materializer is installed.
     let registration = registry
         .get_mut(TypeId::of::<ReflectedPythonComponents>())
         .expect("the reflected Python component envelope is registered");

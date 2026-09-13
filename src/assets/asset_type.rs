@@ -3,32 +3,45 @@ use pybevy_core::{
     public_error::{ASSET_BRIDGE_NOT_FOUND, invalid_asset_type},
     registry::global_registry,
 };
-use pyo3::{exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::{
+    PyTraverseError, PyVisit, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType,
+};
 
 /// Parameter type for Assets[T] subscript notation.
 ///
 /// Stores the Python type pointer for the asset type, enabling O(1) lookup
 /// in the global AssetBridge registry. When `Assets[HologramMaterial]` is used
 /// with a `@material`-decorated class, `wrapper_class` stores the original
-/// Python class pointer so `get_mut()` can auto-wrap results.
+/// retained Python class so `get_mut()` can auto-wrap results.
 #[pyclass(
     name = "AssetTypeParam",
     module = "pybevy.assets",
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyAssetTypeParam {
     type_ptr: *const PyTypeObject,
-    /// If set, the original `@material` class for auto-wrapping in `get_mut()`.
-    wrapper_class: Option<*const PyTypeObject>,
+    /// Retains the original `@material` class for auto-wrapping.
+    wrapper_class: Option<Py<PyAny>>,
     logical_type_id: Option<LogicalTypeId>,
     logical_type_name: Option<String>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: the registry retains the native type; Py owns the redirect class.
 unsafe impl Send for PyAssetTypeParam {}
 unsafe impl Sync for PyAssetTypeParam {}
+
+impl Clone for PyAssetTypeParam {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            type_ptr: self.type_ptr,
+            wrapper_class: self.wrapper_class(py),
+            logical_type_id: self.logical_type_id,
+            logical_type_name: self.logical_type_name.clone(),
+        })
+    }
+}
 
 impl PyAssetTypeParam {
     /// Create from a Python type object, validating it's a registered asset type.
@@ -60,7 +73,7 @@ impl PyAssetTypeParam {
             let logical_type_name = wrapper.qualname()?.extract::<String>()?;
             Ok(Self {
                 type_ptr,
-                wrapper_class: Some(wrapper.as_type_ptr()),
+                wrapper_class: Some(wrapper.clone().into_any().unbind()),
                 logical_type_id: Some(LogicalTypeId::new(logical_type_id)),
                 logical_type_name: Some(logical_type_name),
             })
@@ -74,9 +87,9 @@ impl PyAssetTypeParam {
         self.type_ptr
     }
 
-    /// Get the optional wrapper class pointer (for `@material` redirects).
-    pub fn wrapper_class(&self) -> Option<*const PyTypeObject> {
-        self.wrapper_class
+    /// Get an independently retained wrapper class (for `@material` redirects).
+    pub fn wrapper_class(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.wrapper_class.as_ref().map(|class| class.clone_ref(py))
     }
 
     pub fn logical_type_id(&self) -> Option<LogicalTypeId> {
@@ -90,6 +103,13 @@ impl PyAssetTypeParam {
 
 #[pymethods]
 impl PyAssetTypeParam {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(class) = &self.wrapper_class {
+            visit.call(class)?;
+        }
+        Ok(())
+    }
+
     /// Get the Python type class for this asset type parameter.
     pub fn asset_type_class(&self) -> PyResult<Py<PyType>> {
         if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(self.type_ptr) {

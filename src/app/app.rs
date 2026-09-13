@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     mem,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -27,17 +28,22 @@ use pybevy_core::{
     added_plugins::AddedPythonPlugins,
     allocate_id, consume_unstored_id,
     plugin::plugin_registry,
-    public_error::{duplicate_plugin_identity, plugin_key_type},
+    public_error::{
+        duplicate_plugin_identity, plugin_build_error, plugin_key_type, plugin_missing_decorator,
+        plugin_not_a_plugin,
+    },
     register_wrapped_reflect_types,
 };
 use pybevy_ecs::shared::schedule::{
     StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
+    schedule_build_message,
 };
 use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     ffi::PyTypeObject,
+    panic::PanicException,
     prelude::*,
     types::{PyList, PyModule, PyTuple, PyType},
 };
@@ -47,7 +53,6 @@ use crate::{
         PyStage,
         app_exit::materialize_app_exit,
         chained_systems::{PyChainedSystemSets, PyChainedSystems},
-        error_messages,
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
             cleanup::clear_entities_and_resources,
@@ -158,6 +163,17 @@ fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) 
     let exc_group_type = builtins.getattr("ExceptionGroup")?;
     let group = exc_group_type.call1(("system errors", exceptions))?;
     Err(PyErr::from_value(group))
+}
+
+/// Run a schedule, reporting a schedule-graph failure as a normal Python error.
+fn catch_schedule_build_failure<T>(run: impl FnOnce() -> T) -> PyResult<T> {
+    match catch_unwind(AssertUnwindSafe(run)) {
+        Ok(value) => Ok(value),
+        Err(payload) => match schedule_build_message(payload.as_ref()) {
+            Some(message) => Err(PyRuntimeError::new_err(message)),
+            None => resume_unwind(payload),
+        },
+    }
 }
 
 /// Bevy resource that shares the error state Arc with the `run()` loop.
@@ -1055,9 +1071,10 @@ impl PyApp {
                     .and_then(|n| n.extract::<String>())
                     .unwrap_or_else(|_| "UnknownPlugin".to_string());
 
-                return Err(PyTypeError::new_err(
-                    error_messages::plugin_not_a_plugin_error(&plugin_name, &mro),
-                ));
+                return Err(PyTypeError::new_err(plugin_not_a_plugin(
+                    &plugin_name,
+                    &mro,
+                )));
             }
 
             // Check if the plugin has the @plugin decorator (only for Plugin, not PluginGroup)
@@ -1083,9 +1100,7 @@ impl PyApp {
                             .and_then(|n| n.extract::<String>())
                             .unwrap_or_else(|_| "UnknownPlugin".to_string());
 
-                        return Err(PyTypeError::new_err(
-                            error_messages::plugin_missing_decorator_error(&plugin_name),
-                        ));
+                        return Err(PyTypeError::new_err(plugin_missing_decorator(&plugin_name)));
                     }
                 }
             }
@@ -1159,60 +1174,87 @@ impl PyApp {
             // During reload (is_reload_temp), skip built-in/bridge plugins that need
             // BEVY_APPS access (which temp apps lack), but let custom Python plugins
             // run build() so their systems/resources are captured in pending collections.
-            if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
-                if !is_reload {
-                    // PluginGroupBuilder has build(app) that applies configuration
-                    plugin_instance.call_method1("build", (app_bound,))?;
-                }
-            } else if plugin_instance.is_instance_of::<PyDefaultPlugins>() {
-                if !is_reload {
-                    // DefaultPlugins (and other direct PluginGroups) use _apply_to_app
-                    plugin_instance.call_method1("_apply_to_app", (app_bound,))?;
-                }
-            } else {
-                // Regular Plugin
-                if !is_reload {
-                    // Normal path: try bridge first, then Python build()
-                    if let Some(bridge) = bridge.as_ref() {
-                        // Use the PluginBridge to build the plugin
-                        pyself
-                            .borrow(py)
-                            .with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
-                                bridge.build(&plugin_instance, bevy_app)
-                            })?;
-                    } else {
-                        // Fall back to Python build(app) method for custom plugins
+            let build_result = catch_unwind(AssertUnwindSafe(|| -> PyResult<()> {
+                if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
+                    if !is_reload {
+                        // PluginGroupBuilder has build(app) that applies configuration
                         plugin_instance.call_method1("build", (app_bound,))?;
+                    }
+                } else if plugin_instance.is_instance_of::<PyDefaultPlugins>() {
+                    if !is_reload {
+                        // DefaultPlugins (and other direct PluginGroups) use _apply_to_app
+                        plugin_instance.call_method1("_apply_to_app", (app_bound,))?;
                     }
                 } else {
-                    // Reload: only run build() for custom Python plugins.
-                    // Skip bridge-backed and native Rust plugins because a
-                    // collection-only reload wrapper has no live App slot.
-                    let has_bridge = bridge.is_some();
-                    let is_decorated_python_plugin = plugin_type
-                        .getattr("__pybevy_plugin_decorated__")
-                        .and_then(|marker| marker.is_truthy())
-                        .unwrap_or(false);
-                    let is_native = !is_decorated_python_plugin
-                        && plugin_type
-                            .getattr("__module__")
-                            .and_then(|m| m.extract::<String>())
-                            .map(|m| {
-                                m.starts_with("_pybevy")
-                                    || m.starts_with("pybevy.")
-                                    || m == "builtins"
-                            })
+                    // Regular Plugin
+                    if !is_reload {
+                        // Normal path: try bridge first, then Python build()
+                        if let Some(bridge) = bridge.as_ref() {
+                            // Use the PluginBridge to build the plugin
+                            pyself
+                                .borrow(py)
+                                .with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
+                                    bridge.build(&plugin_instance, bevy_app)
+                                })?;
+                        } else {
+                            // Fall back to Python build(app) method for custom plugins
+                            plugin_instance.call_method1("build", (app_bound,))?;
+                        }
+                    } else {
+                        // Reload: only run build() for custom Python plugins.
+                        // Skip bridge-backed and native Rust plugins because a
+                        // collection-only reload wrapper has no live App slot.
+                        let has_bridge = bridge.is_some();
+                        let is_decorated_python_plugin = plugin_type
+                            .getattr("__pybevy_plugin_decorated__")
+                            .and_then(|marker| marker.is_truthy())
                             .unwrap_or(false);
+                        let is_native = !is_decorated_python_plugin
+                            && plugin_type
+                                .getattr("__module__")
+                                .and_then(|m| m.extract::<String>())
+                                .map(|m| {
+                                    m.starts_with("_pybevy")
+                                        || m.starts_with("pybevy.")
+                                        || m == "builtins"
+                                })
+                                .unwrap_or(false);
 
-                    if !has_bridge && !is_native {
-                        // Custom Python plugin: call build() to capture
-                        // systems/resources in pending collections
-                        plugin_instance.call_method1("build", (app_bound,))?;
+                        if !has_bridge && !is_native {
+                            // Custom Python plugin: call build() to capture
+                            // systems/resources in pending collections
+                            plugin_instance.call_method1("build", (app_bound,))?;
+                        }
                     }
+                }
+                Ok(())
+            }));
+            match build_result {
+                Ok(Err(error)) if error.is_instance_of::<PanicException>(py) => {
+                    return Err(PyRuntimeError::new_err(plugin_build_error(
+                        &short_name,
+                        error.value(py).str()?.extract::<String>()?,
+                    )));
+                }
+                Ok(result) => result?,
+                Err(payload) => {
+                    let detail = payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| {
+                            payload
+                                .downcast_ref::<&str>()
+                                .map(|message| message.to_string())
+                        })
+                        .unwrap_or_else(|| "native plugin build panicked".to_string());
+                    return Err(PyRuntimeError::new_err(plugin_build_error(
+                        &short_name,
+                        detail,
+                    )));
                 }
             }
 
-            // Register only after a successful build, so a failed add can be retried.
+            // Record completed builds so failed Python plugins remain retryable.
             {
                 let app_borrow = pyself.borrow(py);
                 let mut registry = app_borrow.plugin_registry.borrow_mut();
@@ -1548,7 +1590,7 @@ impl PyApp {
             let mut guard = begin_main_app_operation(app_id, AppOperation::Update)?;
             let exit = {
                 let app = guard.app_mut();
-                app.update();
+                catch_schedule_build_failure(|| app.update())?;
                 app.should_exit()
             };
             if let Some(exit) = exit {
@@ -1556,6 +1598,11 @@ impl PyApp {
             }
             Ok::<(), PyErr>(())
         })?;
+
+        // Frame teardown retired Python values into the deferred queue
+        // (despawns, replacements, command application). No storage pointer is
+        // in flight here, so run their finalizers before returning to Python.
+        crate::ecs::deferred_drop::flush_deferred_py_drops();
 
         // Check if any system errors occurred and raise them
         raise_collected_errors(py, &self.system_error)?;
@@ -1591,19 +1638,6 @@ impl PyApp {
         Ok(())
     }
 
-    /// Clear the scene by despawning all entities and clearing custom resources.
-    ///
-    /// This is similar to hot reload's Full mode but without reloading systems.
-    /// Useful for JupyBevy to reset the scene when creating a new instance.
-    ///
-    /// Preserves:
-    /// - Built-in Bevy resources (Time, AssetServer, etc.)
-    /// - RenderDevice and render infrastructure
-    /// - Plugin state
-    ///
-    /// Clears:
-    /// - All entities
-    /// - Custom Python resources
     pub fn clear_scene(&self, py: Python) -> PyResult<()> {
         self.ensure_active()?;
 
@@ -1614,6 +1648,12 @@ impl PyApp {
             clear_entities_and_resources(guard.app_mut().world_mut());
             Ok::<(), PyErr>(())
         })?;
+
+        // Entity cleanup retired Python values while the thread was detached
+        // (pyo3's pool absorbed the decrefs). Reattach here and drain the
+        // queue before returning, so the cleared scene's classes and values
+        // are collectable and no flush runs inside the detached region.
+        crate::ecs::deferred_drop::flush_deferred_py_drops();
 
         Ok(())
     }
@@ -1702,7 +1742,7 @@ impl PyApp {
                     });
                     app.add_systems(Last, check_system_errors_and_exit);
                 }
-                let exit = app.run();
+                let exit = catch_schedule_build_failure(|| app.run())?;
                 *lock_or_recover(&last_exit) = Some(exit);
             }
             guard.finish_consumed();
@@ -1725,6 +1765,10 @@ impl PyApp {
         }
 
         run_result?;
+
+        // The frame loop retired Python values into the deferred queue; drain
+        // them now that no native mutation is in flight.
+        crate::ecs::deferred_drop::flush_deferred_py_drops();
 
         // After the event loop exits, check for system errors and raise them
         raise_collected_errors(py, &error_state)?;
@@ -1884,7 +1928,7 @@ impl PyApp {
         // Release GIL while running schedule (required to avoid deadlock with Python systems)
         py.detach(|| {
             let mut guard = begin_main_app_operation(app_id, AppOperation::RunSchedule)?;
-            stage.run_on_world(guard.app_mut().world_mut());
+            catch_schedule_build_failure(|| stage.run_on_world(guard.app_mut().world_mut()))?;
             Ok::<(), PyErr>(())
         })?;
 
@@ -2034,6 +2078,12 @@ impl Drop for PyApp {
             });
             if let Some(app) = app_to_drop {
                 drop(app);
+                // Dropping the App tears down its World and retires every
+                // stored Python component/resource value into the deferred
+                // queue. Nothing else will flush after teardown, so drain now:
+                // unflushed values would keep their component classes alive
+                // across GC and defeat scene-namespace collection.
+                crate::ecs::deferred_drop::flush_deferred_py_drops();
             }
 
             // Clear the system parameter cache to prevent stale entries

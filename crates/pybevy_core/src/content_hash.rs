@@ -39,6 +39,7 @@ impl CanonicalContentHasher {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::CanonicalContentHasher;
 
@@ -56,5 +57,24 @@ mod tests {
         let mut empty = CanonicalContentHasher::new("test", 1);
         empty.write("some", &[]);
         assert_ne!(absent.finish(), empty.finish());
+    }
+
+    #[test]
+    fn domain_and_version_bind_into_the_digest() {
+        let framed = |domain: &str, version: u32| {
+            let mut hasher = CanonicalContentHasher::new(domain, version);
+            hasher.write("payload", b"identical-bytes");
+            hasher.finish()
+        };
+        let v1 = framed("probe.domain", 1);
+        assert_ne!(v1, framed("probe.domain", 2));
+        assert_ne!(v1, framed("other.domain", 1));
+        // Deterministic: the same framed input reproduces the digest.
+        assert_eq!(v1, framed("probe.domain", 1));
+        assert_eq!(v1.len(), 64);
+        assert!(
+            v1.chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, 'a'..='f'))
+        );
     }
 }

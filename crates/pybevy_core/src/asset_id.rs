@@ -221,6 +221,7 @@ impl PyAssetIdIndex {
     }
 
     #[new]
+    #[pyo3(signature = (*, index, asset_type))]
     pub fn new(
         index: &PyAssetIndex,
         asset_type: &Bound<'_, PyType>,
@@ -266,6 +267,7 @@ impl PyAssetIdUuid {
     }
 
     #[new]
+    #[pyo3(signature = (*, uuid, asset_type))]
     pub fn new(uuid: u128, asset_type: &Bound<'_, PyType>) -> PyResult<PyClassInitializer<Self>> {
         let (type_id, logical_type_id) = registered_asset_identity(asset_type)?;
         Ok(PyClassInitializer::from(PyAssetId {

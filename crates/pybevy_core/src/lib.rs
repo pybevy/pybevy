@@ -22,6 +22,7 @@
 //! to register their types without the core crate needing to import them at
 //! compile time, enabling independent compilation and faster incremental builds.
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 extern crate self as pybevy_core;
 
 pub mod added_plugins;
@@ -35,12 +36,14 @@ pub mod component;
 pub mod component_batch;
 pub mod component_layout;
 pub mod component_wrapper;
+pub mod constructor;
 pub mod content_hash;
 pub mod custom_component;
 pub mod custom_resource;
 pub mod debug_snapshot;
 pub mod duration;
 pub mod entity;
+pub mod float_live_list;
 pub mod handle;
 pub mod hierarchy;
 pub mod live_sequence;
@@ -72,28 +75,15 @@ use bevy::ecs::{
     resource::Resource,
     world::{EntityRef, EntityWorldMut, World},
 };
+pub use float_live_list::PyFloatLiveList;
 pub use logical_type::PyLogicalComponentParam;
 pub use pybevy_storage::{
     DefaultPluginKind, LogicalTypeId, LogicalTypeMap, PluginGroupAddition, PluginGroupPlacement,
     batch_columns, field_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
     validity_guard, value_storage, view_bridge,
 };
-use pyo3::{
-    PyTypeInfo,
-    exceptions::PyRuntimeError,
-    ffi::PyTypeObject,
-    prelude::*,
-    types::{PyList, PyType},
-};
+use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
 pub use scene_module::ActiveSceneModule;
-
-#[pyclass(name = "_FloatLiveList", skip_from_py_object)]
-#[derive(Clone)]
-pub struct PyFloatLiveList {
-    storage: FieldStorage<Vec<f32>>,
-}
-
-impl_live_scalar_list!(PyFloatLiveList, "_FloatLiveList", Vec<f32>, f32);
 
 /// Build a re-resolving [`ComponentStorage<B>`] for a native/bridge component reached
 /// from `world.get`/`world.get_mut`, or `None` if the entity or component is absent.
@@ -452,10 +442,10 @@ pub use component::PyComponent;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
 pub use duration::{
     duration_from_hz, duration_from_py, duration_from_secs_f64, positive_duration_from_secs_f64,
-    try_duration_from_hz, try_duration_from_secs_f64, try_finite_positive_frequency,
-    try_positive_duration_from_secs_f64,
+    relative_speed, try_duration_from_hz, try_duration_from_secs_f64,
+    try_finite_positive_frequency, try_positive_duration_from_secs_f64, try_relative_speed,
 };
-pub use entity::PyEntity;
+pub use entity::{PyEntity, extract_entity_from_any};
 pub use handle::{PyHandle, ensure_asset_type, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;
@@ -496,6 +486,7 @@ pub fn register_core_bridges() {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod bridge_policy_tests {
     use super::*;
 

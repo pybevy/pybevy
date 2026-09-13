@@ -15,7 +15,7 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{
-    AccessMode, AssetAccessRegistry, AssetBorrowCounter, FieldStorage,
+    AssetAccessRegistry, AssetBorrowCounter, BorrowableStorage, FieldStorage,
     ensure_asset_access_registry,
     public_error::{
         ASSET_ACCESS_REGISTRY_MISSING, GIZMOS_PLUGIN_REQUIRED, pipe_input_must_be_first,
@@ -930,9 +930,9 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 // GizmoConfigStore, and the shared run validity expires before
                 // deferred world mutation.
                 let config = unsafe {
-                    FieldStorage::borrowed(
-                        config as *const GizmoConfig as *mut GizmoConfig,
-                        validity.with_access_mode(AccessMode::Read),
+                    <FieldStorage<GizmoConfig> as BorrowableStorage<GizmoConfig>>::borrowed_ref(
+                        config as *const GizmoConfig,
+                        validity.clone(),
                     )
                 };
                 let obj = Py::new(py, PyGizmos::new(config, validity.clone()))
@@ -1060,7 +1060,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 let py_assets = unsafe {
                     PyAssets::new(
                         type_ptr.0,
-                        wrapper_class.map(|w| w.0),
+                        wrapper_class.as_ref().map(|class| class.clone_ref(py)),
                         *logical_type_id,
                         logical_type_name.clone(),
                         world,
@@ -1093,6 +1093,8 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
 /// # Safety
 /// `world` must be held exclusively for the complete call and `validity` must
 /// remain active until every argument and transient query cache has dropped.
+// The ptr-keyed cache is call-local: the Arc never crosses a thread boundary.
+#[allow(clippy::arc_with_non_send_sync, clippy::too_many_arguments)]
 pub(crate) unsafe fn execute_prepared_observer(
     py: Python,
     callable: &Bound<'_, PyAny>,
@@ -1188,9 +1190,9 @@ pub(crate) unsafe fn execute_prepared_observer(
                 // and the shared validity expires before its local command
                 // queue is applied.
                 let config = unsafe {
-                    FieldStorage::borrowed(
-                        config as *const GizmoConfig as *mut GizmoConfig,
-                        validity.with_access_mode(AccessMode::Read),
+                    <FieldStorage<GizmoConfig> as BorrowableStorage<GizmoConfig>>::borrowed_ref(
+                        config as *const GizmoConfig,
+                        validity.clone(),
                     )
                 };
                 let obj = Py::new(py, PyGizmos::new(config, validity.clone()))
@@ -1292,7 +1294,7 @@ pub(crate) unsafe fn execute_prepared_observer(
                 let py_assets = unsafe {
                     PyAssets::new(
                         type_ptr.0,
-                        wrapper_class.map(|w| w.0),
+                        wrapper_class.as_ref().map(|class| class.clone_ref(py)),
                         *logical_type_id,
                         logical_type_name.clone(),
                         world.as_unsafe_world_cell(),

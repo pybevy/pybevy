@@ -1,5 +1,5 @@
 use bevy::ecs::entity::Entity;
-use pybevy_core::ensure_no_live_asset_access;
+use pybevy_core::{ensure_no_live_asset_access, extract_entity_from_any};
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -193,7 +193,7 @@ impl PyEntityCommands {
     /// Despawn this entity
     pub fn despawn(&self) -> PyResult<()> {
         if let Some(source) = self.get_commands_or_world()? {
-            source.as_ref().despawn(&PyEntity(self.id))
+            source.as_ref().despawn_entity(&PyEntity(self.id))
         } else {
             Err(PyValueError::new_err(
                 "Cannot despawn: EntityCommands not associated with a Commands or World object.",
@@ -202,7 +202,8 @@ impl PyEntityCommands {
     }
 
     /// Add a child entity to this entity
-    pub fn add_child(&self, child: &PyEntity) -> PyResult<PyEntityCommands> {
+    pub fn add_child(&self, child: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+        let child = extract_entity_from_any(child)?;
         if let Some(source) = self.get_commands_or_world()? {
             crate::ecs::commands::add_child_helper(source.as_ref(), self.id, child.0)?;
             Ok(self.clone())
@@ -214,7 +215,8 @@ impl PyEntityCommands {
     }
 
     /// Set the parent of this entity
-    pub fn set_parent(&self, parent: &PyEntity) -> PyResult<PyEntityCommands> {
+    pub fn set_parent(&self, parent: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+        let parent = extract_entity_from_any(parent)?;
         if let Some(source) = self.get_commands_or_world()? {
             crate::ecs::commands::set_parent_helper(source.as_ref(), self.id, parent.0)?;
             Ok(self.clone())
@@ -315,12 +317,14 @@ impl PyEntityCommands {
     /// ```
     pub fn observe(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
         // Try to get world access from either Commands or World
+        let mut world_guard;
         let world_mut = if let Some(commands) = self.get_commands()? {
             // Via Commands (immediate mode only)
             commands.try_world_mut()?
         } else if let Some(world) = self.get_world()? {
             // Via World (direct access)
-            Some(world.world_mut()?)
+            world_guard = world.world_mut()?;
+            Some(&mut *world_guard)
         } else {
             None
         };

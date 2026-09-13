@@ -70,22 +70,27 @@ impl From<AssetEventRecord> for AssetEventValue {
 )]
 #[pyclass(module = "pybevy.assets", name = "AssetEvent")]
 pub enum PyAssetEvent {
+    #[pyo3(constructor = (*, id))]
     Added {
         #[py_type(MaterializedPyAssetId)]
         id: PyAssetId,
     },
+    #[pyo3(constructor = (*, id))]
     Modified {
         #[py_type(MaterializedPyAssetId)]
         id: PyAssetId,
     },
+    #[pyo3(constructor = (*, id))]
     Removed {
         #[py_type(MaterializedPyAssetId)]
         id: PyAssetId,
     },
+    #[pyo3(constructor = (*, id))]
     Unused {
         #[py_type(MaterializedPyAssetId)]
         id: PyAssetId,
     },
+    #[pyo3(constructor = (*, id))]
     LoadedWithDependencies {
         #[py_type(MaterializedPyAssetId)]
         id: PyAssetId,

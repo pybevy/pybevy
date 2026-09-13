@@ -26,7 +26,7 @@ use crate::{
 /// the generation is incremented, so if loading fails, the old generation's systems
 /// keep running and the app doesn't freeze.
 ///
-/// Generic over `ReloadRuntime` — the orchestration logic (generation tracking, entity
+/// Generic over `ReloadRuntime` - the orchestration logic (generation tracking, entity
 /// cleanup, stats, rollback) is shared. The runtime handles loading definitions,
 /// registering systems/resources/messages/observers, and GC.
 ///
@@ -123,17 +123,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         profiler.clear();
     }
 
-    // Capture initial native resource state before first reload clears anything.
-    // This records which bridged resources are Bevy-plugin defaults vs user-inserted.
+    // Capture native resources before the first reload clears them, to record defaults vs inserted.
     if !world.contains_resource::<NativeResourceSnapshot>() {
         let initial = runtime.snapshot_native_resources(world);
         world.insert_resource(NativeResourceSnapshot { initial });
     }
 
-    // NOTE: BaseEntitySet is captured in add_hot_reload_system() (bindings.rs),
-    // before any user Startup systems run. If it's missing here (e.g., in unit
-    // tests that bypass the full init path), fall back to an empty set so that
-    // all entities are eligible for despawn.
+    // BaseEntitySet is captured before Startup; fall back to empty when missing.
     if !world.contains_resource::<BaseEntitySet>() {
         world.insert_resource(BaseEntitySet {
             entities: HashSet::new(),
@@ -170,10 +166,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         });
     }
 
-    // Auto-escalation: Partial -> Full when the new definitions contain
-    // changes only a Full reload applies (Startup re-run, resource insertion,
-    // observer re-registration). Compared against the previous generation's
-    // fingerprint; an unchanged file stays on the fast Partial path.
+    // Escalate Partial to Full when the new fingerprint contains a Full-only change.
     let fingerprint = runtime.defs_fingerprint(&defs);
     let mut mode = mode;
     if mode == ReloadMode::Partial {
@@ -368,30 +361,20 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         }
     };
 
-    // A system or observer from the scene being replaced may have failed
-    // earlier in this Main schedule, or fire during the reload's own world
-    // mutations. Drain the buffer for both modes so the old generation's
-    // error is not drained after the reload's clear and misattributed to the
-    // candidate scene.
+    // Drain both modes' error buffers so the old generation's error is not blamed on the candidate.
     if let Some(error) = runtime.take_pending_system_error(world)
         && is_verbose()
     {
         eprintln!("   → Replacing scene after system error: {error}");
     }
 
-    // Run the startup schedule sequence with rollback on panic
-    // Snapshot pre-Startup error state: both the timestamp and whether an
-    // error was already present.  We need both because on the first reload
-    // Time hasn't ticked yet, so timestamp is 0.0 for both pre and post,
-    // making a pure timestamp comparison fail.
+    // Snapshot both before Startup: on the first reload Time has not ticked, so both are 0.0.
     let (pre_startup_error_ts, pre_startup_had_error) = world
         .get_resource::<pybevy_core::LastSystemError>()
         .map(|e| (e.timestamp_secs, e.error.is_some()))
         .unwrap_or((0.0, false));
 
-    // Snapshot ALL entities before Startup so we can clean up on failure.
-    // Snapshot all entities so we can clean up on failure
-    // (catches Bevy side-effect entities spawned during a failed Startup).
+    // Snapshot all entities before Startup so a failure can also clean up Bevy side effects.
     let pre_startup_entities: std::collections::HashSet<Entity> = if mode == ReloadMode::Full {
         world
             .query_filtered::<Entity, Without<IsResource>>()
@@ -437,7 +420,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             };
 
             eprintln!(
-                "⚠️ [Hot Reload] Startup panicked: {} — rolling back to generation {}",
+                "⚠️ [Hot Reload] Startup panicked: {} - rolling back to generation {}",
                 panic_msg, old_generation
             );
 
@@ -467,10 +450,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 gen_res.current = old_generation;
             }
             {
-                // Remove new_generation (not old_generation) since
-                // mark_startup_run() inserted new_generation into the set.
-                // If we leave it, the next reload that reuses this
-                // generation number will skip Startup entirely.
+                // Remove new_generation or a later reload reusing it skips Startup.
                 let gen_res = world.resource::<HotReloadGeneration>();
                 gen_res.forget_startup_run(new_generation);
             }
@@ -513,11 +493,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                     && (e.timestamp_secs > pre_startup_error_ts || !pre_startup_had_error)
             });
 
-    // If a Startup system raised a Python exception (not a panic), apply
-    // the same generation rollback so Update systems from the broken
-    // generation don't keep running.  Without this, the new-generation
-    // Update systems execute every frame even though their Startup failed
-    // to set up the entities/resources they depend on.
+    // Roll back on Python Startup exceptions too, so the broken generation stops updating.
     if startup_had_error && mode == ReloadMode::Full {
         let error_msg = pending_system_error
             .or_else(|| {
@@ -532,9 +508,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             old_generation
         );
 
-        // Clean up entities created during the failed Startup (same as
-        // the panic path) so we don't leave orphaned render targets,
-        // cameras, or other partially-created scene objects.
+        // Clean up failed-Startup entities (as in the panic path) to avoid orphaned render targets.
         {
             let post_entities: Vec<Entity> = world
                 .query_filtered::<Entity, Without<IsResource>>()
@@ -652,9 +626,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         }
     }
 
-    // Update Time<Real>'s last-seen instant so the next frame's delta doesn't
-    // include time spent performing the reload. Must be at the very end so the
-    // delta between here and the next time_system call is minimal.
+    // Update Time<Real> last so the next frame's delta excludes the reload's own duration.
     if mode == ReloadMode::Full
         && let Some(mut time_real) = world.get_resource_mut::<Time<Real>>()
     {
@@ -670,12 +642,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         ReloadProgress::new(ReloadProgressPhase::Complete, new_generation, mode),
     );
 
-    // Record the fingerprint only now that this generation is live. Doing it
-    // earlier let a failed reload (register error, or a Startup that panicked
-    // or errored and rolled back to the previous generation) leave the tracker
-    // pointing at definitions that never took effect, so the next Partial
-    // reload with matching Startup/resource/observer fingerprints skipped
-    // escalation and silently kept the old generation's state.
+    // Record the fingerprint only once live, or a failed reload keeps it on dead definitions.
     let mut tracker = world.get_resource_or_insert_with(EscalationTracker::default);
     tracker.last = Some(fingerprint);
     tracker.full_reload_required = false;
@@ -1863,7 +1830,7 @@ mod tests {
 
     /// Candidate repro for empty-world-after-many-reloads: each Full reload
     /// should leave the world with the entities its Startup spawned. After many
-    /// cycles, the count must stay constant — never drop to zero.
+    /// cycles, the count must stay constant - never drop to zero.
     ///
     /// Probes for state leaks in `startup_run_for_generations` (set.retain) and
     /// `BaseEntitySet` interactions across long edit sessions.
@@ -1957,7 +1924,7 @@ mod tests {
     }
 
     /// Many sequential Full reloads must each leave Startup-spawned entities
-    /// in place — empty world after a successful reload would mean Startup
+    /// in place - empty world after a successful reload would mean Startup
     /// silently failed to run.
     #[test]
     fn many_full_reloads_never_leave_empty_world() {
@@ -2018,7 +1985,7 @@ mod tests {
                 ReloadMode::Full,
                 &state,
             );
-            // Succeed — must spawn entities
+            // Succeed - must spawn entities
             let mut runtime = SpawningStartupRuntime { spawn_count: 2 };
             let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
             assert!(result.is_ok(), "cycle {} success reload should ok", cycle);

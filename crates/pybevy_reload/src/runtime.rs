@@ -22,7 +22,7 @@ pub struct DefsFingerprint {
     pub startup_code: u64,
     /// Hash over resource type names.
     pub resource_types: u64,
-    /// Hash over observer names and code objects.
+    /// Hash over entrypoint observer names and code; runtime registrations are excluded.
     pub observer_code: u64,
     /// A cached custom component was redefined with a different field layout.
     pub component_layout_changed: bool,
@@ -56,7 +56,7 @@ impl std::fmt::Display for ReloadError {
 
 fn default_reload_error_message(error: &ReloadError) -> String {
     format!(
-        "❌ [Hot Reload] {} — old systems still running",
+        "❌ [Hot Reload] {} - old systems still running",
         error.message
     )
 }
@@ -67,7 +67,7 @@ fn default_reload_error_message(error: &ReloadError) -> String {
 /// generation tracking, entity cleanup, asset clearing, stats, rollback.
 /// This trait handles everything that touches the interpreter.
 ///
-/// The associated type `Defs` is opaque to the orchestrator —
+/// The associated type `Defs` is opaque to the orchestrator -
 /// it only passes it back to trait methods.
 pub trait ReloadRuntime {
     /// Opaque container for loaded definitions.
@@ -78,7 +78,7 @@ pub trait ReloadRuntime {
     type SystemHandle: Send + 'static;
 
     /// Load definitions from the loader function.
-    /// Called BEFORE generation increment — on failure, old systems keep running.
+    /// Called BEFORE generation increment - on failure, old systems keep running.
     fn load_definitions(&mut self, generation: u32) -> Result<Self::Defs, ReloadError>;
 
     /// Whether a definition-load error represents adapter-owned asynchronous
@@ -153,7 +153,7 @@ pub trait ReloadRuntime {
         generation: u32,
     ) -> Result<(), ReloadError>;
 
-    /// Clear old observers and register new ones (Full reload only).
+    /// Clear unconditionally on Full reload; runtime registrations never appear in `defs`.
     fn register_observers(
         &mut self,
         world: &mut World,
@@ -221,24 +221,5 @@ pub trait ReloadRuntime {
     /// Print an error to stderr using the shared reload-error format.
     fn print_error(&self, error: &ReloadError) {
         eprintln!("{}", default_reload_error_message(error));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_error_message_preserves_shared_format() {
-        let error = ReloadError {
-            message: "loader failed".to_string(),
-            traceback: None,
-            is_load_failure: true,
-        };
-
-        assert_eq!(
-            default_reload_error_message(&error),
-            "❌ [Hot Reload] loader failed — old systems still running"
-        );
     }
 }

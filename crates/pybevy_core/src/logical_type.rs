@@ -91,6 +91,7 @@ impl PyLogicalComponentParam {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::sync::Once;
 
@@ -99,6 +100,19 @@ mod tests {
     use super::*;
 
     static INIT: Once = Once::new();
+
+    fn probe_param(py: Python<'_>) -> Py<PyLogicalComponentParam> {
+        let component_type = py.get_type::<PyInt>();
+        Py::new(
+            py,
+            PyLogicalComponentParam::new(
+                &component_type,
+                LogicalTypeId::new(7),
+                "RoutingLogicalProbe".to_owned(),
+            ),
+        )
+        .expect("probe param alloc")
+    }
 
     #[test]
     fn component_type_pointer_does_not_require_ambient_attachment() {
@@ -116,5 +130,47 @@ mod tests {
         });
 
         assert_eq!(param.component_type_ptr(), expected);
+    }
+
+    #[test]
+    fn repr_is_exact_and_optional_union_is_symmetric() {
+        INIT.call_once(Python::initialize);
+        Python::attach(|py| {
+            let param = probe_param(py);
+            let bound = param.bind(py);
+            assert_eq!(
+                bound.repr().unwrap().to_string(),
+                "LogicalComponent[RoutingLogicalProbe]"
+            );
+
+            let optional = bound
+                .call_method1("__or__", (py.None(),))
+                .expect("__or__(None) must build the Optional union");
+            // CPython renders typing.Optional as `X | None` from 3.14 and as
+            // `typing.Optional[X]` before it; both spell the same union.
+            let optional_repr = optional.repr().unwrap().to_string();
+            assert!(
+                optional_repr == "LogicalComponent[RoutingLogicalProbe] | None"
+                    || optional_repr == "typing.Optional[LogicalComponent[RoutingLogicalProbe]]",
+                "unexpected Optional repr: {optional_repr}"
+            );
+            let reflected = param
+                .bind(py)
+                .call_method1("__ror__", (py.None(),))
+                .expect("__ror__(None) must build the Optional union");
+            assert!(
+                optional.is(&reflected),
+                "both directions must yield the cached Optional union"
+            );
+
+            let not_implemented = param
+                .bind(py)
+                .call_method1("__or__", (42i32,))
+                .expect("__or__ with a non-None operand must not raise");
+            assert!(
+                not_implemented.is(py.NotImplemented().into_bound(py)),
+                "a non-None operand must defer to Python's TypeError"
+            );
+        });
     }
 }

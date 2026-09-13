@@ -53,8 +53,8 @@ impl PyAssetPath {
     }
 
     #[new]
-    #[pyo3(signature = (path, label=None, source=None))]
-    pub fn py_new(path: String, label: Option<String>, source: Option<String>) -> Self {
+    #[pyo3(signature = (*, source=None, path, label=None))]
+    pub fn py_new(source: Option<String>, path: String, label: Option<String>) -> Self {
         Self {
             path,
             label,
@@ -96,6 +96,7 @@ impl<'a> From<AssetPath<'a>> for PyAssetPath {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -117,9 +118,9 @@ mod tests {
     #[test]
     fn py_new_with_source() {
         let ap = PyAssetPath::py_new(
+            Some("embedded".into()),
             "models/tree.glb".into(),
             Some("Scene0".into()),
-            Some("embedded".into()),
         );
         assert_eq!(ap.path(), "models/tree.glb");
         assert_eq!(ap.label(), Some("Scene0".into()));
@@ -161,7 +162,7 @@ mod tests {
     fn to_bevy_asset_path_sets_the_source_field() {
         // The source belongs in `AssetPath::source`, not as a `source://`
         // prefix inside the path: an AssetServer resolves only the former.
-        let ap = PyAssetPath::py_new("shaders/x.wgsl".into(), None, Some("embedded".into()));
+        let ap = PyAssetPath::py_new(Some("embedded".into()), "shaders/x.wgsl".into(), None);
         let bevy_path: AssetPath<'static> = (&ap).into();
         assert_eq!(bevy_path.source().as_str(), Some("embedded"));
         assert_eq!(bevy_path.path().to_string_lossy(), "shaders/x.wgsl");
@@ -169,7 +170,7 @@ mod tests {
 
     #[test]
     fn round_trip_with_source() {
-        let original = PyAssetPath::py_new("shaders/x.wgsl".into(), None, Some("embedded".into()));
+        let original = PyAssetPath::py_new(Some("embedded".into()), "shaders/x.wgsl".into(), None);
         let bevy_path: AssetPath<'static> = (&original).into();
         let restored: PyAssetPath = bevy_path.into();
         assert_eq!(original, restored);
@@ -178,9 +179,9 @@ mod tests {
     #[test]
     fn round_trip_with_source_and_label() {
         let original = PyAssetPath::py_new(
+            Some("embedded".into()),
             "scene.glb".into(),
             Some("Mesh0".into()),
-            Some("embedded".into()),
         );
         let bevy_path: AssetPath<'static> = (&original).into();
         let restored: PyAssetPath = bevy_path.into();

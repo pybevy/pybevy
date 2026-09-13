@@ -8,9 +8,12 @@ use bevy::{
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
     gltf::{Gltf, GltfLoaderSettings},
     image::{Image, ImageSaver, ImageSaverSettings, SaveImageError},
+    tasks::IoTaskPool,
 };
 use pybevy_core::{
-    extract_asset_id_from_any, handle::PyHandle, public_error::invalid_asset_type,
+    extract_asset_id_from_any,
+    handle::PyHandle,
+    public_error::{ASSET_LOADING_TASK_POOL_MISSING, invalid_asset_type},
     registry::global_registry,
 };
 use pybevy_gltf::loader_settings::PyGltfLoaderSettings;
@@ -79,6 +82,14 @@ impl PyAssetServer {
         unsafe { self.cell.get_resource::<AssetServer>() }
             .ok_or_else(|| PyRuntimeError::new_err("AssetServer resource not found"))
     }
+
+    fn loading_asset_server(&self) -> PyResult<&AssetServer> {
+        let server = self.asset_server()?;
+        if IoTaskPool::try_get().is_none() {
+            return Err(PyRuntimeError::new_err(ASSET_LOADING_TASK_POOL_MISSING));
+        }
+        Ok(server)
+    }
 }
 
 #[pymethods]
@@ -100,7 +111,7 @@ impl PyAssetServer {
             )));
         }
 
-        let asset_server = self.asset_server()?;
+        let asset_server = self.loading_asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let untyped_handle = bridge.load(asset_server, asset_path);
         let py_handle = PyHandle::from_untyped(untyped_handle, type_ptr);
@@ -131,7 +142,7 @@ impl PyAssetServer {
         let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
             .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
 
-        let asset_server = self.asset_server()?;
+        let asset_server = self.loading_asset_server()?;
         let asset_path = extract_asset_path(&path)?;
 
         let untyped_handle = if let Ok(image_settings) = settings.extract::<PyImageLoaderSettings>()
@@ -186,7 +197,7 @@ impl PyAssetServer {
         let bridge = global_registry::get_asset_bridge_by_name("Image")
             .ok_or_else(|| PyRuntimeError::new_err("Asset bridge for 'Image' not found"))?;
 
-        let asset_server = self.asset_server()?;
+        let asset_server = self.loading_asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let bevy_settings: bevy::image::ImageLoaderSettings = settings.into();
         let untyped_handle = asset_server
@@ -211,7 +222,7 @@ impl PyAssetServer {
     pub fn load_folder<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let bridge = global_registry::get_asset_bridge_by_name("LoadedFolder")
             .ok_or_else(|| PyRuntimeError::new_err("Asset bridge for 'LoadedFolder' not found"))?;
-        let asset_server = self.asset_server()?;
+        let asset_server = self.loading_asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let handle = asset_server.load_folder(asset_path).untyped();
         PyHandle::from_untyped(handle, bridge.py_type_ptr()).into_py_any(py)
@@ -315,7 +326,7 @@ impl PyAssetServer {
             PyRuntimeError::new_err(format!("Asset bridge for '{}' not found", name))
         })?;
 
-        let asset_server = self.asset_server()?;
+        let asset_server = self.loading_asset_server()?;
         let asset_path = extract_asset_path(&path)?;
         let untyped_handle = bridge.load(asset_server, asset_path);
         let py_handle = PyHandle::from_untyped(untyped_handle, bridge.py_type_ptr());

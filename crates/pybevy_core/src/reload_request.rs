@@ -243,6 +243,7 @@ pub struct PyResourceStorage {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::ptr;
 
@@ -362,14 +363,12 @@ mod tests {
         // `iter()` returns exactly one entry per logical component name even
         // after many reloads.
         let mut info = CustomComponentInfo::default();
-        let mut next_id = 0usize;
 
-        for _ in 0..10 {
+        for next_id in 0..10 {
             if let Some(prev) = info.id_by_name("Bouncy") {
                 info.remove(prev);
             }
             info.insert(make_component_id(next_id), make_entry("Bouncy"));
-            next_id += 1;
         }
 
         let names: Vec<_> = info.iter().map(|(_, e)| e.name.clone()).collect();

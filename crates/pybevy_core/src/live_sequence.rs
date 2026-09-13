@@ -292,3 +292,44 @@ macro_rules! impl_live_asset_sequence {
         }
     };
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use pybevy_storage::StorageError;
+
+    use super::*;
+
+    #[test]
+    fn normalize_index_supports_python_negative_indexing() {
+        assert_eq!(normalize_index(0, 3).unwrap(), 0);
+        assert_eq!(normalize_index(2, 3).unwrap(), 2);
+        assert_eq!(normalize_index(-1, 3).unwrap(), 2);
+        assert_eq!(normalize_index(-3, 3).unwrap(), 0);
+    }
+
+    #[test]
+    fn normalize_index_rejects_out_of_range() {
+        assert!(matches!(
+            normalize_index(3, 3),
+            Err(StorageError::IndexOutOfRange)
+        ));
+        assert!(matches!(
+            normalize_index(-4, 3),
+            Err(StorageError::IndexOutOfRange)
+        ));
+        assert!(matches!(
+            normalize_index(0, 0),
+            Err(StorageError::IndexOutOfRange)
+        ));
+    }
+
+    #[test]
+    fn normalize_insert_index_clamps_like_a_python_list() {
+        assert_eq!(normalize_insert_index(-5, 3), 0);
+        assert_eq!(normalize_insert_index(-1, 3), 2);
+        assert_eq!(normalize_insert_index(0, 3), 0);
+        assert_eq!(normalize_insert_index(3, 3), 3);
+        assert_eq!(normalize_insert_index(99, 3), 3);
+    }
+}

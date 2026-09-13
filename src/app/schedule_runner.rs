@@ -15,7 +15,7 @@ pub struct PyScheduleRunnerPlugin {
 #[pyclass(name = "RunMode", module = "pybevy.app", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyRunMode {
-    #[pyo3(constructor = (wait = None))]
+    #[pyo3(constructor = (*, wait = None))]
     Loop {
         wait: Option<u64>,
     },
@@ -42,7 +42,7 @@ impl PyScheduleRunnerPlugin {
 #[pymethods]
 impl PyScheduleRunnerPlugin {
     #[new]
-    #[pyo3(signature = (run_mode = PyRunMode::Loop { wait: None }))]
+    #[pyo3(signature = (*, run_mode = PyRunMode::Loop { wait: None }))]
     pub fn new(run_mode: PyRunMode) -> PyClassInitializer<Self> {
         (PyScheduleRunnerPlugin { run_mode }, PyPlugin).into()
     }

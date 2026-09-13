@@ -148,3 +148,121 @@ pub trait BatchComponent: Send + Sync + 'static {
         world: &mut World,
     ) -> PyResult<()>;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    use bevy::ecs::{component::Component, entity::Entity, world::World};
+
+    use super::{
+        PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform,
+        PreparedNativeUniformWith, PreparedUniformComponent, PreparedUniformFn,
+    };
+
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+    struct Marker {
+        value: i32,
+    }
+
+    #[test]
+    fn prepared_native_batch_inserts_each_value_on_its_own_entity() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Marker>();
+        let entities: Vec<Entity> = (0..3).map(|_| world.spawn_empty().id()).collect();
+        let unrelated = world.spawn_empty().id();
+
+        let mut batch = PreparedNativeBatch::new(vec![
+            Marker { value: 1 },
+            Marker { value: 2 },
+            Marker { value: 3 },
+        ]);
+        assert_eq!(batch.count(), 3);
+        batch.insert(component_id, &entities, &mut world);
+
+        for (entity, expected) in entities.iter().copied().zip([1, 2, 3]) {
+            assert_eq!(
+                world.get::<Marker>(entity).unwrap(),
+                &Marker { value: expected }
+            );
+        }
+        assert!(world.get::<Marker>(unrelated).is_none());
+    }
+
+    #[test]
+    fn prepared_native_batch_rejects_a_changed_count_before_commit() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Marker>();
+        let entity = world.spawn_empty().id();
+        let mut batch = PreparedNativeBatch::new(vec![Marker { value: 1 }, Marker { value: 2 }]);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            batch.insert(component_id, &[entity], &mut world);
+        }));
+
+        let payload = result.unwrap_err();
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            message.contains("validated native batch count changed before commit"),
+            "unexpected panic payload: {message:?}"
+        );
+        // The guard fires before the insertion loop: state is untouched.
+        assert!(world.get::<Marker>(entity).is_none());
+    }
+
+    #[test]
+    fn prepared_native_uniform_clones_one_value_to_every_entity() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Marker>();
+        let entities: Vec<Entity> = (0..3).map(|_| world.spawn_empty().id()).collect();
+
+        PreparedNativeUniform::new(Marker { value: 7 }).insert(component_id, &entities, &mut world);
+
+        for entity in entities {
+            assert_eq!(world.get::<Marker>(entity).unwrap(), &Marker { value: 7 });
+        }
+    }
+
+    #[test]
+    fn prepared_native_uniform_with_uses_the_explicit_clone_adapter() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Marker>();
+        let entities: Vec<Entity> = (0..2).map(|_| world.spawn_empty().id()).collect();
+
+        PreparedNativeUniformWith::new(Marker { value: 7 }, |marker| Marker {
+            value: marker.value * 10,
+        })
+        .insert(component_id, &entities, &mut world);
+
+        for entity in entities {
+            // A plain Clone would leave 7; the adapter must be applied.
+            assert_eq!(world.get::<Marker>(entity).unwrap(), &Marker { value: 70 });
+        }
+    }
+
+    fn insert_counter_marker(entity: Entity, world: &mut World) {
+        INSERT_CALLS.fetch_add(1, Ordering::SeqCst);
+        world.entity_mut(entity).insert(Marker { value: 42 });
+    }
+
+    static INSERT_CALLS: AtomicI32 = AtomicI32::new(0);
+
+    #[test]
+    fn prepared_uniform_fn_runs_once_per_entity() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Marker>();
+        let entities: Vec<Entity> = (0..2).map(|_| world.spawn_empty().id()).collect();
+        let before = INSERT_CALLS.load(Ordering::SeqCst);
+
+        PreparedUniformFn::new(insert_counter_marker).insert(component_id, &entities, &mut world);
+
+        assert_eq!(INSERT_CALLS.load(Ordering::SeqCst) - before, 2);
+        for entity in entities {
+            assert_eq!(world.get::<Marker>(entity).unwrap(), &Marker { value: 42 });
+        }
+    }
+}

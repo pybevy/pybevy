@@ -114,6 +114,7 @@ impl AddedPythonPlugins {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -167,5 +168,37 @@ mod tests {
         let replacement = identity("game.PluginB", None);
         assert!(!added.contains(1, &replacement));
         assert!(!added.check_and_insert(1, replacement));
+    }
+
+    #[test]
+    fn report_name_uses_short_name_and_key() {
+        assert_eq!(identity("game.MyPlugin", None).report_name(), "MyPlugin");
+        assert_eq!(
+            identity("game.MyPlugin", Some("main")).report_name(),
+            "MyPlugin[\"main\"]"
+        );
+        assert_eq!(identity("Solo", Some("k")).report_name(), "Solo[\"k\"]");
+    }
+
+    #[test]
+    fn display_keeps_the_qualified_name() {
+        assert_eq!(identity("game.MyPlugin", None).to_string(), "game.MyPlugin");
+        assert_eq!(
+            identity("game.MyPlugin", Some("main")).to_string(),
+            "game.MyPlugin[\"main\"]"
+        );
+    }
+
+    #[test]
+    fn contains_class_matches_by_name_regardless_of_key_or_type_key() {
+        let mut added = AddedPythonPlugins::default();
+        added.insert(1, identity("game.MyPlugin", Some("main")));
+
+        assert!(added.contains_class(1, "game.MyPlugin"));
+        assert!(!added.contains_class(1, "game.OtherPlugin"));
+        // A recycled type key resolves through the qualified identity set.
+        assert!(added.contains_class(2, "game.MyPlugin"));
+        assert!(added.contains(2, &identity("game.MyPlugin", Some("main"))));
+        assert!(!added.contains(2, &identity("game.MyPlugin", Some("other"))));
     }
 }

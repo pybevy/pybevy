@@ -181,3 +181,214 @@ impl BorrowProbe for AssetBorrowAnchorMut {
         self.check_live(true)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use pybevy_array::BorrowProbe;
+    use pybevy_storage::{ValidityFlag, ValidityGuard, ViewCounters};
+    use pyo3::prelude::*;
+
+    use super::*;
+    use crate::StorageError;
+
+    #[test]
+    fn read_anchor_gates_on_validity_and_close_state() {
+        Python::initialize();
+        let counter = Arc::new(AtomicUsize::new(0));
+        Python::attach(|py| {
+            let guard = PyNumpyViewGuard::acquire(counter.clone(), py.None().into_any());
+            let anchor = AssetBorrowAnchor::new(None, guard);
+            assert_eq!(counter.load(Ordering::Acquire), 1);
+            assert!(anchor.check_read().is_ok());
+            anchor.close();
+            assert_eq!(
+                anchor.check_read().unwrap_err(),
+                "array is closed after its context exited"
+            );
+            anchor.close();
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+        });
+
+        Python::attach(|py| {
+            let guard =
+                PyNumpyViewGuard::acquire(Arc::new(AtomicUsize::new(0)), py.None().into_any());
+            let flag = ValidityFlag::new_write();
+            let system = ValidityGuard::new(flag.clone());
+            let anchor = AssetBorrowAnchor::new(Some(flag), guard);
+            assert!(anchor.check_read().is_ok());
+            drop(system);
+            let expected = format!(
+                "the owning system has finished or access crossed threads ({}); \
+                 call .copy() inside the system to keep an independent snapshot",
+                StorageError::InvalidAccess
+            );
+            assert_eq!(anchor.check_read().unwrap_err(), expected);
+
+            // A closed anchor reports the closed error even while the flag is live.
+            let guard2 =
+                PyNumpyViewGuard::acquire(Arc::new(AtomicUsize::new(0)), py.None().into_any());
+            let flag2 = ValidityFlag::new_write();
+            let _system2 = ValidityGuard::new(flag2.clone());
+            let anchor2 = AssetBorrowAnchor::new(Some(flag2), guard2);
+            anchor2.close();
+            assert_eq!(
+                anchor2.check_read().unwrap_err(),
+                "array is closed after its context exited"
+            );
+        });
+
+        // RAII: dropping the anchor without close() releases the view count.
+        Python::attach(|py| {
+            let counter = Arc::new(AtomicUsize::new(0));
+            let guard = PyNumpyViewGuard::acquire(counter.clone(), py.None().into_any());
+            let anchor = AssetBorrowAnchor::new(None, guard);
+            drop(anchor);
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+        });
+    }
+
+    #[test]
+    fn mut_anchor_gates_writes_and_releases_the_write_count_exactly_once() {
+        Python::initialize();
+        Python::attach(|py| {
+            let counters = ViewCounters::default();
+            let pending = PendingNumpyViewGuard::from_acquired(
+                counters.try_prepare_write().expect("write gate free"),
+                py.None().into_any(),
+            );
+            let anchor = AssetBorrowAnchorMut::new(None, pending);
+            assert_eq!(counters.write_count(), 1);
+            assert!(anchor.check_read().is_ok());
+            assert!(anchor.check_write().is_ok());
+            // Commit flips the claim out of the pending (authorizing) state.
+            let claim = anchor.pending_claim();
+            assert!(claim.authorizes(&counters));
+            anchor.commit();
+            assert!(!claim.authorizes(&counters));
+            anchor.close();
+            assert_eq!(
+                anchor.check_write().unwrap_err(),
+                "array is closed after its mutable context exited"
+            );
+            anchor.close();
+            assert_eq!(counters.write_count(), 0);
+        });
+
+        Python::attach(|py| {
+            let counters = ViewCounters::default();
+            let pending = PendingNumpyViewGuard::from_acquired(
+                counters.try_prepare_write().expect("write gate free"),
+                py.None().into_any(),
+            );
+            let flag = ValidityFlag::new_write();
+            let system = ValidityGuard::new(flag.clone());
+            let anchor = AssetBorrowAnchorMut::new(Some(flag), pending);
+            assert!(anchor.check_write().is_ok());
+            drop(system);
+            let expected = format!(
+                "the owning system has finished or access crossed threads ({})",
+                StorageError::InvalidAccess
+            );
+            assert_eq!(anchor.check_write().unwrap_err(), expected);
+            assert_eq!(anchor.check_read().unwrap_err(), expected);
+        });
+
+        // Rollback: dropping the anchor before commit releases the write gate.
+        Python::attach(|py| {
+            let counters = ViewCounters::default();
+            let pending = PendingNumpyViewGuard::from_acquired(
+                counters.try_prepare_write().expect("write gate free"),
+                py.None().into_any(),
+            );
+            let anchor = AssetBorrowAnchorMut::new(None, pending);
+            assert!(anchor.pending_claim().authorizes(&counters));
+            drop(anchor);
+            assert_eq!(counters.write_count(), 0);
+            assert!(counters.try_prepare_write().is_some());
+        });
+    }
+
+    #[test]
+    fn anchor_rejects_a_foreign_thread_and_defers_release_to_drop() {
+        Python::initialize();
+        let counter = Arc::new(AtomicUsize::new(0));
+        Python::attach(|py| {
+            let guard = PyNumpyViewGuard::acquire(counter.clone(), py.None().into_any());
+            let anchor = AssetBorrowAnchor::new(None, guard);
+            let inner = counter.clone();
+            std::thread::spawn(move || {
+                assert_eq!(
+                    anchor.check_read().unwrap_err(),
+                    "borrowed array accessed from a different thread than it was created on"
+                );
+                // A stray cross-thread close() must not release the count early.
+                anchor.close();
+                assert_eq!(inner.load(Ordering::Acquire), 1);
+            })
+            .join()
+            .unwrap();
+            // The guard's Drop is what releases the count.
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+        });
+
+        Python::attach(|py| {
+            let counters = ViewCounters::default();
+            let pending = PendingNumpyViewGuard::from_acquired(
+                counters.try_prepare_write().expect("write gate free"),
+                py.None().into_any(),
+            );
+            let anchor = AssetBorrowAnchorMut::new(None, pending);
+            let inner = counters.clone();
+            std::thread::spawn(move || {
+                assert_eq!(
+                    anchor.check_write().unwrap_err(),
+                    "borrowed array accessed from a different thread than it was created on"
+                );
+                anchor.close();
+                assert_eq!(inner.write_count(), 1);
+            })
+            .join()
+            .unwrap();
+            assert_eq!(counters.write_count(), 0);
+        });
+    }
+
+    #[test]
+    fn live_anchors_exclude_the_opposite_view_kind_until_released() {
+        Python::initialize();
+        Python::attach(|py| {
+            // A live read anchor keeps the write gate unacquirable.
+            let counters = ViewCounters::default();
+            let claim = counters.try_prepare_read().expect("readers free");
+            let anchor = AssetBorrowAnchor::new(
+                None,
+                PyNumpyViewGuard::from_acquired(claim, py.None().into_any()),
+            );
+            assert_eq!(counters.read_count(), 1);
+            assert!(counters.try_prepare_write().is_none());
+            anchor.close();
+            assert_eq!(counters.read_count(), 0);
+            let write_claim = counters.try_prepare_write().expect("released readers");
+            PendingNumpyViewGuard::from_acquired(write_claim, py.None().into_any()).release();
+
+            // A live write anchor (pending and committed) keeps the read gate closed.
+            let counters2 = ViewCounters::default();
+            let pending = PendingNumpyViewGuard::from_acquired(
+                counters2.try_prepare_write().expect("write gate free"),
+                py.None().into_any(),
+            );
+            let anchor2 = AssetBorrowAnchorMut::new(None, pending);
+            assert!(counters2.try_prepare_read().is_none());
+            anchor2.commit();
+            assert!(counters2.try_prepare_read().is_none());
+            anchor2.close();
+            assert!(counters2.try_prepare_read().is_some());
+        });
+    }
+}

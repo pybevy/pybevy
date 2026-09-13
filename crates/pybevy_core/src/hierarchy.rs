@@ -194,8 +194,9 @@ impl PyChildrenIterator {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use bevy::ecs::world::World;
+    use bevy::ecs::{entity::Entity, world::World};
 
     use super::*;
     use crate::{storage_error::StorageError, validity_guard::ValidityFlag};
@@ -218,5 +219,55 @@ mod tests {
             py_child_of.storage.as_mut(),
             Err(StorageError::ReadOnly)
         ));
+    }
+
+    #[test]
+    fn child_of_equality_and_repr_compare_the_parent_only() {
+        let a = PyEntity(Entity::from_raw_u32(5).unwrap());
+        let b = PyEntity(Entity::from_raw_u32(6).unwrap());
+        let (first, _) = PyChildOf::from_owned(ChildOf(a.0));
+        let (second, _) = PyChildOf::from_owned(ChildOf(a.0));
+        let (other, _) = PyChildOf::from_owned(ChildOf(b.0));
+
+        assert_eq!(first.value().unwrap(), a);
+        assert_eq!(first.parent().unwrap(), a);
+        assert!(first.__eq__(&second).unwrap());
+        assert!(!first.__eq__(&other).unwrap());
+        // Bevy 0.19 prints entities as "<index>v<generation>".
+        assert_eq!(first.__repr__().unwrap(), "ChildOf(5v0)");
+    }
+
+    #[test]
+    fn children_observations_pin_exact_indexes_repr_and_errors() {
+        // The real producer of Children is Bevy's relationship hook on spawn.
+        let mut world = World::new();
+        let parent = world.spawn_empty().id();
+        let e1 = world.spawn(ChildOf(parent)).id();
+        let e2 = world.spawn(ChildOf(parent)).id();
+        let e3 = world.spawn(ChildOf(parent)).id();
+
+        let children = world.entity(parent).get::<Children>().unwrap();
+        let py_children: PyChildren = children.try_into().unwrap();
+
+        assert_eq!(py_children.__repr__(), "Children(count=3)");
+        assert_eq!(py_children.len(), 3);
+        assert!(!py_children.is_empty());
+        assert_eq!(
+            py_children.entities(),
+            vec![PyEntity(e1), PyEntity(e2), PyEntity(e3)]
+        );
+        // Positive, last, and negative indexes map onto the stored order.
+        assert_eq!(py_children.__getitem__(0).unwrap(), PyEntity(e1));
+        assert_eq!(py_children.__getitem__(2).unwrap(), PyEntity(e3));
+        assert_eq!(py_children.__getitem__(-1).unwrap(), PyEntity(e3));
+
+        Python::attach(|py| {
+            for (idx, message) in [(3, "Index 3 out of bounds"), (-4, "Index -4 out of bounds")] {
+                let error = py_children.__getitem__(idx).unwrap_err();
+                let value = error.value(py);
+                assert!(value.is_instance_of::<PyIndexError>());
+                assert_eq!(value.str().unwrap().to_string(), message);
+            }
+        });
     }
 }

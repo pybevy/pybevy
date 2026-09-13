@@ -127,6 +127,8 @@ fn reflected_type_path(value: &dyn PartialReflect) -> String {
         .to_owned()
 }
 
+// WorldMapSerializer's entries are a slice of boxed values, so the box must survive this check.
+#[allow(clippy::borrowed_box)]
 fn reflected_root_is_serializable(
     value: &Box<dyn PartialReflect>,
     registry: &TypeRegistry,

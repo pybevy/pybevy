@@ -15,7 +15,7 @@ use bevy::ecs::{
 use pybevy_core::{
     ComponentBridge, LogicalTypeId, LogicalTypeMap, PyLogicalComponentParam,
     custom_resource::validate_hierarchy_link,
-    ensure_no_live_asset_access,
+    ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
         IS_RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE,
         RESOURCE_COMPONENT_SPAWN, RESOURCE_ENTITY_DESPAWN,
@@ -79,15 +79,15 @@ pub(crate) fn trigger_event_helper(
     let event_clone = event.clone().unbind();
 
     if commands.is_world {
-        let world = commands.world_mut()?;
-        ensure_no_live_asset_access(world, "commands.trigger()")
+        let mut world = commands.world_mut()?;
+        ensure_no_live_asset_access(&world, "commands.trigger()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         let observers = world
             .get_resource::<ObserverRegistry>()
             .map(|registry| registry.snapshot_user_event(&event, target_entity))
             .unwrap_or_default();
         for observer_entry in observers {
-            if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity) {
+            if !ObserverRegistry::matches_user_filter(&observer_entry, &world, target_entity) {
                 continue;
             }
 
@@ -100,7 +100,7 @@ pub(crate) fn trigger_event_helper(
             )?;
             ObserverRegistry::invoke(
                 &observer_entry,
-                world,
+                &mut world,
                 &on_param,
                 target_entity,
                 ErrorPolicy::PropagateToCaller,
@@ -388,16 +388,21 @@ impl PyCommands {
         Ok(unsafe { &mut *(self.commands_ptr as *mut Commands) })
     }
 
-    // validity-checked raw pointer access, see docs/safety.md
-    #[allow(clippy::mut_from_ref)]
-    fn world_mut(&self) -> PyResult<&mut World> {
+    // Raw pointer access behind the validity check, see docs/safety.md.
+    // The returned guard's scope is a native mutation window: deferred Python
+    // drops from the previous mutation drain before it, and drops caused by
+    // this window drain when the borrow ends, before returning to Python.
+    fn world_mut(&self) -> PyResult<crate::ecs::deferred_drop::WorldMutGuard<'_>> {
         self.validity.check()?;
         if !self.is_world {
             return Err(PyRuntimeError::new_err(
                 "Cannot get World from Commands-backed PyCommands",
             ));
         }
-        Ok(unsafe { &mut *(self.commands_ptr as *mut World) })
+        // SAFETY: the wrapper holds a live World pointer for its validity window.
+        Ok(crate::ecs::deferred_drop::WorldMutGuard::new(unsafe {
+            &mut *(self.commands_ptr as *mut World)
+        }))
     }
 
     pub(crate) fn check_native_asset_access(&self, operation: &str) -> PyResult<()> {
@@ -405,12 +410,13 @@ impl PyCommands {
             return Ok(());
         }
         let world = self.world_mut()?;
-        ensure_no_live_asset_access(world, operation)
+        ensure_no_live_asset_access(&world, operation)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
-    /// Get world access if this is world-backed, otherwise return None
-    // validity-checked raw pointer access, see docs/safety.md
+    /// Get world access if this is world-backed, otherwise return None.
+    /// The momentary borrow ends with this call; a caller mutating through it
+    /// wraps its own window.
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn try_world_mut(&self) -> PyResult<Option<&mut World>> {
         self.validity.check()?;
@@ -428,8 +434,8 @@ impl PyCommands {
         F: FnOnce(&mut World) + Send + 'static,
     {
         if self.is_world {
-            let world = self.world_mut()?;
-            operation(world);
+            let mut world = self.world_mut()?;
+            operation(&mut world);
         } else if self.is_queue {
             self.validity.check()?;
             // SAFETY: `from_queue_temporary` provides the only live mutable
@@ -450,7 +456,7 @@ impl PyCommands {
         FC: FnOnce(&mut Commands) -> T,
     {
         if self.is_world {
-            Ok(world_op(self.world_mut()?))
+            Ok(world_op(&mut *self.world_mut()?))
         } else if self.is_queue {
             Err(PyRuntimeError::new_err(
                 "This temporary command queue cannot reserve or return entities",
@@ -722,11 +728,11 @@ pub(crate) fn insert_components_to_entity_helper(
     if commands.is_world {
         commands.check_native_asset_access("entity.insert()")?;
         let validity = commands.validity.clone();
-        let world = commands.world_mut()?;
-        ensure_entity_exists(world, entity_id)?;
+        let mut world = commands.world_mut()?;
+        ensure_entity_exists(&world, entity_id)?;
         let mut insertion_error = None;
         crate::ecs::lifecycle_mutation::insert_many_with(
-            world,
+            &mut world,
             entity_id,
             &component_types,
             |world| {
@@ -790,7 +796,7 @@ fn insert_components_to_entity(
 ) -> PyResult<()> {
     if commands.is_world {
         let world = commands.world_mut()?;
-        ensure_entity_exists(world, entity_id)?;
+        ensure_entity_exists(&world, entity_id)?;
     }
 
     for component in components.iter() {
@@ -812,11 +818,21 @@ fn insert_components_to_entity(
 
                 if commands.is_world {
                     // Direct world access - insert immediately via bridge
-                    let world = commands.world_mut()?;
-                    validate_relationship_component(world, entity_id, &component, bridge.as_ref())?;
-                    bridge.insert(world, entity_id, &component)?;
+                    let mut world = commands.world_mut()?;
+                    validate_relationship_component(
+                        &world,
+                        entity_id,
+                        &component,
+                        bridge.as_ref(),
+                    )?;
+                    bridge.insert(&mut world, entity_id, &component)?;
                     if let Some(logical_type) = logical_type {
-                        update_entity_logical_type(world, entity_id, native_type, logical_type);
+                        update_entity_logical_type(
+                            &mut world,
+                            entity_id,
+                            native_type,
+                            logical_type,
+                        );
                     }
                 } else {
                     // Commands - need to queue the operation
@@ -884,15 +900,16 @@ fn insert_components_to_entity(
                 let (registration, prepared_value) = prepare_custom_component(&component)?;
 
                 if commands.is_world {
-                    let world = commands.world_mut()?;
-                    let component_id = register_prepared_custom_component(world, &registration);
+                    let mut world = commands.world_mut()?;
+                    let component_id =
+                        register_prepared_custom_component(&mut world, &registration);
                     match prepared_value {
                         PreparedCustomComponentValue::Wrapper {
                             bytes,
                             wrapper_size,
                             ..
                         } => insert_custom_wrapper_bytes(
-                            world,
+                            &mut world,
                             entity_id,
                             component_id,
                             wrapper_size,
@@ -972,11 +989,11 @@ pub(crate) fn add_child_helper(
     child_id: Entity,
 ) -> PyResult<()> {
     if commands.is_world {
-        let world = commands.world_mut()?;
-        ensure_entities_exist(world, &[parent_id, child_id])?;
-        validate_hierarchy_link(world, child_id, parent_id)
+        let mut world = commands.world_mut()?;
+        ensure_entities_exist(&world, &[parent_id, child_id])?;
+        validate_hierarchy_link(&world, child_id, parent_id)
             .map_err(|error| PyTypeError::new_err(error.to_string()))?;
-        ensure_no_live_asset_access(world, "entity.add_child()")
+        ensure_no_live_asset_access(&world, "entity.add_child()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(parent_id).add_child(child_id);
     } else {
@@ -1005,10 +1022,10 @@ pub(crate) fn remove_children_helper(
     child_ids: &[Entity],
 ) -> PyResult<()> {
     if commands.is_world {
-        let world = commands.world_mut()?;
-        ensure_entity_exists(world, parent_id)?;
-        ensure_entities_exist(world, child_ids)?;
-        ensure_no_live_asset_access(world, "entity.remove_children()")
+        let mut world = commands.world_mut()?;
+        ensure_entity_exists(&world, parent_id)?;
+        ensure_entities_exist(&world, child_ids)?;
+        ensure_no_live_asset_access(&world, "entity.remove_children()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(parent_id).detach_children(child_ids);
     } else {
@@ -1036,9 +1053,9 @@ pub(crate) fn remove_children_helper(
 /// Helper function to clear all children from an entity
 pub(crate) fn clear_children_helper(commands: &PyCommands, parent_id: Entity) -> PyResult<()> {
     if commands.is_world {
-        let world = commands.world_mut()?;
-        ensure_entity_exists(world, parent_id)?;
-        ensure_no_live_asset_access(world, "entity.clear_children()")
+        let mut world = commands.world_mut()?;
+        ensure_entity_exists(&world, parent_id)?;
+        ensure_no_live_asset_access(&world, "entity.clear_children()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(parent_id).detach_all_children();
     } else {
@@ -1058,11 +1075,11 @@ pub(crate) fn set_parent_helper(
     parent_id: Entity,
 ) -> PyResult<()> {
     if commands.is_world {
-        let world = commands.world_mut()?;
-        ensure_entities_exist(world, &[child_id, parent_id])?;
-        validate_hierarchy_link(world, child_id, parent_id)
+        let mut world = commands.world_mut()?;
+        ensure_entities_exist(&world, &[child_id, parent_id])?;
+        validate_hierarchy_link(&world, child_id, parent_id)
             .map_err(|error| PyTypeError::new_err(error.to_string()))?;
-        ensure_no_live_asset_access(world, "entity.set_parent()")
+        ensure_no_live_asset_access(&world, "entity.set_parent()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(child_id).insert(ChildOf(parent_id));
     } else {
@@ -1087,9 +1104,9 @@ pub(crate) fn set_parent_helper(
 /// Helper function to remove parent relationship from an entity
 pub(crate) fn remove_parent_helper(commands: &PyCommands, child_id: Entity) -> PyResult<()> {
     if commands.is_world {
-        let world = commands.world_mut()?;
-        ensure_entity_exists(world, child_id)?;
-        ensure_no_live_asset_access(world, "entity.remove_parent()")
+        let mut world = commands.world_mut()?;
+        ensure_entity_exists(&world, child_id)?;
+        ensure_no_live_asset_access(&world, "entity.remove_parent()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         world.entity_mut(child_id).remove::<ChildOf>();
     } else {
@@ -1146,18 +1163,18 @@ pub(crate) fn remove_components_from_entity_helper(
             return Err(PyTypeError::new_err(IS_RESOURCE_COMPONENT_REMOVE));
         }
         if commands.is_world {
-            let world = commands.world_mut()?;
-            ensure_entity_exists(world, entity_id)?;
+            let mut world = commands.world_mut()?;
+            ensure_entity_exists(&world, entity_id)?;
             if let Some(logical_type) = logical_type
-                && !entity_logical_type_matches(world, entity_id, component_type, logical_type)
+                && !entity_logical_type_matches(&world, entity_id, component_type, logical_type)
             {
                 continue;
             }
-            ensure_no_live_asset_access(world, "entity.remove()")
+            ensure_no_live_asset_access(&world, "entity.remove()")
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            crate::ecs::lifecycle_mutation::remove(world, entity_id, component_type);
+            crate::ecs::lifecycle_mutation::remove(&mut world, entity_id, component_type);
             if let Some(native_type) = component_type.type_id() {
-                update_entity_logical_type(world, entity_id, native_type, None);
+                update_entity_logical_type(&mut world, entity_id, native_type, None);
             }
         } else {
             commands.execute_or_queue(move |world| {
@@ -1239,7 +1256,7 @@ impl PyCommands {
 
         if self.is_world {
             self.check_native_asset_access("commands.spawn_batch()")?;
-            let entities = command.apply(self.world_mut()?)?;
+            let entities = command.apply(&mut *self.world_mut()?)?;
             let entity_list: Vec<PyEntity> = entities.into_iter().map(PyEntity).collect();
             Ok(entity_list.into_pyobject(py)?.into())
         } else {
@@ -1273,9 +1290,9 @@ impl PyCommands {
         let prepared = prepare_iter_batch(py, batch)?;
         if self.is_world {
             self.check_native_asset_access("commands.spawn_batch()")?;
-            let world = self.world_mut()?;
+            let mut world = self.world_mut()?;
             for command in prepared {
-                for entity in command.apply(world)? {
+                for entity in command.apply(&mut world)? {
                     self.trace_spawn(entity);
                 }
             }
@@ -1309,7 +1326,8 @@ impl PyCommands {
         Ok(())
     }
 
-    pub fn entity(&self, entity: &PyEntity) -> PyResult<PyEntityCommands> {
+    pub fn entity(&self, entity: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+        let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
         if self.is_world {
             let world = self.world_mut()?;
@@ -1321,7 +1339,8 @@ impl PyCommands {
         Ok(PyEntityCommands::with_commands(entity.0, self))
     }
 
-    pub fn get_entity(&self, entity: &PyEntity) -> PyResult<Option<PyEntityCommands>> {
+    pub fn get_entity(&self, entity: &Bound<'_, PyAny>) -> PyResult<Option<PyEntityCommands>> {
+        let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
         if self.is_world {
             let world = self.world_mut()?;
@@ -1332,41 +1351,8 @@ impl PyCommands {
         Ok(Some(PyEntityCommands::with_commands(entity.0, self)))
     }
 
-    pub fn despawn(&self, entity: &PyEntity) -> PyResult<()> {
-        self.check_valid()?;
-        self.check_native_asset_access("commands.despawn()")?;
-        let entity_id = entity.0;
-        self.trace_target_op(ParityOpKind::Despawn, entity_id);
-
-        if self.is_world {
-            let world = self.world_mut()?;
-            if hierarchy_contains_resource_entity(world, entity_id) {
-                return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
-            }
-            crate::ecs::lifecycle_mutation::despawn_recursive(world, entity_id);
-        } else {
-            // Deferred commands
-            // We need to collect component types before queuing the despawn
-            // This is tricky because we can't access the world yet
-            // For now, we'll collect component types in the deferred command
-            let error_sink = self.error_sink.clone();
-            self.execute_or_queue(move |world| {
-                // The world is only reachable at flush time, so a resource-entity
-                // despawn reports through the system error sink instead of the
-                // queuing call.
-                if hierarchy_contains_resource_entity(world, entity_id) {
-                    report_deferred_error(
-                        &error_sink,
-                        "Failed to despawn via Commands",
-                        PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN),
-                    );
-                    return;
-                }
-                crate::ecs::lifecycle_mutation::despawn_recursive(world, entity_id);
-            })?;
-        }
-
-        Ok(())
+    pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.despawn_entity(&extract_entity_from_any(entity)?)
     }
 
     pub fn insert_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<()> {
@@ -1385,7 +1371,7 @@ impl PyCommands {
 
         if self.is_world {
             // Direct insertion into world
-            py_resource_type.insert_into_world(self.world_mut()?, py, resource_instance)?;
+            py_resource_type.insert_into_world(&mut *self.world_mut()?, py, resource_instance)?;
         } else {
             // Queue a command to insert the resource later
             // Clone resource_instance for the command closure
@@ -1433,7 +1419,7 @@ impl PyCommands {
 
         if self.is_world {
             // Direct removal from world
-            py_resource_type.remove_from_world(self.world_mut()?, py)?;
+            py_resource_type.remove_from_world(&mut *self.world_mut()?, py)?;
         } else {
             // Queue a command to remove the resource later
             let error_sink = self.error_sink.clone();
@@ -1462,5 +1448,38 @@ impl PyCommands {
             None
         };
         trigger_event_helper(self, py, event, target_entity)
+    }
+}
+
+impl PyCommands {
+    pub(crate) fn despawn_entity(&self, entity: &PyEntity) -> PyResult<()> {
+        self.check_valid()?;
+        self.check_native_asset_access("commands.despawn()")?;
+        let entity_id = entity.0;
+        self.trace_target_op(ParityOpKind::Despawn, entity_id);
+
+        if self.is_world {
+            let mut world = self.world_mut()?;
+            if hierarchy_contains_resource_entity(&world, entity_id) {
+                return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
+            }
+            crate::ecs::lifecycle_mutation::despawn_recursive(&mut world, entity_id);
+        } else {
+            let error_sink = self.error_sink.clone();
+            self.execute_or_queue(move |world| {
+                // Deferred failures report through the system error sink.
+                if hierarchy_contains_resource_entity(world, entity_id) {
+                    report_deferred_error(
+                        &error_sink,
+                        "Failed to despawn via Commands",
+                        PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN),
+                    );
+                    return;
+                }
+                crate::ecs::lifecycle_mutation::despawn_recursive(world, entity_id);
+            })?;
+        }
+
+        Ok(())
     }
 }

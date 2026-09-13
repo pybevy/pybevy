@@ -32,9 +32,9 @@ use pybevy_core::{
     registry::{AssetBridge, global_registry},
 };
 use pyo3::{
-    IntoPyObjectExt,
+    IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
-    ffi::{PyObject, PyTypeObject},
+    ffi::PyTypeObject,
     prelude::*,
     types::{PyTuple, PyType},
 };
@@ -51,7 +51,7 @@ use crate::ecs::{
 pub struct PyAssets {
     runtime: AssetRuntimeCore<TypeId>,
     /// If set, the `@material`-decorated class for auto-wrapping `get_mut()` results.
-    wrapper_class: Option<*const PyTypeObject>,
+    wrapper_class: Option<Py<PyAny>>,
     logical_type_id: Option<LogicalTypeId>,
     logical_type_name: Option<String>,
     /// World cell (lifetime-erased), valid only while the validity flag is active.
@@ -71,7 +71,7 @@ fn asset_runtime_py_error(error: AssetRuntimeError) -> PyErr {
 // - The raw world pointer is protected by the ValidityFlag (Arc<AtomicBool>)
 // - ValidityFlag::check() ensures the pointer is only dereferenced when valid
 // - The validity flag is set to false when the system execution completes
-// - PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// - Py owns the redirect class, which is accessed only while attached
 unsafe impl Send for PyAssets {}
 
 // SAFETY: PyAssets is Sync because:
@@ -86,9 +86,10 @@ impl PyAssets {
     /// # Safety
     /// The provided world cell must reference the world holding the `Assets<T>`
     /// resource and stay valid for as long as the ValidityFlag is active.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn new(
         type_ptr: *const PyTypeObject,
-        wrapper_class: Option<*const PyTypeObject>,
+        wrapper_class: Option<Py<PyAny>>,
         logical_type_id: Option<LogicalTypeId>,
         logical_type_name: Option<String>,
         cell: UnsafeWorldCell,
@@ -123,6 +124,25 @@ impl PyAssets {
             logical_type_name,
             cell,
         }
+    }
+
+    fn wrap_object(&self, py: Python<'_>, raw: Py<PyAny>, method: &str) -> PyResult<Py<PyAny>> {
+        match &self.wrapper_class {
+            Some(wrapper_class) => Ok(wrapper_class
+                .bind(py)
+                .call_method1(method, (raw,))?
+                .unbind()),
+            None => Ok(raw),
+        }
+    }
+
+    fn wrap_result(
+        &self,
+        py: Python<'_>,
+        raw: Option<Py<PyAny>>,
+        method: &str,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        raw.map(|obj| self.wrap_object(py, obj, method)).transpose()
     }
 
     fn type_id(&self) -> TypeId {
@@ -212,6 +232,13 @@ impl PyAssets {
 
 #[pymethods]
 impl PyAssets {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(class) = &self.wrapper_class {
+            visit.call(class)?;
+        }
+        Ok(())
+    }
+
     /// Get a class item as AssetTypeParam by asset type (e.g., Assets[Mesh])
     ///
     /// Supports `@material` redirect: `Assets[HologramMaterial]` resolves to
@@ -355,7 +382,8 @@ impl PyAssets {
             self.check_no_live_asset_borrows()?;
         }
         let world = self.world_mut()?;
-        bridge.remove_and_return(world, id.untyped(), py)
+        let raw = bridge.remove_and_return(world, id.untyped(), py)?;
+        self.wrap_result(py, raw, "from_mut")
     }
 
     pub fn get(&self, py: Python, id: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
@@ -374,14 +402,7 @@ impl PyAssets {
             self.check_object_logical_type(raw_obj.bind(py))?;
         }
 
-        if let (Some(raw_obj), Some(wrapper_ptr)) = (&raw, self.wrapper_class) {
-            // SAFETY: wrapper_ptr is a Python type object, stable for interpreter lifetime
-            let wrapper_cls: Bound<'_, PyAny> =
-                unsafe { Bound::from_borrowed_ptr(py, wrapper_ptr as *mut PyObject) };
-            let wrapped = wrapper_cls.call_method1("from_ref", (raw_obj,))?;
-            return Ok(Some(wrapped.unbind()));
-        }
-        Ok(raw)
+        self.wrap_result(py, raw, "from_ref")
     }
 
     pub fn get_mut(&mut self, py: Python, id: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
@@ -396,16 +417,7 @@ impl PyAssets {
             self.check_object_logical_type(raw_obj.bind(py))?;
         }
 
-        // Auto-wrap with @material class if this is a redirected Assets[HologramMaterial]
-        if let (Some(raw_obj), Some(wrapper_ptr)) = (&raw, self.wrapper_class) {
-            // SAFETY: wrapper_ptr is a Python type object, stable for interpreter lifetime
-            let wrapper_cls: Bound<'_, PyAny> =
-                unsafe { Bound::from_borrowed_ptr(py, wrapper_ptr as *mut PyObject) };
-            let wrapped = wrapper_cls.call_method1("from_mut", (raw_obj,))?;
-            return Ok(Some(wrapped.unbind()));
-        }
-
-        Ok(raw)
+        self.wrap_result(py, raw, "from_mut")
     }
 
     pub fn __iter__(&self, py: Python) -> PyResult<PyAssetIter> {
@@ -423,6 +435,7 @@ impl PyAssets {
             if self.logical_type_id.is_some() && actual != self.logical_type_id {
                 continue;
             }
+            let obj = self.wrap_object(py, obj, "from_ref")?;
             values.push((PyAssetId::from_untyped_with_logical_type(id, actual), obj));
         }
 
@@ -440,6 +453,13 @@ pub struct PyAssetIter {
 
 #[pymethods]
 impl PyAssetIter {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for (_, value) in &self.values {
+            visit.call(value)?;
+        }
+        Ok(())
+    }
+
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }

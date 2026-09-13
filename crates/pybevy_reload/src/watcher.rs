@@ -183,9 +183,7 @@ fn watch_worker(
         }
     };
 
-    // notify implements recursive inotify watches by walking every descendant before
-    // registering one watch per directory. Build that plan here so ignored subtrees
-    // are pruned before either the traversal or the watch registration happens.
+    // Build notify's watch plan here so ignored subtrees are pruned before traversal.
     let prune_recursive_watches = <RecommendedWatcher as Watcher>::kind() == WatcherKind::Inotify;
     let mut watched_paths = BTreeSet::new();
 

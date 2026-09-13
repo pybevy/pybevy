@@ -9,10 +9,10 @@ pybevy_core::register_native_system_set!(
     name = "AnimationSystems"
 );
 
+#[allow(clippy::module_inception)]
 pub mod app;
 pub mod app_exit;
 pub mod chained_systems;
-pub mod error_messages;
 pub mod hot_reload;
 pub mod plugin;
 pub mod plugin_config;

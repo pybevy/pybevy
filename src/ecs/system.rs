@@ -49,9 +49,9 @@ const STACK_PARAMS: usize = 8;
 /// We store the `__code__` object address alongside the params so we can detect
 /// address reuse: if CPython recycles a function's memory for a new closure with
 /// different parameters, the `__code__` pointer will differ and we re-parse.
-static SYSTEM_PARAM_CACHE: Mutex<
-    Option<HashMap<usize, (usize, Arc<SmallVec<[SystemParam; STACK_PARAMS]>>)>>,
-> = Mutex::new(None);
+type SystemParamCacheEntry = (usize, Arc<SmallVec<[SystemParam; STACK_PARAMS]>>);
+type SystemParamCache = HashMap<usize, SystemParamCacheEntry>;
+static SYSTEM_PARAM_CACHE: Mutex<Option<SystemParamCache>> = Mutex::new(None);
 
 /// Represents a pythonic system function with its parameters cached for efficient calls
 #[derive(Debug)]
@@ -144,6 +144,22 @@ impl SystemFunction {
 
             parsed_params
         };
+
+        // Every registration needs its own Local. `Local[T]` in an annotation is
+        // one object built at module definition, and the parameter cache hands
+        // the same one back for a repeated callable, so rebuild here: this is
+        // the single point both the parsed and the cached path reach.
+        let mut params = params;
+        for param in &mut params {
+            if let SystemParamType::Local(local) = &param.ty {
+                let fresh = local
+                    .bind(py)
+                    .cast::<PyLocal>()?
+                    .borrow()
+                    .fresh_for_registration(py)?;
+                param.ty = SystemParamType::Local(fresh);
+            }
+        }
 
         Ok(Self {
             func: func.unbind(),
@@ -329,13 +345,13 @@ impl SystemFunction {
                     )));
                 }
             } else if annotation.is_instance_of::<PyLocal>() {
-                SystemParamType::Local(annotation.unbind().clone_ref(py))
+                SystemParamType::Local(annotation.clone().unbind())
             } else if annotation.get_type().is(PyAssetTypeParam::type_object(py)) {
                 // Assets[T] - extract the asset type
                 let asset_param = annotation.extract::<PyAssetTypeParam>()?;
                 SystemParamType::Assets {
                     type_ptr: AssetTypePtr(asset_param.type_ptr()),
-                    wrapper_class: asset_param.wrapper_class().map(AssetTypePtr),
+                    wrapper_class: asset_param.wrapper_class(py),
                     logical_type_id: asset_param.logical_type_id(),
                     logical_type_name: asset_param.logical_type_name().map(str::to_owned),
                     mutable: is_mutable,
@@ -459,7 +475,7 @@ pub enum SystemParamType {
     Assets {
         type_ptr: AssetTypePtr,
         /// Optional wrapper class for `@material` redirects (e.g. HologramMaterial).
-        wrapper_class: Option<AssetTypePtr>,
+        wrapper_class: Option<Py<PyAny>>,
         logical_type_id: Option<LogicalTypeId>,
         logical_type_name: Option<String>,
         mutable: bool,
@@ -507,7 +523,7 @@ impl Clone for SystemParamType {
                 mutable,
             } => SystemParamType::Assets {
                 type_ptr: *ptr,
-                wrapper_class: *wrapper_class,
+                wrapper_class: wrapper_class.as_ref().map(|class| class.clone_ref(py)),
                 logical_type_id: *logical_type_id,
                 logical_type_name: logical_type_name.clone(),
                 mutable: *mutable,

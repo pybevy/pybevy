@@ -69,6 +69,7 @@ impl PyAssetIndex {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use pybevy_storage::{AccessMode, ValidityFlag};
 

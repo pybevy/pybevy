@@ -735,7 +735,7 @@ where
 
         let call_result = {
             let validity = ValidityFlag::new();
-            let validity_guard = ValidityGuard::new(validity.clone());
+            let validity_guard = ValidityGuard::for_world(validity.clone(), world.id());
             let state = self
                 .state
                 .as_mut()
@@ -940,6 +940,8 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
     policy: ErrorPolicy,
     world: &mut World,
 ) -> ObserverDispatchResult<B> {
+    let validity = ValidityFlag::new();
+    let validity_guard = ValidityGuard::for_world(validity.clone(), world.id());
     let prepared = match interpreter.resolve_callable(retained, current_generation) {
         CallablePreflight::Ready(prepared) => prepared,
         CallablePreflight::Retired => return Ok(()),
@@ -961,8 +963,6 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
     });
 
     let call_result = {
-        let validity = ValidityFlag::new();
-        let validity_guard = ValidityGuard::new(validity.clone());
         let ctx = InterpreterCallContext {
             world: world.as_unsafe_world_cell(),
             ticks,

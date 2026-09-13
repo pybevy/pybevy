@@ -119,8 +119,10 @@ pub fn release_array_guard(array: &Bound<'_, PyAny>) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use pybevy_storage::ViewCounters;
+    use pyo3::ffi::Py_REFCNT;
 
     use super::*;
 
@@ -202,6 +204,127 @@ mod tests {
             guard.release();
             guard.release();
             assert_eq!(counters.read_count(), 0);
+        });
+    }
+
+    #[test]
+    fn release_array_guard_releases_only_a_guard_base() {
+        Python::initialize();
+        let counter = Arc::new(AtomicUsize::new(0));
+        Python::attach(|py| {
+            let guard = Py::new(
+                py,
+                PyNumpyViewGuard::acquire(counter.clone(), py.None().into_any()),
+            )
+            .unwrap();
+            let namespace = py
+                .import("types")
+                .unwrap()
+                .getattr("SimpleNamespace")
+                .unwrap();
+
+            // A guard base releases the counted view, exactly once.
+            let with_guard: Bound<PyAny> = namespace.call0().unwrap();
+            with_guard.setattr("base", guard.clone_ref(py)).unwrap();
+            assert_eq!(counter.load(Ordering::Acquire), 1);
+            release_array_guard(&with_guard);
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+            release_array_guard(&with_guard);
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+
+            // A missing base and a foreign base are no-ops.
+            let plain: Bound<PyAny> = namespace.call0().unwrap();
+            release_array_guard(&plain);
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+            let foreign: Bound<PyAny> = namespace.call0().unwrap();
+            foreign.setattr("base", 42i32).unwrap();
+            release_array_guard(&foreign);
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+        });
+    }
+
+    #[test]
+    fn guard_retains_exactly_one_owner_reference_until_drop() {
+        Python::initialize();
+        Python::attach(|py| {
+            let owner: Bound<PyAny> = py.eval(c"object()", None, None).unwrap();
+            // Local reference + the guard's _owner: exactly two.
+            let guard = Py::new(
+                py,
+                PyNumpyViewGuard::acquire(Arc::new(AtomicUsize::new(0)), owner.clone().unbind()),
+            )
+            .unwrap();
+            // SAFETY: owner is alive for the call; Py_REFCNT only reads its header.
+            assert_eq!(unsafe { Py_REFCNT(owner.as_ptr()) }, 2);
+            drop(guard);
+            // Nothing is retained beyond the local reference: no leak.
+            // SAFETY: same as above; the object is still alive.
+            assert_eq!(unsafe { Py_REFCNT(owner.as_ptr()) }, 1);
+        });
+    }
+
+    // Restores the caller's gc state (isenabled/threshold) even on assert panic.
+    struct GcStateRestore {
+        enabled: bool,
+        threshold: (i32, i32, i32),
+    }
+
+    impl GcStateRestore {
+        fn disable(py: Python<'_>) -> Self {
+            let gc = py.import("gc").unwrap();
+            let enabled: bool = gc.call_method0("isenabled").unwrap().extract().unwrap();
+            let threshold: (i32, i32, i32) =
+                gc.call_method0("get_threshold").unwrap().extract().unwrap();
+            gc.call_method0("disable").unwrap();
+            Self { enabled, threshold }
+        }
+    }
+
+    impl Drop for GcStateRestore {
+        fn drop(&mut self) {
+            Python::attach(|py| {
+                let gc = py.import("gc").unwrap();
+                let (gen0, gen1, gen2) = self.threshold;
+                gc.call_method1("set_threshold", (gen0, gen1, gen2))
+                    .unwrap();
+                if self.enabled {
+                    gc.call_method0("enable").unwrap();
+                } else {
+                    gc.call_method0("disable").unwrap();
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn cycled_view_is_released_when_the_cycle_collector_clears_the_cycle() {
+        Python::initialize();
+        let counter = Arc::new(AtomicUsize::new(0));
+        Python::attach(|py| {
+            // RAII restores the caller's collector state even on assert panic.
+            let _gc = GcStateRestore::disable(py);
+            let guard = Py::new(
+                py,
+                PyNumpyViewGuard::acquire(counter.clone(), py.None().into_any()),
+            )
+            .unwrap();
+            // A tracked refcount cycle that is the last reference to the guard.
+            let inner: Bound<PyAny> = py.eval(c"[]", None, None).unwrap();
+            let holder: Bound<PyAny> = py.eval(c"[]", None, None).unwrap();
+            inner.call_method1("append", (holder.clone(),)).unwrap();
+            holder.call_method1("append", (inner.clone(),)).unwrap();
+            holder
+                .call_method1("append", (guard.clone_ref(py),))
+                .unwrap();
+            assert_eq!(counter.load(Ordering::Acquire), 1);
+            drop(inner);
+            drop(holder);
+            drop(guard);
+            // Refcounting alone cannot clear the cycle: the count stays held.
+            assert_eq!(counter.load(Ordering::Acquire), 1);
+            py.import("gc").unwrap().call_method0("collect").unwrap();
+            // The collector clears the cycle, freeing the guard and releasing the count.
+            assert_eq!(counter.load(Ordering::Acquire), 0);
         });
     }
 }

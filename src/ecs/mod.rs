@@ -9,6 +9,7 @@ pub mod component_wrapper;
 pub mod conditional_system;
 pub mod custom_batch;
 pub mod custom_component;
+pub mod deferred_drop;
 pub mod disabled;
 pub mod dynamic_system;
 pub mod entity_commands;

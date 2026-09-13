@@ -393,6 +393,7 @@ impl PyHandle {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn raw_id(&self) -> u128 {
         match &self.kind {
             HandleKind::Strong(untyped) => match untyped.id() {
@@ -513,9 +514,11 @@ pub fn extract_handle_from_any(obj: &Bound<'_, PyAny>) -> PyResult<PyHandle> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::sync::Once;
 
+    use bevy::reflect::TypePath;
     use pyo3::types::{PyInt, PyList};
 
     use super::*;
@@ -682,5 +685,25 @@ mod tests {
         };
 
         assert!(handle.__repr__().contains("logical_type=11"));
+    }
+
+    #[derive(Asset, TypePath)]
+    struct TestHandleAsset;
+
+    #[test]
+    fn ensure_asset_type_rejects_handle_without_registered_type() {
+        setup_python();
+        Python::attach(|py| {
+            let handle = PyHandle {
+                kind: HandleKind::Uuid(Uuid::from_u128(3)),
+                type_ptr: std::ptr::null(),
+                logical_type_id: None,
+            };
+
+            let error = ensure_asset_type::<TestHandleAsset>(&handle)
+                .expect_err("an unregistered handle must not match any asset type");
+            assert!(error.is_instance_of::<PyTypeError>(py));
+        });
+        assert_eq!(short_asset_name::<TestHandleAsset>(), "TestHandleAsset");
     }
 }
