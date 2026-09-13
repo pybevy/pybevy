@@ -39,6 +39,7 @@ impl From<PyVideoMode> for VideoMode {
 #[pymethods]
 impl PyVideoMode {
     #[new]
+    #[pyo3(signature = (*, physical_size, bit_depth, refresh_rate_millihertz))]
     pub fn new(
         physical_size: PyUVec2,
         bit_depth: u16,

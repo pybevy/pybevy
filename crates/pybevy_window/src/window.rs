@@ -27,20 +27,21 @@ pub struct PyWindow {
 impl PyWindow {
     #[new]
     #[pyo3(signature = (
-        title = DEFAULT_APP_TITLE.to_string(),
-        resolution = PyWindowResolution::default(),
-        decorations = true,
-        resizable = true,
+        *,
         mode = PyWindowMode::default(),
+        resolution = PyWindowResolution::default(),
+        title = DEFAULT_APP_TITLE.to_string(),
+        resizable = true,
+        decorations = true,
         transparent = false,
-        window_level = PyWindowLevel::default(),
+        window_level = PyWindowLevel::default()
     ))]
     pub fn new(
-        title: String,
-        resolution: PyWindowResolution,
-        decorations: bool,
-        resizable: bool,
         mode: PyWindowMode,
+        resolution: PyWindowResolution,
+        title: String,
+        resizable: bool,
+        decorations: bool,
         transparent: bool,
         window_level: PyWindowLevel,
     ) -> PyResult<PyClassInitializer<Self>> {

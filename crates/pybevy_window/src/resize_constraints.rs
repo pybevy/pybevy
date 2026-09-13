@@ -50,10 +50,11 @@ impl TryFrom<&PyWindowResizeConstraints> for WindowResizeConstraints {
 impl PyWindowResizeConstraints {
     #[new]
     #[pyo3(signature = (
+        *,
         min_width = 180.0,
         min_height = 120.0,
         max_width = f32::INFINITY,
-        max_height = f32::INFINITY,
+        max_height = f32::INFINITY
     ))]
     pub fn new(min_width: f32, min_height: f32, max_width: f32, max_height: f32) -> Self {
         PyWindowResizeConstraints::from_owned(WindowResizeConstraints {

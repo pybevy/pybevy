@@ -1,8 +1,10 @@
-use bevy::window::VideoModeSelection;
+use bevy::window::{VideoMode, VideoModeSelection};
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use super::video_mode::PyVideoMode;
 
+#[pyenum(VideoModeSelection, empty_tuple, no_repr)]
 #[pyclass(
     name = "VideoModeSelection",
     module = "pybevy.window",
@@ -13,34 +15,16 @@ use super::video_mode::PyVideoMode;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyVideoModeSelection {
     Current(),
-    Specific { video_mode: PyVideoMode },
+    #[py_bevy(tuple)]
+    Specific {
+        #[py_type(PyVideoMode)]
+        video_mode: VideoMode,
+    },
 }
 
 impl Default for PyVideoModeSelection {
     fn default() -> Self {
         PyVideoModeSelection::Current()
-    }
-}
-
-impl From<PyVideoModeSelection> for VideoModeSelection {
-    fn from(value: PyVideoModeSelection) -> Self {
-        match value {
-            PyVideoModeSelection::Current() => VideoModeSelection::Current,
-            PyVideoModeSelection::Specific { video_mode } => {
-                VideoModeSelection::Specific(video_mode.into())
-            }
-        }
-    }
-}
-
-impl From<VideoModeSelection> for PyVideoModeSelection {
-    fn from(value: VideoModeSelection) -> Self {
-        match value {
-            VideoModeSelection::Current => PyVideoModeSelection::Current(),
-            VideoModeSelection::Specific(video_mode) => PyVideoModeSelection::Specific {
-                video_mode: video_mode.into(),
-            },
-        }
     }
 }
 

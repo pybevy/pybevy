@@ -25,7 +25,8 @@ impl From<&WindowResized> for PyWindowResized {
 #[pymethods]
 impl PyWindowResized {
     #[new]
-    fn new(width: f32, height: f32, window: PyEntity) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (*, window, width, height))]
+    fn new(window: PyEntity, width: f32, height: f32) -> PyClassInitializer<Self> {
         (
             PyWindowResized {
                 width,

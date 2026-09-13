@@ -22,7 +22,7 @@ impl Default for PyWindowResolution {
 #[pymethods]
 impl PyWindowResolution {
     #[new]
-    #[pyo3(signature = (physical_width = 1280, physical_height = 720, scale_factor_override = None))]
+    #[pyo3(signature = (physical_width = 1280, physical_height = 720, *, scale_factor_override = None))]
     pub fn new(
         physical_width: u32,
         physical_height: u32,

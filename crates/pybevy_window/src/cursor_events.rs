@@ -29,6 +29,7 @@ impl From<&CursorEntered> for PyCursorEntered {
 #[pymethods]
 impl PyCursorEntered {
     #[new]
+    #[pyo3(signature = (*, window))]
     pub fn new(window: PyEntity) -> PyClassInitializer<Self> {
         (PyCursorEntered { window }, PyMessage).into()
     }
@@ -63,6 +64,7 @@ impl From<&CursorLeft> for PyCursorLeft {
 #[pymethods]
 impl PyCursorLeft {
     #[new]
+    #[pyo3(signature = (*, window))]
     pub fn new(window: PyEntity) -> PyClassInitializer<Self> {
         (PyCursorLeft { window }, PyMessage).into()
     }
