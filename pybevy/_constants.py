@@ -50,7 +50,7 @@ def _apply() -> None:
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
     from .transform import GlobalTransform, Transform
-    from .ui import FocusPolicy, Interaction, Overflow, UiRect, Val
+    from .ui import FocusPolicy, Interaction, Overflow, UiRect
 
     _registry: list[tuple[type, list[str]]] = [
         # color
@@ -118,7 +118,6 @@ def _apply() -> None:
         (Interaction, ["None_", "Hovered", "Pressed"]),
         (Overflow, ["DEFAULT"]),
         (UiRect, ["ZERO", "AUTO", "DEFAULT"]),
-        (Val, ["ZERO"]),
         # audio
         (PlaybackSettings, ["ONCE", "LOOP", "DESPAWN", "REMOVE"]),
         (Volume, ["SILENT"]),

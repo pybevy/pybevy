@@ -58,7 +58,7 @@ bg = RadialGradient(
 # Fixed-size circle
 bg = RadialGradient(
     UiPosition.center(),
-    RadialGradientShape.circle(Val.px(50.0)),
+    RadialGradientShape.circle(Val.Px(50.0)),
     [
         ColorStop.auto(Color.srgb(1.0, 0.8, 0.0)),
         ColorStop.auto(Color.srgba(1.0, 0.8, 0.0, 0.0)),
@@ -101,7 +101,7 @@ commands.spawn(
 
 # Border gradient
 border_node = Node()
-border_node.border = UiRect.all(Val.px(2.0))
+border_node.border = UiRect.all(Val.Px(2.0))
 commands.spawn(
     border_node,
     BorderGradient([Gradient.linear(
@@ -156,7 +156,7 @@ commands.spawn(
 ```python
 def spawn_button(commands: Commands) -> None:
     button_node = Node()
-    button_node.border = UiRect.all(Val.px(2.0))
+    button_node.border = UiRect.all(Val.Px(2.0))
     commands.spawn(
         Button(),
         button_node,

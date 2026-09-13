@@ -1,7 +1,7 @@
 use bevy::ui::Val2;
 use pyo3::prelude::*;
 
-use crate::val::{PyVal, validate_finite_val};
+use crate::val::PyVal;
 
 #[pyclass(name = "Val2", module = "pybevy.ui", frozen, eq, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,17 +37,14 @@ impl PyVal2 {
     #[staticmethod]
     pub fn px(x: f32, y: f32) -> PyResult<Self> {
         Ok(PyVal2 {
-            inner: Val2::px(validate_finite_val("px", x)?, validate_finite_val("px", y)?),
+            inner: Val2::px(x, y),
         })
     }
 
     #[staticmethod]
     pub fn percent(x: f32, y: f32) -> PyResult<Self> {
         Ok(PyVal2 {
-            inner: Val2::percent(
-                validate_finite_val("percent", x)?,
-                validate_finite_val("percent", y)?,
-            ),
+            inner: Val2::percent(x, y),
         })
     }
 
