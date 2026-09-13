@@ -1,6 +1,6 @@
 use bevy::shader::{Shader, ShaderDefVal};
 use naga::ShaderStage;
-use pybevy_core::AssetStorage;
+use pybevy_core::{AssetStorage, public_error};
 use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -48,9 +48,8 @@ impl PyShader {
             "fragment" => ShaderStage::Fragment,
             "compute" => ShaderStage::Compute,
             _ => {
-                return Err(PyValueError::new_err(format!(
-                    "Invalid shader stage: {}. Must be 'vertex', 'fragment', or 'compute'",
-                    stage
+                return Err(PyValueError::new_err(public_error::shader_stage_invalid(
+                    stage,
                 )));
             }
         };
@@ -103,7 +102,7 @@ impl PyShader {
 
     #[getter]
     pub fn validate_shader(&self) -> PyResult<PyValidateShader> {
-        Ok((&self.as_ref()?.validate_shader).into())
+        Ok(self.as_ref()?.validate_shader.clone().into())
     }
 
     #[setter]

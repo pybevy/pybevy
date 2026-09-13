@@ -1,6 +1,8 @@
 use bevy::shader::ValidateShader;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(ValidateShader)]
 #[pyclass(
     name = "ValidateShader",
     module = "pybevy.shader",
@@ -13,41 +15,4 @@ pub enum PyValidateShader {
     #[default]
     Disabled,
     Enabled,
-}
-
-#[pymethods]
-impl PyValidateShader {
-    fn __repr__(&self) -> &'static str {
-        match self {
-            PyValidateShader::Disabled => "ValidateShader.Disabled",
-            PyValidateShader::Enabled => "ValidateShader.Enabled",
-        }
-    }
-}
-
-impl From<PyValidateShader> for ValidateShader {
-    fn from(py_validate: PyValidateShader) -> Self {
-        match py_validate {
-            PyValidateShader::Disabled => ValidateShader::Disabled,
-            PyValidateShader::Enabled => ValidateShader::Enabled,
-        }
-    }
-}
-
-impl From<&ValidateShader> for PyValidateShader {
-    fn from(validate: &ValidateShader) -> Self {
-        match validate {
-            ValidateShader::Disabled => PyValidateShader::Disabled,
-            ValidateShader::Enabled => PyValidateShader::Enabled,
-        }
-    }
-}
-
-impl From<ValidateShader> for PyValidateShader {
-    fn from(validate: ValidateShader) -> Self {
-        match validate {
-            ValidateShader::Disabled => PyValidateShader::Disabled,
-            ValidateShader::Enabled => PyValidateShader::Enabled,
-        }
-    }
 }
