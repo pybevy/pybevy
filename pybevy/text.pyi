@@ -7,7 +7,19 @@ import numpy as np
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.assets import Handle as AssetHandle
-from pybevy.color import Color
+from pybevy.color import (
+    Color,
+    Hsla,
+    Hsva,
+    Hwba,
+    Laba,
+    Lcha,
+    LinearRgba,
+    Oklaba,
+    Oklcha,
+    Srgba,
+    Xyza,
+)
 from pybevy.ecs import Batchable, Component, Resource, SystemSet
 from pybevy.image import TextureAtlasLayout
 from pybevy.math import Vec2
@@ -530,7 +542,7 @@ class TextColor(Component):
 
     color: Color
 
-    def __init__(self, color: Color = Color.WHITE) -> None:
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = Color.WHITE) -> None:
         """Create a text color component."""
 
     @staticmethod
@@ -771,7 +783,7 @@ class Text2d(Component):
 
     Example:
         >>> from pybevy.text import Text2d, TextFont, TextColor
-        >>> from pybevy.color import Color
+        >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
         >>> from pybevy.transform import Transform
         >>>
         >>> # Basic text
@@ -808,7 +820,7 @@ class Text2dShadow(Component):
 
     Example:
         >>> from pybevy.text import Text2d, Text2dShadow
-        >>> from pybevy.color import Color
+        >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
         >>> from pybevy.math import Vec2
         >>>
         >>> # Add shadow to text
@@ -862,7 +874,7 @@ class TextSpan(Component):
 
     Example:
         >>> from pybevy.text import Text2d, TextSpan, TextFont, TextColor
-        >>> from pybevy.color import Color
+        >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
         >>> from pybevy.ecs import ChildOf
         >>>
         >>> # Create multi-style text
@@ -900,7 +912,7 @@ class TextBackgroundColor(Component):
 
     Example:
         >>> from pybevy.text import Text2d, TextBackgroundColor
-        >>> from pybevy.color import Color
+        >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
         >>>
         >>> # Create highlighted text
         >>> commands.spawn((
@@ -915,7 +927,7 @@ class TextBackgroundColor(Component):
     color: Color
     """Background color"""
 
-    def __init__(self, color: Color = Color.BLACK) -> None:
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = Color.BLACK) -> None:
         """Create a text background color component.
 
         Args:
