@@ -25,7 +25,7 @@ pub enum PyNodeImageMode {
     },
     #[pyo3(
         name = "Tiled",
-        constructor = (tile_x = true, tile_y = true, stretch_value = 1.0)
+        constructor = (*, tile_x = true, tile_y = true, stretch_value = 1.0)
     )]
     Tiled {
         tile_x: bool,

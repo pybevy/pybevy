@@ -51,6 +51,7 @@ impl TryFrom<&PyShadowStyle> for ShadowStyle {
 impl PyShadowStyle {
     #[new]
     #[pyo3(signature = (
+        *,
         color = None,
         x_offset = PyVal::percent_unchecked(20.0),
         y_offset = PyVal::percent_unchecked(20.0),

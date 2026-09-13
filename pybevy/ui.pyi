@@ -161,6 +161,11 @@ class UiRect:
 
     Used for margins, padding, and borders in UI layout.
 
+    The four side names are static constructors, not value accessors: `left`
+    is bevy's `UiRect::left`, so `rect.left` is a method object and
+    `rect.get_left()` is the left value. The same goes for `right`, `top` and
+    `bottom`.
+
     Example:
         ```python
         from pybevy.ui import UiRect, Val
@@ -218,19 +223,35 @@ class UiRect:
 
     @staticmethod
     def left(left: Val) -> UiRect:
-        """Create a UiRect with only left set, others ZERO."""
+        """Create a UiRect with only left set, others ZERO.
+
+        This shadows the constructor keyword of the same name; read the value
+        with `get_left()`.
+        """
 
     @staticmethod
     def right(right: Val) -> UiRect:
-        """Create a UiRect with only right set, others ZERO."""
+        """Create a UiRect with only right set, others ZERO.
+
+        This shadows the constructor keyword of the same name; read the value
+        with `get_right()`.
+        """
 
     @staticmethod
     def top(top: Val) -> UiRect:
-        """Create a UiRect with only top set, others ZERO."""
+        """Create a UiRect with only top set, others ZERO.
+
+        This shadows the constructor keyword of the same name; read the value
+        with `get_top()`.
+        """
 
     @staticmethod
     def bottom(bottom: Val) -> UiRect:
-        """Create a UiRect with only bottom set, others ZERO."""
+        """Create a UiRect with only bottom set, others ZERO.
+
+        This shadows the constructor keyword of the same name; read the value
+        with `get_bottom()`.
+        """
 
     def with_left(self, left: Val) -> UiRect:
         """Return a new UiRect with left modified."""
@@ -595,7 +616,10 @@ class Overflow:
     DEFAULT: ClassVar[Overflow]
 
     def __init__(
-        self, x: OverflowAxis = ..., y: OverflowAxis = ...
+        self,
+        *,
+        x: OverflowAxis = ...,
+        y: OverflowAxis = ...
     ) -> None: ...
 
     @staticmethod
@@ -684,7 +708,8 @@ class PositionType:
 class BoxSizing:
     """Defines how width and height are calculated for a UI node.
 
-    Similar to CSS box-sizing property.
+    Similar to CSS box-sizing property, but the default is `BorderBox`, where
+    CSS defaults to `content-box`.
 
     Example:
         ```python
@@ -741,7 +766,7 @@ class OverflowClipMargin:
         ```python
         from pybevy.ui import OverflowClipMargin, VisualBox
 
-        # Default (content box, 0 margin)
+        # Default (padding box, 0 margin), matching bevy
         margin = OverflowClipMargin()
 
         # Content box clipping
@@ -753,12 +778,15 @@ class OverflowClipMargin:
     """
 
     def __init__(
-        self, visual_box: VisualBox | None = None, margin: float = 0.0
+        self,
+        *,
+        visual_box: VisualBox | None = None,
+        margin: float = 0.0
     ) -> None:
         """Create an overflow clip margin.
 
         Args:
-            visual_box: The clipping boundary box (default: ContentBox)
+            visual_box: Clipping boundary (default: PaddingBox, the border box without borders).
             margin: Margin width on each edge in logical pixels (default: 0.0)
         """
 
@@ -865,9 +893,10 @@ class UiTransform(Component):
 
     def __init__(
         self,
+        *,
         translation: Val2 | None = None,
         scale: Vec2 | None = None,
-        rotation: Rot2 | None = None,
+        rotation: Rot2 | None = None
     ) -> None:
         """Create a UiTransform with optional translation, scale, and rotation."""
 
@@ -1042,6 +1071,7 @@ class Node(Component):
     """
     def __init__(
         self,
+        *,
         display: Display = ...,
         box_sizing: BoxSizing = ...,
         position_type: PositionType = ...,
@@ -1083,7 +1113,7 @@ class Node(Component):
         grid_auto_rows: list[GridTrack] = ...,
         grid_auto_columns: list[GridTrack] = ...,
         grid_row: GridPlacement = ...,
-        grid_column: GridPlacement = ...,
+        grid_column: GridPlacement = ...
     ) -> None: ...
 
     @property
@@ -1242,7 +1272,12 @@ class Node(Component):
 
     @property
     def box_sizing(self) -> BoxSizing:
-        """How width and height are calculated (border-box or content-box)."""
+        """How width and height are calculated. Defaults to `BoxSizing.BorderBox`.
+
+        Note that this is bevy's default, not CSS's: an unset node measures like
+        an explicit `BorderBox`, so padding and border come out of the declared
+        size rather than adding to it.
+        """
 
     @box_sizing.setter
     def box_sizing(self, value: BoxSizing) -> None: ...
@@ -1769,10 +1804,7 @@ class NodeImageMode:
         tile_y: bool
         stretch_value: float
         def __init__(
-            self,
-            tile_x: bool = True,
-            tile_y: bool = True,
-            stretch_value: float = 1.0,
+            self, *, tile_x: bool = True, tile_y: bool = True, stretch_value: float = 1.0
         ) -> None: ...
 
     def uses_slices(self) -> bool:
@@ -1904,6 +1936,7 @@ class FocusPolicy(Component):
         ```
     """
     def __init__(self) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
 
     Block: ClassVar[FocusPolicy]
     """Blocking focus policy that captures input."""
@@ -2112,7 +2145,7 @@ class Selectable(Component):
 class AutoDirectionalNavigation(Component):
     """Auto-generate directional navigation edges to other focusable entities."""
 
-    def __init__(self, respect_tab_order: bool = False) -> None: ...
+    def __init__(self, *, respect_tab_order: bool = False) -> None: ...
     @property
     def respect_tab_order(self) -> bool: ...
     @respect_tab_order.setter
@@ -2680,7 +2713,7 @@ class ScrollPosition(Component):
     def offset(self, value: Vec2) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *, x: np.typing.ArrayLike | None = None, y: np.typing.ArrayLike | None = None
     ) -> Batchable: ...
 
@@ -2724,7 +2757,10 @@ class ComputedNode(Component):
 
     @property
     def content_size(self) -> Vec2:
-        """The size of the node's content area (excluding padding)."""
+        """Taffy content size differs from CSS content-box size. For a container,
+        it is the child extent from the border-box origin plus trailing padding;
+        for a childless node, measured content plus padding on both sides.
+        """
 
     @property
     def unrounded_size(self) -> Vec2:
@@ -2816,7 +2852,7 @@ class ColorStop:
         color: Color | None = None,
         point: Val = ...,
         *,
-        hint: float = 0.5,
+        hint: float = 0.5
     ) -> None:
         """Create a color stop with explicit position.
 
@@ -2867,7 +2903,7 @@ class AngularColorStop:
         color: Color | None = None,
         angle: float | None = None,
         *,
-        hint: float = 0.5,
+        hint: float = 0.5
     ) -> None:
         """Create an angular color stop at a specific angle (radians).
 
@@ -2919,7 +2955,11 @@ class UiPosition:
 
     @staticmethod
     def anchor(anchor: Vec2) -> UiPosition:
-        """Create a position from an anchor point."""
+        """Create a position from an anchor point.
+
+        This shadows the constructor keyword of the same name; read the value
+        with the `anchor_value` property.
+        """
 
     @staticmethod
     def center(x: Val | None = None, y: Val | None = None) -> UiPosition:
@@ -3288,11 +3328,12 @@ class ShadowStyle:
 
     def __init__(
         self,
+        *,
         color: Color | None = None,
         x_offset: Val = ...,
         y_offset: Val = ...,
         spread_radius: Val = ...,
-        blur_radius: Val = ...,
+        blur_radius: Val = ...
     ) -> None:
         """Create a shadow style.
 
@@ -3503,8 +3544,9 @@ class TextShadow(Component):
 
     def __init__(
         self,
+        *,
         offset: Vec2 | None = None,
-        color: Color | None = None,
+        color: Color | None = None
     ) -> None:
         """Create a text shadow.
 

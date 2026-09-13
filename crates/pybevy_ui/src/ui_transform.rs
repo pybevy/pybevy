@@ -16,7 +16,7 @@ pub struct PyUiTransform {
 #[pymethods]
 impl PyUiTransform {
     #[new]
-    #[pyo3(signature = (translation = None, scale = None, rotation = None))]
+    #[pyo3(signature = (*, translation = None, scale = None, rotation = None))]
     pub fn new(
         translation: Option<PyVal2>,
         scale: Option<PyVec2>,
